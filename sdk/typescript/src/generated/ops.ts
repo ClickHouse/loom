@@ -429,6 +429,8 @@ export interface CodeCalibrateOutput {
 }
 
 export interface CodeCallersInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   pr_files?: Record<string, string>;
   pr_diff?: string;
   pr_head_sha?: string;
@@ -494,6 +496,8 @@ export interface CodeCandidateSiteWire {
 }
 
 export interface CodeCallersOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   edges: CodeEdgeWire[];
   seed_symbols: string[];
   overlay?: boolean;
@@ -517,6 +521,8 @@ export interface CodeCallersOutput {
 }
 
 export interface CodeContextPackInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -529,6 +535,8 @@ export interface CodeContextPackInput {
 }
 
 export interface CodeContextPackOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   context: string;
   tokens_used: number;
   source: "precomputed" | "task" | "orientation" | "unavailable";
@@ -923,6 +931,8 @@ export interface CodeHistoryOutput {
 }
 
 export interface CodeImpactInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   pr_files?: Record<string, string>;
   pr_diff?: string;
   pr_head_sha?: string;
@@ -945,6 +955,8 @@ export interface CodeImpactInput {
 }
 
 export interface CodeImpactOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   impacted_symbols: Array<Record<string, unknown>>;
   impacted_tests: Array<Record<string, unknown>>;
   co_change_files: Array<Record<string, unknown>>;
@@ -1124,6 +1136,8 @@ export interface CodeOutcomeOutput {
 }
 
 export interface CodeOutlineInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -1135,6 +1149,8 @@ export interface CodeOutlineInput {
 }
 
 export interface CodeOutlineOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   path: string;
   entries: Array<Record<string, unknown>>;
   total: number;
@@ -1514,6 +1530,8 @@ export interface CodeScipStatusOutput {
 }
 
 export interface CodeSearchInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -1582,6 +1600,8 @@ export interface CodeUnit {
 }
 
 export interface CodeSearchOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   results: CodeUnit[];
   route: string;
   next_cursor?: string;

@@ -221,6 +221,8 @@ async def test_impact_symbol_shape_is_exact(intel) -> None:
     out = await _impact(impact, repo, name="DB::A::insert")
     assert out.epistemic == "exact" and out.causes == []
     assert out.by_hop_counts == {1: 2, 2: 3}
+    # the seed's file leads the files its `lessons` are read for
+    assert out._paths == ["src/A.cpp"]
     assert out.truncated is False
     # coverage was proven from the seed row itself: no coverage read
     assert repo.coverage_asked == []

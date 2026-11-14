@@ -74,6 +74,8 @@ export function searchBody(repo, prompt, { topK = 3, token } = {}) {
     token_budget: 600,
     bodies: "none",
     annotate: false,
+    // the pointers are all this hook renders; the pre-edit hook serves the files' memories
+    include_lessons: false,
     consumer: "claude-code-prompt-pack",
   };
 }

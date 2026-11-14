@@ -16,7 +16,14 @@ from pydantic import (
     model_validator,
 )
 
-from server.code.api.models_common import _CodeIdentity, _lead_namespaces, _trim_namespaces
+from server.code.api.models_common import (
+    _CodeIdentity,
+    _drop_empty_lessons,
+    _lead_namespaces,
+    _LessonsOut,
+    _ResultLessons,
+    _trim_namespaces,
+)
 from server.code.domain.units import CodeUnit
 from server.memory.domain.rerank_names import RerankName
 from server.operations.base import MCP_HIDDEN
@@ -30,7 +37,7 @@ from server.operations.base import MCP_HIDDEN
 QUERY_MAX_CHARS = 20000
 
 
-class CodeSearchInput(_CodeIdentity):
+class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # The question, identifier or phrase to search for; a symbol-shaped query tries the
     # symbol table first (`route` says which path answered). A long one (a pasted issue
     # body) is clipped to QUERY_MAX_CHARS, never refused: the search keeps its rarest
@@ -186,7 +193,7 @@ class CodeSearchInput(_CodeIdentity):
         return self
 
 
-class CodeSearchOutput(BaseModel):
+class CodeSearchOutput(_LessonsOut):
     @model_serializer(mode="wrap")
     def _drop_empty_fanout(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # fanout, legs_timed_out and epistemic are on the wire only when they
@@ -195,7 +202,7 @@ class CodeSearchOutput(BaseModel):
         for name in ("fanout", "legs_timed_out", "epistemic", "partial", "partial_reason"):
             if not data.get(name):
                 data.pop(name, None)
-        return data
+        return _drop_empty_lessons(data)
 
     # The ranked units served on this page, cut to top_k and the token budget; empty on
     # an abstain with no pool or a not-covered path.

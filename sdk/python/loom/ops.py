@@ -5724,6 +5724,8 @@ class CodeCalibrateOutput(TypedDict, total=False):
 
 
 class CodeCallersInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -5745,6 +5747,8 @@ class CodeCallersInput(TypedDict, total=False):
 
 
 class CodeCallersBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -5766,6 +5770,8 @@ class CodeCallersBody(TypedDict, total=False):
 
 
 class CodeCallersOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     edges: Required[list["CodeEdgeWire"]]
     seed_symbols: Required[list[str]]
     overlay: NotRequired[bool]
@@ -5837,6 +5843,8 @@ class CodeCandidateSiteWire(TypedDict, total=False):
 
 
 class CodeContextPackInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -5851,6 +5859,8 @@ class CodeContextPackInput(TypedDict, total=False):
 
 
 class CodeContextPackBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -5865,6 +5875,8 @@ class CodeContextPackBody(TypedDict, total=False):
 
 
 class CodeContextPackOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     context: Required[str]
     tokens_used: Required[int]
     source: Required[Literal["precomputed", "task", "orientation", "unavailable"]]
@@ -6437,6 +6449,8 @@ class CodeHistoryOutput(TypedDict, total=False):
 class CodeImpactInput(TypedDict, total=False):
     "Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -6461,6 +6475,8 @@ class CodeImpactInput(TypedDict, total=False):
 class CodeImpactBody(TypedDict, total=False):
     "Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -6483,6 +6499,8 @@ class CodeImpactBody(TypedDict, total=False):
 
 
 class CodeImpactOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     impacted_symbols: Required[list[dict[str, Any]]]
     impacted_tests: Required[list[dict[str, Any]]]
     co_change_files: Required[list[dict[str, Any]]]
@@ -6720,6 +6738,8 @@ class CodeOutcomeOutput(TypedDict, total=False):
 class CodeOutlineInput(TypedDict, total=False):
     '"What is in this file?" \u2014 the question a whole-file read answers at'
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6733,6 +6753,8 @@ class CodeOutlineInput(TypedDict, total=False):
 class CodeOutlineBody(TypedDict, total=False):
     '"What is in this file?" \u2014 the question a whole-file read answers at'
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6744,6 +6766,8 @@ class CodeOutlineBody(TypedDict, total=False):
 
 
 class CodeOutlineOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     path: Required[str]
     entries: Required[list[dict[str, Any]]]
     total: Required[int]
@@ -7351,6 +7375,8 @@ class CodeScipStatusOutput(TypedDict, total=False):
 
 
 class CodeSearchInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -7388,6 +7414,8 @@ class CodeSearchInput(TypedDict, total=False):
 
 
 class CodeSearchBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -7425,6 +7453,8 @@ class CodeSearchBody(TypedDict, total=False):
 
 
 class CodeSearchOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     results: Required[list["CodeUnit"]]
     route: Required[str]
     next_cursor: NotRequired[str]

@@ -1003,6 +1003,19 @@ settings:
   # The org of `code_ask_memory_namespace`; empty = `code_org`. [restart]
   # code_ask_memory_org: ""
 
+  # --- memories on code results ---
+
+  # Whether the code ops that return files carry `lessons`, the readable memories about
+  # their top files. [live]
+  # code_result_lessons: true
+
+  # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4
+  # characters a token. [live]
+  # code_result_lessons_tokens: 250
+
+  # How many of an answer's files, in rank order, its `lessons` are read for. [live]
+  # code_result_lessons_paths: 3
+
   # --- repository access ---
 
   # True lets every authenticated principal of the org read every configured code

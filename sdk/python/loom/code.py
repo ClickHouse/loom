@@ -30,7 +30,13 @@ class CodeClient:
     class, 0.6 repo-wide name match). Edges arrive compiler tier first, then
     by confidence, each carrying its own `confidence`. `include_ambiguous`
     adds the declined call sites as a `candidate_sites` block apart from the
-    edges; unset follows the deployment default."""
+    edges; unset follows the deployment default.
+
+    `search`, `outline`, `callers`, `callees` and `impact` answer with `lessons`: the
+    team's memories about the answer's top files, and `lessons_left_out`, how many
+    more rows about those files `memory.for_file` holds (left out by the cap, a cut, or
+    because a newer row read for the answer supersedes them). `include_lessons=False`
+    skips that read."""
 
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
@@ -51,6 +57,7 @@ class CodeClient:
         exclude_globs: list[str] | None = None,
         langs: list[str] | None = None,
         namespaces: list[str] | None = None,
+        include_lessons: bool = True,
     ) -> dict[str, Any]:
         """Hybrid code search (symbol-shaped queries answer exactly from
         the symbol table). Read three fields on every answer: `abstain`
@@ -70,7 +77,7 @@ class CodeClient:
         `namespaces=[...]` (up to 8) searches several indexed repositories
         at once — ranks interleaved in that order under one budget, each
         hit tagged `namespace`, `fanout` disclosing per-namespace timing;
-        no `next_cursor` under fan-out."""
+        no `next_cursor` under fan-out. `lessons` as in the class docstring."""
         body: dict[str, Any] = {
             "query": query,
             "top_k": top_k,
@@ -91,6 +98,8 @@ class CodeClient:
             body["langs"] = list(langs)
         if namespaces:
             body["namespaces"] = list(namespaces)
+        if not include_lessons:
+            body["include_lessons"] = False
         return await self._agent.transport.post("/v1/code.search", body)
 
     async def grep(
@@ -203,16 +212,20 @@ class CodeClient:
         *,
         kinds: list[str] | None = None,
         token_budget: int = 1500,
+        include_lessons: bool = True,
     ) -> dict[str, Any]:
         """One file's declarations with line spans, in source order
         (functions, methods, classes, structs, fixtures by default) — the
         answer to "what is in this file?" without reading it. Whole-row
         budgeted: an entry is complete or absent, and `next` is the
         code.symbol call for the first entry that did not fit.
-        `indexed: false` means the path has no live symbol rows."""
+        `indexed: false` means the path has no live symbol rows. `lessons` as
+        in the class docstring."""
         body: dict[str, Any] = {"path": path, "token_budget": token_budget}
         if kinds is not None:
             body["kinds"] = kinds
+        if not include_lessons:
+            body["include_lessons"] = False
         return await self._agent.transport.post("/v1/code.outline", body)
 
     async def symbol(
@@ -298,8 +311,9 @@ class CodeClient:
         include_ambiguous: bool | None = None,
         candidate_min_confidence: float | None = None,
         pr_number: int = 0,
+        include_lessons: bool = True,
     ) -> dict[str, Any]:
-        """Confidence and `include_ambiguous` as in the class docstring;
+        """Confidence, `include_ambiguous` and `lessons` as in the class docstring;
         `include_ambiguous` here also walks a virtual method's overrides
         (edges tagged `via_override`). By default candidates below the
         deployment's confidence floor are counted, not returned;
@@ -324,6 +338,8 @@ class CodeClient:
             body["candidate_min_confidence"] = float(candidate_min_confidence)
         if pr_number:
             body["pr_number"] = int(pr_number)
+        if not include_lessons:
+            body["include_lessons"] = False
         return await self._agent.transport.post("/v1/code.callers", body)
 
     async def callees(
@@ -336,8 +352,9 @@ class CodeClient:
         min_confidence: float = 0.0,
         include_ambiguous: bool | None = None,
         candidate_min_confidence: float | None = None,
+        include_lessons: bool = True,
     ) -> dict[str, Any]:
-        """Confidence and `include_ambiguous` as in the class docstring."""
+        """Confidence, `include_ambiguous` and `lessons` as in the class docstring."""
         body: dict[str, Any] = {
             "name": name,
             "symbol_id": symbol_id,
@@ -349,6 +366,8 @@ class CodeClient:
             body["include_ambiguous"] = bool(include_ambiguous)
         if candidate_min_confidence is not None:
             body["candidate_min_confidence"] = float(candidate_min_confidence)
+        if not include_lessons:
+            body["include_lessons"] = False
         return await self._agent.transport.post("/v1/code.callees", body)
 
     async def impact(
@@ -361,6 +380,7 @@ class CodeClient:
         diff: str = "",
         exclude_authors: list[str] | None = None,
         pr_number: int = 0,
+        include_lessons: bool = True,
     ) -> dict[str, Any]:
         """Blast radius, in either shape.
 
@@ -380,7 +400,8 @@ class CodeClient:
         `pr_number`: an OPEN PR whose head the mirror holds.
         With no `files` / `diff` its own range is the diff; its post-image is
         merged over the index so the functions it adds are seeds (`via:
-        "added"`) and its own call sites count. `overlay: true` on the answer."""
+        "added"`) and its own call sites count. `overlay: true` on the answer.
+        `lessons` as in the class docstring."""
         body: dict[str, Any] = {
             "name": name,
             "symbol_id": symbol_id,
@@ -394,6 +415,8 @@ class CodeClient:
             body["exclude_authors"] = list(exclude_authors)
         if pr_number:
             body["pr_number"] = int(pr_number)
+        if not include_lessons:
+            body["include_lessons"] = False
         return await self._agent.transport.post("/v1/code.impact", body)
 
     async def test_gate(

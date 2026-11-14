@@ -8,7 +8,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
-from server.code.api.models_common import _CodeIdentity
+from server.code.api.models_common import (
+    _CodeIdentity,
+    _drop_empty_lessons,
+    _LessonsOut,
+    _ResultLessons,
+)
 from server.code.domain.units import CodeUnit
 
 # ============================================================
@@ -40,7 +45,7 @@ OUTLINE_DEFAULT_KINDS: tuple[str, ...] = (
 )
 
 
-class CodeOutlineInput(_CodeIdentity):
+class CodeOutlineInput(_CodeIdentity, _ResultLessons):
     """ "What is in this file?" — the question a whole-file read answers at
     the price of the whole file. The outline answers it from the symbol
     table: every declaration in source order with its line span, so the
@@ -57,7 +62,7 @@ class CodeOutlineInput(_CodeIdentity):
     token_budget: int = Field(default=1500, ge=200, le=12000)
 
 
-class CodeOutlineOutput(BaseModel):
+class CodeOutlineOutput(_LessonsOut):
     @model_serializer(mode="wrap")
     def _drop_empty_head(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # only a reference fixture carries a head; other outlines omit it
@@ -65,7 +70,7 @@ class CodeOutlineOutput(BaseModel):
         if not data.get("head"):
             data.pop("head", None)
             data.pop("head_truncated", None)
-        return data
+        return _drop_empty_lessons(data)
 
     # The repo-relative path read, normalised from the request.
     path: str

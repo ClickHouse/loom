@@ -122,13 +122,15 @@ async def handle_code_context_pack(input: CodeContextPackInput) -> CodeContextPa
         if briefing:
             text, named = briefing
             tokens = estimate_tokens(text)
-            return CodeContextPackOutput(
+            out = CodeContextPackOutput(
                 context=text,
                 tokens_used=tokens,
                 source="task",
                 merge_commit_sha="",
                 trace_run_id=_trace(route="pack_task", ids=named[:50], tokens=tokens),
             )
+            out._paths = named
+            return out
 
     # Orientation mode: repo map + top module cards.
     with code_span("context_pack.orientation"):

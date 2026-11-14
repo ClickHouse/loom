@@ -113,4 +113,5 @@ test("searchBody sends the prompt redacted: code.search keeps its query in code_
   assert.equal(body.query, "why does login fail with password=[redacted] here");
   assert.equal(body.top_k, 2);
   assert.equal(body.namespace, "code-x");
+  assert.equal(body.include_lessons, false); // the hook renders pointers only
 });

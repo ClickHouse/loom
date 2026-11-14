@@ -19,7 +19,11 @@ and a body it did not pick is paid for on every later turn.
 `code.symbol` over MCP leaves out the recent PRs (about a third of a definition's
 tokens): they serve a review, not a where/how lookup, and a model that wants them
 passes `include_history`. The lessons stay: up to three memories linked to that
-symbol, each cut to its first 200 characters.
+symbol, each cut to its first 200 characters. `code.search`, `code.callers`,
+`code.callees`, `code.impact`, `code.outline` and a task's `code.context_pack` carry
+the memories of their top files (`server.code.app.result_lessons`): as many as fit in
+`code_result_lessons_tokens`, a decision or constraint whole, any other cut at 200
+characters.
 
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the

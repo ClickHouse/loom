@@ -13,6 +13,21 @@
 // changed since the last emission in this session (editing the same
 // function five times costs one line, not five).
 
+/** The code.impact body for an edit's diff outline. per_hop_limit keeps a hub's fan-out
+ *  to one page (by_hop_counts still carries the true total), and the reach is all the
+ *  hook renders, so it asks for no lessons. */
+export function impactBody(repo, outline, { depth, perHop }) {
+  return {
+    org: repo.org,
+    namespace: repo.namespace,
+    diff: outline,
+    depth,
+    per_hop_limit: perHop,
+    include_lessons: false,
+    consumer: "claude-code-blast",
+  };
+}
+
 /** Stable signature of what the change touches: sorted touched symbol names. */
 export function blastSignature(rel, impact) {
   const names = (impact?.touched_symbols || [])

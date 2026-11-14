@@ -897,6 +897,15 @@ class CodeSettings(BaseModel):
     code_ask_memory_namespace: str = ""
     # The org of `code_ask_memory_namespace`; empty = `code_org`.
     code_ask_memory_org: str = ""
+    # --- memories on code results ---
+    # Whether the code ops that return files carry `lessons`, the readable memories about
+    # their top files.
+    code_result_lessons: Annotated[bool, LIVE] = True
+    # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
+    # 4 characters a token.
+    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=250, ge=50, le=2000)
+    # How many of an answer's files, in rank order, its `lessons` are read for.
+    code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
     # --- repository access ---
     # True lets every authenticated principal of the org read every configured
     # code namespace (right for public or org-internal repos); false leaves reads
