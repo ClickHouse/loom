@@ -1003,6 +1003,24 @@ def test_no_operation_takes_or_answers_a_permission_list() -> None:
             assert not any({"unread", "anyone"} <= p for p in property_sets(schema)), op.name
 
 
+def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _prior(*a: Any, **kw: Any) -> DocumentRow:
+        return _doc(access_json=LISTED)
+
+    async def _none(*a: Any, **kw: Any) -> None:
+        return None
+
+    async def _zero(*a: Any, **kw: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(kh, "get_embedder", lambda: _FakeEmbedder())
+    monkeypatch.setattr(documents_repo, "get_one", _prior)
+    monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
+    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)
+    monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", _zero)
+    monkeypatch.setattr(knowledge_repo, "insert_chunks", _zero)
+
+
 @pytest.mark.parametrize(
     ("passed", "written"),
     [({"access": access_list.AccessList(emails=("a@example.com",))}, LISTED), ({}, "")],
@@ -1014,21 +1032,7 @@ def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
 
     rows = _capture_inserts(monkeypatch)
 
-    async def _prior(*a: Any, **kw: Any) -> DocumentRow:
-        return _doc(access_json=LISTED)
-
-    async def _none(*a: Any, **kw: Any) -> None:
-        return None
-
-    async def _zero(*a: Any, **kw: Any) -> int:
-        return 0
-
-    monkeypatch.setattr(kh, "get_embedder", lambda: _FakeEmbedder())
-    monkeypatch.setattr(documents_repo, "get_one", _prior)
-    monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
-    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)
-    monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", _zero)
-    monkeypatch.setattr(knowledge_repo, "insert_chunks", _zero)
+    _stub_upsert_over_a_listed_row(monkeypatch)
     body = KnowledgeUpsertInput(org="o", namespace="n", source_uri="doc-a", content="new body")
     asyncio.run(kh.handle_knowledge_upsert(body, **passed))
     # Over a listed prior row too: a list is never carried, only passed.
@@ -1040,21 +1044,7 @@ def test_a_metadata_edit_that_reindexes_writes_no_permission_list(monkeypatch) -
 
     rows = _capture_inserts(monkeypatch)
 
-    async def _prior(*a: Any, **kw: Any) -> DocumentRow:
-        return _doc(access_json=LISTED)
-
-    async def _none(*a: Any, **kw: Any) -> None:
-        return None
-
-    async def _zero(*a: Any, **kw: Any) -> int:
-        return 0
-
-    monkeypatch.setattr(kh, "get_embedder", lambda: _FakeEmbedder())
-    monkeypatch.setattr(documents_repo, "get_one", _prior)
-    monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
-    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)
-    monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", _zero)
-    monkeypatch.setattr(knowledge_repo, "insert_chunks", _zero)
+    _stub_upsert_over_a_listed_row(monkeypatch)
     body = KnowledgeUpdateMetadataInput(
         org="o", namespace="n", source_uri="doc-a", title="New", reindex=True
     )

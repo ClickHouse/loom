@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any
 
 # Every Drive role reads the file; a role this module does not know admits nobody.
@@ -18,8 +18,7 @@ _DRIVE_ROLES = frozenset({"owner", "organizer", "fileOrganizer", "writer", "comm
 class AccessList:
     """A permission list as the parsers and `to_json` produce it: `emails`, `groups`
     and `domains` lower-cased and sorted, `owner` the subject of a connected source's
-    owner or empty, and every entry empty when `unread`, when no current list is
-    known."""
+    owner or empty, and, when `unread` (no current list is known), every entry empty."""
 
     emails: tuple[str, ...] = ()
     owner: str = ""
@@ -48,13 +47,16 @@ def to_json(access: AccessList) -> str:
 
 def from_json(text: str) -> AccessList:
     """The stored list; `unread` for an empty or unreadable value, one without
-    `unread: false`, or one with a field or an entry of the wrong type."""
+    `unread: false`, one with a key it does not know, or one with a field or an entry of
+    the wrong type."""
     try:
         data = json.loads(text) if text else None
     except ValueError:
         return UNREAD
     if not isinstance(data, dict) or data.get("unread") is not False:
         return UNREAD
+    if set(data) - {f.name for f in fields(AccessList)}:
+        return UNREAD  # a key a later build added may narrow the list
     emails, groups, domains = (data.get(k, []) for k in ("emails", "groups", "domains"))
     owner, anyone = data.get("owner", ""), data.get("anyone", False)
     if not (

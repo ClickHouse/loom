@@ -54,6 +54,7 @@ def test_every_role_a_reader_and_group_grants_and_discoverable_shares_count() ->
         _perm("audience", emailAddress="x@example.com"),
         _perm("user", emailAddress="  "),
         _perm("user", emailAddress=123),
+        _perm("user", role="published_reader", emailAddress="x@example.com", view="published"),
     ],
 )
 def test_a_permission_that_cannot_be_trusted_admits_nobody(permission: dict[str, Any]) -> None:
@@ -94,6 +95,7 @@ def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
         '{"unread": false, "anyone": "yes"}',
         '{"unread": false, "owner": 7}',
         '{"unread": false, "emails": ["a@example.com", 5]}',
+        '{"unread": false, "anyone": true, "except": ["a@example.com"]}',
     ],
 )
 def test_anything_but_a_read_list_is_unread(text: str) -> None:
