@@ -245,6 +245,9 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 - `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
   `AgentTools` as OpenAI Agents SDK `FunctionTool`s; install the
   `[openai-agents]` extra.
+- `loom.integrations.crewai.LoomCrewMemory(agent=...)` is a CrewAI `Memory`
+  over a `SyncAgent`: `recall` is `memory.search`, a task's output goes to
+  `memory.set_from_messages`; install the `[crewai]` extra.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples

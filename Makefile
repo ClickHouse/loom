@@ -142,25 +142,31 @@ test-unit:
 test-integration:
 	$(PYTHON) -m pytest tests/integration -v
 
-# The adapters whose framework is an SDK extra (tests in sdk/python/tests) and the
-# types of every adapter, with the frameworks those extras name, in a venv of
-# their own: the frameworks' dependencies would otherwise constrain the server's
-# uv.lock. SDK_ADAPTERS_RESOLUTION=lowest-direct installs every direct requirement
-# (the SDK's own, each extra's, pytest) at its lower bound. mypy is the [dev] pin.
-SDK_ADAPTER_EXTRAS := langchain llamaindex openai-agents
+# The adapters whose framework is an SDK extra (tests in sdk/python/tests), each
+# with the framework its extra names, in a venv of its own: a framework's
+# dependencies would otherwise constrain the server's uv.lock, and two frameworks
+# may pin one package incompatibly. SDK_ADAPTERS_RESOLUTION=lowest-direct installs
+# every direct requirement (the SDK's own, the extra's, pytest) at its lower bound.
+# mypy is the [dev] pin. `make test-sdk-adapter-crewai` runs one.
+SDK_ADAPTER_EXTRAS := langchain llamaindex openai-agents crewai
 SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
 SDK_ADAPTERS_PYTHON ?= 3.12
 SDK_ADAPTERS_RESOLUTION ?= highest
-SDK_ADAPTERS_PY = $(abspath $(SDK_ADAPTERS_VENV))/bin/python
-test-sdk-adapters:
-	uv venv --clear -q --python $(SDK_ADAPTERS_PYTHON) $(SDK_ADAPTERS_VENV)
-	$(SDK_ADAPTERS_PY) scripts/gates/sdk_extra_requirements.py $(SDK_ADAPTER_EXTRAS) > $(SDK_ADAPTERS_VENV)/adapters.txt
-	uv pip install -q --python $(SDK_ADAPTERS_PY) --resolution $(SDK_ADAPTERS_RESOLUTION) \
-	  -e ./sdk/python -r $(SDK_ADAPTERS_VENV)/adapters.txt "pytest>=8.0" mypy==2.3.1
-	uv pip list --python $(SDK_ADAPTERS_PY)
-	cd sdk/python && $(SDK_ADAPTERS_PY) -m pytest -q
-	$(SDK_ADAPTERS_PY) -m mypy --strict --python-version \
-	  "$$($(SDK_ADAPTERS_PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations
+# The adapters typed through structural twins need no extra: every venv checks them too.
+SDK_ADAPTERS_NO_EXTRA = $(addprefix sdk/python/loom/integrations/,__init__.py langgraph.py strands.py)
+test-sdk-adapters: $(addprefix test-sdk-adapter-,$(SDK_ADAPTER_EXTRAS))
+test-sdk-adapter-%: PY = $(abspath $(SDK_ADAPTERS_VENV))/$*/bin/python
+test-sdk-adapter-%: MODULE = $(subst -,_,$*)
+test-sdk-adapter-%:
+	uv venv --clear -q --python $(SDK_ADAPTERS_PYTHON) $(SDK_ADAPTERS_VENV)/$*
+	$(PY) scripts/gates/sdk_extra_requirements.py $* > $(SDK_ADAPTERS_VENV)/$*/requirements.txt
+	uv pip install -q --python $(PY) --resolution $(SDK_ADAPTERS_RESOLUTION) \
+	  -e ./sdk/python -r $(SDK_ADAPTERS_VENV)/$*/requirements.txt "pytest>=8.0" mypy==2.3.1
+	uv pip list --python $(PY)
+	cd sdk/python && $(PY) -m pytest -q tests/test_$(MODULE).py
+	$(PY) -m mypy --strict --cache-dir $(SDK_ADAPTERS_VENV)/$*/.mypy_cache --python-version \
+	  "$$($(PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations/$(MODULE).py \
+	  $(SDK_ADAPTERS_NO_EXTRA)
 
 # Builds N-1 (BASE, default the merge base with origin/main) and N side by side
 # on one throwaway ClickHouse (docker); skips without docker (REQUIRE=1 fails
