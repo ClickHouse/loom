@@ -186,13 +186,15 @@ export function Documents() {
   const collections = useReadableCollections(picked.org, collection);
   const mounted = useMounted();
   // Bumped whenever the place shown changes (a pick, Back, a correction, another namespace or
-  // org), and by each create that starts, so only the latest create opens what it made; a
+  // org), and by each create sent (tree or dialog), so only the latest opens what it made; a
   // failed read leaves it.
   const placeVersion = useRef(0);
   useLayoutEffect(() => {
     placeVersion.current += 1;
   }, [picked.org, picked.namespace, collection]);
-  const startCreate = useCallback(() => {
+  // Advances the place version for a create about to be sent and returns it: only the latest
+  // create opens what it made.
+  const claimCreateVersion = useCallback(() => {
     placeVersion.current += 1;
     return placeVersion.current;
   }, []);
@@ -297,13 +299,7 @@ export function Documents() {
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   // New collection: the picker's dialog, which the empty Library opens too.
-  // Each open carries the place version it opened at, for what its create made.
-  const [creatingCollection, setCreatingCollection] = useState<{ version: number } | null>(null);
-  const setCreating = useCallback(
-    (open: boolean) => setCreatingCollection(open ? { version: startCreate() } : null),
-    [startCreate],
-  );
-  const dialogVersion = creatingCollection?.version ?? -1;
+  const [creatingCollection, setCreatingCollection] = useState(false);
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
@@ -970,9 +966,10 @@ export function Documents() {
       place={collection ?? picked.namespace}
       onPick={goTo}
       onLeave={pickCollection}
-      creating={creatingCollection !== null}
-      onCreatingChange={setCreating}
-      onCreated={(name) => openCreated(name, undefined, dialogVersion)}
+      creating={creatingCollection}
+      onCreatingChange={setCreatingCollection}
+      claimCreateVersion={claimCreateVersion}
+      onCreated={(name, version) => openCreated(name, undefined, version)}
       besideTree={besideTree}
     />
   );
@@ -991,7 +988,7 @@ export function Documents() {
       shelf={ownShelf ? picked.namespace : null}
       current={treeCurrent}
       onPick={goTo}
-      startCreate={startCreate}
+      claimCreateVersion={claimCreateVersion}
       onCreated={openCreated}
     />
   );
@@ -1079,7 +1076,7 @@ export function Documents() {
             title={none ? "No collection yet" : "Pick a collection"}
             // With no namespace to reach, the namespace picker holds none to offer.
             description={`${where}${pick}${orNamespace}.`}
-            action={none ? { label: "New collection", onClick: () => setCreating(true) } : action}
+            action={none ? { label: "New collection", onClick: () => setCreatingCollection(true) } : action}
             actions={
               none &&
               action && (

@@ -57,9 +57,12 @@ interface Props {
   /** The header's namespace when it holds documents, named so a top-level collection is not
    *  taken to sit in it. */
   headerNamespace?: string | null;
-  /** Fires with the collection's name (the new one, or the one the title already names there),
-   *  only while this dialog is still open. */
-  onCreated: (namespace: string) => void;
+  /** Advances the place version for a create about to be sent and returns it: only the latest
+   *  create opens what it made. */
+  claimCreateVersion: () => number;
+  /** Fires with the collection's name (the new one, or the one the title already names there)
+   *  and the version its Create claimed, only while this dialog is still open. */
+  onCreated: (namespace: string, version: number) => void;
 }
 
 /**
@@ -77,6 +80,7 @@ export function CreateCollectionDialog({
   parents,
   initialParent = "",
   headerNamespace = null,
+  claimCreateVersion,
   onCreated,
 }: Props) {
   const [title, setTitle] = useState("");
@@ -119,6 +123,7 @@ export function CreateCollectionDialog({
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    const version = claimCreateVersion();
     const into = parent === TOP_LEVEL ? "" : parent;
     try {
       const r = ownAddress
@@ -132,7 +137,7 @@ export function CreateCollectionDialog({
           });
       announceCreated(r, trimmedTitle, org);
       if (!live.current) return;
-      onCreated(r.namespace);
+      onCreated(r.namespace, version);
       reset();
       onOpenChange(false);
     } catch (e) {

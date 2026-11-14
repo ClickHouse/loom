@@ -164,7 +164,7 @@ describe("collection names and order", () => {
 function Picker(
   props: Omit<
     ComponentProps<typeof LibraryCollections>,
-    "creating" | "onCreatingChange" | "onCreated" | "repeated" | "byName"
+    "creating" | "onCreatingChange" | "onCreated" | "claimCreateVersion" | "repeated" | "byName"
   >,
 ) {
   const [creating, setCreating] = useState(false);
@@ -176,6 +176,7 @@ function Picker(
       byName={new Map(rows.map((c) => [c.namespace, c]))}
       creating={creating}
       onCreatingChange={setCreating}
+      claimCreateVersion={() => 0}
       onCreated={vi.fn()}
     />
   );
@@ -407,7 +408,7 @@ function resizable(width = TREE_PAGE_MIN) {
   };
 }
 
-async function startCreate() {
+async function createInTree() {
   let answer: (v: unknown) => void = () => {};
   api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
   api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
@@ -1191,7 +1192,7 @@ describe("the Library on a collection", () => {
   describe("a create answered after the tree is gone", () => {
     it("still opens it when a resize took the tree away", async () => {
       const narrow = resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       act(() => narrow());
       expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
       // The form went with the tree: its focus goes to the picker.
@@ -1212,13 +1213,61 @@ describe("the Library on a collection", () => {
       await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Library" })).toHaveFocus());
     });
 
-    it("leaves a dialog opened since the tree's create alone when that create answers", async () => {
+    it("still opens what the tree made when a dialog was opened and cancelled meanwhile", async () => {
+      const resize = resizable();
+      const answer = await createInTree();
+      act(() => resize());
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await settle();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      // Nothing was sent from the dialog: the tree's create is still the latest.
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+    });
+
+    it("opens only the later of two tree creates, across a resize away and back", async () => {
+      const resize = resizable();
+      const answerA = await createInTree();
+      act(() => resize());
+      act(() => resize(TREE_PAGE_MIN));
+      let answerB: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answerB = resolve)));
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q5" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      const both = [
+        ...ROWS,
+        entry("col-q4", { parent: "col-q3", title: "Q4" }),
+        entry("col-q5", { parent: "col-q3", title: "Q5" }),
+      ];
+      api.listCollections.mockResolvedValue({ collections: both, next_cursor: null });
+      await act(async () => answerA(q4));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      await act(async () => answerB({ namespace: "col-q5", parent: "col-q3", created: true, title: "Q5" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
+    });
+
+    it("leaves a dialog whose create was sent since the tree's alone when the tree's answers", async () => {
       const narrow = resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       act(() => narrow());
       fireEvent.click(screen.getByRole("button", { name: "New collection" }));
       const dialog = await screen.findByRole("dialog");
       fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
+      // The dialog's create is sent, and still unanswered.
+      api.createCollection.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
       const at = location.search;
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
@@ -1227,7 +1276,8 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await answer(q4);
       await settle();
-      // The later create supersedes it: the dialog stays, with its title, and nothing moves.
+      // The dialog's later create supersedes it: the dialog stays, with its title, and nothing
+      // moves.
       expect(dialog).toBeInTheDocument();
       expect(within(dialog).getByRole("textbox", { name: "Title" })).toHaveValue("Q5");
       expect(location.search).toBe(at);
@@ -1237,7 +1287,7 @@ describe("the Library on a collection", () => {
 
     it("moves nothing once the person left the Library and came back, and lists what was made", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       const at = location.search;
       // App mounts a view afresh on each visit: leaving closes this page, coming back opens another.
       cleanup();
@@ -1260,7 +1310,7 @@ describe("the Library on a collection", () => {
 
     it("has the page opened again wait for a collection made before it, while a replica lags", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       cleanup();
       render(<Documents />, { container: inMain() });
       await settle();
@@ -1285,7 +1335,7 @@ describe("the Library on a collection", () => {
 
     it("lists, and does not open, what was made once the person picked another place", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       const tree = screen.getByRole("navigation", { name: "Library places" });
       fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
       await settle();
@@ -1304,7 +1354,7 @@ describe("the Library on a collection", () => {
 
     it("opens a second collection made in the tree after the first one's read failed", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       // The read for the first fails: the URL names it, and the tree shows no place as current.
       api.listCollections.mockRejectedValue(new Error("offline"));
       await answer(q4);
@@ -1347,6 +1397,10 @@ describe("the Library on a collection", () => {
       expect(new URLSearchParams(location.search).get("collection")).toBeNull();
       expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      // The select lists it.
+      fireEvent.pointerDown(screen.getByRole("button", { name: PLACE_PICKER_LABEL }), { button: 0, ctrlKey: false });
+      fireEvent.click(screen.getByRole("button", { name: PLACE_PICKER_LABEL }));
+      expect(within(screen.getByRole("dialog")).getByText("Q4")).toBeInTheDocument();
     });
 
     it("lists, and does not open, what the dialog made after its Cancel", async () => {
@@ -1374,6 +1428,9 @@ describe("the Library on a collection", () => {
       expect(location.search).toBe(at);
       expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      expect(
+        within(screen.getByRole("navigation", { name: "Inside col-q3" })).getByRole("link", { name: "Q4" }),
+      ).toBeInTheDocument();
     });
 
     it("does not open what an earlier dialog made once the person moved and opened it again", async () => {
@@ -1422,7 +1479,7 @@ describe("the Library on a collection", () => {
 
     it("moves nothing once the page shows another org", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       api.listCollections.mockReturnValue(new Promise(() => {}));
       act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
       await settle();
@@ -1567,7 +1624,7 @@ describe("the Library on a collection", () => {
 
     it("waits for a created collection in its own org only", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
         next_cursor: null,
@@ -1586,7 +1643,7 @@ describe("the Library on a collection", () => {
 
     it("reads once for a delete after a create, not waiting again for what was made", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       const withQ4 = [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })];
       api.listCollections.mockResolvedValue({ collections: withQ4, next_cursor: null });
       await answer(q4);
@@ -1644,7 +1701,7 @@ describe("the Library on a collection", () => {
       cleanup();
       // Beside the tree, which still draws the last answer, it is a refresh that failed.
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       api.listCollections.mockRejectedValue(new Error("offline"));
       await answer(q4);
       await settle();
@@ -1653,7 +1710,7 @@ describe("the Library on a collection", () => {
 
     it("marks the tree busy only while it reads again for a create, not after that read failed", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       let fail: (e: Error) => void = () => {};
       api.listCollections.mockReturnValue(new Promise((_, reject) => (fail = reject)));
       await answer(q4);
@@ -1724,7 +1781,7 @@ describe("the Library on a collection", () => {
 
     it("beside the tree, a retry after a failed read for a collection just made still waits for it", async () => {
       resizable();
-      const answer = await startCreate();
+      const answer = await createInTree();
       // The read the create asks for fails.
       api.listCollections.mockRejectedValue(new Error("offline"));
       await answer(q4);

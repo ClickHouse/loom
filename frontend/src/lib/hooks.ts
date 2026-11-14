@@ -106,7 +106,7 @@ export function useVisiblePoll(fn: () => void, ms: number, enabled: boolean = tr
   }, [ms, enabled]);
 }
 
-/** True while the component is mounted: an answer that lands after it is gone checks it. */
+/** True while mounted: an async answer checks it before it touches the component's state. */
 export function useMounted(): { readonly current: boolean } {
   const mounted = useRef(false);
   useEffect(() => {

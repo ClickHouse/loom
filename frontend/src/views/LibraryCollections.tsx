@@ -211,6 +211,7 @@ export function LibraryCollections({
   onLeave,
   creating,
   onCreatingChange: setCreating,
+  claimCreateVersion,
   onCreated,
   besideTree = false,
 }: {
@@ -236,9 +237,13 @@ export function LibraryCollections({
   /** The New collection dialog's open state: the page's, whose empty state opens it too. */
   creating: boolean;
   onCreatingChange: (open: boolean) => void;
-  /** A collection the dialog made (or found by its title), only while this dialog is still
-   *  open: the page opens it while the person is still where the dialog opened. */
-  onCreated: (collection: string) => void;
+  /** Advances the place version for a create about to be sent and returns it: only the latest
+   *  create opens what it made. */
+  claimCreateVersion: () => number;
+  /** A collection the New collection dialog made (or found by its title), reported only while
+   *  that dialog is open: the page opens it unless the person moved or sent another create
+   *  since. */
+  onCreated: (collection: string, version: number) => void;
   /** The tree beside the page lists the places and makes new ones: the select and its New
    *  collection button step aside, and the path names where the page is. */
   besideTree?: boolean;
@@ -466,6 +471,7 @@ export function LibraryCollections({
           parents={parents}
           headerNamespace={namespace}
           initialParent={current && parents.includes(current) ? current.namespace : ""}
+          claimCreateVersion={claimCreateVersion}
           onCreated={onCreated}
         />
       )}

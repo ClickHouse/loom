@@ -1,7 +1,7 @@
 import { act, render, screen } from "../test/rtl";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAbortableEffect, useKeyboard, useVisiblePoll } from "./hooks";
+import { useAbortableEffect, useKeyboard, useMounted, useVisiblePoll } from "./hooks";
 import { must } from "../test/must";
 
 // A read that lands after its view moved on is dropped, and the request itself is
@@ -158,5 +158,30 @@ describe("useKeyboard", () => {
     screen.getByLabelText("field").focus();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(escape).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useMounted", () => {
+  it("is true while mounted, under StrictMode too, and false once unmounted", () => {
+    for (const strict of [false, true]) {
+      let seen: { readonly current: boolean } | null = null;
+      function Probe() {
+        seen = useMounted();
+        return null;
+      }
+      const { unmount } = render(
+        strict ? (
+          <StrictMode>
+            <Probe />
+          </StrictMode>
+        ) : (
+          <Probe />
+        ),
+      );
+      const mounted = must(seen as { readonly current: boolean } | null, "the mounted ref");
+      expect(mounted.current).toBe(true);
+      unmount();
+      expect(mounted.current).toBe(false);
+    }
   });
 });
