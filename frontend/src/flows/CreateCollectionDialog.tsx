@@ -13,6 +13,7 @@ import { humanizeError } from "../lib/errorWords";
 import { COLLECTION_PREFIX, isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { useMounted } from "../lib/hooks";
+import type { ClaimCreateVersion } from "../views/LibraryTree";
 
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
@@ -57,9 +58,7 @@ interface Props {
   /** The header's namespace when it holds documents, named so a top-level collection is not
    *  taken to sit in it. */
   headerNamespace?: string | null;
-  /** Advances the place version for a create about to be sent and returns it: only the latest
-   *  create opens what it made. */
-  claimCreateVersion: () => number;
+  claimCreateVersion: ClaimCreateVersion;
   /** Fires with the collection's name (the new one, or the one the title already names there)
    *  and the version its Create claimed, only while this dialog is still open. */
   onCreated: (namespace: string, version: number) => void;

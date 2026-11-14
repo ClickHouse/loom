@@ -1249,13 +1249,39 @@ describe("the Library on a collection", () => {
         entry("col-q5", { parent: "col-q3", title: "Q5" }),
       ];
       api.listCollections.mockResolvedValue({ collections: both, next_cursor: null });
-      await act(async () => answerA(q4));
+      await answerA(q4);
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
       expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
       await act(async () => answerB({ namespace: "col-q5", parent: "col-q3", created: true, title: "Q5" }));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
+    });
+
+    it("a failed dialog create still supersedes a pending tree create", async () => {
+      const narrow = resizable();
+      const answer = await createInTree();
+      act(() => narrow());
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
+      // A create sent claims the version, failed or not.
+      api.createCollection.mockRejectedValue(new Error("refused"));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      await settle();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await settle();
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
     it("leaves a dialog whose create was sent since the tree's alone when the tree's answers", async () => {

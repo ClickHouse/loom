@@ -63,7 +63,7 @@ import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { PLACE_PICKER_LABEL, TopLevelPlaces } from "./LibraryHierarchy";
-import { LIBRARY_PLACES_LABEL, LibraryTree } from "./LibraryTree";
+import { type ClaimCreateVersion, LIBRARY_PLACES_LABEL, LibraryTree } from "./LibraryTree";
 import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -192,9 +192,7 @@ export function Documents() {
   useLayoutEffect(() => {
     placeVersion.current += 1;
   }, [picked.org, picked.namespace, collection]);
-  // Advances the place version for a create about to be sent and returns it: only the latest
-  // create opens what it made.
-  const claimCreateVersion = useCallback(() => {
+  const claimCreateVersion = useCallback<ClaimCreateVersion>(() => {
     placeVersion.current += 1;
     return placeVersion.current;
   }, []);

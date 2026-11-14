@@ -28,6 +28,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
+import type { ClaimCreateVersion } from "./LibraryTree";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -237,9 +238,7 @@ export function LibraryCollections({
   /** The New collection dialog's open state: the page's, whose empty state opens it too. */
   creating: boolean;
   onCreatingChange: (open: boolean) => void;
-  /** Advances the place version for a create about to be sent and returns it: only the latest
-   *  create opens what it made. */
-  claimCreateVersion: () => number;
+  claimCreateVersion: ClaimCreateVersion;
   /** A collection the New collection dialog made (or found by its title), reported only while
    *  that dialog is open: the page opens it unless the person moved or sent another create
    *  since. */

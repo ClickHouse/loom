@@ -1,4 +1,4 @@
-import { act, render, screen } from "../test/rtl";
+import { act, render, renderHook, screen } from "../test/rtl";
 import { StrictMode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAbortableEffect, useKeyboard, useMounted, useVisiblePoll } from "./hooks";
@@ -162,26 +162,10 @@ describe("useKeyboard", () => {
 });
 
 describe("useMounted", () => {
-  it("is true while mounted, under StrictMode too, and false once unmounted", () => {
-    for (const strict of [false, true]) {
-      let seen: { readonly current: boolean } | null = null;
-      function Probe() {
-        seen = useMounted();
-        return null;
-      }
-      const { unmount } = render(
-        strict ? (
-          <StrictMode>
-            <Probe />
-          </StrictMode>
-        ) : (
-          <Probe />
-        ),
-      );
-      const mounted = must(seen as { readonly current: boolean } | null, "the mounted ref");
-      expect(mounted.current).toBe(true);
-      unmount();
-      expect(mounted.current).toBe(false);
-    }
+  it.each([false, true])("is true while mounted and false once unmounted (StrictMode: %s)", (strict) => {
+    const { result, unmount } = renderHook(() => useMounted(), strict ? { wrapper: StrictMode } : {});
+    expect(result.current.current).toBe(true);
+    unmount();
+    expect(result.current.current).toBe(false);
   });
 });

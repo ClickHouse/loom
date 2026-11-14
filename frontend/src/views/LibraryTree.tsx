@@ -46,6 +46,10 @@ export const placeFocusKey = (collection: string | null) => `library-tree-place-
  *  stays in the tree; `note`: the place's name, said on arrival. */
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
+/** Advances the place version for a create about to be sent and returns it: only the latest
+ *  create opens what it made. */
+export type ClaimCreateVersion = () => number;
+
 /** Open a collection made in the tree. `arriveFocus`: New collection's focus key, so the
  *  person goes on there; `version`: what `claimCreateVersion` gave when Create was pressed. */
 export type MadeCollection = (collection: string, arriveFocus: string, version: number) => void;
@@ -173,9 +177,7 @@ export const LibraryTree = memo(function LibraryTree({
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
   onPick: PickPlace;
-  /** Advances the place version for a create about to be sent and returns it: only the latest
-   *  create opens what it made. */
-  claimCreateVersion: () => number;
+  claimCreateVersion: ClaimCreateVersion;
   /** It can land after the tree is gone (a resize, or a move to another org). */
   onCreated: MadeCollection;
 }) {
@@ -445,7 +447,7 @@ function NewCollectionForm({
   org: string;
   parent: string;
   label: string;
-  claimCreateVersion: () => number;
+  claimCreateVersion: ClaimCreateVersion;
   onClose: () => void;
   onCreated: MadeCollection;
 }) {
