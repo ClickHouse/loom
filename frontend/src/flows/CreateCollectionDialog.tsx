@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -84,6 +84,15 @@ export function CreateCollectionDialog({
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; suggestion: string } | null>(null);
+  // This open's dialog is still drawn: an answer that lands after it closed leaves alone the
+  // page, and a dialog opened since.
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
 
   const reset = () => {
     setTitle("");
@@ -126,6 +135,7 @@ export function CreateCollectionDialog({
             deriveName: true,
           });
       announceCreated(r, trimmedTitle, org);
+      if (!live.current) return;
       onCreated(r.namespace);
       reset();
       onOpenChange(false);

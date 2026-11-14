@@ -1340,10 +1340,14 @@ describe("the Library on a collection", () => {
       // The move closed the dialog; a second open, on the place moved to, is its own.
       expect(screen.queryByRole("dialog")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "New collection" }));
-      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
       await act(async () => answer(q4));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      // The second dialog stays open with what was typed in it.
+      expect(dialog).toBeInTheDocument();
+      expect(within(dialog).getByRole("textbox", { name: "Title" })).toHaveValue("Q5");
     });
 
     it("does not open what the tree made at the namespace once the header picked another", async () => {

@@ -64,7 +64,7 @@ function tree(over: Partial<TreeProps> = {}, options: RenderOptions = {}) {
       shelf: "bench",
       current: null,
       viewHeight: 800,
-      placeVersion: () => 7,
+      readPlaceVersion: () => 7,
       ...props,
     };
     const byName = new Map((p.rows ?? []).map((c) => [c.namespace, c]));

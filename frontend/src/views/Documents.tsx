@@ -191,8 +191,8 @@ export function Documents() {
       mounted.current = false;
     };
   }, []);
-  // Bumped whenever the person moves to another place (a pick, Back, another namespace or
-  // org), not by a read that fails.
+  // Bumped whenever the place shown changes (a pick, Back, a correction, another namespace or
+  // org); a failed read leaves it.
   const placeVersion = useRef(0);
   useLayoutEffect(() => {
     placeVersion.current += 1;
@@ -305,6 +305,7 @@ export function Documents() {
     (open: boolean) => setCreatingCollection(open ? { version: placeVersion.current } : null),
     [],
   );
+  const dialogVersion = creatingCollection?.version ?? 0;
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
@@ -973,7 +974,7 @@ export function Documents() {
       onLeave={pickCollection}
       creating={creatingCollection !== null}
       onCreatingChange={setCreating}
-      onCreated={(name) => creatingCollection && openCreated(name, undefined, creatingCollection.version)}
+      onCreated={(name) => openCreated(name, undefined, dialogVersion)}
       besideTree={besideTree}
     />
   );
@@ -992,7 +993,7 @@ export function Documents() {
       shelf={ownShelf ? picked.namespace : null}
       current={treeCurrent}
       onPick={goTo}
-      placeVersion={currentVersion}
+      readPlaceVersion={currentVersion}
       onCreated={openCreated}
     />
   );

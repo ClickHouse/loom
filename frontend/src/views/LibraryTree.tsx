@@ -149,7 +149,7 @@ export const LibraryTree = memo(function LibraryTree({
   shelf,
   current,
   onPick,
-  placeVersion,
+  readPlaceVersion,
   onCreated,
 }: {
   org: string;
@@ -174,7 +174,7 @@ export const LibraryTree = memo(function LibraryTree({
   current: string | null;
   onPick: PickPlace;
   /** The page's place version now, which a create carries to its answer. */
-  placeVersion: () => number;
+  readPlaceVersion: () => number;
   /** It can land after the tree is gone (a resize, or a move to another org). */
   onCreated: MadeCollection;
 }) {
@@ -314,7 +314,7 @@ export const LibraryTree = memo(function LibraryTree({
             org={org}
             parent={into?.namespace ?? ""}
             label={into ? `New collection in ${distinctTitle(into, repeated)}` : "New collection at the top level"}
-            placeVersion={placeVersion}
+            readPlaceVersion={readPlaceVersion}
             onClose={stopMaking}
             onCreated={onCreated}
           />
@@ -437,14 +437,14 @@ function NewCollectionForm({
   org,
   parent,
   label,
-  placeVersion,
+  readPlaceVersion,
   onClose,
   onCreated,
 }: {
   org: string;
   parent: string;
   label: string;
-  placeVersion: () => number;
+  readPlaceVersion: () => number;
   onClose: () => void;
   onCreated: MadeCollection;
 }) {
@@ -458,7 +458,7 @@ function NewCollectionForm({
     // Create is disabled without a title, with one too long, or while it is sent, and so is the
     // form's submit.
     setBusy(true);
-    const version = placeVersion();
+    const version = readPlaceVersion();
     let r: CollectionCreated;
     try {
       r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });
