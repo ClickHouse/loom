@@ -104,7 +104,8 @@ Exercises:
   difference ([reading an answer](../features/code-index/overview.md#reading-an-answer)).
 - In a clone of the indexed repository, change a function and send the diff to
   `code.impact` as `diff`
-  ([how an agent uses it](../features/code-index/overview.md#how-an-agent-uses-it)):
+  ([how an agent uses it](../features/code-index/overview.md#how-an-agent-uses-it)). The
+  command needs `jq` (`sudo apt-get install -y jq` on Debian or Ubuntu):
 
   ```bash
   git diff | jq -Rs '{org: "dev", namespace: "code-myrepo", diff: .}' \
