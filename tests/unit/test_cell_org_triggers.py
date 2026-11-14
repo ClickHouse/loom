@@ -706,7 +706,7 @@ def test_ensure_creates_enables_or_leaves_the_guard(
     class _Enforced(_Cell):
         async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
             if "pg_attribute" in sql:
-                return []  # no org table: the guard alone
+                return [{"relname": "tenancy", "relkind": "r", "owned": True}]  # the guard alone
             if found is None:
                 return []
             return [{"relname": "tenancy", "tgname": "tenancy_record", "enabled": found}]

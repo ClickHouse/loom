@@ -3,13 +3,13 @@ holds no tenancy row for, written by a session that did not run the tenancy chec
 (docs/architecture/cells.md, "Writers older than the check are refused by the stores
 they write").
 
-A session that ran the check marks itself with `loom.tenancy_checked = 'on'`: every
-session of a process with LOOM_CELL set (a startup parameter of the pool and of
-`pg.dedicated()`) and the migration session (`pg_migrate`). The triggers' WHEN skips a
-marked session; `loom.tenancy_refuse_unheld()` (migration 011) judges the rest. The guard
-on `loom.tenancy` itself, `tenancy_record` with `loom.tenancy_refuse_unmarked()` (migration
-012), refuses an unmarked session's tenancy row in every state but a first cell still
-recording: a tenancy row makes an org held.
+A session that ran the check marks itself with `loom.tenancy_checked = 'on'`: every session
+of a process with LOOM_CELL set (a startup parameter of the pool and of `pg.dedicated()`)
+and the migration session (`pg_migrate`). The triggers' WHEN skips a marked session;
+`loom.tenancy_refuse_unheld()` (migration 011) judges the rest. The guard on `loom.tenancy`
+itself, `tenancy_record` with `loom.tenancy_refuse_unmarked()` (migration 012), refuses an
+unmarked session's tenancy row in every state but a first cell still recording: a tenancy
+row makes an org held.
 
 `ensure` creates the triggers on a fully prepared cell in `enforced` at a migrating boot,
 the guard with them, and `missing` names what a cell's triggers lack for `loom doctor`.
@@ -116,9 +116,9 @@ def definition_shape(definition: str) -> str:
 
 
 async def expected_definitions(conn: Any, names: tuple[str, ...]) -> dict[str, str]:
-    """Each named trigger's definition, as this server prints the one `_create` writes,
-    its table left out: read from triggers created on a temporary table in a transaction
-    rolled back."""
+    """Each named trigger's definition, as this server prints the one `_create` writes, its
+    table left out: read from triggers created on a temporary table in a transaction rolled
+    back."""
     tx = conn.transaction()
     await tx.start()
     try:
@@ -138,10 +138,10 @@ async def expected_definitions(conn: Any, names: tuple[str, ...]) -> dict[str, s
 
 
 def expected_functions(function: str) -> list[tuple[str, list[str]]]:
-    """`function`'s body and settings as each migration file that defines it writes
-    them: a function changes only through a numbered file (rolling-upgrades rule 47), so
-    any other body is a hand edit. An earlier file's body counts too: a cell this build has
-    not migrated yet keeps it."""
+    """`function`'s body and settings as each migration file that defines it writes them: a
+    function changes only through a numbered file (rolling-upgrades rule 47), so any other
+    body is a hand edit. An earlier file's body counts too: a cell this build has not
+    migrated yet keeps it."""
     from server.core.schema import pg_migrate
 
     pattern = _function_sql(function)
@@ -186,6 +186,13 @@ def _guarded(rows: list[Any]) -> list[Any]:
     return [r for r in rows if r["relkind"] == "r" and r["relname"] not in EXCLUDED]
 
 
+def _planned(rows: list[Any]) -> list[tuple[Any, tuple[str, ...]]]:
+    """Each table that carries cell triggers, with their names: a guarded org table its
+    org triggers, and `loom.tenancy` its guard."""
+    out = [(r, ORG_TRIGGERS) for r in _guarded(rows)]
+    return out + [(r, (TENANCY_TRIGGER,)) for r in rows if r["relname"] == "tenancy"]
+
+
 async def _triggers(conn: Any, names: tuple[str, ...]) -> dict[tuple[str, str], Any]:
     return {(r["relname"], r["tgname"]): r for r in await conn.fetch(_TRIGGERS, list(names))}
 
@@ -220,9 +227,7 @@ async def ensure(conn: Any) -> None:
                 log.warning(
                     "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
                 )
-        pairs = [(r["relname"], n) for r in _guarded(tables) for n in ORG_TRIGGERS]
-        pairs.append(("tenancy", TENANCY_TRIGGER))  # the guard, which `_guarded` leaves out
-        for table, name in pairs:
+        for table, name in [(r["relname"], n) for r, names in _planned(tables) for n in names]:
             row = present.get((table, name))
             if row is None:
                 statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
@@ -300,7 +305,6 @@ async def missing(conn: Any) -> list[Defect]:
     """What this cell's triggers and functions lack, read with the migrating role."""
     found: list[Defect] = []
     tables = await conn.fetch(_ORG_TABLES)
-    guarded = _guarded(tables)
     for r in tables:
         if r["relkind"] == "p":
             found.append(Defect("partitioned", f"loom.{r['relname']} is partitioned: unsupported"))
@@ -323,12 +327,11 @@ async def missing(conn: Any) -> list[Defect]:
             found.append(
                 Defect("definition", f"trigger definitions not compared: {type(e).__name__}")
             )
-    on_tenancy = [r for r in tables if r["relname"] == "tenancy"]
-    for r in [*guarded, *on_tenancy]:
+    for r, names in _planned(tables):
         table = r["relname"]
         if not r["owned"]:
             found.append(Defect("owner", f"loom.{table}: this role cannot alter it"))
-        for name in (TENANCY_TRIGGER,) if table == "tenancy" else ORG_TRIGGERS:
+        for name in names:
             row = present.get((table, name))
             if row is None:
                 found.append(Defect("absent", f"loom.{table}: no {name} trigger"))
@@ -373,8 +376,8 @@ async def missing(conn: Any) -> list[Defect]:
 
 
 def _function_defects(function: str, fn: Any) -> list[Defect]:
-    """What a trigger function lacks: it exists, is VOLATILE, not SECURITY DEFINER, and
-    has a body and settings a migration file writes."""
+    """What a trigger function lacks: it exists, is VOLATILE, not SECURITY DEFINER, and has
+    a body and settings a migration file writes."""
     if fn is None:
         return [Defect("function", f"{function}() is absent")]
     found = []
