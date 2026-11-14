@@ -161,7 +161,8 @@ class LoomMemoryRetriever(_LoomRetriever):
     """Leave out memories below Loom's floor; no documents when Loom abstains."""
 
     def _call_kwargs(self) -> dict[str, Any]:
-        # Above top_k 15 an unpinned search serves 200-character excerpts.
+        # Unpinned, a large top_k serves excerpts (above 15 by default)
+        # and drops each hit's explanation.
         kwargs: dict[str, Any] = {"top_k": self.k, "bodies": "full", "explain": False}
         if self.search_tags:
             kwargs["tags"] = list(self.search_tags)

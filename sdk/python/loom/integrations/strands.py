@@ -118,7 +118,8 @@ class LoomMemoryStore:
             top_k=top_k,
             tags=self._tags or None,
             memory_type=self._memory_type,
-            # Above top_k 15 an unpinned search serves 200-character excerpts.
+            # Unpinned, a large top_k serves excerpts (above 15 by default)
+            # and drops each hit's explanation.
             bodies="full",
             explain=False,
         )

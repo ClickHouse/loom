@@ -236,7 +236,7 @@ export class AgentTools {
         const r = await this.agent.recall(text(a, "query"), {
           ...this.scope,
           ...(topK !== undefined ? { top_k: topK } : {}),
-          // Above top_k 15 an unpinned search serves 200-character excerpts.
+          // Unpinned, a large top_k serves excerpts (above 15 by default) and drops each hit's explanation.
           bodies: "full",
           explain: false,
         });

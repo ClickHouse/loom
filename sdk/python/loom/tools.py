@@ -254,7 +254,8 @@ class AgentTools:
                 "verdict": r.get("conflict_verdict"),
             }
         if name == "loom_recall":
-            # Above top_k 15 an unpinned search serves 200-character excerpts.
+            # Unpinned, a large top_k serves excerpts (above 15 by default)
+            # and drops each hit's explanation.
             body = {"query": _str(a, "query"), "bodies": "full", "explain": False}
             if a.get("top_k") not in (None, ""):  # unset: the server's default
                 body["top_k"] = _int(a, "top_k")
