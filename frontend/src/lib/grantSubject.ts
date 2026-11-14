@@ -27,13 +27,14 @@ export function mySpellings(subject: string, rows: Iterable<Pick<GrantEntry, "su
 }
 
 /** A subject as a person reads it: a group, an agent (a service account is one), an end
- *  user by their id, the whole org, else the subject itself. */
+ *  user by their id ("user bob", apart from a login "bob"), the whole org, else the subject
+ *  itself. */
 export function subjectLabel(subject: string, org = ""): string {
   if (subject === "everyone") return org ? `Everyone in ${org}` : "Everyone";
   if (subject.startsWith("group:")) return `group ${subject.slice(6)}`;
   if (subject.startsWith("agent:")) return `agent ${subject.slice(6)}`;
   if (isServiceSubject(subject)) return displaySubject(subject);
-  if (subject.startsWith("user:")) return subject.slice(5);
+  if (subject.startsWith("user:")) return `user ${subject.slice(5)}`;
   return subject;
 }
 

@@ -40,7 +40,7 @@ describe("who can see a collection, in words", () => {
   it("is only you when the person's grant is the one there", () => {
     expect(words([{ namespace: "col-a", rows: [grant("ada", { role: "admin" })] }])).toEqual({
       who: "Only you",
-      how: "Shared with no one else",
+      how: "Not shared with anyone",
       onlyYou: true,
     });
   });
@@ -85,7 +85,7 @@ describe("who can see a collection, in words", () => {
       ],
       { above: "Hidden" },
     );
-    expect(w.who).toBe("You, bob and u1");
+    expect(w.who).toBe("You, bob and user u1");
     expect(w.how).toBe("2 people here · Inherited from top · Also everyone who can see Hidden");
   });
 
@@ -355,7 +355,7 @@ describe("the collection header", () => {
 
   it("says My files are the person's alone, with no Share and no read", async () => {
     const { container } = render(<Header collection={entry("col-me-1a2b", { personal: true })} />);
-    expect(line()).toHaveTextContent("Only you · Your own files: no one else's grants reach them");
+    expect(line()).toHaveTextContent("Only you · Your own files: they can't be shared");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(api.listGrants).not.toHaveBeenCalled();
     expect(await axeViolations(container)).toEqual([]);

@@ -25,6 +25,7 @@ import { fieldError, ListTime, Loading, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
+import { isCollectionName } from "../lib/namespace";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
@@ -121,7 +122,16 @@ interface Props {
   inherited?: InheritedAccess[] | null;
   /** A line above the members that changes what they mean (sign-in off, say). */
   notice?: string;
+  /** Where the focus goes as the dialog closes; unset, back to the control that opened it. */
+  onCloseAutoFocus?: (e: Event) => void;
 }
+
+/** A collection holds documents: its roles say what they let one do with them. */
+const COLLECTION_ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
+  { value: "viewer", label: "Viewer", desc: "Read its documents" },
+  { value: "writer", label: "Writer", desc: "Read and add documents" },
+  { value: "admin", label: "Admin", desc: "Manage members and settings, and delete it" },
+];
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
   { value: "viewer", label: "Viewer", desc: "Read only" },
@@ -141,18 +151,21 @@ export function MembersDialog({
   manage,
   inherited = [],
   notice,
+  onCloseAutoFocus,
 }: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
   // A code index has two roles: readers (viewer) and maintainers (admin); an org admin or a
   // maintainer of it names a maintainer (the server enforces the ceiling — ROLE_CEILING).
-  const roles = isCode
-    ? ROLES.filter((r) => r.value === "viewer" || r.value === "admin").map((r) =>
-        r.value === "viewer"
-          ? { ...r, label: "Reader", desc: "Read the index (read-only)" }
-          : { ...r, label: "Maintainer", desc: "Approve readers, set how people join" },
-      )
-    : ROLES;
+  const roles = isCollectionName(namespace)
+    ? COLLECTION_ROLES
+    : isCode
+      ? ROLES.filter((r) => r.value === "viewer" || r.value === "admin").map((r) =>
+          r.value === "viewer"
+            ? { ...r, label: "Reader", desc: "Read the index (read-only)" }
+            : { ...r, label: "Maintainer", desc: "Approve readers, set how people join" },
+        )
+      : ROLES;
   const roleValues = roles.map((r) => r.value);
   const [rows, setRows] = useState<GrantEntry[] | null>(null);
   // More members followed than the pages read.
@@ -299,7 +312,10 @@ export function MembersDialog({
           ? through.length
             ? `The grant here is revoked.${still}`
             : "Only those named here or on a parent, and the members of groups named, keep access."
-          : `Their grant here is revoked.${still}`,
+          : `Their grant here is revoked.${still}${
+              // A namespace's gate also admits a token's own roles; no claim reaches a collection.
+              isCollectionName(namespace) ? "" : " A token of theirs may still carry roles that let them in."
+            }`,
         confirmLabel: toEveryone ? "Stop sharing" : "Remove",
         danger: true,
       }))
@@ -380,6 +396,7 @@ export function MembersDialog({
       title={`${isCode ? "Readers of" : "Members of"} ${label ?? namespace}`}
       description={label ? namespace : undefined}
       className="w-full max-w-[600px]"
+      onCloseAutoFocus={onCloseAutoFocus}
     >
       <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
         {notice && <p className="mb-3 text-sm text-text-muted">{notice}</p>}

@@ -12,7 +12,9 @@ describe("grant subjects", () => {
     expect(subjectLabel("group:eng")).toBe("group eng");
     expect(subjectLabel("agent:helper")).toBe("agent helper");
     expect(subjectLabel("sa:reporter-a1b2c3")).toBe("Reporter bot");
-    expect(subjectLabel("user:u1")).toBe("u1");
+    // An end user reads apart from a login of the same name.
+    expect(subjectLabel("user:bob")).toBe("user bob");
+    expect(subjectLabel("bob")).toBe("bob");
     expect(subjectLabel("everyone", "acme")).toBe("Everyone in acme");
   });
 });

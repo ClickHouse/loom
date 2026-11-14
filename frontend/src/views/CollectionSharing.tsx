@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
@@ -107,7 +107,7 @@ export function whoCanSee({
   if (others.length === 0 && unseen.length === 0 && !cut) {
     return {
       who: subjects.length > 0 ? "Only you" : "No one is named on it",
-      how: "Shared with no one else",
+      how: "Not shared with anyone",
       onlyYou: subjects.length > 0,
     };
   }
@@ -124,7 +124,7 @@ export function whoCanSee({
     const [through, ...rest] = unseen;
     return {
       who: through ? `Everyone who can see ${through.who}` : "More people than are shown here",
-      how: [inheritedFrom, ...rest.map(noticeOf), shared].filter(Boolean).join(" · "),
+      how: [...rest.map(noticeOf), shared].filter(Boolean).join(" · "),
       onlyYou: false,
     };
   }
@@ -208,6 +208,10 @@ export function useCollectionSharing({
 }) {
   const whoami = useStore((s) => s.whoami);
   const [openFor, setOpenFor] = useState<string | null>(null);
+  // The dialog closed because one of its parent links opened another place: the focus goes
+  // to that page's heading, not back to Share, which the arrival could not do while the
+  // dialog held it.
+  const leftFor = useRef(false);
   const [version, setVersion] = useState(0);
   useEffect(() => setOpenFor(null), [place]);
   const { chain, above } = useMemo(
@@ -224,10 +228,10 @@ export function useCollectionSharing({
   const [reading, setReading] = useState(false);
   // With sign-in off every request is served, so the grants say nothing of who can see it.
   const signInOff = isAuthDisabled();
-  const personal = !collection || collection.personal || signInOff;
+  const readsNoGrants = !collection || collection.personal || signInOff;
   useAbortableEffect(
     (signal, live) => {
-      if (personal) return;
+      if (readsNoGrants) return;
       setReading(true);
       // The collection's own grants decide the line; a parent's failure is named, not fatal.
       const [own, ...parents] = chain.map((c) => c.namespace);
@@ -249,7 +253,7 @@ export function useCollectionSharing({
     },
     // `chainKey` stands in for `chain`, rebuilt on every read of the list, and `key` is
     // `org` with it.
-    [org, chainKey, personal, version],
+    [org, chainKey, readsNoGrants, version],
   );
 
   const titleOf = (ns: string) => {
@@ -264,7 +268,7 @@ export function useCollectionSharing({
   if (collection && signInOff) {
     line = <Words icon="users" who="Everyone who can reach this server" how="sign-in is off" />;
   } else if (collection?.personal) {
-    line = <Words icon="lock" who="Only you" how="Your own files: no one else's grants reach them" />;
+    line = <Words icon="lock" who="Only you" how="Your own files: they can't be shared" />;
   } else if (collection && answer === null) {
     line = (
       <Line>
@@ -328,7 +332,10 @@ export function useCollectionSharing({
         title: titleOf(at.namespace),
         rows: at.failed ? null : at.rows,
         cut: at.cut,
-        onOpen: () => onOpenPlace(at.namespace),
+        onOpen: () => {
+          leftFor.current = true;
+          onOpenPlace(at.namespace);
+        },
       });
     }
     if (hiddenWords) {
@@ -366,6 +373,12 @@ export function useCollectionSharing({
       // Until the header answers for this collection, who else can see it is still being read;
       // a failed answer names no parent.
       inherited={signInOff ? [] : answer === null ? null : inherited}
+      onCloseAutoFocus={(e) => {
+        if (!leftFor.current) return;
+        leftFor.current = false;
+        e.preventDefault();
+        focusInMain(null);
+      }}
       notice={
         signInOff ? "Sign-in is off: everyone who can reach this server can see it, whoever is listed here." : undefined
       }

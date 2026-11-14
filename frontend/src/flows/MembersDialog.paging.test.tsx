@@ -396,4 +396,26 @@ describe("MembersDialog paging", () => {
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(confirm.mock.calls.at(-1)?.[0].title).toBe("Withdraw your viewer request on Runbooks?");
   });
+
+  it("describes a collection's roles by what they do with its documents", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [] });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add member" }));
+    expect(screen.getByText("Read and add documents")).toBeInTheDocument();
+  });
+
+  it("says a token may still let a member removed from a namespace in, and not on a collection", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
+    const { unmount } = render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0].message).toBe(
+      "Their grant here is revoked. A token of theirs may still carry roles that let them in.",
+    );
+    unmount();
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(confirm.mock.calls[1][0].message).toBe("Their grant here is revoked.");
+  });
 });

@@ -575,6 +575,28 @@ def test_a_collection_outside_the_tree_admits_no_one(org_state: dict[str, Any]) 
     assert roles == {"col-gone": None, "col-q3": Role.ADMIN}
 
 
+def test_collection_list_with_auth_off_answers_admin(
+    org_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With auth off there is no caller to rank: `collection.list` lists every collection in
+    the tree as admin, so the dashboard offers Share, not See who, to the operator."""
+    from server.auth import context
+    from server.identity.api.models_collections import CollectionListInput
+    from server.identity.app import collections
+
+    async def _labels(*_a: Any) -> dict[str, dict[str, str]]:
+        return {}
+
+    monkeypatch.setattr(collections.namespaces_repo, "labels", _labels)
+    context.set_current_auth(None)
+    out = asyncio.run(collections.handle_collection_list(CollectionListInput(org=ORG)))
+    assert {(c.namespace, c.role) for c in out.collections} == {
+        ("col-hr", "admin"),
+        ("col-q3", "admin"),
+        ("col-q3-docs", "admin"),
+    }
+
+
 def test_a_collection_is_never_adopted() -> None:
     from server.identity.app.grants import adopt_namespace
 

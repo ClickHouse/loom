@@ -76,6 +76,18 @@ test("Share opens the members dialog in place, and closing it leaves the person 
   await expect(header(page)).toBeVisible();
 });
 
+test("a parent's link in the members dialog opens it, with the focus on the page", async ({ page }) => {
+  await open(page, "col-runbooks");
+  await button(page, "Share").click();
+  const dialog = page.getByRole("dialog", { name: "Members of Runbooks" });
+  const through = dialog.getByRole("region", { name: "Also can see it, through Engineering" });
+  await through.getByRole("button", { name: "Engineering" }).click();
+  await expect(page).toHaveURL(/collection=col-eng/);
+  await expect(dialog).toHaveCount(0);
+  // The arrival focuses the page's heading, not the body the dialog left behind.
+  await expect(page.locator("main h1").first()).toBeFocused();
+});
+
 test("a viewer sees who can see it, and See who in place of Share", async ({ page }) => {
   await open(page, "col-legal", undefined, true);
   await expect(header(page)).toContainText("You and lee@example.com");

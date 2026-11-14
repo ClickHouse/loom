@@ -506,6 +506,20 @@ describe("the Library on a collection", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("opens a parent from the members dialog's link, closing the dialog", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-plans");
+    render(<Documents />, { container: inMain() });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    const through = await within(dialog).findByRole("region", { name: "Also can see it, through col-q3" });
+    fireEvent.click(within(through).getByRole("button", { name: "col-q3" }));
+    await settle();
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("says My files are the person's alone, with no Share", async () => {
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     history.replaceState(null, "", "/library?collection=col-me-1a2b");

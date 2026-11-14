@@ -265,25 +265,6 @@ def test_collection_list_carries_the_title(store: _Store, monkeypatch: pytest.Mo
     assert [(c.namespace, c.title) for c in out.collections] == [("col-q3", "Q3 Plans")]
 
 
-def test_collection_list_with_auth_off_answers_admin(
-    store: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With auth off there is no caller to rank: every collection is listed as admin, so the
-    dashboard offers Share, not See who, to the operator."""
-    store.collection("col-q3", owner="user:ada", title="Q3 Plans")
-
-    class _Tree:
-        parent = {"col-q3": ""}
-
-    async def _tree(*_a: Any) -> _Tree:
-        return _Tree()
-
-    monkeypatch.setattr(collections.sharing, "tree", _tree)
-    context.set_current_auth(None)
-    out = asyncio.run(collections.handle_collection_list(CollectionListInput(org="acme")))
-    assert [(c.namespace, c.role) for c in out.collections] == [("col-q3", "admin")]
-
-
 @pytest.mark.parametrize(
     ("fields", "why"),
     [
