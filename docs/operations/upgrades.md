@@ -290,9 +290,9 @@ checkout.
     - with `LOOM_CELL` unset, `USAGE` on schema `loom`, `SELECT` on `loom.cell_first`,
       `loom.tenancy_mode` and `loom.authority`, `SELECT (updated_at)` on `loom.cell_self`
       and `SELECT (since)` on `loom.tenancy` (the column grants keep the fingerprints and
-      the orgs out of its reach), and a `CONNECTION LIMIT` at least `LOOM_PG_POOL_MAX_SIZE` times the number of
-      such commands that run at once, since each opens its own pool for its writes (the
-      state read retries a full limit briefly, then refuses);
+      the orgs out of its reach), and a `CONNECTION LIMIT` at least `LOOM_PG_POOL_MAX_SIZE`
+      times the number of such commands that run at once, since each opens its own pool for
+      its writes (the state read retries a full limit briefly, then refuses);
     - with `LOOM_CELL` set, the same with `SELECT` on `loom.cell_self` and `loom.tenancy`
       in full, and, to record a new org while the first cell is `recording`, `INSERT` on
       `loom.tenancy` and `UPDATE (since)` on `loom.tenancy_mode`; revoke both with

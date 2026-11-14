@@ -363,11 +363,20 @@ def cli_gate_reason() -> str:
     """Why a CLI with `LOOM_CELL` set must refuse an org-declaring command ('' when it
     may), on the rows it has just read: the first row naming `LOOM_CELL`, and its stores
     matching a value of the cell's own row."""
+    if reason := _rows_reason(_view):
+        return reason
     fields = mine()
-    return _judge(_view, {name: fields[name] for name in _STORE_FIELDS})
+    stores = {name: fields[name] for name in _STORE_FIELDS}
+    if matches(stores, _view.current) or matches(stores, _view.next):
+        return ""
+    return (
+        f"this CLI's stores ({', '.join(stores)}) match neither value of its cell's own "
+        "row: point it at the cell's Postgres, ClickHouse and document bucket"
+    )
 
 
-def _judge(view: _View, fields: Mapping[str, Any] | None = None) -> str:
+def _rows_reason(view: _View) -> str:
+    """Why the rows read do not make a cell this process can belong to ('' when they do)."""
     if view.read_at is None:
         return "the cell's rows are not read yet" + (f" ({view.error})" if view.error else "")
     if view.first is None:
@@ -378,13 +387,12 @@ def _judge(view: _View, fields: Mapping[str, Any] | None = None) -> str:
         return "this cell's tenancy mode row is absent: run loom cell prepare"
     if view.current is None:
         return "this cell's own row is absent: run loom cell prepare"
-    if fields is not None:
-        if matches(fields, view.current) or matches(fields, view.next):
-            return ""
-        return (
-            f"this CLI's stores ({', '.join(fields)}) match neither value of its cell's "
-            "own row: point it at the cell's Postgres, ClickHouse and document bucket"
-        )
+    return ""
+
+
+def _judge(view: _View) -> str:
+    if reason := _rows_reason(view):
+        return reason
     fields = mine()
     if not (matches(fields, view.current) or matches(fields, view.next)):
         return (
@@ -421,10 +429,10 @@ _STATE = (
 
 async def read_state(conn: Any) -> str:
     """The cell state on `conn` (`state`); raises when it cannot read."""
-    return (await read_named_state(conn))[0]
+    return (await _read_named_state(conn))[0]
 
 
-async def read_named_state(conn: Any) -> tuple[str, str]:
+async def _read_named_state(conn: Any) -> tuple[str, str]:
     """The cell state on `conn` and the cell its first row names ('' without one)."""
     row = await conn.fetchrow(_STATE)
     first = None if row["is_first"] is None else (bool(row["is_first"]), str(row["cell"]))
@@ -441,7 +449,7 @@ _STATE_TABLES = ("loom.cell_first", "loom.tenancy_mode", "loom.cell_self", "loom
 
 
 async def read_state_if_present(conn: Any) -> tuple[str, str]:
-    """`read_named_state`, with every state table absent read as `open`: a schema that
+    """`_read_named_state`, with every state table absent read as `open`: a schema that
     predates them cannot be a cell. Judged by `to_regclass`, never by matching a
     privilege error, so a role missing a grant still raises; some tables absent is
     `partial`."""
@@ -452,7 +460,7 @@ async def read_state_if_present(conn: Any) -> tuple[str, str]:
         return "open", ""
     if present < len(_STATE_TABLES):
         return "partial", ""
-    return await read_named_state(conn)
+    return await _read_named_state(conn)
 
 
 async def refresh() -> bool:

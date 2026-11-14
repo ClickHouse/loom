@@ -84,7 +84,7 @@ async def check_unset_cell() -> None:
     """With `LOOM_CELL` unset, refuse an org-declaring command once its deployment is a
     cell past `recording`, as the transports gate a server process with it unset; under
     the ClickHouse authority no cell runs and nothing is read. A failed read refuses."""
-    from server.core import pg
+    from server.core import cell, pg
 
     if not pg.enabled():
         return
@@ -98,10 +98,14 @@ async def check_unset_cell() -> None:
         ) from None
     if found in ("open", "recording"):
         return
-    cell_name = f" (cell {name!r})" if name else ""
+    if found == "partial":
+        raise OrgNotHeld(
+            "refusing: this deployment holds a partial cell state and LOOM_CELL is unset "
+            f"(see {cell.TROUBLESHOOTING}, and loom doctor)"
+        )
     raise OrgNotHeld(
-        f"refusing: this deployment is a cell in {found} state{cell_name} and LOOM_CELL is "
-        f"unset: set LOOM_CELL{f'={name}' if name else ''} for a command that writes an org"
+        f"refusing: this deployment is a cell in enforced state (cell {name!r}) and "
+        f"LOOM_CELL is unset: set LOOM_CELL={name} for a command that writes an org"
     )
 
 

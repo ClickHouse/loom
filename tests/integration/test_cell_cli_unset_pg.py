@@ -56,7 +56,8 @@ def _unset(monkeypatch: pytest.MonkeyPatch, dsn: str) -> None:
     monkeypatch.setattr(settings, "cell", "")
     monkeypatch.setattr(settings, "storage_authority", "postgres")
     monkeypatch.setattr(settings, "pg_dsn", dsn)
-    pg.expect_deployment(None)
+    # Restored at teardown, so an armed deployment check never leaks into a later test.
+    monkeypatch.setattr(pg, "_expected", None)
 
 
 async def _admin(dsn: str, *statements: str) -> None:
@@ -132,9 +133,9 @@ async def test_the_deployment_check_runs_on_the_state_session_with_the_steps_gra
             "VALUES ('postgres', 1, 'dep-a')",
         )
         _unset(monkeypatch, cli)
-        pg.expect_deployment(("dep-a", 1))
+        monkeypatch.setattr(pg, "_expected", ("dep-a", 1))
         await _ch.check_unset_cell()
-        pg.expect_deployment(("dep-b", 1))
+        monkeypatch.setattr(pg, "_expected", ("dep-b", 1))
         with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
             await _ch.check_unset_cell()
 
@@ -163,3 +164,40 @@ async def test_a_full_connection_limit_is_retried_then_refused(
         with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
             await _ch.check_unset_cell()
         assert len(opens) == _ch._BUSY_TRIES
+
+
+@pytest.mark.asyncio
+async def test_a_write_by_a_role_holding_only_the_column_grants_is_a_permission_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On an enforced cell the org trigger reads `loom.tenancy.org` as the writer: a role
+    holding only `SELECT (since)` there is refused with SQLSTATE 42501, not LT001, as
+    the upgrade step says."""
+    import asyncpg
+
+    from server.core import cell_triggers
+
+    async with own_database() as dsn:
+        await _admin(
+            dsn,
+            "INSERT INTO loom.cell_first (is_first, cell) VALUES (true, 'eu-1')",
+            "INSERT INTO loom.tenancy_mode (mode) VALUES ('enforced')",
+            'INSERT INTO loom.cell_self (current_fp) VALUES (\'{"v": 1, "fields": {}}\')',
+        )
+        admin = await asyncpg.connect(dsn, server_settings={"loom.tenancy_checked": "on"})
+        try:
+            await cell_triggers.ensure(admin)
+        finally:
+            await admin.close()
+        grants = (*_GRANTS, "GRANT INSERT ON loom.scope_generations TO {role}")
+        async with _cli_role(dsn, grants=grants) as cli:
+            plain = await asyncpg.connect(cli)
+            try:
+                with pytest.raises(asyncpg.PostgresError) as refused:
+                    await plain.execute(
+                        "INSERT INTO loom.scope_generations (org, scope, generation) "
+                        "VALUES ('stray-org', 's', 1)"
+                    )
+            finally:
+                await plain.close()
+        assert refused.value.sqlstate == "42501"

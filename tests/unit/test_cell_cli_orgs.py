@@ -220,14 +220,14 @@ def test_unset_cell_lets_an_open_or_recording_deployment_through(
     [
         (_rows(mode="enforced"), "enforced state (cell 'eu-1')"),
         (_rows(mode="recording", first=(False, "eu-2")), "enforced state (cell 'eu-2')"),
-        (_rows(mode="", first=(True, "eu-1")), "partial state (cell 'eu-1')"),
+        (_rows(mode="", first=(True, "eu-1")), "partial cell state"),
     ],
 )
 def test_unset_cell_refuses_a_cell_past_recording(
     monkeypatch: pytest.MonkeyPatch, row: dict[str, Any], named: str
 ) -> None:
     _unset_on(monkeypatch, _StateConn(4, row))
-    with pytest.raises(_ch.OrgNotHeld, match="LOOM_CELL is unset") as refused:
+    with pytest.raises(_ch.OrgNotHeld, match="and LOOM_CELL is unset") as refused:
         asyncio.run(_ch.check_orgs(["acme"]))
     assert named in str(refused.value)
 
@@ -242,7 +242,7 @@ def test_unset_cell_reads_absent_state_tables_as_open_and_some_as_partial(
     asyncio.run(_ch.check_orgs(["acme"]))
     assert len(none.reads) == 1 and "to_regclass" in none.reads[0]
     _unset_on(monkeypatch, _StateConn(2))
-    with pytest.raises(_ch.OrgNotHeld, match="partial state"):
+    with pytest.raises(_ch.OrgNotHeld, match="partial cell state .*troubleshooting"):
         asyncio.run(_ch.check_orgs(["acme"]))
 
 
