@@ -38,7 +38,8 @@ def test_the_registry_keeps_every_mirror_a_namespace_had(tmp_path: Path) -> None
         await mirrors.forget_mirrors(ORG, {OLD_MIRROR: "team"}, ch=ch)
         await ch.insert(mirrors.TABLE, [{"org": ORG, "namespace": "team", "mirror": MIRROR}])
         found = await mirrors.mirrors_of(ORG, ["team", "other"], ch=ch)
-        assert found == {OLD_MIRROR: "team", MIRROR: "team"}
+        # In name order, so the mirror pass binds the same list on every run.
+        assert list(found.items()) == [(MIRROR, "team"), (OLD_MIRROR, "team")]
         assert await mirrors.mirrors_of("other-org", ["team"], ch=ch) == {}
         assert await namespace_census.in_use(ORG, "team", [], ch=ch)  # type: ignore[arg-type]
         await mirrors.forget_mirrors(ORG, found, ch=ch)
@@ -62,7 +63,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """`team` has one mirror; the calls the steps make on the registry."""
     calls: list[Any] = []
 
-    async def _mirrors_of(org: str, namespaces: list[str]) -> dict[str, str]:
+    async def _mirrors_of(org: str, namespaces: list[str], **_: Any) -> dict[str, str]:
         calls.append(("mirrors_of", namespaces))
         return {MIRROR: "team"} if "team" in namespaces else {}
 
@@ -184,3 +185,45 @@ def test_the_evidence_census_counts_the_mirror_too(
         saga_steps.evidence_with_mirrors(ORG, "namespace", "team", spellings=None)
     )
     assert found == {"loom.memory": 2} and unread == {}
+
+
+def test_a_failed_saga_s_census_counts_the_mirror(
+    registry: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.erasure.app import saga
+
+    _counted(monkeypatch, left_in_mirror=3)
+    verify: dict[str, Any] = {}
+    asyncio.run(saga._census_tail(ORG, "namespace", "team", verify, purge=False))
+    assert verify["per_table"] == {"loom.memory": 3}
+
+
+def test_erasure_re_verify_reports_what_a_mirror_still_holds(
+    registry: list[Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from server.cli import hygiene
+    from server.erasure.store import health as erasure_health
+    from server.erasure.store import ledger as erasure_ledger
+
+    _counted(monkeypatch, left_in_mirror=4)
+    row = {
+        "id": "e1", "org": ORG, "scope_type": "namespace", "scope_value": "team",
+        "purge": False, "attempts": 1, "steps_completed": [], "failure_reason": "x",
+    }  # fmt: skip
+
+    async def _failed(**_: Any) -> list[dict[str, Any]]:
+        return [row]
+
+    async def _gauges(**_: Any) -> dict[str, int]:
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", _failed)
+    monkeypatch.setattr(erasure_health, "integrity_counts", _gauges)
+    args = argparse.Namespace(
+        completed_since=None, skip_external=False, org="", id=None, orphan_graph=False,
+        resume=False,
+    )  # fmt: skip
+    asyncio.run(hygiene._re_verify_run(None, args))
+    assert 'residue now: 4 {"memory": 4}' in capsys.readouterr().out

@@ -18,6 +18,7 @@ from server.core import grant_cache
 from server.core.errors import caller_text
 from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
+from server.core.repo_base import _CHClient
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
@@ -194,10 +195,10 @@ async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
     return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
 
 
-async def _mirrors_of(org: str, namespace: _NS) -> dict[str, str]:
+async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) -> dict[str, str]:
     """Every mirror the named namespaces have had; a mirror has none of its own."""
     named = [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]
-    return await knowledge_mirrors.mirrors_of(org, named)
+    return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
 
 
 def with_mirrors(
@@ -222,10 +223,14 @@ async def _add_mirror_residue(
     scope_value: _NS,
     per_table: dict[str, int],
     count: Callable[[_NS], Awaitable[dict[str, int]]],
+    *,
+    ch: _CHClient | None = None,
 ) -> None:
     """Add what `count` finds in a namespace scope's mirrors, counted as a purge counts:
     every row a mirror still holds is residue, whatever the erasure's mode."""
-    if scope_type != "namespace" or not (mirrors := list(await _mirrors_of(org, scope_value))):
+    if scope_type != "namespace":
+        return
+    if not (mirrors := list(await _mirrors_of(org, scope_value, ch=ch))):
         return
     with purge_scope(True):
         found = await count(mirrors)
@@ -239,7 +244,7 @@ async def evidence_with_mirrors(
     scope_value: _NS,
     *,
     spellings: Sequence[str] | None,
-    ch: Any = None,
+    ch: _CHClient | None = None,
 ) -> tuple[dict[str, int], dict[str, Exception]]:
     """`erasure_census.evidence_census` of the scope and its mirrors, in the caller's
     purge scope for the named namespaces (see `_add_mirror_residue`)."""
@@ -253,7 +258,7 @@ async def evidence_with_mirrors(
         return found
 
     per_table = await count(scope_value)
-    await _add_mirror_residue(org, scope_type, scope_value, per_table, count)
+    await _add_mirror_residue(org, scope_type, scope_value, per_table, count, ch=ch)
     return per_table, unread
 
 

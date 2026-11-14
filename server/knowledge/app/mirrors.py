@@ -3,12 +3,15 @@ belong to (docs/architecture/document-sources.md)."""
 
 from __future__ import annotations
 
+from server.core.repo_base import _CHClient
 from server.knowledge.store import mirrors as store
 
 
-async def mirrors_of(org: str, namespaces: list[str]) -> dict[str, str]:
-    """Every mirror the namespaces have had, with its namespace."""
-    return await store.mirrors_of(org, namespaces)
+async def mirrors_of(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """Every mirror the namespaces have had, with its namespace, in name order."""
+    return await store.mirrors_of(org, namespaces, ch=ch)
 
 
 async def forget_mirrors(org: str, mirrors: dict[str, str]) -> None:

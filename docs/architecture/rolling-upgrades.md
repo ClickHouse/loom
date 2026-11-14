@@ -755,8 +755,7 @@ schema. These rules keep that safe. The operator procedure is in
     the census counts every row a mirror still holds, so a step a resume or replay runs
     again covers the mirrors too; the last step, `knowledge_mirrors.forget`, writes the
     mirrors `deleted`, and a live one keeps the name in use. N-1 runs no mirror pass and
-    counts no registry row, so an erasure completed on N-1 leaves the mirror, and is run
-    again on N (rule 14). This build writes no mirror, so N-1 meets an empty registry;
+    counts no registry row; this build writes no mirror, so N-1 meets an empty registry.
     `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
     `tests/unit/test_knowledge_sources.py` and
     `tests/unit/test_knowledge_source_sync.py` check N's side.

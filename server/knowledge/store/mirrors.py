@@ -11,12 +11,13 @@ TABLE = "loom.knowledge_mirrors"
 async def mirrors_of(
     org: str, namespaces: list[str], *, ch: _CHClient | None = None
 ) -> dict[str, str]:
-    """Every mirror the namespaces have had, written `deleted` or not, with its namespace."""
+    """Every mirror the namespaces have had, written `deleted` or not, with its namespace,
+    in name order: an erasure step binds them, and its mutation tag must not change."""
     if not namespaces:
         return {}
     rows = await (ch or _default_client()).query_all(
         f"SELECT mirror, namespace FROM {TABLE} FINAL "
-        "WHERE org = {org:String} AND namespace IN {namespaces:Array(String)}",
+        "WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} ORDER BY mirror",
         params={"org": org, "namespaces": namespaces},
     )
     return {str(r["mirror"]): str(r["namespace"]) for r in rows}

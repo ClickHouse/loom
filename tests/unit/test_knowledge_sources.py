@@ -428,7 +428,7 @@ def test_remove_needs_the_name_and_keeps_documents_by_default(fake: _Store) -> N
         ),
     ],
 )
-def test_a_mirrored_source_is_refused_before_any_request(fake: _Store, call: Any) -> None:
+def test_a_mirrored_source_is_refused(fake: _Store, call: Any) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     key = (ORG, NS, "design-decks")
     fake.rows[key] = dataclasses.replace(fake.rows[key], access="mirrored")

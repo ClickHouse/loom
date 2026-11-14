@@ -140,12 +140,3 @@ def saga_runner(monkeypatch: pytest.MonkeyPatch) -> Any:
 def ns_list(purge: bool, external: bool) -> str:
     """A namespace_list scope value."""
     return json.dumps({"namespaces": ["a", "b"], "purge": purge, "external": external})
-
-
-def stub_no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The namespaces erased have no mirror, for a saga run without a ClickHouse."""
-
-    async def _none(org: str, namespaces: list[str]) -> dict[str, str]:
-        return {}
-
-    monkeypatch.setattr("server.knowledge.app.mirrors.mirrors_of", _none)
