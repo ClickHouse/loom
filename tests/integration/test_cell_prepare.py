@@ -271,6 +271,8 @@ async def test_stores_with_another_cells_state_are_refused_before_registering(st
 async def test_a_later_cell_registers_after_the_first_as_enforced(
     stores, monkeypatch, capsys
 ) -> None:
+    import asyncpg
+
     ch, live_ids = stores
     transport = _router_transport()
     assert await _prepare(ch, _args(), transport) == 0
@@ -314,8 +316,6 @@ async def test_a_later_cell_registers_after_the_first_as_enforced(
         with pytest.raises(cell_prepare.Refused, match="is not serving yet"):
             await _prepare(ch, args, transport)
         assert [c["cell"] for c in (await directory.routing())[0]] == ["eu-1"]
-        import asyncpg
-
         router_db = await asyncpg.connect(settings.router_pg_dsn)
         try:
             await router_db.execute(
