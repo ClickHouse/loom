@@ -164,7 +164,7 @@ def test_a_namespace_erasure_with_a_mirror_purges_both_and_counts_both(
     assert ("UPDATE", "loom.memory") not in trace["memory.tombstone"]
     assert censused == [(["team", MIRROR], True)]
     assert ("forget", {MIRROR: "team"}) in registry
-    # The receipt keeps the requested mode.
+    # The receipt keeps the scope's mode.
     assert run.last["out"].purge is False
 
 

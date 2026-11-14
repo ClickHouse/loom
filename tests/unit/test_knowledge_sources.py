@@ -451,6 +451,19 @@ def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) 
         assert not row.active and row.access == "mirrored"
 
 
+def test_a_removed_mirrored_source_s_delete_request_outlasts_an_add_of_its_name(
+    fake: _Store,
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    key = (ORG, NS, "design-decks")
+    fake.rows[key] = dataclasses.replace(
+        fake.rows[key], access="mirrored", active=False, pending_delete=True
+    )
+    assert _code(app.handle_knowledge_source_add(_add())) == "SOURCE_NOT_SERVED"
+    row = fake.rows[key]
+    assert row.access == "mirrored" and row.pending_delete
+
+
 def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     fake.states["design-decks"] = {"state_value": "stamp", "detail": json.dumps({"status": "ok"})}

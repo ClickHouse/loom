@@ -750,8 +750,9 @@ schema. These rules keep that safe. The operator procedure is in
     `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
     credential for it, and N itself serves none: its sync pass skips one, its retire
     pass leaves its delete request alone, and `check`, `rotate`, `update` and `sync_now`
-    refuse one (`SOURCE_NOT_SERVED`), so beside the build that writes mirrors it never
-    syncs a mirrored source into the named namespace.
+    refuse one (`SOURCE_NOT_SERVED`), as does an `add` of a removed one's name while its
+    delete request waits, so beside the build that writes mirrors it never syncs a
+    mirrored source into the named namespace or drops its delete request.
 
     On N, each namespace erasure step reads the registry, which keeps every mirror the
     named namespaces have had, so every run of the step, a resume's or a replay's

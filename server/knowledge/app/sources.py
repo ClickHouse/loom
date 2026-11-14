@@ -537,6 +537,15 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
             )
         documents = await store.count_documents(org, namespace, name)
         earlier = await store.latest_source(org, namespace, name)
+    # A new row under the name would drop a removed mirrored source's delete request,
+    # which only the build that writes mirrors acts on.
+    if earlier is not None and earlier.pending_delete and not domain.served(earlier):
+        raise ValidationError(
+            f"the removed source {name!r} is mirrored and its documents are still waiting "
+            "to be retired, which this server does not do; upgrade Loom, or register the "
+            "new source under another name",
+            code="SOURCE_NOT_SERVED",
+        )
     # A new source of the same name would take the earlier source's documents over:
     # its sync would rewrite or retire them.
     if documents and earlier is not None and earlier.pending_delete:
