@@ -1611,7 +1611,8 @@ class MemoryClient:
 
         Reversible within `reversible_for_days` (default 7) via demote.
         After the window, demote still works but requires admin role. A
-        definition is promoted from its namespace-wide row (`agent_id="-"`)
+        definition is promoted from its namespace-wide row (`agent_id="-"` and no
+        `user_id` or `session_id`)
         and names the `content_sha256` it approves in `approved_sha256`.
         """
         payload: dict[str, Any] = self._identity(user_id, session_id, agent_id=agent_id)
@@ -1939,7 +1940,8 @@ class MemoryClient:
         namespace pick it up automatically through `memory.search(scope="shared")`.
 
         Reversible within `reversible_for_days` (default 7) via `demote()`. A
-        definition is shared from its namespace-wide row (`agent_id="-"`) and
+        definition is shared from its namespace-wide row (`agent_id="-"` and no
+        `user_id` or `session_id`) and
         names the `content_sha256` it approves in `approved_sha256`.
         """
         return await self.promote(

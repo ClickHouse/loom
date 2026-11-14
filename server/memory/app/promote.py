@@ -228,15 +228,11 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
 
 
 def _live(row: MemoryRow) -> bool:
-    """Whether the row is one the term leg would serve: active, not deleted, not past its
-    `expires_at` or `valid_to`."""
+    """Whether the row is one the term leg would serve: active and not past its
+    `expires_at` or `valid_to` (a deleted row is not read at all)."""
     now = naive_utc_now()
     ended = [t for t in (row.expires_at, row.valid_to) if t is not None]
-    return (
-        row.status == "active"
-        and row.tombstoned_at is None
-        and all(to_naive_utc(t) > now for t in ended)
-    )
+    return row.status == "active" and all(to_naive_utc(t) > now for t in ended)
 
 
 async def _check_definition_promotion(
@@ -267,6 +263,12 @@ async def _check_definition_promotion(
         raise PreconditionFailedError(
             "the definition's text changed since it was approved", current_sha256=current
         )
+    names = definition_names(src.value)
+    if names is None:
+        raise ValidationError(
+            "a definition's value is a JSON object with a string term and, optionally, a list "
+            "of string aliases"
+        )
     # The value itself is graded, whatever its label or the autodetect setting: an import or
     # a restore leaves the label empty.
     graded = await detect_level(await decoded_text(src.value))
@@ -279,13 +281,7 @@ async def _check_definition_promotion(
                 "reads as medium or high sensitivity is not promoted",
             },
         )
-    names = definition_names(src.value)
-    if names is None:
-        raise ValidationError(
-            "a definition's value is a JSON object with a string term and, optionally, a list "
-            "of string aliases"
-        )
-    ceiling = int(settings.memory_term_leg_max_definitions)
+    ceiling = settings.memory_term_leg_max_definitions
     # At most the ceiling plus one: within the ceiling the read holds every live definition,
     # so it says whether this key holds one already (a revision).
     rows = await shared_repo.shared_definitions(input.org, input.namespace, ceiling + 1)

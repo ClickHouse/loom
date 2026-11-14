@@ -291,3 +291,37 @@ async def test_a_definition_is_promoted_with_the_hash_get_serves(
     assert row[3] == [f"{org}/{ns}/-/-/-/definition/arr"]
     assert row[4] is None and str(row[5]) == out["promotion_event"]
     assert row[6] == "the finance glossary" and row[7] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_name_is_held_until_its_definition_is_demoted(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Against loom.shared FINAL: a name another definition holds is refused, the
+    definition's own revision is not, and demoting it gives the name back."""
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-names"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+
+        async def promote(key: str, value: dict) -> dict:
+            await a.memory.set(key, value, "definition", agent_id="-")
+            got = await a.memory.get(key, agent_id="-")
+            return await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+
+        await promote("definition/arr", {"term": "ARR", "body": "Annual recurring revenue."})
+        revenue = {"term": "Revenue", "aliases": ["arr"], "body": "Yearly income."}
+        with pytest.raises(LoomError) as e:
+            await promote("definition/revenue", revenue)
+        assert "DEFINITION_NAME_TAKEN" in str(e.value)
+        # Its own revision holds the name already.
+        await promote("definition/arr", {"term": "ARR", "body": "Yearly recurring revenue."})
+        await a.memory.demote("definition/arr")
+        out = await promote("definition/revenue", revenue)
+    assert out["shared_memory_key"] == "definition/revenue"
