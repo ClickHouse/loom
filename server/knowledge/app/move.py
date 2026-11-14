@@ -54,7 +54,8 @@ class _TakenBack(Exception):
 
 class _ServesMore(Exception):
     """The copy where it goes serves more chunks than the source: a copy written over it
-    would serve less. Nothing is written, and the source answers exists."""
+    would serve less. Nothing is written under the claims (an original already stored is
+    the sweep's), and the source answers exists."""
 
 
 # A source whose move raised one of these answers busy; the others still move. An original
@@ -164,8 +165,8 @@ async def _audit_moved(input: KnowledgeMoveInput, to: str, moved: list[str]) -> 
 
 async def _move(doc: DocumentRow | None, dst: str, started: int, moved: set[str]) -> MoveReason:
     """One document: its reason, "" once moved, and its source added to `moved` once its
-    tombstone is in. Its originals are stored first, outside the claims, once no copy is
-    found where it goes; the checks, its chunks, tables and row, and its delete where it
+    tombstone is in. Its originals are stored first, outside the claims, once no whole copy
+    is found where it goes; the checks, its chunks, tables and row, and its delete where it
     was run under the source's claim in both namespaces, taken in one order so two moves
     between the same places do not each hold one and give up on the other."""
     if doc is None:
@@ -465,14 +466,8 @@ async def _remove_copy(copy: _Copy) -> None:
     """Remove what a move wrote where it goes: its row (and under the Postgres authority
     its commit), its chunks and its tables. Its originals stay for the sweep."""
     org, dst, uri, version = copy.doc.org, copy.dst, copy.doc.source_uri, copy.version
-    # Its chunks retired first, in one statement: a take-back that stops partway leaves
-    # none serving without a row, a cancelled copy's INSERT … SELECT that lands later
-    # does not serve either, and a later move reads the copy short at once. A take-back
-    # starts by its claims' cut-off (24 s of their 60 s TTL), or after a Postgres refusal
-    # of a delete begun before it, which its commit answers within
-    # pg_commit_lock_timeout_ms and pg_statement_timeout_ms (2 s and 5 s by default):
-    # with this statement's own bound (9 s) it ends inside the claims, before a later
-    # move can hold them.
+    # The chunks are retired first, in one statement that ends inside the claims' TTL, so
+    # a later move reads the copy short (failure-and-recovery.md, "Knowledge move").
     await chunks_repo.retire_versions(
         org, dst, [(uri, version)], embedding_models=copy.models, when=naive_utc_now()
     )
