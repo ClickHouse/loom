@@ -849,21 +849,17 @@ def begin_refusal(found: Attaching, begin: Begin) -> str:
 async def operator_read(cell_name: str) -> Attaching:
     """`GET /cells/v1/operator/cells/<cell>`: the cell's row as attach reads it, and any
     other row's name, audited; NoSuchCell without one."""
+    return await attach_read(cell_name, audited=True)
+
+
+async def attach_read(cell_name: str, *, audited: bool = False) -> Attaching:
+    """The cell's row as attach reads it, and any other row's name (`audited`: with an
+    audit row, as the operator's read writes); NoSuchCell without one."""
     async with _reading(), _connection() as conn:
         found = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
         other = await conn.fetchval(_OTHER, cell_name)
-        await _audit(conn, "cell_read", {"cell": cell_name, "found": found is not None})
-    if found is None:
-        raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
-    return _attaching(found, other)
-
-
-async def attach_read(cell_name: str) -> Attaching:
-    """The cell's row as attach reads it, and any other row's name; NoSuchCell without
-    one."""
-    async with _reading(), _connection() as conn:
-        found = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
-        other = await conn.fetchval(_OTHER, cell_name)
+        if audited:
+            await _audit(conn, "cell_read", {"cell": cell_name, "found": found is not None})
     if found is None:
         raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
     return _attaching(found, other)

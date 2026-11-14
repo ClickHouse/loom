@@ -754,7 +754,11 @@ class Router:
     ) -> JSONResponse | None:
         """The registration probe at the row's `probe_url` and the upstream check at its
         `upstream_url`, outside any directory transaction: the stores attach reads are the
-        ones the live cell serves from, and routing reaches that deployment."""
+        ones the live cell serves from, and routing reaches that deployment. A bucket nonce
+        is named exactly when the row records a bucket: the probe answers a bucket without
+        one as null, so a null for a bucketed cell would prove nothing."""
+        if (nonces["bucket"] is None) != (not found.bucket):
+            return _refused(400, _NONCES_REFUSAL)
         if refusal := await _probe(found, nonces, self._probe_transport, writer="attach"):
             return refusal
         return await _upstream_check(found, self._probe_transport, names=_ATTACHING)
@@ -876,7 +880,7 @@ def _nonce(value: Any) -> bool:
 
 def _nonces_shaped(nonces: Any) -> bool:
     """Prepare's and attach's nonces: postgres, clickhouse and bucket (null when the cell
-    has no bucket, which the probe then judges)."""
+    has no bucket, which each caller checks against the bucket it knows)."""
     return (
         isinstance(nonces, dict)
         and set(nonces) == set(_NONCES)
@@ -910,10 +914,21 @@ def _fingerprint_shaped(value: Any) -> bool:
     if type(value.get("v")) is not int or value["v"] != cell_state.FINGERPRINT_VERSION:
         return False
     try:
-        encoded = json.dumps(value, allow_nan=False, ensure_ascii=False).encode()
+        json.dumps(value, allow_nan=False, ensure_ascii=False).encode()
     except (ValueError, UnicodeEncodeError):
         return False
-    return b"\\u0000" not in encoded
+    return not _holds_nul(value)
+
+
+def _holds_nul(value: Any) -> bool:
+    """Whether a NUL is in any string or key of a decoded JSON value."""
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any("\x00" in k or _holds_nul(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_holds_nul(v) for v in value)
+    return False
 
 
 def _begin(body: dict[str, Any]) -> tuple[directory.Begin, dict[str, str | None]] | JSONResponse:

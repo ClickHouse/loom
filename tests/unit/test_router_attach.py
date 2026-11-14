@@ -511,6 +511,30 @@ def test_a_malformed_begin_answers_400_and_reads_nothing(
     assert r.status_code == 400 and store.statements == 0
 
 
+def test_text_that_spells_an_escape_is_no_nul(client: TestClient, store: _Store) -> None:
+    """The six characters `\\u0000` are text jsonb stores, not a NUL."""
+    fingerprint = {**CURRENT, "fields": {**CURRENT["fields"], "scim": "\\u0000"}}
+    r = _call(client, "POST", "attach/begin", _begin(current_fp=fingerprint))
+    assert r.status_code != 400
+
+
+@pytest.mark.parametrize("route", ["attach/begin", "attach/serving"])
+def test_a_bucketed_cell_posting_no_bucket_nonce_answers_400(
+    client: TestClient, store: _Store, route: str
+) -> None:
+    """The probe answers a bucket with no nonce as null: a null would prove nothing."""
+    nonces = {**NONCES, "bucket": None}
+    if route == "attach/serving":
+        _enforced(client)  # past begin and enforced, so the probe is what judges it
+    body = (
+        _begin(nonces=nonces)
+        if route == "attach/begin"
+        else {"deployment_id": "dep-1", "nonces": nonces}
+    )
+    r = _call(client, "POST", route, body)
+    assert r.status_code == 400 and "nonce" in r.json()["error"]
+
+
 @pytest.mark.parametrize("value", ["a\x00b", "\ud800", float("nan"), float("inf")])
 def test_a_fingerprint_jsonb_cannot_store_answers_400_and_reads_nothing(
     client: TestClient, store: _Store, value: Any
