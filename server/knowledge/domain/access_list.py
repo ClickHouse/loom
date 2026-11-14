@@ -5,9 +5,8 @@ reads `unread`, which admits nobody."""
 
 from __future__ import annotations
 
-import dataclasses
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 # Every Drive role reads the file; a role this module does not know admits nobody.
@@ -36,31 +35,32 @@ def to_json(access: AccessList) -> str:
     `unread` is empty, as every other writer stores it."""
     if access.unread:
         return ""
-    normal = dataclasses.replace(
+    normal = replace(
         access,
-        emails=_names(list(access.emails)),
-        groups=_names(list(access.groups)),
-        domains=_names(list(access.domains)),
+        emails=_names(access.emails),
+        groups=_names(access.groups),
+        domains=_names(access.domains),
     )
-    return json.dumps(dataclasses.asdict(normal), sort_keys=True, separators=(",", ":"))
+    return json.dumps(asdict(normal), sort_keys=True, separators=(",", ":"))
 
 
 def from_json(text: str) -> AccessList:
-    """The stored list; `unread` for an empty, unreadable or `unread` value."""
+    """The stored list; `unread` for an empty or unreadable value, one without
+    `unread: false`, or one with a field of the wrong type."""
     try:
         data = json.loads(text) if text else None
     except ValueError:
         return UNREAD
     if not isinstance(data, dict) or data.get("unread") is not False:
         return UNREAD
-    owner = data.get("owner")
-    return AccessList(
-        emails=_names(data.get("emails")),
-        owner=owner if isinstance(owner, str) else "",
-        groups=_names(data.get("groups")),
-        domains=_names(data.get("domains")),
-        anyone=data.get("anyone") is True,
-    )
+    lists = [data.get(k, []) for k in ("emails", "groups", "domains")]
+    owner, anyone = data.get("owner", ""), data.get("anyone", False)
+    if not all(isinstance(v, list) for v in lists) or not isinstance(owner, str):
+        return UNREAD
+    if not isinstance(anyone, bool):
+        return UNREAD
+    emails, groups, domains = (_names(v) for v in lists)
+    return AccessList(emails=emails, owner=owner, groups=groups, domains=domains, anyone=anyone)
 
 
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:
@@ -70,20 +70,20 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
     it), and a type or role this module does not know admit nobody."""
     if permissions is None:
         return UNREAD
-    emails: list[str] = []
-    groups: list[str] = []
-    domains: list[str] = []
+    emails: list[Any] = []
+    groups: list[Any] = []
+    domains: list[Any] = []
     anyone = False
     for p in permissions:
         if p.get("deleted") or p.get("role") not in _DRIVE_ROLES:
             continue
         kind = p.get("type")
         if kind == "user":
-            emails.append(str(p.get("emailAddress") or ""))
+            emails.append(p.get("emailAddress"))
         elif kind == "group":
-            groups.append(str(p.get("emailAddress") or ""))
+            groups.append(p.get("emailAddress"))
         elif kind == "domain" and p.get("allowFileDiscovery") is True:
-            domains.append(str(p.get("domain") or ""))
+            domains.append(p.get("domain"))
         elif kind == "anyone" and p.get("allowFileDiscovery") is True:
             anyone = True
     return AccessList(
@@ -92,8 +92,8 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
 
 
 def _names(values: Any) -> tuple[str, ...]:
-    """Distinct non-empty strings, lower-cased and sorted; nothing from a non-list."""
-    if not isinstance(values, list):
+    """Distinct non-empty strings, lower-cased and sorted; nothing from a non-sequence."""
+    if not isinstance(values, (list, tuple)):
         return ()
     return tuple(sorted({v.strip().lower() for v in values if isinstance(v, str) and v.strip()}))
 

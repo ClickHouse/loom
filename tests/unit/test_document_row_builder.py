@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 from datetime import datetime
 from typing import Any
@@ -67,7 +68,7 @@ def test_builder_carries_an_existing_row_and_recomputes_the_hash() -> None:
     doc = _doc()
     row = documents_repo.build_document_row(doc, version=2, superseded_at=ERASED)
     for col in documents_repo.DOCUMENT_COLUMNS:
-        if col not in ("version", "superseded_at"):
+        if col not in ("version", "superseded_at", "access_json"):
             assert row[col] == getattr(doc, col), col
     renamed = documents_repo.build_document_row(doc, title="New", version=3)
     assert renamed["content_sha256"] == _content_sha256("New\nbody text")
@@ -984,21 +985,11 @@ def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> N
 
 
 def test_no_operation_takes_or_answers_a_permission_list() -> None:
-    import json
-
     from server.operations.registry import ALL_OPERATIONS
 
     for op in ALL_OPERATIONS:
         for model in (op.input_model, op.output_model):
             assert "access_json" not in json.dumps(model.model_json_schema()), op.name
-
-
-class _Embedder:
-    model_name = "fake-e"
-    dim = 3
-
-    async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        return [[1.0, 0.0, 0.0] for _ in texts]
 
 
 @pytest.mark.parametrize(
@@ -1021,7 +1012,7 @@ def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
     async def _zero(*a: Any, **kw: Any) -> int:
         return 0
 
-    monkeypatch.setattr(kh, "get_embedder", _Embedder)
+    monkeypatch.setattr(kh, "get_embedder", lambda: _FakeEmbedder())
     monkeypatch.setattr(documents_repo, "get_one", _prior)
     monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
     monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)

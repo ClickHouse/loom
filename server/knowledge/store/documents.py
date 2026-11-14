@@ -445,6 +445,9 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
+# What a rewrite takes from the row it read: not the hash, which is recomputed, nor the
+# permission list, which only the owning source's turn writes.
+_CARRIED = tuple(c for c in DOCUMENT_COLUMNS if c not in ("content_sha256", "access_json"))
 
 # A version row carries any column of the live table this build does not write
 # (server/core/rmt_carry.py): a later build's columns survive this build's
@@ -541,8 +544,7 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "access_json": "",
     }
     if existing is not None:
-        carried = (c for c in DOCUMENT_COLUMNS if c not in ("content_sha256", "access_json"))
-        row.update({c: getattr(existing, c) for c in carried})
+        row.update({c: getattr(existing, c) for c in _CARRIED})
     row.update(fields)
     if row["superseded_at"] is not None and row["access_json"]:
         raise ValueError("build_document_row: a tombstone carries no permission list")

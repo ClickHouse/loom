@@ -41,7 +41,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeBulkDeleteResult,
     _KnowledgeBulkEntryResult,
 )
-from server.knowledge.domain.access_list import AccessList, to_json
+from server.knowledge.domain.access_list import UNREAD, AccessList, to_json
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
 from server.knowledge.store import datasets as datasets_repo
@@ -325,7 +325,7 @@ async def handle_knowledge_upsert(
     input: KnowledgeUpsertInput,
     *,
     read_version: int | None = None,
-    access: AccessList | None = None,
+    access: AccessList = UNREAD,
 ) -> KnowledgeUpsertOutput:
     """Insert new chunks for `source_uri`; soft-supersede prior chunks.
 
@@ -445,7 +445,7 @@ async def handle_knowledge_upsert(
         blob_content_type=blob_content_type,
         original_filename=original_filename,
         revision=revision,
-        access_json=to_json(access) if access is not None else "",
+        access_json=to_json(access),
     )
     try:
         # Inside the cleanup: a chunk insert that timed out may land later.

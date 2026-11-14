@@ -777,22 +777,19 @@ schema. These rules keep that safe. The operator procedure is in
     rides in the head's `row`, with no Postgres migration. Only a mirrored source's turn
     passes a list to the row builder, which carries none forward: every other rewrite N
     makes, and every tombstone N writes, has the column empty, which a mirror leg reads
-    as `unread` and which admits nobody. N-1 knows no such column, so every ClickHouse
-    row it writes, a tombstone included, keeps the newest stored list through rule 2's
-    carry; under the Postgres authority the head it commits has none, so a read that
-    judges by heads sees `unread`, and the ClickHouse copy keeps the carried list or, when
-    N's delivery worker publishes that head, none. A carried list is the newest one N
-    wrote, so no N-1 write widens who may read. No op's input or output has the field.
-    This build writes no list yet; `tests/unit/test_access_list.py` and
+    as `unread` and which admits nobody. N-1 never meets a list: this build writes none,
+    and the build that first writes one runs beside this build, whose every rewrite
+    other than a source's turn writes none. No op's input or output has the field. This
+    build writes no list yet; `tests/unit/test_access_list.py` and
     `tests/unit/test_document_row_builder.py` check N's side.
 
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
 once with a Keeper and once without) boots the base build on an empty ClickHouse, then
-this build, which applies its migrations, then the base again on the newer schema, and
-a third process of this build with a changed dashboard bundle and one no-op migration
-more (N+1). It checks:
+this build, which applies its migrations, then the base again on the newer schema, and a
+third process of this build with a changed dashboard bundle and one no-op migration more
+(N+1). It checks:
 
 - each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict
