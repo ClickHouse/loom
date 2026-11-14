@@ -18,11 +18,9 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
 
-The `loom` and `clickhouse-client` commands below run inside the stack's containers, with
-`docker compose --project-directory <dir> exec loom loom <command>` and
-`docker compose --project-directory <dir> exec clickhouse clickhouse-client …`, where
-`<dir>` is `~/.loom` on a laptop and `/workspaces/.loom` in a codespace. Lab 1 also needs
-the Python SDK (`pip install clickhouse-loom`, in a virtual environment).
+The commands below run inside the stack's containers, in its install directory: `~/.loom`
+on a laptop and `/workspaces/.loom` in a codespace (`<dir>` below). Lab 1 also needs the
+Python SDK (`pip install clickhouse-loom`, in a virtual environment).
 
 ## Lab 1: an agent that remembers
 
@@ -40,11 +38,17 @@ Exercises:
 
 ## Lab 2: document search with citations
 
-Ingest a document with `loom demo --file <path>`, which also prints the top search hits for
-a question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
+Ingest a few documents with `loom demo`, which also prints the top search hits for a
+question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
 The path is inside the container, which holds these docs under `/app/docs/`; copy a file
-of your own in with `docker compose --project-directory <dir> cp`. Then search the namespace's documents
-with `knowledge.search` over HTTP or the SDK ([knowledge documents](../features/knowledge.md)).
+of your own in with `docker compose --project-directory <dir> cp`:
+
+```bash
+docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md
+```
+
+Then search the namespace's documents with `knowledge.search` over HTTP or the SDK
+([knowledge documents](../features/knowledge.md)).
 
 Exercises:
 
@@ -52,8 +56,7 @@ Exercises:
   recall@k on `knowledge.search` ([evaluate your workload](../getting-started/evaluate.md#memory-and-rag)).
 - Add questions the documents do not answer. `knowledge.search` still returns hits for
   them, so compare the top hit's `score` on answerable and unanswerable questions and pick
-  a cutoff that separates them; then ask the same questions of `memory.search`, which
-  abstains on its own.
+  a cutoff that separates them.
 
 ## Lab 3: a code index
 
@@ -75,13 +78,12 @@ Exercises:
 
 Loom keeps its data as rows in ClickHouse tables, and a read-only ClickHouse user reads a
 namespace through its views ([SQL surface](../reference/sql-surface.md)). Make one for the
-stack's namespace, `local`; the command prints its password:
+stack's namespace, `local` (the first command prints its password), then query as it:
 
 ```bash
-loom sql-access grant --user student1 --org dev --namespaces local
+docker compose --project-directory <dir> exec loom loom sql-access grant --user student1 --org dev --namespaces local
+docker compose --project-directory <dir> exec clickhouse clickhouse-client --user student1 --password <password>
 ```
-
-Then query as that user with `clickhouse-client --user student1 --password <password>`.
 
 Exercises:
 
