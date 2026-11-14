@@ -285,8 +285,8 @@ checkout.
     import) checks its deployment: under either authority its ClickHouse user needs
     `SELECT` on `loom.storage_authority`, and the command refuses against a deployment that
     records another authority. Under the Postgres authority it also needs `LOOM_PG_DSN`
-    and reads the cell state on a session of its own. Grant the Postgres role it connects
-    as:
+    and reads the cell state (with `LOOM_CELL` unset, on a session of its own). Grant the
+    Postgres role it connects as:
     - with `LOOM_CELL` unset, `USAGE` on schema `loom`, `SELECT` on `loom.cell_first`,
       `loom.tenancy_mode` and `loom.authority`, `SELECT (updated_at)` on `loom.cell_self`
       and `SELECT (since)` on `loom.tenancy` (the column grants keep the fingerprints and
