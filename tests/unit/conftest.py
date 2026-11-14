@@ -1130,3 +1130,14 @@ def off_code_repos(monkeypatch: pytest.MonkeyPatch) -> None:
         return None
 
     monkeypatch.setattr("server.code.app.index.maintainers.read_repo", _no_repo)
+
+
+@pytest.fixture
+def no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The namespaces an erasure covers have no mirror, for a saga or census run without
+    a ClickHouse."""
+
+    async def _none(org: str, namespaces: list[str], **_: object) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.knowledge.app.mirrors.mirrors_of", _none)

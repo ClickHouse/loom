@@ -30,6 +30,7 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.knowledge.domain.sources import (
+    NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     id_list_config,
@@ -51,7 +52,8 @@ REVISIONS_PAGE = 10_000  # not a setting: a bound on one statement
 
 _COLUMNS = (
     "org, namespace, name, source_id, kind, source_kind, config_json, items_json, "
-    "credential_enc, secret_enc, created_by, active, pending_delete, created_at, updated_at"
+    "credential_enc, secret_enc, access, created_by, active, pending_delete, created_at, "
+    "updated_at"
 )
 
 
@@ -80,6 +82,7 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         items=_items(str(row.get("items_json") or "")) or items_from_config(kind, config),
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
+        access=str(row.get("access") or NAMESPACE_ACCESS),
         created_by=str(row.get("created_by") or ""),
         active=bool(row.get("active")),
         pending_delete=bool(row.get("pending_delete")),
@@ -221,6 +224,7 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
         "items_json": json.dumps(src.items, sort_keys=True),
         "credential_enc": src.credential_enc,
         "secret_enc": src.secret_enc,
+        "access": src.access,
         "created_by": src.created_by,
         "active": src.active,
         "pending_delete": src.pending_delete,

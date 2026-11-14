@@ -28,6 +28,9 @@ from server.knowledge.store import blobs, pg_documents
 from server.knowledge.workers import blob_gc
 from server.settings import settings
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
+
 BUCKET = "originals"
 
 

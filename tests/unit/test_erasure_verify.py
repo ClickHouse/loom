@@ -15,6 +15,8 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
 
 class _StubCH:
     """`counts` answer the counts in order; `rows` every read but a system.mutations poll."""

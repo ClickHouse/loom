@@ -7,23 +7,27 @@ each."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.grant_claims import account_change, collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
+from server.core.ch import sequential_reads
 from server.core.errors import caller_text
+from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
+from server.core.repo_base import _CHClient
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of
+from server.erasure.store.mutations import namespaces_of, purge_scope
+from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
@@ -67,13 +71,12 @@ async def _step_verify_residue(
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
     spellings = await census_spellings(org, scope_type, scope_value)
-    per_table = await erasure_census.residue_census(
-        org, scope_type, scope_value, spellings=spellings
-    )
-    if scope_type == "namespace":  # and the scope's objects left in the document bucket
-        per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
-            org, scope_value
-        )
+    async with counted_scope(org, scope_type, scope_value) as scope:
+        per_table = await erasure_census.residue_census(org, scope_type, scope, spellings=spellings)
+        if scope_type == "namespace":  # and the scope's objects left in the document bucket
+            per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
+                org, scope
+            )
     holder["per_table"] = per_table
     holder["count"] = sum(per_table.values())
     holder["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
@@ -186,6 +189,64 @@ async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> in
 async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
     """First of all, so no source writes back what the later steps erase."""
     return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
+
+
+async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) -> dict[str, str]:
+    """Every mirror the named namespaces have had, read from every replica's writes; a
+    mirror has none of its own."""
+    if not (named := [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]):
+        return {}
+    with sequential_reads():
+        return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
+
+
+async def _mirror_scope(
+    org: str, namespace: _NS, *, ch: _CHClient | None = None
+) -> list[str] | None:
+    """The scope with its namespaces' mirrors, or None when it holds no mirror."""
+    names = namespaces_of(namespace)
+    mirrors = list(await _mirrors_of(org, namespace, ch=ch))
+    if not mirrors and not any(is_mirror_name(ns) for ns in names):
+        return None
+    return list(dict.fromkeys([*names, *mirrors]))  # a scope may name a mirror it has
+
+
+@asynccontextmanager
+async def counted_scope(
+    org: str, scope_type: str, scope_value: _NS, *, ch: _CHClient | None = None
+) -> AsyncIterator[_NS]:
+    """The scope a namespace step erases and a census counts: with its namespaces'
+    mirrors, as a purge, when it holds one."""
+    scope = await _mirror_scope(org, scope_value, ch=ch) if scope_type == "namespace" else None
+    if scope is None:
+        yield scope_value
+        return
+    with purge_scope(True):
+        yield scope
+
+
+def with_mirrors(
+    step: Callable[[str, _NS], Awaitable[int]],
+) -> Callable[[str, _NS], Awaitable[int]]:
+    """`step` over the `counted_scope`. A scope that holds a mirror is erased as a purge:
+    no token reads or restores an `acl-` name, so its rows leave the disk, and in one
+    pass, so a Postgres step commits one mark and an org-wide step runs once."""
+
+    async def run(org: str, namespace: _NS) -> int:
+        async with counted_scope(org, "namespace", namespace) as scope:
+            return await step(org, scope)
+
+    return run
+
+
+async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
+    """The last Loom step, before the backends and the census: writes every mirror the
+    named namespaces have had `deleted`, so the name registered again gets a new one; a
+    scope of only mirrors forgets none. It reads the registry itself, so the
+    `with_mirrors` it runs under, like every namespace step, changes nothing here."""
+    found = await _mirrors_of(org, namespace)
+    await knowledge_mirrors.forget_mirrors(org, found)
+    return len(found)
 
 
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
@@ -375,4 +436,5 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("chunks.supersede", memory_steps.supersede_chunks_by_namespace),
     ("documents.tombstone", _step_tombstone_documents_by_ns),
     *_LATE_STEPS_NS,
+    ("knowledge_mirrors.forget", _step_forget_mirrors_by_ns),
 )

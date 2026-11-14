@@ -567,34 +567,38 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     been written after it finished. Only the row links an older build's erasure
     did not know, and whose memory has no live row and no row written since the
     census, are counted (and with `resume`, deleted). 1 while any are left, else 0."""
+    from server.erasure.app.saga_steps import counted_scope
     from server.erasure.store import steps_graph
 
     org = str(row["org"])
-    scope_type, scope_value, _purge, _external = _re_verify_scope(row)
+    scope_type, named, _purge, _external = _re_verify_scope(row)
     # Memories written since the census are not the saga's, even soft-deleted.
     cut = row["verified_at"]
     print(f"  {row['id']} {org}/{row['scope_type']} completed")
-    orphans = await steps_graph.count_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
-    found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
-    print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
-    if not found:
-        return 0
-    if not resume:
-        return 1
-    deleted = await steps_graph.delete_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
-    left = await steps_graph.count_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
+    # With the scope's mirrors, as the saga erased them; the orphan-link reads ignore the
+    # purge mode.
+    async with counted_scope(org, scope_type, named, ch=ch) as scope_value:
+        orphans = await steps_graph.count_orphan_row_links(
+            org, scope_type, scope_value, verified_at=cut, ch=ch
+        )
+        found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
+        print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
+        if not found:
+            return 0
+        if not resume:
+            return 1
+        deleted = await steps_graph.delete_orphan_row_links(
+            org, scope_type, scope_value, verified_at=cut, ch=ch
+        )
+        left = await steps_graph.count_orphan_row_links(
+            org, scope_type, scope_value, verified_at=cut, ch=ch
+        )
     print(f"    deleted {deleted}; left {sum(left.values())}")
     return 1 if any(left.values()) else 0
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
-    from server.erasure.app.saga_steps import census_spellings
+    from server.erasure.app.saga_steps import census_spellings, counted_scope
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
@@ -633,7 +637,6 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             rc = 1
             continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
-        names = scope_value if isinstance(scope_value, list) else [scope_value]
         try:
             spellings = await census_spellings(str(row["org"]), scope_type, scope_value)
         except Exception as e:  # noqa: BLE001 — one saga's unread directory must not end the run
@@ -642,14 +645,17 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             rc = 1
             continue
         with erasure_mutations.purge_scope(purge):
-            census, unread = await erasure_census.evidence_census(
-                str(row["org"]), scope_type, scope_value, ch=ch, spellings=spellings
-            )
+            async with counted_scope(str(row["org"]), scope_type, scope_value, ch=ch) as scope:
+                census, unread = await erasure_census.evidence_census(
+                    str(row["org"]), scope_type, scope, ch=ch, spellings=spellings
+                )
+                counted_purge = erasure_mutations.purge_mode()
+                counted = len(erasure_mutations.namespaces_of(scope))
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])
         print(
             f"  {row['id']} {row['org']}/{row['scope_type']} attempts={row['attempts']} "
-            f"steps_done={len(done)} scope={len(names)} name(s) purge={purge}"
+            f"steps_done={len(done)} scope={counted} name(s) purge={counted_purge}"
         )
         print(f"    last: {str(row.get('failure_reason') or '')[:160]}")
         print(f"    residue now: {sum(residue.values())} {json.dumps(residue, sort_keys=True)}")

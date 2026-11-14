@@ -153,6 +153,7 @@ def test_the_journal_files() -> None:
         "095_knowledge_gaps.sql",
         "096_knowledge_source_items.sql",
         "097_mirror_names_reserved.sql",
+        "098_knowledge_mirrors.sql",
     ]
 
 

@@ -100,6 +100,11 @@ SYNC_WORKER_ACTOR = "worker:knowledge-source-sync"
 STATE_KEY_PREFIX = "knowledge_source:"
 
 
+# `KnowledgeSource.access`: who a source's documents are shown to.
+NAMESPACE_ACCESS = "namespace"  # every reader of the namespace
+MIRRORED_ACCESS = "mirrored"  # a reader the store admits, from the namespace's mirror
+
+
 @dataclass(frozen=True)
 class KnowledgeSource:
     """One registry row of `loom.knowledge_sources`; the credential stays sealed."""
@@ -120,6 +125,9 @@ class KnowledgeSource:
     # (a build without items can use it), else in `secret_enc`.
     credential_enc: str = ""
     secret_enc: str = ""
+    # Who the documents are shown to: NAMESPACE_ACCESS or MIRRORED_ACCESS; a later build
+    # may write another value, which `served` refuses.
+    access: str = NAMESPACE_ACCESS
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -520,9 +528,18 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
     return {"include": include_in(config)} if kind == "gdrive" else {}
 
 
+def served(src: KnowledgeSource) -> bool:
+    """Whether this build serves `src`: one shown to every reader of its namespace. A
+    mirrored one, or any `access` a later build writes, is that build's."""
+    return src.access == NAMESPACE_ACCESS
+
+
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when it cannot
-    express the source: such a source is stored with `kind` empty."""
+    express the source: such a source is stored with `kind` empty. A build without
+    items shows every document to every reader of the namespace."""
+    if not served(src):
+        return None
     if src.kind == "recording":
         return src.config
     return config_from_items(src.kind, src.items, include_in(src.config))
@@ -578,7 +595,6 @@ __all__ = [
     "GDRIVE_MIME_TYPES",
     "ITEM_FIELDS",
     "KINDS",
-    "KnowledgeSource",
     "MAX_DEPTH",
     "MAX_FOLDERS",
     "MAX_ITEMS",
@@ -586,11 +602,14 @@ __all__ = [
     "MAX_PROJECTS",
     "MAX_RECORDING_IDS",
     "MAX_WALK_FOLDERS",
+    "MIRRORED_ACCESS",
+    "NAMESPACE_ACCESS",
     "RECORDING_ID_RE",
     "SAMPLE_ITEMS",
     "STATE_KEY_PREFIX",
     "SYNC_FIELDS",
     "SYNC_WORKER_ACTOR",
+    "KnowledgeSource",
     "check_filters",
     "config_from_items",
     "fits_id_list",
@@ -607,6 +626,7 @@ __all__ = [
     "parse_config",
     "parse_include",
     "parse_items",
+    "served",
     "shown",
     "source_tag",
     "source_tags",

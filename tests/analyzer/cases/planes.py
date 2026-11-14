@@ -585,6 +585,7 @@ async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.knowledge.store import chunks as K
     from server.knowledge.store import documents as D
+    from server.knowledge.store import mirrors as M
 
     f = c["filters"]
     await K.count_active_by_uri(ORG, NS, ["doc://a"], ch=ch)
@@ -593,6 +594,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, ["h1"], excluding_source_uri="doc://b" if f else "", ch=ch
     )
     await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
+    await M.mirrors_of(ORG, [NS], ch=ch)
     await K.find_doc_by_content_sha256(
         ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
     )
@@ -929,6 +931,14 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         )
 
 
+async def _namespace_in_use(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The check a name registration makes: a grant, a source, a mirror or any census
+    row of the name."""
+    from server.identity.store import namespace_census
+
+    await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
+
+
 async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The grants `collection.create` reads to find another holder of the name, and the
     member count `namespace.inventory` takes over a collection's lineage; `grants.list`
@@ -1093,6 +1103,9 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case("namespace_in_use", "server.identity.store.namespace_census", _namespace_in_use, {})
+    )
     out.append(
         Case(
             "namespace_tune",

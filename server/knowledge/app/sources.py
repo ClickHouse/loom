@@ -343,6 +343,17 @@ async def _source_or_404(org: str, namespace: str, name: str) -> KnowledgeSource
     return src
 
 
+def _require_served(src: KnowledgeSource) -> None:
+    """This build syncs only sources shown to every reader of the namespace: a mirrored
+    one, which a later build writes, is that build's to read."""
+    if not domain.served(src):
+        raise ValidationError(
+            f"source {src.name!r} is not served by this server (access {src.access!r}); "
+            "upgrade Loom to manage it",
+            code="SOURCE_NOT_SERVED",
+        )
+
+
 @contextlib.contextmanager
 def _store_refusals(suffix: str = "", about: Container[str] | None = None) -> Iterator[None]:
     """A probe's or a lookup's refusal, as the op answers it; one about an item (of
@@ -526,6 +537,15 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
             )
         documents = await store.count_documents(org, namespace, name)
         earlier = await store.latest_source(org, namespace, name)
+    # A new row under the name would drop a removed mirrored source's delete request,
+    # which only the build that writes mirrors acts on.
+    if earlier is not None and earlier.pending_delete and not domain.served(earlier):
+        raise ValidationError(
+            f"the removed source {name!r} is not served by this server (access "
+            f"{earlier.access!r}) and its documents are still waiting to be retired; "
+            "upgrade Loom, or register the new source under another name",
+            code="SOURCE_NOT_SERVED",
+        )
     # A new source of the same name would take the earlier source's documents over:
     # its sync would rewrite or retire them.
     if documents and earlier is not None and earlier.pending_delete:
@@ -548,6 +568,7 @@ async def handle_knowledge_source_check(
     input: KnowledgeSourceCheckInput,
 ) -> KnowledgeSourceCheckOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    _require_served(src)
     checked_at = _now_iso()
     credential = credential_of(src)
     if not credential:
@@ -590,6 +611,7 @@ async def handle_knowledge_source_rotate(
     input: KnowledgeSourceRotateInput,
 ) -> KnowledgeSourceRotateOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    _require_served(src)
     if not input.credential.strip():
         raise ValidationError("a credential is required", code="CREDENTIAL_REFUSED")
     # A deployment that cannot store the credential says so before the probe.
@@ -623,6 +645,7 @@ async def handle_knowledge_source_update(
     input: KnowledgeSourceUpdateInput,
 ) -> KnowledgeSourceUpdateOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    _require_served(src)
     if src.kind not in domain.ITEM_FIELDS:
         raise ValidationError(f"a {src.kind} source has no items", code="BAD_KIND")
     plan = await _update_plan(src, input)
@@ -892,6 +915,7 @@ async def handle_knowledge_source_sync_now(
     input: KnowledgeSourceSyncNowInput,
 ) -> KnowledgeSourceSyncNowOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    _require_served(src)
     await _require_source_namespace(input.org, input.namespace)
     async with sources_lease(input.org, input.namespace):
         # A request meant for the source this call read must not be recorded on another

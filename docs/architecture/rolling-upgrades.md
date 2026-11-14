@@ -739,10 +739,31 @@ schema. These rules keep that safe. The operator procedure is in
     it holds, `code.repo.remove` for a repository and `namespace.delete`. The build that
     writes mirrors comes after this one, so the build beside it already refuses the
     form; the one gap is a name an N-1 process registers or writes after the migration
-    ran, and the first migration of the build that writes mirrors runs the same check
-    (`server/core/schema/prechecks.py`) to close it, so no such namespace is ever taken
-    for a mirror. `tests/unit/test_mirror_names_refused.py` checks N's side, and the
-    mixed-version gate does not check this rule.
+    ran. This build writes no mirror, so no namespace of the form is taken for one; the
+    build that first writes a mirror must run the same check
+    (`server/core/schema/prechecks.py`) before that write.
+    `tests/unit/test_mirror_names_refused.py` checks N's side, and the mixed-version
+    gate does not check this rule.
+52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
+    `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
+    default (`namespace`) is what every row N-1 writes means. N stores a source whose
+    `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
+    credential for it. N serves none either: its sync pass skips one, its retire pass
+    leaves its delete request alone, and `check`, `rotate`, `update`, `sync_now` and an
+    `add` of a removed one's name while that request waits refuse with
+    `SOURCE_NOT_SERVED`. So beside the build that writes mirrors, N never syncs a
+    mirrored source into the named namespace or drops its delete request.
+
+    On N, each namespace erasure step reads the registry, which keeps every mirror the
+    named namespaces have had, so every run of the step, a resume's or a replay's
+    included, covers them: a scope that holds a mirror is erased as a purge, in one pass
+    over the named namespaces and their mirrors, and the census counts it the same way.
+    The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a
+    live one keeps the name in use. N-1 runs no mirror pass and counts no registry row;
+    this build writes no mirror, so N-1 meets an empty registry.
+    `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
+    `tests/unit/test_knowledge_sources.py` and
+    `tests/unit/test_knowledge_source_sync.py` check N's side.
 
 ## What checks them
 

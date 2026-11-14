@@ -19,6 +19,8 @@ from server.memory.store import pg_memory
 from server.settings import settings
 from tests.unit import clickhouse_local
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
 
 def _names(steps: Any) -> set[str]:
     return {name for name, _ in steps}

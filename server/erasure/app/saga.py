@@ -40,6 +40,8 @@ from server.erasure.app.saga_steps import (
     _step_verify_residue,
     authority_steps,
     census_spellings,
+    counted_scope,
+    with_mirrors,
 )
 from server.erasure.domain.scopes import (
     applied_purge,
@@ -124,7 +126,8 @@ def request_row_template(
         "requester": input.requester,
         "actor": actor,
         "urgency": input.urgency,
-        # The purge the saga applies: a single namespace's never purges, whatever was asked.
+        # The scope's mode (a single namespace's: tombstone, whatever was asked); a scope
+        # that holds a mirror is purged anyway (`saga_steps.with_mirrors`).
         "purge": applied_purge(input.scope_type, input.scope_value, bool(input.purge)),
         "attempts": attempts,
         "requested_at": requested_at,
@@ -545,9 +548,10 @@ async def _census_tail(
     try:
         spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            per_table, unread = await erasure_census.evidence_census(
-                org, scope_type, scope_value, spellings=spellings
-            )
+            async with counted_scope(org, scope_type, scope_value) as scope:
+                per_table, unread = await erasure_census.evidence_census(
+                    org, scope_type, scope, spellings=spellings
+                )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
         log.warning("erasure: census tail failed after a step failure: %s", error_summary(e))
         return
@@ -719,7 +723,7 @@ async def _saga_namespace(
         )
 
     for name, fn in authority_steps(NAMESPACE_STEPS):
-        await _step(name, fn, org, namespace)
+        await _step(name, with_mirrors(fn), org, namespace)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse

@@ -17,6 +17,9 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import health as erasure_health
 from server.erasure.store import ledger as erasure_ledger
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
+
 _OPERATOR_RESIDUE = {
     "loom.memory_belief_sources": 454610,
     "loom.memory_chunk_sources": 1812448,

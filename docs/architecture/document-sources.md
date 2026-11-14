@@ -403,12 +403,13 @@ for everyone. So no token searches, reads or exports a mirror, and the threat mo
 rows hold for every token. A mirror has no directory row and appears in no namespace
 listing or usage view; a deleted name keeps its mirror and counts as in use
 (`namespace_census.in_use`, with the same code as any other reason, whatever the mirror
-holds) until a namespace erasure, or the mirror-erase command, deletes the
-`loom.knowledge_mirrors` row. A namespace erasure deletes that row last, after the
-mirror's rows (the table is classified as holding no memory content), so an erased name
-can be registered again and gets a new mirror. The migration that enables the refusal
-first looks for namespaces of the reserved form, registered or holding rows, and refuses
-to run, naming them, if it finds any.
+holds) until a namespace erasure, or the mirror-erase command, writes its
+`loom.knowledge_mirrors` row `deleted`. A namespace erasure does that last, after the
+mirror's rows (the row holds names only), so an erased name can be registered again and
+gets a new mirror. A name that has ever had a mirror is always erased as a purge, a new
+owner's erasure included, since the registry keeps every mirror it had. The migration
+that enables the refusal first looks for namespaces of the reserved form, registered or
+holding rows, and refuses to run, naming them, if it finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below, while the namespace's source list holds an active mirrored source (a fact
@@ -847,7 +848,7 @@ ClickHouse, additive migrations:
 | Table                              | Key                                                           | Holds                                                                                                                                                                                                             |
 | ---------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom.knowledge_sources` (columns) | `(org, namespace, name)`                                      | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`                   |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                                            | `mirror`, `created_at`                                                                                                                                                                                            |
+| `loom.knowledge_mirrors`           | `(org, namespace, mirror)`                                    | `deleted` (written once a namespace erasure or the mirror-erase command has erased the mirror); at most one live mirror per namespace                                                                             |
 | `loom.knowledge_mirror_latch`      | one row                                                       | `set_at`: the deployment once had the switch on; the mirror-erase command deletes it last. It stays in ClickHouse and holds no memory content.                                                                    |
 | `loom.documents` (column)          | as today; in a mirror `source_uri` is `<address>#<source id>` | `access_json`: a mirrored document's permission list (`emails`, `owner`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id)`                                 | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                                      |
@@ -884,10 +885,13 @@ statements and census keys against these, and its tests pin each one:
 - A namespace erasure, `namespace.delete`, `collection.delete` and `code.repo.remove`
   retire the namespace's sources first, clearing their credentials, so no turn writes
   back what the erasure took. A `namespace` or `namespace_list` erasure covers each
-  named namespace's mirror as one more name of the same erasure, through its resume,
-  replay and re-verify. A mirror's rows are deleted in either mode: no token reads or
-  restores an `acl-` name. A `user_id` erasure touches no mirror row (the sync writes
-  them as `-`), and its census and export name none.
+  named namespace's mirrors as more names of the same erasure: a scope that holds a
+  mirror is erased as a purge, in one pass over the named namespaces and their mirrors,
+  since no token reads or restores an `acl-` name, and the census counts it the same
+  way. The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, so
+  the name registered again gets a new mirror; the registry keeps them, so a resume or a
+  replay after a restore still reaches them. A `user_id` erasure touches no mirror row
+  (the sync writes them as `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once
@@ -922,14 +926,14 @@ statements and census keys against these, and its tests pin each one:
   token that names a mirror, its org-wide reads (insights, usage, cost, the analytics
   export) include `acl-` rows, and nothing on N-1 ages the lists. N reports the
   condition (`loom doctor`, and the schema heartbeat check above) when a process below
-  the mirror migration heartbeats while `loom.knowledge_mirrors` holds a mirror, as a
-  rolling rollback (a Helm rollback included) would start one. So the rollback procedure
-  ([upgrades](../operations/upgrades.md)) stops every replica, stops every mirrored
-  source and erases every mirror (`loom knowledge mirror erase --all`) before any N-1
-  replica starts. A restore of either store runs the same command before the deployment
-  starts, since a restored copy cannot be trusted to say who may read; owners connect
-  and add their sources again. The implementing pull request adds both steps and
-  specifies the command.
+  the mirror migration heartbeats while `loom.knowledge_mirrors` holds a live mirror
+  (one not written `deleted`), as a rolling rollback (a Helm rollback included) would
+  start one. So the rollback procedure ([upgrades](../operations/upgrades.md)) stops
+  every replica, stops every mirrored source and erases every mirror
+  (`loom knowledge mirror erase --all`) before any N-1 replica starts. A restore of
+  either store runs the same command before the deployment starts, since a restored copy
+  cannot be trusted to say who may read; owners connect and add their sources again. The
+  implementing pull request adds both steps and specifies the command.
 - **Ownership.** In a namespace, one owner per address, found by its tag, is today's
   model, so N-1 and N agree on whose a document is; N-1 has no mirror leg.
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.

@@ -107,9 +107,10 @@ def parse_purge_flag(scope_value: str, default: bool = False) -> bool:
 
 
 def applied_purge(scope_type: str, scope_value: str, requested: bool) -> bool:
-    """Whether a saga of this scope deletes rather than tombstones, as it runs: a
-    user's as requested, a namespace list's from its scope (`requested` when the
-    scope does not say), a single namespace's never."""
+    """Whether a saga of this scope deletes rather than tombstones: a user's as requested,
+    a namespace list's from its scope (`requested` when the scope does not say), a
+    single namespace's never. A scope that holds a mirror is purged whatever this says
+    (`saga_steps.with_mirrors`)."""
     if scope_type == "user_id":
         return requested
     if scope_type == "namespace_list":

@@ -53,6 +53,7 @@ from server.erasure.app.saga_steps import (
     PG_ONLY_STEPS,
     USER_STEPS,
     ErasureStepError,
+    with_mirrors,
 )
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 from server.erasure.domain.scopes import shown_scope
@@ -195,6 +196,8 @@ async def _run_steps(
     if input.scope_type == "user_id":
         await marks.bump(input.org, marks.ORG_WIDE, "erasure")
     with erasure_mutations.saga_scope(erasure_id), erasure_mutations.purge_scope(purge):
+        if input.scope_type != "user_id":
+            steps = [(name, with_mirrors(step)) for name, step in steps]
         for name, step in steps:
             with erasure_mutations.step_scope(name):
                 try:
