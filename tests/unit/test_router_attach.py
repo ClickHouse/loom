@@ -472,11 +472,16 @@ def test_begin_writes_nothing_when_the_probe_or_upstream_does_not_answer_the_cel
 ) -> None:
     listener.nonces = {**NONCES, "postgres": "n-other"}  # a restored copy's Postgres
     r = _call(client, "POST", "attach/begin", _begin())
-    assert r.status_code == 409 and "does not read the stores" in r.json()["error"]
+    assert r.status_code == 409
+    assert r.json()["error"] == "the probe listener does not read the stores attach wrote to"
     listener.nonces = dict(NONCES)
     listener.upstream_id = "dep-2"  # the upstream routing uses is another deployment now
     r = _call(client, "POST", "attach/begin", _begin())
-    assert r.status_code == 409 and "another deployment id" in r.json()["error"]
+    # Attach names the addresses the row records, not the router's settings.
+    assert r.status_code == 409 and r.json()["error"] == (
+        "the directory row's upstream_url reports another deployment id than its probe_url: "
+        "they must name one deployment"
+    )
     assert store.statements == 4  # two reads before the probe, twice: nothing written
     assert store.cells["eu-1"]["attach_started_at"] is None and store.audit == []
 
@@ -894,7 +899,15 @@ class _Router:
 @pytest.fixture
 def cli_router(monkeypatch: pytest.MonkeyPatch) -> _Router:
     monkeypatch.setattr(settings, "router_operator_token", OPERATOR)
-    fake = _Router({"cell": "eu-1", "is_first": True, "deployment_id": "dep-1"})
+    fake = _Router(
+        {
+            "cell": "eu-1",
+            "is_first": True,
+            "state": "attaching",
+            "placed_orgs": 0,
+            "deployment_id": "dep-1",
+        }
+    )
     monkeypatch.setattr(httpx, "get", fake.get)
     monkeypatch.setattr(httpx, "delete", fake.delete)
     return fake
@@ -945,9 +958,33 @@ def test_remove_refuses_a_first_cell_its_postgres_does_not_clear(
 def test_remove_reads_no_store_for_a_later_cell(
     cli_router: _Router, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cli_router.row = {"cell": "eu-1", "is_first": False, "deployment_id": "dep-2"}
+    cli_router.row = {**cli_router.row, "is_first": False, "deployment_id": "dep-2"}
     checked = _stores(monkeypatch, "never asked")
     assert cell_cli._cmd_remove(_remove_args()) == 0 and checked == []
+
+
+@pytest.mark.parametrize(
+    "over,why",
+    [
+        ({"state": "serving"}, "is serving: a cell stays attached"),
+        ({"placed_orgs": 1}, "holds 1 placement(s): its attach goes forward, never back"),
+        ({"placed_orgs": None}, "names no state or placement count"),
+    ],
+)
+def test_remove_refuses_a_live_or_placed_cell_before_reading_its_postgres(
+    cli_router: _Router,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    over: dict[str, Any],
+    why: str,
+) -> None:
+    """A first cell that is serving or holds placements goes forward: the CLI never tells
+    the operator to clear its state, and the router's own wording says why."""
+    cli_router.row = {**cli_router.row, **over}
+    checked = _stores(monkeypatch, "")
+    assert cell_cli._cmd_remove(_remove_args()) == 1
+    assert why in capsys.readouterr().err
+    assert checked == [] and [m for m, _url in cli_router.calls] == ["GET"]
 
 
 def test_remove_tells_an_older_router_from_an_unknown_cell(

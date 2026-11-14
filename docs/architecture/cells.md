@@ -164,16 +164,17 @@ itself (`GET`, which attach reads for its refusals, its done check and its resum
 first cell's attach (`attach/begin`, `attach/place`, `attach/enforced` and `attach/serving`,
 in that order), and `DELETE`. Each answers a cell the directory does not hold 404 with the
 code `NO_SUCH_CELL`, so a 404 without it is a router replica of an earlier build. Every call
-that succeeds, the read included, is written to the audit log and has a time bound derived
-from its statement count, and every change takes the directory lock and then the cell's row
-lock (the order registration, the operator changes and the removal take). Every router
-replica runs a build with these routes before a first cell's attach starts: an earlier
-build's placement collides with an attach batch's as a transient 503, and its registration
-can add a later cell mid-attach, which every attach call then refuses until it is removed.
-Each attach call refuses unless the row is the first cell's, `attaching`, and records the
-deployment id the call names, and while any other row exists (registration refuses a later
-cell until the first is `serving`, and a router replica of an earlier build could still
-register one):
+that succeeds, the read included, is written to the audit log, and every call runs a fixed
+number of statements, each bounded by the directory's statement timeout (enforced on the
+directory's server too); the read and the removal carry the derived bounds `loom cell` waits
+for. Every change takes the directory lock and then the cell's row lock (the order
+registration, the operator changes and the removal take). Every router replica runs a build
+with these routes before a first cell's attach starts: an earlier build's placement collides
+with an attach batch's as a transient 503, and its registration can add a later cell
+mid-attach, which every attach call then refuses until it is removed. Each attach call
+refuses unless the row is the first cell's, `attaching`, and records the deployment id the
+call names, and while any other row exists (registration refuses a later cell until the
+first is `serving`, and a router replica of an earlier build could still register one):
 
 - `attach/begin` carries the cell's fingerprints exactly as `loom.cell_self` stores them,
   its root-secret fingerprint, the allow lists attach judged the stores by, and fresh

@@ -716,8 +716,7 @@ class Router:
         except directory.DirectoryUnavailable as e:
             return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
         row = found.row
-        done = row.is_first and row.state == "serving" and row.deployment_id == deployment_id
-        if not done:
+        if not found.served(deployment_id):
             reason = directory.attach_refusal(found, deployment_id)
             if not reason and row.mode != "enforced":
                 reason = f"cell {name!r} records mode {row.mode!r}: post attach/enforced first"
@@ -757,11 +756,11 @@ class Router:
         """The registration probe at the row's `probe_url` and the upstream check at its
         `upstream_url`, outside any directory transaction: the stores attach read are the
         ones the live cell serves from, and routing reaches that deployment."""
-        if refusal := await _probe(found, nonces, self._probe_transport):
+        if refusal := await _probe(found, nonces, self._probe_transport, writer="attach"):
             return refusal
         if not found.upstream_url:
             return _refused(409, f"cell {found.row.cell!r} records no upstream address")
-        return await _upstream_check(found, self._probe_transport)
+        return await _upstream_check(found, self._probe_transport, names=_ATTACHING)
 
     async def livez(self, _request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
@@ -1140,11 +1139,14 @@ async def _probe(
     reg: _Stores,
     nonces: dict[str, str | None],
     transport: httpx.AsyncBaseTransport | None,
+    *,
+    writer: str = "prepare",
 ) -> JSONResponse | None:
-    """None when the probe listener at the cell's probe address answers its deployment
-    id, the nonces prepare wrote and the bucket and prefix it names, else the refusal. A
-    busy listener answers 503 `PROBE_BUSY` with its Retry-After; an unreachable one, or
-    one that cannot read a store, 503 `PROBE_UNREACHABLE`: prepare waits and asks again."""
+    """None when the probe listener at the cell's probe address answers its deployment id,
+    the nonces `writer` (prepare, or attach) wrote and the bucket and prefix it names, else
+    the refusal. A busy listener answers 503 `PROBE_BUSY` with its Retry-After; an
+    unreachable one, or one that cannot read a store, 503 `PROBE_UNREACHABLE`: the caller
+    waits and asks again."""
     fetched = await _fetch(reg.probe_url + PROBE_PATH, transport)
     if fetched is None:
         return _refused(503, "the probe address could not be reached", code="PROBE_UNREACHABLE")
@@ -1179,45 +1181,52 @@ async def _probe(
     if answer.get("bucket") != {"name": reg.bucket, "prefix": reg.bucket_prefix}:
         return _refused(409, "the probe listener stores under another bucket or prefix")
     if answer.get("nonces") != nonces:
-        return _refused(409, "the probe listener does not read the stores prepare wrote to")
+        return _refused(409, f"the probe listener does not read the stores {writer} wrote to")
     return None
 
 
+# What registration's upstream check names: the router's own settings, which it copies.
+_REGISTERING = ("LOOM_ROUTER_UPSTREAM_URL", "LOOM_ROUTER_UPSTREAM_PROBE_URL")
+# What attach's names: the addresses the directory row records.
+_ATTACHING = ("the directory row's upstream_url", "its probe_url")
+
+
 async def _upstream_check(
-    reg: _Stores, transport: httpx.AsyncBaseTransport | None
+    reg: _Stores,
+    transport: httpx.AsyncBaseTransport | None,
+    *,
+    names: tuple[str, str] = _REGISTERING,
 ) -> JSONResponse | None:
     """None when the first cell's upstream (the deployment the shared host forwards to)
-    reports the deployment id its probe listener did, else the refusal: registration
-    copies the upstream into the row, so it must be the same deployment. The main port
-    answers the id from memory and sets no rate of its own: a 429, 502, 503 or 504 there
-    is a proxy's in front of it, and is asked again."""
+    reports the deployment id its probe listener did, else the refusal, naming the upstream
+    and probe addresses as `names` does: the row's upstream must be the deployment probed.
+    The main port answers the id from memory and sets no rate of its own: a 429, 502, 503 or
+    504 there is a proxy's in front of it, and is asked again."""
+    upstream, probe = names
     fetched = await _fetch(reg.upstream_url + PROBE_PATH, transport)
     if fetched is None or fetched[0] in (429, 502, 503, 504):
-        return _refused(
-            503, "LOOM_ROUTER_UPSTREAM_URL could not be reached", code="PROBE_UNREACHABLE"
-        )
+        return _refused(503, f"{upstream} could not be reached", code="PROBE_UNREACHABLE")
     status, _retry_after, answer = fetched
     if status != 200 or not isinstance(answer, dict):
-        return _refused(409, f"LOOM_ROUTER_UPSTREAM_URL did not answer as Loom ({status})")
+        return _refused(409, f"{upstream} did not answer as Loom ({status})")
     if "nonces" in answer:
         # The probe listener answers the same path with its nonces.
         return _refused(
             409,
-            "LOOM_ROUTER_UPSTREAM_URL answered as the probe listener, not the main port",
+            f"{upstream} answered as the probe listener, not the main port",
         )
     if answer.get("deployment_id") == "":
         # A serving process has verified its deployment at boot, so '' never changes: it
         # runs without the Postgres authority, which a cell needs.
         return _refused(
             409,
-            "LOOM_ROUTER_UPSTREAM_URL reports no deployment id: it runs without the "
+            f"{upstream} reports no deployment id: it runs without the "
             "Postgres authority (LOOM_STORAGE_AUTHORITY=postgres), which a cell needs",
         )
     if answer.get("deployment_id") != reg.deployment_id:
         return _refused(
             409,
-            "LOOM_ROUTER_UPSTREAM_URL reports another deployment id than "
-            "LOOM_ROUTER_UPSTREAM_PROBE_URL: they must name one deployment",
+            f"{upstream} reports another deployment id than {probe}: they must name one deployment",
         )
     return None
 

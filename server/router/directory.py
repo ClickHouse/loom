@@ -726,6 +726,12 @@ class Attaching:
     def deployment_id(self) -> str:
         return self.row.deployment_id
 
+    def served(self, deployment_id: str) -> bool:
+        """Whether this is the first cell, `serving` already, with that deployment id:
+        `attach/serving` is done."""
+        row = self.row
+        return row.is_first and row.state == "serving" and row.deployment_id == deployment_id
+
 
 def _attaching(found: Any, other: str | None) -> Attaching:
     values = dict(found)
@@ -1005,7 +1011,7 @@ async def attach_serving(cell_name: str, deployment_id: str) -> Attaching:
     accept computed from the row as locked. A `serving` row is answered as it is."""
     async with _attach_change(cell_name) as (conn, found):
         row = found.row
-        if row.is_first and row.state == "serving" and row.deployment_id == deployment_id:
+        if found.served(deployment_id):
             await _audit(conn, "attach_serving", {"cell": cell_name, "serving_already": True})
             return found
         if reason := attach_refusal(found, deployment_id):
@@ -1026,6 +1032,18 @@ async def attach_serving(cell_name: str, deployment_id: str) -> Attaching:
     return _attaching(written, None)
 
 
+def remove_refusal(cell_name: str, state: str, placed: int) -> str:
+    """Why a cell's row may not be removed ('' when it may): only while it is `attaching`
+    with no placement. `loom cell remove` judges the row it read the same way first."""
+    if state != "attaching":
+        return f"cell {cell_name!r} is {state}: a cell stays attached"
+    if placed:
+        return (
+            f"cell {cell_name!r} holds {placed} placement(s): its attach goes forward, never back"
+        )
+    return ""
+
+
 async def remove(cell_name: str) -> Cell:
     """`DELETE /cells/v1/operator/cells/<cell>` (`loom cell remove`): remove a cell's row
     and its host rows, audited, while it is `attaching` with no placement, whatever its
@@ -1040,13 +1058,8 @@ async def remove(cell_name: str) -> Cell:
         if found is None:
             raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
         row = _cell(found)
-        if row.state != "attaching":
-            raise OperatorRefused(f"cell {cell_name!r} is {row.state}: a cell stays attached")
-        if row.placed:
-            raise OperatorRefused(
-                f"cell {cell_name!r} holds {row.placed} placement(s): its attach goes forward, "
-                "never back"
-            )
+        if reason := remove_refusal(cell_name, row.state, row.placed):
+            raise OperatorRefused(reason)
         await conn.execute("DELETE FROM loom_router.hosts WHERE cell = $1", cell_name)
         await conn.execute("DELETE FROM loom_router.cells WHERE cell = $1", cell_name)
         await _audit(

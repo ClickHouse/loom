@@ -37,6 +37,7 @@ from server.router.directory import (
     OPERATOR_READ_MAX_S,
     REMOVE_MAX_S,
     STATEMENT_TIMEOUT_S,
+    remove_refusal,
 )
 from server.settings import settings
 
@@ -352,6 +353,18 @@ def _cmd_remove(args: argparse.Namespace) -> int:
     row = _read_row(router, args.cell)
     if isinstance(row, str):
         print(f"loom cell remove: {row}", file=sys.stderr)
+        return 1
+    # Judged before any store is read: a live or placed cell is never told to clear its
+    # state. The router judges the row again under its lock.
+    state, placed = row.get("state"), row.get("placed_orgs")
+    if not isinstance(state, str) or type(placed) is not int:
+        print(
+            "loom cell remove: the router's answer names no state or placement count",
+            file=sys.stderr,
+        )
+        return 1
+    if reason := remove_refusal(args.cell, state, placed):
+        print(f"loom cell remove: refusing: {reason}", file=sys.stderr)
         return 1
     if row.get("is_first") is True:
         try:
