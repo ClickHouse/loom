@@ -376,6 +376,12 @@ and how a name is derived. People see a collection as a collection, in the Libra
 title and its place there; the namespace that stores it is what grants, search scope, audit
 and erasure key on, and it never appears in the dashboard's namespace picker.
 
+A namespace named `acl-` and 24 hex digits is a mirror: it holds the documents of a
+document source that follows its store's permissions, each shown only to a reader the
+store admits ([document sources](../architecture/document-sources.md#the-mirror)). No
+token reaches one (only a platform admin's erasure names one), so `namespace.register`
+and `namespace.restore` refuse the form.
+
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on
 otherwise gives `gateway`. A non-loopback bind with sign-up open also needs `trust-network`

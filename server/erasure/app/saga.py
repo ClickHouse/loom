@@ -46,6 +46,7 @@ from server.erasure.domain.scopes import (
     parse_external_flag,
     parse_namespace_list,
     parse_purge_flag,
+    shown_scope,
 )
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
@@ -71,8 +72,8 @@ _TRANSIENT_FAILURES = (
 
 def audit_namespace(scope_type: str, scope_value: str) -> str:
     """The namespace an erasure's audit rows carry: the scope's own for a
-    single-namespace scope, `-` for one that spans namespaces."""
-    return scope_value if scope_type == "namespace" else "-"
+    single-namespace scope, `-` for one that spans namespaces or is a mirror."""
+    return shown_scope(scope_type, scope_value) if scope_type == "namespace" else "-"
 
 
 # ============================================================
@@ -226,7 +227,7 @@ async def begin_erasure(
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
+            "scope_value": shown_scope(input.scope_type, input.scope_value),
             "requester": input.requester,
         },
         request_id=erasure_id,
@@ -471,7 +472,7 @@ async def run_saga(
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
+            "scope_value": shown_scope(input.scope_type, input.scope_value),
             "requester": input.requester,
             "steps": [s.model_dump() for s in steps],
             # Counts only: a copy of the receipt that outlives the ledger row.

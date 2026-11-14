@@ -18,7 +18,7 @@ Export the rows about a user or namespace, each section capped at `section_limit
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | required | `user_id` exports one user's rows across the org (org admin only); `namespace` exports one namespace (admin on it). |
-| `scope_value` | `str` | required | The user id or namespace to export. |
+| `scope_value` | `str` | required | The user id or namespace to export; never a mirror's name (`acl-` and 24 hex digits). |
 | `requester` | `str` | required | email or service account requesting the export |
 | `include_tombstoned` | `bool` | `True` | Include tombstoned memory and conversation rows. |
 | `section_limit` | `int` | `10000` | Per-section caps. |
@@ -64,7 +64,7 @@ Erase the rows about a user or namespace (the audit trail is kept).
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | required | What `scope_value` names: `user_id` (one user across the org's namespaces, org admin only), `namespace` (one namespace, admin on it) or `namespace_list` (several, org admin only). |
-| `scope_value` | `str` | required | For `namespace_list`: a JSON array of namespace names (1–500), or a JSON object {"namespaces": [...], "purge": bool}. |
+| `scope_value` | `str` | required | The user id, namespace or (for `namespace_list`) a JSON array of 1–500 names or {"namespaces": [...], "purge": bool}; only a platform admin with auth on may name a mirror (`acl-` and 24 hex digits). |
 | `requester` | `str` | required | email or service account that requested the erasure |
 | `urgency` | `Literal['normal', 'urgent']` | `'normal'` | `normal` or `urgent`; recorded on the saga's ledger row, the saga runs the same either way. |
 | `purge` | `bool` | `False` | Hard-delete the rows of the soft-delete tables (memory, embeddings, chunks, documents, summaries, links) instead of stamping tombstoned_at: a tombstone keeps the bytes in every FINAL read and merge; a purge takes them out of the parts. |
@@ -101,7 +101,7 @@ Check the status of an in-flight erasure request (queued, running, completed, fa
 | `erasure_id` | `str` | The saga id asked about. |
 | `org` | `str \| None` | The tenant (first element of the identity tuple). |
 | `scope_type` | `str \| None` | The saga's scope kind (`user_id`, `namespace` or `namespace_list`); `None` when not found. |
-| `scope_value` | `str \| None` | The saga's scope as requested (user id, namespace, or the JSON list). |
+| `scope_value` | `str \| None` | The saga's scope (user id, namespace, or the JSON list); a list leaves out any mirror's name but for a platform admin. |
 | `requester` | `str \| None` | Who asked for the erasure, as given in the request. |
 | `status` | `Literal['in_progress', 'completed', 'failed'] \| None` | `in_progress`, `completed` or `failed`; `None` when not found. |
 | `current_step` | `int \| None` | How many steps have finished; 99 once the saga completed. |

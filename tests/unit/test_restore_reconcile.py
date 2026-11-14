@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1290,3 +1291,15 @@ def test_the_heads_clickhouse_lacks_or_holds_older_are_held_page_by_page(
     assert asyncio.run(knowledge_reconcile.hold_documents_behind(_Documents(), page=2)) == 1
     assert held_docs == [("o", "n", "kb://b")]
     assert doc_afters == [None, ("o", "n", "kb://b")]
+
+
+def test_a_replay_s_audit_row_names_no_mirror_of_its_list_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mirror = "acl-0123456789abcdef01234567"
+    scope = json.dumps({"namespaces": ["A", mirror], "purge": False})
+    _, _, audits = _clickhouse_replay(
+        monkeypatch, fail=False, scope_type="namespace_list", scope_value=scope
+    )
+    [audit] = audits
+    assert json.loads(audit["subject"]["scope_value"])["namespaces"] == ["A"]

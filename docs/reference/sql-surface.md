@@ -117,6 +117,10 @@ turn as `conversation.get` does, above. None of them shows:
   whatever the grant, from the moment it is classified: Loom audits each read of a
   [restricted namespace](../architecture/security.md#restricted-namespaces), which a view
   cannot;
+- any row of a mirror (a namespace named `acl-` and 24 hex digits), whatever the grant:
+  each of its documents is shown only to a reader its store's permission list admits
+  ([document sources](../architecture/document-sources.md#the-mirror)), which a view
+  cannot check;
 - tables outside the five views: tokens, grants, secrets, the audit log, documents,
   embeddings and request arguments;
 - the `system` tables that show other users' statements, such as `system.query_log`,

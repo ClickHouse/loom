@@ -485,7 +485,7 @@ that for collections, since one missed path leaks.
 - **No scope reaches a mirror.** Every statement a request runs that reads a table
   holding mirror rows other than by a namespace the caller names leaves out the
   `acl-[0-9a-f]{24}` form; the workers named here are the exception, since they must
-  reach the mirror's rows. `resolve_org_scope`, ahead of its auth-off return,
+  reach the mirror's rows. `resolve_org_scope` (its auth-off filter included),
   `every_namespace_scope` and `rollup_member_namespaces` (`server/auth/context.py`)
   leave it out for a request's caller; the sync, the erasure saga, the mirror-erase
   command (which finds mirrors by the `acl-` form in every store, not only by their
@@ -495,12 +495,17 @@ that for collections, since one missed path leaks.
   mirror through the stores, never the gate, under the rule of the bullet "the sync and
   the workers write nothing outside the mirror". Every `sql_v1_` view (each replaced by
   a migration), the analytics export's statements and the org-wide reads of
-  `erasure.export` and of a `user_id` erasure's steps and census (their `Shown.hidden`
-  always carries the form) leave it out too; a saga whose scope holds only `acl-` names
-  is not found for anyone but a platform admin, and every scope a saga answers leaves
-  `acl-` names out, so `audit.list`, the insights, usage and cost reads, the SQL surface
-  and a person's export name no mirror. `row_reach` refuses the form before its auth-off
-  return, so no id-addressed check or `audit.list` of a named namespace opens one.
+  `erasure.export` (`Shown.clause` carries the form) and of a `user_id` erasure's steps
+  and census leave it out too; a saga whose scope holds only `acl-` names is not found
+  for anyone but a platform admin; every scope a saga answers to anyone else, and every
+  audit row a saga writes, leaves `acl-` names out (a mirror-only saga's audit rows show
+  only that a platform admin erased something); so `audit.list`, the insights, usage and
+  cost reads, the SQL surface and a person's export name no mirror. `check_authorized`
+  refuses the form before its auth-off return, so no id-addressed check (`row_reach`) or
+  `audit.list` of a named namespace opens one. The deployment-wide admin reads
+  (`/v1/admin/`, outside the gate) leave a mirror's ledger rows out whole: until the
+  fold below carries a marked request's spend, a mirror's spend is in no fleet or
+  consumer total.
 - **Every `agent_events` read is folded and masked.** The analytics export and
   `sql_v1_usage_daily` fold a marked request's spend into a row per namespace and day
   with agent and operation `-`, and every read of `agent_events` rows for anyone below a

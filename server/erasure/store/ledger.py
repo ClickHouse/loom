@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from server.core.ch import sequential_reads
+from server.core.naming import mirror_name_sql
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX, REPLAY_PENDING_REASON
 from server.erasure.store.rows import (
@@ -204,6 +205,19 @@ async def insert_request_checkpoint(
     `id` so the latest state always wins on FINAL reads."""
     ch = ch or _default_client()
     await ch.insert("loom.erasure_requests", [dict(row)])
+
+
+# The ledger holds a list scope as `{"namespaces": [...], ...}`. `only_mirrors` also reads
+# the bare-array form, which the ledger never holds: `begin_erasure` stores every list as
+# an object.
+_LIST_NAMESPACES = "JSONExtract(scope_value, 'namespaces', 'Array(String)')"
+# Leaves out the sagas whose scope names mirrors only (`scopes.only_mirrors`), which only a
+# platform admin's list shows.
+NOT_ONLY_MIRRORS = (
+    f" AND NOT (scope_type = 'namespace' AND {mirror_name_sql('scope_value')})"
+    f" AND NOT (scope_type = 'namespace_list' AND notEmpty({_LIST_NAMESPACES})"
+    f" AND arrayAll(x -> {mirror_name_sql('x')}, {_LIST_NAMESPACES}))"
+)
 
 
 async def list_requests(

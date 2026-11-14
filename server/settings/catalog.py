@@ -169,8 +169,8 @@ class AuthSettings(BaseModel):
     # identity. identity_provider=single-user forces auth off regardless.
     auth_required: bool = True
     # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap,
-    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is
-    # reserved and rejected.
+    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a
+    # mirror's name (`acl-` and 24 hex digits) are reserved and rejected.
     default_namespace: str = "local"
 
     @field_validator("default_namespace")
@@ -192,13 +192,14 @@ class AuthSettings(BaseModel):
         `namespace.register` and the create dialog accept). `personal-*` is
         additionally reserved for per-subject auto-provisioning: reusing it
         collides with that scheme and skews the `NOT LIKE 'personal-%'`
-        analytics split in the dashboard.
+        analytics split in the dashboard. A mirror's name (`acl-` and 24 hex
+        digits) is refused too: the gate refuses every request that names one.
 
         Auth-ON deployments never read the setting, so a stale value left in
         a shared .env must not crash-loop the server/CLI/migrations for a
         mode that ignores it — warn and carry on instead.
         """
-        from server.core.naming import validate_namespace_name
+        from server.core.naming import is_mirror_name, validate_namespace_name
 
         v = self.default_namespace
         error: str | None = None
@@ -207,6 +208,11 @@ class AuthSettings(BaseModel):
                 f"LOOM_DEFAULT_NAMESPACE={v!r} uses the reserved 'personal-' "
                 "prefix, which belongs to per-subject auto-provisioning. "
                 "Pick a name that doesn't start with 'personal-'."
+            )
+        elif is_mirror_name(v):
+            error = (
+                f"LOOM_DEFAULT_NAMESPACE={v!r} has the form 'acl-' and 24 hex digits, which "
+                "is reserved for mirrors and refused on every request. Pick another name."
             )
         else:
             try:

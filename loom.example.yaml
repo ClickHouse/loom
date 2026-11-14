@@ -637,8 +637,8 @@ settings:
   # auth_required: true
 
   # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK
-  # caller defaults). Ignored when auth is required; `personal-*` is reserved and
-  # rejected. [restart]
+  # caller defaults). Ignored when auth is required; `personal-*` and a mirror's name
+  # (`acl-` and 24 hex digits) are reserved and rejected. [restart]
   # default_namespace: "local"
 
   # MCP one-click connect: dynamic client registration and /oauth/authorize on top of

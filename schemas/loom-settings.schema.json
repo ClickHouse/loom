@@ -2362,7 +2362,7 @@
         "default_namespace": {
           "default": "local",
           "type": "string",
-          "description": "The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is reserved and rejected."
+          "description": "The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a mirror's name (`acl-` and 24 hex digits) are reserved and rejected."
         },
         "delete_version_check_batch_size": {
           "default": 200,

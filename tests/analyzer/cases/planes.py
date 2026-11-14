@@ -19,6 +19,7 @@ import typing
 from typing import Any
 
 from server.auth.context import current_auth
+from server.core.naming import not_mirror_sql
 from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -29,12 +30,13 @@ from server.identity.domain.read_scope import (
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
-# An org admin's scope as `resolve_org_scope` builds it: a hidden restricted namespace and
-# the collections it cannot read (`tests/unit/test_projection_failures_org_scope.py` pins
-# it to the builder).
+# An org admin's scope as `resolve_org_scope` builds it: a hidden restricted namespace, no
+# mirror and the collections it cannot read
+# (`tests/unit/test_projection_failures_org_scope.py` pins it to the builder).
 ADMIN_SCOPE = (
     " AND (NOT startsWith(namespace, {col_prefix:String})"
     " OR namespace IN {col_readable:Array(String)})"
+    f" AND {not_mirror_sql()}"
     " AND namespace NOT IN {ns_hidden:Array(String)}"
 )
 ADMIN_SCOPE_PARAMS = {"col_prefix": "col-", "col_readable": [NS], "ns_hidden": ["restricted"]}

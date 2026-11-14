@@ -50,6 +50,7 @@ def test_blank_normalises_to_local(monkeypatch) -> None:  # type: ignore[no-unty
     "value",
     [
         "personal-avery",  # collides with per-subject auto-provisioning
+        "acl-0123456789abcdef01234567",  # a mirror's name, refused on every request
         "Team Alpha/prod",  # spaces + separator, inserted verbatim otherwise
         "TeamAlpha",  # uppercase: no other creation path emits it
         "-leading",
