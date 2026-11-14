@@ -169,8 +169,9 @@ flowchart TD
 - **Tombstone or purge.** By default the soft-delete tables (memory, embeddings, chunks,
   summaries, links) are tombstoned, and `memory.restore` can still revive them inside
   the window; `erasure.list` reports such revivals as `reversals_count`. `purge=true`
-  deletes the rows instead (a lightweight `DELETE FROM` on the wide tables). A namespace
-  that has ever had a mirror is always purged, so it has no such window ([document
+  deletes the rows instead (a lightweight `DELETE FROM` on the wide tables). A scope
+  that holds a namespace that has ever had a mirror is purged whole, every namespace in
+  it, so none of them has such a window ([document
   sources](../../architecture/document-sources.md#the-mirror)). A user erasure finds
   what the user's memories fed through their keys, so in a purge its `loom.memory` rows,
   and the consolidated summaries built from them, are tombstoned first and deleted in

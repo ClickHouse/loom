@@ -127,6 +127,13 @@ def test_a_list_scope_covers_every_named_namespace_s_mirrors(
     assert seen == [(["a", "b", "c", MIRROR, OLD_MIRROR], True)]
 
 
+def test_a_list_with_one_mirrored_namespace_is_purged_whole(registry: list[Any]) -> None:
+    seen, step = _recorded()
+    asyncio.run(saga_steps.with_mirrors(step)(ORG, ["team", "other"]))
+    # `other` has no mirror and is deleted too: the scope runs as one purge.
+    assert seen == [(["team", "other", MIRROR], True)]
+
+
 def test_a_mirror_named_in_the_scope_is_purged_and_has_no_mirror_looked_up(
     registry: list[Any],
 ) -> None:
