@@ -114,9 +114,11 @@ export function MoveDocumentsDialog({
     if (!r.found) {
       setError(`You can no longer add documents to ${target.label}.${before}`);
     } else {
-      // The failed call may have moved some of its own before it failed.
+      // The failed call may have moved some of its own before it failed. The error
+      // words end the line: they may close with a retry tail.
+      const earlier = moved.length ? `${documents(moved.length)} moved before the call that failed. ` : "";
       setError(
-        `${humanizeError(r.error)}${before} Some documents of the last call may have moved too; the list shows where each one is now.`,
+        `${earlier}Some documents of that call may have moved too; the list shows where each one is now. ${humanizeError(r.error)}`,
       );
     }
     setBusy(false);

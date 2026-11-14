@@ -162,7 +162,7 @@ describe("MoveDocumentsDialog", () => {
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /1 document moved before that\. Some documents of the last call may have moved too; the list shows where each one is now\.$/,
+      /^1 document moved before the call that failed\. Some documents of that call may have moved too; the list shows where each one is now\. .*boom/,
     );
     expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]);
     expect(onClose).not.toHaveBeenCalled();
