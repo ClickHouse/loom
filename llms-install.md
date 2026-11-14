@@ -44,11 +44,14 @@ whether to keep them.
 The command runs the installer from the user's home directory:
 
 ```bash
-cd ~ && curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && LOOM_CONNECT=none sh loom-install.sh && rm loom-install.sh
+cd ~ && curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && LOOM_CONNECT=none LOOM_LOCAL_MODELS=off sh loom-install.sh && rm loom-install.sh
 ```
 
 - `LOOM_CONNECT=none` stops the installer from setting up other agents, since you add the
   MCP entry yourself in step 3.
+- `LOOM_LOCAL_MODELS=off` stops it asking whether to run Loom's models on an Ollama it
+  finds, a question that would wait for an answer; ask the user, and pass
+  `LOOM_LOCAL_MODELS=ollama` instead if they want that.
 - The installer verifies the release bundle, pulls the images and waits until
   `/v1/health` answers. The first run takes a few minutes.
 - When it finishes, it prints `Dashboard: http://<host>:<port>/`. If that port is not

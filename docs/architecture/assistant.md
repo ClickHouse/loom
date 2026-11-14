@@ -431,13 +431,20 @@ ends empty first puts the turn back as it was, as does a reload before then.
 
 `integrations/librechat/agent.yaml` holds the agent's name, instructions, model and a
 version number (`server/assistant/domain/definition.py`); the tools are the assistant
-toolset's, listed by Loom. Loom seeds it at boot under the service user, which owns
-it, so nothing is shared. It writes the definition when its version is newer than the
+toolset's, listed by Loom. Loom seeds it at boot under the service user, which owns it,
+so nothing is shared. `LOOM_ASSISTANT_MODEL` and `LOOM_ASSISTANT_PROVIDER` replace the
+file's model and provider when set; `local` is LibreChat's endpoint for a model server
+the operator runs (`deploy/librechat/assistant.librechat.yaml`). The stored row records
+the definition's model as `<provider>/<model>` when the provider is not the file's, and
+as the bare model otherwise. It writes the definition when its version is newer than the
 stored one, or the same with another model, so during a rolling upgrade a build N-1
-never overwrites N's definition and a changed `LOOM_ASSISTANT_MODEL` takes effect at the
-next boot. While N rolls out, and after a rollback, N's definition stays, and a tool
-call it names that an N-1 pod does not serve answers `UNKNOWN_OP` there until every pod
-runs N.
+never overwrites N's definition, and a changed `LOOM_ASSISTANT_MODEL` or
+`LOOM_ASSISTANT_PROVIDER` takes effect at the next boot. One exception: a build that
+predates `LOOM_ASSISTANT_PROVIDER` ignores it, so with it set that build rewrites the
+agent onto the file's provider under the local model's name; unset it and
+`LOOM_ASSISTANT_MODEL` before rolling back. Otherwise, while N rolls out and after a
+rollback, N's definition stays, and a tool call it names that an N-1 pod does not serve
+answers `UNKNOWN_OP` there until every pod runs N.
 
 The tool list is the assistant toolset's reads and `insights.query`, so the agent writes
 nothing; a change it suggests is a draft a person applies elsewhere, as the Assistant
@@ -1114,9 +1121,11 @@ from Loom, and both run its v0.8.8 configuration,
   service and the internal `assistant-db` network with MongoDB alone, so the `loom`
   container, which builds repository code, cannot reach the database. LibreChat alone is
   also on `assistant-egress`, a network of its own with a route out, for its model
-  provider. Its secrets and model key come from `.env` beside `compose.yaml`
-  (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
-  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`, each named apart from
+  provider (with `LOOM_ASSISTANT_PROVIDER=local`, a model server on the Docker host,
+  reached as `host.docker.internal`). Its secrets and model key come from `.env` beside
+  `compose.yaml` (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
+  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`,
+  `LIBRECHAT_LOCAL_LLM_BASE_URL`, each named apart from
   anything Loom reads, since the `loom` service loads the same `.env`), and its
   configuration from
   `deploy/librechat/assistant.librechat.yaml`, which the release's stack bundle ships.
@@ -1132,7 +1141,8 @@ from Loom, and both run its v0.8.8 configuration,
 - **Settings:** `LOOM_ASSISTANT_LIBRECHAT_URL` names LibreChat's internal address; unset,
   Loom sets up nothing, and the dashboard, which learns it from its boot snippet
   (`window.__LOOM_ASSISTANT`), shows the panel without its chat: the starters still read.
-  `LOOM_ASSISTANT_MODEL` replaces the definition's model.
+  `LOOM_ASSISTANT_MODEL` and `LOOM_ASSISTANT_PROVIDER` replace the definition's model and
+  provider.
 
 Each replica sets the service up in its background at boot. Over a row that has its key
 and agent, a boot asks LibreChat, with the stored key and no sign-in, whether the agent
@@ -1209,8 +1219,9 @@ goes to its caller only and is stored nowhere, as any read in flight.
 
 The model is the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
 it into the definition when it seeds), `claude-haiku-4-5` otherwise. The model runs in
-LibreChat on its own key, so Loom's provider layer does not call it, but Loom holds its
-spend to the same budget as its own model calls:
+LibreChat, on its own Anthropic key or on the operator's model server
+(`LOOM_ASSISTANT_PROVIDER=local`), so Loom's provider layer does not call it, but Loom
+holds its spend to the same budget as its own model calls:
 
 - Before calling LibreChat, the bridge checks the namespace's daily model cost cap
   (`server/observability/budget.py`, `daily_cost_cap_usd`, default
@@ -1232,7 +1243,8 @@ spend to the same budget as its own model calls:
   `agent_events` row, where every model spend is counted. An answer cut before its final
   chunk (a disconnect, the stop button, a timeout), or on a model Loom has no rate for,
   is charged a per-answer ceiling (`LOOM_ASSISTANT_ANSWER_CEILING_USD`, default $0.10)
-  instead, so no answer spends for free.
+  instead. `0` charges nothing, which is what the local-model preset sets
+  ([a model server on your machine](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)).
 
 At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
 per answer that the [qualification](../features/integrations/librechat.md#qualification)

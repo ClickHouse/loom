@@ -104,11 +104,12 @@ def _status_values(saved: ProviderSetupInput | None) -> dict[str, Any]:
         if saved
         else {},
         "verification_models": saved.llm.verification_models if saved else None,
+        # `local` (a model server the operator runs, or the bundled embedder) needs no key.
         "requires_setup": (
-            llm_provider not in ("openai", "anthropic")
-            or embedding_provider not in ("openai", "gemini", "compatible")
-            or not keys.get(llm_provider, False)
-            or not keys.get(embedding_provider, False)
+            llm_provider not in ("openai", "anthropic", "local")
+            or embedding_provider not in ("openai", "gemini", "compatible", "local")
+            or (llm_provider != "local" and not keys.get(llm_provider, False))
+            or (embedding_provider != "local" and not keys.get(embedding_provider, False))
         ),
     }
 

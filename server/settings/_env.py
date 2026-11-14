@@ -81,6 +81,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_INSTANCE_LABEL",
         "LOOM_KEEP_ALIVE_S",
         "LOOM_LISTEN_HOST",
+        "LOOM_LOCAL_MODELS",
         "LOOM_MENTOR_BRIEF",
         "LOOM_NAMESPACE",
         "LOOM_NO_OPEN",

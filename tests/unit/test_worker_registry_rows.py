@@ -115,6 +115,7 @@ def test_the_memory_expiry_sweep_row() -> None:
 
 
 _DEADLINE_SETTINGS = {
+    "extraction_queue": "extraction_queue_max_pass_seconds",
     "memory_code_links": "memory_code_links_max_pass_seconds",
     "observe_extract": "observe_extract_max_pass_seconds",
     "tracker_embed": "tracker_embed_max_pass_seconds",
@@ -133,6 +134,17 @@ def test_a_workers_spec_takes_its_pass_deadline_from_its_setting(
     assert row.max_pass_setting == _DEADLINE_SETTINGS[name]
     monkeypatch.setattr(settings, row.max_pass_setting, 42.0)
     assert registry._spec_for(row).max_pass_seconds == 42.0
+
+
+def test_the_extraction_queue_keeps_four_intervals_while_its_deadline_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    row = _row("extraction_queue")
+    monkeypatch.setattr(settings, "extraction_queue_max_pass_seconds", 0.0)
+    monkeypatch.setattr(settings, "extraction_queue_interval_seconds", 60)
+    assert registry._spec_for(row).deadline_seconds() == 240.0
 
 
 def test_a_pass_deadline_is_a_setting_or_derived_in_its_worker() -> None:

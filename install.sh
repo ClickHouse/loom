@@ -86,6 +86,13 @@ main() {
       || fail "LOOM_PORT must be between 1 and 65535: $LOOM_PORT" ;;
   esac
 
+  # LOOM_LOCAL_MODELS: ollama sets Loom's model jobs on the Ollama of this machine
+  # without asking, off never offers it.
+  case ${LOOM_LOCAL_MODELS:-} in
+    '' | ollama | off) ;;
+    *) fail "LOOM_LOCAL_MODELS takes ollama or off: $LOOM_LOCAL_MODELS" ;;
+  esac
+
   # LOOM_CONNECT: which coding agents to connect without asking, as a comma list.
   case ${LOOM_CONNECT:-} in
     *[!a-z,-]* | ,* | *, | *,,*) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, in lowercase, separated by single commas: $LOOM_CONNECT" ;;
@@ -398,6 +405,61 @@ main() {
   for key in $KEPT_SETTINGS; do
     [ -z "$(given "$key")" ] || set_env "$key" "$(given "$key")"
   done
+  # A model server on this machine (Ollama) for Loom's model jobs, no key:
+  # offered on a new install when Ollama answers here. An install already set up keeps
+  # its models (the dashboard's Models & keys does not show in .env).
+  local_model=qwen2.5:3b
+  use_local=
+  if [ "${LOOM_LOCAL_MODELS:-}" = ollama ]; then
+    use_local=1
+  elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ -z "${had_env:-}" ] \
+    && [ -t 0 ] && [ -t 1 ] \
+    && curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/version >/dev/null 2>&1; then
+    printf 'Ollama answers on this machine. Use it for extraction, the assistant and the other model jobs (%s, no API key)? [Y/n] ' "$local_model"
+    read -r answer || answer=n
+    case $answer in '' | [Yy]*) use_local=1 ;; esac
+  fi
+  if [ -n "$use_local" ]; then
+    # The container reaches the host as host.docker.internal (compose.yaml).
+    set_env LOOM_LLM_PROVIDER local
+    set_env LOOM_LLM_MODEL "$local_model"
+    set_env LOOM_LOCAL_LLM_BASE_URL http://host.docker.internal:11434/v1
+    set_env LOOM_ASSISTANT_PROVIDER local
+    set_env LOOM_ASSISTANT_MODEL "$local_model"
+    set_env LOOM_ASSISTANT_ANSWER_CEILING_USD 0
+    # The capture verifier drops facts and the conflict resolver retires rows on a
+    # hosted model's judgment: both off rather than on the small model.
+    set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS ""
+    set_env LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED false
+    # A CPU reads a long prompt for minutes; the hosted default would cut it short. A
+    # server that timed out once answers no faster on a retry, so a call is tried once,
+    # and the extraction queue's pass (its lease follows) outlasts several calls.
+    set_env LOOM_LLM_REQUEST_TIMEOUT_S 900
+    set_env LOOM_LLM_RETRY_ATTEMPTS 1
+    set_env LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS 1
+    set_env LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS 3600
+    # A replay too long for this machine fails on its second try rather than hold the
+    # queue for its default eight.
+    set_env LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS 2
+    # Entity tagging would queue behind extraction on a server that answers one request at
+    # a time, and a tagging pass cut at its deadline writes nothing: off.
+    set_env LOOM_ENTITY_EXTRACT_ENABLED false
+    # Jobs whose default names a hosted model take LOOM_LLM_MODEL.
+    for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
+      LOOM_TRACKER_DUPCHECK_RERANK_MODEL LOOM_RETRIEVAL_JUDGE_MODEL; do
+      set_env "$key" ""
+    done
+    printf 'Loom will run its model jobs on Ollama (%s)\n' "$local_model"
+    printf 'The capture verifier and the conflict resolver are off (their thresholds were set on hosted models), and entity tagging too (its pass would run out of time on a local model)\n'
+    [ -z "${had_env:-}" ] \
+      || printf 'A configuration saved in Models & keys wins over .env: choose Use environment configuration there after the restart\n'
+    curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/tags 2>/dev/null \
+      | grep -q "\"$local_model\"" \
+      || printf 'Pull the model before the first extraction: ollama pull %s\n' "$local_model"
+    printf 'Run Ollama with OLLAMA_CONTEXT_LENGTH=32768: extraction prompts are longer than its default window, which cuts them silently\n'
+    [ "$(uname -s)" = Darwin ] \
+      || printf 'With Docker Engine on Linux the container reaches Ollama only beyond loopback: run Ollama with OLLAMA_HOST=0.0.0.0 and keep port 11434 closed to the network\n'
+  fi
   chmod 600 "$INSTALL_DIR/.env"
   umask "$saved_umask"
 

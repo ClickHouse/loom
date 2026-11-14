@@ -51,7 +51,7 @@
           "maximum": 10,
           "minimum": 0,
           "type": "number",
-          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price, so no answer is free."
+          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing."
         },
         "assistant_answer_ttl_s": {
           "default": 600,
@@ -82,7 +82,17 @@
         "assistant_model": {
           "default": "",
           "type": "string",
-          "description": "The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
+          "description": "The assistant agent's model, which Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
+        },
+        "assistant_provider": {
+          "default": "",
+          "enum": [
+            "",
+            "anthropic",
+            "local"
+          ],
+          "type": "string",
+          "description": "The LibreChat endpoint the agent runs on: \"\" = the definition's (anthropic), \"local\" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model)."
         },
         "assistant_service_email": {
           "default": "loom-assistant@loom.invalid",
@@ -2714,19 +2724,25 @@
           "default": 600,
           "minimum": 60,
           "type": "integer",
-          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass."
+          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. A lease shorter than the pass deadline plus a minute is raised to that, so an overlapping worker never claims a batch still waiting in the pass."
         },
         "extraction_queue_max_attempts": {
           "default": 8,
           "minimum": 0,
           "type": "integer",
-          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none."
+          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none; on a `local` provider a read timeout from that model server and a cancelled replay (pass deadline, shutdown) spend one."
         },
         "extraction_queue_max_batches_per_pass": {
           "default": 8,
           "minimum": 0,
           "type": "integer",
           "description": "Most queued batches one pass claims."
+        },
+        "extraction_queue_max_pass_seconds": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor cancels it; 0 = four intervals, kept between 60 and 900 s."
         },
         "extraction_queue_namespace_concurrency": {
           "default": 4,
@@ -3302,7 +3318,7 @@
         "llm_model": {
           "default": "",
           "type": "string",
-          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
+          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1)."
         },
         "llm_openai_reasoning_effort": {
           "default": "",
@@ -3317,13 +3333,13 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds an LLM call waits for its reply before the client retries. Generous on purpose: it only catches a hung connection, so a slow model or a long output never hits it. Calls that must be fast set their own, shorter deadline (HyDE, search budgets)."
+          "description": "Seconds an LLM call waits for its reply before the client retries. Generous for hosted models, where only a hung connection reaches it; a model server on a CPU can need longer (the local preset sets 900). Calls that must be fast set their own, shorter deadline (HyDE, search budgets)."
         },
         "llm_rerank_skip_above": {
           "default": 0.62,
@@ -3351,6 +3367,11 @@
           "default": "var/models",
           "type": "string",
           "description": "Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env."
+        },
+        "local_llm_base_url": {
+          "default": "http://localhost:11434/v1",
+          "type": "string",
+          "description": "LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's <host>:11434/v1, llama.cpp's server <host>:8080/v1)."
         },
         "log_format": {
           "default": "text",

@@ -465,3 +465,24 @@ def test_the_service_row_reads_back_as_written() -> None:
     ch = _LocalCH()
     asyncio.run(store.write(row, ch=ch))  # type: ignore[arg-type]
     assert asyncio.run(store.read(ch=ch)) == row  # type: ignore[arg-type]
+
+
+def test_a_set_provider_replaces_the_files_and_is_a_new_model() -> None:
+    raw = {
+        "name": "n",
+        "version": 2,
+        "provider": "anthropic",
+        "model": "m-file",
+        "instructions": "",
+    }
+    local = definition.parse(raw, [], "qwen2.5:3b", "local")
+    assert (local.provider, local.model, local.model_ref) == (
+        "local",
+        "qwen2.5:3b",
+        "local/qwen2.5:3b",
+    )
+    # The stored row names the model alone while the file's provider runs, as before.
+    assert definition.parse(raw, []).model_ref == "m-file"
+    # Moving the same model to another endpoint writes the definition again.
+    assert definition.needs_write(2, "qwen2.5:3b", local)
+    assert not definition.needs_write(2, "local/qwen2.5:3b", local)

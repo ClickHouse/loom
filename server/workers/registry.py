@@ -351,6 +351,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.memory.workers.extraction_queue",
         "extraction_queue_enabled",
         "extraction_queue_interval_seconds",
+        max_pass_setting="extraction_queue_max_pass_seconds",
     ),
     _Worker(
         "code_ingest",

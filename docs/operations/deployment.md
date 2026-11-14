@@ -626,11 +626,12 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 | `text-embedding-3-large`          | 3072                         | `OPENAI_API_KEY`                                       |
 | `gemini-embedding-001`            | 3072                         | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)                 |
 
-| LLM (`LOOM_LLM_PROVIDER`) | Needs                                | Default `LOOM_LLM_MODEL` |
-| ------------------------- | ------------------------------------ | ------------------------ |
-| `fake`                    | nothing; extraction produces nothing | `fake-echo-1`            |
-| `openai`                  | `OPENAI_API_KEY`                     | `gpt-6-luna`             |
-| `anthropic`               | `ANTHROPIC_API_KEY`                  | `claude-haiku-4-5`       |
+| LLM (`LOOM_LLM_PROVIDER`) | Needs                                                          | Default `LOOM_LLM_MODEL` |
+| ------------------------- | -------------------------------------------------------------- | ------------------------ |
+| `fake`                    | nothing; extraction produces nothing                           | `fake-echo-1`            |
+| `openai`                  | `OPENAI_API_KEY`                                               | `gpt-6-luna`             |
+| `anthropic`               | `ANTHROPIC_API_KEY`                                            | `claude-haiku-4-5`       |
+| `local`                   | a chat-completions server at `LOOM_LOCAL_LLM_BASE_URL`, no key | `qwen2.5:3b`             |
 
 - **Width.** `LOOM_EMBEDDING_DIM` must equal the model's width. It is fixed when the
   tables are created. The server probes the embedder at boot; a mismatch shows as the
@@ -670,8 +671,9 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 Every setting that names a model is in the `Models` section of
 [`server/settings/catalog.py`](../../server/settings/catalog.py), one per job. Set any
 of them in `.env` to move that job to another model. The provider comes from the name,
-so a job can run on Claude while the rest run on GPT, as long as both keys are set. An
-empty value uses `LOOM_LLM_MODEL`.
+so a job can run on Claude while the rest run on GPT, as long as both keys are set; a
+job naming `LOOM_LLM_MODEL` itself, or a name with no provider prefix, runs on
+`LOOM_LLM_PROVIDER`. An empty value uses `LOOM_LLM_MODEL`.
 
 | Job                                   | Setting                                 | Default           |
 | ------------------------------------- | --------------------------------------- | ----------------- |

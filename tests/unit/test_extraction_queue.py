@@ -15,6 +15,7 @@ CH-free: the CH client is a stub.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -815,6 +816,111 @@ async def test_an_unreachable_provider_spends_no_attempt(
     assert timedelta(seconds=299) < written["lease_until"] - before <= timedelta(seconds=301)
 
 
+@pytest.mark.asyncio
+async def test_a_local_model_that_times_out_spends_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    monkeypatch.setattr(settings, "local_llm_base_url", "http://localhost:11434/v1")
+    local = httpx.Request("POST", "http://localhost:11434/v1/chat/completions")
+    ch = _replaying(monkeypatch, httpx.ReadTimeout("no reply within the timeout", request=local))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    written = ch.inserts[-1][1][0]
+    assert res.unreachable == 0 and res.failures == ["q1: failed"]
+    assert (written["status"], written["attempts"]) == (q.STATUS_FAILED, 3)
+
+
+@pytest.mark.asyncio
+async def test_a_local_root_written_with_a_default_port_still_matches_its_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    monkeypatch.setattr(settings, "local_llm_base_url", "http://Ollama:80/v1")
+    sent = httpx.Request("POST", "http://Ollama:80/v1/chat/completions")
+    _replaying(monkeypatch, httpx.ReadTimeout("no reply", request=sent))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    assert res.unreachable == 0 and res.failures == ["q1: failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_raised_without_its_request_spends_none_on_a_local_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    ch = _replaying(monkeypatch, httpx.ReadTimeout("no reply"))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    assert res.unreachable == 1 and res.failures == []
+    assert ch.inserts[-1][1][0]["last_error"].startswith("unreachable: ")
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_models_timeout_on_a_local_deployment_spends_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    # One gateway host in front of both, told apart by path.
+    monkeypatch.setattr(settings, "local_llm_base_url", "https://gw.example/local/v1")
+    hosted = httpx.Request("POST", "https://gw.example/openai/v1/chat/completions")
+    ch = _replaying(monkeypatch, httpx.ReadTimeout("no reply", request=hosted))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    assert res.unreachable == 1 and res.failures == []
+    assert ch.inserts[-1][1][0]["last_error"].startswith("unreachable: ")
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_replay_on_a_local_model_spends_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    ch = _replaying(monkeypatch, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    written = ch.inserts[-1][1][0]
+    assert (written["status"], written["attempts"]) == (q.STATUS_PENDING, 3)
+    assert written["last_error"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_replay_on_a_hosted_model_spends_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _replaying(monkeypatch, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    assert all(row["status"] == q.STATUS_RUNNING for ins in ch.inserts for row in ins[1])
+
+
+@pytest.mark.asyncio
+async def test_a_pass_the_supervisor_times_out_records_the_attempt_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    ch = _replaying(monkeypatch, RuntimeError("unused"))
+
+    async def _slow(inp: Any, **_kw: Any) -> Any:
+        await asyncio.sleep(60)
+
+    from server.memory.app.extract import handler as extract_handler_mod
+
+    monkeypatch.setattr(extract_handler_mod, "handle_memory_set_from_messages", _slow)
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.05):
+            await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    assert ch.inserts[-1][1][0]["last_error"] == "cancelled"
+
+
 _STATEMENT = "Code: 241. DB::Exception: Memory limit exceeded. INSERT INTO loom.memory VALUES"
 
 
@@ -1153,3 +1259,18 @@ async def test_the_enqueuer_rides_its_own_column_and_a_hold_fills_an_old_rows() 
     old = {**_queued("old", "process:sa:t:agent-a", 0), "enqueued_by": ""}  # before the column
     await q.mark_held(old, reason="refused", seconds=60, ch=ch)
     assert ch.inserts[-1][1][0]["enqueued_by"] == "process:sa:t:agent-a"
+
+
+def test_the_lease_is_raised_above_the_pass_deadline_whatever_it_is_set_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "extraction_queue_max_pass_seconds", 3600.0)
+    monkeypatch.setattr(settings, "extraction_queue_lease_seconds", 600)
+    assert worker._config_from_settings().lease_seconds == 3660
+    # Unset, the deadline is four intervals: 240 s at a 60 s interval.
+    monkeypatch.setattr(settings, "extraction_queue_max_pass_seconds", 0.0)
+    monkeypatch.setattr(settings, "extraction_queue_interval_seconds", 60)
+    monkeypatch.setattr(settings, "extraction_queue_lease_seconds", 120)
+    assert worker._config_from_settings().lease_seconds == 300

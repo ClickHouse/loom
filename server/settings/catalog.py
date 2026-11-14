@@ -68,7 +68,7 @@ class AssistantSettings(BaseModel):
     # can overshoot it.
     assistant_concurrent_answers: int = Field(default=2, ge=1, le=50)
     # USD charged for an answer cut before LibreChat reported its usage (a
-    # disconnect, a timeout) or on a model with no price, so no answer is free.
+    # disconnect, a timeout) or on a model with no price; 0 charges nothing.
     assistant_answer_ceiling_usd: float = Field(default=0.10, ge=0, le=10)
 
 
@@ -2104,16 +2104,21 @@ class ExtractionSettings(BaseModel):
     extraction_defer_agents: Annotated[str, LIVE] = ""
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
+    # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
+    # replays) may run before the supervisor cancels it; 0 = four intervals, kept
+    # between 60 and 900 s.
+    extraction_queue_max_pass_seconds: float = Field(default=0.0, ge=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Seconds a claimed batch stays leased to one worker before another may claim it; at
-    # least a minute. Set it above the longest pass
-    # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping
-    # worker may claim a batch still waiting in the pass.
+    # least a minute. A lease shorter than the pass deadline plus a minute is raised to
+    # that, so an overlapping worker never claims a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
     # Attempts before a failing batch stops returning to `pending` and is marked failed;
     # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
-    # gateway that cannot be reached, or a held call, spends none.
+    # gateway that cannot be reached, or a held call, spends none; on a `local` provider a
+    # read timeout from that model server and a cancelled replay (pass deadline,
+    # shutdown) spend one.
     extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
@@ -3831,18 +3836,21 @@ class ModelSettings(BaseModel):
     Every setting that names a model lives here, one per job, so a deployment changes
     a job's model with one env var (`LOOM_<FIELD>`). The provider is inferred from the
     name (`claude*` → Anthropic, `gpt*` / o-series → OpenAI), so any job can run on
-    either provider when its API key is set. "" means the job uses `llm_model`.
+    either provider when its API key is set; `llm_model` itself, or a name with no such
+    prefix, runs on `llm_provider` (`provider_of`). "" means the job uses `llm_model`.
     """
 
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, rerank and every job whose own model
     # setting (the other *_model settings) is left "". Empty takes the resolved
-    # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    # provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1).
     llm_model: str = ""
-    # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
-    # writes into the agent definition at boot. "" = the definition's own
-    # (integrations/librechat/agent.yaml), not llm_model.
+    # The assistant agent's model, which Loom writes into the agent definition at boot.
+    # "" = the definition's own (integrations/librechat/agent.yaml), not llm_model.
     assistant_model: str = ""
+    # The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local"
+    # = LibreChat's local endpoint (a model server the operator runs; needs assistant_model).
+    assistant_provider: Literal["", "anthropic", "local"] = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are
@@ -3917,6 +3925,15 @@ class ModelSettings(BaseModel):
     # different model from the ones answering: a same-model judge measures
     # agreement, not quality.
     retrieval_judge_model: str = "gpt-6.1-sol"
+
+    @model_validator(mode="after")
+    def _check_assistant_provider(self) -> ModelSettings:
+        """A local endpoint runs no model the definition names, so it needs its own."""
+        if self.assistant_provider == "local" and not self.assistant_model:
+            raise ValueError(
+                "LOOM_ASSISTANT_PROVIDER=local needs LOOM_ASSISTANT_MODEL, a model it serves"
+            )
+        return self
 
 
 # ===== Namespace ==============================================================
@@ -4298,6 +4315,7 @@ def host_list_refusal(setting: str, hosts: str) -> str:
 _GATEWAY_CHECKED = (
     "openai_base_url",
     "anthropic_base_url",
+    "local_llm_base_url",
     "embedding_base_url",
     "inference_token_url",
     "embedding_provider",
@@ -4468,6 +4486,9 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
+    # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
+    # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
+    local_llm_base_url: str = "http://localhost:11434/v1"
     # Model calls with no provider key: exchange an identity token (RFC 8693)
     # at this token endpoint of the gateway, and send the answer as the bearer
     # (server/llm/gateway.py). The gateway must trust the token's issuer. "" =
@@ -4582,11 +4603,11 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
-    # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key
-    # present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
-    # at load; an explicit value is never overridden. Run `make bench-quick`
-    # before making anthropic a default.
+    # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+    # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
+    # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
+    # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
+    # overridden. Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
     # (production) makes it an `error` and `status: degraded`, which preflight
@@ -4734,6 +4755,7 @@ class ProviderSettings(ModelSettings):
         urls = {
             "openai_base_url": self.openai_base_url,
             "anthropic_base_url": self.anthropic_base_url,
+            "local_llm_base_url": self.local_llm_base_url,
             "inference_token_url": self.inference_token_url,
         }
         for name, value in urls.items():
@@ -4818,10 +4840,10 @@ class ProviderSettings(ModelSettings):
     # reasoning. The reserve per model is learned from the reasoning tokens its
     # replies report (twice the most it has spent) and capped here.
     llm_hidden_reasoning_reserve_max: int = Field(16384, ge=0)
-    # Seconds an LLM call waits for its reply before the client retries. Generous
-    # on purpose: it only catches a hung connection, so a slow model or a long
-    # output never hits it. Calls that must be fast set their own, shorter
-    # deadline (HyDE, search budgets).
+    # Seconds an LLM call waits for its reply before the client retries. Generous for
+    # hosted models, where only a hung connection reaches it; a model server on a CPU
+    # can need longer (the local preset sets 900). Calls that must be fast set their
+    # own, shorter deadline (HyDE, search budgets).
     llm_request_timeout_s: float = Field(300.0, gt=0)
     # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
     # connection) before the fallback model takes over.
@@ -4878,13 +4900,17 @@ class ProviderSettings(ModelSettings):
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
         saved = dict(changes or {})
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
-        # Both API roots count, a provider unused included: a model named per
-        # request may be either provider's.
-        for field, what in (
+        # Both hosted API roots count, a provider unused included: a model named per
+        # request may be either provider's. The local root is called only while it is
+        # the provider, since no model name reaches it otherwise.
+        roots = [
             ("openai_base_url", "LOOM_OPENAI_BASE_URL"),
             ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
             ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
-        ):
+        ]
+        if self.llm_provider == "local":
+            roots.append(("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL"))
+        for field, what in roots:
             host = self.off_gateway(v[field]) if v[field] else ""
             if host:
                 if field in saved:

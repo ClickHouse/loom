@@ -433,7 +433,9 @@ until every roll finishes.
 replaced rather than rolled and restarted when its configuration changes, its Service
 and ConfigMap, and a MongoDB StatefulSet with `assistant.mongo.storage` of disk. It
 needs `assistant.existingSecret`, a Secret with `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
-`JWT_REFRESH_SECRET` and `ANTHROPIC_API_KEY`; the chart refuses to render without it.
+`JWT_REFRESH_SECRET`, and `ANTHROPIC_API_KEY` while the assistant runs on Anthropic or
+`LOCAL_LLM_BASE_URL` for `LOOM_ASSISTANT_PROVIDER=local`; the chart refuses to render
+without it.
 The Loom pods get `LOOM_ASSISTANT_LIBRECHAT_URL` pointing at it, unless `env` or
 `extraEnv` sets one, and set the service user and agent up at boot. LibreChat's
 NetworkPolicy admits only the release's Loom pods and lets it reach DNS, its MongoDB,
@@ -441,6 +443,12 @@ the Loom pods and TCP 443 for its model provider; MongoDB's admits only LibreCha
 reaches nothing, and Loom's own policy admits LibreChat when it names its peers. Both
 run non-root on a read-only root filesystem. `assistant.nodeSelector`,
 `assistant.tolerations` and `imagePullSecrets` apply to both pods.
+
+For `LOOM_ASSISTANT_PROVIDER=local`, a model server you run instead of Anthropic, add
+`LOCAL_LLM_BASE_URL` to the Secret and write a NetworkPolicy of your own that lets the
+LibreChat pod reach the server; the
+[local-model setup](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
+lists the rest.
 
 ## Analytics export
 

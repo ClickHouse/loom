@@ -163,6 +163,8 @@ services:
       # A name of its own: the loom service loads all of .env, and an ANTHROPIC_API_KEY
       # there would become Loom's own model key.
       ANTHROPIC_API_KEY: "${LIBRECHAT_ANTHROPIC_API_KEY:-}"
+      # A model server on the Docker host, for LOOM_ASSISTANT_PROVIDER=local.
+      LOCAL_LLM_BASE_URL: "${LIBRECHAT_LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
       HOST: 0.0.0.0
       PORT: "3080"
       MONGO_URI: mongodb://librechat-mongo:27017/LibreChat
@@ -171,6 +173,8 @@ services:
       ALLOW_REGISTRATION: "true"
       ALLOW_UNVERIFIED_EMAIL_LOGIN: "true"
       BAN_VIOLATIONS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./deploy/librechat/assistant.librechat.yaml:/app/librechat.yaml:ro
     networks: [assistant, assistant-db, assistant-egress]

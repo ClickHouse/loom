@@ -11,7 +11,8 @@ step, so a boot that stopped halfway leaves the row at a step the next one finis
    exist), delete any key a cut-short boot left, create the key;
 3. no agent id: keep the oldest agent of the definition's name and delete the rest, or
    create one;
-4. a stored definition older than this build's, or of its version with another model:
+4. a stored definition older than this build's, or of its version with another model or
+   provider:
    write it.
 """
 
@@ -107,12 +108,14 @@ def forget_answering() -> None:
 
 def current_definition() -> agent_definition.Definition:
     """This build's definition: agent.yaml, the tools the assistant connection lists,
-    and LOOM_ASSISTANT_MODEL in place of the file's model when set."""
+    and LOOM_ASSISTANT_MODEL and LOOM_ASSISTANT_PROVIDER in place of the file's when set."""
     from server.operations.toolsets import assistant_ops
 
     raw = yaml.safe_load(paths.ASSISTANT_AGENT.read_text())
     tools = [op.mcp_tool_name for op in assistant_ops()]
-    return agent_definition.parse(raw, tools, str(settings.assistant_model))
+    return agent_definition.parse(
+        raw, tools, str(settings.assistant_model), str(settings.assistant_provider)
+    )
 
 
 @contextlib.asynccontextmanager
@@ -289,7 +292,7 @@ async def ensure_service() -> None:
                 await store.write(row)
             if agent_definition.needs_write(row.definition_version, row.definition_model, defn):
                 await lc.write_agent(row.agent_id, defn)
-                row = row.advanced(definition_version=defn.version, definition_model=defn.model)
+                row = row.advanced(definition_version=defn.version, definition_model=defn.model_ref)
                 await store.write(row)
     _answering = (row.agent_id, key)
 

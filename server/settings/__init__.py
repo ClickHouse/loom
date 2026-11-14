@@ -146,11 +146,15 @@ class Settings(
             self._inferred_fields |= {"memory_conflict_resolver_enabled"}
         return self
 
+    def provider_of(self, model: str) -> str:
+        """The provider a job's `model` runs on (`server.core.llm_provider.provider_of`)."""
+        from server.core.llm_provider import provider_of
+
+        return provider_of(model, self.llm_model, self.llm_provider)
+
     def conflict_resolver_provider(self) -> str:
         """The provider the conflict resolver's model runs on."""
-        from server.core.llm_provider import provider_for_model
-
-        return provider_for_model(self.conflict_resolver_model, self.llm_provider)
+        return self.provider_of(self.conflict_resolver_model)
 
     def inference_issuer(self) -> str:
         """The `iss` of the identity tokens Loom signs for an inference gateway

@@ -202,6 +202,18 @@ def test_provider_runtime_failure_from_the_breaker(monkeypatch: pytest.MonkeyPat
     assert derive_status(True, problems) == "degraded"
 
 
+def test_a_failing_local_model_server_names_the_server_not_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _settings(monkeypatch, LOOM_EMBEDDING_MODEL="fake-ngram-1024", LOOM_LLM_PROVIDER="fake")
+    status = {"providers": {"local:chat": {"failing": True, "last_error": "connection refused"}}}
+    p = _by_code(
+        collect_problems(s, HealthState(provider_status=status, env={})),
+        "provider_failing:local:chat",
+    )
+    assert "LOOM_LOCAL_LLM_BASE_URL" in p.fix and "key" not in p.fix
+
+
 def test_the_key_a_problem_names_is_the_one_the_provider_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

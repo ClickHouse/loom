@@ -265,3 +265,33 @@ def test_oversized_input_is_rejected(client: TestClient) -> None:
 
 def test_forms_cannot_trigger_billable_checks(client: TestClient) -> None:
     assert client.post("/v1/admin/models/validate", data={"key": "value"}).status_code == 415
+
+
+def test_a_local_model_server_and_the_local_embedder_count_as_set_up(client, monkeypatch):
+    monkeypatch.setattr(
+        routes,
+        "configurations",
+        AsyncMock(return_value=[{"state": "environment", "version": 125}]),
+    )
+    monkeypatch.setattr(routes, "environment_provider_key", lambda _: "")
+    env = {**routes.environment_settings(), "llm_provider": "local", "llm_model": "qwen2.5:3b"}
+    monkeypatch.setattr(routes, "environment_settings", lambda: env)
+    monkeypatch.setattr(routes, "environment_embedding", lambda: ("local", "local"))
+    body = client.get("/v1/admin/models").json()
+    assert body["llm_provider"] == "local"
+    assert not any(body["configured_keys"].values())
+    assert not body["requires_setup"]
+
+
+def test_a_hosted_llm_with_its_key_and_the_local_embedder_counts_as_set_up(client, monkeypatch):
+    # The released stack embeds with `local`; adding a hosted LLM finishes its setup.
+    monkeypatch.setattr(
+        routes,
+        "configurations",
+        AsyncMock(return_value=[{"state": "environment", "version": 126}]),
+    )
+    monkeypatch.setattr(routes, "environment_provider_key", lambda n: "k" if n == "openai" else "")
+    env = {**routes.environment_settings(), "llm_provider": "openai", "llm_model": "gpt-6-luna"}
+    monkeypatch.setattr(routes, "environment_settings", lambda: env)
+    monkeypatch.setattr(routes, "environment_embedding", lambda: ("local", "local"))
+    assert not client.get("/v1/admin/models").json()["requires_setup"]
