@@ -424,16 +424,18 @@ function NewCollectionForm({
     e.preventDefault();
     if (!trimmed || tooLong || busy) return;
     setBusy(true);
+    let r: Awaited<ReturnType<typeof createCollection>>;
     try {
-      const r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });
-      announceCreated(r, trimmed);
-      onClose();
-      onCreated(r.namespace, org);
+      r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });
     } catch (err) {
       toastError(`Couldn't create ${trimmed}`, err);
       setBusy(false);
       field.current?.focus();
+      return;
     }
+    announceCreated(r, trimmed);
+    onClose();
+    onCreated(r.namespace, org);
   };
   return (
     <form className="library-tree-form" onSubmit={(e) => void make(e)}>

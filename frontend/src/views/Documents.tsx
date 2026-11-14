@@ -173,11 +173,8 @@ export function Documents() {
     useStore.getState().clearPendingDoc();
     setPicks((n) => n + 1);
   }, []);
-  // A person's pick is a new history entry, so Back steps through the places they picked;
-  // the page's own corrections (leaving a collection it cannot show) replace the entry.
-  // `arriveFocus`: the control that takes the focus on arrival, in place of the h1.
-  // Stable, so the tree beside the page does not draw again for each render of the page.
-  // `note`: what the arrival says in place of the page's title (the place picked in the tree).
+  // A pick is a new history entry, so Back steps through the places picked. `arriveFocus` and
+  // `note` are the arrival's focus and words (a tree pick keeps the person on its row).
   const goTo = useCallback((c: string | null, arriveFocus?: string, note?: string) => {
     if (c === linkedCollection()) return; // the place already shown: nothing moves
     useStore.getState().clearPendingDoc();
