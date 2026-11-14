@@ -340,6 +340,7 @@ export function CollectionPath({
           </li>
         )}
         {named ? (
+          // A breadcrumb's last step is the current page, as the tree's row is too.
           <li className="flex min-w-0 items-center gap-1">
             {(home || above.length > 0) && sep}
             <span aria-current="page" className="block min-w-0 max-w-48">
