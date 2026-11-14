@@ -458,7 +458,7 @@ Raised in `server/code/domain/index/repos.py`.
 
 #### `DEFINITION_CEILING`
 
-HTTP 409, raised as `server.core.errors.DefinitionCeilingError`. 409 — the namespace holds `memory_term_leg_max_definitions` shared definitions already; demote one to make room. Category `input`, retryable: no.
+HTTP 409, raised as `server.core.errors.DefinitionCeilingError`. 409 — the promotion would leave the namespace past `memory_term_leg_max_definitions` shared definitions; demote definitions until it is within it. Category `input`, retryable: no.
 
 #### `DEFINITION_NAME_TAKEN`
 

@@ -190,6 +190,13 @@ async def test_a_source_the_term_leg_would_not_serve_is_not_promoted(
     assert await _refusal(store) == "DEFINITION_PROMOTION_REFUSED"
 
 
+@pytest.mark.parametrize("field", ["expires_at", "valid_to"])
+async def test_a_source_that_ends_later_is_promoted(store: dict[str, Any], field: str) -> None:
+    store["row"] = _row(**{field: datetime(2999, 1, 1, tzinfo=UTC)})
+    await promote.handle_memory_promote(_input())
+    assert len(store["written"]) == 1
+
+
 async def test_a_definition_written_as_json_text_has_no_names(store: dict[str, Any]) -> None:
     # memory.set of a string holding JSON stores that string, which carries no term.
     store["row"] = _row(value=json.dumps(VALUE))

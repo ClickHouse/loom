@@ -119,8 +119,8 @@ class SensitiveDefinitionRefusedError(LoomServerError):
 
 
 class DefinitionCeilingError(LoomServerError):
-    """409 — the namespace holds `memory_term_leg_max_definitions` shared definitions
-    already; demote one to make room."""
+    """409 — the promotion would leave the namespace past `memory_term_leg_max_definitions`
+    shared definitions; demote definitions until it is within it."""
 
     code = "DEFINITION_CEILING"
     status_code = 409

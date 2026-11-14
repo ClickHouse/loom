@@ -39,7 +39,7 @@ class MemoryPromoteInput(BaseModel):
     reversible_for_days: int = Field(default=7, ge=0, le=90)
     # On learnings.review-driven promotions (not for a definition, where it is named in
     # `ignored_args`), written to loom.shared.promoted_from_candidate_id so memory.lineage
-    # resolves via an FK-style lookup. NULL for auto-promote / direct callers.
+    # resolves via an FK-style lookup. NULL for a direct caller.
     promoted_from_candidate_id: str | None = None
     # For a definition, the content hash it approves (the row's `content_sha256` as
     # memory.get serves it), required and checked; for any other row it is ignored and

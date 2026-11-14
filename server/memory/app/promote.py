@@ -301,7 +301,8 @@ async def _check_definition_promotion(
     revision = any(r["memory_key"] == target_key for r in rows)
     if len(rows) > ceiling or (len(rows) == ceiling and not revision):
         raise DefinitionCeilingError(
-            f"the ceiling is {ceiling} shared definitions: demote one to make room"
+            f"the ceiling is {ceiling} shared definitions: demote definitions until a new "
+            "key fits, or, past the ceiling, until at most that many remain"
         )
     taken = sorted(
         r["memory_key"]
