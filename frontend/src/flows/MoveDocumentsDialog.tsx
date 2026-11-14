@@ -71,8 +71,8 @@ export function MoveDocumentsDialog({
   /** The collections are still being read, their read failed, or there are more than the
    *  Library reads: `places` may lack some. */
   placesReading?: "loading" | "failed" | "truncated" | null;
-  /** After every call, whatever it answered (a failed one may have moved some): the
-   *  sources that moved. */
+  /** After every call of a move (a selection goes in calls of `MOVE_MAX`), whatever it
+   *  answered (a failed one may have moved some): the sources that call moved. */
   onMoved: (moved: string[]) => void;
   onClose: () => void;
   /** Where focus goes once it closes, as the Modal's. */
@@ -95,10 +95,12 @@ export function MoveDocumentsDialog({
     setError(null);
     const controller = new AbortController();
     stop.current = controller;
-    const r = await moveKnowledge({ org, namespace: from }, target.namespace, left, controller.signal);
-    const moved = r.results.filter((x) => x.moved).map((x) => x.source_uri);
-    onMoved(moved);
-    if (controller.signal.aborted) return; // closed meanwhile: the list is read again
+    const movedOf = (results: KnowledgeMoveResult[]) => results.filter((x) => x.moved).map((x) => x.source_uri);
+    const r = await moveKnowledge({ org, namespace: from }, target.namespace, left, controller.signal, (results) =>
+      onMoved(movedOf(results)),
+    );
+    const moved = movedOf(r.results);
+    if (controller.signal.aborted) return; // closed meanwhile: each call read the list again
     if (r.found && r.error === undefined) {
       const summary = moveSummary(r.results, target.label);
       toast(summary.text, summary.ok ? "ok" : "info");

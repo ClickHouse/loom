@@ -10,7 +10,6 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC
 from typing import Any, Literal, TypeGuard
@@ -27,7 +26,7 @@ from server.core.object_store import ObjectStoreError
 from server.core.pg_lease import PublicationPending
 from server.core.shielded import to_its_end
 from server.erasure.app import ledger_reads
-from server.erasure.domain.scopes import reaches
+from server.erasure.domain.scopes import may_cover
 from server.knowledge.api.models_knowledge import (
     KnowledgeMoveInput,
     KnowledgeMoveOutput,
@@ -102,7 +101,6 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
         started = await blobs.ch_now_s()
         read = await documents_repo.get_many_by_uris(input.org, input.namespace, uris)
         docs = {d.source_uri: d for d in read}
-        ledger = await _ledger(input.org, read, started)
         # A few sources at a time, each under its own claims. A failure that is not one
         # source's (`_BUSY`) is raised once every source has answered, so the moves that
         # finished are audited.
@@ -110,19 +108,22 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
 
         reasons: dict[str, MoveReason] = {}
         failures: list[Exception] = []
+        # Each source is added the moment its tombstone is in, under its claims: what
+        # follows (their release, the table cleanup) may be cancelled.
+        moved: set[str] = set()
 
         async def one(uri: str) -> None:
             async with slots:
                 try:
-                    reasons[uri] = await _move(docs.get(uri), to, ledger, started)
+                    reasons[uri] = await _move(docs.get(uri), to, started, moved)
                 except Exception as e:  # noqa: BLE001 — raised below, after the others
                     failures.append(e)
 
         try:
             await asyncio.gather(*(one(u) for u in uris))
         finally:
-            # A cancel of the request too: the moves that finished are audited.
-            await _audit_moved(input, to, [u for u in uris if reasons.get(u) == ""])
+            # A cancel of the request too: the moves that were made are audited.
+            await _audit_moved(input, to, [u for u in uris if u in moved])
     if failures:
         for e in failures[1:]:
             log.warning("knowledge.move: another source failed too", exc_info=e)
@@ -131,7 +132,10 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
         found=True,
         to_namespace=to,
         results=[
-            _KnowledgeMoveResult(source_uri=u, moved=not reasons[u], reason=reasons[u])
+            # A cut-off as its claims were given up answers busy, after the tombstone.
+            _KnowledgeMoveResult(source_uri=u, moved=True, reason="")
+            if u in moved
+            else _KnowledgeMoveResult(source_uri=u, reason=reasons[u])
             for u in uris
         ],
     )
@@ -157,14 +161,12 @@ async def _audit_moved(input: KnowledgeMoveInput, to: str, moved: list[str]) -> 
     )
 
 
-async def _move(
-    doc: DocumentRow | None, dst: str, ledger: list[dict[str, Any]], started: int
-) -> MoveReason:
-    """One document: its reason, "" once moved. Its originals are stored first, outside
-    the claims, once no copy is found where it goes; the checks, its chunks, tables and
-    row, and its delete where it was run under the source's claim in both namespaces,
-    taken in one order so two moves between the same places do not each hold one and
-    give up on the other."""
+async def _move(doc: DocumentRow | None, dst: str, started: int, moved: set[str]) -> MoveReason:
+    """One document: its reason, "" once moved, and its source added to `moved` once its
+    tombstone is in. Its originals are stored first, outside the claims, once no copy is
+    found where it goes; the checks, its chunks, tables and row, and its delete where it
+    was run under the source's claim in both namespaces, taken in one order so two moves
+    between the same places do not each hold one and give up on the other."""
     if doc is None:
         return "not_found"
     org, src, uri = doc.org, doc.namespace, doc.source_uri
@@ -174,8 +176,6 @@ async def _move(
         if doc.actor == SYNC_WORKER_ACTOR:
             return "synced"
         arrived = await _arrived_s(doc)
-        if _erasing(ledger, doc, arrived, dst, started):
-            return "erased"
         there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
         # A copy is written over a deleted document, none, or a copy an earlier move left
         # incomplete (a cut-off row insert can land after its take-back, with no chunks
@@ -186,14 +186,12 @@ async def _move(
             if state == "other":
                 return "exists"
             copying = state == "incomplete"
-        originals: dict[str, Any] = {}
-        if copying:
-            # Read again just before: an erasure's originals step that runs before this
-            # store does not see it, and an original no row names is the sweep's only
-            # once it is old enough.
-            if _erasing(await _ledger(org, [doc], started), doc, arrived, dst, started):
-                return "erased"
-            originals = await _store_originals(doc, dst)
+        # Just before the original is stored: an erasure's originals step that runs
+        # before the store does not see it, and an original no row names is the sweep's
+        # only once it is old enough.
+        if await _erasing(doc, arrived, dst, started):
+            return "erased"
+        originals = await _store_originals(doc, dst) if copying else {}
         first, second = sorted((src, dst))
         async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as held_first:
             if held_first:
@@ -204,16 +202,19 @@ async def _move(
                         reason = await _claimed(
                             doc, there, copying, dst, originals, arrived, started
                         )
+                        if reason == "":
+                            moved.add(uri)
     except _BUSY:
         reason = "busy"
     except _ServesMore:
         reason = "exists"
     except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
         reason = "erased"
-    if reason == "":
-        # Its tombstone is in: the move is made. Outside the claims, as a delete's, and
-        # run to its end through a cancel of the request; a failure is only logged.
-        await to_its_end(_forget_tables(doc), name=f"knowledge.move tables {doc.source_uri}")
+    finally:
+        if uri in moved:
+            # Its tombstone is in: the move is made, whatever ends this call. Outside the
+            # claims, as a delete's, and run to its end; a failure is only logged.
+            await to_its_end(_forget_tables(doc), name=f"knowledge.move tables {uri}")
     return reason
 
 
@@ -252,7 +253,7 @@ async def _claimed(
     try:
         # An erasure registered since the call's first read may have passed the copy, this
         # one or an earlier move's, already: read again before the source goes.
-        erased = _erasing(await _ledger(org, [doc], started), doc, arrived, dst, started)
+        erased = await _erasing(doc, arrived, dst, started)
         unchanged = not erased and await _head_is(doc)
     except BaseException:  # a cancel too: a copy whose source stays live goes
         if copy is not None:
@@ -508,21 +509,14 @@ async def _arrived_s(doc: DocumentRow) -> int:
     return _written_s(doc) if first is None else first
 
 
-async def _ledger(org: str, docs: Iterable[DocumentRow], started: int) -> list[dict[str, Any]]:
-    """The org's erasures unfinished since the oldest of `docs` was written or since the
-    move `started`, whichever is earlier: the rows `_erasing` judges each document by."""
-    since = min([_written_s(d) for d in docs] + [started])
-    return await ledger_reads.unfinished_since(org, since, ledger_reads.LEDGER_CLOCK_MARGIN_S)
-
-
-def _erasing(
-    ledger: list[dict[str, Any]], doc: DocumentRow, arrived: int, dst: str, started: int
-) -> bool:
-    """Whether an erasure of `ledger` may reach the document where it is (unfinished when
+async def _erasing(doc: DocumentRow, arrived: int, dst: str, started: int) -> bool:
+    """Whether an unfinished erasure may reach the document where it is (unfinished when
     its text was written there, `arrived`) or the place it goes (unfinished when the move
-    started)."""
-    return any(
-        reaches(r, ns, doc.user_id, since - ledger_reads.LEDGER_CLOCK_MARGIN_S)
-        for r in ledger
-        for ns, since in ((doc.namespace, arrived), (dst, started))
-    )
+    `started`), as `knowledge.restore` reads the ledger."""
+    for ns, since in ((doc.namespace, arrived), (dst, started)):
+        rows = await ledger_reads.unfinished_reaching(
+            doc.org, ns, doc.user_id, since, ledger_reads.LEDGER_CLOCK_MARGIN_S
+        )
+        if any(may_cover(str(r["scope_type"]), str(r["scope_value"]), ns) for r in rows):
+            return True
+    return False

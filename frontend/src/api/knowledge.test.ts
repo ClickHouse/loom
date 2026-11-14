@@ -308,6 +308,23 @@ describe("moveKnowledge", () => {
     expect(r.results.map((x) => x.source_uri)).toEqual(uris);
   });
 
+  it("hands each call's answers on as it lands, and none for one that failed", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls += 1;
+        if (calls === 3) return new Response(JSON.stringify({ code: "INTERNAL_ERROR", message: "x" }), { status: 500 });
+        const batch = JSON.parse(String(init?.body)).source_uris as string[];
+        const results = batch.map((u) => ({ source_uri: u, moved: true, reason: "" }));
+        return new Response(JSON.stringify({ found: true, results }), { status: 200 });
+      }),
+    );
+    const seen: number[] = [];
+    await moveKnowledge(id, "col-b", uris, undefined, (results) => seen.push(results.length));
+    expect(seen).toEqual([MOVE_MAX, MOVE_MAX, 0]);
+  });
+
   it("sends no further call once its signal is aborted", async () => {
     const controller = new AbortController();
     const sent = moves(() => {

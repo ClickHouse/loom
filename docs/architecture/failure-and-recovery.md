@@ -578,38 +578,43 @@ text or metadata was edited, is another document and answers `exists`.
 
 Anything that does not land whole, or a write that took either place before the delete,
 takes back what the move wrote where it goes, and that source answers `busy`. The take-back
-runs to its end under the claims, however often the request is cancelled meanwhile (the
-cancel is raised once it is done), so no retry finds a half-removed copy; the other sources
-of the call still move. The take-back deletes its row (under the Postgres authority its
-commit first), retires its chunks under each embedding model they were copied under, then
-deletes them, and deletes its tables: a cancelled `INSERT … SELECT` runs on in ClickHouse
-and may land after the delete, and the retirement keeps what lands from serving. The work
-under the claims is cut off at 40% of the claim's 60 s TTL (24 s); a document whose copy
-runs past that is taken back and answers `busy`. Once the delete has begun, a failure (a
-cut-off, which answers `busy`, or a lost answer, which fails the call) may follow the
-tombstone, so the copy stays: the document is in both places, or only where it goes, and a
-retry finds the copy and only deletes the source, or answers `not_found`. Once the tombstone
-is in, the move is made: the source's tables are deleted after the claims are given up, as a
-delete of a live document takes none, so no cut-off reaches it; a failure there is logged,
-and a later delete of the source settles them. A failure that is not one source's (a store
+runs to its end before the claims are given up, however often the request is cancelled
+meanwhile (the cancel is raised once it is done). Its statements are bounded one by one, not
+together, so a take-back can outlast the claim's 60 s TTL; a retry that takes the claim then
+finds an incomplete copy and writes it again; the other sources of the call still move. The
+take-back deletes its row (under the Postgres authority its commit first), retires its
+chunks under each embedding model they were copied under, then deletes them, and deletes its
+tables: a cancelled `INSERT … SELECT` runs on in ClickHouse and may land after the delete,
+and the retirement keeps what lands from serving. The work under the claims is cut off at
+40% of the claim's 60 s TTL (24 s); a document whose copy runs past that is taken back and
+answers `busy`. Once the delete has begun, a failure (a cut-off, which answers `busy`, or a
+lost answer, which fails the call) may follow the tombstone, so the copy stays: the document
+is in both places, or only where it goes, and a retry finds the copy and only deletes the
+source, or answers `not_found`. Once the tombstone is in, the move is made: the source's
+tables are deleted after the claims are given up, as a delete of a live document takes none,
+so no cut-off reaches it; a failure there is logged, and a later delete of the source
+settles them. A document counts as moved the moment its tombstone is in, under the claims:
+its audit row and its table cleanup follow whatever ends the call after that (a cancel as
+the claims are given up, or during the cleanup). A failure that is not one source's (a store
 that does not answer) is raised once every source of the call has answered, after the audit
 row of those that moved.
 
-The erasure ledger is read once per call, before the first copy, for an erasure that may
-reach a document where it is (unfinished when its text was written there: its first chunk's
-`created_at`, which a move stamps with when it copied the chunks, while the row keeps its
-ingest time) or the place it goes (unfinished when the move started), and again for each
-document under the claims, just before its delete, for one registered since: one may have
-passed the copy, this move's or an earlier move's. That one takes back a copy this move
-wrote, leaves an earlier move's copy to the erasure, and answers `erased` without deleting
-the source, so an `erased` document always stays where it was. Under the Postgres authority
-a delete over a document an erasure removed meanwhile answers `erased` too. The ledger is
-read again just before a document's original is stored in the new place, so an erasure whose
-originals step could miss it must register in the moment between that read and the store;
-the re-read before the delete then answers `erased`, and that original, named by no row, is
-the sweep's after `document_blob_min_age_seconds`, as any original whose row did not land.
-The move deletes no original itself: one is keyed by its bytes, and a concurrent write of
-the same bytes whose row has not landed yet may need it.
+The erasure ledger is read for each document twice, as `knowledge.restore` reads it
+(`unfinished_reaching` for the document's namespace and writer, filtered with `may_cover`):
+before its original is stored, for an erasure that may reach it where it is (unfinished when
+its text was written there: its first chunk's `created_at`, which a move stamps with when it
+copied the chunks, while the row keeps its ingest time) or the place it goes (unfinished
+when the move started), and again under the claims, just before its delete, for one
+registered since: one may have passed the copy, this move's or an earlier move's. That one
+takes back a copy this move wrote, leaves an earlier move's copy to the erasure, and answers
+`erased` without deleting the source, so an `erased` document always stays where it was.
+Under the Postgres authority a delete over a document an erasure removed meanwhile answers
+`erased` too. The first read comes just before the original is stored in the new place, so
+an erasure whose originals step could miss it must register in the moment between that read
+and the store; the re-read before the delete then answers `erased`, and that original, named
+by no row, is the sweep's after `document_blob_min_age_seconds`, as any original whose row
+did not land. The move deletes no original itself: one is keyed by its bytes, and a
+concurrent write of the same bytes whose row has not landed yet may need it.
 
 Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's row
 and the delete each commit over the version read, so a write that took the source or the

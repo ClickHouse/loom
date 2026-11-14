@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -52,12 +52,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "dst": {},
         "held": True,
         "reach": True,
-        # The erasure ledger: the call's first read, then each document's own reads in
-        # order (before its original is stored, when it copies, then under the claims);
-        # past the list, its last entry.
-        "ledger": [],
-        "ledger_per_doc": [],
-        "ledger_reads": {},
+        # Whether an erasure may reach each document, at its reads in order (before its
+        # original is stored, then under the claims); past the list, its last entry.
+        "erasing": [],
+        "erasing_reads": {},
         "fail": {},
         "copied": [],
         "deleted": [],
@@ -107,16 +105,11 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def now() -> int:
         return STARTED
 
-    async def ledger(org: str, docs: Any, started: int) -> list[dict[str, Any]]:
-        docs = list(docs)
-        if "call" not in state["ledger_reads"]:
-            state["ledger_reads"]["call"] = 1
-            return state["ledger"]
-        uri = docs[0].source_uri
-        n = state["ledger_reads"].get(uri, 0)
-        state["ledger_reads"][uri] = n + 1
-        seq = state["ledger_per_doc"]
-        return seq[min(n, len(seq) - 1)] if seq else []
+    async def erasing(doc: DocumentRow, arrived: int, dst: str, started: int) -> bool:
+        n = state["erasing_reads"].get(doc.source_uri, 0)
+        state["erasing_reads"][doc.source_uri] = n + 1
+        seq = state["erasing"]
+        return bool(seq[min(n, len(seq) - 1)]) if seq else False
 
     async def originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
         state["originals"].append(doc.source_uri)
@@ -161,7 +154,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move.ingest_jobs, "open_for_source", no)
     monkeypatch.setattr(move.ingest_run, "claim_source", claim)
     monkeypatch.setattr(move.blobs, "ch_now_s", now)
-    monkeypatch.setattr(move, "_ledger", ledger)
+    monkeypatch.setattr(move, "_erasing", erasing)
     monkeypatch.setattr(move, "_store_originals", originals)
     monkeypatch.setattr(move.blobs, "delete", deleted_blob)
     monkeypatch.setattr(move, "_copy", copy)
@@ -258,7 +251,7 @@ async def test_an_earlier_moves_copy_there_finishes_that_move(store: dict[str, A
 
 
 async def test_an_erasure_leaves_the_document_where_it_was(store: dict[str, Any]) -> None:
-    store["ledger"] = [_erasure("namespace", "src")]
+    store["erasing"] = [True]
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["copied"] == [] and store["deleted"] == []
 
@@ -266,7 +259,7 @@ async def test_an_erasure_leaves_the_document_where_it_was(store: dict[str, Any]
 async def test_an_erasure_registered_while_it_copied_takes_the_copy_back_before_the_delete(
     store: dict[str, Any],
 ) -> None:
-    store["ledger_per_doc"] = [[], [_erasure("namespace", "dst")]]
+    store["erasing"] = [False, True]
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["taken_back"] == [URI]
     # Where it was, it stays: an erased answer never leaves it deleted there.
@@ -295,7 +288,7 @@ async def test_a_failure_of_the_request_answers_as_itself_after_the_others_moved
     store["fail"] = {"doc://2": RuntimeError("the store failed")}
     # An erasure of the place registered while they copied: each copy that landed is
     # checked before its delete, the one that failed changes nothing of that.
-    store["ledger_per_doc"] = [[], [_erasure("namespace", "dst")]]
+    store["erasing"] = [False, True]
     with pytest.raises(RuntimeError, match="the store failed"):
         await _run(uris=uris)
     assert sorted(store["taken_back"]) == ["doc://1", "doc://3"]
@@ -456,23 +449,45 @@ def _erasure(scope: str, value: str, **over: Any) -> dict[str, Any]:
     return {"scope_type": scope, "scope_value": value, "state": "in_progress", **over}
 
 
+async def _reads_of_erasing(
+    monkeypatch: pytest.MonkeyPatch, rows: dict[str, list[dict[str, Any]]]
+) -> tuple[bool, list[tuple[str, str, int]]]:
+    """`move._erasing` over a ledger answering `rows` by namespace; what it read."""
+    reads: list[tuple[str, str, int]] = []
+
+    async def reaching(org: str, ns: str, user: str, since: int, margin: int) -> Any:
+        reads.append((ns, user, since))
+        return rows.get(ns, [])
+
+    monkeypatch.setattr(move.ledger_reads, "unfinished_reaching", reaching)
+    reached = await move._erasing(_doc("src"), STARTED - 3600, "dst", STARTED)
+    return reached, reads
+
+
+async def test_erasures_are_read_where_it_is_since_it_arrived_and_where_it_goes_since_the_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A moved document keeps its ingest time; the source side is read from when its text
+    # arrived there, so an erasure that finished before then is not one that reaches it.
+    reached, reads = await _reads_of_erasing(monkeypatch, {})
+    assert reached is False
+    assert reads == [("src", "u1", STARTED - 3600), ("dst", "u1", STARTED)]
+
+
 @pytest.mark.parametrize(
-    ("row", "reaches"),
+    ("rows", "reached"),
     [
-        (_erasure("namespace", "src"), True),
-        (_erasure("namespace", "other"), False),
-        (_erasure("user_id", "u1"), True),
-        (_erasure("user_id", "u2"), False),
-        (_erasure("namespace_list", '["src"]'), True),
-        # Finished before the document was written: it cannot have reached it.
-        (_erasure("user_id", "u1", state="completed", completed_at=datetime(2025, 1, 1)), False),
-        (_erasure("user_id", "u1", state="completed", completed_at=datetime(2026, 6, 1)), True),
+        ({"src": [_erasure("namespace", "src")]}, True),
+        ({"dst": [_erasure("user_id", "u1")]}, True),
+        ({"src": [_erasure("namespace_list", '["src"]')]}, True),
+        # A list the ledger answers that names neither place does not reach it.
+        ({"src": [_erasure("namespace_list", '["other"]')]}, False),
     ],
 )
-def test_which_erasures_reach_a_document(row: dict[str, Any], reaches: bool) -> None:
-    doc = _doc("src")
-    since = move._written_s(doc)
-    assert move._erasing([row], doc, since, "dst", since + 10**9) is reaches
+async def test_which_erasures_reach_a_document(
+    monkeypatch: pytest.MonkeyPatch, rows: dict[str, list[dict[str, Any]]], reached: bool
+) -> None:
+    assert (await _reads_of_erasing(monkeypatch, rows))[0] is reached
 
 
 @pytest.fixture
@@ -664,9 +679,9 @@ async def test_an_erasure_registered_before_the_claims_leaves_an_earlier_copy_an
     store: dict[str, Any],
 ) -> None:
     # An earlier move's whole copy is there; an erasure of the target registers after the
-    # call's first ledger read. Deleting the source now could leave it in neither place.
+    # document's first read. Deleting the source now could leave it in neither place.
     store["dst"][URI] = _doc("dst", version=20)
-    store["ledger_per_doc"] = [[_erasure("namespace", "dst")]]  # its one read: the claims'
+    store["erasing"] = [False, True]  # clear before the claims, reached under them
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["deleted"] == [] and store["taken_back"] == [] and store["copied"] == []
 
@@ -728,30 +743,10 @@ async def test_a_copy_is_never_written_over_one_that_serves_more(
     assert real_copy["originals"] == []
 
 
-async def test_a_moved_document_is_judged_by_when_it_arrived_not_its_ingest_time(
-    store: dict[str, Any],
-) -> None:
-    # Ingested long ago elsewhere and moved here since; an erasure of this namespace that
-    # finished before the move cannot have reached it.
-    store["arrived"] = STARTED - 3600
-    finished = datetime.fromtimestamp(STARTED - 7200, UTC).replace(tzinfo=None)
-    store["ledger"] = [_erasure("namespace", "src", state="completed", completed_at=finished)]
-    assert _answers(await _run()) == [(URI, True, "")]
-
-
-async def test_an_erasure_that_finished_after_the_document_arrived_still_counts(
-    store: dict[str, Any],
-) -> None:
-    store["arrived"] = STARTED - 7200
-    finished = datetime.fromtimestamp(STARTED - 3600, UTC).replace(tzinfo=None)
-    store["ledger"] = [_erasure("namespace", "src", state="completed", completed_at=finished)]
-    assert _answers(await _run()) == [(URI, False, "erased")]
-
-
 async def test_an_erasure_registered_before_the_original_is_stored_stores_none(
     store: dict[str, Any],
 ) -> None:
-    store["ledger_per_doc"] = [[_erasure("namespace", "dst")]]
+    store["erasing"] = [True]
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["originals"] == [] and store["copied"] == []
 
@@ -759,7 +754,7 @@ async def test_an_erasure_registered_before_the_original_is_stored_stores_none(
 async def test_an_erased_move_deletes_no_original(store: dict[str, Any]) -> None:
     # Keyed by its bytes, an original stored for the copy may be the one a concurrent
     # write of the same bytes, its row still to land, needs: it is left to the sweep.
-    store["ledger_per_doc"] = [[], [_erasure("namespace", "dst")]]
+    store["erasing"] = [False, True]
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["originals"] == [URI] and store["blobs_deleted"] is False
 
@@ -808,3 +803,37 @@ async def test_a_namespace_given_as_a_dash_or_blank_is_refused(store: dict[str, 
     for name in ("-", "  "):
         with pytest.raises(ValidationError):
             await _run(to=name)
+
+
+async def test_a_cancel_during_the_table_cleanup_still_audits_the_move(
+    store: dict[str, Any],
+) -> None:
+    store["forget_wait_s"] = 0.2
+    task = asyncio.create_task(_run())
+    for _ in range(100):
+        await asyncio.sleep(0)
+    assert store["deleted"] == [URI] and store["forgotten"] == []
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # The cleanup ran to its end, and the move is audited.
+    assert store["forgotten"] == [URI]
+    assert store["audited"][0]["subject"]["source_uris"] == [URI]
+
+
+async def test_a_cancel_while_the_claims_are_given_up_still_audits_the_move(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @asynccontextmanager
+    async def cancelled_on_release(org: str, ns: str, uri: str, *, wait_s: float = 10):
+        try:
+            yield True
+        finally:
+            if ns == "src":  # the request's cancel lands as this claim is given up
+                raise asyncio.CancelledError
+
+    monkeypatch.setattr(move.ingest_run, "claim_source", cancelled_on_release)
+    with pytest.raises(asyncio.CancelledError):
+        await _run()
+    assert store["deleted"] == [URI] and store["forgotten"] == [URI]
+    assert store["audited"][0]["subject"]["source_uris"] == [URI]

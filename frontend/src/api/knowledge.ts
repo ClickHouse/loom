@@ -138,12 +138,15 @@ export const MOVE_MAX = 50;
 /** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were;
  *  sent in calls of at most `MOVE_MAX`, their answers merged. A call that finds the place no
  *  longer writable, or that fails, stops the rest: `found` is false, or `error` is set, with
- *  the answers before it. An aborted `signal` sends no further call. It never throws. */
+ *  the answers before it. An aborted `signal` sends no further call. `onCall` runs after
+ *  each call with its answers (none for one that failed, which may still have moved some).
+ *  It never throws. */
 export async function moveKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   to: string,
   sourceUris: string[],
   signal?: AbortSignal,
+  onCall?: (results: KnowledgeMoveResult[]) => void,
 ): Promise<KnowledgeMoved> {
   const results: KnowledgeMoveResult[] = [];
   for (let i = 0; i < sourceUris.length && !signal?.aborted; i += MOVE_MAX) {
@@ -156,8 +159,10 @@ export async function moveKnowledge(
         source_uris: sourceUris.slice(i, i + MOVE_MAX),
       });
     } catch (error) {
+      onCall?.([]);
       return { found: true, results, error };
     }
+    onCall?.(r.results ?? []);
     if (!r.found) return { found: false, results };
     results.push(...(r.results ?? []));
   }

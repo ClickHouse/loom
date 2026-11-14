@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../test/axe";
 import { cleanup, render, screen, waitFor } from "../test/rtl";
+import type { KnowledgeMoveResult } from "../api";
 import { MoveDocumentsDialog, moveSummary, type MovePlace } from "./MoveDocumentsDialog";
 
 const api = vi.hoisted(() => ({ moveKnowledge: vi.fn() }));
@@ -20,6 +21,18 @@ const PLACES: MovePlace[] = [
   { namespace: "col-eng", label: "Engineering", depth: 0, kind: "collection" },
   { namespace: "col-storage", label: "Storage", depth: 1, kind: "collection" },
 ];
+
+/** `moveKnowledge` answering `value`, each call's answers handed to `onCall` first. */
+function answers(value: { found: boolean; results: KnowledgeMoveResult[]; error?: unknown }) {
+  api.moveKnowledge.mockImplementation(
+    async (_id: unknown, _to: unknown, _uris: unknown, _s: unknown, onCall?: (r: KnowledgeMoveResult[]) => void) => {
+      // The calls before a failed one answered what moved; the failed one answers nothing.
+      if (value.results.length || value.error === undefined) onCall?.(value.results);
+      if (value.error !== undefined) onCall?.([]);
+      return value;
+    },
+  );
+}
 
 beforeEach(() => {
   api.moveKnowledge.mockReset();
@@ -81,7 +94,7 @@ describe("moveSummary", () => {
 
 describe("MoveDocumentsDialog", () => {
   it("moves to the place picked and says whose sharing they take", async () => {
-    api.moveKnowledge.mockResolvedValue({
+    answers({
       found: true,
       results: [
         { source_uri: "doc://a.md", moved: true, reason: "" },
@@ -99,6 +112,7 @@ describe("MoveDocumentsDialog", () => {
       "col-storage",
       ["doc://a.md", "doc://b.md"],
       expect.any(AbortSignal),
+      expect.any(Function),
     );
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md", "doc://b.md"]));
     expect(toast).toHaveBeenCalledWith("Moved 2 documents to Storage", "ok");
@@ -114,7 +128,7 @@ describe("MoveDocumentsDialog", () => {
   });
 
   it("stays open with the reason when the place cannot take them", async () => {
-    api.moveKnowledge.mockResolvedValue({ found: false, results: [] });
+    answers({ found: false, results: [] });
     const { onMoved, onClose } = dialog();
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
@@ -125,7 +139,7 @@ describe("MoveDocumentsDialog", () => {
   });
 
   it("words a failed call and keeps the pick", async () => {
-    api.moveKnowledge.mockResolvedValue({
+    answers({
       found: true,
       results: [],
       error: new Error("boom"),
@@ -139,7 +153,7 @@ describe("MoveDocumentsDialog", () => {
   });
 
   it("says what moved before a later call failed", async () => {
-    api.moveKnowledge.mockResolvedValue({
+    answers({
       found: true,
       results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
       error: new Error("boom"),
@@ -154,25 +168,52 @@ describe("MoveDocumentsDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
     // Move again sends only what is left.
     expect(screen.getByRole("dialog", { name: "Move 1 document" })).toBeInTheDocument();
-    api.moveKnowledge.mockResolvedValue({ found: true, results: [] });
+    answers({ found: true, results: [] });
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(api.moveKnowledge).toHaveBeenLastCalledWith(
       { org: "acme", namespace: "col-ingest" },
       "col-eng",
       ["doc://b.md"],
       expect.any(AbortSignal),
+      expect.any(Function),
     );
+  });
+
+  it("hands on what each call moved as it lands", async () => {
+    api.moveKnowledge.mockImplementation(
+      async (_id: unknown, _to: unknown, _uris: unknown, _s: unknown, onCall: (r: KnowledgeMoveResult[]) => void) => {
+        onCall([{ source_uri: "doc://a.md", moved: true, reason: "" }]);
+        onCall([{ source_uri: "doc://b.md", moved: true, reason: "" }]);
+        return {
+          found: true,
+          results: [
+            { source_uri: "doc://a.md", moved: true, reason: "" },
+            { source_uri: "doc://b.md", moved: true, reason: "" },
+          ],
+        };
+      },
+    );
+    const { onMoved } = dialog();
+    await pick("Engineering");
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(onMoved).toHaveBeenCalledTimes(2));
+    expect(onMoved.mock.calls).toEqual([[["doc://a.md"]], [["doc://b.md"]]]);
   });
 
   it("stops the calls still to send once it closes mid-move", async () => {
     let signal: AbortSignal | undefined;
     let answer: (v: unknown) => void = () => {};
-    api.moveKnowledge.mockImplementation((_id: unknown, _to: unknown, _uris: unknown, s: AbortSignal) => {
-      signal = s;
-      return new Promise((resolve) => {
-        answer = resolve;
-      });
-    });
+    api.moveKnowledge.mockImplementation(
+      (_id: unknown, _to: unknown, _uris: unknown, s: AbortSignal, onCall: (r: KnowledgeMoveResult[]) => void) => {
+        signal = s;
+        return new Promise((resolve) => {
+          answer = (v) => {
+            onCall((v as { results: KnowledgeMoveResult[] }).results);
+            resolve(v);
+          };
+        });
+      },
+    );
     const { onMoved, onClose, unmount } = dialog();
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
@@ -205,7 +246,7 @@ describe("MoveDocumentsDialog", () => {
   });
 
   it("says what moved before the place closed partway through", async () => {
-    api.moveKnowledge.mockResolvedValue({
+    answers({
       found: false,
       results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
     });
