@@ -21,9 +21,11 @@ schema. These rules keep that safe. The operator procedure is in
    tombstone keeps the values N wrote to N's new columns. This costs a cached lookup
    while every build agrees with the schema, and one extra keyed read per insert while a
    newer column exists.
-   A moved document's row is a new key (its new namespace), so a newer column is filled
-   from that key's newest row, not the source's; its chunks and table rows are copied
-   with `SELECT *` and keep every column.
+   A moved document's row is a new key (its new namespace). A move N-1 makes after N's
+   migration added a `loom.documents` column fills that column from the new key's newest
+   row (a document deleted there, or the column's default), not from the source's: that
+   value is lost for as long as N-1 serves. A move N makes builds the row with every
+   column; its chunks and table rows are copied with `SELECT *` and keep every column.
    - Each process checks `loom._migrations` and the carried tables' metadata time
      every 2 s in the background and then re-reads the column lists.
    - A write that took the lists before the `ALTER` would still drop the column. So

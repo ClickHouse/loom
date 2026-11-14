@@ -550,8 +550,10 @@ nothing was deleted.
 the namespace it goes to, then deletes it where it was, so a cut-off move leaves the
 document in both places and never in neither. Per document, it stores the original and
 the extraction artifact in the new namespace first, outside any claim (an original no row
-names yet is the sweep's, as any upload whose row did not land). Then, under the source's
-claim in both namespaces, taken in sorted order, it reads the document again and refuses
+names yet is the sweep's, as any upload whose row did not land). An original held as a ClickHouse
+row is copied inside ClickHouse; one in the bucket is read and written again under the new
+namespace's place there. Then, under the source's claim in both namespaces, taken in sorted
+order and not waited for (a held source answers `busy` at once), it reads the document again and refuses
 (`busy`) when it changed since the call read it, when a publication of either place may
 still land, or while an ingest job of the source is open (its publish would write the
 document back where it was). It copies the chunks of the document's revision, with their
@@ -562,16 +564,22 @@ before its delete (the same text, author and ingest time where it goes) is only 
 where it was.
 
 Anything that does not land whole, or a write that took either place meanwhile, takes
-back what the move wrote where it goes (its row, under the Postgres authority its commit,
-its chunks and its tables), shielded from a cancel, and that source answers `busy`; the
-other sources of the call still move. The claims cut a document's work off well inside
-their TTL, which a copy inside ClickHouse fits for documents of any size.
+back what the move wrote where it goes, shielded from a cancel, and that source answers
+`busy`; the other sources of the call still move. The take-back deletes its row (under the
+Postgres authority its commit first), retires its chunks under each embedding model they
+were copied under, then deletes them, and deletes its tables: a cancelled `INSERT …
+SELECT` runs on in ClickHouse and may land after the delete, and the retirement keeps what
+lands from serving. The work under the claims is cut off at `_WORK_SHARE` (0.4) of their
+60 s TTL; a document whose copy runs past that is taken back and answers `busy`. A failure
+that is not one source's (a store that does not answer) is raised once every source of
+the call has answered, after the audit row of those that moved.
 
-The erasure ledger is read twice per call: before the first copy, for an erasure that may
+The erasure ledger is read once per call, before the first copy, for an erasure that may
 reach a document where it is (unfinished when it was written) or the place it goes
-(unfinished when the move started), and after the last, for one registered meanwhile. The
-second takes the copy back and answers `erased`; the document then stays deleted where it
-was, and `knowledge.restore` there brings it back unless the erasure reaches it there too.
+(unfinished when the move started), and again for each document after its copy and before
+its delete, for one registered meanwhile. That one takes the copy back and answers
+`erased`, so an `erased` document always stays where it was. Under the Postgres authority
+a delete over a document an erasure removed meanwhile answers `erased` too.
 
 Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's
 row and the delete each commit over the version read, so a write that took the source or

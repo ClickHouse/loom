@@ -129,6 +129,8 @@ export interface KnowledgeMoved {
   found: boolean;
   to_namespace: string;
   results: KnowledgeMoveResult[];
+  /** The failure of a call, after the answers of the calls before it. */
+  error?: unknown;
 }
 
 // The sources one knowledge.move call takes (its `source_uris` max_length).
@@ -136,7 +138,8 @@ export const MOVE_MAX = 50;
 
 /** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were;
  *  sent in calls of at most `MOVE_MAX`, their answers merged. A call that finds the place no
- *  longer writable stops the rest: `found` is false, with the answers before it. */
+ *  longer writable, or that fails, stops the rest: `found` is false, or `error` is set, with
+ *  the answers before it. It never throws. */
 export async function moveKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   to: string,
@@ -145,12 +148,17 @@ export async function moveKnowledge(
   const results: KnowledgeMoveResult[] = [];
   let toNamespace = to;
   for (let i = 0; i < sourceUris.length; i += MOVE_MAX) {
-    const r = await post<KnowledgeMoved>("/v1/knowledge.move", {
-      org: id.org,
-      namespace: id.namespace,
-      to_namespace: to,
-      source_uris: sourceUris.slice(i, i + MOVE_MAX),
-    });
+    let r: KnowledgeMoved;
+    try {
+      r = await post<KnowledgeMoved>("/v1/knowledge.move", {
+        org: id.org,
+        namespace: id.namespace,
+        to_namespace: to,
+        source_uris: sourceUris.slice(i, i + MOVE_MAX),
+      });
+    } catch (error) {
+      return { found: true, to_namespace: toNamespace, results, error };
+    }
     if (!r.found) return { found: false, to_namespace: toNamespace, results };
     toNamespace = r.to_namespace ?? to;
     results.push(...(r.results ?? []));

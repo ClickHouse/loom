@@ -296,9 +296,8 @@ async def unfinished_since(
     """The org's erasures that had not finished by `since_s` (ClickHouse clock, seconds):
     in progress, failed, or completed after `since_s - margin_s`, at most `limit` of
     them. Each row has `erasure_id`, `scope_type`, `scope_value`, `state` and
-    `completed_at`. Read with
-    sequential consistency: a fence on it must see an erasure another replica just
-    registered."""
+    `completed_at`. Read with sequential consistency: a fence on it must see an erasure
+    another replica just registered."""
     ch = ch or _default_client()
     limit_clause = f"LIMIT {int(limit)}" if limit is not None else ""
     with sequential_reads():

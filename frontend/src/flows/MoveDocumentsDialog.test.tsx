@@ -2,7 +2,6 @@
 // and hear how many went and why the rest stayed.
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { cleanup, render, screen, waitFor } from "../test/rtl";
 import { MoveDocumentsDialog, moveSummary, type MovePlace } from "./MoveDocumentsDialog";
@@ -28,7 +27,11 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-function dialog(uris = ["doc://a.md", "doc://b.md"]) {
+function dialog(
+  uris = ["doc://a.md", "doc://b.md"],
+  places = PLACES,
+  placesReading: "loading" | "failed" | null = null,
+) {
   const onMoved = vi.fn();
   const onClose = vi.fn();
   render(
@@ -37,7 +40,8 @@ function dialog(uris = ["doc://a.md", "doc://b.md"]) {
       from="col-ingest"
       fromLabel="Ingest"
       sourceUris={uris}
-      places={PLACES}
+      places={places}
+      placesReading={placesReading}
       onMoved={onMoved}
       onClose={onClose}
     />,
@@ -114,29 +118,51 @@ describe("MoveDocumentsDialog", () => {
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("You can no longer add documents to Engineering.");
-    expect(onMoved).not.toHaveBeenCalled();
+    // The list is read again whatever the answer.
+    expect(onMoved).toHaveBeenCalledWith([]);
     expect(onClose).not.toHaveBeenCalled();
   });
 
   it("words a failed call and keeps the pick", async () => {
-    api.moveKnowledge.mockRejectedValue(new Error("boom"));
-    dialog();
+    api.moveKnowledge.mockResolvedValue({
+      found: true,
+      to_namespace: "col-eng",
+      results: [],
+      error: new Error("boom"),
+    });
+    const { onMoved } = dialog();
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Move" })).toBeEnabled();
+    expect(onMoved).toHaveBeenCalledWith([]);
   });
 
-  it("goes on as after a move when the move committed with only lists behind", async () => {
-    api.moveKnowledge.mockRejectedValue(
-      new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { category: "dependency", retryable: false } }),
-    );
+  it("says what moved before a later call failed", async () => {
+    api.moveKnowledge.mockResolvedValue({
+      found: true,
+      to_namespace: "col-eng",
+      results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
+      error: new Error("boom"),
+    });
     const { onMoved, onClose } = dialog();
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(onMoved).toHaveBeenCalledWith(["doc://a.md", "doc://b.md"]);
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/1 document moved before that\.$/);
+    expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("says the collections are still being read, or could not be, instead of no place", () => {
+    dialog(["doc://a.md"], [], "loading");
+    expect(screen.getByText("Reading the collections…")).toBeInTheDocument();
+    expect(screen.queryByText(/no other place/)).not.toBeInTheDocument();
+    cleanup();
+    dialog(["doc://a.md"], [], "failed");
+    expect(screen.getByText("The collections could not be read, so they are not listed here.")).toBeInTheDocument();
+    cleanup();
+    dialog(["doc://a.md"], []);
+    expect(screen.getByText("There is no other place you can add documents to.")).toBeInTheDocument();
   });
 
   it("says what moved before the place closed partway through", async () => {

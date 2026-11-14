@@ -308,6 +308,25 @@ describe("moveKnowledge", () => {
     expect(r.results.map((x) => x.source_uri)).toEqual(uris);
   });
 
+  it("stops at a call that fails, with the answers before it and the error", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls += 1;
+        if (calls === 2) return new Response(JSON.stringify({ code: "INTERNAL_ERROR", message: "x" }), { status: 500 });
+        const batch = JSON.parse(String(init?.body)).source_uris as string[];
+        const results = batch.map((u) => ({ source_uri: u, moved: true, reason: "" }));
+        return new Response(JSON.stringify({ found: true, to_namespace: "col-b", results }), { status: 200 });
+      }),
+    );
+    const r = await moveKnowledge(id, "col-b", uris);
+    expect(calls).toBe(2);
+    expect(r.found).toBe(true);
+    expect(r.results).toHaveLength(MOVE_MAX);
+    expect(r.error).toBeInstanceOf(ApiError);
+  });
+
   it("stops at a call that finds the place closed, with the answers before it", async () => {
     const sent = moves((batch) => batch[0] !== uris[MOVE_MAX]);
     const r = await moveKnowledge(id, "col-b", uris);

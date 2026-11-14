@@ -92,6 +92,13 @@ async def test_a_moved_document_keeps_its_chunks_original_and_metadata(
             ["runbook"],
         )
         assert (row["has_blob"], row["original_filename"]) == (True, "lane.pdf")
+        # The original is stored again where it went, its bytes copied whole.
+        stored = ch_client.query(
+            "SELECT hex(data) FROM loom.document_blobs WHERE org = {org:String}"
+            " AND namespace = {ns:String}",
+            parameters={"org": ORG, "ns": dst},
+        ).result_rows
+        assert stored == [(b"%PDF-original".hex().upper(),)]
         listed = await a.transport.post(
             "/v1/knowledge.list", {"org": ORG, "namespace": src, "limit": 10}
         )
@@ -180,56 +187,12 @@ async def test_a_move_to_the_same_namespace_is_refused(control_plane_url: str) -
 async def test_a_moved_document_brings_its_tables(control_plane_url: str, ch_client: Any) -> None:
     from loom import Agent
 
-    from server.knowledge.store import datasets as repo
-
     src, dst, uri = _places()
     async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
         await a.knowledge.add(
             content="region,total\nnorth,3\nsouth,4", source_uri=uri, title="sales"
         )
-        [[version]] = ch_client.query(
-            "SELECT version FROM loom.documents FINAL WHERE org = {org:String}"
-            " AND namespace = {ns:String} AND source_uri = {uri:String}",
-            parameters={"org": ORG, "ns": src, "uri": uri},
-        ).result_rows
-        catalog = repo.dataset_row(
-            None,
-            org=ORG,
-            namespace=src,
-            source_uri=uri,
-            dataset_id="ds_sales",
-            doc_version=int(version),
-            snapshot_id=7,
-            revision=1,
-            table_id="t1",
-            position=0,
-            name="sales",
-            sheet="",
-            row_start=1,
-            row_end=3,
-            schema="[]",
-            schema_state="needs_clarification",
-            clarifications="[]",
-            row_count=2,
-            rejected_rows=0,
-            rejected="[]",
-            complete=True,
-            artifact_sha256="",
-            agent="w",
-            user_id="-",
-            session_id="-",
-            actor="",
-            source_class="asserted",
-        )
-        rows = [
-            repo.slot_row(catalog, {"row_id": i, "s1": region, "n1": n}, catalog["created_at"])
-            for i, (region, n) in enumerate([("north", 3), ("south", 4)], start=1)
-        ]
-        for table, written in (("loom.datasets", [catalog]), ("loom.dataset_rows", rows)):
-            ch_client.insert(
-                table, [list(r.values()) for r in written], column_names=list(written[0])
-            )
-
+        _write_table(ch_client, src, uri)
         assert (await _move(a, src, dst, [uri]))["results"][0]["moved"] is True
         got = await a.transport.post(
             "/v1/knowledge.dataset_get",
@@ -244,6 +207,52 @@ async def test_a_moved_document_brings_its_tables(control_plane_url: str, ch_cli
         parameters={"org": ORG, "ns": dst},
     ).result_rows
     assert [tuple(r) for r in rows] == [("north", 3.0), ("south", 4.0)]
+
+
+def _write_table(ch_client: Any, ns: str, uri: str) -> None:
+    """A two-row table published with the source's live document version."""
+    from server.knowledge.store import datasets as repo
+
+    [[version]] = ch_client.query(
+        "SELECT version FROM loom.documents FINAL WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}",
+        parameters={"org": ORG, "ns": ns, "uri": uri},
+    ).result_rows
+    catalog = repo.dataset_row(
+        None,
+        org=ORG,
+        namespace=ns,
+        source_uri=uri,
+        dataset_id="ds_sales",
+        doc_version=int(version),
+        snapshot_id=7,
+        revision=1,
+        table_id="t1",
+        position=0,
+        name="sales",
+        sheet="",
+        row_start=1,
+        row_end=3,
+        schema="[]",
+        schema_state="needs_clarification",
+        clarifications="[]",
+        row_count=2,
+        rejected_rows=0,
+        rejected="[]",
+        complete=True,
+        artifact_sha256="",
+        agent="w",
+        user_id="-",
+        session_id="-",
+        actor="",
+        source_class="asserted",
+    )
+    rows = [
+        repo.slot_row(catalog, {"row_id": i, "s1": region, "n1": n}, catalog["created_at"])
+        for i, (region, n) in enumerate([("north", 3), ("south", 4)], start=1)
+    ]
+    for table, written in (("loom.datasets", [catalog]), ("loom.dataset_rows", rows)):
+        ch_client.insert(table, [list(r.values()) for r in written], column_names=list(written[0]))
 
 
 def _live_rows(ch_client: Any, ns: str, uri: str) -> int:
@@ -404,5 +413,127 @@ async def test_an_erasure_registered_while_it_copied_takes_the_copy_back(
         {"source_uri": uri, "moved": False, "reason": "erased"}
     ]
     assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
-    # Deleted where it was, as a move leaves it: a restore there brings it back.
-    assert _live_rows(ch_client, src, uri) == 0
+    # Taken back before the delete: it stays where it was.
+    assert _live_rows(ch_client, src, uri) == 1
+
+
+def _row(ch_client: Any, ns: str, uri: str) -> dict[str, Any]:
+    """The source's latest document row, every column."""
+    res = ch_client.query(
+        "SELECT * FROM loom.documents FINAL WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}",
+        parameters={"org": ORG, "ns": ns, "uri": uri},
+    )
+    return dict(zip(res.column_names, res.result_rows[0], strict=True))
+
+
+def _vectors(ch_client: Any, ns: str, uri: str, version: int) -> list[tuple[Any, ...]]:
+    return [
+        tuple(r)
+        for r in ch_client.query(
+            "SELECT chunk_idx, embedding_model, embed_input_sha256, embedding FROM loom.chunks"
+            " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
+            " AND doc_version = {v:UInt64} ORDER BY chunk_idx, embedding_model",
+            parameters={"org": ORG, "ns": ns, "uri": uri, "v": version},
+        ).result_rows
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_moved_row_is_the_documents_but_for_its_place_and_its_mover(
+    control_plane_url: str, ch_client: Any, in_process: Any
+) -> None:
+    from server.memory.domain.provenance import pipeline_actor_var
+
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    before = _row(ch_client, src, uri)
+    vectors = _vectors(ch_client, src, uri, int(before["version"]))
+    mover = pipeline_actor_var.set("service:mover")
+    try:
+        assert await _move_here(move, src, dst, uri) == [
+            {"source_uri": uri, "moved": True, "reason": ""}
+        ]
+    finally:
+        pipeline_actor_var.reset(mover)
+    after = _row(ch_client, dst, uri)
+    changed = {"namespace", "doc_id", "version", "revision", "actor"}
+    assert {c: after[c] for c in after if c not in changed} == {
+        c: before[c] for c in before if c not in changed
+    }
+    assert (after["namespace"], after["actor"], after["revision"]) == (dst, "service:mover", 1)
+    assert after["doc_id"] != before["doc_id"] and after["version"] > before["version"]
+    # The vectors are the ones stored: nothing is embedded again.
+    assert _vectors(ch_client, dst, uri, int(after["version"])) == vectors
+
+
+@pytest.mark.asyncio
+async def test_a_copy_that_lands_after_its_take_back_does_not_serve(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    real_take_back = move._take_back
+    late: list[Any] = []
+
+    async def take_back_then_land(copy: Any) -> None:
+        await real_take_back(copy)
+        # A cancelled INSERT … SELECT that ClickHouse finishes after the take-back.
+        doc = copy.doc
+        late.append(
+            await move.chunks_repo.copy_revision(
+                doc.org,
+                doc.namespace,
+                doc.source_uri,
+                revision=doc.revision,
+                upto_version=doc.version,
+                to_namespace=copy.dst,
+                to_version=copy.version,
+                to_revision=1,
+            )
+        )
+
+    async def refused(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(move, "_take_back", take_back_then_land)
+    monkeypatch.setattr(move, "_delete_source", refused)
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": False, "reason": "busy"}
+    ]
+    assert late == [True]  # the late rows are there, retired
+    assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
+    assert _live_rows(ch_client, src, uri) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_table_that_did_not_copy_whole_leaves_nothing_where_it_goes(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    from loom import Agent
+
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content="region,total\nnorth,3", source_uri=uri, title="sales")
+    _write_table(ch_client, src, uri)
+    real = move.datasets_repo.copy_snapshot
+
+    async def short(*args: Any, **kwargs: Any) -> bool:
+        await real(*args, **kwargs)
+        return False
+
+    monkeypatch.setattr(move.datasets_repo, "copy_snapshot", short)
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": False, "reason": "busy"}
+    ]
+    assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
+    for table in ("loom.datasets", "loom.dataset_rows"):
+        [[n]] = ch_client.query(
+            f"SELECT count() FROM {table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
+            parameters={"org": ORG, "ns": dst},
+        ).result_rows
+        assert n == 0, table
+    assert _live_rows(ch_client, src, uri) == 1

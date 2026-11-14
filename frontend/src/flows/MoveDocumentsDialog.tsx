@@ -5,8 +5,7 @@ import { moveKnowledge, type KnowledgeMoveResult, type MoveRefusal } from "../ap
 import { toast } from "../components/Toast";
 import { Alert } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { committedAnyway, humanizeError } from "../lib/errorWords";
-import { isPublicationPending } from "../lib/errors";
+import { humanizeError } from "../lib/errorWords";
 import { fmtInt } from "../lib/format";
 
 /** A place documents can go to: a collection the person writes, their own files, or the
@@ -57,6 +56,7 @@ export function MoveDocumentsDialog({
   fromLabel,
   sourceUris,
   places,
+  placesReading = null,
   onMoved,
   onClose,
 }: {
@@ -67,7 +67,10 @@ export function MoveDocumentsDialog({
   sourceUris: string[];
   /** Where they can go, in tree order; `from` is left out by the caller. */
   places: MovePlace[];
-  /** After the call answered: the sources that moved. */
+  /** The collections are still being read, or their read failed: `places` may lack them. */
+  placesReading?: "loading" | "failed" | null;
+  /** After every call, whatever it answered (a failed one may have moved some): the
+   *  sources that moved. */
   onMoved: (moved: string[]) => void;
   onClose: () => void;
 }) {
@@ -81,32 +84,20 @@ export function MoveDocumentsDialog({
     if (!target) return;
     setBusy(true);
     setError(null);
-    try {
-      const r = await moveKnowledge({ org, namespace: from }, target.namespace, sourceUris);
-      const moved = r.results.filter((x) => x.moved).map((x) => x.source_uri);
-      if (!r.found) {
-        // A selection sent in several calls may have moved some before the place closed.
-        const before = moved.length ? ` ${documents(moved.length)} moved before that.` : "";
-        setError(`You can no longer add documents to ${target.label}.${before}`);
-        if (moved.length) onMoved(moved);
-        setBusy(false);
-        return;
-      }
+    const r = await moveKnowledge({ org, namespace: from }, target.namespace, sourceUris);
+    const moved = r.results.filter((x) => x.moved).map((x) => x.source_uri);
+    onMoved(moved);
+    if (r.found && r.error === undefined) {
       const summary = moveSummary(r.results, target.label);
       toast(summary.text, summary.ok ? "ok" : "info");
-      onMoved(moved);
       onClose();
-    } catch (e) {
-      // Committed, with only lists and search behind: on as after a move.
-      if (isPublicationPending(e)) {
-        committedAnyway("Move", e);
-        onMoved(sourceUris);
-        onClose();
-        return;
-      }
-      setError(humanizeError(e));
-      setBusy(false);
+      return;
     }
+    // A selection sent in several calls may have moved some before the stop.
+    const before = moved.length ? ` ${documents(moved.length)} moved before that.` : "";
+    const why = r.found ? humanizeError(r.error) : `You can no longer add documents to ${target.label}.`;
+    setError(`${why}${before}`);
+    setBusy(false);
   };
 
   return (
@@ -129,7 +120,11 @@ export function MoveDocumentsDialog({
             ))}
           </Select>
           {target && <p className="text-sm text-text-muted">{sharing(target)}</p>}
-          {places.length === 0 && (
+          {placesReading === "loading" && <p className="text-sm text-text-muted">Reading the collections…</p>}
+          {placesReading === "failed" && (
+            <p className="text-sm text-text-muted">The collections could not be read, so they are not listed here.</p>
+          )}
+          {places.length === 0 && !placesReading && (
             <p className="text-sm text-text-muted">There is no other place you can add documents to.</p>
           )}
           {error && <Alert role="alert" state="danger" text={error} />}
