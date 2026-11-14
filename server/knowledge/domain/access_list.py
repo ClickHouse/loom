@@ -57,23 +57,32 @@ def from_json(text: str) -> AccessList:
         return UNREAD
     if set(data) - {f.name for f in fields(AccessList)}:
         return UNREAD  # a key a later build added may narrow the list
-    emails, groups, domains = (data.get(k, []) for k in ("emails", "groups", "domains"))
-    owner, anyone = data.get("owner", ""), data.get("anyone", False)
+    emails = data.get("emails", [])
+    groups = data.get("groups", [])
+    domains = data.get("domains", [])
+    owner = data.get("owner", "")
+    anyone = data.get("anyone", False)
     if not (
         all(_strings(v) for v in (emails, groups, domains))
         and isinstance(owner, str)
         and isinstance(anyone, bool)
     ):
         return UNREAD
-    emails, groups, domains = _names(emails), _names(groups), _names(domains)
-    return AccessList(emails=emails, owner=owner, groups=groups, domains=domains, anyone=anyone)
+    return AccessList(
+        emails=_names(emails),
+        owner=owner,
+        groups=_names(groups),
+        domains=_names(domains),
+        anyone=anyone,
+    )
 
 
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:
     """The list a `shared` source reads from a Drive file's `permissions`; `unread` when
     the store gave none. A deleted permission (its address may now belong to someone
     else), a link-only share (one that lets a holder of the link open the file, not find
-    it), and a type or role this module does not know admit nobody."""
+    it), a grant to one view of the file only (`view`), and a type or role this module
+    does not know admit nobody."""
     if permissions is None:
         return UNREAD
     emails: list[Any] = []
@@ -81,7 +90,7 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
     domains: list[Any] = []
     anyone = False
     for p in permissions:
-        if p.get("deleted") or p.get("role") not in _DRIVE_ROLES:
+        if p.get("deleted") or p.get("view") or p.get("role") not in _DRIVE_ROLES:
             continue
         kind = p.get("type")
         if kind == "user":

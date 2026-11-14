@@ -55,6 +55,8 @@ def test_every_role_a_reader_and_group_grants_and_discoverable_shares_count() ->
         _perm("user", emailAddress="  "),
         _perm("user", emailAddress=123),
         _perm("user", role="published_reader", emailAddress="x@example.com", view="published"),
+        _perm("user", role="reader", emailAddress="x@example.com", view="published"),
+        _perm("anyone", role="reader", allowFileDiscovery=True, view="published"),
     ],
 )
 def test_a_permission_that_cannot_be_trusted_admits_nobody(permission: dict[str, Any]) -> None:
