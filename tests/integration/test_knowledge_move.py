@@ -540,7 +540,7 @@ async def test_a_table_that_did_not_copy_whole_leaves_nothing_where_it_goes(
 
 
 @pytest.mark.asyncio
-async def test_a_delete_that_fails_after_its_tombstone_leaves_the_copy_live(
+async def test_a_delete_whose_table_cleanup_fails_after_its_tombstone_is_a_move(
     control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     move = in_process
@@ -552,9 +552,10 @@ async def test_a_delete_that_fails_after_its_tombstone_leaves_the_copy_live(
         raise RuntimeError("the datasets delete failed")
 
     monkeypatch.setattr(move.datasets_repo, "forget_published", failed)
-    with pytest.raises(RuntimeError):
-        await _move_here(move, src, dst, uri)
-    # Deleted where it was, so the copy is the document now: it stays.
+    # Deleted where it was, so the copy is the document now: moved, and it stays.
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": True, "reason": ""}
+    ]
     assert _live_rows(ch_client, src, uri) == 0
     assert _live_rows(ch_client, dst, uri) == 1 and _live(ch_client, dst, uri) == before
 
@@ -587,3 +588,45 @@ async def test_a_retry_onto_a_copy_with_its_chunks_gone_copies_it_again(
         {"source_uri": uri, "moved": True, "reason": ""}
     ]
     assert _live(ch_client, dst, uri) == before and _live_rows(ch_client, src, uri) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_retry_onto_a_copy_with_its_chunks_and_tables_gone_copies_it_again(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loom import Agent
+
+    move = in_process
+    src, dst, uri = _places()
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content="region,total\nnorth,3", source_uri=uri, title="sales")
+    _write_table(ch_client, src, uri)
+    before = _live(ch_client, src, uri)
+
+    async def cut_off(doc: Any) -> None:
+        raise RuntimeError("cut off before the delete")
+
+    with monkeypatch.context() as m:
+        m.setattr(move, "_delete_source", cut_off)
+        with pytest.raises(RuntimeError):
+            await _move_here(move, src, dst, uri)
+    # What a row insert that landed after its take-back leaves: the row, no chunks, no
+    # catalog, no table rows.
+    for table in ("loom.chunks", "loom.datasets", "loom.dataset_rows"):
+        ch_client.command(
+            f"DELETE FROM {table} WHERE org = {{org:String}} AND namespace = {{ns:String}}"
+            " SETTINGS lightweight_deletes_sync = 2",
+            parameters={"org": ORG, "ns": dst},
+        )
+    assert _live_rows(ch_client, dst, uri) == 1
+
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": True, "reason": ""}
+    ]
+    assert _live(ch_client, dst, uri) == before and _live_rows(ch_client, src, uri) == 0
+    rows = ch_client.query(
+        "SELECT s1 FROM loom.dataset_rows WHERE org = {org:String} AND namespace = {ns:String}"
+        " ORDER BY row_id",
+        parameters={"org": ORG, "ns": dst},
+    ).result_rows
+    assert [r[0] for r in rows] == ["north", "south"]

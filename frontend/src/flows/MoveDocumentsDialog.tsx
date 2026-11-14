@@ -23,7 +23,7 @@ const STAYED: Record<MoveRefusal, string> = {
   not_found: "no longer here",
   exists: "a document with the same source is already there",
   synced: "kept here by a document source",
-  busy: "being written right now; try again",
+  busy: "busy, or cut off partway; moving it again finishes it",
   erased: "an erasure is under way",
 };
 

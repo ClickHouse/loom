@@ -621,3 +621,12 @@ async def test_a_second_cancel_during_the_take_back_still_waits_for_it(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert real_copy["events"][-3:] == ["taken back", "release src", "release dst"]
+
+
+async def test_a_copy_there_with_its_tables_gone_is_copied_again(store: dict[str, Any]) -> None:
+    # A take-back removes every table; a cut-off row insert that landed after it has none.
+    store["dst"][URI] = _doc("dst", version=20)
+    table = {"dataset_id": "t", "schema": "[]", "schema_state": "draft", "clarifications": "[]"}
+    store["tables"]["src"] = [{**table, "row_count": 2}]
+    assert _answers(await _run()) == [(URI, True, "")]
+    assert store["copied"] == [URI] and store["deleted"] == [URI]

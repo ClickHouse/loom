@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC
-from typing import Any
+from typing import Any, Literal
 
 from server.auth.context import current_auth
 from server.auth.gateway import personal_namespace
@@ -161,12 +161,14 @@ async def _move(
             return "erased"
         there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
         # A copy is written over a deleted document, none, or a copy an earlier move left
-        # incomplete (a cut-off row insert can land after its take-back, with no chunks).
+        # incomplete (a cut-off row insert can land after its take-back, with no chunks
+        # and no tables).
         copying = True
         if there is not None and _live(there):
-            if not await _earlier_move(doc, there):
+            state = await _earlier_copy(doc, there)
+            if state == "other":
                 return "exists"
-            copying = not await _copied_whole(doc, there)
+            copying = state == "incomplete"
         # An original no row names yet is the sweep's, as any upload whose row did not land.
         originals = await _store_originals(doc, dst) if copying else {}
         first, second = sorted((src, dst))
@@ -242,34 +244,42 @@ async def _claimed(
     return ""
 
 
-async def _earlier_move(doc: DocumentRow, there: DocumentRow) -> bool:
-    """Whether the live row where it goes is this document's copy, left by a move that
-    stopped before its delete: the same text, title, description, tags, metadata, author
-    and ingest time, and the same tables. An edit of either since makes it another."""
+async def _earlier_copy(
+    doc: DocumentRow, there: DocumentRow
+) -> Literal["whole", "incomplete", "other"]:
+    """What the live row where it goes is: this document's copy left by a move that
+    stopped before its delete (the same text, title, description, tags, metadata, author
+    and ingest time), whole or incomplete, or another document.
+
+    A take-back removes every chunk and every table of a copy, so a copy with fewer live
+    chunks, or with no tables where the document has some, is incomplete: it is written
+    over. Tables there that differ from the document's otherwise were changed on one
+    side since (an approval, a clarification), which cannot be told apart from the other
+    side's: another document."""
     fields = ("content_sha256", "title", "description", "tags", "metadata", "user_id")
     if any(getattr(there, f) != getattr(doc, f) for f in fields):
-        return False
+        return "other"
     if there.ingested_at != doc.ingested_at:
-        return False
-    return _table_shapes(
+        return "other"
+    mine = _table_shapes(
         await datasets_repo.at_version(doc.org, doc.namespace, doc.source_uri, doc.version)
-    ) == _table_shapes(
+    )
+    copied = _table_shapes(
         await datasets_repo.at_version(there.org, there.namespace, there.source_uri, there.version)
     )
-
-
-async def _copied_whole(doc: DocumentRow, there: DocumentRow) -> bool:
-    """Whether `there` serves as many live chunks as `doc`: the copy's insert of its row
-    may have landed after its take-back had deleted its chunks."""
-    return await chunks_repo.count_revision(
-        doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
-    ) == await chunks_repo.count_revision(
+    if copied and copied != mine:
+        return "other"
+    chunks_there = await chunks_repo.count_revision(
         there.org,
         there.namespace,
         there.source_uri,
         revision=there.revision,
         upto_version=there.version,
     )
+    chunks_here = await chunks_repo.count_revision(
+        doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
+    )
+    return "whole" if copied == mine and chunks_there == chunks_here else "incomplete"
 
 
 def _table_shapes(catalogs: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
@@ -366,7 +376,9 @@ async def _head_is(doc: DocumentRow) -> bool:
 
 async def _delete_source(doc: DocumentRow) -> None:
     """Delete `doc` where it was, as `knowledge.delete` does, over its own version (under
-    the Postgres authority, HeadMoved when a write took the source since)."""
+    the Postgres authority, HeadMoved when a write took the source since). Once its
+    tombstone is in, the move is made: a failure to delete its tables then is logged,
+    and a delete of the source settles them."""
     org, ns, uri = doc.org, doc.namespace, doc.source_uri
     try:
         await documents_repo.insert_one(
@@ -378,7 +390,10 @@ async def _delete_source(doc: DocumentRow) -> None:
         )
     except PublicationPending:
         pass  # committed: the delivery worker publishes it
-    await datasets_repo.forget_published(org, ns, {uri: doc.version})
+    try:
+        await datasets_repo.forget_published(org, ns, {uri: doc.version})
+    except Exception as e:  # the document is deleted: the move is made, whatever this says
+        log.warning("knowledge.move: the tables of a moved %s stay where it was", uri, exc_info=e)
 
 
 async def _taken_back(copy: _Copy) -> None:

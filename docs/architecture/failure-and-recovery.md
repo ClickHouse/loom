@@ -556,35 +556,40 @@ any upload whose row did not land). An original held as a ClickHouse row is copi
 ClickHouse; one in the bucket, or one moved there meanwhile, is read and written again
 under the new namespace's place there.
 
-Then, under the source's claim in both namespaces, taken in sorted order and not waited
-for (a held source answers `busy` at once), it refuses (`busy`) when either place changed
-since it read them, when a publication of either place may still land, or while an
-ingest job of either is open (its publish would write the document back where it was, or
-over the copy). It copies the chunks of the document's revision, with their vectors,
-inside ClickHouse (`INSERT … SELECT`, every version the row serves: a metadata edit leaves
-the chunks at their own version), then the tables, then the row, and deletes the source
-over the version it read. A copy left by an earlier move that stopped before its delete
-(the same text, title, description, tags, metadata, author, ingest time and tables where
-it goes) is not written again when it serves as many live chunks as the source: only the
-source is deleted. One with fewer (a cancelled row insert that landed after its
-take-back, which leaves the row with no chunks) is written over, as a deleted document
-is, before the source is deleted. An edit of either since makes it another document,
-which answers `exists`.
+Then, under the source's claim in both namespaces, taken in sorted order and not waited for
+(a held source answers `busy` at once), it refuses (`busy`) when either place changed since
+it read them, when a publication of either place may still land, or while an ingest job of
+either is open (its publish would write the document back where it was, or over the copy).
+It copies the chunks of the document's revision, with their vectors, inside ClickHouse
+(`INSERT … SELECT`, every version the row serves: a metadata edit leaves the chunks at their
+own version), then the tables, then the row, and deletes the source over the version it
+read. A copy left by an earlier move that stopped before its delete (the same text, title,
+description, tags, metadata, author and ingest time where it goes) is not written again when
+it serves as many live chunks as the source and the same tables: only the source is deleted.
+One with fewer chunks, or with no tables where the source has some (a cancelled row insert
+can land after its take-back, which leaves the row alone), is written over, as a deleted
+document is, before the source is deleted. Tables there that differ otherwise were changed
+on one side since (an approval, a clarification), which cannot be told from a change on the
+other: that copy, like one whose text or metadata was edited, is another document and
+answers `exists`.
 
 Anything that does not land whole, or a write that took either place before the delete,
-takes back what the move wrote where it goes, and that source answers `busy`. The
-take-back runs to its end under the claims, however often the request is cancelled
-meanwhile (the cancel is raised once it is done), so no retry finds a half-removed copy; the other sources of the call still move. The take-back deletes its row
-(under the Postgres authority its commit first), retires its chunks under each embedding
-model they were copied under, then deletes them, and deletes its tables: a cancelled
-`INSERT … SELECT` runs on in ClickHouse and may land after the delete, and the retirement
-keeps what lands from serving. The work under the claims is cut off at `_WORK_SHARE` (0.4)
-of their 60 s TTL; a document whose copy runs past that is taken back and answers `busy`.
-Once the delete has begun, a failure (a cut-off, a lost answer, the datasets delete after
-the tombstone) may follow the tombstone, so the copy stays: the document is in both places
-at worst, and a retry finds the copy and only deletes the source. A failure that is not
-one source's (a store that does not answer) is raised once every source of the call has
-answered, after the audit row of those that moved.
+takes back what the move wrote where it goes, and that source answers `busy`. The take-back
+runs to its end under the claims, however often the request is cancelled meanwhile (the
+cancel is raised once it is done), so no retry finds a half-removed copy; the other sources
+of the call still move. The take-back deletes its row (under the Postgres authority its
+commit first), retires its chunks under each embedding model they were copied under, then
+deletes them, and deletes its tables: a cancelled `INSERT … SELECT` runs on in ClickHouse
+and may land after the delete, and the retirement keeps what lands from serving. The work
+under the claims is cut off at `_WORK_SHARE` (0.4) of their 60 s TTL; a document whose copy
+runs past that is taken back and answers `busy`. Once the delete has begun, a failure (a
+cut-off, which answers `busy`, or a lost answer, which fails the call) may follow the
+tombstone, so the copy stays: the document is in both places, or only where it goes, and a
+retry finds the copy and only deletes the source, or answers `not_found`. Once the tombstone
+is in, the move is made: a failure to delete the source's tables is logged, and a later
+delete of the source settles them. A failure that is not one source's (a store that does not
+answer) is raised once every source of the call has answered, after the audit row of those
+that moved.
 
 The erasure ledger is read once per call, before the first copy, for an erasure that may
 reach a document where it is (unfinished when it was written) or the place it goes
