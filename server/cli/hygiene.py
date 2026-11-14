@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, run_connected
+from server.cli._ch import dry_run_orgs, reads, run_connected, writes
 from server.core.error_summary import error_summary
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 
@@ -95,7 +95,7 @@ def _cmd_drops(args: argparse.Namespace) -> int:
         print(_format_drops(rows, namespace=args.namespace, hours=int(args.hours)))
         return 0
 
-    return run_connected(_run, org_free="reads")
+    return run_connected(_run, org_free=reads("reads"))
 
 
 # ----------------------------------------------------------------------
@@ -496,7 +496,9 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         return await _re_verify_run(ch, args)
 
     # --erase files purges for rows already in this cell, which stay erasable.
-    return run_connected(_run, org_free="re-verifies and files erasures of this cell's rows")
+    return run_connected(
+        _run, org_free=writes("re-verifies and files erasures of this cell's rows")
+    )
 
 
 def _utc_instant(text: str) -> datetime:

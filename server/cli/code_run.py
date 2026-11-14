@@ -11,7 +11,7 @@ import time
 from collections.abc import Coroutine, Iterator
 from typing import Any
 
-from server.cli._ch import connect_declared, disconnect
+from server.cli._ch import connect_declared, disconnect, reads, writes
 from server.cli._proc import TERMINATED_EXIT, Terminated, cancel_on_sigterm
 from server.code.app.index.repo_modes import repo_umask
 
@@ -120,7 +120,7 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
         from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE, refresh_db_repos
         from server.code.domain.index.repos import RegistryUnread
 
-        await connect_declared(get_client(), org_free="reads the repository registry")
+        await connect_declared(get_client(), org_free=reads("reads the repository registry"))
         async with model_command():
             # Never raises; while it has never succeeded, `configured_repos` refuses.
             await refresh_db_repos(force=True)
@@ -132,7 +132,7 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
             finally:
                 # Some native commands close their own client. Reopen it for
                 # buffered-write drain/retirement before leaving enrollment.
-                await connect_declared(get_client(), org_free="drains the buffered writes")
+                await connect_declared(get_client(), org_free=writes("drains the buffered writes"))
     finally:
         if not started and asyncio.iscoroutine(coro):
             coro.close()

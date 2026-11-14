@@ -65,6 +65,135 @@ def test_every_connect_declares_the_orgs_it_writes() -> None:
     assert not undeclared, f"declare orgs= or org_free= on: {undeclared}"
 
 
+# What an `org_free=` may be: a typed value (`reads`, `writes`, `revokes`), one a helper
+# picks per subcommand, a conditional between those and None, or a parameter passed on.
+_KINDS = {"reads", "writes", "revokes"}
+_PICKERS = {"_org_free"}
+
+
+def _typed(node: ast.expr) -> bool:
+    if isinstance(node, ast.Call):
+        return _name(node) in _KINDS | _PICKERS
+    if isinstance(node, ast.IfExp):
+        return all(
+            _typed(b) or (isinstance(b, ast.Constant) and b.value is None)
+            for b in (node.body, node.orelse)
+        )
+    return isinstance(node, ast.Name) and node.id == "org_free"
+
+
+def test_every_org_free_connect_says_whether_it_reads_writes_or_revokes() -> None:
+    """A `write` or `revocation` is gated on the cell's `first` row; a `read` is not
+    (docs/architecture/cells.md, "The CLI declares its orgs")."""
+    untyped = []
+    for path in _sources():
+        for call in _calls(ast.parse(path.read_text())):
+            if _name(call) not in _CONNECTS:
+                continue
+            for k in call.keywords:
+                if k.arg == "org_free" and not _typed(k.value):
+                    untyped.append(f"{path.relative_to(ROOT)}:{call.lineno}")
+    assert not untyped, f"pass reads(...), writes(...) or revokes(...) on: {untyped}"
+
+
+def test_each_signing_key_subcommand_has_its_own_kind() -> None:
+    from server.cli import signing_keys
+
+    kinds = {c: signing_keys._org_free(c).kind for c in ("list", "retire", "rotate", "record-root")}
+    assert kinds == {
+        "list": "read",
+        "retire": "revocation",
+        "rotate": "write",
+        "record-root": "write",
+    }
+
+
+def _cell_set(monkeypatch: pytest.MonkeyPatch, answer: Any) -> None:
+    """LOOM_CELL set under the Postgres authority, the state read answering `answer`
+    (a (state, cell) pair, or an exception it raises)."""
+
+    async def _read() -> tuple[str, str]:
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(_ch, "_read_state", _read)
+
+
+@pytest.mark.parametrize("free", [_ch.writes("w"), _ch.revokes("r")])
+def test_a_write_or_revocation_on_another_cells_stores_refuses(
+    monkeypatch: pytest.MonkeyPatch, free: _ch.OrgFree
+) -> None:
+    _cell_set(monkeypatch, ("enforced", "us-1"))
+    with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1', not LOOM_CELL='eu-1'"):
+        asyncio.run(_ch.check_org_free(free))
+
+
+@pytest.mark.parametrize(
+    "answer", [("enforced", "eu-1"), ("recording", "eu-1"), ("open", ""), ("partial", "")]
+)
+def test_a_write_on_its_own_cell_or_one_not_prepared_yet_runs(
+    monkeypatch: pytest.MonkeyPatch, answer: tuple[str, str]
+) -> None:
+    """Its own `first` row passes; no row, or tables not migrated yet, passes too, so a
+    later cell runs these before it is prepared."""
+    _cell_set(monkeypatch, answer)
+    asyncio.run(_ch.check_org_free(_ch.writes("w")))
+
+
+def test_a_read_is_not_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _cell_set(monkeypatch, AssertionError("read"))
+    asyncio.run(_ch.check_org_free(_ch.reads("r")))
+
+
+def test_a_write_refuses_when_the_state_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import pg as pg_mod
+
+    down = pg_mod.PostgresUnavailableError("Postgres is unavailable")
+    _cell_set(monkeypatch, down)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+        asyncio.run(_ch.check_org_free(_ch.writes("w")))
+
+
+def test_a_revocation_runs_through_an_outage_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.core import pg as pg_mod
+
+    _cell_set(monkeypatch, pg_mod.PostgresUnavailableError("Postgres is unavailable"))
+    asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+    assert "state was not checked" in capsys.readouterr().err
+    _cell_set(monkeypatch, TimeoutError())
+    asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+
+
+def test_a_revocation_refuses_on_a_missing_grant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only an outage lets a revocation through; any other error refuses."""
+    denied = Exception("permission denied for table cell_first")
+    denied.sqlstate = "42501"  # type: ignore[attr-defined]
+    _cell_set(monkeypatch, denied)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read .*permission denied"):
+        asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+
+
+def test_an_org_free_connect_runs_its_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    async def _gate(free: _ch.OrgFree) -> None:
+        seen.append(free.kind)
+
+    monkeypatch.setattr(_ch, "check_org_free", _gate)
+    monkeypatch.setattr(settings, "cell", "")
+
+    class _Client:
+        connected = True
+
+    asyncio.run(_ch.connect_declared(_Client(), org_free=_ch.writes("w")))
+    assert seen == ["write"]
+
+
 def test_no_cli_command_connects_outside_the_one_module() -> None:
     stray = []
     for path in sorted((ROOT / "server" / "cli").glob("*.py")):
@@ -124,11 +253,11 @@ def test_a_command_with_a_dry_run_declares_no_org_on_it() -> None:
 
 def test_a_connect_that_declares_nothing_is_refused() -> None:
     with pytest.raises(TypeError, match="declares the orgs"):
-        _ch._declared(None, "")
+        _ch._declared(None, None)
     # A declared but unset org (an optional --org) names none, and checks nothing.
-    assert _ch._declared((None, ""), "") == ()
-    assert _ch._declared(("acme", None, ""), "") == ("acme",)
-    assert _ch._declared(None, "the cell's settings") == ()
+    assert _ch._declared((None, ""), None) == ()
+    assert _ch._declared(("acme", None, ""), None) == ("acme",)
+    assert _ch._declared(None, _ch.writes("the cell's settings")) == ()
 
 
 def test_outside_a_cell_nothing_is_checked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,7 +435,7 @@ def test_an_org_declaring_command_checks_its_deployment_cell_or_not(
 
     asyncio.run(_ch.connect_declared(_Client(), orgs=("acme",)))
     assert checked == [1]
-    asyncio.run(_ch.connect_declared(_Client(), org_free="reads"))
+    asyncio.run(_ch.connect_declared(_Client(), org_free=_ch.reads("reads")))
     assert checked == [1]
 
 
@@ -426,7 +555,7 @@ def test_a_connected_client_is_not_connected_again(monkeypatch: pytest.MonkeyPat
         async def connect(self) -> None:
             connects.append(1)
 
-    asyncio.run(_ch.connect_declared(_Client(), org_free="reads"))
+    asyncio.run(_ch.connect_declared(_Client(), org_free=_ch.reads("reads")))
     assert connects == []
 
 

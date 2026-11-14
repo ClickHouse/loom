@@ -13,6 +13,8 @@ import argparse
 import sys
 from typing import Any
 
+from server.cli._ch import writes
+
 
 def _cmd_retire(args: argparse.Namespace) -> int:
     """Retire a provider participant row whose process died without shutting
@@ -39,7 +41,7 @@ def _cmd_retire(args: argparse.Namespace) -> int:
 
         return await retire_participant(participant, ch=ch)
 
-    outcome = run_connected(_go, org_free="a participant row of this cell")
+    outcome = run_connected(_go, org_free=writes("a participant row of this cell"))
     if outcome == "absent":
         print(f"  ✗ no live participant {participant}", file=sys.stderr)
         return 1

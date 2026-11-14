@@ -13,7 +13,7 @@ import sys
 import time
 from typing import Any
 
-from server.cli._ch import connect_code_plane, connect_declared
+from server.cli._ch import connect_code_plane, connect_declared, reads, writes
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 log = logging.getLogger("loom.cli.code")
@@ -84,7 +84,7 @@ async def _export_pairs(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await connect_declared(get_client(), org_free="reads")
+    await connect_declared(get_client(), org_free=reads("reads"))
     org, ns = _identity(args)
     res = await export_pairs(CodeRepo(get_client()), org, ns, days=args.days, out_path=args.out)
     print(
@@ -106,7 +106,7 @@ async def _reconcile(args: argparse.Namespace) -> int:
     if args.heal:
         await connect_declared(get_client(), orgs=(cfg.org,))
     else:
-        await connect_declared(get_client(), org_free="reads")
+        await connect_declared(get_client(), org_free=reads("reads"))
     repo = CodeRepo()
     if not args.no_fetch:
         await gitrepo.fetch(cfg.git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
@@ -248,7 +248,9 @@ async def _compact(args: argparse.Namespace) -> int:
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    await connect_declared(get_client(), org_free="optimizes whole code tables, no org's rows")
+    await connect_declared(
+        get_client(), org_free=writes("optimizes whole code tables, no org's rows")
+    )
     ch = get_client()
     min_ratio = args.min_ratio if args.min_ratio is not None else settings.code_compact_min_ratio
     rc = 0
@@ -550,7 +552,7 @@ async def _export_matrix(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await connect_declared(get_client(), org_free="reads")
+    await connect_declared(get_client(), org_free=reads("reads"))
     org, ns = _identity(args)
     repo = CodeRepo()
     state = await repo.all_state(org, ns)
@@ -592,7 +594,7 @@ async def _lint_instructions(args: argparse.Namespace) -> int:
         from server.code.store.index import CodeRepo
         from server.core.ch import get_client
 
-        await connect_declared(get_client(), org_free="reads")
+        await connect_declared(get_client(), org_free=reads("reads"))
         repo = CodeRepo()
     report = await lint_repo(
         cfg,
@@ -612,7 +614,7 @@ async def _stats(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await connect_declared(get_client(), org_free="reads")
+    await connect_declared(get_client(), org_free=reads("reads"))
     org, ns = _identity(args)
     repo = CodeRepo()
     state = await repo.all_state(org, ns)

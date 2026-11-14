@@ -11,7 +11,7 @@ import socket
 import sys
 from typing import Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import run_connected, writes
 
 
 def _cmd_publish(args: argparse.Namespace) -> int:
@@ -52,7 +52,7 @@ def _cmd_publish(args: argparse.Namespace) -> int:
         print("✓ published")
         return 0
 
-    return run_connected(_go, org_free="the deployment's published configuration")
+    return run_connected(_go, org_free=writes("the deployment's published configuration"))
 
 
 def register_deployment_cli(sub: Any) -> None:

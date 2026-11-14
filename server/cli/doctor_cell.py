@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from server.cli._ch import reads
 from server.cli.doctor import FAIL, PASS, WARN
 
 # A doctor run never hangs on a cell's stores: each statement, and each session's connect
@@ -166,7 +167,7 @@ def cell_checks() -> list[tuple[str, str, str]]:
         ch = get_client()
         try:
             await asyncio.wait_for(
-                connect_declared(ch, org_free="loom doctor reads a cell's state"),
+                connect_declared(ch, org_free=reads("loom doctor reads a cell's state")),
                 timeout=_SESSION_S,
             )
             return await _checks(ch)

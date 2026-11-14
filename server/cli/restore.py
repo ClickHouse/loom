@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import run_connected, writes
 
 
 def _add_reconcile_parser(sub: Any) -> None:
@@ -71,7 +71,7 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
             args.restored, point, apply=not args.dry_run, live=args.allow_live, ch=ch
         )
 
-    return run_connected(_go, org_free="reconciles a restore of the cell's own stores")
+    return run_connected(_go, org_free=writes("reconciles a restore of the cell's own stores"))
 
 
 def margin() -> timedelta:

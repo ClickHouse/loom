@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, run_connected
+from server.cli._ch import dry_run_orgs, run_connected, writes
 
 
 def _cmd_recalibrate(args: argparse.Namespace) -> int:
@@ -43,7 +43,7 @@ def _cmd_recalibrate(args: argparse.Namespace) -> int:
                 print(f"    - {w}")
         return 0
 
-    return run_connected(_run, org_free="the embedder's calibration, deployment-wide")
+    return run_connected(_run, org_free=writes("the embedder's calibration, deployment-wide"))
 
 
 # ----------------------------------------------------------------------
@@ -208,7 +208,7 @@ def _cmd_sensitivity_sweep(args: argparse.Namespace) -> int:
     """
     return run_connected(
         lambda ch: _sensitivity_sweep_run(ch, args),
-        org_free="sweeps the cell's own rows: every org it touches is held",
+        org_free=writes("sweeps the cell's own rows: every org it touches is held"),
     )
 
 
@@ -270,7 +270,7 @@ def _cmd_integrity_repair(args: argparse.Namespace) -> int:
     The drift and valid_to counts are listed, not repaired."""
     return run_connected(
         lambda ch: _integrity_repair_run(ch, args),
-        org_free="repairs the cell's own rows: every org it touches is held",
+        org_free=writes("repairs the cell's own rows: every org it touches is held"),
     )
 
 

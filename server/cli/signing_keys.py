@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, reads, revokes, run_connected, writes
 from server.core.errors import BackendUnavailableError
 
 
@@ -29,7 +29,17 @@ def _cmd_signing_key(args: argparse.Namespace) -> int:
             print(f"✗ {e}", file=sys.stderr)
             return 1
 
-    return run_connected(_go, org_free="the cell's signing keys")
+    return run_connected(_go, org_free=_org_free(args.signing_cmd))
+
+
+def _org_free(signing_cmd: str) -> OrgFree:
+    """What each subcommand does to the cell's stores: `retire` revokes, and runs through
+    a Postgres outage; `rotate` and `record-root` seal a key under this CLI's root secret."""
+    if signing_cmd == "list":
+        return reads("lists the cell's signing keys")
+    if signing_cmd == "retire":
+        return revokes("retires a signing key: no org's rows")
+    return writes("seals a signing key of the cell")
 
 
 async def _servers_refresh_s(keyring: Any, ch: Any) -> float | None:
