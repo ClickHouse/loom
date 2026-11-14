@@ -805,3 +805,31 @@ def test_me_from_a_service_token_is_refused_over_http(
             headers={"Authorization": f"Bearer {token}"},
         )
     assert r.status_code == 422, r.text
+
+
+def test_a_move_into_a_namespace_never_written_registers_it(
+    control_plane_url: str, ch_client: Any, mint_test_token: Any
+) -> None:
+    import httpx
+
+    src, dst, uri = _places()
+    token = mint_test_token(org=ORG, namespaces=[src, dst], roles=["writer"], subject="w")
+    headers = {"Authorization": f"Bearer {token}"}
+    with httpx.Client(base_url=control_plane_url, timeout=30.0) as c:
+        r = c.post(
+            "/v1/knowledge.add",
+            json={"org": ORG, "namespace": src, "source_uri": uri, "content": "registered"},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        r = c.post(
+            "/v1/knowledge.move",
+            json={"org": ORG, "namespace": src, "to_namespace": dst, "source_uris": [uri]},
+            headers=headers,
+        )
+    assert r.json()["results"][0]["moved"] is True
+    [[n]] = ch_client.query(
+        "SELECT count() FROM loom.namespaces WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": ORG, "ns": dst},
+    ).result_rows
+    assert n == 1

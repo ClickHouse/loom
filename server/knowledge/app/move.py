@@ -27,6 +27,7 @@ from server.core.pg_lease import PublicationPending
 from server.core.shielded import to_its_end
 from server.erasure.app import ledger_reads
 from server.erasure.domain.scopes import may_cover
+from server.identity.app.namespace_autoregister import ensure_registered
 from server.knowledge.api.models_knowledge import (
     KnowledgeMoveInput,
     KnowledgeMoveOutput,
@@ -97,6 +98,10 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
         raise ValidationError("to_namespace is the namespace the documents are in")
     if not await row_in_scope(input.org, to, Role.WRITER):
         return KnowledgeMoveOutput(found=False)
+    # The transport registers the request's namespace; the one written to is this call's.
+    auth = current_auth()
+    if auth is not None and auth.subject:
+        await ensure_registered(input.org, to, subject=str(auth.subject), op_name="knowledge.move")
     uris = list(dict.fromkeys(input.source_uris))
     with own_write_reads():  # a document written a call ago moves too
         started = await blobs.ch_now_s()
@@ -282,17 +287,9 @@ async def _claimed(
 async def _earlier_copy(
     doc: DocumentRow, there: DocumentRow
 ) -> Literal["whole", "incomplete", "other"]:
-    """What the live row where it goes is: this document's copy left by a move that
-    stopped before its delete (the same text, title, description, tags, metadata, author
-    and ingest time), whole or incomplete, or another document.
-
-    A take-back removes every chunk and every table of a copy, so a copy with fewer live
-    chunks, or with no tables where the document has some, is incomplete: it is written
-    over. One with more is whole (the source's own were retired by a cut-off delete),
-    unless its tables are gone too: it is never written over, and answers as another.
-    Tables there that differ from the document's otherwise were changed on one side
-    since (an approval, a clarification), which cannot be told apart from the other
-    side's: another document."""
+    """Whether the live row where it goes is this document's copy left by a move that
+    stopped before its delete, whole or incomplete, or another document: the rules are in
+    docs/architecture/failure-and-recovery.md, "Knowledge move"."""
     fields = ("content_sha256", "title", "description", "tags", "metadata", "user_id")
     if any(getattr(there, f) != getattr(doc, f) for f in fields):
         return "other"
@@ -481,33 +478,39 @@ async def _remove_copy(copy: _Copy) -> None:
 
 async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
     """The document's original and its extraction artifact stored again in `dst` (an
-    original belongs to its namespace: its sweep and erasure go by it). A ClickHouse row
-    is copied inside ClickHouse; an object is read and written again. Answers the
+    original belongs to its namespace: its sweep and erasure go by it). Answers the
     columns to clear for one the source no longer holds."""
     cleared: dict[str, Any] = {}
     # An erasure took its original (`blob_erased_at`): bytes of the same sha another
     # upload keeps are not this document's to copy.
-    if doc.blob_erased_at is not None:
+    if doc.blob_erased_at is not None or (
+        doc.blob_path and not await _store_one(doc, doc.blob_path, dst)
+    ):
         cleared.update(documents_repo.NO_ORIGINAL)
-    for column, sha in (("blob_path", doc.blob_path), ("artifact_sha256", doc.artifact_sha256)):
-        if not sha or (column == "blob_path" and doc.blob_erased_at is not None):
-            continue
+    if doc.artifact_sha256 and not await _store_one(doc, doc.artifact_sha256, dst):
+        cleared["artifact_sha256"] = ""
+    return cleared
+
+
+async def _store_one(doc: DocumentRow, sha: str, dst: str) -> bool:
+    """Store one of the document's originals again in `dst`: a ClickHouse row copied
+    inside ClickHouse, an object read and written again. False when the source no longer
+    holds it."""
+    held = await blobs.locate(doc.org, doc.namespace, sha)
+    if held is not None and not held.location:
+        if await blobs.copy_held(
+            doc.org, doc.namespace, sha, dst, size=held.size, uploader=doc.user_id
+        ):
+            return True
+        # Its row went after it was located: moved to the bucket, or swept.
         held = await blobs.locate(doc.org, doc.namespace, sha)
         if held is not None and not held.location:
-            if await blobs.copy_held(
-                doc.org, doc.namespace, sha, dst, size=held.size, uploader=doc.user_id
-            ):
-                continue
-            # Its row went after it was located: moved to the bucket, or swept.
-            held = await blobs.locate(doc.org, doc.namespace, sha)
-            if held is not None and not held.location:
-                held = None
-        data = await blobs.read(doc.org, doc.namespace, sha, stored=held) if held else None
-        if data is None:
-            cleared.update(documents_repo.NO_ORIGINAL if column == "blob_path" else {column: ""})
-            continue
-        await blobs.put(doc.org, dst, data, uploader=doc.user_id)
-    return cleared
+            held = None
+    data = await blobs.read(doc.org, doc.namespace, sha, stored=held) if held else None
+    if data is None:
+        return False
+    await blobs.put(doc.org, dst, data, uploader=doc.user_id)
+    return True
 
 
 def _written_s(doc: DocumentRow) -> int:

@@ -642,13 +642,8 @@ MoveReason = Literal["", "not_found", "exists", "synced", "busy", "erased"]
 class _KnowledgeMoveResult(BaseModel):
     source_uri: str
     moved: bool = False
-    # Why it did not move: not_found (no live document there), exists (another document
-    # with this source is live where it goes), synced (a document source keeps it where it
-    # is), busy (another write of it, or of the place it goes, is in progress or took it
-    # since it was read, its original was refused by the object store, its claim was cut
-    # off, or its copy did not finish and was taken back; a cut-off can leave it in both
-    # places; call again shortly), erased (an erasure may reach it or the place it goes;
-    # it stays where it was).
+    # Why it did not move: not_found, exists, synced, busy (call again shortly) or erased;
+    # each is described in docs/features/knowledge.md#moving-documents.
     reason: MoveReason = ""
 
 
