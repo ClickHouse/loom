@@ -1219,6 +1219,11 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   `loom doctor` names), with their functions in
   `schemas/pg_migrations/011_tenancy_triggers.sql` and `012_tenancy_guard.sql`;
   `server/cli/doctor_cell.py`: `loom doctor`'s cell checks;
+- `server/cli/cell_scan.py`: the first attach's org scan, a library no command calls: the
+  tables of both stores with an `org` column, judged by engine and against erasure's
+  classification, every host of a cluster listing the same, and the distinct orgs of each
+  table outside `LOG_TABLES`; `server/cli/cell_writers.py`: the ClickHouse writer check (the
+  users, user directories, objects and replicas outside the operator's allow lists);
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,

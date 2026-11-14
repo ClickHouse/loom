@@ -84,7 +84,9 @@ def _refused(
     return JSONResponse(body, status_code=status, headers=headers)
 
 
-def _org(value: Any) -> str | None:
+def named_org(value: Any) -> str | None:
+    """`value` as an org a request can name, or None (`loom cell attach`'s scan judges the
+    orgs it finds by the same rule)."""
     # A name Postgres text cannot hold (a NUL, a lone surrogate) is malformed, never a
     # directory outage.
     if not isinstance(value, str) or value in ORG_FREE or "\x00" in value:
@@ -268,7 +270,7 @@ class Router:
         body = await _body(request)
         if not isinstance(body, dict):
             return _refused(400, "a placement is a JSON object: org, cell, fingerprint")
-        org, name = _org(body.get("org")), body.get("cell")
+        org, name = named_org(body.get("org")), body.get("cell")
         if org is None or not isinstance(name, str) or not cell_state.NAME.fullmatch(name):
             return _refused(400, "a placement names an org and a cell")
         presented = await self._authenticated(request, name)
@@ -333,7 +335,7 @@ class Router:
         if not self.lookups.admit(client):
             wait = str(self.lookups.wait_s(client))
             return _refused(429, "too many lookups", {"Retry-After": wait})
-        org = _org(request.query_params.get("org"))
+        org = named_org(request.query_params.get("org"))
         if org is None:
             return _refused(400, "a lookup names an org: ?org=")
         cached = self._placed.get(org)
@@ -670,7 +672,7 @@ class Router:
             return _refused(
                 400, f"a batch is a JSON object of deployment_id and 1 to {ATTACH_BATCH} orgs"
             )
-        named = [_org(o) for o in orgs]
+        named = [named_org(o) for o in orgs]
         if None in named:
             return _refused(400, "each org of a batch is a name an org can have")
         name = request.path_params["cell"]

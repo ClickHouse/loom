@@ -99,8 +99,7 @@ async def test_ensure_guards_every_org_table_of_an_enforced_cell(
     async with _cell("enforced") as (_dsn, conn):
         await cell_triggers.ensure(conn)
         guarded = [
-            r["relname"]
-            for r in cell_triggers._guarded(await conn.fetch(cell_triggers._ORG_TABLES))
+            r["relname"] for r in cell_triggers._guarded(await conn.fetch(cell_triggers.ORG_TABLES))
         ]
         assert "scope_generations" in guarded and "tenancy" not in guarded
         assert "idempotency" not in guarded and "idempotency_fences" not in guarded
@@ -446,8 +445,7 @@ async def test_the_guarded_tables_are_erasures_org_tables() -> None:
             t.removeprefix("pg:").removeprefix("loom.") for t in (*PG_CENSUS, *PG_NO_MEMORY_CONTENT)
         }
         guarded = {
-            r["relname"]
-            for r in cell_triggers._guarded(await conn.fetch(cell_triggers._ORG_TABLES))
+            r["relname"] for r in cell_triggers._guarded(await conn.fetch(cell_triggers.ORG_TABLES))
         }
         assert guarded == (classified & with_org) - cell_triggers.EXCLUDED
         # The memory and knowledge heads above all.

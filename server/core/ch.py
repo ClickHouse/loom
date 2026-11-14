@@ -1142,15 +1142,22 @@ class CHClient:
         types = [t.name for t in result.column_types]
         return list(result.column_names), types, [tuple(r) for r in result.result_rows]
 
-    async def raw_bytes(self, sql: str, params: dict[str, Any] | None = None) -> bytes:
+    async def raw_bytes(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+    ) -> bytes:
         """A SELECT's whole output as bytes (`FORMAT RawBLOB` for one String
-        value), read under one pool slot like any query."""
+        value), read under one pool slot like any query. `settings` are this
+        statement's own ClickHouse settings."""
 
         async def _q() -> bytes:
             return await self.client.raw_query(
                 sql,
                 parameters=params or {},
-                settings=statement_settings(sql, cls="read"),
+                settings=statement_settings(sql, settings, cls="read"),
                 **_reader_auth(),
             )
 
@@ -1159,12 +1166,17 @@ class CHClient:
 
     @asynccontextmanager
     async def raw_stream(
-        self, sql: str, params: dict[str, Any] | None = None
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> AsyncIterator[AsyncIterator[bytes]]:
         """A SELECT's output as raw byte chunks (`FORMAT RawBLOB` for one String
         value), for a body too large to buffer. Opening is retried like any
         read; the stream holds one of the `STREAM_SLOTS` until the block exits,
-        not a pool slot, since the client sets how long that takes."""
+        not a pool slot, since the client sets how long that takes. `settings`
+        are this statement's own ClickHouse settings."""
 
         held: list[int] = []  # the generation whose client opened the stream
 
@@ -1175,7 +1187,7 @@ class CHClient:
             stream = await client.raw_stream(
                 sql,
                 parameters=params or {},
-                settings=statement_settings(sql, cls="read"),
+                settings=statement_settings(sql, settings, cls="read"),
                 **_reader_auth(),
             )
             # Held before `_bounded` drops its count, so the client is never

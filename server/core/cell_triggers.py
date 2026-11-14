@@ -48,7 +48,7 @@ LOCK_RETRY_S = 1.0  # not a setting: the pause between them
 # Ordinary and partitioned tables in schema loom with a live `org` column. A partition
 # is left out: its parent is named unsupported, and guarding some partitions would leave
 # one attached later unguarded until a boot.
-_ORG_TABLES = """
+ORG_TABLES = """
 SELECT c.relname, c.relkind::text AS relkind, pg_has_role(c.relowner, 'USAGE') AS owned
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -223,7 +223,7 @@ async def ensure(conn: Any) -> None:
             )
     if state == "enforced":
         present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
-        tables = await conn.fetch(_ORG_TABLES)
+        tables = await conn.fetch(ORG_TABLES)
         for r in tables:
             if r["relkind"] == "p":
                 # No trigger guards it: named here as missing() names it.
@@ -309,7 +309,7 @@ class Defect:
 async def missing(conn: Any) -> list[Defect]:
     """What this cell's triggers and functions lack, read with the migrating role."""
     found: list[Defect] = []
-    tables = await conn.fetch(_ORG_TABLES)
+    tables = await conn.fetch(ORG_TABLES)
     for r in tables:
         if r["relkind"] == "p":
             found.append(Defect("partitioned", f"loom.{r['relname']} is partitioned: unsupported"))
