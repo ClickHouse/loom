@@ -28,6 +28,27 @@ import { oneOf } from "../lib/oneOf";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
+import { namesMe as grantNamesMe, subjectLabel } from "../lib/grantSubject";
+
+/** Whether a grant names the person signed in (`me`), under any spelling, in any case. */
+function namesMe(r: GrantEntry, me: string): boolean {
+  return grantNamesMe(r, [me]);
+}
+
+/** A row's name: the subject as a person reads it, with the subject itself beneath when the
+ *  two differ. */
+function SubjectName({ r, me, org }: { r: GrantEntry; me: string; org: string }) {
+  const label = subjectLabel(r.subject, org);
+  return (
+    <>
+      <div className="truncate text-sm">
+        {label}
+        {namesMe(r, me) && <span className="ml-2 text-xs text-text-muted">(you)</span>}
+      </div>
+      {label !== r.subject && <div className="truncate font-mono text-xs text-text-muted">{r.subject}</div>}
+    </>
+  );
+}
 
 /** A members list drawn a step at a time: rows by subject, each focusing its first control,
  *  else itself. */
@@ -39,11 +60,6 @@ const MEMBER_ROWS: ShowMoreRows<GrantEntry> = {
       li.querySelector<HTMLElement>("button") ?? li,
     ]),
 };
-
-/** Whether a grant names `me`, under any of the person's spellings. */
-function namesMe(r: GrantEntry, me: string): boolean {
-  return !!me && [r.subject, ...(r.also ?? [])].includes(me);
-}
 
 /** Show more under a list drawn a step at a time. */
 function MoreButton({ label, onClick }: { label: string | null; onClick: () => void }) {
@@ -57,17 +73,17 @@ function MoreButton({ label, onClick }: { label: string | null; onClick: () => v
 
 /** Who else can see a collection through one of the collections it sits in: read-only. */
 export interface InheritedAccess {
-  /** The parent's name ("" for one the person cannot open): what keys its section. */
+  /** The parent's name, which keys its section; "" for the one entry that is no parent the
+   *  person can open (one they cannot, or the parents when their grants failed to read). */
   namespace: string;
-  /** The parent's title, or the words for one the person cannot open (`hidden`). */
+  /** The parent's title, or words for the "" entry. */
   title: string;
-  /** Its grants; null when they could not be read, or the parent cannot be opened. */
+  /** Its grants; null when there are none to show (`note` says why). */
   rows: GrantEntry[] | null;
   /** More grants followed than were read. */
   cut?: boolean;
-  /** The parent is one the person cannot open: who can see it is not shown. */
-  hidden?: boolean;
-  /** Said in place of the rows, when there are none to show. */
+  /** Said in place of the rows when there are none to show; "Its members couldn't be read."
+   *  when unset. */
   note?: string;
   /** Shows the parent in the Library. */
   onOpen?: () => void;
@@ -93,9 +109,11 @@ interface Props {
   /** Fires after a member is added — the Setup checklist ticks "Invite a
    * teammate" on it. */
   onChanged?: () => void;
-  /** The caller is known to be an admin here though no grant row names them: a
-   *  collection's role reaches through its parents and the caller's groups. */
-  admin?: boolean;
+  /** Whether the caller may change the members, when the page knows it: a collection's role
+   *  from `collection.list`, the gate's own answer (it reaches through parents and groups,
+   *  and no token claim reaches a collection). Unset: the token's claims and the caller's
+   *  own grant decide. */
+  manage?: boolean;
   /** A collection's parents, nearest first, and who can see it through each: listed under
    *  its own members, read-only, since they are changed on the parent. Null while they are
    *  read: the dialog says nothing of an empty list until it knows who else can see it. */
@@ -117,7 +135,7 @@ export function MembersDialog({
   label,
   pendingElsewhere,
   onChanged,
-  admin = false,
+  manage,
   inherited = [],
 }: Props) {
   const whoami = useStore((s) => s.whoami);
@@ -189,7 +207,7 @@ export function MembersDialog({
 
   const me = whoami?.subject || "";
   const canManage =
-    admin ||
+    manage ??
     holdsAdminGrant(
       whoami,
       rows?.find((r) => namesMe(r, me)),
@@ -200,14 +218,16 @@ export function MembersDialog({
   const manageReason =
     canManage || rows === null
       ? null
-      : scopedUnseen(
-            whoami,
-            rows.some((r) => namesMe(r, me)),
-          )
-        ? serverDecides(name)
-        : isCode
-          ? needsMaintainer(name)
-          : needsRole("admin", name);
+      : manage === false
+        ? needsRole("admin", name)
+        : scopedUnseen(
+              whoami,
+              rows.some((r) => namesMe(r, me)),
+            )
+          ? serverDecides(name)
+          : isCode
+            ? needsMaintainer(name)
+            : needsRole("admin", name);
 
   const onAdd = async () => {
     const subj = newSubject.trim();
@@ -310,6 +330,7 @@ export function MembersDialog({
   }));
 
   const addLabel = isCode ? "Add reader" : "Add member";
+  const inheritedSeen = (inherited ?? []).some((p) => p.rows === null || p.rows.some((r) => r.status === "active"));
   // Every page is read, so counts and "(you)" hold; the rows are drawn a step at a time.
   const members = useShowMore(activeRows, MORE_SHOWN, MEMBER_ROWS);
 
@@ -339,10 +360,12 @@ export function MembersDialog({
         )}
         {rows !== null && rows.length === 0 && inherited !== null && (
           <div className={`text-center text-sm text-text-muted ${inherited.length > 0 ? "py-3" : "py-8"}`}>
-            {inherited.length > 0
+            {/* Seen through a parent only when one names someone, or may (unread or hidden). */}
+            {inheritedSeen
               ? "No one is named here; who can see it comes from the collections it sits in."
               : "No members yet."}
-            {canManage && ` Click ${addLabel} below to invite the first one.`}
+            {canManage &&
+              ` Click ${addLabel} below to ${inheritedSeen ? "name someone here" : "invite the first one"}.`}
           </div>
         )}
         {cut && (
@@ -366,7 +389,7 @@ export function MembersDialog({
                   >
                     <RoleIcon role={r.requested_role} />
                     <div className="min-w-0 flex-1">
-                      <div className="break-all font-mono text-sm">{r.subject}</div>
+                      <SubjectName r={r} me={me} org={org} />
                       <div className="text-xs text-text-muted">
                         {hasBase ? (
                           <>
@@ -464,10 +487,7 @@ export function MembersDialog({
                 >
                   <RoleIcon role={r.role} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-mono text-sm">
-                      {r.subject}
-                      {namesMe(r, me) && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
-                    </div>
+                    <SubjectName r={r} me={me} org={org} />
                     <div className="text-xs text-text-muted">
                       Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
                     </div>
@@ -515,7 +535,7 @@ export function MembersDialog({
         {inherited === null ? (
           <Loading label="Loading who else can see it" />
         ) : (
-          inherited.map((p) => <InheritedSection key={p.hidden ? "hidden" : p.namespace} access={p} me={me} />)
+          inherited.map((p) => <InheritedSection key={p.namespace} access={p} me={me} org={org} isCode={isCode} />)
         )}
       </div>
 
@@ -596,7 +616,17 @@ export function MembersDialog({
 }
 
 /** "Also can see it, through <parent>": the parent's active members, read-only, and its link. */
-function InheritedSection({ access, me }: { access: InheritedAccess; me: string }) {
+function InheritedSection({
+  access,
+  me,
+  org,
+  isCode,
+}: {
+  access: InheritedAccess;
+  me: string;
+  org: string;
+  isCode: boolean;
+}) {
   const active = (access.rows ?? []).filter((r) => r.status === "active");
   const heading = `Also can see it, through ${access.title}`;
   const rows = useShowMore(active, MORE_SHOWN, MEMBER_ROWS);
@@ -613,16 +643,13 @@ function InheritedSection({ access, me }: { access: InheritedAccess; me: string 
         )}
       </div>
       {access.rows === null ? (
-        <p className="py-1 text-sm text-text-muted">
-          {access.note ??
-            (access.hidden ? "Who can see that collection isn't shown to you." : "Its members couldn't be read.")}
-        </p>
+        <p className="py-1 text-sm text-text-muted">{access.note ?? "Its members couldn't be read."}</p>
       ) : active.length === 0 ? (
         <p className="py-1 text-sm text-text-muted">No one is named there.</p>
       ) : (
         <div className="space-y-1">
           {active.length > MORE_SHOWN && (
-            <div className="text-xs text-text-muted">{`${fmtInt(active.length)} there`}</div>
+            <div className="text-xs text-text-muted">{`${isCode ? "Readers" : "Members"} there (${fmtInt(active.length)})`}</div>
           )}
           <ul ref={rows.list} className="space-y-1">
             {rows.shown.map((r) => (
@@ -633,9 +660,8 @@ function InheritedSection({ access, me }: { access: InheritedAccess; me: string 
                 className="flex items-center gap-3 rounded-lg p-2.5"
               >
                 <RoleIcon role={r.role} />
-                <div className="min-w-0 flex-1 truncate font-mono text-sm">
-                  {r.subject}
-                  {namesMe(r, me) && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
+                <div className="min-w-0 flex-1">
+                  <SubjectName r={r} me={me} org={org} />
                 </div>
                 <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
               </li>

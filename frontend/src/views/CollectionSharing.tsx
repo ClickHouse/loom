@@ -6,7 +6,8 @@ import type { CollectionEntry } from "../api";
 import { distinctTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
-import { displaySubject, isServiceSubject } from "../lib/format";
+import { fmtInt, isServiceSubject } from "../lib/format";
+import { grantSpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 import { allGrants, type GrantsAt } from "../lib/grantPages";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useAbortableEffect } from "../lib/hooks";
@@ -34,22 +35,13 @@ export interface WhoCanSee {
   onlyYou: boolean;
 }
 
-/** A grant's subject as a person reads it; a service account is an agent. */
-function subjectLabel(subject: string): string {
-  if (subject.startsWith("group:")) return `group ${subject.slice(6)}`;
-  if (subject.startsWith("agent:")) return `agent ${subject.slice(6)}`;
-  if (isServiceSubject(subject)) return displaySubject(subject);
-  if (subject.startsWith("user:")) return subject.slice(5);
-  return subject;
-}
-
 /** An agent's subject: one an end-user token signs in, or a service account. */
 function isAgentSubject(subject: string): boolean {
   return subject.startsWith("agent:") || isServiceSubject(subject);
 }
 
 function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
+  return `${fmtInt(n)} ${n === 1 ? one : many}`;
 }
 
 /** "a", "a and b", "a, b and c". */
@@ -77,12 +69,16 @@ export function whoCanSee({
   above?: string | null;
   empty?: boolean;
 }): WhoCanSee {
-  // Each subject once, by where its access is given nearest to the collection.
+  // Each person once, under any of their spellings, by where their access is given nearest
+  // to the collection; the person reading is "".
   const from = new Map<string, string>();
+  const keyOf = new Map<string, string>();
   for (const at of grants) {
-    for (const r of at.failed ? [] : at.rows) {
+    for (const r of at.rows) {
       if (r.status !== "active") continue;
-      const key = [r.subject, ...(r.also ?? [])].some((s) => me.has(s)) ? "" : r.subject;
+      const spellings = grantSpellings(r);
+      const key = namesMe(r, me) ? "" : (spellings.map((s) => keyOf.get(s)).find(Boolean) ?? r.subject);
+      for (const s of spellings) keyOf.set(s, key);
       if (!from.has(key)) from.set(key, at.namespace);
     }
   }
@@ -118,7 +114,7 @@ export function whoCanSee({
   const agents = others.filter(isAgentSubject);
   const people = others.filter((s) => !groups.includes(s) && !agents.includes(s));
   const you = subjects.includes("");
-  const names = [...(you ? ["You"] : []), ...[...groups, ...people, ...agents].map(subjectLabel)];
+  const names = [...(you ? ["You"] : []), ...[...groups, ...people, ...agents].map((x) => subjectLabel(x))];
   const head = names.slice(0, 3);
   const more = names.length - head.length;
   // Named by no grant the person can read: the first parent unseen says who, and the line
@@ -316,7 +312,14 @@ export function useCollectionSharing({
         onOpen: () => onOpenPlace(at.namespace),
       });
     }
-    if (hiddenWords) inherited.push({ namespace: "", title: hiddenWords, rows: null, hidden: true });
+    if (hiddenWords) {
+      inherited.push({
+        namespace: "",
+        title: hiddenWords,
+        rows: null,
+        note: "Who can see that collection isn't shown to you.",
+      });
+    }
   } else if (answer && (chain.length > 1 || hiddenWords)) {
     // The header's read failed: the parents are there, but who they let in is unknown.
     inherited.push({
@@ -339,7 +342,8 @@ export function useCollectionSharing({
       namespace={shown.namespace}
       // A title, with the address beneath it; an untitled collection is named by its address once.
       label={shown.title?.trim() || undefined}
-      admin={shown.role === "admin"}
+      // The collection's role decides, not a token claim: none reaches a collection.
+      manage={shown.role === "admin"}
       // Until the header answers for this collection, who else can see it is still being read;
       // a failed answer names no parent.
       inherited={answer === null ? null : inherited}
@@ -375,7 +379,7 @@ function Words({ icon, who, how, busy }: { icon: "lock" | "users"; who: string; 
 }
 
 /** **Share** for an admin of the collection shown, **See who** for anyone else: both open
- *  the members dialog, which gives a non-admin its list without the controls. On a phone,
+ *  the members dialog, which gives a non-admin its list with its controls unavailable. On a phone,
  *  where the header has no room for another label, its icon alone with a tooltip. */
 export function ShareButton({ collection, onOpen }: { collection: CollectionEntry; onOpen: () => void }) {
   const phone = useMedia(PHONE_QUERY);

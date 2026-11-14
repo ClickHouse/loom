@@ -151,6 +151,14 @@ describe("who can see a collection, in words", () => {
     expect(twins.how).toBe("Also everyone who can see Notes, whose members couldn't be read");
   });
 
+  it("counts a person once under all their spellings, in any case", () => {
+    const w = words([
+      { namespace: "col-a", rows: [grant("ADA"), grant("bob")] },
+      { namespace: "col-top", rows: [grant("bob@example.com", { also: ["bob"] })] },
+    ]);
+    expect(w).toMatchObject({ who: "You and bob", how: "2 people" });
+  });
+
   it("names the parent when no grant the person reads names anyone", () => {
     expect(words([{ namespace: "col-a", rows: [] }], { above: "Hidden" }).who).toBe("Everyone who can see Hidden");
   });

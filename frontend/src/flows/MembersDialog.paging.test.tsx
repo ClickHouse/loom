@@ -104,7 +104,7 @@ describe("MembersDialog paging", () => {
       />,
     );
     const through = await screen.findByRole("region", { name: "Also can see it, through Engineering" });
-    expect(within(through).getByText("80 there")).toBeInTheDocument();
+    expect(within(through).getByText("Members there (80)")).toBeInTheDocument();
     expect(within(through).getAllByRole("listitem")).toHaveLength(50);
     expect(within(through).getByText("alice@example.com").parentElement).toHaveTextContent("(you)");
     fireEvent.click(within(through).getByRole("button", { name: "Show 30 more" }));
@@ -159,7 +159,7 @@ describe("MembersDialog paging", () => {
     );
     const through = await screen.findByRole("region", { name: "Also can see it, through Engineering" });
     fireEvent.click(within(through).getByRole("button", { name: "Show 10 more" }));
-    expect(within(through).getByText("60 there")).toBeInTheDocument();
+    expect(within(through).getByText("Members there (60)")).toBeInTheDocument();
   });
 
   it("treats a row under another of your spellings as yours: (you), and no role or Remove", async () => {
@@ -172,5 +172,63 @@ describe("MembersDialog paging", () => {
     expect(screen.queryByRole("button", { name: "Remove alice@example.com" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Role for alice@example.com")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove bob" })).toBeInTheDocument();
+  });
+
+  it("gives an org admin no controls on a collection whose role is writer", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "olga", org: "acme", roles: ["ORG_ADMIN"] } });
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" manage={false} />);
+    await screen.findByText("bob");
+    expect(screen.queryByLabelText("Role for bob")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove bob" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add member" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("takes admin rights from the person's grant under another spelling, with no claim", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: [] } });
+    vi.mocked(api.listGrants).mockResolvedValue({
+      rows: [{ ...grant("Alice@example.com"), role: "admin", also: ["ALICE"] }, grant("bob")],
+    });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+    expect(await screen.findByLabelText("Role for bob")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add member" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("offers Withdraw on the person's own pending request under another spelling", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: [] } });
+    vi.mocked(api.listGrants).mockResolvedValue({
+      rows: [{ ...grant("alice@example.com"), status: "pending", also: ["alice"] }],
+    });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+    expect(await screen.findByRole("button", { name: "Withdraw" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Approve/ })).not.toBeInTheDocument();
+  });
+
+  it("says No members yet when no parent names anyone either", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [] });
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-a"
+        inherited={[{ namespace: "col-top", title: "Engineering", rows: [] }]}
+      />,
+    );
+    expect(
+      await screen.findByText(/^No members yet\. Click Add member below to invite the first one\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No one is named here/)).not.toBeInTheDocument();
+  });
+
+  it("names a row as the header does, with the subject beneath", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({
+      rows: [grant("group:eng"), grant("everyone"), grant("sa:reporter-a1b2c3")],
+    });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" />);
+    const row = (await screen.findByText("group eng")).closest("li") as HTMLElement;
+    expect(row).toHaveTextContent("group:eng");
+    expect(screen.getByText("Everyone in acme").closest("li")).toHaveTextContent("everyone");
+    expect(screen.getByText("Reporter bot").closest("li")).toHaveTextContent("sa:reporter-a1b2c3");
   });
 });
