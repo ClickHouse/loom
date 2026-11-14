@@ -38,6 +38,7 @@ One page per need, each saying what Loom does for it and where to start:
 ## 1. Getting started
 
 - [Overview](getting-started/overview.md): what Loom is, when it fits, prerequisites.
+- [What's included](getting-started/whats-included.md): Loom's main capabilities, each with its page.
 - [Quickstart](getting-started/quickstart.md): the local stack end to end.
 - [Configure models and API keys](getting-started/models-and-keys.md): agent subscriptions,
   server LLMs, embeddings and single-provider setups.
