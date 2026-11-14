@@ -7,18 +7,27 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 # Every Drive role reads the file; a role this module does not know admits nobody.
 _DRIVE_ROLES = frozenset({"owner", "organizer", "fileOrganizer", "writer", "commenter", "reader"})
 
 
+def _is_str_list(values: Any) -> bool:
+    return isinstance(values, list) and all(isinstance(v, str) for v in values)
+
+
+def _names(values: Iterable[Any]) -> tuple[str, ...]:
+    """Distinct non-empty strings, lower-cased and sorted; a non-string is dropped."""
+    return tuple(sorted({v.strip().lower() for v in values if isinstance(v, str) and v.strip()}))
+
+
 @dataclass(frozen=True)
 class AccessList:
     """Who the store lets read a mirrored document. `owner` is a connected source's
-    owner subject. `unread`: no current list is known; it admits nobody. The parsers and
-    `to_json` lower-case and sort `emails`, `groups` and `domains`."""
+    owner subject. `unread`: no current list is known; it admits nobody. `emails`,
+    `groups` and `domains` are kept lower-cased and sorted."""
 
     emails: tuple[str, ...] = ()
     owner: str = ""
@@ -26,6 +35,11 @@ class AccessList:
     domains: tuple[str, ...] = ()
     anyone: bool = False
     unread: bool = False
+
+    def __post_init__(self) -> None:
+        # One spelling per list, so equal lists compare and store equal.
+        for name in ("emails", "groups", "domains"):
+            object.__setattr__(self, name, _names(getattr(self, name)))
 
 
 UNREAD = AccessList(unread=True)
@@ -36,13 +50,7 @@ def to_json(access: AccessList) -> str:
     `unread` is empty, as every other writer stores it."""
     if access.unread:
         return ""
-    normal = replace(
-        access,
-        emails=_names(access.emails),
-        groups=_names(access.groups),
-        domains=_names(access.domains),
-    )
-    return json.dumps(asdict(normal), sort_keys=True, separators=(",", ":"))
+    return json.dumps(asdict(access), sort_keys=True, separators=(",", ":"))
 
 
 def from_json(text: str) -> AccessList:
@@ -68,13 +76,7 @@ def from_json(text: str) -> AccessList:
         and isinstance(anyone, bool)
     ):
         return UNREAD
-    return AccessList(
-        emails=_names(emails),
-        owner=owner,
-        groups=_names(groups),
-        domains=_names(domains),
-        anyone=anyone,
-    )
+    return AccessList(emails=emails, owner=owner, groups=groups, domains=domains, anyone=anyone)
 
 
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:
@@ -102,17 +104,8 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
         elif kind == "anyone" and p.get("allowFileDiscovery") is True:
             anyone = True
     return AccessList(
-        emails=_names(emails), groups=_names(groups), domains=_names(domains), anyone=anyone
+        emails=tuple(emails), groups=tuple(groups), domains=tuple(domains), anyone=anyone
     )
-
-
-def _is_str_list(values: Any) -> bool:
-    return isinstance(values, list) and all(isinstance(v, str) for v in values)
-
-
-def _names(values: Iterable[Any]) -> tuple[str, ...]:
-    """Distinct non-empty strings, lower-cased and sorted; a non-string is dropped."""
-    return tuple(sorted({v.strip().lower() for v in values if isinstance(v, str) and v.strip()}))
 
 
 __all__ = ["UNREAD", "AccessList", "from_drive_permissions", "from_json", "to_json"]

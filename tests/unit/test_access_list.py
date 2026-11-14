@@ -110,10 +110,11 @@ def test_anything_but_a_read_list_is_unread(text: str) -> None:
     assert access_list.from_json(text) == UNREAD
 
 
-def test_a_list_built_directly_is_stored_in_the_one_spelling() -> None:
+def test_a_list_built_directly_is_kept_in_the_one_spelling() -> None:
     built = AccessList(emails=("B@example.com", "a@example.com", "a@example.com"))
+    assert built == AccessList(emails=("a@example.com", "b@example.com"))
     assert access_list.to_json(built) == access_list.to_json(
-        AccessList(emails=("a@example.com", "b@example.com"))
+        AccessList(emails=("b@example.com", "a@example.com"))
     )
 
 
