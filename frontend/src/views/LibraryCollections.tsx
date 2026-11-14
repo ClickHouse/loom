@@ -111,7 +111,7 @@ export const REFRESH_WAIT_MS = 1000;
  *  clears `rows` until its answer; a write elsewhere keeps them. `showing`: the collection the
  *  page shows; a refresh that leaves it out reads again, up to `REFRESH_TRIES` times, before
  *  it counts as gone. */
-export function useReadableCollections(org: string, showing = ""): ReadableCollections {
+export function useReadableCollections(org: string, showing: string | null = null): ReadableCollections {
   const [answer, setAnswer] = useState<{
     org: string;
     reloads: number;
@@ -148,7 +148,7 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
   // The collection shown, once the page's last reload is answered and lists it. The read
   // effect captures it when it starts: `showing` changing restarts no read.
   const answered = answer?.org === org && answer.reloads === asked.reloads;
-  const hold = answered && answer.rows.some((c) => c.namespace === showing) ? showing : "";
+  const hold = answered && showing !== null && answer.rows.some((c) => c.namespace === showing) ? showing : "";
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -406,10 +406,11 @@ export function LibraryCollections({
         {collection && <RowMenu name={collectionTitle(collection)} items={items} />}
         {/* The collections inside, after the path; a phone's select lists them. */}
         {!phone && (
-          // One per place, so Show more starts again in the next.
+          // One per place, so Show more starts again in the next. Beside the tree, the last
+          // answer while it is read again, as the tree and the path show.
           <CollectionChips
             key={current?.namespace ?? ""}
-            rows={rows}
+            rows={besideTree ? (collections.kept?.rows ?? null) : rows}
             repeated={repeated}
             collection={collection}
             onPick={onPick}

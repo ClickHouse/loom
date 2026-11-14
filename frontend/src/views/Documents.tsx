@@ -181,7 +181,7 @@ export function Documents() {
   }, []);
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
-  const collections = useReadableCollections(picked.org, collection ?? "");
+  const collections = useReadableCollections(picked.org, collection);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;

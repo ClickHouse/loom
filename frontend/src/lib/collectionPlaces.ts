@@ -1,8 +1,8 @@
 /**
  * How a collection is named outside the Library: by its title and its place, never as a
  * namespace. Its `col-…` name is its address, shown in details, and beside a title that looks
- * like another. It also holds the bus that tells the Library's lists a collection changed
- * (`onCollectionsChanged`).
+ * like another. The bus that tells the Library's lists a collection changed
+ * (`onCollectionsChanged`) sits beside the shared-read invalidation every write already calls.
  *
  * The boot loads this module on demand, so the index chunk does not carry it.
  */
