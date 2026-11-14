@@ -85,7 +85,7 @@ export interface ReadableCollections {
   /** Every collection the caller can read, or null while a reload is in flight; a refresh
    *  keeps them. */
   rows: CollectionEntry[] | null;
-  /** More pages than the select reads. */
+  /** More pages than the Library reads (`COLLECTIONS_PAGES`). */
   truncated: boolean;
   /** The last answer for this org, kept while it is read again: what stays on screen. Null
    *  before the first answer. */
@@ -307,7 +307,7 @@ export function LibraryCollections({
     const p = byName.get(parent);
     return p ? collectionTitle(p) : parent;
   };
-  // What the place shown is, behind the info button beside the select (and the role, which
+  // What the place shown is, behind the info button on the place line (and the role, which
   // a phone has no room to print).
   const about = current
     ? current.personal

@@ -185,7 +185,7 @@ export function Documents() {
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection);
-  const { error: listFailed, retry: retryList } = collections;
+  const { error: listFailed, retry: retryList, reload: reloadCollections } = collections;
   const goTo = useCallback(
     (c: string | null, arriveFocus?: string, note?: string) => {
       // A collection is opened only once the list names it: a list that failed reads again.
@@ -206,7 +206,6 @@ export function Documents() {
     placeVersion.current += 1;
     return placeVersion.current;
   }, []);
-  const reloadCollections = collections.reload;
   const openCreated = useCallback(
     (name: string, arriveFocus: string | undefined, version: number) => {
       if (!mounted.current || version !== placeVersion.current) return;
