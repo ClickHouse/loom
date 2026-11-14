@@ -499,7 +499,7 @@ async def test_a_copy_that_lands_after_its_take_back_does_not_serve(
         return False
 
     monkeypatch.setattr(move, "_take_back", take_back_then_land)
-    monkeypatch.setattr(move, "_delete_source", refused)
+    monkeypatch.setattr(move, "_head_is", refused)  # a write of the source meanwhile
     assert await _move_here(move, src, dst, uri) == [
         {"source_uri": uri, "moved": False, "reason": "busy"}
     ]
@@ -537,3 +537,23 @@ async def test_a_table_that_did_not_copy_whole_leaves_nothing_where_it_goes(
         ).result_rows
         assert n == 0, table
     assert _live_rows(ch_client, src, uri) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_delete_that_fails_after_its_tombstone_leaves_the_copy_live(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    before = _live(ch_client, src, uri)
+
+    async def failed(org: str, ns: str, through: Any) -> None:
+        raise RuntimeError("the datasets delete failed")
+
+    monkeypatch.setattr(move.datasets_repo, "forget_published", failed)
+    with pytest.raises(RuntimeError):
+        await _move_here(move, src, dst, uri)
+    # Deleted where it was, so the copy is the document now: it stays.
+    assert _live_rows(ch_client, src, uri) == 0
+    assert _live_rows(ch_client, dst, uri) == 1 and _live(ch_client, dst, uri) == before

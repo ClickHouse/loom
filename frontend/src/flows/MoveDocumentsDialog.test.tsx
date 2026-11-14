@@ -34,7 +34,7 @@ function dialog(
 ) {
   const onMoved = vi.fn();
   const onClose = vi.fn();
-  render(
+  const view = render(
     <MoveDocumentsDialog
       org="acme"
       from="col-ingest"
@@ -46,7 +46,7 @@ function dialog(
       onClose={onClose}
     />,
   );
-  return { onMoved, onClose };
+  return { onMoved, onClose, unmount: view.unmount };
 }
 
 async function pick(label: string) {
@@ -95,10 +95,12 @@ describe("MoveDocumentsDialog", () => {
     await pick("Storage");
     expect(screen.getByText(/They take Storage's sharing/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
-    expect(api.moveKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "col-ingest" }, "col-storage", [
-      "doc://a.md",
-      "doc://b.md",
-    ]);
+    expect(api.moveKnowledge).toHaveBeenCalledWith(
+      { org: "acme", namespace: "col-ingest" },
+      "col-storage",
+      ["doc://a.md", "doc://b.md"],
+      expect.any(AbortSignal),
+    );
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md", "doc://b.md"]));
     expect(toast).toHaveBeenCalledWith("Moved 2 documents to Storage", "ok");
     expect(onClose).toHaveBeenCalled();
@@ -148,9 +150,44 @@ describe("MoveDocumentsDialog", () => {
     const { onMoved, onClose } = dialog();
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/1 document moved before that\.$/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /1 document moved before that\. Some documents of the last call may have moved too; the list shows where each one is now\.$/,
+    );
     expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]);
     expect(onClose).not.toHaveBeenCalled();
+    // Move again sends only what is left.
+    expect(screen.getByRole("dialog", { name: "Move 1 document" })).toBeInTheDocument();
+    api.moveKnowledge.mockResolvedValue({ found: true, to_namespace: "col-eng", results: [] });
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(api.moveKnowledge).toHaveBeenLastCalledWith(
+      { org: "acme", namespace: "col-ingest" },
+      "col-eng",
+      ["doc://b.md"],
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("stops the calls still to send once it closes mid-move", async () => {
+    let signal: AbortSignal | undefined;
+    let answer: (v: unknown) => void = () => {};
+    api.moveKnowledge.mockImplementation((_id: unknown, _to: unknown, _uris: unknown, s: AbortSignal) => {
+      signal = s;
+      return new Promise((resolve) => {
+        answer = resolve;
+      });
+    });
+    const { onMoved, onClose, unmount } = dialog();
+    await pick("Engineering");
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalled();
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    // The call in flight still answers: the list is read again, nothing else happens.
+    answer({ found: true, to_namespace: "col-eng", results: [{ source_uri: "doc://a.md", moved: true, reason: "" }] });
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]));
+    expect(toast).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("says the collections are still being read, or could not be, instead of no place", () => {

@@ -16,6 +16,8 @@ from server.core.object_store import ObjectStoreError
 from server.knowledge.api.models_knowledge import KnowledgeMoveInput
 from server.knowledge.app import move
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
+from server.knowledge.store import blobs
+from server.knowledge.store import documents as documents_repo
 from server.knowledge.store.documents import DocumentRow
 from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
 
@@ -58,6 +60,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "deleted": [],
         "taken_back": [],
         "audited": [],
+        "originals": [],
+        "tables": {"src": [], "dst": []},
+        "head_moved": False,
+        "on_claim": None,
     }
 
     async def get_one(org: str, ns: str, uri: str, *, include_superseded: bool = False) -> Any:
@@ -71,6 +77,9 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     @asynccontextmanager
     async def claim(org: str, ns: str, uri: str, *, wait_s: float = 10):
+        if state["on_claim"] is not None:
+            state.pop("on_claim")()
+            state["on_claim"] = None
         yield state["held"]
 
     async def no(*args: Any) -> bool:
@@ -84,6 +93,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return state["ledger"] if state["ledger_reads"] == 1 else state["ledger_later"]
 
     async def originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
+        state["originals"].append(doc.source_uri)
         return {}
 
     async def copy(doc: DocumentRow, dst: str, there: Any, originals: Any) -> move._Copy:
@@ -93,9 +103,14 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         state["copied"].append(doc.source_uri)
         return move._Copy(doc, dst, 99, [], ["m"])
 
-    async def delete(doc: DocumentRow) -> bool:
+    async def delete(doc: DocumentRow) -> None:
         state["deleted"].append(doc.source_uri)
-        return True
+
+    async def head_is(doc: DocumentRow) -> bool:
+        return not state["head_moved"]
+
+    async def tables(org: str, ns: str, uri: str, version: int) -> list[dict[str, Any]]:
+        return state["tables"][ns]
 
     async def take_back(copy: move._Copy) -> None:
         state["taken_back"].append(copy.doc.source_uri)
@@ -117,6 +132,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move, "_store_originals", originals)
     monkeypatch.setattr(move, "_copy", copy)
     monkeypatch.setattr(move, "_delete_source", delete)
+    monkeypatch.setattr(move, "_head_is", head_is)
+    monkeypatch.setattr(move.datasets_repo, "at_version", tables)
     monkeypatch.setattr(move, "_take_back", take_back)
     monkeypatch.setattr("server.auth.authz.row_in_scope", reach)
     monkeypatch.setattr("server.observability.audit.emit", emit)
@@ -293,13 +310,10 @@ async def test_a_publication_that_may_still_land_is_busy(
 async def test_a_source_written_since_it_was_read_is_busy(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    read = store["src"][URI]
+    def text_write() -> None:  # after the read, before the claims
+        store["src"][URI] = _doc("src", version=11)
 
-    async def get_many(org: str, ns: str, uris: list[str]) -> list[DocumentRow]:
-        store["src"][URI] = _doc("src", version=11)  # a text write after the read
-        return [read]
-
-    monkeypatch.setattr(move.documents_repo, "get_many_by_uris", get_many)
+    store["on_claim"] = text_write
     assert _answers(await _run()) == [(URI, False, "busy")]
     assert store["copied"] == [] and store["deleted"] == []
 
@@ -321,12 +335,80 @@ async def test_a_source_deleted_meanwhile_is_not_found_and_no_delete_runs(
 async def test_a_copy_whose_source_moved_before_its_delete_is_taken_back(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def moved(doc: DocumentRow) -> bool:
-        return False
+    store["head_moved"] = True
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["taken_back"] == [URI] and store["deleted"] == []
 
-    monkeypatch.setattr(move, "_delete_source", moved)
+
+async def test_a_delete_refused_under_postgres_takes_the_copy_back(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def refused(doc: DocumentRow) -> None:
+        raise HeadMoved(doc.source_uri)
+
+    monkeypatch.setattr(move, "_delete_source", refused)
     assert _answers(await _run()) == [(URI, False, "busy")]
     assert store["taken_back"] == [URI]
+
+
+async def test_a_delete_that_fails_after_its_tombstone_leaves_the_copy(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def after_tombstone(doc: DocumentRow) -> None:
+        raise RuntimeError("forget_published failed")
+
+    monkeypatch.setattr(move, "_delete_source", after_tombstone)
+    with pytest.raises(RuntimeError):
+        await _run()
+    # The source may be deleted already: the copy stays, and a retry only deletes.
+    assert store["copied"] == [URI] and store["taken_back"] == []
+
+
+async def test_no_original_is_stored_for_a_document_already_there(store: dict[str, Any]) -> None:
+    store["dst"][URI] = _doc("dst", content_sha256="other")
+    assert _answers(await _run()) == [(URI, False, "exists")]
+    assert store["originals"] == []
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        {"title": "B"},
+        {"description": "new"},
+        {"tags": ["x"]},
+        {"metadata": '{"k": 1}'},
+    ],
+)
+async def test_a_copy_edited_on_either_side_is_another_document(
+    store: dict[str, Any], edit: dict[str, Any]
+) -> None:
+    # A cut-off move's copy, then an edit of the source: deleting it would lose the edit.
+    store["dst"][URI] = _doc("dst", version=20)
+    store["src"][URI] = _doc("src", **edit)
+    assert _answers(await _run()) == [(URI, False, "exists")]
+    assert store["deleted"] == []
+
+
+async def test_a_table_approved_since_the_copy_makes_it_another_document(
+    store: dict[str, Any],
+) -> None:
+    store["dst"][URI] = _doc("dst", version=20)
+    table = {"dataset_id": "t", "schema": "[]", "schema_state": "draft", "clarifications": "[]"}
+    store["tables"]["dst"] = [{**table, "row_count": 2}]
+    store["tables"]["src"] = [{**table, "row_count": 2, "schema_state": "approved"}]
+    assert _answers(await _run()) == [(URI, False, "exists")]
+    assert store["deleted"] == []
+
+
+async def test_an_ingest_job_open_where_it_goes_is_busy(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def open_job(org: str, ns: str, uri: str) -> bool:
+        return ns == "dst"
+
+    monkeypatch.setattr(move.ingest_jobs, "open_for_source", open_job)
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["copied"] == []
 
 
 def _erasure(scope: str, value: str, **over: Any) -> dict[str, Any]:
@@ -350,3 +432,44 @@ def test_which_erasures_reach_a_document(row: dict[str, Any], reaches: bool) -> 
     doc = _doc("src")
     since = move._written_s(doc)
     assert move._erasing([row], doc, "dst", since + 10**9) is reaches
+
+
+@pytest.fixture
+def originals(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """An original held as a ClickHouse row in `src` whose copy does not land, and what
+    `locate` answers after that; what was stored again."""
+    state: dict[str, Any] = {"after": None, "put": [], "located": 0}
+
+    async def locate(org: str, ns: str, sha: str) -> Any:
+        state["located"] += 1
+        return blobs.Stored(5, "") if state["located"] == 1 else state["after"]
+
+    async def copy_held(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    async def read(org: str, ns: str, sha: str, *, stored: Any) -> bytes:
+        assert stored.location
+        return b"bytes"
+
+    async def put(org: str, ns: str, data: bytes, *, uploader: str) -> str:
+        state["put"].append((ns, data))
+        return "sha"
+
+    for name, fake in (("locate", locate), ("copy_held", copy_held), ("read", read), ("put", put)):
+        monkeypatch.setattr(move.blobs, name, fake)
+    return state
+
+
+async def test_an_original_moved_to_the_bucket_meanwhile_is_read_from_there(
+    originals: dict[str, Any],
+) -> None:
+    originals["after"] = blobs.Stored(5, "s3://bucket/key")
+    assert await move._store_originals(_doc("src", blob_path="sha"), "dst") == {}
+    assert originals["put"] == [("dst", b"bytes")]
+
+
+async def test_an_original_swept_meanwhile_is_cleared_from_the_copy(
+    originals: dict[str, Any],
+) -> None:
+    cleared = await move._store_originals(_doc("src", blob_path="sha"), "dst")
+    assert cleared == documents_repo.NO_ORIGINAL and originals["put"] == []
