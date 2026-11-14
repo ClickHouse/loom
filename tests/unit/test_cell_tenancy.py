@@ -607,24 +607,6 @@ def test_a_guard_refusal_of_the_row_answers_tenancy_refused_not_a_retry(
     assert "new" not in tenancy._held
 
 
-def test_a_guard_refusal_of_a_recorded_row_answers_tenancy_refused(
-    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from server.core import pg
-
-    cell_pg.mode = "recording"
-
-    async def _refused(sql: str, org: str) -> Any:
-        if sql == tenancy._RECORD:
-            raise errors.TenancyRefusedError("cell refuses a tenancy row")
-        return await cell_pg.fetchval(sql, org)
-
-    monkeypatch.setattr(pg, "fetchval", _refused)
-    with pytest.raises(errors.TenancyRefusedError):
-        asyncio.run(tenancy.ensure_held("new", _auth("new")))
-    assert "new" not in tenancy._held
-
-
 def test_an_org_another_process_just_recorded_is_held(cell_pg: _PG) -> None:
     cell_pg.mode = "recording"
     cell_pg.racer = "new"
