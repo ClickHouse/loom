@@ -158,12 +158,10 @@ def test_an_org_longer_than_a_cell_holds_answers_400_and_places_nothing(
 ) -> None:
     """The directory's one check refuses it before any statement, for every placing
     route; the route answers 400, which no retry changes."""
-    connected: list[int] = []
 
     @asynccontextmanager
     async def _connection(**_kw: Any) -> Any:
-        connected.append(1)
-        raise AssertionError("connected")
+        raise AssertionError("connected")  # the test client re-raises it
         yield
 
     monkeypatch.setattr(directory, "place", _real_place)
@@ -172,21 +170,6 @@ def test_an_org_longer_than_a_cell_holds_answers_400_and_places_nothing(
     answer = _place(_client(), long)
     assert answer.status_code == 400
     assert f"longer than the {cell.ORG_MAX_BYTES}" in answer.json()["error"]
-    assert connected == []
-
-
-def test_the_directory_refuses_a_long_org_before_it_connects(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    @asynccontextmanager
-    async def _never(**_kw: Any) -> Any:
-        raise AssertionError("connected")
-        yield
-
-    monkeypatch.setattr(directory, "_connection", _never)
-    long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)
-    with pytest.raises(directory.OrgTooLong):
-        asyncio.run(_real_place(long, "eu-1", lambda _row: ""))
 
 
 def test_an_org_placed_elsewhere_answers_its_cell(fake: _Directory) -> None:

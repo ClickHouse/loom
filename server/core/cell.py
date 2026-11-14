@@ -68,7 +68,9 @@ def org_too_long(org: str) -> bool:
 
 
 def org_too_long_reason(org: str) -> str:
-    return f"org name is {len(org.encode())} bytes, longer than the {ORG_MAX_BYTES} a cell holds"
+    return (
+        f"org name is {len(org.encode())} bytes, longer than the {ORG_MAX_BYTES} bytes a cell holds"
+    )
 
 
 FINGERPRINT_VERSION = 1

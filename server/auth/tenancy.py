@@ -118,8 +118,9 @@ def scoped_to(auth: AuthInfo | None, org: str) -> bool:
 async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     """Pass when this cell holds `org`, recording or placing it as the mode allows.
     Raise `PermissionError` (403) first for a principal that may not act in the org,
-    `WrongCellError` (409) for another cell's org, `BackendUnavailableError` (503)
-    when the cell cannot tell. Nothing is written for an org refused."""
+    `WrongCellError` (409) for another cell's org, `ValidationError` (422) for a new org
+    longer than `cell.ORG_MAX_BYTES`, `BackendUnavailableError` (503) when the cell
+    cannot tell. Nothing is written for an org refused."""
     if not settings.cell or org is None or org in ORG_FREE:
         return
     # A principal that may not act in the org is refused first, as the gate would, so
