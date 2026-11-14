@@ -1,7 +1,7 @@
 // The place picker (a select, or the tree beside the page), the path and chips, the
 // collection's menu, New collection, and how the list is read again after a write.
 import { useState, type ComponentProps } from "react";
-import { PLACE_PICKER_LABEL, repeatedTitles } from "../lib/collections";
+import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
@@ -23,6 +23,7 @@ import {
   useReadableCollections,
   type ReadableCollections,
 } from "./LibraryCollections";
+import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 
 const api = vi.hoisted(() => ({
   listCollections: vi.fn(),

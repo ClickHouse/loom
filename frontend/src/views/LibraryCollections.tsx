@@ -20,7 +20,6 @@ import {
   collectionTitle,
   distinctTitle,
   namespaceLabel,
-  PLACE_PICKER_LABEL,
   roleLabel,
 } from "../lib/collections";
 import { fmtInt } from "../lib/format";
@@ -30,6 +29,7 @@ import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
+import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";

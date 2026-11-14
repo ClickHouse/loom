@@ -1,7 +1,6 @@
 /**
  * What a collection is called on screen, the name a title derives, the order collections are
- * listed in, how many the Library reads, what a new one may sit in, and the Library's landmark
- * names the page's focus handoff looks up.
+ * listed in, how many the Library reads, and what a new one may sit in.
  *
  * A collection's name (`col-…`) is its address: grants, search scope and audit key on it,
  * and it is never used again once deleted. People see its title, which may repeat; the
@@ -130,8 +129,8 @@ export function plainName(title: string): string {
 /** server/identity/api/models_collections.py: the title field's max_length. */
 export const MAX_TITLE = 200;
 
-/** Whether a trimmed title is over MAX_TITLE, counted by character after the NFC the server
- *  applies (an emoji, or an accent typed as two, is one). */
+/** Whether a trimmed title is over MAX_TITLE, counted by code point after the NFC the server
+ *  applies, as its max_length counts. */
 export function titleTooLong(title: string): boolean {
   return Array.from(title.normalize("NFC")).length > MAX_TITLE;
 }
@@ -140,9 +139,3 @@ export function titleTooLong(title: string): boolean {
 export function canHold(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "viewer";
 }
-
-/** The Library tree's landmark name, which the focus handoff finds it by. */
-export const LIBRARY_PLACES_LABEL = "Library places";
-
-/** The place picker's name, shown where no tree is: the page hands it the focus when the tree goes. */
-export const PLACE_PICKER_LABEL = "Show the documents of";

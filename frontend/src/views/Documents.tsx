@@ -287,7 +287,6 @@ export function Documents() {
   // not measured yet, the select stands in.
   const treeHeight = useTreeHeight();
   const besideTree = treeHeight !== null;
-  // A title typed in the tree's New collection form is dropped.
   useTreeFocusHandoff(besideTree);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
