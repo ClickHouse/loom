@@ -11,12 +11,19 @@ import sys
 from typing import Any
 
 import pytest
+from autogen_core import Image
 from autogen_core.memory import Memory, MemoryContent, MemoryMimeType
 from autogen_core.model_context import BufferedChatCompletionContext
 from autogen_core.models import AssistantMessage, SystemMessage, UserMessage
 from loom import Agent, SyncAgent
 from loom.integrations.autogen import LoomMemory
 from loom.memory import MemorySearchHit, MemorySearchResult
+
+# A 1x1 PNG.
+_PIXEL = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6"
+    "kgAAAABJRU5ErkJggg=="
+)
 
 
 class _FakeMemory:
@@ -191,3 +198,20 @@ def test_query_stays_within_memory_search_s_top_k_bound() -> None:
     asyncio.run(LoomMemory(_Agent(fake)).query("seat", top_k=600))  # type: ignore[arg-type]
     ((_, _, kw),) = fake.calls
     assert kw["top_k"] == 500
+
+
+def test_update_context_reads_a_multimodal_latest_message_by_its_text() -> None:
+    fake = _FakeMemory()
+    memory = LoomMemory(_Agent(fake))  # type: ignore[arg-type]
+
+    async def run() -> None:
+        context = BufferedChatCompletionContext(buffer_size=10)
+        await context.add_message(UserMessage(content="Book me a flight", source="user"))
+        picture = Image.from_base64(_PIXEL)
+        await context.add_message(
+            UserMessage(content=["Which seat should I pick?", picture], source="user")
+        )
+        await memory.update_context(context)
+
+    asyncio.run(run())
+    assert fake.calls[0][1] == ("Which seat should I pick?",)

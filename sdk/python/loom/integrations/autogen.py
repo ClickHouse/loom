@@ -1,18 +1,21 @@
 """Loom as an AutoGen ``Memory``.
 
 ``LoomMemory`` implements ``autogen_core.memory.Memory``, the protocol an
-AutoGen ``AssistantAgent`` takes as ``memory=[...]``: before each model call
-the agent asks it to ``update_context``, and it adds the Loom memories that
-match the latest user message as a system message::
+AutoGen ``AssistantAgent`` takes as ``memory=[...]``: once per turn, before
+the agent's first model call, it asks the memory to ``update_context``, and
+the memory adds the Loom memories that match the latest user message as a
+system message::
 
     from autogen_agentchat.agents import AssistantAgent
-    from autogen_core.memory import MemoryContent
+    from autogen_core.memory import MemoryContent, MemoryMimeType
     from loom import Agent
     from loom.integrations.autogen import LoomMemory
 
     async with Agent(org="acme", namespace="support") as loom_agent:
         memory = LoomMemory(loom_agent, user_id="alice")
-        await memory.add(MemoryContent(content="Alice prefers aisle seats", mime_type="text/plain"))
+        await memory.add(
+            MemoryContent(content="Alice prefers aisle seats", mime_type=MemoryMimeType.TEXT)
+        )
         assistant = AssistantAgent("assistant", model_client=model_client, memory=[memory])
 
 Identity and isolation come from the Loom agent. Install with
@@ -142,15 +145,8 @@ class LoomMemory(Memory):
 
     async def update_context(self, model_context: ChatCompletionContext) -> UpdateContextResult:
         messages = await model_context.get_messages()
-        query = next(
-            (
-                m.content
-                for m in reversed(messages)
-                if isinstance(m, UserMessage) and isinstance(m.content, str)
-            ),
-            "",
-        )
-        memories = await self.query(query)
+        latest = next((m for m in reversed(messages) if isinstance(m, UserMessage)), None)
+        memories = await self.query(_user_text(latest) if latest else "")
         if memories.results:
             # query returns text; MemoryContent.content is typed to allow bytes too.
             lines = "\n".join(f"{i}. {str(m.content)}" for i, m in enumerate(memories.results, 1))
@@ -175,3 +171,10 @@ def _text(content: MemoryContent) -> str:
     if isinstance(content.content, dict):
         return json.dumps(content.content, ensure_ascii=False, sort_keys=True)
     raise TypeError(f"LoomMemory stores text and JSON, not {type(content.content).__name__}")
+
+
+def _user_text(message: UserMessage) -> str:
+    """A user message's text; a multimodal message keeps its text parts."""
+    if isinstance(message.content, str):
+        return message.content
+    return " ".join(part for part in message.content if isinstance(part, str))
