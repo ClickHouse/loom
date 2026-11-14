@@ -30,8 +30,16 @@ compare the new value with the active rows of the same `memory_type` in the name
 A `decision` row is identified by its key (category and scenario), not its text: in the
 write-time conflict check, a peer under another key is never a merge, a duplicate, a
 refinement or a pinned refusal, only a conflict ([decisions](../tasks-and-decisions.md#decisions)).
-A `memory.bulk_set` entry whose value is byte-identical to a live row under another key
-folds into that row whatever its type, a `decision` included.
+A `definition` row is identified by its key too, and is judged against no row under
+another key: no write-time verdict, no supersession by the value-update pass, the
+`newest_wins` named-fact path or a templated pair inside one batch, and no conflict mark.
+`memory.consolidate` never takes it and the conflict resolver never judges one. Its
+namespace-wide row is revised only by a write of that row: a write of its key by another
+identity does not retire it, and a negative outcome's quarantine skips it. A
+`memory.bulk_set` entry whose value is byte-identical to a live row of the same agent and
+user, under another key or in another session, folds into that row, unless either is a
+`definition`: a definition is written as its own row and is never the row an entry folds
+into.
 
 No verdict on the write calls an LLM. The [conflict resolver](#the-conflict-resolver)
 judges flagged and nearby pairs afterwards.
@@ -56,7 +64,7 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 | `duplicate` | Near-identical to a peer but not canonically equal.                                                   | Yes, `status='duplicate'` with `duplicate_of`.                     |
 | `conflict`  | Close to a peer but different.                                                                        | Yes; both rows `conflicted` and cross-linked.                      |
 | `refines`   | Under `newest_wins`, the same statement with a different fill, unless the peer's `valid_at` is later. | Yes; the replaced peer is superseded.                              |
-| `rejected`  | Close to a pinned peer (a `decision` excepted, see above), or a changed value for a pinned key.       | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
+| `rejected`  | Close to a pinned peer (a `decision` or `definition` excepted), or a changed value for a pinned key.  | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
 
 - Every verdict is deterministic and settled in the response.
 - `dry_run=true` runs the whole check and writes nothing.
@@ -67,12 +75,12 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 
 `namespace.register` takes `default_conflict_policy`:
 
-| Policy                     | Behaviour                                                                                                                                                                                                                  |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `auto_reinforce` (default) | A contradiction is flagged for review; an update the conflict resolver is sure of retires the older row as `superseded` (history kept), and a less sure one is flagged. Two sessions' rows of one key are judged as peers. |
-| `manual_review`            | Both stay live and the pair waits for review: the conflict resolver flags or clears, never retires.                                                                                                                        |
-| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it.             |
-| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                        |
+| Policy                     | Behaviour                                                                                                                                                                                                                                                |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto_reinforce` (default) | A contradiction is flagged for review; an update the conflict resolver is sure of retires the older row as `superseded` (history kept), and a less sure one is flagged. Two sessions' rows of one key are judged as peers, a `definition`'s never.       |
+| `manual_review`            | Both stay live and the pair waits for review: the conflict resolver flags or clears, never retires.                                                                                                                                                      |
+| `newest_wins`              | A templated substitution, or an update the conflict resolver is sure of, retires the older row as `superseded` (history kept). A write for a key retires every older live row with that key, whoever wrote it, except a definition's namespace-wide row. |
+| `append_only`              | Every write is an event: no merge, duplicate or conflict verdict. A same-key rewrite stays last-writer-wins. The writer owns dedup.                                                                                                                      |
 
 Superseded rows are served only to reads that pass `include_superseded=true` (or an
 `as_of` read of a time they held), and a served one names its successor.
@@ -83,14 +91,14 @@ Superseded rows are served only to reads that pass `include_superseded=true` (or
 ranking hint:
 
 - A close write against a pinned peer is refused with 409 `PINNED_CONFLICT` (a
-  `decision` excepted, see above); `pinned_blocker_id` names the row.
+  `decision` or `definition` excepted, see above); `pinned_blocker_id` names the row.
 - A changed value for a pinned key is refused the same way unless the write itself pins.
 - A byte-identical restatement passes and keeps the pin.
 - In `memory.bulk_set`, an entry for a pinned key is skipped (`skipped_pinned`); one
-  close to a pinned peer is listed in `rejected_pinned` (a `decision` excepted, see
-  above). Entries for one key settle in order, as separate `memory.set` calls would: an
-  entry that is refused or merged leaves no value or pin for the next one, and repeating
-  it gets the same verdict.
+  close to a pinned peer is listed in `rejected_pinned` (a `decision` or `definition`
+  excepted, see above). Entries for one key settle in order, as separate `memory.set`
+  calls would: an entry that is refused or merged leaves no value or pin for the next
+  one, and repeating it gets the same verdict.
 
 To change a pinned value, call `memory.update` (keeps the pin) or `memory.pin` (re-pins).
 
@@ -133,9 +141,9 @@ async with Agent(org="acme", namespace="support", agent="curator") as agent:
 
 With `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` on (the default wherever neither
 `LOOM_LLM_PROVIDER` nor the provider of `LOOM_CONFLICT_RESOLVER_MODEL` is `fake`), a
-leader-only worker judges each write that has a live peer of its type at cosine
-0.60 or more, or was flagged `conflicted`, against up to eight such peers in one call to
-`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
+leader-only worker judges each write but a `definition` that has a live peer of its type
+at cosine 0.60 or more, or was flagged `conflicted`, against up to eight such peers in
+one call to `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`). Per pair:
 
 - an update it is sure of (confidence 0.98 or more) under `auto_reinforce` (the default)
   or `newest_wins` retires the older row, recorded for Undo (reason `conflict_resolver`),
@@ -151,7 +159,8 @@ leader-only worker judges each write that has a live peer of its type at cosine
 
 The judge sees when each note's statement holds and which session it comes from.
 
-It also re-checks pairs flagged before it judged them, so a false flag is cleared once.
+It also re-checks pairs flagged before it judged them, so a false flag is cleared once (a
+definition's flags excepted: it is never judged, only its dead flags released).
 A pinned row is never touched, a row that changed since it was judged is left to its
 next judgement, and each written version is judged once. A judgement costs about $0.005,
 and the resolver spends at most a quarter of a namespace's daily cost cap

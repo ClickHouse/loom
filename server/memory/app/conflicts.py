@@ -10,9 +10,10 @@
    peer is rejected with 409 PINNED_CONFLICT — pinned is a write-time
    invariant, not a UI badge.
 
-A KEY_IDENTIFIED_TYPES row (a decision) skips the merge, duplicate and
+A key-identified row (KEY_IDENTIFIED_TYPES) skips the merge, duplicate and
 refines steps and the pinned short-circuit: a row under another key is
-another decision, so every close peer is only a conflict.
+another row, so every close peer is only a conflict. A definition returns
+before any of this: it reads no peers and is always clear.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ from server.memory.domain.conflicts import (
     substitution_result,
     templated_substitution,
 )
-from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
+from server.memory.domain.memory_types import DEFINITION, KEY_IDENTIFIED_TYPES, is_definition
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.store import conflicts as _conflicts_repo
 from server.memory.store.conflict_candidates import (
@@ -154,13 +155,16 @@ async def same_key_mark(
     same subject holds the row's key live: a shared key is not proof of one attribute,
     so the resolver judges the pair (as bulk writes do). Not under `newest_wins`, which
     retires the older row itself, nor `append_only`, nor for the anonymous user
-    (`keys_held_elsewhere`). One query; fail-open."""
+    (`keys_held_elsewhere`), nor for a definition, whose key is its identity. One query;
+    fail-open."""
     from server.memory.app.key_supersession import keys_held_elsewhere
     from server.memory.store.conflict_resolver import OWED_MARK
 
     mark = resolver_mark(result)
     if mark is not None or not settings.memory_conflict_resolver_enabled:
         return mark
+    if is_definition(memory_row):
+        return None  # a definition's key is its identity: nothing to judge
     try:
         ch = get_client()
         policy = policy or await namespace_conflict_policy(org, namespace, ch=ch)
@@ -517,6 +521,8 @@ async def check_on_commit(
     if not new_embedding:
         return ConflictResult(verdict="clear", peers=[])
 
+    if memory_type == DEFINITION:  # judged against no row under another key
+        return ConflictResult(verdict="clear", peers=[])
     resolved_policy = await _policy_before_gate(resolved_policy, org, namespace)
     if resolved_policy == APPEND_ONLY_POLICY:  # no verdict against a peer
         return ConflictResult(verdict="clear", peers=[])
@@ -797,10 +803,12 @@ async def apply_refines(
             owe_retirements,
             settle_retirements,
         )
-        from server.memory.domain.lock import refuses_retirement
+        from server.memory.domain.lock import refuses_cross_key_retirement
 
         tracker = RetirementTracker(
-            lambda row: refuses_retirement(row) or (skip_peer is not None and skip_peer(row))
+            lambda row: (
+                refuses_cross_key_retirement(row) or (skip_peer is not None and skip_peer(row))
+            )
         )
         reason = reason or NEWEST_WINS_CONTRADICTION
         agent = str(getattr(new_row, "agent", "") or "")

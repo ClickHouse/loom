@@ -158,8 +158,10 @@ class _CH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.executes: list[str] = []
         self.fail_runs_insert = fail_runs_insert
+        self.reads: list[tuple[str, dict[str, Any]]] = []
 
     async def query_all(self, sql, params=None):
+        self.reads.append((sql, dict(params or {})))
         return list(self.rows)
 
     async def execute(self, sql, params=None):
@@ -270,6 +272,20 @@ def _two_row_cluster() -> list[dict[str, Any]]:
             tags=["pet"],
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_candidate_read_binds_the_definition_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A definition under another key is another term: the read leaves every one out.
+    from server.memory.domain.memory_types import DEFINITION
+
+    ch = _CH([])
+    _wire(monkeypatch, ch, _LLM("{}"))
+    await handle_memory_consolidate(_input())
+    sql, params = ch.reads[0]
+    assert "m.memory_type != {definition:String}" in sql and params["definition"] == DEFINITION
 
 
 # ----------------------------------------------------------------------

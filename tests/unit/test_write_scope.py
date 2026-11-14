@@ -652,7 +652,7 @@ class _PinnedV(_NamespaceCH):
     rows = [_V_PINNED_ROW]
 
 
-def _check_on_commit(monkeypatch, ch: _SqlCH) -> Any:
+def _check_on_commit(monkeypatch, ch: _SqlCH, memory_type: str = "semantic") -> Any:
     from server.memory.app import conflicts
 
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
@@ -660,7 +660,7 @@ def _check_on_commit(monkeypatch, ch: _SqlCH) -> Any:
         org="o",
         namespace="n",
         agent="bot",
-        memory_type="semantic",
+        memory_type=memory_type,
         memory_key="k",
         new_value="U lives in Lisbon",
         new_embedding=[0.1, 0.2],
@@ -690,6 +690,14 @@ def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) 
     out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch))
     assert len([s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]) == 1
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
+
+
+def test_a_definition_is_judged_against_no_peer(monkeypatch) -> None:
+    # A definition issues no peer read, so no row, pinned or not, blocks or flags it.
+    ch = _PinnedV()
+    out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch, "definition"))
+    assert (out.verdict, out.peers, out.review) == ("clear", [], False)
+    assert ch.sql == []
 
 
 def test_batched_conflict_candidates_are_the_writers_rows() -> None:

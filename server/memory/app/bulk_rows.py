@@ -38,7 +38,7 @@ from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.expire_reasons import carried_reason
-from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.memory_types import is_definition, is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
 from server.memory.store.pg_memory import policy_part
@@ -382,6 +382,9 @@ def _bulk_skip_gate(
     keeper = state.built.get(_dup[0]) if _dup is not None else None
     if (
         _dup is not None
+        # A definition never folds into another row of its bytes: its key is its identity,
+        # and another session's row of that key is that session's copy.
+        and not is_definition(entry)
         and entry.memory_key not in state.existing_sha
         and entry.memory_key not in state.built
         and (keeper is None or keeper.row["memory_id"] != _dup[1])

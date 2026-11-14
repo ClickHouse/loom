@@ -27,7 +27,9 @@ def _row(monkeypatch):
             namespace="n",
             agent="a",
             user_id="-",
+            session_id="-",
             memory_key="k",
+            memory_type="semantic",
             lock_mode="",
             lock_until=None,
         )
@@ -100,6 +102,7 @@ def _session_row(session_id, lock_mode="", version=1):
         user_id="-",
         session_id=session_id,
         memory_key="k",
+        memory_type="semantic",
         memory_id=f"mid-{session_id}",
         status="active",
         version=version,
@@ -172,6 +175,33 @@ async def test_a_locked_memory_is_not_quarantined(monkeypatch, mode):
     ch = _wire_quarantine(monkeypatch, heads)
 
     out = await ops.handle_memory_outcome(_negative())
+    assert out.recorded is True and out.quarantined is False
+    assert [t for t, _ in ch.inserts] == ["loom.memory_usage_events"]
+
+
+async def test_a_session_copy_never_quarantines_the_namespace_definition(monkeypatch):
+    copy = _session_row("s1")
+    shared = _session_row("-")
+    for row in (copy, shared):
+        row.agent, row.memory_type = "-", "definition"
+    ch = _wire_quarantine(monkeypatch, {"mid-s1": copy, "mid--": shared})
+
+    out = await ops.handle_memory_outcome(_negative())
+    assert out.quarantined is True
+    written = [r for t, rows in ch.inserts if t == "loom.memory" for r in rows]
+    assert [(r["session_id"], r["status"]) for r in written] == [("s1", "rejected")]
+
+
+async def test_rating_the_namespace_definition_quarantines_nothing(monkeypatch):
+    shared = _session_row("-")
+    copy = _session_row("s1")
+    for row in (copy, shared):
+        row.agent, row.memory_type = "-", "definition"
+    ch = _wire_quarantine(monkeypatch, {"mid--": shared, "mid-s1": copy})
+
+    out = await ops.handle_memory_outcome(
+        MemoryOutcomeInput(org="o", namespace="n", memory_id="mid--", outcome="negative", weight=1)
+    )
     assert out.recorded is True and out.quarantined is False
     assert [t for t, _ in ch.inserts] == ["loom.memory_usage_events"]
 

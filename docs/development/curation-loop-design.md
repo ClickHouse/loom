@@ -219,42 +219,13 @@ ceiling): one fixed winner, not necessarily the later of the two. A rewrite of a
 row that is not a promotion, such as a scrub, does not count.
 
 A caller may already write rows of type `definition`; they are governed only once an admin
-promotes them, but their write-time verdicts change with this design: `definition` joins
-`KEY_IDENTIFIED_TYPES`, as `decision` is, which switches off the merge, duplicate,
-refinement and pinned-peer verdicts across keys: two rows under different keys stay two
-rows however alike they read, and only the promotion's name check compares their names. A
-decision is still marked `conflicted` against a close peer under another key; unlike a
-decision, a definition is never judged against a close definition under another key: the
-write-time check neither marks nor supersedes it (no merge, duplicate, refinement or
-pinned-peer refusal, and no supersession by the value-update pass of `memory.bulk_set`,
-and no fold of a `memory.bulk_set` entry into a byte-identical row under another key,
-which [conflicts and refusal](../features/memory/conflicts-and-refusal.md) applies to
-every other type), and the conflict resolver ([conflicts and
-refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
-nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
-clusters (today it clusters one identity's live, unpinned, unlocked rows of one type that
-are not `high`, which reaches a namespace-wide row when called under agent and user `'-'`,
-by similarity and tombstones the merged keys), since a row under another key is not a
-revision, and `MRR` is not a revision of `ARR`. Under `newest_wins`, the named-fact path,
-which closes an older single-valued fact and retires the rows behind it across keys and
-types (`newest_wins_contradiction`), never retires a definition's namespace-wide row
-either. And a write of a `definition/` key by another identity (a user's own copy) does
-not retire the namespace-wide row of that key, as same-key supersession does today for
-every unpinned row the writer reads: only a write of the namespace-wide row itself revises
-it, so no writer ends an admin's definition by writing a private copy, which the term leg
-then keeps out of the served list. This is an exception to the `newest_wins` rule that a
-write for a key retires every older live row with that key, whoever wrote it ([conflicts
-and refusal](../features/memory/conflicts-and-refusal.md)), for a definition's
-namespace-wide row only; the pinned-peer exemption above is the one `decision` already has
-as a key-identified type. The implementing pull request updates the comment on
-`KEY_IDENTIFIED_TYPES` (`server/memory/domain/memory_types.py`), the policy table of that
-page, the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
-consolidation in [memory architecture](../architecture/memory-architecture.md) and
-[conflicts and refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the
-old verdicts during a rollout. Conflict surfacing compares a row only with rows of its own
-`memory_type`, so a learned fact that contradicts a definition is not flagged against it.
-The term leg serves the governed definition above such a fact; a cross-type check would
-add a candidate read to every write, and is not part of this design.
+promotes them. A definition is key-identified and is judged against no row under another
+key, and only a write of its namespace-wide row revises that row
+([conflicts and refusal](../features/memory/conflicts-and-refusal.md)). Conflict surfacing
+compares a row only with rows of its own `memory_type`, so a learned fact that contradicts
+a definition is not flagged against it. The term leg serves the governed
+definition above such a fact; a cross-type check would add a candidate read to every write,
+and is not part of this design.
 
 ### The term leg
 

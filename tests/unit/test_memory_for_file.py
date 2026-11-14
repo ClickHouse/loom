@@ -665,6 +665,15 @@ def test_a_row_superseding_two_rows_leaves_both_out_with_it() -> None:
     ]
 
 
+def test_two_linked_definitions_are_two_terms() -> None:
+    x = _row("definition/arr", json.dumps("ARR"), memory_type="definition", memory_id="id-1")
+    y = _row("definition/mrr", json.dumps("MRR"), memory_type="definition", memory_id="id-2")
+    x["conflict_with"], y["conflict_with"] = ["id-2"], ["id-1"]
+    rows = mff._supersede_order([x, y])
+    assert [r["memory_key"] for r in rows] == ["definition/arr", "definition/mrr"]
+    assert not any(r.get("supersedes_key") for r in rows)
+
+
 def test_two_linked_rows_with_one_timestamp_link_one_way() -> None:
     def pair() -> list[dict[str, Any]]:
         x = _row("x", json.dumps("Keep 32."), namespace="me", memory_id="id-1")

@@ -426,6 +426,7 @@ def _mem(mid: str = "m1", **kw: Any) -> Any:
         memory_id=mid,
         actor="",
         memory_key="office_city",
+        memory_type="semantic",
         namespace="ns",
         agent="a",
         user_id="u",
@@ -879,6 +880,42 @@ async def test_a_row_gone_or_under_append_only_is_stamped_without_a_call(row_env
     row_env.mem.status = "active"
     await _resolve(policy="append_only")
     assert row_env.llm_calls == 0 and row_env.stamped == ["office_city", "office_city"]
+
+
+async def test_a_definition_is_stamped_without_a_call_however_it_was_queued(row_env: NS) -> None:
+    # Owed by the delivery repair, or flagged `conflicted` by an older build: the resolver
+    # never judges a definition, so it neither flags nor retires one. A dead flag is still
+    # released, as for any row.
+    row_env.mem.memory_type = "definition"
+    row_env.mem.status, row_env.mem.conflict_with = "conflicted", ["m2", "m9"]
+    row_env.dead = {"m9"}
+    await _resolve()
+    assert row_env.unlinked == [("m1", ("m9",))]
+    assert row_env.llm_calls == 0 and row_env.acted == [] and row_env.stamped == ["office_city"]
+
+
+async def test_a_row_rewritten_as_a_definition_before_its_prompt_costs_no_call(
+    row_env: NS,
+) -> None:
+    # The value, and so the hash, kept: the re-read before the prompt sees the type.
+    import copy
+
+    rewritten = copy.copy(row_env.heads["m1"])
+    rewritten.memory_type = "definition"
+    row_env.heads["m1"] = rewritten
+    await _resolve()
+    assert row_env.llm_calls == 0 and row_env.acted == [] and row_env.stamped == ["office_city"]
+
+
+async def test_a_pair_whose_peer_became_a_definition_is_not_acted_on(row_env: NS) -> None:
+    # Rewritten while the model judged: the re-read under the key locks refuses the pair.
+    import copy
+
+    rewritten = copy.copy(row_env.heads["m2"])
+    rewritten.memory_type = "definition"
+    row_env.heads["m2"] = rewritten
+    counts = await _resolve()
+    assert row_env.llm_calls == 1 and row_env.acted == [] and counts.skipped_changed == 1
 
 
 @pytest.mark.parametrize("field", ["expires_at", "valid_to"])
@@ -2131,6 +2168,11 @@ async def test_a_bulk_row_whose_key_another_session_holds_is_owed(monkeypatch) -
         row["user_id"] = "-"
     await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns"), state)
     assert ch.sql == [] and [e["conflict_checked_at"] for e in state.embedding_rows] == [None, None]
+    # A definition's key is its identity: another session's row of it is not judged.
+    for row in (*state.memory_rows, *state.embedding_rows):
+        row.update(user_id="u", memory_type="definition")
+    await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns"), state)
+    assert ch.sql == [] and [e["conflict_checked_at"] for e in state.embedding_rows] == [None, None]
 
 
 def test_a_later_close_sibling_of_its_type_is_marked() -> None:
@@ -2140,6 +2182,7 @@ def test_a_later_close_sibling_of_its_type_is_marked() -> None:
     assert cr.later_close_siblings([rome, paris], kinds[:2], 0.60) == {1}, "the later one"
     assert cr.later_close_siblings([paris, rome], ["semantic", "preference"], 0.60) == set()
     assert cr.later_close_siblings([paris, [], rome], kinds, 0.85) == set()
+    assert cr.later_close_siblings([paris, rome], ["definition", "definition"], 0.60) == set()
 
 
 async def test_a_bulk_update_inside_the_batch_is_owed_under_every_policy_but_append_only(

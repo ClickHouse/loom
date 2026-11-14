@@ -18,6 +18,11 @@ of its own (tags, links, outcomes and attestations are metadata ops that no
 lock gates), so it would collapse into `read_only`. Locking is a WRITER action
 and loosening an ADMIN action: narrowing access is silent, widening it is
 explicit.
+
+`refuses_retirement` and `refuses_cross_key_retirement` are the predicates every
+automatic retirement re-reads its row with. `refuses_retirement` also keeps a
+definition's namespace-wide row, and `refuses_cross_key_retirement` any definition: a
+definition's key is its identity.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now as _now
 from server.core.datetimes import to_naive_utc as _naive
+from server.memory.domain.memory_types import is_definition, is_namespace_definition
 
 LockAction = Literal["value", "expire", "delete"]
 
@@ -54,8 +60,17 @@ def effective_mode(row: Any, *, now: datetime | None = None) -> str:
 
 
 def refuses_retirement(row: Any) -> bool:
-    """A row no other write may retire: both lock modes refuse it."""
-    return bool(effective_mode(row))
+    """A row no automatic retirement may take: one either lock mode holds, or a
+    definition's namespace-wide row, which only its own write revises."""
+    return bool(effective_mode(row)) or is_namespace_definition(row)
+
+
+def refuses_cross_key_retirement(row: Any) -> bool:
+    """A row a retirement judged against another key may not take: one
+    `refuses_retirement` refuses, or any definition, whose key is its identity. The
+    retiring path reads it again, so a row rewritten as a definition since its peer read
+    is left too."""
+    return refuses_retirement(row) or is_definition(row)
 
 
 def is_stricter_or_equal(new_mode: str, old_mode: str) -> bool:
