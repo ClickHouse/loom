@@ -704,7 +704,7 @@ def _refuse_long(orgs: Iterable[str]) -> None:
 # registered before the first attach could share the first cell's stores.
 
 # The columns attach reads beside a Cell's.
-_ATTACH_EXTRA = ("bucket", "bucket_prefix", "probe_url", "upstream_url", "attach_started_at")
+_ATTACH_EXTRA = (*_REGISTERED, "attach_started_at")
 _CELL_ATTACH = f"SELECT {_CELL_COLUMNS}, {', '.join(_ATTACH_EXTRA)} FROM loom_router.cells"
 _OTHER = "SELECT cell FROM loom_router.cells WHERE cell <> $1 ORDER BY cell LIMIT 1"
 
@@ -846,15 +846,9 @@ def begin_refusal(found: Attaching, begin: Begin) -> str:
     return ""
 
 
-async def operator_read(cell_name: str) -> Attaching:
-    """`GET /cells/v1/operator/cells/<cell>`: the cell's row as attach reads it, and any
-    other row's name, audited; NoSuchCell without one."""
-    return await attach_read(cell_name, audited=True)
-
-
 async def attach_read(cell_name: str, *, audited: bool = False) -> Attaching:
     """The cell's row as attach reads it, and any other row's name (`audited`: with an
-    audit row, as the operator's read writes); NoSuchCell without one."""
+    audit row, as `GET /cells/v1/operator/cells/<cell>` writes); NoSuchCell without one."""
     async with _reading(), _connection() as conn:
         found = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
         other = await conn.fetchval(_OTHER, cell_name)

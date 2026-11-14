@@ -868,7 +868,7 @@ def test_each_attach_calls_bound_counts_the_statements_it_sends(store: _Store) -
         return store.statements - before
 
     begin = directory.Begin("dep-1", CURRENT, None, "keys", {})
-    assert sent(directory.operator_read("eu-1")) == directory.OPERATOR_READ_STATEMENTS
+    assert sent(directory.attach_read("eu-1", audited=True)) == directory.OPERATOR_READ_STATEMENTS
     assert sent(directory.attach_read("eu-1")) == directory.ATTACH_READ_STATEMENTS
     assert sent(directory.attach_begin("eu-1", begin)) == directory.ATTACH_CHANGE_STATEMENTS
     assert sent(directory.attach_enforced("eu-1", "dep-1")) == directory.ATTACH_CHANGE_STATEMENTS
