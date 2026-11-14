@@ -12,8 +12,8 @@ lab links the page that does its work.
 | A GitHub account and a browser | [Try it in GitHub Codespaces](../getting-started/quickstart.md#try-it-in-github-codespaces) |
 | Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone) |
 
-The codespace runs on a 4-core machine with 16 GB of memory, and its hours count against
-each student's Codespaces quota.
+The codespace runs on a 4-core machine with 16 GB of memory, so each hour it runs uses
+four core-hours of the student's Codespaces quota.
 
 The stock install needs no API key: it embeds with a bundled local model, so search works
 offline, and no write verdict calls an LLM. Extraction, summaries and generated answers
@@ -40,7 +40,8 @@ session, and a run. Follow [Your first agent](../getting-started/first-agent.md)
 
 Exercises:
 
-- Ask a question no saved fact answers and explain the abstain code the reply carries
+- Search with `memory.search` for something no saved fact answers, and explain the
+  `abstain_code` the reply carries
   ([search and ask](../features/memory/search-and-ask.md)).
 - Save a fact, then a close but different value under another key, and read the write
   verdict ([how a write is judged](../features/memory/conflicts-and-refusal.md#how-a-write-is-judged)).
@@ -51,12 +52,13 @@ Exercises:
 
 Ingest a few documents with `loom demo`, which also prints the top search hits for a
 question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
-The path is inside the container, which holds these docs under `/app/docs/`. The path also
-names the document, so copy a file of your own in under its own name first:
+The path is inside the container, which holds these docs under `/app/docs/`. Copy a file
+of your own in first, under a name that identifies it, since `loom demo` names the
+document by its path:
 
 ```bash
 docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md --question "How do I get a token?"
-docker compose --project-directory <dir> cp <path> loom:/tmp/<name>
+docker compose --project-directory <dir> exec -T loom sh -c 'cat > /tmp/<name>' < <path>
 docker compose --project-directory <dir> exec loom loom demo --file /tmp/<name> --question "<a question the file answers>"
 ```
 
@@ -87,7 +89,8 @@ Exercises:
 
 - Pick five functions and compare `code.callers` with what `grep` finds; explain each
   difference ([reading an answer](../features/code-index/overview.md#reading-an-answer)).
-- Change a function on a branch and read what `code.impact` reports for the diff.
+- Change a function on a branch and send its `git diff` to `code.impact` as `diff`
+  ([how an agent uses it](../features/code-index/overview.md#how-an-agent-uses-it)).
 
 ## Lab 4: memory as a database
 
