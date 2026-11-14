@@ -726,4 +726,4 @@ async def test_a_guard_function_dropped_after_its_migration_is_a_defect_in_every
         assert any("tenancy_refuse_unmarked() is absent" in r.getMessage() for r in caplog.records)
         defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
         assert ("function", "loom.tenancy_refuse_unmarked() is absent") in defects
-        assert ("absent", "loom.tenancy: no tenancy_record trigger") in defects
+        assert ("function", "loom.tenancy: no tenancy_record trigger") in defects

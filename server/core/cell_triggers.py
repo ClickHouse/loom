@@ -138,7 +138,7 @@ async def expected_definitions(conn: Any, names: tuple[str, ...]) -> dict[str, s
         await tx.rollback()
 
 
-def expected_functions(function: str = FUNCTION) -> list[tuple[str, list[str]]]:
+def expected_functions(function: str) -> list[tuple[str, list[str]]]:
     """`function`'s body and settings as each migration file that defines it writes
     them: a function changes only through a numbered file (rolling-upgrades rule 47), so
     any other body is a hand edit. An earlier file's body counts too: a cell this build has
@@ -319,6 +319,12 @@ async def missing(conn: Any) -> list[Defect]:
     present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
     fn = await conn.fetchrow(_FUNCTION, f"{FUNCTION}()")
     tenancy_fn = await conn.fetchrow(_FUNCTION, f"{TENANCY_FUNCTION}()")
+    # The guard and its function are absent before 012 ran, normal there; dropped after it,
+    # no boot creates them again: a defect in every state.
+    migrated = tenancy_fn is not None or await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM loom.pg_migrations WHERE filename = $1)", TENANCY_MIGRATION
+    )
+    dropped = "function" if migrated and tenancy_fn is None else "absent"
     # Compared whole, as this server prints them; a trigger whose function is absent has
     # nothing to compare with. A role that may not create a temporary table cannot compare:
     # named, with every other defect kept.
@@ -343,7 +349,8 @@ async def missing(conn: Any) -> list[Defect]:
         for name in (TENANCY_TRIGGER,) if table == "tenancy" else ORG_TRIGGERS:
             row = present.get((table, name))
             if row is None:
-                found.append(Defect("absent", f"loom.{table}: no {name} trigger"))
+                kind = dropped if name == TENANCY_TRIGGER else "absent"
+                found.append(Defect(kind, f"loom.{table}: no {name} trigger"))
                 continue
             event = _EVENTS[name]
             tgtype = row["tgtype"]
@@ -371,13 +378,7 @@ async def missing(conn: Any) -> list[Defect]:
                     Defect("shape", f"loom.{table}: {name} is not AFTER, row-level, on its event")
                 )
     found += _function_defects(FUNCTION, fn, absent="function")
-    # Absent before 012 ran, like its trigger; dropped after it, a defect in every state.
-    migrated = tenancy_fn is not None or await conn.fetchval(
-        "SELECT EXISTS (SELECT 1 FROM loom.pg_migrations WHERE filename = $1)", TENANCY_MIGRATION
-    )
-    found += _function_defects(
-        TENANCY_FUNCTION, tenancy_fn, absent="function" if migrated else "absent"
-    )
+    found += _function_defects(TENANCY_FUNCTION, tenancy_fn, absent=dropped)
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
     for name in CELL_FIRST_TRIGGERS:
         row = first.get(("cell_first", name))

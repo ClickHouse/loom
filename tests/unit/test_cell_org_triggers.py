@@ -574,7 +574,7 @@ def test_the_expected_functions_are_read_only_from_the_files_that_define_it(
     altered = tmp_path / "901_alter.sql"
     altered.write_text("ALTER FUNCTION loom.tenancy_refuse_unheld() OWNER TO loom;\n")
     monkeypatch.setattr(pg_migrate, "migration_files", lambda: [*shipped, helper, altered])
-    found = cell_triggers.expected_functions()
+    found = cell_triggers.expected_functions(cell_triggers.FUNCTION)
     assert len(found) == 1 and "cell holds no tenancy row" in found[0][0]
 
 
@@ -586,7 +586,7 @@ def test_a_bound_that_ran_out_is_named_on_a_not_read_line() -> None:
 
 
 def test_the_expected_function_is_read_from_its_migration() -> None:
-    body, config = cell_triggers.expected_functions()[-1]
+    body, config = cell_triggers.expected_functions(cell_triggers.FUNCTION)[-1]
     assert "RAISE EXCEPTION 'cell holds no tenancy row for org %'" in body
     assert not body.lstrip().startswith("AS") and "$$" not in body
     assert config == ["search_path=pg_catalog, loom, pg_temp"]
@@ -728,3 +728,10 @@ def test_ensure_creates_or_enables_the_guard_once_its_function_exists(
     monkeypatch.setattr(cell_triggers, "_run_ddl", _run)
     asyncio.run(cell_triggers.ensure(_Enforced(RuntimeError("unused"))))
     assert statements == ([("tenancy", ran)] if ran else [])
+
+
+def test_the_guards_function_is_read_from_its_migration() -> None:
+    (body, config), *rest = cell_triggers.expected_functions(cell_triggers.TENANCY_FUNCTION)
+    assert not rest and "IF TG_OP = 'UPDATE' AND OLD.org = NEW.org" in body
+    assert "from a session that ran no tenancy check" in body and "$$" not in body
+    assert config == ["search_path=pg_catalog, loom, pg_temp"]

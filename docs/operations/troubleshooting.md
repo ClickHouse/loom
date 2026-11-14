@@ -395,9 +395,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 ### Writes are slow, or a script is refused, on a deployment that is not a cell
 
-- **Symptom:** on a deployment whose cell state is `open` (every process serves), Loom's
-  own writes, and any script's or bulk loader's, take longer per row, or a role without
-  `SELECT` on `loom.cell_first` gets "permission denied for table cell_first".
+- **Symptom:** on a deployment whose cell state is `open` (every process serves), Loom's own
+  writes, and any script's or bulk loader's, take longer per row, a role without `SELECT` on
+  `loom.cell_first` gets "permission denied for table cell_first", or a script's
+  `loom.tenancy` insert fails with SQLSTATE `LT001`.
 - **Cause:** the org triggers are still on its tables: a schema-only restore of a
   prepared cell, or a cleanup that skipped the step that drops them. In `open` they let
   every row through, but each unmarked write still reads the state. The `loom.tenancy`
