@@ -673,6 +673,8 @@ async def test_a_dropped_guard_function_is_named_in_every_state_and_fails_the_bo
                 await cell_triggers.ensure(conn)
         defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
         assert ("function", "loom.tenancy_refuse_unmarked() is absent") in defects
+        if state == "enforced":  # the failed boot created no guard
+            assert ("absent", "loom.tenancy: no tenancy_record trigger") in defects
         await conn.execute((pg_migrate.PG_MIGRATIONS_DIR / "012_tenancy_guard.sql").read_text())
         await cell_triggers.ensure(conn)
         if state == "enforced":

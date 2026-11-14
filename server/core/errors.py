@@ -143,8 +143,9 @@ class DefinitionNameTakenError(LoomServerError):
 
 class TenancyRefusedError(LoomServerError):
     """503 — this cell's Postgres refused a row for an org the cell holds no tenancy row
-    for (its org triggers, docs/architecture/cells.md): the session that wrote it is not
-    marked as one that ran the tenancy check. Nothing was written. A served request
+    for (its org triggers), or a tenancy row (its `loom.tenancy` guard;
+    docs/architecture/cells.md): the session that wrote it is not marked as one that ran
+    the tenancy check. Nothing was written. A served request
     meets it only when this process's sessions lost the marker (a pooler or proxy that
     drops the startup parameter: point LOOM_PG_DSN straight at Postgres; `loom doctor`
     names it), a fault of the server, not of the call: not retried, since only an
