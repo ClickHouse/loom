@@ -298,7 +298,7 @@ agent and its credential are not component config.
 
 ## AG2
 
-AG2 1.3 gives an agent context through assembly policies, which run before each model call,
+An AG2 1.3 agent gets context through assembly policies, which run before each model call,
 and acts through tools. `LoomRecallPolicy` is a policy that adds the Loom memories matching
 the latest user message to the prompt, and `loom_tools` returns Loom's agent verbs as AG2
 tools, the same `AgentTools` as the [OpenAI Agents SDK](#openai-agents-sdk) adapter, so the
@@ -336,7 +336,10 @@ one), and adds the matches as one prompt block, or nothing. It only reads; the m
 through `loom_remember`. `loom_tools` binds `user_id`, `session_id` and `run_id` to every
 call and takes `only=[...]` and `max_result_chars` (8,000 by default; `loom_recall` leaves
 out its lowest-ranked memories whole to fit, counted in `omitted`). A call Loom refuses
-raises its `LoomError`, which AG2 hands the model as a tool error, and the run goes on.
+is a tool error whose text is `<tool> failed: <message>`, in place of the traceback AG2
+sends for an exception, and the run goes on. The policy adds context, so put it before a
+trimming policy (`SlidingWindowPolicy`, `TokenBudgetPolicy`), which then counts the memory
+block.
 
 ## Pydantic AI
 
@@ -544,15 +547,15 @@ client can speak for several agents.
   anyway: a failed save prints only for a `verbose` agent, and a failed recall shows only as
   a `MemoryRetrievalFailedEvent` on CrewAI's event bus, so an unreachable Loom is otherwise
   silent.
-- **An AG2 call fails when Loom is unreachable.** `LoomRecallPolicy` runs inside the
-  agent's assembly step, which does not catch a policy's error.
+- **An AG2 turn fails when Loom is unreachable.** `LoomRecallPolicy` runs before each
+  model call of the turn, and `AssemblerMiddleware` does not catch a policy's error.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
 - **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK tools
   return Loom's error to the model as the call's result; the Pydantic AI, Mastra and AI SDK
   tools return it as a failed tool result (Mastra answers a call outside Loom's schema with
-  its own validation message first).
+  its own validation message first), and the AG2 tools as a tool error.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).

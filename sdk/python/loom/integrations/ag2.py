@@ -1,6 +1,6 @@
 """Loom as AG2 memory: a recall policy and Loom's agent verbs as tools.
 
-AG2 1.3 gives an agent context through assembly policies, which run before
+An AG2 1.3 agent gets context through assembly policies, which run before
 each model call, and acts through tools. ``LoomRecallPolicy`` is a policy: it
 searches Loom with the latest user message and adds the matching memories to
 the prompt. ``loom_tools`` returns Loom's agent verbs (``loom_remember``,
@@ -29,17 +29,20 @@ Identity and isolation come from the Loom agent. Install with
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 try:
-    from ag2.events import BaseEvent, ModelRequest
+    from ag2.events import BaseEvent, ModelRequest, ToolCallEvent, ToolErrorEvent
     from ag2.events.input_events import TextInput
+    from ag2.events.tool_events import ToolResult
+    from ag2.middleware.base import ToolExecution, ToolResultType
     from ag2.tools import tool
     from ag2.tools.final.function_tool import FunctionTool
 except ImportError as e:  # the framework is an optional extra
     raise ImportError("loom.integrations.ag2 needs ag2: pip install 'clickhouse-loom[ag2]'") from e
 
+from loom.errors import LoomError
 from loom.sync import SyncAgent
 from loom.tools import AgentTools
 
@@ -56,10 +59,12 @@ class LoomRecallPolicy:
     bound to with the latest user message, and adds the matches as one prompt
     block. With ``honour_abstain`` it leaves out memories below Loom's floor
     and adds nothing when Loom abstains. It only reads: memories are written
-    through ``loom_tools`` (``loom_remember``) or the SDK.
+    through ``loom_tools`` (``loom_remember``) or the SDK. It adds context, so
+    put it before a trimming policy (``SlidingWindowPolicy``,
+    ``TokenBudgetPolicy``), which then counts the memory block.
     """
 
-    name = "loom_recall"
+    name = "loom_memory"
 
     def __init__(
         self,
@@ -128,8 +133,9 @@ def loom_tools(
     ``only`` keeps a subset by name, e.g. ``["loom_remember", "loom_recall"]``;
     ``max_result_chars`` caps the string each call returns to the model
     (``loom_recall`` leaves out its lowest-ranked memories whole to fit, counted
-    in ``omitted``). A call Loom refuses raises its ``LoomError``, which AG2
-    hands the model as a tool error; the run goes on.
+    in ``omitted``). A call Loom refuses is a tool error whose text is
+    ``<tool> failed: <message>``, in place of the traceback AG2 sends for an
+    exception; the run goes on.
     """
     if isinstance(agent, SyncAgent):
         raise TypeError("loom_tools needs a loom.Agent: its tools await the agent's calls")
@@ -147,12 +153,28 @@ def loom_tools(
             name=spec["name"],
             description=spec["description"],
             schema=spec["parameters"],
+            middleware=[_loom_error_text],
         )
         for spec in tools.definitions()
     ]
 
 
-def _runner(tools: AgentTools, name: str) -> Any:
+async def _loom_error_text(
+    call_next: ToolExecution, event: ToolCallEvent, context: ConversationContext
+) -> ToolResultType:
+    """A refused call stays a tool error, with Loom's message rather than a traceback."""
+    result = await call_next(event, context)
+    if isinstance(result, ToolErrorEvent) and isinstance(result.error, LoomError):
+        return ToolErrorEvent(
+            parent_id=result.parent_id,
+            name=result.name,
+            error=result.error,
+            result=ToolResult(f"{result.name} failed: {result.error}"),
+        )
+    return result
+
+
+def _runner(tools: AgentTools, name: str) -> Callable[..., Awaitable[str]]:
     async def run(**arguments: Any) -> str:
         return await tools.execute(name, arguments)
 

@@ -105,7 +105,10 @@ def test_a_refused_call_reaches_the_model_as_a_tool_error_and_the_run_goes_on() 
     reply = asyncio.run(assistant.ask("Which seat?"))
     assert asyncio.run(reply.content()) == "Sorry."
     (error,) = [m for m in config.calls[-1].messages if isinstance(m, ToolErrorEvent)]
-    assert "memory store unavailable" in str(error.error)
+    # What the model reads: Loom's message, not a traceback.
+    assert [part.content for part in error.result.parts] == [
+        "loom_recall failed: memory store unavailable"
+    ]
 
 
 def test_the_policy_adds_loom_s_memories_to_the_prompt_the_model_sees() -> None:
@@ -156,6 +159,19 @@ def test_the_policy_leaves_out_rows_below_the_floor_then_caps_at_top_k() -> None
     policy = LoomRecallPolicy(_FakeAgent({}, memory), top_k=2)  # type: ignore[arg-type]
     prompts, _ = asyncio.run(policy.apply([], _asked("Alice"), None))  # type: ignore[arg-type]
     assert prompts == ["## Relevant memories from Loom\n\n- aisle seats\n- vegetarian"]
+
+
+def test_the_policy_reads_the_user_s_request_and_skips_an_inbox_message() -> None:
+    from ag2.events import ModelRequest
+    from ag2.events.input_events import TextInput
+
+    memory = _FakeMemory([_hit("k1", "aisle seats")])
+    policy = LoomRecallPolicy(_FakeAgent({}, memory))  # type: ignore[arg-type]
+    inbox = ModelRequest([TextInput("deploy finished")], origin="service")
+    asyncio.run(policy.apply([], [*_asked("Which seat?"), inbox], None))  # type: ignore[arg-type]
+    assert [q for q, _ in memory.searches] == ["Which seat?"]
+    assert asyncio.run(policy.apply(["base"], [inbox], None)) == (["base"], [inbox])  # type: ignore[arg-type]
+    assert len(memory.searches) == 1
 
 
 def test_the_policy_searches_nothing_without_a_user_message() -> None:
