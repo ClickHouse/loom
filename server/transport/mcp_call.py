@@ -510,9 +510,9 @@ async def _another_cells_org(
 ) -> dict[str, Any] | None:
     """A call in the token's own org on a cell that does not hold it answers WRONG_CELL,
     or the refusal of a new org's name past `cell.ORG_MAX_BYTES`, as a tool error before
-    the caller's defaults are read: they live in that org, so
-    reading them would only find none and refuse the call as a validation failure. A
-    call naming another org is the op gate's to check."""
+    the caller's defaults are read: they live in that org, so reading them would only
+    find none and refuse the call as a validation failure. A call naming another org is
+    the op gate's to check."""
     from server.settings import settings
 
     if auth is None or not settings.cell:
