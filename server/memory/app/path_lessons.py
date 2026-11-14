@@ -72,6 +72,8 @@ def _lesson(hit: dict[str, Any], path: str) -> dict[str, Any] | None:
         "excerpt": excerpt,
         "code_state": str(hit.get("code_state") or ""),
     }
+    if hit.get("code_changed_since"):
+        lesson["changed_since"] = str(hit["code_changed_since"])
     if hit.get("supersedes_key"):
         lesson["supersedes_key"] = str(hit["supersedes_key"])
     return lesson
@@ -101,9 +103,10 @@ async def lessons_for_paths(
     `supersedes_key`, and `memory.for_file` shows them. Each row: `path`, `memory_key`,
     `namespace`, `excerpt`, `code_state`: the worst state of its links to code in the file
     (`fresh`, `moved`, or `changed`, `unresolved` or `missing` when that code differs from
-    what the memory was written against), '' for a row that names the file only; and
-    `supersedes_key`, the key of the older row it replaces, when the conflict check linked
-    one."""
+    what the memory was written against), '' for a row that names the file only;
+    `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
+    state, when one is known; and `supersedes_key`, the key of the older row it replaces,
+    when the conflict check linked one."""
     if not namespaces or not paths:
         return Lessons([])
     # memory.for_file takes two extra namespaces and follows code links only into the

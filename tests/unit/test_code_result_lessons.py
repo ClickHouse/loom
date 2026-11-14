@@ -121,6 +121,18 @@ async def test_nothing_readable_reads_nothing(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
+async def test_a_lesson_whose_code_changed_names_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    changed = dict(_hit("rule/changed", state="changed"), code_changed_since="ab" * 20)
+    fresh = dict(_hit("rule/fresh", state="fresh"), code_changed_since="")  # as the listing sends
+    rows = await _lessons(monkeypatch, {"a.py": [changed, fresh]}, ["a.py"])
+    assert rows[0]["changed_since"] == "ab" * 20
+    # no commit to name, no key: as `supersedes_key`, absent rather than empty
+    assert "changed_since" not in rows[1]
+
+
+@pytest.mark.asyncio
 async def test_another_file_of_the_same_name_brings_no_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

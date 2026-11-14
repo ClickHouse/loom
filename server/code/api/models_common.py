@@ -42,7 +42,7 @@ class _CodeIdentity(BaseModel):
 class _ResultLessons(BaseModel):
     """The `lessons` a code answer carries for the files it returns."""
 
-    # Attach `lessons`: the team's memories about the answer's top files (for
+    # Attach `lessons`: the memories about the answer's top files (for
     # code.context_pack, a `task` briefing's only). False = none.
     # Not in the MCP listing (every session pays for it) but accepted there.
     include_lessons: bool = Field(default=True, json_schema_extra=MCP_HIDDEN)
@@ -70,10 +70,12 @@ class _LessonsOut(BaseModel):
 
     # The memories about the answer's top files, best first, capped at
     # `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt,
-    # code_state}, and `supersedes_key` when it replaces an older row. `code_state` is the
-    # worst state of the row's links to code in the file: `fresh`, `moved`, or `changed`,
-    # `unresolved` or `missing` when that code differs from what the memory was written
-    # against; '' for a row that names the file only.
+    # code_state}, with `changed_since` and `supersedes_key` when they apply. `code_state` is
+    # the worst state of the row's links to code in the file: `fresh`, `moved`, or
+    # `changed`, `unresolved` or `missing` when that code differs from what the memory was
+    # written against; '' for a row that names the file only. `changed_since` is the commit
+    # that put its code in a `changed`, `unresolved` or `missing` state, when known;
+    # `supersedes_key` the key of the older row it replaces.
     lessons: list[dict[str, Any]] = Field(default_factory=list)
     # How many rows about those files the lessons' token cap or a cut left out, with
     # the rows another row read for the answer supersedes.
