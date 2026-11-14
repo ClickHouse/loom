@@ -64,9 +64,10 @@ class LoomRecallPolicy:
     bound to with the latest user message, and adds the matches as one prompt
     block. With ``honour_abstain`` it leaves out memories below Loom's floor
     and adds nothing when Loom abstains. It only reads: memories are written
-    through ``loom_tools`` (``loom_remember``) or the SDK. It adds context, so
-    put it before a trimming policy (``SlidingWindowPolicy``,
-    ``TokenBudgetPolicy``), which then counts the memory block.
+    through ``loom_tools`` (``loom_remember``) or the SDK. Put it before a
+    trimming policy (``SlidingWindowPolicy``, ``TokenBudgetPolicy``), which can
+    cut the user's request out of the events it reads. Those policies trim
+    events, not the prompt, so ``top_k`` is what bounds the memory block.
     """
 
     name = "loom_memory"

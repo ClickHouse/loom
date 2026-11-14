@@ -330,16 +330,17 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 | `top_k`                     | 5        | memories per model call, at least 1 and capped at 500                                                |
 | `honour_abstain`            | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                    |
 
-The policy runs `memory.search` of the namespace it is bound to before each model call of a
-turn, with the text of the latest request a user sent (a framework inbox message is not
-one), and adds the matches as one prompt block, or nothing. It only reads; the model writes
-through `loom_remember`. `loom_tools` binds `user_id`, `session_id` and `run_id` to every
-call and takes `only=[...]` and `max_result_chars` (8,000 by default; `loom_recall` leaves
-out its lowest-ranked memories whole to fit, counted in `omitted`). A call Loom refuses
-is a tool error whose text is `<tool> failed: <message>`, in place of the traceback AG2
-sends for an exception, and the run goes on. The policy adds context, so put it before a
-trimming policy (`SlidingWindowPolicy`, `TokenBudgetPolicy`), which then counts the memory
-block.
+The policy runs `memory.search` of the namespace it is bound to before each model call of
+a turn, with the text of the latest request a user sent (a framework inbox message is not
+one), and adds the matches as one prompt block, or nothing. It only reads; the model
+writes through `loom_remember`. `loom_tools` binds `user_id`, `session_id` and `run_id` to
+every call and takes `only=[...]` and `max_result_chars` (8,000 by default; `loom_recall`
+leaves out its lowest-ranked memories whole to fit, counted in `omitted`). A call Loom
+refuses is a tool error whose text is `<tool> failed: <message>`, in place of the
+traceback AG2 sends for an exception, and the run goes on. Put the policy before a
+trimming policy (`SlidingWindowPolicy`, `TokenBudgetPolicy`), which can cut the user's
+request out of the events the policy reads. Those policies trim events, not the prompt, so
+`top_k` is what bounds the memory block.
 
 ## Pydantic AI
 
