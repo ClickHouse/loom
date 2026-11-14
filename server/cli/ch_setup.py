@@ -25,7 +25,7 @@ import re
 import sys
 from typing import Any, Literal, NamedTuple
 
-from server.cli._ch import check_setup_stores, run_connected, writes
+from server.cli._ch import OrgNotHeld, check_setup_stores, run_connected, writes
 from server.core.ch_errors import error_code, error_line
 from server.core.ch_names import DEFAULT_READER, database, quote, telemetry_database
 from server.core.schema import preflight
@@ -441,6 +441,11 @@ def _write_analyst() -> None:
         run_connected(
             lambda _ch: rewrite(), org_free=writes("ClickHouse users and grants, no tenant rows")
         )
+    except OrgNotHeld as e:
+        # `check_setup_stores` checked these stores before the reader was written; a state
+        # read that fails now leaves this optional step unwritten, never the setup.
+        print(f"· loom_analyst (insights.query): not written ({e})")
+        return
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
         if isinstance(e, SetupRefused):

@@ -388,6 +388,19 @@ def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
     assert set_up == [1]
 
 
+def test_ch_setups_optional_analyst_step_is_left_unwritten_when_a_state_read_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.cli import ch_setup
+
+    def _refused(*_a: Any, **_k: Any) -> None:
+        raise _ch.OrgNotHeld("refusing: this cell's state could not be read (TimeoutError)")
+
+    monkeypatch.setattr(ch_setup, "run_connected", _refused)
+    ch_setup._write_analyst()
+    assert "loom_analyst (insights.query): not written" in capsys.readouterr().out
+
+
 def test_a_setup_check_on_a_service_with_no_loom_database_passes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
