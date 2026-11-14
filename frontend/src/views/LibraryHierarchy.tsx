@@ -92,7 +92,8 @@ export function topLevelCollections(rows: CollectionEntry[]): CollectionEntry[] 
 
 /** The collections directly inside `c`. */
 export function childrenOf(rows: CollectionEntry[], c: CollectionEntry): CollectionEntry[] {
-  return rows.filter((r) => r.parent === c.namespace).sort(collectionOrder);
+  // My files stays apart, as in the tree, even under a parent.
+  return rows.filter((r) => r.parent === c.namespace && !r.personal).sort(collectionOrder);
 }
 
 /** "Shared with you", at the top level: each collection shared with the caller whose parent
@@ -401,9 +402,11 @@ export function TopLevelPlaces({
 /** The links of a list of places, by the collection each row names (`data-collection`), for
  *  useLastPageFocus. */
 export function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]> {
-  return [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-collection]") ?? [])].flatMap((li) => {
+  return [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-collection]") ?? [])].flatMap<
+    [string, HTMLElement]
+  >((li) => {
     const link = li.querySelector<HTMLElement>("a");
-    return link ? [[li.dataset.collection ?? "", link] as [string, HTMLElement]] : [];
+    return link ? [[li.dataset.collection ?? "", link]] : [];
   });
 }
 
@@ -419,26 +422,29 @@ export function useShowMore<T extends { namespace: string }>(
 ) {
   const [count, setCount] = useState(first);
   const list = useRef<HTMLUListElement | null>(null);
-  const head = items.slice(0, count);
-  const shown = extra && !head.includes(extra) && items.includes(extra) ? [...head, extra] : head;
-  const left = items.length - shown.length;
+  const shownAt = (n: number) => {
+    const head = items.slice(0, n);
+    return extra && !head.includes(extra) && items.includes(extra) ? [...head, extra] : head;
+  };
+  const shown = shownAt(count);
+  // What the next press adds: `extra` may already be drawn among it.
+  const adds = shownAt(count + MORE_SHOWN).length - shown.length;
   const markShown = useLastPageFocus({
     loading: false,
-    more: left > 0,
+    more: adds > 0,
     rows: () => placeLinks(list.current),
     fallback,
   });
   return {
     shown,
     list,
-    more: left > 0 ? `Show ${Math.min(left, MORE_SHOWN)} more` : null,
+    more: adds > 0 ? `Show ${adds} more` : null,
     showMore: () => {
       markShown(shown.map((c) => c.namespace));
       setCount(count + MORE_SHOWN);
     },
-    /** More than `first` are shown, and back to `first`. */
-    grown: count > first,
-    shrink: () => setCount(first),
+    count,
+    setCount,
   };
 }
 
@@ -461,7 +467,7 @@ function PlaceList({
   onPick: (collection: string) => void;
   truncated: boolean;
 }) {
-  const { shown, list, more, showMore, grown, shrink } = useShowMore(items, FIRST_SHOWN, null, () =>
+  const { shown, list, more, showMore, count, setCount } = useShowMore(items, FIRST_SHOWN, null, () =>
     document.getElementById(id),
   );
   if (items.length === 0) return null;
@@ -493,14 +499,14 @@ function PlaceList({
             {more}
           </Button>
         )}
-        {grown && (
+        {count > FIRST_SHOWN && (
           <Button
             type="empty"
             htmlType="button"
             onClick={() => {
               // Its button goes with the list it shortens; the heading stays.
               document.getElementById(id)?.focus();
-              shrink();
+              setCount(FIRST_SHOWN);
             }}
           >
             Show fewer

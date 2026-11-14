@@ -120,7 +120,7 @@ describe("LibraryTree", () => {
     expect(names()).toHaveLength(51);
     expect(names().at(49)).toBe("Kid 049");
     expect(names().at(-1)).toBe("Kid 080");
-    await userEvent.click(screen.getByRole("button", { name: "Show 50 more" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show 49 more" }));
     expect(names()).toHaveLength(100);
     await userEvent.click(screen.getByRole("button", { name: "Show 20 more" }));
     expect(names()).toHaveLength(120);

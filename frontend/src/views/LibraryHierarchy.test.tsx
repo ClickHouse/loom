@@ -312,6 +312,21 @@ describe("CollectionBack, the path on a phone", () => {
 describe("CollectionChips", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("never shows My files as a chip, a parent or not", () => {
+    const rows = [
+      ROWS[0],
+      entry("col-me-1a2b", { personal: true, parent: "col-team" }),
+      entry("col-kid", { parent: "col-team", title: "Kid" }),
+    ];
+    render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
+    const nav = screen.getByRole("navigation", { name: "Collections in Team" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Kid"]);
+  });
+
   it("names their nav after the collection as the tree tells two of one title apart", () => {
     const rows = [
       entry("col-a", { title: "Notes" }),

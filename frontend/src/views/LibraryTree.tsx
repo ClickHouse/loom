@@ -80,7 +80,7 @@ export function placeTree(rows: CollectionEntry[]): {
     else under.set(c.parent, [c]);
   }
   for (const list of under.values()) list.sort(collectionOrder);
-  // Each collection under the first parent the walk reaches it from.
+  // A cycle's top is not drawn again under its child.
   const children = new Map<string, CollectionEntry[]>();
   const seen = new Set<string>();
   const visit = (c: CollectionEntry): boolean => {
@@ -104,15 +104,6 @@ export function placeTree(rows: CollectionEntry[]): {
   mine.sort(collectionOrder);
   shared.sort(collectionOrder);
   return { own: rows.find((c) => c.personal) ?? null, mine, shared, children };
-}
-
-/** The collections above `name` that the list holds. */
-function ancestors(byName: Map<string, CollectionEntry>, name: string): string[] {
-  const c = byName.get(name);
-  if (!c) return [];
-  return collectionPath(c, byName)
-    .slice(0, -1)
-    .flatMap((p) => ("namespace" in p ? [p.namespace] : []));
 }
 
 /** Memoised: the page beside it draws again on every keystroke in its search. */
@@ -172,15 +163,19 @@ export const LibraryTree = memo(function LibraryTree({
     });
   }, [rows, truncated]);
   useEffect(() => saveExpanded(org, open), [org, open]);
-  // A move opens the place reached and its parents, once the list names it; after that a
-  // person can close any of them, the one shown too.
+  // The way from the top to the place shown, which a move opens, once the list names it (a
+  // person can close any of it after), and on which each list draws its step wherever it sits.
+  const onPath = useMemo(() => {
+    const shown = current ? byName.get(current) : undefined;
+    return new Set(shown ? collectionPath(shown, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : []);
+  }, [byName, current]);
   const shownFor = useRef<string | null>(null);
   useEffect(() => {
     if (shownFor.current === current) return;
     if (current && !byName.has(current)) return;
     shownFor.current = current;
-    if (current) setRevealed((prev) => withAll(prev, [...ancestors(byName, current), current]));
-  }, [byName, current]);
+    if (current) setRevealed((prev) => withAll(prev, [...onPath]));
+  }, [byName, current, onPath]);
   const isOpen = (key: string) => open.has(key) || revealed.has(key);
   const toggle = (key: string) => {
     if (isOpen(key)) {
@@ -227,13 +222,6 @@ export const LibraryTree = memo(function LibraryTree({
       </li>
     );
   };
-
-  // The way from the top to the place shown: each list in the tree draws its step on it,
-  // however far down the list it sits.
-  const shownEntry = current ? byName.get(current) : undefined;
-  const onPath = new Set(
-    shownEntry ? collectionPath(shownEntry, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : [],
-  );
 
   return (
     <nav

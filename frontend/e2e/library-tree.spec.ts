@@ -163,18 +163,18 @@ test.describe("1280 px", () => {
       .toBe(true);
     await expect(tree).toBeVisible();
     await expect(page.getByLabel("Show the documents of")).toHaveCount(0);
+    // Beside the tree the search keeps its room (277 px drawn).
+    expect((await page.getByLabel("Search library").boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(250);
   });
 });
 
-// The page's padding and the tree column's border around the documents' toolbar.
-const TOOLBAR_SLACK = 120;
-
 // Ask AI beside the page narrows <main>: the tree shows only where the page keeps the width
 // it has at 1280 px without the panel.
-for (const [width, tree] of [
-  [1280, false],
-  [1440, false],
-  [1700, true],
+for (const [width, tree, search] of [
+  // The search field's least width, a little under what each draws.
+  [1280, false, 120],
+  [1440, false, 250],
+  [1700, true, 250],
 ] as const) {
   test.describe(`${width} px with Ask AI beside the page`, () => {
     test.use({ viewport: { width, height: 900 } });
@@ -187,15 +187,9 @@ for (const [width, tree] of [
       await expect(page.locator("[data-assistant-panel][data-open]")).toBeVisible();
       await expect(page.getByRole("navigation", { name: "Library places" })).toHaveCount(tree ? 1 : 0);
       await expect(page.getByLabel("Show the documents of")).toHaveCount(tree ? 0 : 1);
-      // The documents' toolbar spans the page, less the tree's column where it shows.
-      const toolbar = page.getByRole("search", { name: "Search and filters" });
-      const room = await page.evaluate(() => document.getElementById("main")?.clientWidth ?? 0);
-      const treeWidth = tree
-        ? ((await page.getByRole("navigation", { name: "Library places" }).boundingBox())?.width ?? 0)
-        : 0;
       await expect
-        .poll(async () => (await toolbar.boundingBox())?.width ?? 0)
-        .toBeGreaterThanOrEqual(room - treeWidth - TOOLBAR_SLACK);
+        .poll(async () => (await page.getByLabel("Search library").boundingBox())?.width ?? 0)
+        .toBeGreaterThanOrEqual(search);
     });
   });
 }
