@@ -265,7 +265,7 @@ def test_unset_cell_refuses_a_read_that_does_not_answer(monkeypatch: pytest.Monk
 
     _unset_on(monkeypatch, _Hung(4))
     monkeypatch.setattr(_ch, "_UNSET_READ_S", 0.05)
-    with pytest.raises(_ch.OrgNotHeld, match="no answer within the bound"):
+    with pytest.raises(_ch.OrgNotHeld, match="TimeoutError: no answer within 0.05 s"):
         asyncio.run(_ch.check_orgs(["acme"]))
 
 

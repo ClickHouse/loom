@@ -93,7 +93,10 @@ async def check_unset_cell() -> None:
     except pg.AuthorityMismatch:
         raise  # another deployment's Postgres: refused as `check_configured` refuses it
     except Exception as e:  # noqa: BLE001 — an unread cell state refuses the command
-        reason = str(e) or "no answer within the bound"
+        if isinstance(e, TimeoutError):
+            reason = f"no answer within {_UNSET_READ_S:g} s"
+        else:
+            reason = str(e) or "no reason given"
         raise OrgNotHeld(
             f"refusing: this deployment's cell state could not be read "
             f"({type(e).__name__}: {reason})"
