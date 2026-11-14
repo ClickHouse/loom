@@ -354,15 +354,15 @@ A `definition` is promoted only:
 - Within `memory_term_leg_max_definitions`: a new key at the ceiling, or any promotion
   while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
 - Under a name no other live shared definition holds as its term or an alias (409
-  `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format characters dropped, NFKC,
-  whitespace collapsed, case-folded.
+  `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format
+  characters dropped, NFKC, whitespace collapsed, case-folded.
 
 One namespace's definition promotions run their ceiling and name checks and the write one
-at a time (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a definition gives back its name
-and its place. The token's actor is its `promoted_by`: `approver` and
-`promoted_from_candidate_id` are ignored and named in `ignored_args`, and no close shared
-row under another key refuses it. `learnings.review` promotes no candidate of type
-`definition` to memory.
+at a time (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a
+definition gives back its name and its place. The token's actor is its `promoted_by`:
+`approver` and `promoted_from_candidate_id` are ignored and named in `ignored_args`, and
+no close shared row under another key refuses it. `learnings.review` promotes no candidate
+of type `definition` to memory.
 
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an

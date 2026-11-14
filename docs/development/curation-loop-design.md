@@ -153,11 +153,11 @@ reader:
   before the review's write, so a refused review writes nothing.
 
 Should two shared rows match one name despite the name check (one promoted through a build
-without the check, or one whose claim on the namespace ran out), the term leg serves, among the rows the
-read-time check passes, the one with the latest `promoted_at`, a tie within its second
-settled by `promotion_event` (the same order picks the rows the term leg reads past the
-ceiling): one fixed winner, not necessarily the later of the two. A rewrite of a shared
-row that is not a promotion, such as a scrub, does not count.
+without the check, or one whose claim on the namespace ran out), the term leg serves,
+among the rows the read-time check passes, the one with the latest `promoted_at`, a tie
+within its second settled by `promotion_event` (the same order picks the rows the term leg
+reads past the ceiling): one fixed winner, not necessarily the later of the two. A rewrite
+of a shared row that is not a promotion, such as a scrub, does not count.
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them. A definition is key-identified and is judged against no row under another

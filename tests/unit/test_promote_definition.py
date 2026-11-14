@@ -52,23 +52,36 @@ def _row(**over: Any) -> MemoryRow:
 def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The source row, the live shared definitions (key -> value), what was written, and
     whether the namespace's claim is free (the claims taken are kept)."""
-    state: dict[str, Any] = {"row": _row(), "shared": {}, "written": [], "free": True, "claims": []}
+    state: dict[str, Any] = {
+        "row": _row(),
+        "shared": {},
+        "written": [],
+        "free": True,
+        "claims": [],
+        "held": False,
+    }
 
     async def get_by_key(*_a: Any, **_k: Any) -> MemoryRow:
         return state["row"]
 
     async def definitions(org: str, namespace: str, limit: int, **_k: Any) -> list[dict]:
         # The two fields the store extracts, as its statement reads them.
+        assert state["held"], "the check runs under the namespace's claim"
         rows = [{"memory_key": k, **_extracted(v)} for k, v in sorted(state["shared"].items())]
         return rows[:limit]
 
     async def write(row: dict[str, Any]) -> None:
+        assert state["held"] or row["memory_type"] != "definition", "written under the claim"
         state["written"].append(row)
 
     @asynccontextmanager
     async def holding(name: str, **_k: Any) -> AsyncIterator[bool]:
         state["claims"].append(name)
-        yield state["free"]
+        state["held"] = state["free"]
+        try:
+            yield state["free"]
+        finally:
+            state["held"] = False
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
