@@ -13,8 +13,8 @@ import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, ti
 import {
   collectionPath,
   cycleStart,
-  MORE_SHOWN,
   isSharedWithMe,
+  MORE_SHOWN,
   PlaceTitleLink,
   sharedWithMe,
   topLevelCollections,

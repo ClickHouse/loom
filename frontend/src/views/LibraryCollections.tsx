@@ -183,11 +183,8 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   };
 }
 
-/**
- * Where the Library reads: the namespace picked in the header, or one of the collections
- * the caller can read. A collection is a shelf of documents that only grants open; its
- * menu shares it (Members) and deletes it, and New collection adds one inside it.
- */
+/** The Library's place line: the place picker (where no tree is shown), the path, the chips
+ *  and the collection's menu (Members, Move, Delete). */
 export function LibraryCollections({
   org,
   namespace,

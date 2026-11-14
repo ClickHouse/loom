@@ -1179,7 +1179,9 @@ export function Documents() {
             onChange={(value) => setQuery(value)}
             // The short form on a phone and beside the tree, whose column leaves the field
             // narrow.
-            placeholder={phone || wide ? "Search, or tag:specs" : "Search title, filename, description, or tag:specs"}
+            placeholder={
+              phone || wide ? "Search, or tag:specs" : "Search title, filename, description, or tag (tag:specs)"
+            }
             aria-label="Search library"
           />
         </ListToolbarSearch>

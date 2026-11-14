@@ -252,8 +252,13 @@ describe("LibraryTree", () => {
     tree();
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
-    await userEvent.type(screen.getByRole("textbox", { name: "New collection at the top level" }), "   ");
+    const field = screen.getByRole("textbox", { name: "New collection at the top level" });
+    await userEvent.type(field, "   {enter}");
     expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    // Enter sends nothing either, nor does a title past the limit.
+    fireEvent.change(field, { target: { value: "a".repeat(201) } });
+    await userEvent.type(field, "{enter}");
+    expect(api.createCollection).not.toHaveBeenCalled();
   });
 
   it("lists a cycle in the list once, from the top, without hanging", () => {
