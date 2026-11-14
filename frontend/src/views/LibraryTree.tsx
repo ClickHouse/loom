@@ -379,7 +379,7 @@ function PlaceBranches({
         {shown.map((c) => branch(c, depth))}
         {more && (
           <li className="library-tree-row library-tree-more" style={{ "--depth": depth } as CSSProperties}>
-            <span className="library-tree-twist" aria-hidden="true" />
+            <span className="library-tree-twist-space" aria-hidden="true" />
             <Button type="empty" htmlType="button" onClick={showMore}>
               {more}
             </Button>
@@ -418,13 +418,14 @@ function PlaceRow({
         <IconButton
           icon={expanded ? "chevron-down" : "chevron-right"}
           size="xs"
+          minTarget
           label={`Collections in ${label}`}
           aria-expanded={!!expanded}
           className="library-tree-twist"
           onClick={onToggle}
         />
       ) : (
-        <span className="library-tree-twist" aria-hidden="true" />
+        <span className="library-tree-twist-space" aria-hidden="true" />
       )}
       <PlaceTitleLink
         plain

@@ -1739,15 +1739,14 @@ textarea[aria-invalid="true"]:focus-visible {
   .library-tree-row[data-selected] .library-tree-link {
     font: var(--click-sidebar-navigation-item-typography-active);
   }
-  /* The show/hide button: 24 px, the smallest pointer target WCAG 2.5.8 allows; an empty
-     box of the same size on a row with nothing inside. */
+  /* The show/hide button keeps Click UI's box (24 px for a mouse, 44 px for a thumb); a row
+     with nothing inside holds an empty box of the same size, so the titles line up. */
   .library-tree-twist {
-    display: inline-flex;
+    flex: 0 0 auto;
+  }
+  .library-tree-twist-space {
     flex: 0 0 1.5rem;
     height: 1.5rem;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
   }
   /* New collection's form at the tree's foot: where it goes, its title, then its two
      buttons on their own line: the column is narrow. */
@@ -1785,7 +1784,7 @@ textarea[aria-invalid="true"]:focus-visible {
     .library-tree-row {
       min-height: var(--spacing-hit);
     }
-    .library-tree-twist {
+    .library-tree-twist-space {
       flex-basis: var(--spacing-hit);
       height: var(--spacing-hit);
     }
