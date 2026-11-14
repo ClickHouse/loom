@@ -268,8 +268,8 @@ export function Documents() {
   // the server decides.
   const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
-  // Who the tree remembers folds for. App draws no page before whoami answers, so it is ""
-  // only with auth off.
+  // Who the tree remembers folds for. App draws no page before whoami answers (with auth off
+  // it answers "local"), so it is "" only for a token that names no subject.
   const subject = whoami?.subject ?? "";
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
