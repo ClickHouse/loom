@@ -11121,7 +11121,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.ingest_status", group: "knowledge", method: "ingestStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
   { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
-  { name: "knowledge.move", group: "knowledge", method: "move", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
+  { name: "knowledge.move", group: "knowledge", method: "move", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 8000, audit: true, readOnly: false },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },

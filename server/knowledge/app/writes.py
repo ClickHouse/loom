@@ -639,11 +639,10 @@ async def handle_knowledge_delete(
     from server.core.ch import own_write_reads
 
     with own_write_reads():
-        return await delete_document(input)
+        return await _delete(input)
 
 
-async def delete_document(input: KnowledgeDeleteInput) -> KnowledgeDeleteOutput:
-    """The delete, for a caller already reading its own writes (a move's source too)."""
+async def _delete(input: KnowledgeDeleteInput) -> KnowledgeDeleteOutput:
     from server.knowledge.store import chunks as knowledge_repo
     from server.knowledge.store import documents as documents_repo
 

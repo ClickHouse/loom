@@ -1119,7 +1119,7 @@ recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 
 ### Moving documents
 
-`knowledge.move` moves up to 100 documents from `namespace` to `to_namespace` in the same
+`knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the same
 org: a collection, `@me` (the caller's own) or a namespace. The caller needs writer on both;
 one it cannot write answers `found: false` and moves nothing, so the answer never says
 whether a collection it cannot reach exists. Each document is written in the new place with
@@ -1132,20 +1132,22 @@ the moved copy).
 
 Each source answers on its own: `moved: true`, or a `reason`:
 
-| `reason`    | Meaning                                                                                      |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| `not_found` | No live document has this source in `namespace` (one already moved answers this on a retry). |
-| `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.         |
-| `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.      |
-| `busy`      | Another write of the source holds it, or a publication of it may still land; call again.     |
-| `erased`    | An erasure that has not finished may reach the document or the place it goes.                |
+| `reason`    | Meaning                                                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_found` | No live document has this source in `namespace` (one already moved answers this on a retry).                                                                     |
+| `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.                                                                             |
+| `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.                                                                          |
+| `busy`      | Another write of the source or the place holds it, a publication or an ingest of it is still to land, or its copy did not finish and was taken back; call again. |
+| `erased`    | An erasure that has not finished may reach the document or the place it goes.                                                                                    |
 
 A move takes the source's claim in both namespaces, as a restore does in one. It writes the
 new place first and deletes the old one last, so a move cut off between the two leaves the
-document in both places, never in neither; moving it again finds the same text already
-there and only deletes the old one. An erasure registered while a move runs takes the copy
-back before the old one is deleted. Under the Postgres authority each of the two writes is
-its own commit.
+document in both places, never in neither; moving it again finds its copy there (the same
+text, author and ingest time) and only deletes the old one. One source that fails answers
+`busy` and the others still move. An erasure registered while a move runs takes the copy
+back and answers `erased`; the document stays deleted where it was. Under the Postgres
+authority each of the two writes is its own commit. The ordering and what a cut-off move
+leaves are in [failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
 
 ## Ingesting files
 

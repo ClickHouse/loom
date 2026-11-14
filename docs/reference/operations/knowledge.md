@@ -389,7 +389,7 @@ Move documents to another namespace of the org: a collection, `@me`, or a namesp
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | Where the documents are. |
 | `to_namespace` | `str` | required | Where they go. |
-| `source_uris` | `list[str]` | required | The documents to move, by source; a source named twice moves once. |
+| `source_uris` | `list[str]` | required | The documents to move, by source, at most 50 a call; a source named twice moves once. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

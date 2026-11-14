@@ -792,7 +792,7 @@ export function Documents() {
   // dialog is up (each owns its Escape).
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
   const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
-  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
+  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry || !!moving;
   const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
   const { selected } = selection;
   const clearSelection = selection.clear;
@@ -1007,15 +1007,15 @@ export function Documents() {
     collections.rows && !collections.truncated && (!collection || shown)
       ? { rows: collections.rows, shown }
       : undefined;
-  // Where documents can go from here: the header's namespace, and the collections the person
-  // writes, in tree order; not the place shown.
+  // Where documents can go from here: the header's namespace when the person adds there, and
+  // the collections they write, in tree order; not the place shown.
+  const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
   const movePlaces = useMemo<MovePlace[]>(() => {
     const out: MovePlace[] = [];
-    if (ownShelf && identity.namespace !== picked.namespace) {
+    if (addsToHeader && identity.namespace !== picked.namespace) {
       out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
     }
-    const repeated = repeatedTitles(collections.rows ?? []);
-    for (const { c, depth } of treeOrder(collections.rows ?? [])) {
+    for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
       if (c.role === "viewer" || c.namespace === identity.namespace) continue;
       out.push({
         namespace: c.namespace,
@@ -1025,7 +1025,7 @@ export function Documents() {
       });
     }
     return out;
-  }, [collections.rows, identity.namespace, ownShelf, picked.namespace]);
+  }, [collections.kept, repeated, identity.namespace, addsToHeader, picked.namespace]);
   const moveDialog = moving && (
     <MoveDocumentsDialog
       org={identity.org}
@@ -1035,7 +1035,9 @@ export function Documents() {
       places={movePlaces}
       onMoved={(moved) => {
         if (moved.length === 0) return;
-        for (const uri of moved) if (selected.has(uri)) toggleRow(uri);
+        // The rows, the menu or the selection bar that opened it leave with the next read:
+        // focus then goes to the search.
+        focusSearchOnRead.current = true;
         reload();
       }}
       onClose={() => setMoving(null)}

@@ -131,19 +131,31 @@ export interface KnowledgeMoved {
   results: KnowledgeMoveResult[];
 }
 
-/** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were. */
+// The sources one knowledge.move call takes (its `source_uris` max_length).
+export const MOVE_MAX = 50;
+
+/** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were;
+ *  sent in calls of at most `MOVE_MAX`, their answers merged. A call that finds the place no
+ *  longer writable stops the rest: `found` is false, with the answers before it. */
 export async function moveKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   to: string,
   sourceUris: string[],
 ): Promise<KnowledgeMoved> {
-  const r = await post<KnowledgeMoved>("/v1/knowledge.move", {
-    org: id.org,
-    namespace: id.namespace,
-    to_namespace: to,
-    source_uris: sourceUris,
-  });
-  return { found: r.found, to_namespace: r.to_namespace ?? to, results: r.results ?? [] };
+  const results: KnowledgeMoveResult[] = [];
+  let toNamespace = to;
+  for (let i = 0; i < sourceUris.length; i += MOVE_MAX) {
+    const r = await post<KnowledgeMoved>("/v1/knowledge.move", {
+      org: id.org,
+      namespace: id.namespace,
+      to_namespace: to,
+      source_uris: sourceUris.slice(i, i + MOVE_MAX),
+    });
+    if (!r.found) return { found: false, to_namespace: toNamespace, results };
+    toNamespace = r.to_namespace ?? to;
+    results.push(...(r.results ?? []));
+  }
+  return { found: true, to_namespace: toNamespace, results };
 }
 
 export interface KnowledgeBulkDeleteResult {

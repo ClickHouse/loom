@@ -5,7 +5,8 @@ import { moveKnowledge, type KnowledgeMoveResult, type MoveRefusal } from "../ap
 import { toast } from "../components/Toast";
 import { Alert } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { humanizeError } from "../lib/errorWords";
+import { committedAnyway, humanizeError } from "../lib/errorWords";
+import { isPublicationPending } from "../lib/errors";
 import { fmtInt } from "../lib/format";
 
 /** A place documents can go to: a collection the person writes, their own files, or the
@@ -74,7 +75,7 @@ export function MoveDocumentsDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const target = places.find((p) => p.namespace === to) ?? null;
-  const what = sourceUris.length === 1 ? "1 document" : documents(sourceUris.length);
+  const what = documents(sourceUris.length);
 
   const submit = async () => {
     if (!target) return;
@@ -82,16 +83,27 @@ export function MoveDocumentsDialog({
     setError(null);
     try {
       const r = await moveKnowledge({ org, namespace: from }, target.namespace, sourceUris);
+      const moved = r.results.filter((x) => x.moved).map((x) => x.source_uri);
       if (!r.found) {
-        setError(`You can no longer add documents to ${target.label}.`);
+        // A selection sent in several calls may have moved some before the place closed.
+        const before = moved.length ? ` ${documents(moved.length)} moved before that.` : "";
+        setError(`You can no longer add documents to ${target.label}.${before}`);
+        if (moved.length) onMoved(moved);
         setBusy(false);
         return;
       }
       const summary = moveSummary(r.results, target.label);
       toast(summary.text, summary.ok ? "ok" : "info");
-      onMoved(r.results.filter((x) => x.moved).map((x) => x.source_uri));
+      onMoved(moved);
       onClose();
     } catch (e) {
+      // Committed, with only lists and search behind: on as after a move.
+      if (isPublicationPending(e)) {
+        committedAnyway("Move", e);
+        onMoved(sourceUris);
+        onClose();
+        return;
+      }
       setError(humanizeError(e));
       setBusy(false);
     }

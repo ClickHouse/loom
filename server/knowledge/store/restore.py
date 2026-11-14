@@ -14,15 +14,15 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL, SUPERSESSIONS_TABLE
+from server.knowledge.domain.live_chunks import (
+    LIVE_CHUNK_SQL,
+    OF_REVISION_SQL,
+    SUPERSESSIONS_TABLE,
+)
 
 _DOC = "org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
-# A chunk of the revision, or one written before chunks recorded their revision, which
-# only the time of the delete that listed it tells apart.
-_OF_REVISION = (
-    "(JSONExtractUInt(chunk_metadata, 'revision') = {rev:UInt64}"
-    " OR NOT JSONHas(chunk_metadata, 'revision'))"
-)
+# A chunk with no revision is told apart only by the time of the delete that listed it.
+_OF_REVISION = OF_REVISION_SQL
 
 
 async def retired_by_delete(

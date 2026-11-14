@@ -244,3 +244,165 @@ async def test_a_moved_document_brings_its_tables(control_plane_url: str, ch_cli
         parameters={"org": ORG, "ns": dst},
     ).result_rows
     assert [tuple(r) for r in rows] == [("north", 3.0), ("south", 4.0)]
+
+
+def _live_rows(ch_client: Any, ns: str, uri: str) -> int:
+    """The live document rows of a source."""
+    [[n]] = ch_client.query(
+        "SELECT count() FROM loom.documents FINAL WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String} AND superseded_at IS NULL",
+        parameters={"org": ORG, "ns": ns, "uri": uri},
+    ).result_rows
+    return int(n)
+
+
+@pytest.mark.asyncio
+async def test_a_document_whose_metadata_was_edited_moves_with_its_chunks(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from loom import Agent
+
+    src, dst, uri = _places()
+    text = "Rotate the signing keys.\n\n" + "Revoke the old key after the grace period. " * 60
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content=text, source_uri=uri, title="Keys")
+        before = _live(ch_client, src, uri)
+        # A new row version; the chunks stay at theirs.
+        await a.transport.post(
+            "/v1/knowledge.update_metadata",
+            {"org": ORG, "namespace": src, "source_uri": uri, "title": "Key rotation"},
+        )
+        out = await _move(a, src, dst, [uri])
+        assert out["results"] == [{"source_uri": uri, "moved": True, "reason": ""}]
+        assert _live(ch_client, dst, uri) == before
+        got = await a.transport.post(
+            "/v1/knowledge.get", {"org": ORG, "namespace": dst, "source_uri": uri}
+        )
+        assert got["title"] == "Key rotation"
+        hits = await a.transport.post(
+            "/v1/knowledge.search",
+            {
+                "org": ORG,
+                "namespace": dst,
+                "query": "rotate signing keys",
+                "namespace_scope": "this",
+            },
+        )
+        assert uri in {h["source_uri"] for h in hits["results"]}
+    # Each chunk names the revision its new place's row has.
+    revisions = ch_client.query(
+        "SELECT DISTINCT JSONExtractUInt(chunk_metadata, 'revision') FROM loom.chunks"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}",
+        parameters={"org": ORG, "ns": dst, "uri": uri},
+    ).result_rows
+    assert revisions == [(got["revision"],)]
+
+
+@pytest.fixture
+async def in_process(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The move run in this process against the test ClickHouse, the caller allowed on
+    every namespace."""
+    from server.core.ch import get_client
+    from server.knowledge.app import move
+
+    async def allowed(org: str, ns: str, role: Any) -> bool:
+        return True
+
+    monkeypatch.setattr("server.auth.authz.row_in_scope", allowed)
+    client = get_client()
+    await client.connect()
+    yield move
+    await client.disconnect()
+
+
+async def _move_here(move: Any, src: str, dst: str, uri: str) -> list[dict[str, Any]]:
+    from server.knowledge.api.models_knowledge import KnowledgeMoveInput
+
+    out = await move.handle_knowledge_move(
+        KnowledgeMoveInput(org=ORG, namespace=src, to_namespace=dst, source_uris=[uri])
+    )
+    return [r.model_dump() for r in out.results]
+
+
+async def _written(control_plane_url: str, src: str, uri: str) -> None:
+    from loom import Agent
+
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content="Page the on-call. " * 80, source_uri=uri, title="t")
+
+
+@pytest.mark.asyncio
+async def test_chunks_that_did_not_copy_whole_leave_nothing_where_it_goes(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    real = move.chunks_repo.copy_revision
+
+    async def short(*args: Any, **kwargs: Any) -> bool:
+        await real(*args, **kwargs)
+        return False
+
+    monkeypatch.setattr(move.chunks_repo, "copy_revision", short)
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": False, "reason": "busy"}
+    ]
+    assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
+    assert _live(ch_client, src, uri) != [] and _live_rows(ch_client, src, uri) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_did_not_land_leaves_nothing_where_it_goes(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    real = move.documents_repo.insert_one
+
+    async def refused(row: Any, **kwargs: Any) -> None:
+        if row["namespace"] == dst:
+            raise RuntimeError("the insert failed")
+        await real(row, **kwargs)
+
+    monkeypatch.setattr(move.documents_repo, "insert_one", refused)
+    with pytest.raises(RuntimeError):
+        await _move_here(move, src, dst, uri)
+    assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
+    assert _live_rows(ch_client, src, uri) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_erasure_registered_while_it_copied_takes_the_copy_back(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    real = move.chunks_repo.copy_revision
+
+    async def then_erased(*args: Any, **kwargs: Any) -> bool:
+        landed = await real(*args, **kwargs)
+        ch_client.insert(
+            "loom.erasure_requests",
+            [[uuid.uuid4(), ORG, "namespace", dst, "itest", "queued", 1]],
+            column_names=[
+                "id",
+                "org",
+                "scope_type",
+                "scope_value",
+                "requester",
+                "status",
+                "version",
+            ],
+        )
+        return bool(landed)
+
+    monkeypatch.setattr(move.chunks_repo, "copy_revision", then_erased)
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": False, "reason": "erased"}
+    ]
+    assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
+    # Deleted where it was, as a move leaves it: a restore there brings it back.
+    assert _live_rows(ch_client, src, uri) == 0
