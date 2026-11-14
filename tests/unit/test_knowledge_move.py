@@ -12,11 +12,12 @@ import pytest
 
 from server.core.errors import ValidationError
 from server.core.leases import ClaimExpired
+from server.core.object_store import ObjectStoreError
 from server.knowledge.api.models_knowledge import KnowledgeMoveInput
 from server.knowledge.app import move
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
 from server.knowledge.store.documents import DocumentRow
-from server.knowledge.store.pg_documents import HeadMoved
+from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
 
 ORG = "acme"
 URI = "doc://a.md"
@@ -48,7 +49,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "dst": {},
         "held": True,
         "reach": True,
-        "ledger": [[], []],
+        # The erasure ledger: the call's first read, and every read after a copy.
+        "ledger": [],
+        "ledger_later": [],
+        "ledger_reads": 0,
         "fail": {},
         "copied": [],
         "deleted": [],
@@ -66,7 +70,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return [state[ns][u] for u in uris if u in state[ns]]
 
     @asynccontextmanager
-    async def claim(org: str, ns: str, uri: str):
+    async def claim(org: str, ns: str, uri: str, *, wait_s: float = 10):
         yield state["held"]
 
     async def no(*args: Any) -> bool:
@@ -76,7 +80,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return STARTED
 
     async def ledger(org: str, since: int, margin: int) -> list[dict[str, Any]]:
-        return state["ledger"].pop(0)
+        state["ledger_reads"] += 1
+        return state["ledger"] if state["ledger_reads"] == 1 else state["ledger_later"]
 
     async def originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
         return {}
@@ -86,7 +91,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         if failure is not None:
             raise failure
         state["copied"].append(doc.source_uri)
-        return move._Copy(doc, dst, 99, [])
+        return move._Copy(doc, dst, 99, [], ["m"])
 
     async def delete(doc: DocumentRow) -> bool:
         state["deleted"].append(doc.source_uri)
@@ -195,18 +200,19 @@ async def test_an_earlier_moves_copy_there_finishes_that_move(store: dict[str, A
 
 
 async def test_an_erasure_leaves_the_document_where_it_was(store: dict[str, Any]) -> None:
-    store["ledger"][0] = [_erasure("namespace", "src")]
+    store["ledger"] = [_erasure("namespace", "src")]
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["copied"] == [] and store["deleted"] == []
 
 
-async def test_an_erasure_registered_while_it_ran_takes_the_copy_back(
+async def test_an_erasure_registered_while_it_copied_takes_the_copy_back_before_the_delete(
     store: dict[str, Any],
 ) -> None:
-    store["ledger"][1] = [_erasure("namespace", "dst")]
+    store["ledger_later"] = [_erasure("namespace", "dst")]
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["taken_back"] == [URI]
-    assert store["audited"] == []
+    # Where it was, it stays: an erased answer never leaves it deleted there.
+    assert store["deleted"] == [] and store["audited"] == []
 
 
 async def test_one_source_failing_leaves_the_others_answered(store: dict[str, Any]) -> None:
@@ -223,10 +229,65 @@ async def test_one_source_failing_leaves_the_others_answered(store: dict[str, An
     assert store["deleted"] == ["doc://1", "doc://4"]
 
 
-async def test_a_failure_of_the_request_answers_as_itself(store: dict[str, Any]) -> None:
-    store["fail"] = {URI: RuntimeError("the store failed")}
+async def test_a_failure_of_the_request_answers_as_itself_after_the_others_moved(
+    store: dict[str, Any],
+) -> None:
+    uris = ["doc://1", "doc://2", "doc://3"]
+    store["src"] = {u: _doc("src", u) for u in uris}
+    store["fail"] = {"doc://2": RuntimeError("the store failed")}
+    # An erasure of the place registered while they copied: each copy that landed is
+    # checked before its delete, the one that failed changes nothing of that.
+    store["ledger_later"] = [_erasure("namespace", "dst")]
     with pytest.raises(RuntimeError, match="the store failed"):
-        await _run()
+        await _run(uris=uris)
+    assert sorted(store["taken_back"]) == ["doc://1", "doc://3"]
+    assert store["deleted"] == []
+
+
+async def test_the_moves_that_finished_before_a_failure_are_audited(
+    store: dict[str, Any],
+) -> None:
+    uris = ["doc://1", "doc://2"]
+    store["src"] = {u: _doc("src", u) for u in uris}
+    store["fail"] = {"doc://2": RuntimeError("the store failed")}
+    with pytest.raises(RuntimeError):
+        await _run(uris=uris)
+    assert store["deleted"] == ["doc://1"]
+    [row] = store["audited"]
+    assert row["subject"]["source_uris"] == ["doc://1"]
+
+
+async def test_an_erasure_meanwhile_under_postgres_answers_erased(store: dict[str, Any]) -> None:
+    store["fail"] = {URI: DocumentErased()}
+    assert _answers(await _run()) == [(URI, False, "erased")]
+
+
+async def test_an_original_the_object_store_refused_is_busy(store: dict[str, Any]) -> None:
+    store["fail"] = {URI: ObjectStoreError("the bucket is down", operation="write")}
+    assert _answers(await _run()) == [(URI, False, "busy")]
+
+
+async def test_an_open_ingest_job_of_the_source_is_busy(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def open_job(org: str, ns: str, uri: str) -> bool:
+        return ns == "src"
+
+    monkeypatch.setattr(move.ingest_jobs, "open_for_source", open_job)
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["copied"] == []
+
+
+@pytest.mark.parametrize("where", ["src", "dst"])
+async def test_a_publication_that_may_still_land_is_busy(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    async def may_land(org: str, ns: str, uri: str) -> bool:
+        return ns == where
+
+    monkeypatch.setattr(move.documents_repo, "publication_may_land", may_land)
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["copied"] == []
 
 
 async def test_a_source_written_since_it_was_read_is_busy(

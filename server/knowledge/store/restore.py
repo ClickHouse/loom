@@ -21,8 +21,6 @@ from server.knowledge.domain.live_chunks import (
 )
 
 _DOC = "org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
-# A chunk with no revision is told apart only by the time of the delete that listed it.
-_OF_REVISION = OF_REVISION_SQL
 
 
 async def retired_by_delete(
@@ -43,7 +41,7 @@ async def retired_by_delete(
         WHERE {_DOC} AND superseded_at = {{at:DateTime}}
           AND doc_version IN (
               SELECT DISTINCT doc_version FROM loom.chunks
-              WHERE {_DOC} AND {_OF_REVISION}
+              WHERE {_DOC} AND {OF_REVISION_SQL}
           )
         ORDER BY v
         """,
@@ -60,7 +58,7 @@ async def live_versions(
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"SELECT DISTINCT doc_version AS v FROM loom.chunks WHERE {_DOC}"
-        f" AND {_OF_REVISION} AND {LIVE_CHUNK_SQL} ORDER BY v",
+        f" AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL} ORDER BY v",
         params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision},
     )
     return [int(r["v"]) for r in rows]
@@ -107,8 +105,8 @@ async def unretire(
 async def delete_row(
     org: str, namespace: str, source_uri: str, version: int, *, ch: _CHClient | None = None
 ) -> None:
-    """Remove the one document row a restore wrote (its own version), when it takes itself
-    back under a purge that may cover the document."""
+    """Remove the one document row of this version: a restore's, when it takes itself back
+    under a purge that may cover the document, or a move's copy it takes back."""
     ch = ch or _default_client()
     await ch.execute(
         f"DELETE FROM loom.documents WHERE {_DOC} AND version = {{v:UInt64}}",

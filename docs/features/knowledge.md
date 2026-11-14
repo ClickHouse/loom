@@ -1138,14 +1138,16 @@ Each source answers on its own: `moved: true`, or a `reason`:
 | `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.                                                                             |
 | `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.                                                                          |
 | `busy`      | Another write of the source or the place holds it, a publication or an ingest of it is still to land, or its copy did not finish and was taken back; call again. |
-| `erased`    | An erasure that has not finished may reach the document or the place it goes.                                                                                    |
+| `erased`    | An erasure that has not finished may reach the document or the place it goes; the document stays where it was.                                                   |
 
 A move takes the source's claim in both namespaces, as a restore does in one. It writes the
 new place first and deletes the old one last, so a move cut off between the two leaves the
 document in both places, never in neither; moving it again finds its copy there (the same
-text, author and ingest time) and only deletes the old one. One source that fails answers
-`busy` and the others still move. An erasure registered while a move runs takes the copy
-back and answers `erased`; the document stays deleted where it was. Under the Postgres
+text, author and ingest time) and only deletes the old one. A source whose own move fails
+(its claim held or cut off, a write of it meanwhile, its original refused by the object
+store) answers `busy`, and the others still move; a failure of the call itself is answered
+once every source has. An erasure registered while a move runs takes the copy back before
+the delete and answers `erased`: an `erased` document is always still where it was. Under the Postgres
 authority each of the two writes is its own commit. The ordering and what a cut-off move
 leaves are in [failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
 

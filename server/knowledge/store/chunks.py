@@ -380,14 +380,26 @@ async def count_active_for_doc(
     return int(row["n"]) if row else 0
 
 
-# `chunk_metadata` with its `revision` set to `{to_rev:UInt64}`, its other keys kept, in
-# the sorted key order `build_chunk_rows` writes.
+# `chunk_metadata` with its `revision` set to `{to_rev:UInt64}`, its other keys kept. Every
+# reader parses it (`read_structure`), so the key order and spacing need not match
+# `build_chunk_rows`.
 _WITH_REVISION_SQL = (
-    "concat('{', arrayStringConcat(arrayMap(kv -> concat(toJSONString(kv.1), ': ', kv.2),"
-    " arraySort(kv -> kv.1, arrayPushBack("
-    "arrayFilter(kv -> kv.1 != 'revision', JSONExtractKeysAndValuesRaw(chunk_metadata)),"
-    " ('revision', toString({to_rev:UInt64}))))), ', '), '}')"
+    "jsonMergePatch(if(chunk_metadata = '', '{}', chunk_metadata),"
+    " concat('{\"revision\":', toString({to_rev:UInt64}), '}'))"
 )
+
+
+async def embedding_models(
+    org: str, namespace: str, source_uri: str, *, ch: _CHClient | None = None
+) -> list[str]:
+    """The embedding models the source's chunks are stored under, live or not."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT DISTINCT embedding_model AS m FROM loom.chunks WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String} LIMIT 100",
+        params={"org": org, "ns": namespace, "uri": source_uri},
+    )
+    return [str(r["m"]) for r in rows]
 
 
 async def copy_revision(

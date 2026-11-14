@@ -643,7 +643,7 @@ class _KnowledgeMoveResult(BaseModel):
     # with this source is live where it goes), synced (a document source keeps it where it
     # is), busy (another write of it, or of the place it goes, is in progress, or its copy
     # did not finish and was taken back; call again), erased (an erasure may reach it or
-    # the place it goes; one registered while it moved leaves it deleted where it was).
+    # the place it goes; it stays where it was).
     reason: MoveReason = ""
 
 

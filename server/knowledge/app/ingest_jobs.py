@@ -65,8 +65,9 @@ async def earlier_open(job: dict[str, Any]) -> bool:
 
 
 async def open_for_source(org: str, namespace: str, source_uri: str) -> bool:
-    """Whether a job of the source is still to run or running, in either store under
-    Postgres (one only ClickHouse holds an older build queued), as `earlier_open` reads."""
+    """Whether a job of the source is still to run or running. Under Postgres both stores
+    are read, as `earlier_open` reads them: a job an older build queued is held only in
+    ClickHouse."""
     if not pg.enabled():
         return bool(await ingestions.open_for_source(org, namespace, source_uri, limit=1))
     if await pg_jobs.open_for_source(org, namespace, source_uri):

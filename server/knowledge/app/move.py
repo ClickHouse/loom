@@ -20,9 +20,11 @@ from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import ValidationError
 from server.core.leases import LeaseUnavailable
+from server.core.logging_config import request_id_var
+from server.core.object_store import ObjectStoreError
 from server.core.pg_lease import PublicationPending
 from server.erasure.app import ledger_reads
-from server.erasure.domain.scopes import may_cover
+from server.erasure.domain.scopes import reaches
 from server.knowledge.api.models_knowledge import (
     KnowledgeMoveInput,
     KnowledgeMoveOutput,
@@ -37,17 +39,21 @@ from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
 from server.knowledge.store import restore as restore_repo
 from server.knowledge.store.documents import DocumentRow
-from server.knowledge.store.pg_documents import HeadMoved
+from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
 from server.memory.app.provenance import writer_actor
 
 
-class _Retry(Exception):
+class _TakenBack(Exception):
     """A copy that did not land whole, or a write of either place since it was read: what
     this move wrote is taken back, and the source answers busy."""
 
 
-# A source whose move raised one of these answers busy; the others still move.
-_BUSY = (LeaseUnavailable, HeadMoved, _Retry)
+# A source whose move raised one of these answers busy; the others still move. An original
+# the object store did not take is one of them.
+_BUSY = (LeaseUnavailable, HeadMoved, ObjectStoreError, _TakenBack)
+# A move's claims are not waited for: a held source answers busy at once, so another
+# writer never holds up the call.
+_CLAIM_WAIT_S = 0.0  # not a setting: the call's budget has no room for waits
 
 
 # The sources one call moves at once.
@@ -62,12 +68,16 @@ class _Copy:
     dst: str
     version: int
     tables: list[dict[str, Any]]
+    # The embedding models of the chunks it copied: its take-back retires each.
+    models: list[str]
 
 
 async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutput:
     """Move each document of `source_uris` from `namespace` to `to_namespace`. The
     transport checked writer on `namespace`; `to_namespace` is checked here, and one the
-    caller cannot write answers found=False, never a 403 that says it exists."""
+    caller cannot write answers found=False, never a 403 that says it exists. It never
+    answers PUBLICATION_PENDING: a row committed under the Postgres authority counts as
+    written."""
     from server.auth.authz import Role, row_in_scope
 
     try:
@@ -85,27 +95,19 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
         docs = {d.source_uri: d for d in read}
         ledger = await _ledger(input.org, read, started)
         # A few sources at a time, each under its own claims. A failure that is not one
-        # source's (`_BUSY`) cancels the others; a copy still in progress is taken back.
+        # source's (`_BUSY`) is raised once every source has answered, so the moves that
+        # finished are audited.
         slots = asyncio.Semaphore(_AT_ONCE)
 
-        async def one(uri: str) -> tuple[MoveReason, _Copy | None]:
+        async def one(uri: str) -> tuple[MoveReason, Exception | None]:
             async with slots:
-                return await _move(docs.get(uri), to, ledger, started)
+                try:
+                    return await _move(docs.get(uri), to, ledger, started), None
+                except Exception as e:  # noqa: BLE001 — raised below, after the others
+                    return "busy", e
 
-        try:
-            async with asyncio.TaskGroup() as group:
-                tasks = {uri: group.create_task(one(uri)) for uri in uris}
-        except ExceptionGroup as e:  # the request answers its first failure, as raised
-            raise e.exceptions[0] from None
-        reasons: dict[str, MoveReason] = {uri: t.result()[0] for uri, t in tasks.items()}
-        copies = [c for t in tasks.values() if (c := t.result()[1]) is not None]
-        # An erasure registered while this ran may have passed the copies already.
-        if copies:
-            ledger = await _ledger(input.org, [c.doc for c in copies], started)
-            for c in copies:
-                if _erasing(ledger, c.doc, to, started):
-                    await asyncio.shield(_take_back(c))
-                    reasons[c.doc.source_uri] = "erased"
+        answers = dict(zip(uris, await asyncio.gather(*(one(u) for u in uris)), strict=True))
+    reasons: dict[str, MoveReason] = {u: reason for u, (reason, _) in answers.items()}
     moved = [u for u in uris if not reasons[u]]
     if moved:
         from server.observability import audit
@@ -117,7 +119,11 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
             namespace=to,
             actor=writer_actor(),
             subject={"from_namespace": input.namespace, "source_uris": moved},
+            request_id=request_id_var.get() or "",
         )
+    failed = next((e for _, e in answers.values() if e is not None), None)
+    if failed is not None:
+        raise failed
     return KnowledgeMoveOutput(
         found=True,
         to_namespace=to,
@@ -130,64 +136,71 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
 
 async def _move(
     read: DocumentRow | None, dst: str, ledger: list[dict[str, Any]], started: int
-) -> tuple[MoveReason, _Copy | None]:
-    """One document: its reason ("" once moved) and what it wrote where it goes. Its
+) -> MoveReason:
+    """One document: its reason, "" once moved. Its
     originals are stored first, outside the claims; the checks, its chunks, tables and
     row, and its delete where it was run under the source's claim in both namespaces,
     taken in one order so two moves between the same places do not each hold one and
     give up on the other."""
     if read is None:
-        return "not_found", None
+        return "not_found"
     # A source sync owns it: its next pass would write it back where it was.
     if read.actor == SYNC_WORKER_ACTOR:
-        return "synced", None
+        return "synced"
     if _erasing(ledger, read, dst, started):
-        return "erased", None
+        return "erased"
     org, uri = read.org, read.source_uri
     try:
         # An original no row names yet is the sweep's, as any upload whose row did not land.
         originals = await _store_originals(read, dst)
         first, second = sorted((read.namespace, dst))
-        async with ingest_run.claim_source(org, first, uri) as one:
+        async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as one:
             if not one:
-                return "busy", None
-            async with ingest_run.claim_source(org, second, uri) as two:
+                return "busy"
+            async with ingest_run.claim_source(org, second, uri, wait_s=_CLAIM_WAIT_S) as two:
                 if not two:
-                    return "busy", None
-                return await _claimed(read, dst, originals)
+                    return "busy"
+                return await _claimed(read, dst, originals, started)
     except _BUSY:
-        return "busy", None
+        return "busy"
+    except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
+        return "erased"
 
 
 async def _claimed(
-    read: DocumentRow, dst: str, originals: dict[str, Any]
-) -> tuple[MoveReason, _Copy | None]:
+    read: DocumentRow, dst: str, originals: dict[str, Any], started: int
+) -> MoveReason:
     org, src, uri = read.org, read.namespace, read.source_uri
     doc = await documents_repo.get_one(org, src, uri)
     if doc is None:
-        return "not_found", None
+        return "not_found"
     if doc.version != read.version:  # written since: its originals may be others
-        return "busy", None
+        return "busy"
     for ns in (src, dst):
         if await documents_repo.publication_may_land(org, ns, uri):
-            return "busy", None
+            return "busy"
     # An ingest of the source still to publish would write it back where it was.
     if await ingest_jobs.open_for_source(org, src, uri):
-        return "busy", None
+        return "busy"
     there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
     copy: _Copy | None = None
     if there is None or there.superseded_at is not None:
         copy = await _copy(doc, dst, there, originals)
     elif not _earlier_move(doc, there):
-        return "exists", None
+        return "exists"
     try:
+        # An erasure registered while it copied may have passed the copy already: it is
+        # taken back before the delete, so the document stays where it was.
+        if copy is not None and _erasing(await _ledger(org, [doc], started), doc, dst, started):
+            await asyncio.shield(_take_back(copy))
+            return "erased"
         if not await _delete_source(doc):
-            raise _Retry
+            raise _TakenBack
     except BaseException as e:  # a cancel too: a copy whose source stays live goes
         if copy is not None and not writes.published_anyway(e):
             await asyncio.shield(_take_back(copy))
         raise
-    return "", copy
+    return ""
 
 
 def _earlier_move(doc: DocumentRow, there: DocumentRow) -> bool:
@@ -210,7 +223,8 @@ async def _copy(
     version = documents_repo.version_past(max(doc.version, over))
     revision = writes.next_revision(there)
     catalogs = await datasets_repo.at_version(doc.org, doc.namespace, doc.source_uri, doc.version)
-    copy = _Copy(doc, dst, version, _tables_of(catalogs, dst, version))
+    models = await chunks_repo.embedding_models(doc.org, doc.namespace, doc.source_uri)
+    copy = _Copy(doc, dst, version, _tables_of(catalogs, dst, version), models)
     # The mover is the actor of every row the move writes; the author, the content's
     # class and the ingest time stay, as the move rewrites no content.
     row = documents_repo.build_document_row(
@@ -234,7 +248,7 @@ async def _copy(
             to_revision=revision,
         )
         if not landed:
-            raise _Retry
+            raise _TakenBack
         for catalog, table in zip(catalogs, copy.tables, strict=True):
             if not await datasets_repo.copy_snapshot(
                 catalog,
@@ -243,7 +257,7 @@ async def _copy(
                 doc_version=version,
                 actor=table["actor"],
             ):
-                raise _Retry
+                raise _TakenBack
         await datasets_repo.insert_catalog(copy.tables)
         try:
             await documents_repo.insert_one(row, over=over, retire_older=True, chunked=True)
@@ -253,7 +267,7 @@ async def _copy(
         # `there` was read (a text write takes no claim) with a later version wins.
         head = await documents_repo.get_one(doc.org, dst, doc.source_uri, include_superseded=True)
         if documents_repo.version_of(head) != version:
-            raise _Retry
+            raise _TakenBack
     except BaseException as e:  # a cancel too: what this copy wrote must not serve
         if not writes.published_anyway(e):
             await asyncio.shield(_take_back(copy))
@@ -302,6 +316,13 @@ async def _take_back(copy: _Copy) -> None:
     org, dst, uri, version = copy.doc.org, copy.dst, copy.doc.source_uri, copy.version
     await documents_repo.drop_committed(org, dst, uri, version)
     await restore_repo.delete_row(org, dst, uri, version)
+    # Retired first: a cancelled copy's INSERT … SELECT runs on in ClickHouse and may land
+    # after the delete; the supersession rows keep what lands from serving.
+    now = naive_utc_now()
+    for model in copy.models:
+        await chunks_repo.retire_versions(
+            org, dst, [(uri, version)], embedding_model=model, when=now
+        )
     await chunks_repo.delete_versions(org, dst, [(uri, version)])
     await datasets_repo.forget(org, dst, [uri], only=version)
     for t in copy.tables:
@@ -311,12 +332,20 @@ async def _take_back(copy: _Copy) -> None:
 async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
     """The document's original and its extraction artifact stored again in `dst` (an
     original belongs to its namespace: its sweep and erasure go by it); the columns to
-    clear for one the source no longer holds."""
+    clear for one the source no longer holds. A ClickHouse row is copied inside
+    ClickHouse; an object is read and written again, as an object belongs to its
+    namespace's place in the bucket."""
     cleared: dict[str, Any] = {}
     for column, sha in (("blob_path", doc.blob_path), ("artifact_sha256", doc.artifact_sha256)):
         if not sha:
             continue
         held = await blobs.locate(doc.org, doc.namespace, sha)
+        if held is not None and not held.location:
+            if await blobs.copy_held(
+                doc.org, doc.namespace, sha, dst, size=held.size, uploader=doc.user_id
+            ):
+                continue
+            held = None  # its row went after it was located: the sweep took it
         data = await blobs.read(doc.org, doc.namespace, sha, stored=held) if held else None
         if data is None:
             cleared.update(documents_repo.NO_ORIGINAL if column == "blob_path" else {column: ""})
@@ -340,24 +369,7 @@ def _erasing(ledger: list[dict[str, Any]], doc: DocumentRow, dst: str, started: 
     """Whether an erasure of `ledger` may reach the document where it is (unfinished when
     it was written) or the place it goes (unfinished when the move started)."""
     return any(
-        _reaches(r, ns, doc.user_id, since)
+        reaches(r, ns, doc.user_id, since - ledger_reads.LEDGER_CLOCK_MARGIN_S)
         for r in ledger
         for ns, since in ((doc.namespace, _written_s(doc)), (dst, started))
     )
-
-
-def _reaches(row: dict[str, Any], namespace: str, user_id: str, since_s: int) -> bool:
-    """`ledger.unfinished_reaching`'s test for one row: unfinished at `since_s`, and of
-    `namespace`, of `user_id`, or of a scope that may cover the namespace."""
-    done = row.get("completed_at")
-    if row["state"] == "completed" and (
-        done is None
-        or done.replace(tzinfo=UTC).timestamp() < since_s - ledger_reads.LEDGER_CLOCK_MARGIN_S
-    ):
-        return False
-    scope, value = str(row["scope_type"]), str(row["scope_value"])
-    if scope == "namespace":
-        return value == namespace
-    if scope == "user_id":
-        return value == user_id
-    return may_cover(scope, value, namespace)

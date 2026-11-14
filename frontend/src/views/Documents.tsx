@@ -332,6 +332,8 @@ export function Documents() {
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   // The documents Move to… was opened for; another place shown closes it.
   const [moving, setMoving] = useState<string[] | null>(null);
+  // Whether the open Move to… dialog moved any document.
+  const movedSome = useRef(false);
   useEffect(() => setMoving(null), [identity.org, identity.namespace]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
   // A reason that appears while Edit details is open closes it. Add and Replace stay: they
@@ -525,7 +527,8 @@ export function Documents() {
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
   }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
-  // After a row's delete, the read that drops the row hands focus to the search field.
+  // After a row's delete, or a move once its dialog closes, the read that drops the rows
+  // hands focus to the search field.
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
     focusSearchOnRead.current = false;
@@ -1033,14 +1036,21 @@ export function Documents() {
       fromLabel={shown ? collectionTitle(shown) : `Namespace ${identity.namespace}`}
       sourceUris={moving}
       places={movePlaces}
+      placesReading={collections.kept ? null : collections.error ? "failed" : "loading"}
       onMoved={(moved) => {
-        if (moved.length === 0) return;
-        // The rows, the menu or the selection bar that opened it leave with the next read:
-        // focus then goes to the search.
+        // Any answer may have changed the list, a failed call's too.
+        if (moved.length) movedSome.current = true;
+        reload();
+      }}
+      onClose={() => {
+        setMoving(null);
+        if (!movedSome.current) return;
+        movedSome.current = false;
+        // The rows, the menu or the selection bar that opened it may have left: the read
+        // after the dialog closes hands focus to the search.
         focusSearchOnRead.current = true;
         reload();
       }}
-      onClose={() => setMoving(null)}
     />
   );
   // Mounted while open, beside either page, so a batch outlives a page move.
