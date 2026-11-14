@@ -63,6 +63,20 @@ describe("who can see a collection, in words", () => {
     expect(w.how).toBe("Inherited from top");
   });
 
+  it("says where only the grant to everyone comes from", () => {
+    const here = words([
+      { namespace: "col-a", rows: [grant("everyone")] },
+      { namespace: "col-top", rows: [grant("bob")] },
+    ]);
+    expect(here).toMatchObject({ who: "Everyone in acme", how: "" });
+    const above = words([
+      { namespace: "col-a", rows: [grant("bob")] },
+      { namespace: "col-mid", rows: [grant("carol")] },
+      { namespace: "col-top", rows: [grant("everyone")] },
+    ]);
+    expect(above).toMatchObject({ who: "Everyone in acme", how: "Inherited from top" });
+  });
+
   it("says which parents the access comes from, and a parent the person cannot read", () => {
     const w = words(
       [

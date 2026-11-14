@@ -99,7 +99,10 @@ export function whoCanSee({
   const tail = [inheritedFrom, ...unseen.map(noticeOf)];
   const shared = empty ? "Anything added here is shared with them" : "";
   if (others.includes("everyone")) {
-    return { who: `Everyone in ${org}`, how: [...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
+    // Only where the grant to everyone comes from: nothing when it is on the collection itself.
+    const at = from.get("everyone");
+    const via = at && at !== shown ? `Inherited from ${titleOf(at)}` : "";
+    return { who: `Everyone in ${org}`, how: [via, shared].filter(Boolean).join(" · "), onlyYou: false };
   }
   if (others.length === 0 && unseen.length === 0 && !cut) {
     return {

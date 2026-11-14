@@ -261,7 +261,7 @@ export function MembersDialog({
       // The role Select is the one deliberate "lower this member" control;
       // it says so to the server. onAdd never does.
       await createGrant({ org, namespace }, subject, role, { replace: true });
-      toast(`${subject} → ${role}`, "ok");
+      toast(`${subjectLabel(subject, org)} → ${role}`, "ok");
       load();
     } catch (e) {
       toastError("Update failed", e);
@@ -298,7 +298,7 @@ export function MembersDialog({
         message: toEveryone
           ? through.length
             ? `The grant here is revoked.${still}`
-            : "Only the people named here or on a parent keep access."
+            : "Only those named here or on a parent, and the members of groups named, keep access."
           : `Their grant here is revoked.${still}`,
         confirmLabel: toEveryone ? "Stop sharing" : "Remove",
         danger: true,
@@ -338,12 +338,13 @@ export function MembersDialog({
       }
     }
     const verb = decision === "approve" ? "Approved" : "Rejected";
+    const who = subjectLabel(subject, org);
     if (ok === targets.length) {
-      toast(targets.length > 1 ? `${verb} ${subject} on ${ok} branches` : `${verb} ${subject}`, "ok");
+      toast(targets.length > 1 ? `${verb} ${who} on ${ok} branches` : `${verb} ${who}`, "ok");
     } else if (ok === 0) {
-      toastError(`Couldn't ${decision} ${subject}`, firstError);
+      toastError(`Couldn't ${decision} ${who}`, firstError);
     } else {
-      const msg = `${verb} ${subject} on ${ok} of ${targets.length} branches; the rest failed: ${humanizeError(firstError, { bare: true })}`;
+      const msg = `${verb} ${who} on ${ok} of ${targets.length} branches; the rest failed: ${humanizeError(firstError, { bare: true })}`;
       toastErrorLine(msg, firstError);
     }
     setBusy(null);
@@ -545,7 +546,7 @@ export function MembersDialog({
                         type="danger"
                         size="sm"
                         label={removeLabel(r.subject, org)}
-                        tooltip={`Remove from ${name}`}
+                        tooltip={r.subject === "everyone" ? removeLabel(r.subject, org) : `Remove from ${name}`}
                         onClick={() => onRemove(r.subject)}
                         disabled={busy === r.subject}
                       />

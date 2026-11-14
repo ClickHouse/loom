@@ -351,11 +351,15 @@ describe("MembersDialog paging", () => {
       <MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" />,
     );
     expect(await screen.findByLabelText("Role for Everyone in acme")).toBeInTheDocument();
+    // Its tooltip says what its press does, as its name does.
+    expect(screen.getByRole("button", { name: "Stop sharing with everyone in acme" })).not.toHaveAccessibleDescription(
+      /Remove from/,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Stop sharing with everyone in acme" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(confirm.mock.calls[0][0]).toMatchObject({
       title: "Stop sharing Runbooks with everyone in acme?",
-      message: "Only the people named here or on a parent keep access.",
+      message: "Only those named here or on a parent, and the members of groups named, keep access.",
     });
     unmount();
     render(
