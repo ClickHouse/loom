@@ -287,7 +287,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, and `supersedes_key` when it replaces an older row. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, `changed_since` when its code changed at a known commit, and `supersedes_key` when… |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `edges` | `list[CodeEdgeWire]` | The call-graph edges found, hop by hop; the far end (`from_*` for callers, `to_*` for callees) is the answer. |
 | `seed_symbols` | `list[str]` | Qualified names of the definitions the walk started from; empty when refused as ambiguous. |
@@ -341,7 +341,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, and `supersedes_key` when it replaces an older row. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, `changed_since` when its code changed at a known commit, and `supersedes_key` when… |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `edges` | `list[CodeEdgeWire]` | The call-graph edges found, hop by hop; the far end (`from_*` for callers, `to_*` for callees) is the answer. |
 | `seed_symbols` | `list[str]` | Qualified names of the definitions the walk started from; empty when refused as ambiguous. |
@@ -386,7 +386,7 @@ Briefing at the START of a task, instead of exploring file by file.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, and `supersedes_key` when it replaces an older row. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, `changed_since` when its code changed at a known commit, and `supersedes_key` when… |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `context` | `str` | The pack as Markdown text; for `unavailable`, a short note saying the PR has no pack yet. |
 | `tokens_used` | `int` | Estimated tokens of `context`. |
@@ -814,7 +814,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, and `supersedes_key` when it replaces an older row. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, `changed_since` when its code changed at a known commit, and `supersedes_key` when… |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `impacted_symbols` | `list[dict[str, Any]]` | Each row {qualified_name, path, hop, tier}; a row whose function is a registration function (`REGISTER_FUNCTION(X)`, `registerStorageFoo`) carries `via: "registration"` — the seed is reached through a registry; the key is absent otherwise. |
 | `impacted_tests` | `list[dict[str, Any]]` | Tests the test map ties to the seed and impacted paths: {test_path, src_path, confidence}. |
@@ -991,7 +991,7 @@ Tell loom what you did with a code answer, by its trace_run_id: 'used_in_answer'
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, and `supersedes_key` when it replaces an older row. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, `changed_since` when its code changed at a known commit, and `supersedes_key` when… |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `path` | `str` | The repo-relative path read, normalised from the request. |
 | `entries` | `list[dict[str, Any]]` | source order: {kind, qualified_name, signature, start_line, end_line, tier} |
@@ -1469,7 +1469,7 @@ Search the shared code index of this repository (fresh to the last merged PR).
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, and `supersedes_key` when it replaces an older row. |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, `changed_since` when its code changed at a known commit, and `supersedes_key` when… |
 | `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[CodeUnit]` | The ranked units served on this page, cut to top_k and the token budget; empty on an abstain with no pool or a not-covered path. |
 | `route` | `str` | symbol_exact \| hybrid \| symbol_miss_hybrid |

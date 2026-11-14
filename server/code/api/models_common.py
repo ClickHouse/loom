@@ -70,10 +70,11 @@ class _LessonsOut(BaseModel):
 
     # The memories about the answer's top files, best first, capped at
     # `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt,
-    # code_state}, and `supersedes_key` when it replaces an older row. `code_state` is the
-    # worst state of the row's links to code in the file: `fresh`, `moved`, or `changed`,
-    # `unresolved` or `missing` when that code differs from what the memory was written
-    # against; '' for a row that names the file only.
+    # code_state}, `changed_since` when its code changed at a known commit, and
+    # `supersedes_key` when it replaces an older row. `code_state` is the worst state of the
+    # row's links to code in the file: `fresh`, `moved`, or `changed`, `unresolved` or
+    # `missing` when that code differs from what the memory was written against (the commit
+    # that put it there is `changed_since`); '' for a row that names the file only.
     lessons: list[dict[str, Any]] = Field(default_factory=list)
     # How many rows about those files the lessons' token cap or a cut left out, with
     # the rows another row read for the answer supersedes.
