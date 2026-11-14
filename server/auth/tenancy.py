@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 from server.core.errors import (
     BackendUnavailableError,
+    TenancyRefusedError,
     ValidationError,
     WrongCellError,
     caller_text,
@@ -196,6 +197,8 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
         )
     try:
         await pg.execute(_ADD, org)
+    except TenancyRefusedError:
+        raise  # the `loom.tenancy` guard: this process's sessions lost the marker; no retry
     except Exception as e:  # re-raised as 503: the placement stands; the row lands on retry
         log.warning("tenancy: %s placed here, row unwritten: %s", org, e)
         raise BackendUnavailableError(

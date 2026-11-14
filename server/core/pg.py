@@ -318,9 +318,9 @@ def _raise_if_tenancy_refused(e: BaseException) -> None:
         ) from None
 
 
-# The setting that marks a session as one that ran the tenancy check: the org triggers'
-# WHEN skips such a session (`server.core.cell_triggers`; its name never changes,
-# rolling-upgrades rule 47).
+# The setting that marks a session as one that ran the tenancy check: the WHEN of the org
+# triggers and the `loom.tenancy` guard skips such a session (`server.core.cell_triggers`;
+# its name never changes, rolling-upgrades rule 47).
 TENANCY_MARKER = "loom.tenancy_checked"
 
 

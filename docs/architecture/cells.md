@@ -1124,16 +1124,17 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   directory unreachable, placements, uncached lookups, the `loom cell` commands that
   read or write it and the recording cells' state reads refuse while each cell keeps
   serving the orgs it holds. Third, a migrating boot that cannot create or enable an org
-  trigger on a table, or set `loom.cell_first`'s triggers back to always (its lock not
-  taken in three tries of 100 ms, or a table the role cannot alter), logs it and serves,
-  leaving that table unguarded until a later boot succeeds: the triggers are a backstop
-  only against writers that send no marker, refusing the boot would take a cell down for a
-  backstop, and attach refuses a missing trigger. Fourth, an org-free revocation command
-  that cannot give access back (a plain `loom revoke-token`, not one that narrows or lapses,
-  a SQL user's revocation, `loom signing-key retire`, `loom bot disable`, `loom sso unlink`)
-  with `LOOM_CELL` set whose read of the cell's `first` row fails for a Postgres that does
-  not answer runs and prints that the cell was not checked, since a revocation must work
-  through an outage; any other failed read, a missing grant among them, refuses.
+  trigger or the `loom.tenancy` guard on a table, or set `loom.cell_first`'s triggers back
+  to always (its lock not taken in three tries of 100 ms, or a table the role cannot alter),
+  logs it and serves, leaving that table unguarded until a later boot succeeds: the triggers
+  are a backstop only against writers that send no marker, refusing the boot would take a
+  cell down for a backstop, and attach refuses a missing trigger. Fourth, an org-free
+  revocation command that cannot give access back (a plain `loom revoke-token`, not one that
+  narrows or lapses, a SQL user's revocation, `loom signing-key retire`, `loom bot disable`,
+  `loom sso unlink`) with `LOOM_CELL` set whose read of the cell's `first` row fails for a
+  Postgres that does not answer runs and prints that the cell was not checked, since a
+  revocation must work through an outage; any other failed read, a missing grant among them,
+  refuses.
 
 ## Source entry points
 

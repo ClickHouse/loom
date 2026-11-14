@@ -591,6 +591,22 @@ def test_a_router_read_timeout_answers_503_and_writes_nothing(
     assert cell_pg.writes == []
 
 
+def test_a_guard_refusal_of_the_row_answers_tenancy_refused_not_a_retry(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sessions that lost the marker meet the `loom.tenancy` guard: an operator's fix."""
+    from server.core import pg
+
+    async def _refused(_sql: str, _org: str) -> str:
+        raise errors.TenancyRefusedError("cell refuses a tenancy row")
+
+    _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
+    monkeypatch.setattr(pg, "execute", _refused)
+    with pytest.raises(errors.TenancyRefusedError):
+        asyncio.run(tenancy.ensure_held("new", _auth("new")))
+    assert "new" not in tenancy._held
+
+
 def test_an_org_another_process_just_recorded_is_held(cell_pg: _PG) -> None:
     cell_pg.mode = "recording"
     cell_pg.racer = "new"

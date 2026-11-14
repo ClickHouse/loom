@@ -187,8 +187,8 @@ def _guarded(rows: list[Any]) -> list[Any]:
 
 
 def _planned(rows: list[Any]) -> list[tuple[Any, tuple[str, ...]]]:
-    """Each table that carries cell triggers, with their names: a guarded org table its
-    org triggers, and `loom.tenancy` its guard."""
+    """Each table that carries cell triggers, with their names: a guarded org table its org
+    triggers, and `loom.tenancy` its guard."""
     out = [(r, ORG_TRIGGERS) for r in _guarded(rows)]
     return out + [(r, (TENANCY_TRIGGER,)) for r in rows if r["relname"] == "tenancy"]
 
