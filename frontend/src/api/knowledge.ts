@@ -127,7 +127,6 @@ export interface KnowledgeMoveResult {
 export interface KnowledgeMoved {
   /** False when the caller cannot add to the place: nothing moved. */
   found: boolean;
-  to_namespace: string;
   results: KnowledgeMoveResult[];
   /** The failure of a call, after the answers of the calls before it. */
   error?: unknown;
@@ -147,7 +146,6 @@ export async function moveKnowledge(
   signal?: AbortSignal,
 ): Promise<KnowledgeMoved> {
   const results: KnowledgeMoveResult[] = [];
-  let toNamespace = to;
   for (let i = 0; i < sourceUris.length && !signal?.aborted; i += MOVE_MAX) {
     let r: KnowledgeMoved;
     try {
@@ -158,13 +156,12 @@ export async function moveKnowledge(
         source_uris: sourceUris.slice(i, i + MOVE_MAX),
       });
     } catch (error) {
-      return { found: true, to_namespace: toNamespace, results, error };
+      return { found: true, results, error };
     }
-    if (!r.found) return { found: false, to_namespace: toNamespace, results };
-    toNamespace = r.to_namespace ?? to;
+    if (!r.found) return { found: false, results };
     results.push(...(r.results ?? []));
   }
-  return { found: true, to_namespace: toNamespace, results };
+  return { found: true, results };
 }
 
 export interface KnowledgeBulkDeleteResult {

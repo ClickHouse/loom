@@ -149,6 +149,8 @@ async def _move(
     if doc is None:
         return "not_found"
     org, src, uri = doc.org, doc.namespace, doc.source_uri
+    own: list[str] = []  # the originals this call stored in `dst`
+    reason: MoveReason = "busy"
     try:
         # A source sync owns it: its next pass would write it back where it was.
         if doc.actor == SYNC_WORKER_ACTOR:
@@ -167,9 +169,8 @@ async def _move(
                 return "exists"
             copying = state == "incomplete"
         # An original no row names yet is the sweep's, as any upload whose row did not land.
-        originals = await _store_originals(doc, dst) if copying else {}
+        originals, own = await _store_originals(doc, dst) if copying else ({}, [])
         first, second = sorted((src, dst))
-        reason: MoveReason = "busy"
         async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as held_first:
             if held_first:
                 async with ingest_run.claim_source(
@@ -179,15 +180,17 @@ async def _move(
                         reason = await _claimed(
                             doc, there, copying, dst, originals, arrived, started
                         )
-        if reason == "":
-            # Its tombstone is in: the move is made. Outside the claims, as a delete's:
-            # nothing cuts this off, and a failure is only logged.
-            await _forget_tables(doc)
-        return reason
     except _BUSY:
-        return "busy"
+        reason = "busy"
     except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
-        return "erased"
+        reason = "erased"
+    if reason == "erased" and own:
+        await _drop_own_originals(doc, dst, own)
+    if reason == "":
+        # Its tombstone is in: the move is made. Outside the claims, as a delete's:
+        # nothing cuts this off, and a failure is only logged.
+        await _forget_tables(doc)
+    return reason
 
 
 def _live(doc: DocumentRow | None) -> TypeGuard[DocumentRow]:
@@ -432,16 +435,19 @@ async def _take_back(copy: _Copy) -> None:
         await datasets_repo.forget_snapshot(t)
 
 
-async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
+async def _store_originals(doc: DocumentRow, dst: str) -> tuple[dict[str, Any], list[str]]:
     """The document's original and its extraction artifact stored again in `dst` (an
-    original belongs to its namespace: its sweep and erasure go by it); the columns to
-    clear for one the source no longer holds. A ClickHouse row is copied inside
-    ClickHouse; an object is read and written again, as an object belongs to its
-    namespace's place in the bucket."""
+    original belongs to its namespace: its sweep and erasure go by it). A ClickHouse row
+    is copied inside ClickHouse; an object is read and written again. Answers the
+    columns to clear for one the source no longer holds, and the originals `dst` held no
+    row of before: this call's own."""
     cleared: dict[str, Any] = {}
+    own: list[str] = []
     for column, sha in (("blob_path", doc.blob_path), ("artifact_sha256", doc.artifact_sha256)):
         if not sha:
             continue
+        if await blobs.locate(doc.org, dst, sha) is None:
+            own.append(sha)
         held = await blobs.locate(doc.org, doc.namespace, sha)
         if held is not None and not held.location:
             if await blobs.copy_held(
@@ -457,7 +463,15 @@ async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
             cleared.update(documents_repo.NO_ORIGINAL if column == "blob_path" else {column: ""})
             continue
         await blobs.put(doc.org, dst, data, uploader=doc.user_id)
-    return cleared
+    return cleared, own
+
+
+async def _drop_own_originals(doc: DocumentRow, dst: str, own: list[str]) -> None:
+    """Delete the originals this call stored in `dst` that no row there needs: an erasure
+    registered while it ran may have finished its originals step before they were
+    stored, and the sweep would take them only later."""
+    unneeded = sorted(set(own) - await blobs.needed(doc.org, dst, own))
+    await blobs.delete(doc.org, dst, unneeded)
 
 
 def _written_s(doc: DocumentRow) -> int:

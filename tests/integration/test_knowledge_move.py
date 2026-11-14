@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -676,3 +677,59 @@ def test_a_place_the_token_cannot_write_answers_found_false_and_moves_nothing(
             headers=headers,
         )
     assert allowed.json()["results"] == [{"source_uri": uri, "moved": True, "reason": ""}]
+
+
+async def _moves_audited(a: Any, ns: str) -> list[dict[str, Any]]:
+    out = await a.transport.post(
+        "/v1/audit.list", {"org": ORG, "namespace": ns, "event_type": "knowledge.move"}
+    )
+    return list(out["rows"])
+
+
+@pytest.mark.asyncio
+async def test_a_move_is_audited_where_it_was_and_where_it_went(control_plane_url: str) -> None:
+    from loom import Agent
+
+    from tests.integration._eventually import eventually
+
+    src, dst, uri = _places()
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        await a.knowledge.add(content="audited", source_uri=uri, title="t")
+        assert (await _move(a, src, dst, [uri]))["results"][0]["moved"] is True
+        # The transport's row under the source, the handler's under the target.
+        assert await eventually(lambda: _moves_audited(a, src), description="source row")
+        [there] = await eventually(lambda: _moves_audited(a, dst), description="target row")
+    assert json.loads(there["subject"]) == {"from_namespace": src, "source_uris": [uri]}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_call_audits_its_finished_moves_where_they_went(
+    control_plane_url: str, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loom import Agent
+
+    from server.knowledge.api.models_knowledge import KnowledgeMoveInput
+    from tests.integration._eventually import eventually
+
+    move = in_process
+    src, dst, uri = _places()
+    failing = uri.replace(".md", "-2.md")
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        for u in (uri, failing):
+            await a.knowledge.add(content=f"text of {u}", source_uri=u, title="t")
+        real = move._move
+
+        async def one_fails(doc: Any, *args: Any) -> Any:
+            if doc is not None and doc.source_uri == failing:
+                raise RuntimeError("the store failed")
+            return await real(doc, *args)
+
+        monkeypatch.setattr(move, "_move", one_fails)
+        with pytest.raises(RuntimeError):
+            await move.handle_knowledge_move(
+                KnowledgeMoveInput(
+                    org=ORG, namespace=src, to_namespace=dst, source_uris=[uri, failing]
+                )
+            )
+        [there] = await eventually(lambda: _moves_audited(a, dst), description="target row")
+    assert json.loads(there["subject"]) == {"from_namespace": src, "source_uris": [uri]}

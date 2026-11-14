@@ -584,7 +584,7 @@ of the call still move. The take-back deletes its row (under the Postgres author
 commit first), retires its chunks under each embedding model they were copied under, then
 deletes them, and deletes its tables: a cancelled `INSERT … SELECT` runs on in ClickHouse
 and may land after the delete, and the retirement keeps what lands from serving. The work
-under the claims is cut off at `_WORK_SHARE` (0.4) of their 60 s TTL; a document whose copy
+under the claims is cut off at 40% of the claim's 60 s TTL (24 s); a document whose copy
 runs past that is taken back and answers `busy`. Once the delete has begun, a failure (a
 cut-off, which answers `busy`, or a lost answer, which fails the call) may follow the
 tombstone, so the copy stays: the document is in both places, or only where it goes, and a
@@ -603,8 +603,10 @@ document under the claims, just before its delete, for one registered since: one
 passed the copy, this move's or an earlier move's. That one takes back a copy this move
 wrote, leaves an earlier move's copy to the erasure, and answers `erased` without deleting
 the source, so an `erased` document always stays where it was. Under the Postgres authority
-a delete over a document an erasure removed meanwhile answers `erased` too. The original
-stored in the new place stays there, named by no row, until the sweep deletes it after
+a delete over a document an erasure removed meanwhile answers `erased` too. An `erased`
+answer also deletes the originals the call stored in the new place that no row there needs:
+the erasure's originals step may have run before they were stored. A copy taken back for
+another reason leaves its original, named by no row, to the sweep after
 `document_blob_min_age_seconds`, as any original whose row did not land.
 
 Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's

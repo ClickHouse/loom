@@ -1152,9 +1152,9 @@ answered once every source has. An erasure registered while a move runs takes th
 before the delete and answers `erased`: an `erased` document is always still where it was.
 The SDKs retry `knowledge.move` after a lost answer with the same Idempotency-Key, and the
 server replays the first answer; a retry without the key, or one the replay cache cannot
-answer under the ClickHouse authority, moves again, and a document that moved the first time
-answers `not_found`. Under the Postgres authority each of the two writes is its own commit.
-The ordering and what a cut-off move leaves are in [failure and
+answer under the ClickHouse authority, runs the move again, and a document that moved the
+first time answers `not_found`. Under the Postgres authority each of the two writes is its
+own commit. The ordering and what a cut-off move leaves are in [failure and
 recovery](../architecture/failure-and-recovery.md#knowledge-move).
 
 ## Ingesting files
