@@ -115,6 +115,11 @@ class PlacementRefused(Refusal):
     """The cell may not place a new org now; `reason` says why."""
 
 
+class OrgTooLong(Refusal):
+    """A new org name longer than a cell holds (`cell.ORG_MAX_BYTES`): refused before its
+    placement is written, by every route that places, and no retry places it."""
+
+
 def _require_dsn() -> str:
     if not settings.router_pg_dsn:
         raise DirectoryUnavailable("no directory: set LOOM_ROUTER_PG_DSN")
@@ -599,11 +604,6 @@ async def first_cell_named(cell_name: str) -> Cell | None:
     async with _reading(), _connection() as conn:
         row = await conn.fetchrow(f"{_CELL} WHERE is_first AND cell = $1", cell_name)
     return _cell(row) if row else None
-
-
-class OrgTooLong(ValueError):
-    """A new org name longer than a cell holds (`cell.ORG_MAX_BYTES`): refused before its
-    placement is written, by every route that places."""
 
 
 async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tuple[str, str]:
