@@ -12,7 +12,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from server.cli._ch import reads, revokes, run_connected
+from server.cli._ch import reads, revokes, run_connected, writes
 from server.cli._client import token_path
 from server.core.pg import AuthorityMismatch
 
@@ -541,6 +541,10 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             _run,
             org_free=reads("lists the unexpired revocations")
             if args.list
+            # Narrowing SCIM's revocation, or one that lapses or covers only older
+            # tokens, can give access back: gated as a write, not run through an outage.
+            else writes("revises a revocation: no org's rows")
+            if args.scim or expires_at is not None or issued_before is not None
             else revokes("revokes a token or subject by id: no org's rows"),
         )
     except AuthorityMismatch:

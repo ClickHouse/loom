@@ -210,22 +210,24 @@ def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postg
     assert seen == ([1] if checked else [])
 
 
-# Commands whose dry run, check or listing writes nothing: the flag each one's kind is
-# picked by, so with LOOM_CELL set and Postgres down that mode still runs.
+# Commands whose kind depends on their flags: each flag the pick reads, and how many call
+# sites in the file pick. A dry run, check or listing writes nothing, so with LOOM_CELL
+# set and Postgres down it still runs; a revocation that can give access back is a write.
 _MODE_PICKED = {
-    "secrets.py": "dry_run",
-    "restore.py": "dry_run",
-    "ops.py": "dry_run",
-    "hygiene.py": "resume",
-    "code_maintenance.py": "dry_run",
-    "deployment.py": "check",
-    "sso.py": "dry_run",
-    "access.py": "list",
+    "secrets.py": ({"dry_run", "check"}, 1),
+    "restore.py": ({"dry_run"}, 1),
+    "ops.py": ({"dry_run"}, 2),
+    "hygiene.py": ({"resume", "erase"}, 1),
+    "code_maintenance.py": ({"dry_run"}, 1),
+    "deployment.py": ({"check"}, 1),
+    "sso.py": ({"dry_run"}, 1),
+    "access.py": ({"list", "scim", "expires_at", "issued_before"}, 1),
 }
 
 
-@pytest.mark.parametrize(("file", "flag"), sorted(_MODE_PICKED.items()))
-def test_a_mode_that_writes_nothing_picks_a_read(file: str, flag: str) -> None:
+@pytest.mark.parametrize("file", sorted(_MODE_PICKED))
+def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(file: str) -> None:
+    flags, sites = _MODE_PICKED[file]
     source = (ROOT / "server" / "cli" / file).read_text()
     picked = [
         k.value
@@ -234,9 +236,32 @@ def test_a_mode_that_writes_nothing_picks_a_read(file: str, flag: str) -> None:
         for k in call.keywords
         if k.arg == "org_free" and isinstance(k.value, ast.IfExp)
     ]
-    branches = [_name(b) for v in picked for b in (v.body, v.orelse) if isinstance(b, ast.Call)]
-    assert "reads" in branches, f"{file}: a mode that writes nothing should pick reads(...)"
-    assert any(flag in ast.unparse(v.test) for v in picked), f"{file}: picked by --{flag}"
+    assert len(picked) == sites, f"{file}: {sites} call site(s) pick their kind"
+    tests = " ".join(
+        ast.unparse(n.test) for v in picked for n in ast.walk(v) if isinstance(n, ast.IfExp)
+    )
+    assert all(f in tests for f in flags), f"{file}: the pick reads {sorted(flags)}"
+    kinds = {_name(n) for v in picked for n in ast.walk(v) if isinstance(n, ast.Call)}
+    assert "reads" in kinds or file == "access.py"
+
+
+def test_a_revocation_that_can_give_access_back_is_gated_as_a_write() -> None:
+    """Narrowing SCIM's revocation, or one that lapses or covers older tokens only, is
+    not run through an outage: only a plain revocation is."""
+    source = (ROOT / "server" / "cli" / "access.py").read_text()
+    picks = [
+        ast.unparse(k.value)
+        for call in _calls(ast.parse(source))
+        if _name(call) in _CONNECTS
+        for k in call.keywords
+        if k.arg == "org_free" and isinstance(k.value, ast.IfExp)
+    ]
+    (pick,) = picks
+    assert (
+        "writes(" in pick
+        and "args.scim" in pick
+        and pick.rindex("revokes(") > pick.index("writes(")
+    )
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:

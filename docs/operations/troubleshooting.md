@@ -269,7 +269,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   "holds a partial cell state and LOOM_CELL is unset", or "cell state could not be read
   (...)"; for the first, set `LOOM_CELL` on the CLI, and for the last, act on the reason
   it names: a missing grant ([upgrade step 15](upgrades.md#upgrade-procedure)) or a
-  Postgres that does not answer.
+  Postgres that does not answer. With `LOOM_CELL` set, a command that writes for no org
+  or revokes refuses with "this Postgres's first row names cell ..., not LOOM_CELL=...",
+  pointed at another cell's stores, or "this cell's state could not be read (...)"; a
+  revocation runs through an outage and prints that the cell was not checked.
 - **Cause:** under the Postgres authority every server process reads the deployment's
   cell state (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`).
   With `LOOM_CELL` unset it serves only while none of them holds a row, or while they

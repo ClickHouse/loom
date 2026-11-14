@@ -145,12 +145,12 @@ def _read_failure(e: BaseException) -> str:
     return str(e) or "no reason given"
 
 
-def _outage(e: BaseException | None) -> bool:
+def _outage(e: BaseException) -> bool:
     """Whether a state read failed for a Postgres that does not answer: a lost or refused
     connection or no answer within the bound, never a missing grant."""
     from server.core import pg
 
-    return e is not None and (isinstance(e, pg.PostgresUnavailableError) or pg.is_outage(e))
+    return isinstance(e, pg.PostgresUnavailableError) or pg.is_outage(e)
 
 
 async def check_org_free(free: OrgFree) -> None:
@@ -241,10 +241,11 @@ async def connect_declared(
     check_authority: bool = False,
 ) -> None:
     """Connect `ch` for a command that writes for `orgs` (or for none, `org_free` saying
-    why), refusing, disconnected, an org this cell does not hold. With orgs to check, or
-    with `check_authority`, it first refuses a deployment other than its own
-    (`check_configured`): an org's rows and its tenancy row land only in this
-    deployment's stores, and the cell state is read from this deployment's Postgres."""
+    why), refusing, disconnected, an org this cell does not hold. With orgs to check, with
+    `check_authority`, or on a cell for an org-free write or revocation, it first refuses a
+    deployment other than its own (`check_configured`): an org's rows and its tenancy row
+    land only in this deployment's stores, and the cell state is read from this
+    deployment's Postgres. An org-free command is then judged by `check_org_free`."""
     from server.settings import settings
 
     named = _declared(orgs, org_free)
