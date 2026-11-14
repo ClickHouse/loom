@@ -16,7 +16,8 @@ from loom.errors import LoomError
 from loom.integrations.pydantic_ai import loom_toolset
 from loom.tools import LOOM_TOOL_SPECS
 from pydantic_ai import Agent as PydanticAgent
-from pydantic_ai import FunctionToolset
+from pydantic_ai import FunctionToolset, ToolFailed
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 
 
@@ -69,14 +70,29 @@ def test_a_refused_call_returns_the_error_and_the_run_goes_on() -> None:
     toolset = loom_toolset(_Down({}), only=["loom_remember"])  # type: ignore[arg-type]
     model = TestModel(call_tools=["loom_remember"])
     result = PydanticAgent(model, toolsets=[toolset]).run_sync("Remember my seat")
-    assert "loom_remember failed: memory store unavailable" in result.output
+    (returned,) = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert returned.outcome == "failed"  # a failed tool result, not a success
+    assert returned.content == "loom_remember failed: memory store unavailable"
+
+
+def test_a_rejected_argument_is_a_failed_tool_result() -> None:
+    (recall,) = _tools(loom_toolset(_FakeAgent({}), only=["loom_recall"])).values()  # type: ignore[arg-type]
+    with pytest.raises(ToolFailed, match='top_k must be an integer, got "five"'):
+        asyncio.run(recall.function(query="seat", top_k="five"))
 
 
 def test_max_result_chars_caps_what_the_model_reads() -> None:
     hit = {"memory_key": "k", "content_excerpt": "x" * 500, "similarity": 0.9}
     toolset = loom_toolset(
-        _FakeAgent({"results": [hit]}), only=["loom_recall"], max_result_chars=100
-    )  # type: ignore[arg-type]
+        _FakeAgent({"results": [hit]}),  # type: ignore[arg-type]
+        only=["loom_recall"],
+        max_result_chars=100,
+    )
     out = asyncio.run(_tools(toolset)["loom_recall"].function(query="seat"))
     assert out.endswith("…[truncated]")
     assert len(out) == 100 + len("…[truncated]")

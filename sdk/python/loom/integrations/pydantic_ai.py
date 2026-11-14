@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 try:
-    from pydantic_ai import FunctionToolset, Tool
+    from pydantic_ai import FunctionToolset, Tool, ToolFailed
 except ImportError as e:  # the framework is an optional extra
     raise ImportError(
         "loom.integrations.pydantic_ai needs pydantic-ai-slim: "
@@ -57,7 +57,7 @@ def loom_toolset(
 
     ``only`` keeps a subset by name, e.g. ``["loom_remember", "loom_recall"]``;
     ``max_result_chars`` caps the string each call returns to the model. A call
-    Loom refuses returns its error message to the model instead of failing the run.
+    Loom refuses reaches the model as a failed tool result, and the run goes on.
     """
     if isinstance(agent, SyncAgent):
         raise TypeError("loom_toolset needs a loom.Agent: Pydantic AI awaits its tools")
@@ -87,8 +87,8 @@ def _runner(tools: AgentTools, name: str) -> Callable[..., Awaitable[str]]:
         try:
             return await tools.execute(name, arguments)
         except LoomError as e:
-            # Pydantic AI fails the run on any exception but ModelRetry, which spends
-            # the tool's retries; the message lets the model fix its call either way.
-            return f"{name} failed: {e}"
+            # A failed tool result the model reads and the run goes on; any other
+            # exception fails the run, and ModelRetry would spend the tool's retries.
+            raise ToolFailed(f"{name} failed: {e}") from e
 
     return run

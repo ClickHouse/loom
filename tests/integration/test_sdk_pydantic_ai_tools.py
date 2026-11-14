@@ -28,5 +28,5 @@ async def test_remember_then_recall(agent) -> None:
         out = json.loads(await tools["loom_recall"].function(query="Alice aisle seat"))
         return [m["memory_key"] for m in out["memories"]][:1] == ["seat_preference"]
 
-    # The write is searchable once its embedding lands; eventually raises on timeout.
+    # The write is searchable once its embedding lands.
     await eventually(recalled, description="seat_preference recalled")

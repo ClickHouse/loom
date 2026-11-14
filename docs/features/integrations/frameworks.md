@@ -297,7 +297,7 @@ agent and its credential are not component config.
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
 agent verbs as a `FunctionToolset`, the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. Install with
-`pip install 'clickhouse-loom[pydantic-ai]'` (`pydantic-ai-slim` 2.x).
+`pip install 'clickhouse-loom[pydantic-ai]'` (`pydantic-ai-slim` 2.68 or later).
 
 ```python
 from pydantic_ai import Agent as PydanticAgent
@@ -314,11 +314,12 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 ```
 
 `user_id`, `session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a
-subset and `max_result_chars` caps what a call returns. A call Loom refuses returns
-`<tool> failed: <message>` to the model, as with the OpenAI Agents SDK: Pydantic AI fails the
-run on any exception other than `ModelRetry`. Pydantic AI awaits its tools, so the toolset
-takes a `loom.Agent` and refuses a `SyncAgent`. Message history stays with the caller, who
-passes it to each run as `message_history`.
+subset and `max_result_chars` (8,000 by default) caps what a call returns. A call Loom
+refuses raises Pydantic AI's `ToolFailed` with `<tool> failed: <message>`: the model reads
+it as a failed tool result and the run goes on, where any other exception would fail the
+run. Pydantic AI awaits its tools, so the toolset takes a `loom.Agent` and refuses a
+`SyncAgent`. Message history stays with the caller, who passes it to each run as
+`message_history`.
 
 ## LangGraph
 
@@ -443,8 +444,9 @@ client can speak for several agents.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
-- **A refused tool call is a message, not an exception.** The OpenAI Agents SDK and
-  Pydantic AI tools return Loom's error to the model as the call's result.
+- **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
+  return Loom's error to the model as the call's result; the Pydantic AI tools return it as
+  a failed tool result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).
