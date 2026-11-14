@@ -20,7 +20,8 @@ def _is_str_list(values: Any) -> bool:
 
 
 def _names(values: Iterable[Any]) -> tuple[str, ...]:
-    """Distinct non-empty strings, lower-cased and sorted; a non-string is dropped."""
+    """The non-empty strings, stripped, lower-cased, distinct and sorted; anything else
+    is dropped."""
     return tuple(sorted({v.strip().lower() for v in values if isinstance(v, str) and v.strip()}))
 
 
@@ -28,7 +29,8 @@ def _names(values: Iterable[Any]) -> tuple[str, ...]:
 class AccessList:
     """Who the store lets read a mirrored document. `owner` is a connected source's
     owner subject. `unread`: no current list is known; it admits nobody. `emails`,
-    `groups` and `domains` are kept lower-cased and sorted."""
+    `groups` and `domains` are kept in one spelling: stripped, lower-cased, distinct and
+    sorted."""
 
     emails: tuple[str, ...] = ()
     owner: str = ""
@@ -43,7 +45,7 @@ class AccessList:
         if self.unread and (
             self.emails or self.groups or self.domains or self.anyone or self.owner
         ):
-            raise ValueError("an unread list names nobody")
+            raise ValueError("an unread list cannot name anyone")
 
 
 UNREAD = AccessList(unread=True)
@@ -84,10 +86,9 @@ def from_json(text: str) -> AccessList:
 
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:
     """The list a `shared` source reads from a Drive file's `permissions`; `unread` when
-    the store gave none. A deleted permission (its address may now belong to someone
-    else), a link-only share (one that lets a holder of the link open the file, not find
-    it), a grant to one view of the file only (`view`), and a type or role this module
-    does not know admit nobody."""
+    the store gave none. A deleted, link-only or one-view (`view`) permission, and a type
+    or role this module does not know, admit nobody (docs/architecture/document-sources.md,
+    Who may read)."""
     if permissions is None:
         return UNREAD
     emails: list[Any] = []

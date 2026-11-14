@@ -82,12 +82,26 @@ def test_builder_refuses_unknown_and_hash_fields() -> None:
         documents_repo.build_document_row(_doc(), version=2, content_sha256="x")
 
 
+_STORED = {
+    "org": "o", "namespace": "n", "source_uri": "u", "doc_id": "d", "content": "c",
+    "version": 1, "ingested_at": INGESTED, "access_json": LISTED,
+}  # fmt: skip
+
+
 def test_a_read_keeps_the_permission_list() -> None:
-    row = {
-        "org": "o", "namespace": "n", "source_uri": "u", "doc_id": "d", "content": "c",
-        "version": 1, "ingested_at": INGESTED, "access_json": LISTED,
-    }  # fmt: skip
-    assert documents_repo._hydrate(row).access_json == LISTED
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return [_STORED]
+
+    [doc] = asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
+    assert doc.access_json == LISTED
+
+
+def test_a_postgres_head_keeps_the_permission_list() -> None:
+    from server.knowledge.store import pg_documents
+
+    stored = pg_documents.decode_row(pg_documents.encode_row(_STORED))
+    assert documents_repo._hydrate(stored).access_json == LISTED
 
 
 def test_the_repo_reads_select_the_hash_the_erasure_stamp_and_the_permission_list() -> None:
