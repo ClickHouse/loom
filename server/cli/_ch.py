@@ -119,7 +119,7 @@ async def check_orgs(orgs: Iterable[str]) -> None:
     from server.auth import tenancy
     from server.code.domain.index import repos
     from server.core import cell, pg_profile
-    from server.core.errors import BackendUnavailableError, WrongCellError
+    from server.core.errors import BackendUnavailableError, ValidationError, WrongCellError
     from server.settings import settings
 
     orgs = tuple(orgs)
@@ -154,7 +154,7 @@ async def check_orgs(orgs: Iterable[str]) -> None:
             raise OrgNotHeld(
                 f"refusing: {e.message} (`loom cell place --org {org}` places a new org)"
             ) from None
-        except BackendUnavailableError as e:
+        except (BackendUnavailableError, ValidationError) as e:
             raise OrgNotHeld(f"refusing: {e.message}") from None
 
 

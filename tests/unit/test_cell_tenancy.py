@@ -138,6 +138,32 @@ def test_a_held_org_passes_and_is_remembered(cell_pg: _PG) -> None:
     assert cell_pg.writes == []
 
 
+@pytest.mark.parametrize("mode", ["recording", "enforced"])
+def test_a_new_org_longer_than_a_cell_holds_is_neither_recorded_nor_placed(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """The router could not index its placement, so the cell never records it: 422,
+    nothing written, the router never asked."""
+    from server.core.errors import ValidationError
+
+    cell_pg.mode = mode
+    calls = _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
+    long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)  # 2 bytes a character: just past the limit
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES}"):
+        asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert cell_pg.writes == [] and calls == []
+    exact = "a" * cell.ORG_MAX_BYTES
+    asyncio.run(tenancy.ensure_held(exact, _auth(exact)))
+    assert cell_pg.writes == [exact]
+
+
+def test_an_org_longer_than_the_limit_held_before_it_keeps_serving(cell_pg: _PG) -> None:
+    long = "x" * (cell.ORG_MAX_BYTES + 1)
+    cell_pg.held.add(long)
+    asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert cell_pg.writes == []
+
+
 def test_recording_records_a_new_org(cell_pg: _PG) -> None:
     cell_pg.mode = "recording"
     asyncio.run(tenancy.ensure_held("new", _auth("*", Role.PLATFORM_ADMIN)))

@@ -137,6 +137,12 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     if held:
         _held.add(org)
         return
+    # An org held before the limit keeps serving; a new one past it is never recorded or
+    # placed, so every held org has a placement the directory can index.
+    if cell.org_too_long(org):
+        from server.core.errors import ValidationError
+
+        raise ValidationError(cell.org_too_long_reason(org))
     if cell.mode() == "recording":
         # A restore to before attach's step 3 whose `loom cell restore` was skipped reads
         # `recording` too: the directory, which says `serving` then, tells the two apart.

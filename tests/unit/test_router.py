@@ -21,6 +21,8 @@ from server.router.limits import MAX_KEYS, Limiter
 from server.settings import settings
 from tests.unit.clock_fake import ManualClock
 
+_real_place = directory.place
+
 TOKEN = "cell-eu-1-credential-0123456789abcdef"
 US_TOKEN = "cell-us-1-credential-0123456789abcdef"
 FIELDS = {"public_host": "eu-1.example.test", "deployment_id": "dep-eu-1"}
@@ -149,6 +151,33 @@ def test_a_serving_cell_places_a_new_org_and_a_retry_answers_the_same(fake: _Dir
     assert first.json() == {"cell": "eu-1", "deployment_id": "dep-eu-1"}
     assert _place(client).json() == first.json()
     assert fake.placements == {"acme": "eu-1"}
+
+
+def test_an_org_longer_than_a_cell_holds_answers_400_and_places_nothing(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The directory's one check refuses it before any statement, for every placing
+    route; the route answers 400, which no retry changes."""
+    monkeypatch.setattr(directory, "place", _real_place)
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    answer = _place(_client(), long)
+    assert answer.status_code == 400
+    assert f"longer than the {cell.ORG_MAX_BYTES}" in answer.json()["error"]
+    assert fake.placements == {}
+
+
+def test_the_directory_refuses_a_long_org_before_it_connects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @asynccontextmanager
+    async def _never(**_kw: Any) -> Any:
+        raise AssertionError("connected")
+        yield
+
+    monkeypatch.setattr(directory, "_connection", _never)
+    long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)
+    with pytest.raises(directory.OrgTooLong):
+        asyncio.run(_real_place(long, "eu-1", lambda _row: ""))
 
 
 def test_an_org_placed_elsewhere_answers_its_cell(fake: _Directory) -> None:

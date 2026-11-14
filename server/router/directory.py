@@ -600,12 +600,22 @@ async def first_cell_named(cell_name: str) -> Cell | None:
     return _cell(row) if row else None
 
 
+class OrgTooLong(ValueError):
+    """An org name longer than a cell holds (`cell.ORG_MAX_BYTES`): refused before the
+    directory is touched, by every route that places."""
+
+
 async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tuple[str, str]:
     """Place `org` in `cell_name` unless it is placed already; the (cell, deployment
     id) that holds it. An org placed already answers its cell, whatever the cell's
     state. Otherwise the cell's row is locked and judged (`refusal`, then its quota),
     so a change to it waits for the placement and the quota holds across router
-    replicas; a refused placement raises PlacementRefused and writes nothing."""
+    replicas; a refused placement raises PlacementRefused and writes nothing, and an org
+    longer than a cell holds raises OrgTooLong."""
+    from server.core import cell as cell_state
+
+    if cell_state.org_too_long(org):
+        raise OrgTooLong(cell_state.org_too_long_reason(org))
     async with _reading(), _connection() as conn, conn.transaction():
         # Placements of one org run one at a time, whichever cell asks: the later one
         # reads the earlier one's winner.

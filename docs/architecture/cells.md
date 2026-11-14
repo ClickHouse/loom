@@ -760,6 +760,12 @@ lists any tenancy row the directory does not place.
   both are classified for erasure as holding no memory content, as a namespace's claim
   is, and stay after any erasure, so an org name never comes free for another cell. A
   process keeps the orgs it has seen held, and a kept org is never wrong to serve.
+- **One org name limit.** A cell records or places no new org longer than
+  `ORG_MAX_BYTES` (2048 UTF-8 bytes, `server/core/cell.py`, below Postgres's index entry
+  limit): its tenancy check refuses one with 422 and writes nothing, and the directory's
+  placement refuses one with 400 before any statement, for every route that places, so
+  every org a cell records has a placement the directory can index. An org held before
+  the limit keeps serving.
 - **A placed org with no row** (a restore to before its placement) gets its row back
   from `loom cell restore`, before the restored cell starts ([What each cell
   runs](#what-each-cell-runs)).
