@@ -206,7 +206,7 @@ describe("LibraryTree", () => {
     await userEvent.type(field, "Q4");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(api.createCollection).toHaveBeenCalledWith("acme", "", { parent: "col-eng", title: "Q4", deriveName: true });
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", NEW_COLLECTION_FOCUS, 7));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", 7, NEW_COLLECTION_FOCUS));
     expect(toast.toast).toHaveBeenCalledWith("Created Q4", "ok");
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByRole("button", { name: "New collection" })).toHaveFocus();
@@ -541,7 +541,7 @@ describe("LibraryTree's form", () => {
     cleanup();
     await act(async () => answer({ namespace: "col-q4", parent: "col-eng", created: true, title: "Q4" }));
     // The page decides: a resize still opens it, a move to another place does not.
-    expect(onCreated).toHaveBeenCalledWith("col-q4", NEW_COLLECTION_FOCUS, 7);
+    expect(onCreated).toHaveBeenCalledWith("col-q4", 7, NEW_COLLECTION_FOCUS);
     expect(toast.toast).toHaveBeenCalledWith("Created Q4", "ok");
   });
 
@@ -551,7 +551,7 @@ describe("LibraryTree's form", () => {
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     await userEvent.type(screen.getByRole("textbox", { name: "New collection in Engineering" }), "Q4");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", NEW_COLLECTION_FOCUS, 7));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", 7, NEW_COLLECTION_FOCUS));
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 });

@@ -46,9 +46,9 @@ export const placeFocusKey = (collection: string | null) => `library-tree-place-
  *  stays in the tree; `note`: the place's name, said on arrival. */
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
-/** Open a collection made in the tree. `arriveFocus`: New collection's focus key, so the
- *  person goes on there; `version`: what `claimCreateVersion` gave when Create was pressed. */
-export type MadeCollection = (collection: string, arriveFocus: string, version: number) => void;
+/** Open a collection made in the tree. `version`: what `claimCreateVersion` gave when Create
+ *  was pressed; `arriveFocus`: New collection's focus key, so the person goes on there. */
+export type MadeCollection = (collection: string, version: number, arriveFocus?: string) => void;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
@@ -232,15 +232,16 @@ export const LibraryTree = memo(function LibraryTree({
   // The form's target, fixed when New collection is pressed; null while closed.
   const [making, setMaking] = useState<CollectionEntry | "top" | null>(null);
   const newButton = useRef<HTMLButtonElement | null>(null);
-  // The form goes when it is done or dropped: focus goes to the button back in its place.
+  // The form goes when it is done or dropped: focus goes to the button back in its place, when
+  // the form still held it.
   const refocus = useRef(false);
   useEffect(() => {
     if (making || !refocus.current) return;
     refocus.current = false;
     newButton.current?.focus();
   }, [making]);
-  const stopMaking = () => {
-    refocus.current = true;
+  const stopMaking = (focusBack: boolean) => {
+    refocus.current = focusBack;
     setMaking(null);
   };
   const into = making && making !== "top" ? making : null;
@@ -441,7 +442,8 @@ function PlaceRow({
 }
 
 /** New collection's form at the tree's foot: a title, Create and Cancel. `parent` is "" for
- *  the top level; `onClose` runs after a create and on Cancel. */
+ *  the top level; `onClose` runs after a create and on Cancel, saying whether the focus goes
+ *  back to New collection. */
 function NewCollectionForm({
   org,
   parent,
@@ -454,10 +456,17 @@ function NewCollectionForm({
   parent: string;
   label: string;
   claimCreateVersion: ClaimCreateVersion;
-  onClose: () => void;
+  onClose: (focusBack: boolean) => void;
   onCreated: MadeCollection;
 }) {
   const [title, setTitle] = useState("");
+  const form = useRef<HTMLFormElement | null>(null);
+  // The focus is still the form's: in it, or dropped to the page. Elsewhere, the person moved
+  // on while the create was sent, and the focus stays where they put it.
+  const focusIsOurs = () => {
+    const active = document.activeElement;
+    return !active || active === document.body || !!form.current?.contains(active);
+  };
   const [busy, setBusy] = useState(false);
   const field = useRef<HTMLInputElement | null>(null);
   const trimmed = title.trim();
@@ -474,15 +483,15 @@ function NewCollectionForm({
     } catch (err) {
       toastError(`Couldn't create ${trimmed}`, err);
       setBusy(false);
-      field.current?.focus();
+      if (focusIsOurs()) field.current?.focus();
       return;
     }
     announceCreated(r, trimmed, org);
-    onClose();
-    onCreated(r.namespace, NEW_COLLECTION_FOCUS, version);
+    onClose(focusIsOurs());
+    onCreated(r.namespace, version, NEW_COLLECTION_FOCUS);
   };
   return (
-    <form className="library-tree-form" onSubmit={(e) => void make(e)}>
+    <form ref={form} className="library-tree-form" onSubmit={(e) => void make(e)}>
       <div className="min-w-0 basis-full">
         <TextField
           ref={field}
@@ -501,7 +510,7 @@ function NewCollectionForm({
       <Button type="secondary" htmlType="submit" disabled={busy || !trimmed || tooLong} loading={busy}>
         Create
       </Button>
-      <Button type="empty" htmlType="button" disabled={busy} onClick={onClose}>
+      <Button type="empty" htmlType="button" disabled={busy} onClick={() => onClose(true)}>
         Cancel
       </Button>
     </form>

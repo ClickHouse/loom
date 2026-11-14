@@ -207,7 +207,7 @@ export function Documents() {
     return placeVersion.current;
   }, []);
   const openCreated = useCallback(
-    (name: string, arriveFocus: string | undefined, version: number) => {
+    (name: string, version: number, arriveFocus?: string) => {
       if (!mounted.current || version !== placeVersion.current) return;
       // The answer named the collection already shown: the create's refresh is enough.
       if (name === linkedCollection()) return;
@@ -971,7 +971,7 @@ export function Documents() {
       creating={creatingCollection}
       onCreatingChange={setCreatingCollection}
       claimCreateVersion={claimCreateVersion}
-      onCreated={(name, version) => openCreated(name, undefined, version)}
+      onCreated={openCreated}
       besideTree={besideTree}
     />
   );

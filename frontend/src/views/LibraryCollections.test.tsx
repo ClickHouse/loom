@@ -1398,9 +1398,12 @@ describe("the Library on a collection", () => {
       resizable();
       const answer = await createInTree();
       const tree = screen.getByRole("navigation", { name: "Library places" });
-      fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
+      const mine = within(tree).getByRole("link", { name: "My files" });
+      fireEvent.click(mine);
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      // The arrival focuses the row picked.
+      act(() => mine.focus());
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
         next_cursor: null,
@@ -1411,6 +1414,30 @@ describe("the Library on a collection", () => {
       // Listed inside col-q3, which the earlier visit left open.
       expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      expect(mine).toHaveFocus();
+    });
+
+    it("leaves the focus on the row picked when the tree's create fails after the pick", async () => {
+      resizable();
+      let fail: (e: Error) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection in/ }), { target: { value: "Q4" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      const mine = within(tree).getByRole("link", { name: "My files" });
+      fireEvent.click(mine);
+      await settle();
+      act(() => mine.focus());
+      await act(async () => fail(new Error("refused")));
+      await settle();
+      expect(mine).toHaveFocus();
+      // The form keeps what was typed, for another try.
+      expect(screen.getByRole("textbox", { name: /^New collection in/ })).toHaveValue("Q4");
     });
 
     it("reads the list once for a tree create that opens what it made", async () => {
