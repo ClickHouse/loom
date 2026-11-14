@@ -1499,9 +1499,11 @@ describe("the Library on a collection", () => {
       const tree = screen.getByRole("navigation", { name: "Library places" });
       fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
       fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q5" } });
+      const reads = api.listCollections.mock.calls.length;
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
     });
 
     it("lists, and does not open, what the dialog made once the person moved on", async () => {

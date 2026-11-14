@@ -179,15 +179,17 @@ export function Documents() {
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection);
   const { error: listFailed, retry: retryList } = collections;
-  // A pick is a new history entry, so Back steps through the places picked. `arriveFocus` and
+  // A move is a new history entry, so Back steps through the places picked. `arriveFocus` and
   // `note` are the arrival's focus and words (a tree pick keeps the person on its row).
+  const moveTo = (c: string | null, arriveFocus?: string, note?: string) => {
+    useStore.getState().clearPendingDoc();
+    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
+  };
   const goTo = useCallback(
     (c: string | null, arriveFocus?: string, note?: string) => {
       // A collection is opened only once the list names it: a list that failed reads again.
       if (c && listFailed) retryList();
-      if (c === linkedCollection()) return;
-      useStore.getState().clearPendingDoc();
-      useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
+      if (c !== linkedCollection()) moveTo(c, arriveFocus, note);
     },
     [listFailed, retryList],
   );
@@ -211,9 +213,9 @@ export function Documents() {
       if (name === linkedCollection()) return;
       // The read starts before the move so the old list never says it is missing.
       flushSync(() => reloadCollections(name));
-      goTo(name, arriveFocus);
+      moveTo(name, arriveFocus);
     },
-    [reloadCollections, goTo],
+    [reloadCollections],
   );
   const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
   // Read once for every list of places on the page, over the last answer (kept while it is
