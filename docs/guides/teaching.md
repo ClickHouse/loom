@@ -12,11 +12,12 @@ lab links the page that does its work.
 | A GitHub account and a browser | [Try it in GitHub Codespaces](../getting-started/quickstart.md#try-it-in-github-codespaces) |
 | Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone) |
 
-The codespace's machine size, set by `hostRequirements` in
-[`.devcontainer/devcontainer.json`](../../.devcontainer/devcontainer.json), decides how many
-core-hours of the student's Codespaces quota each hour uses. A stopped codespace still
-counts its disk against the storage quota until it is deleted, and deleting it deletes its
-data.
+A codespace uses the student's Codespaces quota while it runs and while its disk is kept, and
+GitHub deletes one left unused for its retention period, with its data
+([billing](https://docs.github.com/en/billing/concepts/product-billing/github-codespaces),
+[automatic deletion](https://docs.github.com/en/codespaces/setting-your-user-preferences/configuring-automatic-deletion-of-your-codespaces)).
+The dev container's `hostRequirements` set the smallest machine it runs on
+([`.devcontainer/devcontainer.json`](../../.devcontainer/devcontainer.json)).
 
 The stock install needs no API key: it embeds with a bundled local model, so search works
 offline, and no write verdict calls an LLM. Extraction, summaries and generated answers
@@ -27,7 +28,8 @@ writes, reads and search only.
 Lab 1 also needs the Python SDK in a virtual environment, in a terminal on the laptop or
 the codespace's terminal. On Debian or Ubuntu, a codespace and WSL included, run
 `sudo apt-get update && sudo apt-get install -y python3-venv` before the commands below.
-The SDK needs Python 3.11 or newer; `python3 --version` says which one is installed.
+The SDK needs Python 3.11 or newer; `python3 --version` says which one is installed. A
+student without one can use the codespace, where this step installs a new enough Python.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
