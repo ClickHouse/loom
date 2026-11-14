@@ -202,16 +202,6 @@ WHERE org = {org:String} AND namespace = {ns:String}
 """
 
 
-async def count_shared_definitions(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
-    """How many live shared definitions the namespace holds; no value is read."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        "SELECT count() AS n" + _LIVE_DEFINITIONS + "SETTINGS select_sequential_consistency = 1",
-        params={"org": org, "ns": namespace},
-    )
-    return int((row or {}).get("n") or 0)
-
-
 async def shared_definitions(
     org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:

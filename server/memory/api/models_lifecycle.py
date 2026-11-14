@@ -32,8 +32,8 @@ class MemoryPromoteInput(BaseModel):
     target_key: str | None = None  # default = memory_key
     # Why it was promoted; stored on the shared row and returned by memory.lineage.
     rationale: str = ""
-    # Stored as the shared row's `promoted_by` (None records `explicit`); for a
-    # definition the token's actor is, and this is named in `ignored_args`.
+    # Stored as the shared row's `promoted_by` (None records `explicit`); ignored for a
+    # definition, whose promoter is the token's actor, and named in `ignored_args`.
     approver: str | None = None
     # Days (0–90) the promotion counts as reversible; memory.demote reports it.
     reversible_for_days: int = Field(default=7, ge=0, le=90)

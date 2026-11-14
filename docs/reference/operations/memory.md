@@ -1469,7 +1469,7 @@ Promote a single source memory to the namespace's shared layer.
 | `memory_key` | `str` | required | source key in loom.memory |
 | `target_key` | `str \| None` | `None` | default = memory_key |
 | `rationale` | `str` | `''` | Why it was promoted; stored on the shared row and returned by memory.lineage. |
-| `approver` | `str \| None` | `None` | Stored as the shared row's `promoted_by` (None records `explicit`); for a definition the token's actor is, and this is named in `ignored_args`. |
+| `approver` | `str \| None` | `None` | Stored as the shared row's `promoted_by` (None records `explicit`); ignored for a definition, whose promoter is the token's actor, and named in `ignored_args`. |
 | `reversible_for_days` | `int` | `7` | Days (0–90) the promotion counts as reversible; memory.demote reports it. |
 | `promoted_from_candidate_id` | `str \| None` | `None` | On learnings.review-driven promotions (not for a definition, where it is named in `ignored_args`), written to loom.shared.promoted_from_candidate_id so memory.lineage resolves via an FK-style lookup. |
 | `approved_sha256` | `str \| None` | `None` | For a definition, the content hash it approves (the row's `content_sha256` as memory.get serves it), required and checked; for any other row it is ignored. |

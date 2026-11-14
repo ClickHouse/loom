@@ -796,7 +796,6 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     from server.memory.store import shared as SH
 
-    await SH.count_shared_definitions(ORG, NS, ch=ch)
     await SH.shared_definitions(ORG, NS, 10, ch=ch)
     await CF.resolve_conflict_floor(ORG, NS, "preference")
     RD.clear_cache()

@@ -221,20 +221,20 @@ async def handle_learnings_review(
     promoted_to_shared = False
     promoted_to_knowledge = False
     knowledge_source_uri = ""
-    if input.decision == "promote" and row.get("memory_type") == DEFINITION:
-        # A definition is promoted only through memory.promote of its namespace-wide row,
-        # which checks the approved hash.
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": (
-                    "a definition candidate is not promoted by review: write the definition "
-                    "as the namespace-wide row and promote it with memory.promote"
-                ),
-            },
-        )
     if input.decision == "promote":
+        if row.get("memory_type") == DEFINITION:
+            # A definition is promoted only through memory.promote of its namespace-wide row,
+            # which checks the approved hash.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VALIDATION_FAILED",
+                    "message": (
+                        "a definition candidate is not promoted by review: write the definition "
+                        "as the namespace-wide row and promote it with memory.promote"
+                    ),
+                },
+            )
         # A bot rule is promoted with the confidence the reviewer saw: the mean over
         # its supporters, not the filing session's own. Only the promotion reads it;
         # the status row below keeps the candidate's own columns.

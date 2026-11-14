@@ -8,6 +8,7 @@ Covers the explicit promotion path:
   - demote of a non-existent shared key is an idempotent no-op
   - source memory's private layer is unaffected by promote/demote
   - audit_log records both events
+  - a definition is promoted from its namespace-wide row with the hash memory.get serves
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import sys
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -248,10 +250,10 @@ async def test_promote_and_demote_emit_audit_rows(detector, ch_client) -> None:
 async def test_a_definition_is_promoted_with_the_hash_get_serves(
     control_plane_url: str, mint_test_token, ch_client
 ) -> None:
-    import httpx
-
     ns = f"def-{uuid.uuid4().hex[:8]}"
-    tok = mint_test_token(org="clickhouse", namespaces=["*"], roles=["admin", "writer"])
+    tok = mint_test_token(
+        org="clickhouse", namespaces=["*"], roles=["admin", "writer"], subject="definer"
+    )
     ident = {"org": "clickhouse", "namespace": ns, "agent": "-"}
     value = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
     async with httpx.AsyncClient(
@@ -266,8 +268,13 @@ async def test_a_definition_is_promoted_with_the_hash_get_serves(
         )
         assert set_.status_code == 200, set_.text
         got = (await call("memory.get", memory_key="definition/arr")).json()
-        refused = await call("memory.promote", memory_key="definition/arr")
-        assert refused.json()["detail"]["code"] == "VALIDATION_FAILED"  # no approved hash
+        refused = await call("memory.promote", memory_key="definition/arr")  # no approved hash
+        assert refused.status_code == 422
+        assert refused.json()["detail"]["code"] == "VALIDATION_FAILED"
+        shared_rows = (
+            "SELECT count() FROM loom.shared WHERE org = 'clickhouse' AND namespace = {ns:String}"
+        )
+        assert ch_client.query(shared_rows, parameters={"ns": ns}).result_rows == [(0,)]
         out = await call(
             "memory.promote",
             memory_key="definition/arr",
@@ -286,6 +293,6 @@ async def test_a_definition_is_promoted_with_the_hash_get_serves(
     ).result_rows
     (row,) = rows
     assert row[0] == "definition" and json.loads(row[1]) == value
-    assert row[2] not in ("lead", "explicit", "")  # the token's actor
+    assert row[2] == "process:definer"  # the token's actor, not the body's approver
     assert row[3] == [f"clickhouse/{ns}/-/-/-/definition/arr"]
     assert row[4] is None

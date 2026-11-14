@@ -1581,7 +1581,6 @@ bb02b0e3dee7	SELECT symbol_id, qualified_name, name, signature, path, start_line
 bb04945353ff	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 bb4566fa0eb8	SELECT namespace, toString(owner_email) AS owner, active, tags, password_hash = ? AS sso FROM loom.namespaces FINAL WHERE org = {org:String} AND contact_email = {ident:String}
 bb4f8de6abf4	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
-bb7015fbb5a4	SELECT count() AS n FROM loom.shared FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory_type = ? AND startsWith(memory_key, ?) AND tombstoned_at IS NULL SETTINGS select_sequential_c
 bb995e847c01	SELECT thread_id, uniqExact(msg_id, cityHash64(content)) AS n, argMax((agent, toString(role), substringUTF8(content, ?, {listed:UInt32})), (ts, msg_id)) AS last_turn FROM loom.conversations WHERE org
 bba54143f24b	ALTER TABLE loom.learnings_queue DELETE WHERE (org = {org:String} AND candidate_id IN {cids:Array(UUID)} AND status = ?) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mu
 bba7b08570b0	ALTER TABLE loom.conflict_allowlist UPDATE tombstoned_at = {ts:DateTime}, reason = concat(reason, ?, {note:String}) WHERE org = {org:String} AND namespace = {ns:String} AND memory_key_a = {a:String} A

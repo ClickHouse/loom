@@ -24,7 +24,8 @@ def fold_name(name: str) -> str:
 
 def definition_names(value: Any) -> set[str] | None:
     """The folded term and aliases of a definition's value (a JSON object, or its text),
-    or None when it is not one: no object, or no non-empty string `term`."""
+    or None when it is not one: no object, no non-empty string `term`, or `aliases`
+    present and not a list of strings (it may be left out)."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -32,7 +33,7 @@ def definition_names(value: Any) -> set[str] | None:
             return None
     if not isinstance(value, dict) or not isinstance(value.get("term"), str):
         return None
-    aliases = value.get("aliases") or []
+    aliases = value.get("aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
         return None
     term = fold_name(value["term"])

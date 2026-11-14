@@ -26,8 +26,8 @@ export async function rejectMemory(id: Identity, memoryKey: string, reason: stri
 }
 
 /** POST /v1/memory.promote (ADMIN): a copy in the namespace's shared layer, read by every agent.
- * `approvedSha256` is the hash of the text shown: a definition's promotion is refused
- * without it, or when the text changed since. */
+ * `approvedSha256`, sent for a definition, is the hash of the text shown: its promotion
+ * is refused without it, or when the text changed since. */
 export async function shareMemory(
   id: Identity,
   memoryKey: string,

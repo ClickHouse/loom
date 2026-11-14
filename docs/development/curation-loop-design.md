@@ -120,7 +120,7 @@ Namespace erasure reaches `loom.shared`: its `shared.tombstone` step takes every
 row of the namespace and its census counts them, beside the user erasure's match by
 provenance.
 
-The shared layer needs these changes for this, each in the pull request that adds the term
+The shared layer needs these changes still, each in the pull request that adds the term
 leg except where a change names another, because the term leg serves shared rows to every
 reader:
 
@@ -142,15 +142,15 @@ reader:
   the sensitivity sweep, retires that row's shared embedding, keeping the row:
   `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
   serving the copy, and no sweep removes a durable row its writer did not ask to remove.
-- **The promotion rules** for a definition are built: the approved hash, the source and
-  key, the `medium` refusal, the name check and its ceiling, `promoted_by` from the token,
-  no candidate id or approver on the wire, no `check_against_shared`, and no
-  `learnings.review` promotion of a `definition` candidate ([the shared
+- **The review path's promotion** of a `knowledge_gap` or `query_history` draft, in the
+  pull request that adds those kinds: the approved hash is the canonical-JSON hash of the
+  drafted value; `decided_by` and the audit subject come from the token, never the body's
+  `approver`; the review sets `promoted_from_candidate_id` itself; and the name check runs
+  before the review's write, so a refused review writes nothing. The rules `memory.promote`
+  applies to a definition are built ([the shared
   layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
-  The pull request that adds the `knowledge_gap` and `query_history` candidate kinds lets
-  the review promote those through the path above.
 
-Should two shared rows match one name despite that refusal (two promotions racing, or one
+Should two shared rows match one name despite the name check (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the
 read-time check passes, the one with the latest `promoted_at`, a tie within its second
 settled by `promotion_event` (the same order picks the rows the term leg reads past the

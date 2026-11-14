@@ -658,7 +658,9 @@ export function MemoryInspector({
     });
     if (!ok) return;
     try {
-      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, detail.content_sha256);
+      // A definition's promotion names the text it approves: the one shown.
+      const approved = detail.memory_type === "definition" ? detail.content_sha256 : undefined;
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, approved);
       toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {

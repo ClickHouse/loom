@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.core.errors import PreconditionFailedError
+from server.core.errors import LoomServerError, PreconditionFailedError
 from server.core.hashing import served_content_sha256
 from server.memory import store as memory_repo
 from server.memory.api.models_lifecycle import MemoryPromoteInput
@@ -52,9 +52,6 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def get_by_key(*_a: Any, **_k: Any) -> MemoryRow:
         return state["row"]
 
-    async def count(*_a: Any, **_k: Any) -> int:
-        return state.get("count", len(state["shared"]))
-
     async def definitions(org: str, namespace: str, limit: int, **_k: Any) -> list[dict]:
         rows = [{"memory_key": k, "value": v} for k, v in sorted(state["shared"].items())]
         return rows[:limit]
@@ -65,7 +62,6 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
     monkeypatch.setattr(promote, "writer_actor", lambda fallback="": "user:admin")
-    monkeypatch.setattr(shared, "count_shared_definitions", count)
     monkeypatch.setattr(shared, "shared_definitions", definitions)
     monkeypatch.setattr(shared, "insert_shared_row", write)
     return state
@@ -83,23 +79,43 @@ def _input(**over: Any) -> MemoryPromoteInput:
 
 
 async def _refusal(store: dict[str, Any], **over: Any) -> str:
-    with pytest.raises(HTTPException) as e:
+    """The code of the refusal the promotion answers, which writes nothing."""
+    with pytest.raises((HTTPException, LoomServerError)) as e:
         await promote.handle_memory_promote(_input(**over))
     assert store["written"] == []
+    if isinstance(e.value, LoomServerError):
+        return e.value.code
     return str(e.value.detail["code"])
 
 
-def test_names_fold_format_characters_space_and_case() -> None:
-    assert fold_name("\ufeffSAT ") == fold_name("Sat") == fold_name("sat") == "sat"
-    assert fold_name("Churn  Rate") == "churn rate"
-    assert definition_names(json.dumps(VALUE)) == {"arr", "annual recurring revenue"}
-    for value in (
-        "plain text",
-        {"body": "no term"},
-        {"term": " "},
-        {"term": "ARR", "aliases": "x"},
-    ):
-        assert definition_names(value) is None
+@pytest.mark.parametrize(
+    ("name", "folded"),
+    [
+        ("\ufeffSAT", "sat"),  # a format character dropped
+        ("\uff33\uff21\uff34", "sat"),  # NFKC: full-width letters
+        ("  Churn\u00a0  Rate ", "churn rate"),  # trimmed, every run of space made one
+        ("Straße", "strasse"),  # case-folded
+    ],
+)
+def test_a_name_folds_step_by_step(name: str, folded: str) -> None:
+    assert fold_name(name) == folded
+
+
+@pytest.mark.parametrize(
+    ("value", "names"),
+    [
+        (json.dumps(VALUE), {"arr", "annual recurring revenue"}),
+        ({"term": "MRR"}, {"mrr"}),  # aliases may be left out
+        ("plain text", None),
+        ({"body": "no term"}, None),
+        ({"term": " "}, None),
+        ({"term": "ARR", "aliases": "x"}, None),
+        ({"term": "ARR", "aliases": ""}, None),
+        ({"term": "ARR", "aliases": [1]}, None),
+    ],
+)
+def test_a_definitions_names(value: Any, names: set[str] | None) -> None:
+    assert definition_names(value) == names
 
 
 async def test_an_approved_definition_is_promoted_by_the_tokens_actor(
@@ -263,15 +279,6 @@ async def test_review_promotes_no_definition_candidate(
     with pytest.raises(HTTPException) as e:
         await learnings.handle_learnings_review(review)
     assert e.value.detail["code"] == "VALIDATION_FAILED"
-
-
-async def test_a_promotion_landed_after_the_count_is_caught_by_the_read(
-    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "memory_term_leg_max_definitions", 2)
-    store["shared"] = {"definition/mrr": {"term": "MRR"}, "definition/nrr": {"term": "NRR"}}
-    store["count"] = 1  # the count ran before the second one landed
-    assert await _refusal(store) == "DEFINITION_CEILING"
 
 
 async def test_another_rows_promotion_names_an_approved_hash_it_ignores(

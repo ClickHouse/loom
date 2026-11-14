@@ -6,12 +6,11 @@ import json
 import logging
 import uuid
 from datetime import timedelta
-from typing import Any
 
 from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now
-from server.core.errors import PreconditionFailedError
+from server.core.errors import PreconditionFailedError, ValidationError
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -22,20 +21,14 @@ from server.memory.api.models_lifecycle import (
     MemoryPromoteOutput,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.app.sensitivity_level import decoded_text
+from server.memory.app.sensitivity_level import decoded_text, detect_level
 from server.memory.domain.definitions import KEY_PREFIX, definition_names
 from server.memory.domain.memory_types import (
     DEFINITION,
     is_namespace_definition,
     is_searchable_type,
 )
-from server.memory.domain.sensitivity import (
-    HIGH,
-    MEDIUM,
-    detect_sensitivity,
-    max_sensitivity,
-    value_reads_high,
-)
+from server.memory.domain.sensitivity import HIGH, MEDIUM, max_sensitivity
 from server.memory.domain.trust import verification_state
 from server.memory.store.rows import MemoryRow, next_version
 from server.settings import settings
@@ -172,8 +165,8 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
                     },
                 )
 
-    # promoted_from_candidate_id is set only on the learnings.review path;
-    # other callers pass None and lineage falls back to the time-window match.
+    # promoted_from_candidate_id is set only on a non-definition learnings.review
+    # promotion; lineage matches the others by time window, except a definition.
     await shared_repo.insert_shared_row(
         {
             "org": input.org,
@@ -235,10 +228,6 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     )
 
 
-def _refused(status: int, detail: dict[str, Any]) -> HTTPException:
-    return HTTPException(status_code=status, detail=detail)
-
-
 async def _check_definition_promotion(
     input: MemoryPromoteInput, src: MemoryRow, target_key: str
 ) -> None:
@@ -254,22 +243,16 @@ async def _check_definition_promotion(
         and src.memory_key.startswith(KEY_PREFIX)
         and target_key == src.memory_key
     ):
-        raise _refused(
-            422,
-            {
+        raise HTTPException(
+            status_code=422,
+            detail={
                 "code": "DEFINITION_PROMOTION_REFUSED",
                 "message": "a definition is promoted from its namespace-wide row (agent, user "
                 "and session '-') of type definition under a definition/ key, to that key",
             },
         )
     if not input.approved_sha256:
-        raise _refused(
-            422,
-            {
-                "code": "VALIDATION_FAILED",
-                "message": "a definition promotion names the hash it approves (approved_sha256)",
-            },
-        )
+        raise ValidationError("a definition promotion names the hash it approves (approved_sha256)")
     current = served_content_sha256(src.value)
     if current != input.approved_sha256:
         raise PreconditionFailedError(
@@ -277,12 +260,11 @@ async def _check_definition_promotion(
         )
     # The value itself is graded, whatever its label or the autodetect setting: an import or
     # a restore leaves the label empty.
-    graded = detect_sensitivity(await decoded_text(src.value))
-    level = max_sensitivity([str(src.sensitivity or ""), graded])
-    if level in (MEDIUM, HIGH) or value_reads_high(src.value):
-        raise _refused(
-            422,
-            {
+    graded = await detect_level(await decoded_text(src.value))
+    if max_sensitivity([str(src.sensitivity or ""), graded]) in (MEDIUM, HIGH):
+        raise HTTPException(
+            status_code=422,
+            detail={
                 "code": "SENSITIVE_DEFINITION_REFUSED",
                 "message": "a definition is served to every reader of the namespace: one that "
                 "reads as medium or high sensitivity is not promoted",
@@ -290,43 +272,34 @@ async def _check_definition_promotion(
         )
     names = definition_names(src.value)
     if names is None:
-        raise _refused(
-            422,
-            {
-                "code": "VALIDATION_FAILED",
-                "message": "a definition's value is a JSON object with a string term and a "
-                "list of string aliases",
-            },
+        raise ValidationError(
+            "a definition's value is a JSON object with a string term and, optionally, a list "
+            "of string aliases"
         )
     org, namespace = input.org, input.namespace
     ceiling = int(settings.memory_term_leg_max_definitions)
-    count = await shared_repo.count_shared_definitions(org, namespace)
-    rows = (
-        [] if count > ceiling else await shared_repo.shared_definitions(org, namespace, ceiling + 1)
-    )
-    # Within the ceiling the read holds every live definition, so it says whether this
-    # key holds one already (a revision); a promotion that landed since the count is
-    # caught by the read's own length.
+    # At most the ceiling plus one: within the ceiling the read holds every live definition,
+    # so it says whether this key holds one already (a revision).
+    rows = await shared_repo.shared_definitions(org, namespace, ceiling + 1)
     revision = any(r["memory_key"] == target_key for r in rows)
-    for n in (count, len(rows)):
-        if n > ceiling or (n >= ceiling and not revision):
-            raise _refused(
-                409,
-                {
-                    "code": "DEFINITION_CEILING",
-                    "message": f"the namespace holds {n} shared definitions, at most {ceiling}: "
-                    "demote one to make room",
-                },
-            )
+    if len(rows) > ceiling or (len(rows) == ceiling and not revision):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DEFINITION_CEILING",
+                "message": f"the namespace holds at least {len(rows)} shared definitions, at "
+                f"most {ceiling}: demote one to make room",
+            },
+        )
     taken = sorted(
         str(r["memory_key"])
         for r in rows
         if r["memory_key"] != target_key and names & (definition_names(r["value"]) or set())
     )
     if taken:
-        raise _refused(
-            409,
-            {
+        raise HTTPException(
+            status_code=409,
+            detail={
                 "code": "DEFINITION_NAME_TAKEN",
                 "message": "another shared definition holds this term or an alias",
                 "conflicting_keys": taken,

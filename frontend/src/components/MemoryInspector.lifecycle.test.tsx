@@ -564,10 +564,17 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
   });
 
+  it("shares a definition with the hash of the text it shows", async () => {
+    await open("admin", { ...LIVE, memory_type: "definition", content_sha256: "abc123" });
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
+    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", "abc123"));
+  });
+
   it("shares with every agent and stops sharing, for an admin, each after a confirmation", async () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", LIVE.content_sha256));
+    // Only a definition names the text it approves.
+    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", undefined));
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Stop sharing" }));
     await waitFor(() => expect(lc.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
     expect(confirmAction).toHaveBeenCalledTimes(2);
