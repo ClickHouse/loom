@@ -1746,14 +1746,8 @@ textarea[aria-invalid="true"]:focus-visible {
     height: 1.5rem;
     align-items: center;
     justify-content: center;
-    background: none;
-    border: 0;
-    border-radius: var(--click-sidebar-navigation-item-radii-all);
     padding: 0;
     color: var(--color-text-muted);
-  }
-  button.library-tree-twist {
-    cursor: pointer;
   }
   /* New collection's form at the tree's foot: where it goes, its title, then its two
      buttons on their own line: the column is narrow. */

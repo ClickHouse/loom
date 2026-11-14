@@ -2,13 +2,12 @@
  *  no keys of their own), with New collection at its foot. */
 import { type CSSProperties, type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
-import { Icon } from "@clickhouse/click-ui/Icon";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { createCollection, type CollectionEntry } from "../api";
 import { toastError } from "../components/Toast";
 import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
-import { Tip } from "../components/ui/Tooltip";
+import { IconButton } from "../components/IconButton";
 import { announceCreated } from "../flows/CreateCollectionDialog";
 import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
 import {
@@ -21,6 +20,9 @@ import {
   topLevelCollections,
   useShowMore,
 } from "./LibraryHierarchy";
+
+/** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
+export const placeFocusKey = (collection: string | null) => `library-tree-place-${collection ?? ""}`;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
@@ -141,7 +143,8 @@ export const LibraryTree = memo(function LibraryTree({
   shelf: string | null;
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
-  onPick: (collection: string | null) => void;
+  /** `arriveFocus`: the picked row's focus key, so the person stays in the tree. */
+  onPick: (collection: string | null, arriveFocus?: string) => void;
   /** A collection made here, in `org`: read the list again and open it. It can land after
    *  the tree is gone (a resize, or a move to another org). */
   onCreated: (collection: string, org: string) => void;
@@ -365,25 +368,20 @@ function PlaceRow({
   here: boolean;
   expanded?: boolean;
   onToggle?: () => void;
-  onPick: (collection: string | null) => void;
+  /** `arriveFocus`: the picked row's focus key, so the person stays in the tree. */
+  onPick: (collection: string | null, arriveFocus?: string) => void;
 }) {
-  const toggleName = `Collections in ${label}`;
   return (
     <div className="library-tree-row" data-selected={here || undefined} style={{ "--depth": depth } as CSSProperties}>
       {onToggle ? (
-        <Tip content={toggleName}>
-          <button
-            type="button"
-            className="library-tree-twist"
-            aria-expanded={!!expanded}
-            aria-label={toggleName}
-            // The tip only repeats the name: not read again as its description.
-            aria-describedby={undefined}
-            onClick={onToggle}
-          >
-            <Icon name={expanded ? "chevron-down" : "chevron-right"} size="xs" aria-hidden />
-          </button>
-        </Tip>
+        <IconButton
+          icon={expanded ? "chevron-down" : "chevron-right"}
+          size="xs"
+          label={`Collections in ${label}`}
+          aria-expanded={!!expanded}
+          className="library-tree-twist"
+          onClick={onToggle}
+        />
       ) : (
         <span className="library-tree-twist" aria-hidden="true" />
       )}
@@ -394,7 +392,8 @@ function PlaceRow({
         icon={icon}
         aria-current={here ? "page" : undefined}
         className="library-tree-link"
-        onOpen={() => onPick(collection)}
+        data-focus-key={placeFocusKey(collection)}
+        onOpen={() => onPick(collection, placeFocusKey(collection))}
       />
     </div>
   );

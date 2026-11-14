@@ -7,7 +7,7 @@ import type { CollectionEntry } from "../api";
 import { axeViolations } from "../test/axe";
 import { act, cleanup, fireEvent, render, type RenderOptions, screen, waitFor, within } from "../test/rtl";
 import { repeatedTitles } from "../lib/collections";
-import { LibraryTree, placeTree } from "./LibraryTree";
+import { LibraryTree, placeFocusKey, placeTree } from "./LibraryTree";
 
 const api = vi.hoisted(() => ({ createCollection: vi.fn() }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
@@ -171,9 +171,9 @@ describe("LibraryTree", () => {
     const legal = screen.getByRole("link", { name: "Legal" });
     expect(legal.getAttribute("href")).toContain("collection=col-legal");
     await userEvent.click(legal);
-    expect(onPick).toHaveBeenLastCalledWith("col-legal");
+    expect(onPick).toHaveBeenLastCalledWith("col-legal", placeFocusKey("col-legal"));
     await userEvent.click(screen.getByRole("link", { name: "Namespace bench" }));
-    expect(onPick).toHaveBeenLastCalledWith(null);
+    expect(onPick).toHaveBeenLastCalledWith(null, placeFocusKey(null));
     onPick.mockClear();
     fireEvent.click(legal, { ctrlKey: true });
     expect(onPick).not.toHaveBeenCalled();
@@ -440,7 +440,7 @@ describe("LibraryTree", () => {
       act(() => link.focus());
       expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
       fireEvent.click(link);
-      expect(onPick).toHaveBeenCalledWith("col-eng");
+      expect(onPick).toHaveBeenCalledWith("col-eng", placeFocusKey("col-eng"));
       await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
     });
 

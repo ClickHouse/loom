@@ -333,6 +333,8 @@ export function LibraryCollections({
             named={besideTree}
           />
         )}
+        {/* My files has no path; beside the tree no select names it either. */}
+        {besideTree && current?.personal && <span className="text-sm">{collectionTitle(current)}</span>}
         {phone && collection && (
           <CollectionBack
             current={collection}

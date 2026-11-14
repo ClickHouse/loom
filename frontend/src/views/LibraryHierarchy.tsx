@@ -38,7 +38,7 @@ const HEADING_ID = "library-top-level";
 const SHARED_HEADING_ID = "library-collections-shared";
 
 /** Places listed at first, and how many more each "Show more" adds. */
-export const FIRST_SHOWN = 6;
+const FIRST_SHOWN = 6;
 export const MORE_SHOWN = 50;
 
 /** An ancestor missing from the list: its address, all `collection.list` says of it. */
@@ -401,7 +401,7 @@ export function TopLevelPlaces({
 
 /** The links of a list of places, by the collection each row names (`data-collection`), for
  *  useLastPageFocus. */
-export function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]> {
+function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]> {
   return [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-collection]") ?? [])].flatMap<
     [string, HTMLElement]
   >((li) => {
@@ -410,21 +410,21 @@ export function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLEl
   });
 }
 
-/** A list of places shown `first` at a time, each Show more adding MORE_SHOWN, `extra` (the
- *  place on the way to the one shown) drawn past them wherever it sits. `more` is the button's
- *  label, null once all are shown. The last press removes its button: the focus goes to the
- *  first place it added, else `fallback`. */
-export function useShowMore<T extends { namespace: string }>(
-  items: T[],
+/** The first `first` places, each Show more adding MORE_SHOWN; `extra` (one of `items`, on the
+ *  way to the place shown) is drawn past them wherever it sits. `more` is the button's label,
+ *  null once all are shown. The last press removes its button: the focus goes to the first
+ *  place it added, else the last row shown, else `fallback`. */
+export function useShowMore(
+  items: CollectionEntry[],
   first: number,
-  extra: T | null = null,
+  extra: CollectionEntry | null = null,
   fallback: () => HTMLElement | null = () => null,
 ) {
   const [count, setCount] = useState(first);
   const list = useRef<HTMLUListElement | null>(null);
   const shownAt = (n: number) => {
     const head = items.slice(0, n);
-    return extra && !head.includes(extra) && items.includes(extra) ? [...head, extra] : head;
+    return extra && !head.includes(extra) ? [...head, extra] : head;
   };
   const shown = shownAt(count);
   // What the next press adds: `extra` may already be drawn among it.

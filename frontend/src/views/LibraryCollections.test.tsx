@@ -11,7 +11,7 @@ import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { arriveAt } from "../lib/place";
-import { NEW_COLLECTION_FOCUS, placeTree } from "./LibraryTree";
+import { NEW_COLLECTION_FOCUS, placeFocusKey, placeTree } from "./LibraryTree";
 import { axeViolations } from "../test/axe";
 import { Documents } from "./Documents";
 import {
@@ -1141,6 +1141,24 @@ describe("the Library on a collection", () => {
       expect(location.search).toBe(at);
       expect(api.listCollections).toHaveBeenLastCalledWith("other", expect.anything());
     });
+  });
+
+  it("beside the tree keeps the person in it: a picked row takes the focus, and My files is named", async () => {
+    resizable();
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library");
+    render(<Documents />, { container: inMain() });
+    const tree = await screen.findByRole("navigation", { name: "Library places" });
+    fireEvent.click(await within(tree).findByRole("link", { name: "col-q3" }));
+    await settle();
+    // The arrival App makes on a move focuses the row the move asked for.
+    expect(useStore.getState().arriveFocus).toBe(placeFocusKey("col-q3"));
+    act(() => arriveAt(null, useStore.getState().arriveFocus));
+    await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
+    await settle();
+    // My files has no path; the page names it beside the tree.
+    expect(screen.getAllByText("My files").some((el) => !tree.contains(el))).toBe(true);
   });
 
   describe("where <main> can be measured", () => {
