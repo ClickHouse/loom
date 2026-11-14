@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../tes
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { TREE_PAGE_MIN } from "../lib/useTreeHeight";
+import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
@@ -23,7 +24,6 @@ import {
   useReadableCollections,
   type ReadableCollections,
 } from "./LibraryCollections";
-import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 
 const api = vi.hoisted(() => ({
   listCollections: vi.fn(),

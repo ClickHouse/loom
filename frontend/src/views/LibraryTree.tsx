@@ -28,6 +28,7 @@ import {
   namespaceLabel,
   titleTooLong,
 } from "../lib/collections";
+import { LIBRARY_PLACES_LABEL } from "../lib/useTreeFocusHandoff";
 import {
   collectionPath,
   cycleStart,
@@ -38,7 +39,6 @@ import {
   topLevelCollections,
   useShowMore,
 } from "./LibraryHierarchy";
-import { LIBRARY_PLACES_LABEL } from "../lib/useTreeFocusHandoff";
 
 /** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
 export const placeFocusKey = (collection: string | null) => `library-tree-place-${collection ?? ""}`;

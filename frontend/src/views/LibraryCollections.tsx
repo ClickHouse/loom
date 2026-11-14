@@ -8,7 +8,7 @@ import { Popover } from "@clickhouse/click-ui/Popover";
 import { PopoverTrigger } from "../components/ui/Menu";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
-import { CreateCollectionDialog } from "../flows/CreateCollectionDialog";
+import { type ClaimCreateVersion, CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
 import { CollectionBack, CollectionChips, CollectionPath, cycleStart } from "./LibraryHierarchy";
@@ -27,9 +27,8 @@ import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
-import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
-import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
 import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
+import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
