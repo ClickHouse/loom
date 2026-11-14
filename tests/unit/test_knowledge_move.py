@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -70,6 +70,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         # What happened, in order: claims taken and given up, take-backs started and done.
         "events": [],
         "forgotten": [],
+        # When the source's text was written where it is, by its chunks; None: none.
+        "arrived": None,
         "forget_wait_s": 0.0,
     }
 
@@ -152,6 +154,11 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move, "_delete_source", delete)
     monkeypatch.setattr(move, "_head_is", head_is)
     monkeypatch.setattr(move.chunks_repo, "count_revision", count)
+
+    async def arrived(org: str, ns: str, uri: str, *, revision: int, upto_version: int) -> Any:
+        return state["arrived"]
+
+    monkeypatch.setattr(move.chunks_repo, "first_written_s", arrived)
     monkeypatch.setattr(move.datasets_repo, "forget_published", forget)
     monkeypatch.setattr(move.datasets_repo, "at_version", tables)
     monkeypatch.setattr(move, "_take_back", take_back)
@@ -375,7 +382,7 @@ async def test_a_delete_that_fails_after_its_tombstone_leaves_the_copy(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def after_tombstone(doc: DocumentRow) -> None:
-        raise RuntimeError("forget_published failed")
+        raise RuntimeError("the delete failed after its tombstone")
 
     monkeypatch.setattr(move, "_delete_source", after_tombstone)
     with pytest.raises(RuntimeError):
@@ -451,7 +458,7 @@ def _erasure(scope: str, value: str, **over: Any) -> dict[str, Any]:
 def test_which_erasures_reach_a_document(row: dict[str, Any], reaches: bool) -> None:
     doc = _doc("src")
     since = move._written_s(doc)
-    assert move._erasing([row], doc, "dst", since + 10**9) is reaches
+    assert move._erasing([row], doc, since, "dst", since + 10**9) is reaches
 
 
 @pytest.fixture
@@ -679,3 +686,48 @@ async def test_a_failed_table_cleanup_after_the_tombstone_counts_the_move(
     monkeypatch.setattr(move.datasets_repo, "forget_published", failed)
     assert _answers(await _run()) == [(URI, True, "")]
     assert store["audited"][0]["subject"]["source_uris"] == [URI]
+
+
+async def test_a_retry_after_a_delete_cut_off_between_its_retirement_and_tombstone(
+    store: dict[str, Any],
+) -> None:
+    # The first move copied the document whole, then its delete retired the source's
+    # chunks and was cut off before the tombstone: the source row is live with none.
+    store["dst"][URI] = _doc("dst", version=20)
+    store["chunks"] = {"src": 0, "dst": 3}
+    assert _answers(await _run()) == [(URI, True, "")]
+    # Only the delete is left: the copy is not written again over what it serves.
+    assert store["copied"] == [] and store["deleted"] == [URI]
+
+
+async def test_a_copy_is_never_written_over_one_that_serves_more(
+    real_copy: dict[str, Any],
+) -> None:
+    # A copy whose tables are gone is incomplete, but it serves more chunks than the
+    # source now does: writing over it would serve less.
+    real_copy["dst"][URI] = _doc("dst", version=20)
+    real_copy["chunks"] = {"src": 0, "dst": 3}
+    table = {"dataset_id": "t", "schema": "[]", "schema_state": "draft", "clarifications": "[]"}
+    real_copy["tables"]["src"] = [{**table, "row_count": 2}]
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert "copying" not in real_copy["events"] and real_copy["deleted"] == []
+
+
+async def test_a_moved_document_is_judged_by_when_it_arrived_not_its_ingest_time(
+    store: dict[str, Any],
+) -> None:
+    # Ingested long ago elsewhere and moved here since; an erasure of this namespace that
+    # finished before the move cannot have reached it.
+    store["arrived"] = STARTED - 3600
+    finished = datetime.fromtimestamp(STARTED - 7200, UTC).replace(tzinfo=None)
+    store["ledger"] = [_erasure("namespace", "src", state="completed", completed_at=finished)]
+    assert _answers(await _run()) == [(URI, True, "")]
+
+
+async def test_an_erasure_that_finished_after_the_document_arrived_still_counts(
+    store: dict[str, Any],
+) -> None:
+    store["arrived"] = STARTED - 7200
+    finished = datetime.fromtimestamp(STARTED - 3600, UTC).replace(tzinfo=None)
+    store["ledger"] = [_erasure("namespace", "src", state="completed", completed_at=finished)]
+    assert _answers(await _run()) == [(URI, False, "erased")]

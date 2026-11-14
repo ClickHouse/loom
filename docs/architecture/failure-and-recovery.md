@@ -568,8 +568,11 @@ description, tags, metadata, author and ingest time where it goes) is not writte
 it serves as many live chunks as the source and the same tables: only the source is deleted.
 One with fewer chunks, or with no tables where the source has some (a cancelled row insert
 can land after its take-back, which leaves the row alone), is written over, as a deleted
-document is, before the source is deleted. Tables there that differ otherwise were changed
-on one side since (an approval, a clarification), which cannot be told from a change on the
+document is, before the source is deleted. One with more is whole: a delete cut off between
+retiring the source's chunks and writing its tombstone (it retires them first) leaves the
+source row live with none, and only the delete is left; a copy is never written over one
+that serves more chunks than the source. Tables there that differ otherwise were changed on
+one side since (an approval, a clarification), which cannot be told from a change on the
 other: that copy, like one whose text or metadata was edited, is another document and
 answers `exists`.
 
@@ -593,15 +596,16 @@ that does not answer) is raised once every source of the call has answered, afte
 row of those that moved.
 
 The erasure ledger is read once per call, before the first copy, for an erasure that may
-reach a document where it is (unfinished when it was written) or the place it goes
-(unfinished when the move started), and again for each document under the claims, just
-before its delete, for one registered since: one may have passed the copy, this move's or an
-earlier move's. That one takes back a copy this move wrote, leaves an earlier move's copy to
-the erasure, and answers `erased` without deleting the source, so an `erased` document
-always stays where it was. Under the Postgres authority a delete over a document an erasure
-removed meanwhile answers `erased` too. The original stored in the new place stays there,
-named by no row, until the sweep deletes it after `document_blob_min_age_seconds`, as any
-original whose row did not land.
+reach a document where it is (unfinished when its text was written there: its first chunk's
+`created_at`, which a move stamps with when it copied the chunks, while the row keeps its
+ingest time) or the place it goes (unfinished when the move started), and again for each
+document under the claims, just before its delete, for one registered since: one may have
+passed the copy, this move's or an earlier move's. That one takes back a copy this move
+wrote, leaves an earlier move's copy to the erasure, and answers `erased` without deleting
+the source, so an `erased` document always stays where it was. Under the Postgres authority
+a delete over a document an erasure removed meanwhile answers `erased` too. The original
+stored in the new place stays there, named by no row, until the sweep deletes it after
+`document_blob_min_age_seconds`, as any original whose row did not land.
 
 Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's
 row and the delete each commit over the version read, so a write that took the source or

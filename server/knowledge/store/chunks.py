@@ -423,6 +423,27 @@ async def count_revision(
     return int(row["n"]) if row else 0
 
 
+async def first_written_s(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    *,
+    revision: int,
+    upto_version: int,
+    ch: _CHClient | None = None,
+) -> int | None:
+    """The earliest `created_at` (Unix seconds) of the chunks `count_revision` counts;
+    None when there is none."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n, toUnixTimestamp(min(created_at)) AS s FROM loom.chunks"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
+        f" AND doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}",
+        params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision, "v": upto_version},
+    )
+    return int(row["s"]) if row and int(row["n"]) else None
+
+
 async def copy_revision(
     org: str,
     namespace: str,
@@ -457,9 +478,12 @@ async def copy_revision(
     )
     # The rows are picked in an inner query: an outer WHERE would read the replaced
     # columns, not the stored ones. `SELECT *` keeps a column a newer build added.
+    # `created_at` is when they were written there: what the erasure ledger is read
+    # against for a later move of them.
     await ch.execute(
         "INSERT INTO loom.chunks SELECT * REPLACE ({to_ns:String} AS namespace,"
-        f" {{to_v:UInt64}} AS doc_version, {_WITH_REVISION_SQL} AS chunk_metadata)"
+        f" {{to_v:UInt64}} AS doc_version, {_WITH_REVISION_SQL} AS chunk_metadata,"
+        " now() AS created_at)"
         " FROM (SELECT * FROM loom.chunks WHERE org = {org:String}"
         f" AND source_uri = {{uri:String}} AND {picked})",
         params=params,
