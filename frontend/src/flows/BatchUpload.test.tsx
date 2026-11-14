@@ -1245,6 +1245,7 @@ describe("BatchUpload", () => {
       await user.click(await screen.findByRole("button", { name: "Upload 1 file to Team" }));
       await screen.findByRole("button", { name: "Done" });
       expect(invalidateSharedCollections).toHaveBeenCalledTimes(1);
+      expect(invalidateSharedCollections).toHaveBeenCalledWith({ name: "col-q3", org: "o" });
     });
 
     it("names a folder's collection the check could not read whole, and reads it no more at upload", async () => {

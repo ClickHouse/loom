@@ -24,7 +24,8 @@ import {
 } from "../lib/collections";
 import { fmtInt } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
-import { useAbortableEffect, wait } from "../lib/hooks";
+import { useAbortableEffect } from "../lib/hooks";
+import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
