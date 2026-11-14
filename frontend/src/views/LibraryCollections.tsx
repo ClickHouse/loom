@@ -325,8 +325,8 @@ export function LibraryCollections({
     return namespaceLabel(namespace);
   };
   const lineName = placeName();
-  // Whether rows are still drawn (the tree keeps the last answer; the select does not): a
-  // failure then is a failed refresh.
+  // Whether rows are still drawn (the tree keeps the last answer through a reload too; the
+  // select's rows go with it): a failure then is a failed refresh.
   const rowsDrawn = !!(besideTree ? collections.kept : rows);
   // The collection shown, not My files: it has a path, members and a menu.
   const collection = current && !current.personal ? current : null;

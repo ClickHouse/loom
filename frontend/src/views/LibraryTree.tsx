@@ -35,7 +35,6 @@ import {
   isSharedWithMe,
   MORE_SHOWN,
   PlaceTitleLink,
-  sharedWithMe,
   topLevelCollections,
   useShowMore,
 } from "./LibraryHierarchy";
@@ -123,7 +122,8 @@ export function placeTree(rows: CollectionEntry[]): {
     return true;
   };
   const mine = topLevelCollections(rows);
-  const shared = sharedWithMe(rows).filter((c) => !c.parent || !byName.has(c.parent));
+  // Shared with the person, and not under a collection the tree lists.
+  const shared = rows.filter((c) => isSharedWithMe(c) && (!c.parent || !byName.has(c.parent))).sort(collectionOrder);
   for (const c of [...mine, ...shared]) visit(c);
   // What is left hangs off a cycle (cycleStart).
   for (const c of [...rows].sort(collectionOrder)) {

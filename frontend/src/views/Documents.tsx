@@ -225,7 +225,7 @@ export function Documents() {
     () => new Map((collections.kept?.rows ?? []).map((c) => [c.namespace, c])),
     [collections.kept],
   );
-  const resolving = !!collection && collections.rows === null && !collections.error;
+  const resolving = !!collection && collections.rows === null && !listFailed;
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
@@ -986,7 +986,7 @@ export function Documents() {
       byName={byName}
       truncated={collections.kept?.truncated}
       viewHeight={treeHeight}
-      failed={!!collections.error}
+      failed={!!listFailed}
       busy={collections.refreshing}
       namespace={ownShelf ? picked.namespace : null}
       current={treeCurrent}
@@ -1041,7 +1041,7 @@ export function Documents() {
     // The list's answer decides: none while it is read, and a failure is not "none".
     const listed = collections.rows;
     // Nothing said while the list is read, or while one's own files open by themselves.
-    const unknown = !picked.namespace && ((listed === null && !collections.error) || !!opensFirst);
+    const unknown = !picked.namespace && ((listed === null && !listFailed) || !!opensFirst);
     // No namespace, but collections to pick: the page asks only for the pick.
     const picking = !picked.namespace && !!listed?.length;
     const action = picking
