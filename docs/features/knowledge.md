@@ -1144,17 +1144,18 @@ A move takes the source's claim in both namespaces, as a restore does in one. It
 new place first and deletes the old one last, so a move cut off between the two leaves the
 document in both places, never in neither; moving it again finds its copy there (the same
 text, title, description, tags, metadata, author, ingest time and tables) and only deletes
-the old one, while an edit of either since makes the copy another document, which answers
-`exists`. A source whose own move fails (its claim held or cut off, a write of it meanwhile,
-its original refused by the object store) answers `busy`, and the others still move; a
-failure of the call itself is answered once every source has. An erasure registered while a
-move runs takes the copy back before the delete and answers `erased`: an `erased` document
-is always still where it was. The SDKs retry `knowledge.move` after a lost answer with the
-same Idempotency-Key, and the server replays the first answer; a retry without the key, or
-one the replay cache cannot answer under the ClickHouse authority, moves again, and a
-document that moved the first time answers `not_found`. Under the Postgres authority each of
-the two writes is its own commit. The ordering and what a cut-off move leaves are in
-[failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
+the old one (after writing the copy again if it lacks chunks), while an edit of either since
+makes the copy another document, which answers `exists`. A source whose own move fails (its
+claim held or cut off, a write of it meanwhile, its original refused by the object store)
+answers `busy`, and the others still move; a failure of the call itself is answered once
+every source has. An erasure registered while a move runs takes the copy back before the
+delete and answers `erased`: an `erased` document is always still where it was. The SDKs
+retry `knowledge.move` after a lost answer with the same Idempotency-Key, and the server
+replays the first answer; a retry without the key, or one the replay cache cannot answer
+under the ClickHouse authority, moves again, and a document that moved the first time
+answers `not_found`. Under the Postgres authority each of the two writes is its own commit.
+The ordering and what a cut-off move leaves are in [failure and
+recovery](../architecture/failure-and-recovery.md#knowledge-move).
 
 ## Ingesting files
 

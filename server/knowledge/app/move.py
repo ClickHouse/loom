@@ -7,6 +7,7 @@ docs/architecture/failure-and-recovery.md, "Knowledge move"."""
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Iterable
@@ -23,6 +24,7 @@ from server.core.leases import LeaseUnavailable
 from server.core.logging_config import request_id_var
 from server.core.object_store import ObjectStoreError
 from server.core.pg_lease import PublicationPending
+from server.core.shielded import to_its_end
 from server.erasure.app import ledger_reads
 from server.erasure.domain.scopes import reaches
 from server.knowledge.api.models_knowledge import (
@@ -41,6 +43,8 @@ from server.knowledge.store import restore as restore_repo
 from server.knowledge.store.documents import DocumentRow
 from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
 from server.memory.app.provenance import writer_actor
+
+log = logging.getLogger(__name__)
 
 
 class _TakenBack(Exception):
@@ -124,6 +128,8 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
             request_id=request_id_var.get() or "",
         )
     if failures:
+        for e in failures[1:]:
+            log.warning("knowledge.move: another source failed too", exc_info=e)
         raise failures[0]
     return KnowledgeMoveOutput(
         found=True,
@@ -145,21 +151,24 @@ async def _move(
     give up on the other."""
     if read is None:
         return "not_found"
-    org, src, uri = read.org, read.namespace, read.source_uri
+    doc = read
+    org, src, uri = doc.org, doc.namespace, doc.source_uri
     try:
-        doc = await documents_repo.get_one(org, src, uri)
-        if doc is None:
-            return "not_found"
         # A source sync owns it: its next pass would write it back where it was.
         if doc.actor == SYNC_WORKER_ACTOR:
             return "synced"
         if _erasing(ledger, doc, dst, started):
             return "erased"
         there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
-        if there is not None and _live(there) and not await _earlier_move(doc, there):
-            return "exists"
+        # A copy is written over a deleted document, none, or a copy an earlier move left
+        # incomplete (a cut-off row insert can land after its take-back, with no chunks).
+        copying = True
+        if there is not None and _live(there):
+            if not await _earlier_move(doc, there):
+                return "exists"
+            copying = not await _copied_whole(doc, there)
         # An original no row names yet is the sweep's, as any upload whose row did not land.
-        originals = {} if _live(there) else await _store_originals(doc, dst)
+        originals = await _store_originals(doc, dst) if copying else {}
         first, second = sorted((src, dst))
         async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as held_first:
             if not held_first:
@@ -169,7 +178,7 @@ async def _move(
             ) as held_second:
                 if not held_second:
                     return "busy"
-                return await _claimed(doc, there, dst, originals, started)
+                return await _claimed(doc, there, copying, dst, originals, started)
     except _BUSY:
         return "busy"
     except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
@@ -183,11 +192,13 @@ def _live(doc: DocumentRow | None) -> bool:
 async def _claimed(
     doc: DocumentRow,
     there: DocumentRow | None,
+    copying: bool,
     dst: str,
     originals: dict[str, Any],
     started: int,
 ) -> MoveReason:
-    """The move under the claims, of `doc` over `there`, both as read before them."""
+    """The move under the claims, of `doc` over `there`, both as read before them; with
+    `copying` false, `there` is an earlier move's whole copy and only the delete is left."""
     org, src, uri = doc.org, doc.namespace, doc.source_uri
     # Written since they were read: the originals or the copy found may be others.
     now_doc = await documents_repo.get_one(org, src, uri)
@@ -204,7 +215,7 @@ async def _claimed(
         # An ingest still to publish would write it back where it was, or over the copy.
         if await ingest_jobs.open_for_source(org, ns, uri):
             return "busy"
-    copy = None if _live(there) else await _copy(doc, dst, there, originals)
+    copy = await _copy(doc, dst, there, originals) if copying else None
     try:
         # An erasure registered while it copied may have passed the copy already.
         erased = copy is not None and _erasing(
@@ -213,18 +224,18 @@ async def _claimed(
         unchanged = not erased and await _head_is(doc)
     except BaseException:  # a cancel too: a copy whose source stays live goes
         if copy is not None:
-            await asyncio.shield(_take_back(copy))
+            await _taken_back(copy)
         raise
     if erased or not unchanged:
         # Taken back before the delete: the document stays where it was.
         if copy is not None:
-            await asyncio.shield(_take_back(copy))
+            await _taken_back(copy)
         return "erased" if erased else "busy"
     try:
         await _delete_source(doc)
     except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
         if copy is not None:
-            await asyncio.shield(_take_back(copy))
+            await _taken_back(copy)
         raise
     # Any other failure of the delete may follow its tombstone: the document is left in
     # both places, and a retry finds the copy and only deletes the source.
@@ -247,6 +258,20 @@ async def _earlier_move(doc: DocumentRow, there: DocumentRow) -> bool:
     )
 
 
+async def _copied_whole(doc: DocumentRow, there: DocumentRow) -> bool:
+    """Whether `there` serves as many live chunks as `doc`: the copy's insert of its row
+    may have landed after its take-back had deleted its chunks."""
+    return await chunks_repo.count_revision(
+        doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
+    ) == await chunks_repo.count_revision(
+        there.org,
+        there.namespace,
+        there.source_uri,
+        revision=there.revision,
+        upto_version=there.version,
+    )
+
+
 def _table_shapes(catalogs: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
     """What a copy keeps of each table: an approval or a clarification changes it."""
     return [
@@ -258,8 +283,9 @@ def _table_shapes(catalogs: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
 async def _copy(
     doc: DocumentRow, dst: str, there: DocumentRow | None, originals: dict[str, Any]
 ) -> _Copy:
-    """Write `doc` into `dst` over `there` (a deleted document at its source, or none):
-    chunks, tables, then the row, each copied inside ClickHouse. Anything that does not
+    """Write `doc` into `dst` over `there` (a deleted document at its source, an earlier
+    move's incomplete copy, or none): its chunks and table rows copied inside ClickHouse,
+    then its catalog rows and its document row built and inserted. Anything that does not
     land whole is taken back before the error answers."""
     over = documents_repo.version_of(there)
     version = documents_repo.version_past(max(doc.version, over))
@@ -312,7 +338,7 @@ async def _copy(
             raise _TakenBack
     except BaseException as e:  # a cancel too: what this copy wrote must not serve
         if not writes.published_anyway(e):
-            await asyncio.shield(_take_back(copy))
+            await _taken_back(copy)
         raise
     return copy
 
@@ -353,6 +379,12 @@ async def _delete_source(doc: DocumentRow) -> None:
     except PublicationPending:
         pass  # committed: the delivery worker publishes it
     await datasets_repo.forget_published(org, ns, {uri: doc.version})
+
+
+async def _taken_back(copy: _Copy) -> None:
+    """`_take_back` run to its end, held under the caller's claims: a cancellation, even a
+    repeated one, is raised only once it is done, so no retry finds a half-removed copy."""
+    await to_its_end(_take_back(copy), name=f"knowledge.move take-back {copy.doc.source_uri}")
 
 
 async def _take_back(copy: _Copy) -> None:
@@ -407,8 +439,8 @@ def _written_s(doc: DocumentRow) -> int:
 
 
 async def _ledger(org: str, docs: Iterable[DocumentRow], started: int) -> list[dict[str, Any]]:
-    """The org's erasures unfinished since the oldest of the documents was written or the
-    move started, read once for every document of the call."""
+    """The org's erasures unfinished since the oldest of `docs` was written or since the
+    move `started`, whichever is earlier: the rows `_erasing` judges each document by."""
     since = min([_written_s(d) for d in docs] + [started])
     return await ledger_reads.unfinished_since(org, since, ledger_reads.LEDGER_CLOCK_MARGIN_S)
 

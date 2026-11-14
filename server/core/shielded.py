@@ -19,6 +19,25 @@ async def shielded[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
     return await asyncio.shield(_running.spawn(write, name=name))
 
 
+async def to_its_end[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
+    """`shielded`, and the caller waits for the end too: a cancellation, however often it
+    comes, is raised only once `write` has finished, so whatever the caller holds (a
+    claim) is held until then."""
+    task = _running.spawn(write, name=name)
+    cancelled: asyncio.CancelledError | None = None
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError as e:
+            if task.done():  # `write` ended (or was cancelled itself): the cancel goes on
+                raise
+            cancelled = e
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
 async def drain(timeout_s: float = 5.0) -> list[str]:
     """Wait for the shielded writes still running (at most `timeout_s`);
     returns the names of those left running."""

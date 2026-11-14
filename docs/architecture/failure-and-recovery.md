@@ -565,12 +565,16 @@ inside ClickHouse (`INSERT … SELECT`, every version the row serves: a metadata
 the chunks at their own version), then the tables, then the row, and deletes the source
 over the version it read. A copy left by an earlier move that stopped before its delete
 (the same text, title, description, tags, metadata, author, ingest time and tables where
-it goes) is not written again: only the source is deleted. An edit of either since makes
-it another document, which answers `exists`.
+it goes) is not written again when it serves as many live chunks as the source: only the
+source is deleted. One with fewer (a cancelled row insert that landed after its
+take-back, which leaves the row with no chunks) is written over, as a deleted document
+is, before the source is deleted. An edit of either since makes it another document,
+which answers `exists`.
 
 Anything that does not land whole, or a write that took either place before the delete,
-takes back what the move wrote where it goes, shielded from a cancel, and that source
-answers `busy`; the other sources of the call still move. The take-back deletes its row
+takes back what the move wrote where it goes, and that source answers `busy`. The
+take-back runs to its end under the claims, however often the request is cancelled
+meanwhile (the cancel is raised once it is done), so no retry finds a half-removed copy; the other sources of the call still move. The take-back deletes its row
 (under the Postgres authority its commit first), retires its chunks under each embedding
 model they were copied under, then deletes them, and deletes its tables: a cancelled
 `INSERT … SELECT` runs on in ClickHouse and may land after the delete, and the retirement
