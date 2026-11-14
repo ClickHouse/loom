@@ -1278,6 +1278,53 @@ describe("the Library on a collection", () => {
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
+    it("opens a second collection made in the tree after the first one's read failed", async () => {
+      resizable();
+      const answer = await startCreate();
+      // The read for the first fails: the URL names it, and the tree shows no place as current.
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      api.createCollection.mockResolvedValue({ namespace: "col-q5", parent: "", created: true, title: "Q5" });
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" }), entry("col-q5", { title: "Q5" })],
+        next_cursor: null,
+      });
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q5" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
+    });
+
+    it("lists, and does not open, what the dialog made once the person moved on", async () => {
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      // The person goes to the header's namespace before the answer.
+      act(() => useStore.getState().navigate("knowledge", { query: {} }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await act(async () => answer(q4));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
     it("moves nothing once the page shows another org", async () => {
       resizable();
       const answer = await startCreate();

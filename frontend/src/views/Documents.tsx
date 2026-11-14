@@ -7,6 +7,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -190,14 +191,16 @@ export function Documents() {
       mounted.current = false;
     };
   }, []);
+  // The place the tree shows as current, for a create's answer to compare against.
+  const placeShown = useRef<string | null>(null);
   // A collection just made: the read starts before the move so the old list never says it is
   // missing. Nothing moves once this page closed or its org changed, nor once the person left
   // `from`, the place Create was pressed in: the list's refresh lists it there.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
-    (name: string, org: string, arriveFocus?: string, from?: string | null) => {
+    (name: string, org: string, arriveFocus: string | undefined, from: string | null) => {
       if (!mounted.current || org !== useStore.getState().identity?.org) return;
-      if (from !== undefined && from !== linkedCollection()) return;
+      if (from !== placeShown.current) return;
       flushSync(() => reloadCollections(name));
       goTo(name, arriveFocus);
     },
@@ -212,6 +215,10 @@ export function Documents() {
     [collections.kept],
   );
   const resolving = !!collection && collections.rows === null && !collections.error;
+  const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
+  useLayoutEffect(() => {
+    placeShown.current = treeCurrent;
+  }, [treeCurrent]);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
   const mine = useStore((s) => s.myNamespaces);
@@ -291,6 +298,12 @@ export function Documents() {
   const [addOpen, setAddOpen] = useState(false);
   // New collection: the picker's dialog, which the empty Library opens too.
   const [creatingCollection, setCreatingCollection] = useState(false);
+  // The place the dialog opened on: its create opens what it made only while that is shown.
+  const dialogFrom = useRef<string | null>(null);
+  const setCreating = useCallback((open: boolean) => {
+    if (open) dialogFrom.current = placeShown.current;
+    setCreatingCollection(open);
+  }, []);
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
@@ -958,8 +971,8 @@ export function Documents() {
       onPick={goTo}
       onLeave={pickCollection}
       creating={creatingCollection}
-      onCreatingChange={setCreatingCollection}
-      onCreated={(name) => openCreated(name, picked.org)}
+      onCreatingChange={setCreating}
+      onCreated={(name) => openCreated(name, picked.org, undefined, dialogFrom.current)}
       besideTree={besideTree}
     />
   );
@@ -976,7 +989,7 @@ export function Documents() {
       failed={!!collections.error}
       busy={collections.refreshing}
       shelf={ownShelf ? picked.namespace : null}
-      current={shown?.namespace ?? (resolving ? collection : null)}
+      current={treeCurrent}
       onPick={goTo}
       onCreated={openCreated}
     />
@@ -1065,7 +1078,7 @@ export function Documents() {
             title={none ? "No collection yet" : "Pick a collection"}
             // With no namespace to reach, the namespace picker holds none to offer.
             description={`${where}${pick}${orNamespace}.`}
-            action={none ? { label: "New collection", onClick: () => setCreatingCollection(true) } : action}
+            action={none ? { label: "New collection", onClick: () => setCreating(true) } : action}
             actions={
               none &&
               action && (

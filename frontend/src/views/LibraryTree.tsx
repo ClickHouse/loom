@@ -1,6 +1,16 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
  *  no keys of their own), with New collection at its foot. */
-import { type CSSProperties, type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  memo,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
@@ -190,7 +200,8 @@ export const LibraryTree = memo(function LibraryTree({
     return new Set(shown ? collectionPath(shown, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : []);
   }, [byName, current]);
   const shownFor = useRef<string | null>(null);
-  useEffect(() => {
+  // Before paint, so a tree drawn by a resize shows the place's row for the focus it is handed.
+  useLayoutEffect(() => {
     if (shownFor.current === current) return;
     if (current && !byName.has(current)) return;
     shownFor.current = current;
@@ -431,7 +442,8 @@ function NewCollectionForm({
   org: string;
   parent: string;
   label: string;
-  /** The place shown as the form opened, which a create's answer may still be in. */
+  /** The place shown when Create is pressed: the page opens the new collection only while it
+   *  still is. */
   from: string | null;
   onClose: () => void;
   onCreated: MadeCollection;
