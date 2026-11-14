@@ -13,7 +13,8 @@ lab links the page that does its work.
 | Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone) |
 
 The codespace runs on a 4-core machine with 16 GB of memory, so each hour it runs uses
-four core-hours of the student's Codespaces quota.
+four core-hours of the student's Codespaces quota. A stopped codespace still counts its
+disk against the storage quota until it is deleted, and deleting it deletes its data.
 
 The stock install needs no API key: it embeds with a bundled local model, so search works
 offline, and no write verdict calls an LLM. Extraction, summaries and generated answers
@@ -22,8 +23,8 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 writes, reads and search only.
 
 Lab 1 also needs the Python SDK (Python 3.11 or newer) in a virtual environment on the
-host; in a codespace, run `sudo apt-get update && sudo apt-get install -y python3-venv`
-first:
+host. On Debian or Ubuntu, a codespace and WSL included, run
+`sudo apt-get update && sudo apt-get install -y python3-venv` first:
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
@@ -81,7 +82,7 @@ Index a repository on the stack
 ([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)),
 then ask where a symbol is defined, who calls it, and what a change to it touches
 ([what the code index answers](../features/code-index/overview.md#what-it-answers)), over
-HTTP or the SDK. A coding agent can ask the same questions once connected
+HTTP or the SDK, naming `org` `dev` and the repository's `namespace` on each call. A coding agent can ask the same questions once connected
 ([connect a coding agent](../getting-started/connect-a-coding-agent.md)); it needs its own
 model account.
 
