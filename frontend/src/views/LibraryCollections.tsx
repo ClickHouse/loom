@@ -27,6 +27,9 @@ import { useAbortableEffect } from "../lib/hooks";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
+/** The place picker's name; the tree hands it the focus when it leaves. */
+export const PLACE_PICKER_LABEL = "Show the documents of";
+
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
 
@@ -350,7 +353,7 @@ export function LibraryCollections({
             value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
             placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
             onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v)}
-            triggerProps={{ "aria-label": "Show the documents of" }}
+            triggerProps={{ "aria-label": PLACE_PICKER_LABEL }}
             // A long list is found by typing a name or a description.
             showSearch
             className="min-w-0 flex-1 sm:flex-none sm:w-96"

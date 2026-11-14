@@ -15,6 +15,7 @@ import { NEW_COLLECTION_FOCUS, placeFocusKey, placeTree } from "./LibraryTree";
 import { axeViolations } from "../test/axe";
 import { Documents } from "./Documents";
 import {
+  PLACE_PICKER_LABEL,
   REFRESH_TRIES,
   REFRESH_WAIT_MS,
   LibraryCollections,
@@ -1092,7 +1093,7 @@ describe("the Library on a collection", () => {
     within(tree).getAllByRole("link")[0].focus();
     act(() => narrow());
     expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
-    await waitFor(() => expect(screen.getByLabelText("Show the documents of")).toHaveFocus());
+    await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
   });
 
   describe("a create answered after the tree is gone", () => {

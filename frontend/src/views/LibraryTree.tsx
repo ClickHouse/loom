@@ -19,7 +19,6 @@ import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { IconButton } from "../components/IconButton";
 import { announceCreated } from "../flows/CreateCollectionDialog";
-import { focusViewHeading } from "../lib/place";
 import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
 import {
   collectionPath,
@@ -31,6 +30,7 @@ import {
   topLevelCollections,
   useShowMore,
 } from "./LibraryHierarchy";
+import { PLACE_PICKER_LABEL } from "./LibraryCollections";
 
 /** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
 export const placeFocusKey = (collection: string | null) => `library-tree-place-${collection ?? ""}`;
@@ -238,8 +238,8 @@ export const LibraryTree = memo(function LibraryTree({
     );
   };
 
-  // A narrower page takes the tree away: focus in it goes to the place picker drawn instead,
-  // else the view's h1. A title typed in its New collection form is dropped.
+  // A narrower page takes the tree away: focus in it goes to the place picker drawn instead.
+  // A title typed in its New collection form is dropped.
   const nav = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const el = nav.current;
@@ -248,9 +248,7 @@ export const LibraryTree = memo(function LibraryTree({
       requestAnimationFrame(() => {
         // Only focus that fell to the page: a navigation away has placed its own.
         if (document.activeElement && document.activeElement !== document.body) return;
-        const picker = document.querySelector<HTMLElement>('[aria-label="Show the documents of"]');
-        if (picker) picker.focus();
-        else focusViewHeading();
+        document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`)?.focus();
       });
     };
   }, []);
