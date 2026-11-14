@@ -26,11 +26,11 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 writes, reads and search only.
 
 Lab 1, and the SDK route in Lab 2, need the Python SDK in a virtual environment, in a
-terminal on the laptop or the codespace's terminal. On Debian or Ubuntu, a codespace and
-WSL included, run `sudo apt-get update && sudo apt-get install -y python3-venv` before the
+terminal on the laptop or in the codespace. On Debian or Ubuntu, a codespace and WSL
+included, run `sudo apt-get update && sudo apt-get install -y python3-venv` before the
 commands below. The SDK needs Python 3.11 or newer; `python3 --version` says which one is
-installed. A student without one can use the codespace, where this step installs a new
-enough Python.
+installed. A student without Python 3.11 or newer can use the codespace, where this step
+installs a new enough Python.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
@@ -60,8 +60,8 @@ Exercises:
 Ingest a few documents with `loom demo`, which on the stock stack (fake LLM) prints the
 top `knowledge.search` hits for a question instead of an answer ([ask a question about a
 document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)). The
-path is inside the container, which holds these docs under `/app/docs/`. Copy a file of
-your own in first (here `notes.md` from the current directory), under a name that
+`--file` path is inside the container, which holds these docs under `/app/docs/`. Copy a
+file of your own in first (here `notes.md` from the current directory), under a name that
 identifies it, since `loom demo` names the document by its path: a second file copied to
 the same path replaces the first as its next revision.
 
@@ -102,8 +102,14 @@ Exercises:
 
 - Pick five functions and compare `code.callers` with what `grep` finds; explain each
   difference ([reading an answer](../features/code-index/overview.md#reading-an-answer)).
-- Change a function on a branch and send its `git diff` to `code.impact` as `diff`
-  ([how an agent uses it](../features/code-index/overview.md#how-an-agent-uses-it)).
+- In a clone of the indexed repository, change a function and send the diff to
+  `code.impact` as `diff`
+  ([how an agent uses it](../features/code-index/overview.md#how-an-agent-uses-it)):
+
+  ```bash
+  git diff | jq -Rs '{org: "dev", namespace: "code-myrepo", diff: .}' \
+    | curl -s -X POST http://localhost:7777/v1/code.impact -H 'Content-Type: application/json' -d @-
+  ```
 
 ## Lab 4: memory as a database
 
