@@ -915,7 +915,7 @@ def _fingerprint_shaped(value: Any) -> bool:
         return False
     try:
         json.dumps(value, allow_nan=False, ensure_ascii=False).encode()
-    except (ValueError, UnicodeEncodeError):
+    except (ValueError, UnicodeEncodeError, RecursionError):
         return False
     return not _holds_nul(value)
 
