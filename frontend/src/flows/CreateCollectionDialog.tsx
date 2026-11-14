@@ -16,10 +16,9 @@ import { invalidateSharedCollections } from "../lib/collectionPlaces";
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
 
-/** After collection.create in `org`: the shared reads of the collections start again, and
- *  the Library's lists wait for it to be listed, even one opened after the create was sent.
- *  The person is told whether it was made or one of that title already sits there. `typed`:
- *  the title asked for, shown when the answer names none. */
+/** After collection.create in `org`: the shared reads start again, and every Library list
+ *  open when the answer lands waits for the new collection. The person is told whether it was
+ *  made or one of that title already sits there; `typed` is shown when the answer names none. */
 export function announceCreated(r: CollectionCreated, typed: string, org: string): void {
   invalidateSharedCollections({ name: r.namespace, org });
   const shown = r.title || typed || r.namespace;
