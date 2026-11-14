@@ -11,7 +11,7 @@ import socket
 import sys
 from typing import Any
 
-from server.cli._ch import reads, run_connected, writes
+from server.cli._ch import OrgFree, reads, run_connected, writes
 
 
 def _cmd_publish(args: argparse.Namespace) -> int:
@@ -54,9 +54,7 @@ def _cmd_publish(args: argparse.Namespace) -> int:
 
     return run_connected(
         _go,
-        org_free=reads("compares this env with the published configuration")
-        if args.check
-        else writes("the deployment's published configuration"),
+        org_free=_publish_org_free(args),
     )
 
 
@@ -75,3 +73,10 @@ def register_deployment_cli(sub: Any) -> None:
         help="Write nothing; exit 2 when this env differs from the published configuration",
     )
     pub.set_defaults(func=_cmd_publish)
+
+
+def _publish_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.check:
+        return reads("compares this env with the published configuration")
+    return writes("the deployment's published configuration")

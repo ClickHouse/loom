@@ -73,7 +73,7 @@ _PICKERS = {"_org_free", "_revoke_kind"}
 
 def _typed(node: ast.expr) -> bool:
     if isinstance(node, ast.Call):
-        return _name(node) in _KINDS | _PICKERS
+        return _name(node) in _KINDS | _PICKERS or _name(node).endswith("_org_free")
     if isinstance(node, ast.IfExp):
         return all(
             _typed(b) or (isinstance(b, ast.Constant) and b.value is None)
@@ -210,39 +210,54 @@ def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postg
     assert seen == ([1] if checked else [])
 
 
-# Commands whose kind depends on their flags: each flag the pick reads, and how many call
-# sites in the file pick. A dry run, check or listing writes nothing, so with LOOM_CELL
-# set and Postgres down it still runs; a revocation that can give access back is a write.
-# The last entry is the kind the pick gives when its flags are set.
-_MODE_PICKED = {
-    "secrets.py": ({"dry_run", "check"}, 1, "reads"),
-    "restore.py": ({"dry_run"}, 1, "reads"),
-    "ops.py": ({"dry_run"}, 2, "reads"),
-    "hygiene.py": ({"resume", "erase"}, 1, "writes"),
-    "code_maintenance.py": ({"dry_run"}, 1, "reads"),
-    "deployment.py": ({"check"}, 1, "reads"),
-    "sso.py": ({"dry_run"}, 1, "reads"),
-}
+# A command whose kind depends on its flags: the picker, the flags of its read-only mode,
+# and the kind each mode gets.
+_MODE_PICKED = [
+    ("secrets", "_reseal_org_free", {"dry_run": True, "check": False}, "read"),
+    ("secrets", "_reseal_org_free", {"dry_run": False, "check": True}, "read"),
+    ("secrets", "_reseal_org_free", {"dry_run": False, "check": False}, "write"),
+    ("restore", "_reconcile_org_free", {"dry_run": True}, "read"),
+    ("restore", "_reconcile_org_free", {"dry_run": False}, "write"),
+    ("ops", "_sweep_org_free", {"dry_run": True}, "read"),
+    ("ops", "_sweep_org_free", {"dry_run": False}, "write"),
+    ("ops", "_repair_org_free", {"dry_run": True}, "read"),
+    ("ops", "_repair_org_free", {"dry_run": False}, "write"),
+    ("hygiene", "_re_verify_org_free", {"resume": False, "erase": False}, "read"),
+    ("hygiene", "_re_verify_org_free", {"resume": True, "erase": False}, "write"),
+    ("hygiene", "_re_verify_org_free", {"resume": False, "erase": True}, "write"),
+    ("code_maintenance", "_compact_org_free", {"dry_run": True}, "read"),
+    ("code_maintenance", "_compact_org_free", {"dry_run": False}, "write"),
+    ("deployment", "_publish_org_free", {"check": True}, "read"),
+    ("deployment", "_publish_org_free", {"check": False}, "write"),
+    ("sso", "_unlink_org_free", {"dry_run": True}, "read"),
+    ("sso", "_unlink_org_free", {"dry_run": False}, "revocation"),
+]
 
 
-@pytest.mark.parametrize("file", sorted(_MODE_PICKED))
-def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(file: str) -> None:
-    flags, sites, when_set = _MODE_PICKED[file]
-    source = (ROOT / "server" / "cli" / file).read_text()
-    picked = [
-        k.value
-        for call in _calls(ast.parse(source))
-        if _name(call) in _CONNECTS
-        for k in call.keywords
-        if k.arg == "org_free" and isinstance(k.value, ast.IfExp)
-    ]
-    assert len(picked) == sites, f"{file}: {sites} call site(s) pick their kind"
-    tests = " ".join(
-        ast.unparse(n.test) for v in picked for n in ast.walk(v) if isinstance(n, ast.IfExp)
-    )
-    assert all(f in tests for f in flags), f"{file}: the pick reads {sorted(flags)}"
-    # The branch taken when the flags are set, so an inverted pick fails.
-    assert all(_name(v.body) == when_set for v in picked), f"{file}: set flags give {when_set}"
+@pytest.mark.parametrize(("module", "picker", "flags", "kind"), _MODE_PICKED)
+def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(
+    module: str, picker: str, flags: dict[str, Any], kind: str
+) -> None:
+    """A mode that writes nothing reads, so with LOOM_CELL set and Postgres down it still
+    runs; the mode that writes is gated."""
+    import argparse
+    import importlib
+
+    mod = importlib.import_module(f"server.cli.{module}")
+    assert getattr(mod, picker)(argparse.Namespace(**flags)).kind == kind
+
+
+def test_every_flag_picked_connect_uses_a_tested_picker() -> None:
+    tested = {(m, p) for m, p, _f, _k in _MODE_PICKED}
+    used = set()
+    for path in sorted((ROOT / "server" / "cli").glob("*.py")):
+        for call in _calls(ast.parse(path.read_text())):
+            for k in call.keywords:
+                if k.arg == "org_free" and isinstance(k.value, ast.Call):
+                    name = _name(k.value)
+                    if name.endswith("_org_free") and name != "_org_free":
+                        used.add((path.stem, name))
+    assert used == tested
 
 
 @pytest.mark.parametrize(
@@ -427,8 +442,31 @@ def test_a_setup_check_that_cannot_read_clickhouse_refuses_in_one_line(
     _cell_set(monkeypatch, ("open", ""))
     monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
     monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    import logging
+
+    driver = logging.getLogger("clickhouse_connect")
+    monkeypatch.setattr(driver, "level", logging.INFO)
     with pytest.raises(_ch.OrgNotHeld, match="could not be read for the cell check"):
         asyncio.run(_ch.check_setup_stores())
+    assert driver.level == logging.INFO  # the mute is undone
+
+
+def test_the_setup_check_mutes_the_drivers_own_failed_connect_line(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    class _Client:
+        async def connect(self) -> None:
+            logging.getLogger("clickhouse_connect").error("failed to connect")
+            raise RuntimeError("Code: 81. DB::Exception: Database loom does not exist")
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(_ch.check_setup_stores())
+    assert not [r for r in caplog.records if r.name == "clickhouse_connect"]
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:

@@ -13,7 +13,7 @@ import sys
 import time
 from typing import Any
 
-from server.cli._ch import connect_code_plane, connect_declared, reads, writes
+from server.cli._ch import OrgFree, connect_code_plane, connect_declared, reads, writes
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 log = logging.getLogger("loom.cli.code")
@@ -250,9 +250,7 @@ async def _compact(args: argparse.Namespace) -> int:
         return 2
     await connect_declared(
         get_client(),
-        org_free=reads("lists what a compaction would optimize")
-        if args.dry_run
-        else writes("optimizes whole code tables, no org's rows"),
+        org_free=_compact_org_free(args),
     )
     ch = get_client()
     min_ratio = args.min_ratio if args.min_ratio is not None else settings.code_compact_min_ratio
@@ -735,3 +733,10 @@ async def _repack(args: argparse.Namespace) -> int:
     print(f"repack: {done} packs {verb}, {skipped} PRs had no indexed files")
     _note(packs=done, skipped=skipped, prs=len(prs), dry_run=bool(args.dry_run))
     return 0
+
+
+def _compact_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("lists what a compaction would optimize")
+    return writes("optimizes whole code tables, no org's rows")

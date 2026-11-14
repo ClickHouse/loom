@@ -207,10 +207,15 @@ async def test_an_org_free_write_with_loom_cell_set_refuses_another_cells_stores
 ) -> None:
     """A CLI with LOOM_CELL set pointed at another cell's Postgres finds that cell's
     `first` row there and refuses a write; a read runs; before prepare, a write runs."""
-    async with own_database() as dsn:
+    # Upgrade step 15's grant set for a CLI with LOOM_CELL set.
+    grants = (
+        *_GRANTS,
+        "GRANT SELECT ON loom.cell_self, loom.tenancy TO {role}",
+    )
+    async with own_database() as dsn, _cli_role(dsn, grants=grants) as cli:
         monkeypatch.setattr(settings, "cell", "eu-1")
         monkeypatch.setattr(settings, "storage_authority", "postgres")
-        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "pg_dsn", cli)
         monkeypatch.setattr(pg, "_expected", None)
         await _ch.check_org_free(_ch.writes("w"))  # not prepared yet: no first row
         await _admin(dsn, "INSERT INTO loom.cell_first (is_first, cell) VALUES (false, 'us-1')")

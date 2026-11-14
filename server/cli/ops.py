@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, reads, run_connected, writes
+from server.cli._ch import OrgFree, dry_run_orgs, reads, run_connected, writes
 
 
 def _cmd_recalibrate(args: argparse.Namespace) -> int:
@@ -208,9 +208,7 @@ def _cmd_sensitivity_sweep(args: argparse.Namespace) -> int:
     """
     return run_connected(
         lambda ch: _sensitivity_sweep_run(ch, args),
-        org_free=reads("counts what a sweep would label")
-        if args.dry_run
-        else writes("sweeps the cell's own rows: every org it touches is held"),
+        org_free=_sweep_org_free(args),
     )
 
 
@@ -272,9 +270,7 @@ def _cmd_integrity_repair(args: argparse.Namespace) -> int:
     The drift and valid_to counts are listed, not repaired."""
     return run_connected(
         lambda ch: _integrity_repair_run(ch, args),
-        org_free=reads("counts the invariants a repair would fix")
-        if args.dry_run
-        else writes("repairs the cell's own rows: every org it touches is held"),
+        org_free=_repair_org_free(args),
     )
 
 
@@ -368,3 +364,17 @@ def _add_recalibrate_parser(sub: Any) -> None:
         "(otherwise this runs weekly via the recalibration worker).",
     )
     p_recal.set_defaults(func=_cmd_recalibrate)
+
+
+def _sweep_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("counts what a sweep would label")
+    return writes("sweeps the cell's own rows: every org it touches is held")
+
+
+def _repair_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("counts the invariants a repair would fix")
+    return writes("repairs the cell's own rows: every org it touches is held")

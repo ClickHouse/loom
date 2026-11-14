@@ -13,7 +13,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from server.cli._ch import reads, run_connected, writes
+from server.cli._ch import OrgFree, reads, run_connected, writes
 
 # Every place a value `server.core.secrets_at_rest.seal` made is kept:
 # (table, column, JSON path inside the column (() = the column itself), purpose,
@@ -248,9 +248,7 @@ def _cmd_reseal(args: argparse.Namespace) -> int:
 
     return run_connected(
         _go,
-        org_free=reads("counts what a reseal would write")
-        if args.dry_run or args.check
-        else writes("reseals this cell's stored credentials"),
+        org_free=_reseal_org_free(args),
     )
 
 
@@ -269,3 +267,10 @@ def register_secrets_cli(sub: Any) -> None:
         "LOOM_JWT_SECRET_PREVIOUS",
     )
     rs.set_defaults(func=_cmd_reseal)
+
+
+def _reseal_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run or args.check:
+        return reads("counts what a reseal would write")
+    return writes("reseals this cell's stored credentials")
