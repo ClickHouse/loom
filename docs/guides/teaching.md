@@ -59,13 +59,13 @@ Exercises:
 Ingest a few documents with `loom demo`, which on the stock stack (fake LLM) prints the top
 `knowledge.search` hits for a question instead of an answer ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
 The path is inside the container, which holds these docs under `/app/docs/`. Copy a file
-of your own in first, under a name that identifies it, since `loom demo` names the
-document by its path:
+of your own in first (here `notes.md` from the current directory), under a name that
+identifies it, since `loom demo` names the document by its path:
 
 ```bash
 docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md --question "How do I get a token?"
-docker compose --project-directory <dir> exec -T loom sh -c 'cat > /tmp/<name>' < <path>
-docker compose --project-directory <dir> exec loom loom demo --file /tmp/<name> --question "<a question the file answers>"
+docker compose --project-directory <dir> exec -T loom sh -c 'cat > /tmp/notes.md' < ./notes.md
+docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.md --question "<a question the file answers>"
 ```
 
 Then search the namespace's documents with `knowledge.search` over HTTP (with no
