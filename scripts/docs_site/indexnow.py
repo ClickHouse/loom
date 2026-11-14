@@ -5,9 +5,10 @@ ownership against a key file served on the site. The key file is the one `.txt` 
 docs/ whose name is its own content; it is public by design.
 
 Usage: indexnow.py <changed path>...   (paths relative to the repository root)
-A changed or deleted page under docs/ maps to its URL. A change to mkdocs.yml, anything
-under scripts/docs_site/ or scripts/codegen/page_summary.py (the descriptions and sidebar)
-changes every page, so every page under docs/ is submitted.
+A changed or deleted page under docs/ maps to its URL. A change to what renders the pages
+(mkdocs.yml, the hooks, the theme overrides, the pinned builder, or
+scripts/codegen/page_summary.py, which writes the descriptions and sidebar) changes every
+page, so every page under docs/ is submitted; a change to this script alone submits none.
 """
 
 from __future__ import annotations
@@ -22,7 +23,13 @@ from pathlib import Path
 SITE = "https://clickhouse.github.io/loom/"
 ENDPOINT = "https://api.indexnow.org/indexnow"
 DOCS = Path(__file__).resolve().parents[2] / "docs"
-BUILD_INPUTS = ("mkdocs.yml", "scripts/docs_site/", "scripts/codegen/page_summary.py")
+BUILD_INPUTS = (
+    "mkdocs.yml",
+    "scripts/codegen/page_summary.py",
+    "scripts/docs_site/hooks.py",
+    "scripts/docs_site/requirements.txt",
+    "scripts/docs_site/overrides/",
+)
 
 
 def key() -> str:
@@ -52,7 +59,7 @@ def every_page() -> list[str]:
 
 def urls_for(paths: list[str]) -> list[str]:
     changed = {u for p in paths if (u := page_url(p))}
-    if any(p.startswith(i) for p in paths for i in BUILD_INPUTS):
+    if any(p == i or (i.endswith("/") and p.startswith(i)) for p in paths for i in BUILD_INPUTS):
         # A deleted page is no longer in the tree, so keep the changed paths' URLs too.
         return sorted(changed | set(every_page()))
     return sorted(changed)

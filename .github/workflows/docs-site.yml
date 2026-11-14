@@ -88,7 +88,9 @@ jobs:
         run: |
           set -euo pipefail
           # A push can carry several commits, and a pending run can be cancelled by a newer
-          # one, so diff from the last successful run on main, or from HEAD~1 without one.
+          # one, so diff from the last successful run on main. Fall back to HEAD~1 when
+          # there is none or it isn't an ancestor of HEAD. A run counts as successful even
+          # when its submission failed or the deploy was off, and those pages aren't resent.
           base=$(gh run list -R "$GITHUB_REPOSITORY" --workflow docs-site.yml --branch main \
             --event push --status success --limit 1 --json headSha --jq '.[0].headSha // empty')
           if [ -z "$base" ] || ! git merge-base --is-ancestor "$base" HEAD; then base=HEAD~1; fi
