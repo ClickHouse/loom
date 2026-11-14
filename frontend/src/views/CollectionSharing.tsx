@@ -142,14 +142,26 @@ export function whoCanSee({
     : more > 0
       ? `${head.join(", ")} and ${fmtInt(more)} more`
       : joined(head);
+  // Counted on the collection itself only: the server folds a person's spellings within one
+  // place (`also`), never across places, so a sum over parents could count one person twice.
+  const here = new Map<string, string>();
+  for (const r of grants[0]?.rows ?? []) {
+    if (r.status !== "active") continue;
+    const k = namesMe(r, mine) ? "" : r.subject;
+    if (!here.has(k)) here.set(k, k);
+  }
+  const hereSubjects = [...here.keys()];
+  const hereGroups = hereSubjects.filter((x) => x.startsWith("group:")).length;
+  const hereAgents = hereSubjects.filter((x) => x !== "" && isAgentSubject(x)).length;
+  const herePeople = hereSubjects.filter((x) => x !== "everyone").length - hereGroups - hereAgents;
   const counts = joined(
     [
-      people.length + Number(you) > 0 ? plural(people.length + Number(you), "person", "people") : "",
-      groups.length > 0 ? plural(groups.length, "group", "groups") : "",
-      agents.length > 0 ? plural(agents.length, "agent", "agents") : "",
+      herePeople > 0 ? plural(herePeople, "person", "people") : "",
+      hereGroups > 0 ? plural(hereGroups, "group", "groups") : "",
+      hereAgents > 0 ? plural(hereAgents, "agent", "agents") : "",
     ].filter(Boolean),
   );
-  const counted = cut && counts ? `${counts}, or more` : counts;
+  const counted = counts ? `${counts} here${grants[0]?.cut ? ", or more" : ""}` : "";
   return { who, how: [counted, ...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
 }
 

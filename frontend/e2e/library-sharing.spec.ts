@@ -59,7 +59,7 @@ const button = (page: Page, name: string) => page.getByRole("main").getByRole("b
 test("Share opens the members dialog in place, and closing it leaves the person in the Library", async ({ page }) => {
   await open(page, "col-runbooks");
   await expect(header(page)).toHaveText(
-    "You, group eng, sam@example.com and 1 more · 3 people and 1 group · Inherited from Engineering",
+    "You, group eng, sam@example.com and 1 more · 2 people here · Inherited from Engineering",
   );
   expect(await violations(page)).toEqual([]);
   await button(page, "Share").click();

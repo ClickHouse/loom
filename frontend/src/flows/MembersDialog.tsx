@@ -28,12 +28,7 @@ import { oneOf } from "../lib/oneOf";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
-import { namesMe as grantNamesMe, mySpellings, subjectLabel } from "../lib/grantSubject";
-
-/** Whether a grant names the person signed in (`me`: their spellings), in any case. */
-function namesMe(r: GrantEntry, me: readonly string[]): boolean {
-  return grantNamesMe(r, me);
-}
+import { mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 
 /** A row's name: the subject as a person reads it, with the subject itself beneath when the
  *  two differ. */
@@ -213,8 +208,9 @@ export function MembersDialog({
       whoami,
       rows?.find((r) => namesMe(r, me)),
     );
-  // A repository is named by its label.
-  const name = isCode ? (label ?? namespace) : namespace;
+  // Named by its label (a repository's "owner/name @ branch", a collection's title), else
+  // by its address.
+  const name = label ?? namespace;
   // A scoped token with no grant here may be an admin the client cannot see; a grant of its own caps it.
   const manageReason =
     canManage || rows === null
@@ -268,9 +264,9 @@ export function MembersDialog({
   const onRemove = async (subject: string) => {
     if (
       !(await confirmAction({
-        title: `Remove ${subject} from ${namespace}?`,
+        title: `Remove ${subject} from ${name}?`,
         message:
-          "Their JWT keeps any org-level roles, but the namespace-specific grant is revoked. They can re-request access later.",
+          "Their token keeps any org-level roles, but the grant here is revoked. They can ask for access again later.",
         confirmLabel: "Remove",
         danger: true,
       }))
@@ -332,7 +328,8 @@ export function MembersDialog({
 
   const addLabel = isCode ? "Add reader" : "Add member";
   const inheritedSeen = (inherited ?? []).some((p) => p.rows === null || p.rows.some((r) => r.status === "active"));
-  // Every page is read, so counts and "(you)" hold; the rows are drawn a step at a time.
+  // Up to GRANTS_READ grants are read, so the counts and "(you)" cover them; the rows are
+  // drawn a step at a time.
   const members = useShowMore(activeRows, MORE_SHOWN, MEMBER_ROWS);
   const pending = useShowMore(pendingRows, MORE_SHOWN, MEMBER_ROWS);
 
@@ -514,7 +511,7 @@ export function MembersDialog({
                         type="danger"
                         size="sm"
                         label={`Remove ${r.subject}`}
-                        tooltip="Remove from namespace"
+                        tooltip={`Remove from ${name}`}
                         onClick={() => onRemove(r.subject)}
                         disabled={busy === r.subject}
                       />

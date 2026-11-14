@@ -265,4 +265,26 @@ describe("MembersDialog paging", () => {
     const through = await screen.findByRole("region", { name: "Also can see it, through Engineering" });
     expect(within(through).getByText("ada@example.com").parentElement).toHaveTextContent("(you)");
   });
+
+  it("names a collection by its title in the reason See who gives", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "olga", org: "acme", roles: [] } });
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-q3-plans"
+        label="Q3 plans"
+        manage={false}
+      />,
+    );
+    await screen.findByText("bob");
+    expect(screen.getByRole("button", { name: "Add member" })).toHaveAccessibleDescription(
+      "Needs admin on Q3 plans. An admin of it can grant that.",
+    );
+    expect(screen.getByRole("button", { name: "Remove bob" })).toHaveAccessibleDescription(
+      "Needs admin on Q3 plans. An admin of it can grant that.",
+    );
+  });
 });

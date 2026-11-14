@@ -49,7 +49,7 @@ describe("who can see a collection, in words", () => {
     const rows = ["bob", "group:eng", "agent:helper", "carol", "dan"].map((s) => grant(s));
     expect(words([{ namespace: "col-a", rows: [grant("ada"), ...rows] }])).toEqual({
       who: "You, group eng, bob and 3 more",
-      how: "4 people, 1 group and 1 agent",
+      how: "4 people, 1 group and 1 agent here",
       onlyYou: false,
     });
   });
@@ -72,7 +72,7 @@ describe("who can see a collection, in words", () => {
       { above: "Hidden" },
     );
     expect(w.who).toBe("You, bob and u1");
-    expect(w.how).toBe("3 people · Inherited from top · Also everyone who can see Hidden");
+    expect(w.how).toBe("2 people here · Inherited from top · Also everyone who can see Hidden");
   });
 
   it("leaves out pending requests, and counts a person's other spellings as them", () => {
@@ -87,13 +87,13 @@ describe("who can see a collection, in words", () => {
 
   it("says anything added to an empty collection is shared with them", () => {
     const w = words([{ namespace: "col-a", rows: [grant("ada"), grant("bob")] }], { empty: true });
-    expect(w.how).toBe("2 people · Anything added here is shared with them");
+    expect(w.how).toBe("2 people here · Anything added here is shared with them");
   });
 
   it("counts a service account as an agent and names it as one", () => {
     const w = words([{ namespace: "col-a", rows: [grant("ada"), grant("sa:reporter-a1b2c3"), grant("bob")] }]);
     expect(w.who).toBe("You, bob and Reporter bot");
-    expect(w.how).toBe("2 people and 1 agent");
+    expect(w.how).toBe("2 people and 1 agent here");
   });
 
   it("concludes nothing from a read cut short: no Only you, and counts or more", () => {
@@ -101,13 +101,13 @@ describe("who can see a collection, in words", () => {
     expect(cut.onlyYou).toBe(false);
     expect(cut.who).toBe("You and more");
     const some = words([{ namespace: "col-a", rows: [grant("ada"), grant("bob")], cut: true }]);
-    expect(some).toMatchObject({ who: "You, bob and more", how: "2 people, or more" });
+    expect(some).toMatchObject({ who: "You, bob and more", how: "2 people here, or more" });
   });
 
   it("counts the person among the people", () => {
     expect(words([{ namespace: "col-a", rows: [grant("ada"), grant("bob")] }])).toMatchObject({
       who: "You and bob",
-      how: "2 people",
+      how: "2 people here",
     });
   });
 
@@ -119,7 +119,7 @@ describe("who can see a collection, in words", () => {
     expect(w.onlyYou).toBe(false);
     expect(w).toMatchObject({
       who: "You",
-      how: "1 person · Also everyone who can see top, whose members couldn't be read",
+      how: "1 person here · Also everyone who can see top, whose members couldn't be read",
     });
   });
 
@@ -156,7 +156,7 @@ describe("who can see a collection, in words", () => {
       { namespace: "col-a", rows: [grant("ADA"), grant("bob")] },
       { namespace: "col-top", rows: [grant("bob@example.com", { also: ["bob"] })] },
     ]);
-    expect(w).toMatchObject({ who: "You and bob", how: "2 people" });
+    expect(w).toMatchObject({ who: "You and bob", how: "2 people here" });
   });
 
   it("counts the reader once when a parent holds only another of their spellings", () => {
@@ -164,7 +164,7 @@ describe("who can see a collection, in words", () => {
       { namespace: "col-a", rows: [grant("ada", { also: ["ada@example.com"] }), grant("bob")] },
       { namespace: "col-top", rows: [grant("ada@example.com")] },
     ]);
-    expect(w).toMatchObject({ who: "You and bob", how: "2 people" });
+    expect(w).toMatchObject({ who: "You and bob", how: "2 people here" });
     // The parent's row comes first: still the reader.
     const reversed = whoCanSee({
       grants: [
@@ -175,7 +175,18 @@ describe("who can see a collection, in words", () => {
       org: "acme",
       titleOf: (ns) => ns,
     });
-    expect(reversed).toMatchObject({ who: "You and bob", how: "2 people" });
+    expect(reversed).toMatchObject({ who: "You and bob", how: "2 people here" });
+  });
+
+  it("never counts across places, where nothing ties a person's two spellings", () => {
+    // No `also` links ada here and ada@example.com on the parent: they may be one person.
+    const w = words([
+      { namespace: "col-a", rows: [grant("ada")] },
+      { namespace: "col-top", rows: [grant("ada@example.com")] },
+    ]);
+    expect(w).toMatchObject({ who: "You and ada@example.com", how: "1 person here · Inherited from top" });
+    expect(w.onlyYou).toBe(false);
+    expect(w.how).not.toMatch(/2 people/);
   });
 
   it("counts the rest past three with fmtInt", () => {
@@ -233,7 +244,7 @@ describe("the collection header", () => {
     api.listGrants.mockResolvedValue({ rows: [grant("ada", { role: "admin" }), grant("group:eng")] });
     const { container } = render(<Header collection={entry("col-a")} />);
     expect(await screen.findByText("You and group eng")).toBeInTheDocument();
-    expect(line()).toHaveTextContent("You and group eng · 1 person and 1 group");
+    expect(line()).toHaveTextContent("You and group eng · 1 person and 1 group here");
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(await axeViolations(container)).toEqual([]);
   });
@@ -256,7 +267,7 @@ describe("the collection header", () => {
     render(<Header collection={mid} byName={byName} />);
     expect(await screen.findByText("You and group eng")).toBeInTheDocument();
     expect(line()).toHaveTextContent(
-      "You and group eng · 1 person and 1 group · Inherited from Engineering · Also everyone who can see a collection you can't open",
+      "You and group eng · 1 person here · Inherited from Engineering · Also everyone who can see a collection you can't open",
     );
     expect(line()).not.toHaveTextContent("col-secret");
     expect(api.listGrants.mock.calls.map((c) => c[0].namespace)).toEqual(["col-a", "col-top"]);
