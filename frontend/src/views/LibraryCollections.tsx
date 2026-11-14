@@ -163,15 +163,15 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
           const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= REFRESH_TRIES - 1) return { rows, truncated: !!cursor };
           await new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(resolve, REFRESH_WAIT_MS);
-            signal.addEventListener(
-              "abort",
-              () => {
-                clearTimeout(timer);
-                reject(signal.reason);
-              },
-              { once: true },
-            );
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(signal.reason);
+            };
+            const timer = setTimeout(() => {
+              signal.removeEventListener("abort", onAbort);
+              resolve();
+            }, REFRESH_WAIT_MS);
+            signal.addEventListener("abort", onAbort, { once: true });
           });
         }
       })()
