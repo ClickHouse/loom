@@ -84,13 +84,15 @@ Exercises:
 ## Lab 3: a code index
 
 Index a repository on the stack
-([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)),
-then ask where a symbol is defined, who calls it, and what a change to it touches
+([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)).
+Then ask where a symbol is defined, who calls it, and what a change to it touches
 ([what the code index answers](../features/code-index/overview.md#what-it-answers)), over
-HTTP or the SDK, naming `org` `"dev"` and the repository's `namespace` (`code-myrepo` in
-the quickstart's entry) on each call. A coding agent can ask the same questions once
-connected ([connect a coding agent](../getting-started/connect-a-coding-agent.md)); it
-needs its own model account.
+HTTP or the SDK. The single-user stack does not fill in `code.*` calls, so each one names
+`org` `"dev"` and the repository's `namespace` (`code-myrepo` in the quickstart's entry).
+
+A coding agent can ask the same questions once connected
+([connect a coding agent](../getting-started/connect-a-coding-agent.md)). It runs on its own
+provider's model, so it needs a sign-in or API key there; the stack does not supply one.
 
 Exercises:
 
