@@ -1,7 +1,8 @@
-"""Per-key call limits for the router's rate-limited answers: a cell's placement calls
-and a client's lookups. Each router replica counts on its own, so a deployment of N
-replicas admits up to N times the limit; the directory's quota (`placements_max`) is
-the bound that holds across them."""
+"""Per-key call limits for the router's rate-limited answers: a cell's placement calls and a
+client's lookups. Each router replica counts on its own, so a deployment of N replicas
+admits up to N times the limit; the directory's quota (`placements_max`) is the bound that
+holds across them. Also the bounds on what a call may send, which the callers check before
+they send."""
 
 from __future__ import annotations
 
@@ -13,6 +14,15 @@ from collections.abc import Callable
 # Keys one limiter remembers: past it, the key idle longest is forgotten (a client
 # address that comes back starts a fresh window).
 MAX_KEYS = 10_000  # not a setting: memory per replica, not behaviour
+
+# A placement or operator call's body is a few short fields: anything larger is refused
+# unread. A cell's placement carries its fingerprint, so `attach/begin` refuses one whose
+# placement body could pass this.
+MAX_BODY_BYTES = 64 * 1024  # not a setting: the request's own shape bounds it
+# `attach/begin` carries two fingerprints and the allow lists attach judged the stores by.
+ATTACH_BEGIN_MAX_BYTES = 256 * 1024  # not a setting: the request's own shape bounds it
+# The most orgs one `attach/place` batch names (its body also within MAX_BODY_BYTES).
+ATTACH_BATCH = 500  # not a setting: a batch's statements are a fixed count
 
 
 class Limiter:

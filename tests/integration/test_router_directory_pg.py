@@ -438,6 +438,11 @@ async def test_prepare_registers_a_cell_once_and_refuses_what_another_holds(own_
                 await directory.register(reg(first, **over))
             assert await directory.refusal_before_probe(reg(first, **over)) == refused.value.reason
         assert await directory.refusal_before_probe(reg(first)) == ""
+        # No later cell registers while the first attaches: once it is `serving`.
+        assert "not serving yet" in await directory.refusal_before_probe(reg(later))
+        with pytest.raises(directory.OperatorRefused, match="not serving yet"):
+            await directory.register(reg(later))
+        await conn.execute("UPDATE loom_router.cells SET state = 'serving' WHERE cell = $1", first)
         assert await directory.refusal_before_probe(reg(later)) == ""
         # A second first cell, and a later cell holding what the first holds, are refused.
         with pytest.raises(directory.OperatorRefused, match="first cell already"):
@@ -534,3 +539,278 @@ async def test_the_directory_never_migrates_into_a_memory_authority(
     monkeypatch.setattr(settings, "router_pg_dsn", memory)
     with pytest.raises(directory.DirectoryUnavailable, match="memory authority"):
         await directory.migrate()
+
+
+def _first(name: str, **over: Any) -> directory.Registration:
+    fields: dict[str, Any] = {
+        "cell": name,
+        "host": f"{name}.example.test",
+        "deployment_id": f"dep-{name}",
+        "credential_sha256": hashlib.sha256(name.encode()).hexdigest(),
+        "bucket": "docs",
+        "bucket_prefix": f"cells/{name}",
+        "probe_url": f"http://{name}.internal:7790",
+        "is_first": True,
+        "upstream_url": "http://upstream.internal:7777",
+        "tenancy_rows": 0,
+        "state_rows": 0,
+        "prefix_objects": 0,
+        "processes_without_cell": 0,
+    }
+    return directory.Registration(**{**fields, **over})
+
+
+def _fp(name: str, **over: Any) -> dict[str, Any]:
+    fields = {
+        "public_host": f"{name}.example.test",
+        "oauth_issuer_host": f"{name}.example.test",
+        "deployment_id": f"dep-{name}",
+        "bucket": "docs",
+        "bucket_prefix": f"cells/{name}",
+        "bearer_issuers": [f"https://{name}.example.test"],
+        **over,
+    }
+    return {"v": 1, "fields": fields}
+
+
+@pytest.mark.asyncio
+async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) -> None:
+    import asyncpg
+
+    await directory.migrate()
+    name = f"at-{uuid.uuid4().hex[:8]}"
+    dep = f"dep-{name}"
+    await directory.register(_first(name))
+    begin = directory.Begin(dep, _fp(name), None, "keys-1", {"pg_allow_roles": ["loom"]})
+    conn = await asyncpg.connect(own_dsn)
+    try:
+        # Nothing before begin; begin writes its start once and the fingerprints.
+        with pytest.raises(directory.OperatorRefused, match="has not begun"):
+            await directory.attach_enforced(name, dep)
+        with pytest.raises(directory.OperatorRefused, match="has not begun"):
+            await directory.attach_place(name, dep, ["a"])
+        with pytest.raises(directory.OperatorRefused, match="deployment id"):
+            await directory.attach_begin(name, directory.Begin("dep-x", _fp(name), None, "k", {}))
+        found = await directory.attach_begin(name, begin)
+        started = found.attach_started_at
+        assert started is not None and found.row.current_fp == _fp(name)
+        again = await directory.attach_begin(
+            name, directory.Begin(dep, _fp(name), None, "keys-2", {})
+        )
+        assert again.attach_started_at == started
+        stored = await conn.fetchrow(
+            "SELECT keys_fp, current_fp, next_fp FROM loom_router.cells WHERE cell = $1", name
+        )
+        assert (stored["keys_fp"], json.loads(stored["current_fp"]), stored["next_fp"]) == (
+            "keys-2",
+            _fp(name),
+            None,
+        )
+        with pytest.raises(directory.OperatorRefused, match="loom cell update"):
+            await directory.attach_begin(
+                name, directory.Begin(dep, _fp(name, oidc_issuer="x"), None, "k", {})
+            )
+        # A batch waits for the directory mode `enforced`.
+        with pytest.raises(directory.OperatorRefused, match="attach/enforced first"):
+            await directory.attach_place(name, dep, ["a"])
+        enforced = await directory.attach_enforced(name, dep)
+        assert enforced.row.mode == "enforced"
+        await directory.attach_enforced(name, dep)  # idempotent
+        # A closed cell with a quota of 0 still takes its own orgs; a rerun places none
+        # twice.
+        await conn.execute(
+            "UPDATE loom_router.cells SET closed = true, placements_max = 0 WHERE cell = $1", name
+        )
+        assert await directory.attach_place(name, dep, ["b", "a", "a"]) == (2, 2)
+        assert await directory.attach_place(name, dep, ["a", "c"]) == (1, 3)
+        placed = await conn.fetch(
+            "SELECT org FROM loom_router.placements WHERE cell = $1 ORDER BY org", name
+        )
+        assert [r["org"] for r in placed] == ["a", "b", "c"]
+        with pytest.raises(directory.OrgTooLong):
+            await directory.attach_place(name, dep, ["d", "x" * 2049])
+        served = await directory.attach_serving(name, dep)
+        assert served.row.state == "serving"
+        assert await conn.fetchval(
+            "SELECT issuers FROM loom_router.cells WHERE cell = $1", name
+        ) == [f"https://{name}.example.test"]
+        assert (await directory.attach_serving(name, dep)).row.state == "serving"  # done
+        with pytest.raises(directory.OperatorRefused, match="serving already"):
+            await directory.attach_enforced(name, dep)
+        audit = await conn.fetch(
+            "SELECT actor, action, detail FROM loom_router.audit "
+            "WHERE detail->>'cell' = $1 ORDER BY id",
+            name,
+        )
+        steps = [(r["actor"], r["action"], json.loads(r["detail"])) for r in audit]
+        assert [a for _actor, a, _d in steps] == [
+            "register",
+            "attach_begin",
+            "attach_begin",
+            "attach_enforced",
+            "attach_enforced",
+            "place",
+            "place",
+            "place",
+            "attach_serving",
+        ]
+        assert steps[1][2] == {
+            "cell": name,
+            "deployment_id": dep,
+            "keys_fp": "keys-1",
+            "fingerprints_written": True,
+            "pg_allow_roles": ["loom"],
+        }
+        assert [d["org"] for _actor, a, d in steps if a == "place"] == ["a", "b", "c"]
+        assert {actor for actor, a, _d in steps if a == "place"} == {"operator"}
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_a_live_placement_racing_a_batch_of_the_same_org_places_it_once(
+    own_dsn: str,
+) -> None:
+    """The batch holds the cell's row lock, not the org's: a live placement that read no
+    winner waits on the row lock, reads the batch's placement once it holds it, and answers
+    it as placed, with no quota judged and nothing counted twice."""
+    import asyncpg
+
+    await directory.migrate()
+    name = f"lr-{uuid.uuid4().hex[:8]}"
+    dep = f"dep-{name}"
+    await directory.register(_first(name))
+    await directory.attach_begin(name, directory.Begin(dep, _fp(name), None, "k", {}))
+    await directory.attach_enforced(name, dep)
+    conn = await asyncpg.connect(own_dsn)
+    holder = await asyncpg.connect(own_dsn)
+    try:
+        # A full quota: a live placement judged on it would be refused.
+        await conn.execute("UPDATE loom_router.cells SET placements_max = 0 WHERE cell = $1", name)
+        tx = holder.transaction()
+        await tx.start()
+        await holder.execute("SELECT pg_advisory_xact_lock($1)", directory._DIRECTORY_LOCK)
+        await holder.execute("SELECT 1 FROM loom_router.cells WHERE cell = $1 FOR UPDATE", name)
+        live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
+        for _ in range(100):  # the live placement waits on the row lock
+            waiting = await conn.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'loom-router' "
+                "AND wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE%'"
+            )
+            if waiting:
+                break
+            await asyncio.sleep(0.05)
+        assert waiting == 1
+        # What the batch writes under the row lock, then commits.
+        await holder.execute(
+            "INSERT INTO loom_router.placements (org, cell) VALUES ('acme', $1)", name
+        )
+        await holder.execute(
+            "UPDATE loom_router.cells SET placed = placed + 1 WHERE cell = $1", name
+        )
+        await tx.commit()
+        assert await live == (name, dep)
+        assert (
+            await conn.fetchval("SELECT placed FROM loom_router.cells WHERE cell = $1", name) == 1
+        )
+        assert (
+            await conn.fetchval(
+                "SELECT count(*) FROM loom_router.audit WHERE actor = $1", f"cell:{name}"
+            )
+            == 0
+        )
+        # The other order: placed live first, then named in a batch, which skips it.
+        await conn.execute(
+            "UPDATE loom_router.cells SET placements_max = NULL WHERE cell = $1", name
+        )
+        assert await directory.place("beta", name, lambda _row: "") == (name, dep)
+        assert await directory.attach_place(name, dep, ["acme", "beta", "gamma"]) == (1, 3)
+        audit = await conn.fetch(
+            "SELECT actor, detail->>'org' AS org FROM loom_router.audit WHERE action = 'place' "
+            "AND detail->>'cell' = $1 ORDER BY id",
+            name,
+        )
+        assert [(r["actor"], r["org"]) for r in audit] == [
+            (f"cell:{name}", "beta"),
+            ("operator", "gamma"),
+        ]
+    finally:
+        await holder.close()
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_an_attaching_cell_with_no_placement_is_removed_with_its_hosts(
+    own_dsn: str,
+) -> None:
+    import asyncpg
+
+    await directory.migrate()
+    first, later = (f"rm-{uuid.uuid4().hex[:8]}" for _ in range(2))
+    dep = f"dep-{first}"
+    await directory.register(_first(first))
+    conn = await asyncpg.connect(own_dsn)
+    try:
+        # A later cell an earlier build registered mid-attach blocks every attach call until
+        # it is removed.
+        await conn.execute(
+            "INSERT INTO loom_router.cells (cell, host, state, mode, credential_sha256, "
+            "deployment_id) VALUES ($1, $2, 'attaching', 'enforced', $3, $4)",
+            later,
+            f"{later}.example.test",
+            "e" * 64,
+            f"dep-{later}",
+        )
+        await conn.execute(
+            "INSERT INTO loom_router.hosts (host, cell) VALUES ($1, $2)",
+            f"{later}.example.test",
+            later,
+        )
+        with pytest.raises(directory.OperatorRefused, match=f"loom cell remove --cell {later}"):
+            await directory.attach_begin(first, directory.Begin(dep, _fp(first), None, "k", {}))
+        assert (await directory.remove(later)).cell == later
+        assert (
+            await conn.fetchval("SELECT count(*) FROM loom_router.hosts WHERE cell = $1", later)
+            == 0
+        )
+        with pytest.raises(directory.NoSuchCell):
+            await directory.remove(later)
+        # The first cell backs out at any directory mode until its first placement.
+        await directory.attach_begin(first, directory.Begin(dep, _fp(first), None, "k", {}))
+        await directory.attach_enforced(first, dep)
+        await directory.attach_place(first, dep, ["only"])
+        with pytest.raises(directory.OperatorRefused, match="never back"):
+            await directory.remove(first)
+        await conn.execute("UPDATE loom_router.cells SET state = 'serving' WHERE cell = $1", first)
+        with pytest.raises(directory.OperatorRefused, match="stays attached"):
+            await directory.remove(first)
+        removed = await conn.fetch(
+            "SELECT detail FROM loom_router.audit WHERE action = 'remove' ORDER BY id"
+        )
+        assert [json.loads(r["detail"]) for r in removed] == [
+            {
+                "cell": later,
+                "is_first": False,
+                "host": f"{later}.example.test",
+                "deployment_id": f"dep-{later}",
+                "mode": "enforced",
+            }
+        ]
+        # A first cell still attaching with nothing placed is removed, its host with it.
+        other = f"rm-{uuid.uuid4().hex[:8]}"
+        await conn.execute("DELETE FROM loom_router.audit")  # not under test here
+        await conn.execute("ALTER TABLE loom_router.placements DISABLE TRIGGER USER")
+        await conn.execute("DELETE FROM loom_router.placements")
+        await conn.execute("ALTER TABLE loom_router.placements ENABLE TRIGGER USER")
+        await conn.execute("DELETE FROM loom_router.hosts")
+        await conn.execute("DELETE FROM loom_router.cells")
+        await directory.register(_first(other))
+        await directory.attach_begin(
+            other, directory.Begin(f"dep-{other}", _fp(other), None, "k", {})
+        )
+        await directory.attach_enforced(other, f"dep-{other}")  # a step-3 lock that never landed
+        assert (await directory.remove(other)).is_first
+        assert await conn.fetchval("SELECT count(*) FROM loom_router.cells") == 0
+        assert await conn.fetchval("SELECT count(*) FROM loom_router.hosts") == 0
+    finally:
+        await conn.close()

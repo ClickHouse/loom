@@ -692,6 +692,10 @@ Raised in `server/knowledge/app/sources.py`.
 
 HTTP 503, raised as `server.auth.keyring.NoSigningKey`. Kid `default` is retired (or the root secret signs neither HS256 nor RS256) and no keyring key is active here: nothing can be signed until an operator acts, so it carries no Retry-After. Category `configuration`, retryable: no.
 
+#### `NO_SUCH_CELL`
+
+Raised in `server/router/app.py`. Category `input`, retryable: no.
+
 #### `OP_NOT_ON_MCP`
 
 Raised in `server/transport/mcp_call.py`, `server/transport/mcp_op.py`.

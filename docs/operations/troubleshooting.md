@@ -289,23 +289,24 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   (`/v1/health` names them) or restore the connection, and the next read, within a
   second, opens or gates it as below.
 - **Fix** otherwise, by what the check shows:
-  - **The deployment is a cell** (the directory holds its row and it is not an
-    unattached later cell, below): set `LOOM_CELL` to the cell's name; for a partial
-    state, run `loom cell prepare` again, which completes it.
+  - **The deployment is a cell** (the directory holds its row, and it is neither an
+    unattached later cell nor a first cell being backed out, below): set `LOOM_CELL` to the
+    cell's name; for a partial state, run `loom cell prepare` again, which completes it.
   - **The deployment is not meant to be a cell** (no directory row, or no router), or
     **an unattached later cell** (its row reads `is_first = false`,
     `state = 'attaching'` and `placed = 0`) that you are turning back into a single
     deployment: clear the state in one transaction, in a psql session on `LOOM_PG_DSN`
     (`\connect` back to it after the check) as the role that owns schema `loom`'s tables
     (the role that migrates; altering a trigger needs the table's owner). The
-    deployment is then `open`. An unattached later cell's directory row stays live;
-    making the deployment a cell again needs that row removed and a new prepare. On a
-    lock failure, `ROLLBACK` if psql is still open, then rerun the whole step.
+    deployment is then `open`. An unattached later cell's directory row stays live until
+    `loom cell remove --cell <cell>` removes it, which a new prepare of the deployment
+    needs. On a lock failure, `ROLLBACK` if psql is still open, then rerun the whole step.
 
     ```sql
     \set ON_ERROR_STOP on
     BEGIN;
     SET LOCAL lock_timeout = '100ms';
+    SELECT pg_advisory_xact_lock(7813586394088235880);  -- the attach lock: held by a running attach, prepare or update
     SELECT pg_advisory_xact_lock(7813586394288842610);  -- the migration lock
     ALTER TABLE loom.cell_first DISABLE TRIGGER cell_first_immutable;
     DELETE FROM loom.cell_first;
@@ -333,6 +334,35 @@ each field means is in [monitoring](./monitoring.md#health-checks).
       AND t.tgname IN ('tenancy_insert', 'tenancy_update', 'tenancy_record') \gexec
     COMMIT;
     ```
+
+    A lock failure at the state transaction's attach lock means an attach, a prepare or an
+    update is running against this Postgres, which can take hours: rerunning the step
+    meanwhile fails the same way. This names the session that holds the lock:
+
+    ```sql
+    SELECT a.pid, a.usename, a.application_name, a.client_addr, a.backend_start
+    FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+    WHERE l.locktype = 'advisory' AND l.granted
+      AND l.classid = (7813586394088235880 >> 32)::oid
+      AND l.objid = (7813586394088235880 & 4294967295)::oid AND l.objsubid = 1
+      AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database());
+    ```
+
+  - **A first cell being backed out** (its row reads `is_first = true`,
+    `state = 'attaching'` and `placed = 0`, whatever its `mode`, since an attach refused at
+    its step-3 lock leaves it `enforced`; and `SELECT mode FROM loom.tenancy_mode` on its
+    Postgres reads `recording`): back it out in this order. Unset `LOOM_CELL` on every
+    process, each of which then serves as in `recording`; run the state transaction and the
+    drop step above; then run `loom cell remove --cell <cell>` with the router's operator
+    credential and the cell's `LOOM_PG_DSN`, which refuses until that Postgres reads `open`
+    and records the row's deployment id. Removing the row first would answer every new org
+    503, and clearing the state first would gate every process with `LOOM_CELL` set. The
+    router cannot read the cell's Postgres, so a `DELETE` of the row called on the router
+    directly skips that check, and leaves a still prepared cell answering its new orgs 503
+    and unable to register again until the steps above run. The cleared stores keep no cell
+    state, and the deployment is prepared again from `loom cell prepare`. A first cell whose
+    row reads `placed > 0` goes forward, never back: run its attach again (the removal
+    refuses it).
 
   - **A restored copy of a cell's Postgres** on another deployment carries the source
     cell's deployment id, so the check returns the live source cell's row. Do not clear

@@ -200,3 +200,40 @@ async def test_the_pages_directory_check_reads_an_unattached_later_cell() -> Non
         )
         row = await conn.fetchrow(second.replace(":'id'", "$1"), deployment)
         assert (row["is_first"], row["state"], row["placed"]) == (False, "attaching", 0)
+
+
+def _holder_query() -> str:
+    """The page's query naming the session that holds the attach lock."""
+    text = PAGE.read_text()
+    section = text[text.index("### A process with LOOM_CELL unset is gated") :]
+    return next(b for b in re.findall(r"```sql\n(.*?)```", section, re.S) if "pg_locks" in b)
+
+
+@pytest.mark.asyncio
+async def test_the_pages_transaction_waits_for_no_running_attach_and_names_its_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An attach, prepare or update holds the attach lock; the transaction takes it before
+    the migration lock, so it refuses at once and changes nothing, and the page's query
+    names the session holding it."""
+    import asyncpg
+
+    _, transaction = _page_sql()
+    async with _own_database() as conn:
+        await _write_state(conn, {"tenancy"})
+        database = await conn.fetchval("SELECT current_database()")
+        holder = await asyncpg.connect(with_database(os.environ["LOOM_PG_DSN"], database))
+        try:
+            await holder.execute("SELECT pg_advisory_lock($1)", cell.ATTACH_LOCK_KEY)
+            with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+                await conn.execute(_statements(transaction))
+            await conn.execute("ROLLBACK")
+            assert "partial" in await _gate(monkeypatch, conn)
+            rows = await conn.fetch(_holder_query())
+            assert [r["pid"] for r in rows] == [await holder.fetchval("SELECT pg_backend_pid()")]
+            await holder.execute("SELECT pg_advisory_unlock($1)", cell.ATTACH_LOCK_KEY)
+            assert await conn.fetch(_holder_query()) == []
+            await conn.execute(_statements(transaction))  # the rerun
+            assert await _gate(monkeypatch, conn) == ""
+        finally:
+            await holder.close()

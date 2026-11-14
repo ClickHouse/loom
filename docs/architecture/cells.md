@@ -158,6 +158,53 @@ timeout); a refused, failed or late answer counts as unreadable.
 With the directory unreachable, rules 1 to 4 route from the router's cached cells; a
 lookup of an org it has not cached and a placement answer 503.
 
+The operator's routes, each with the router's operator credential, are under
+`/cells/v1/operator/cells/<cell>`: `limit`, `credential` and `register` (prepare's), the row
+itself (`GET`, which attach reads for its refusals, its done check and its resume), the
+first cell's attach (`attach/begin`, `attach/place`, `attach/enforced` and `attach/serving`,
+in that order), and `DELETE`. Each answers a cell the directory does not hold 404 with the
+code `NO_SUCH_CELL`, so a 404 without it is a router replica of an earlier build. Every
+change takes the directory lock and then the cell's row lock (the order registration, the
+operator changes and the removal take), is written to the audit log, and has a time bound
+derived from its statement count. Each attach call refuses unless the row is the first
+cell's, `attaching`, and records the deployment id the call names, and while any other row
+exists (registration refuses a later cell until the first is `serving`, and a router replica
+of an earlier build could still register one):
+
+- `attach/begin` carries the cell's fingerprints exactly as `loom.cell_self` stores them,
+  its root-secret fingerprint, the allow lists attach judged the stores by, and fresh
+  nonces. It refuses a fingerprint whose deployment id, bucket, prefix, public host or
+  issuer host differ from the row's (an issuer host other than the cell's own is refused),
+  and one whose live placement body, with an org name at its longest, would pass the
+  router's body bound, naming the largest fields. Outside any directory transaction it runs
+  registration's probe at the row's `probe_url` and asks the row's `upstream_url` for the
+  deployment id, so the stores attach reads are the ones the live cell serves from. Then,
+  under the locks, it writes `attach_started_at` once, the fingerprints only while the row
+  has none (other fingerprints there answer 409: they change with `loom cell update`), and
+  `keys_fp` on every call, and audits the allow lists. It is idempotent. Its body has its
+  own bound, 256 KiB, past which it answers 413.
+- `attach/place` places a batch of at most 500 orgs (within the 64 KiB body bound) once
+  `begin` has run and the directory mode is `enforced`, past the cell's closed mark and
+  quota. It runs a fixed number of statements: one insert of the batch that skips an org
+  placed already, one read refusing the batch (rolled back, naming the org) when an org is
+  placed in another cell, one count, and one audit row per org it placed. A live placement
+  of the same org runs beside it once the mode is `enforced`; both hold the cell's row lock,
+  a live placement reads the winner again once it holds it, and every insert skips an org
+  placed already and counts only what it wrote, so the org is placed and counted once.
+- `attach/enforced` records the directory mode `enforced`, after which the first cell places
+  new orgs live; it is idempotent.
+- `attach/serving` runs the probe and the upstream check again, then, under the locks,
+  computes the row's issuers from its fingerprints (`bearer_issuers` of `current` and
+  `next`) and marks the cell `serving`; on a `serving` cell it answers at once. `begin`,
+  `place` and `enforced` on a `serving` cell answer 409.
+
+`DELETE` removes the row of a cell that is `attaching` with no placement, whatever its
+directory mode, with its host rows, audited: a first cell is backed out until its first
+placement, and a later cell registered by an earlier build stops blocking the first attach.
+A placement in flight either commits first, and the removal refuses, or finds no row. The
+router cannot read the cell's stores, so `loom cell remove`, which calls it, checks a first
+cell's Postgres first ([Operations](#operations)).
+
 ## SCIM and sign-in across cells
 
 Each cell is its own application at the identity provider: an OIDC client for sign-in at
@@ -260,7 +307,8 @@ prepare's arguments: the router reads it there at every prepare and rerun, and r
 an answer with another deployment id or none. The router also asks its pass-through
 upstream's main port (`LOOM_ROUTER_UPSTREAM_URL`, which registration copies into the
 row) and refuses one that reports another deployment id, so the row never names two
-deployments. Prepare refuses every other cell until the first is registered.
+deployments. Prepare refuses every other cell until the first is registered and `serving`,
+under the directory lock, so no later cell appears while the first attaches.
 
 **The stores are the live ones.** Before writing anything, prepare writes a random nonce
 into the target Postgres, under a reserved key of the target ClickHouse's
@@ -996,6 +1044,16 @@ the directory row.
 - `loom cell limit --cell <cell> --closed` closes a cell to new orgs, `--open` reopens
   it, and `--placements-max <n>` sets its placement quota (`--placements-max none`
   clears it).
+- `loom cell remove --cell <cell>` removes the directory row of a cell that is `attaching`
+  with no placement (`--cell` is the cell's `LOOM_CELL`, unset by then). For the first cell
+  it refuses unless the cell's Postgres reads `open` and records the row's deployment id,
+  which enforces the back-out order: unset `LOOM_CELL` on every process (each serves as in
+  `recording`), then the full-state cleanup, then the removal
+  ([troubleshooting](../operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated)).
+  Removing the row first answers every new org 503; clearing the state first gates every
+  process with `LOOM_CELL` set. A first cell with a placement goes forward, never back. A
+  removed cell's stores keep whatever state rows they hold, so the full-state cleanup runs
+  before they are prepared again.
 - The router's operator credential is `lco_` and 128 lowercase hex (a router with no
   `LOOM_ROUTER_OPERATOR_SHA256` answers the operator API 503 with
   `NO_OPERATOR_CREDENTIAL`), which `loom cell credential new --operator` makes; the
@@ -1164,12 +1222,12 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   `recording`), routing by rules 1 to 4 (`server/router/routing.py`, which decides, and
   the forward), the org lookup with its cache of placed orgs (which `loom login --org`,
   `loom.credentials.org_server`, asks), their rate limits (`server/router/limits.py`)
-  and the checks a placement passes; its operator API, which `loom cell limit` and
-  `loom cell credential` (`server/cli/cell.py`, with `loom cell which`) call with the
-  router's operator credential (`LOOM_ROUTER_OPERATOR_TOKEN`; the router keeps only
-  `LOOM_ROUTER_OPERATOR_SHA256`); `server/router/directory.py` and
-  `schemas/router_migrations/`: the directory, in the router's own Postgres database
-  (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
+  and the checks a placement passes; its operator API, with the first cell's attach routes,
+  which `loom cell limit`, `loom cell credential` and `loom cell remove`
+  (`server/cli/cell.py`, with `loom cell which`) call with the router's operator credential
+  (`LOOM_ROUTER_OPERATOR_TOKEN`; the router keeps only `LOOM_ROUTER_OPERATOR_SHA256`);
+  `server/router/directory.py` and `schemas/router_migrations/`: the directory, in the
+  router's own Postgres database (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
 
 The rest of the cell code is added by the pull requests that implement this page. It
 builds on:

@@ -1,11 +1,18 @@
 """The router's directory, in its own Postgres database (`LOOM_ROUTER_PG_DSN`):
-`loom_router.cells`, `placements`, `hosts` and `audit`
-(`schemas/router_migrations/`, docs/architecture/cells.md, "The router").
+`loom_router.cells`, `placements`, `hosts` and `audit` (`schemas/router_migrations/`,
+docs/architecture/cells.md, "The router").
 
-Every statement the router runs against it is here. Placements of one org run one
-at a time under a transaction-scoped lock on the org (`_PLACE_LOCK`, which every path
-that places takes), so two cells placing one org at once agree on the winner, and a
-retry of the same call answers the same.
+Every statement the router runs against it is here. Three things serialize placements:
+
+- the placing cell's row lock (`FOR UPDATE`), which a live placement and an attach batch
+  (`attach_place`) both take before they insert, so a cell's count and quota are judged one
+  placement at a time; a live placement reads the winner again once it holds the lock, so an
+  org a batch placed meanwhile is answered as placed;
+- a transaction-scoped lock on the org (`_PLACE_LOCK`) between live placements, so two cells
+  placing one org at once agree on the winner, and a retry of the same call answers the
+  same; a batch takes none, since no other cell exists while it runs;
+- the placements' primary key, as a backstop: every insert is `ON CONFLICT DO NOTHING`, and
+  only a row it returns is counted and audited.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from server.core import cell as cell_state
@@ -41,22 +49,36 @@ _lookups = asyncio.Semaphore(LOOKUP_SLOTS)
 # transaction left idle is ended at twice that: a stalled router never keeps a cell's row
 # lock. A cell's placement call gives up at its own LOOM_CELL_ROUTER_TIMEOUT_S.
 STATEMENT_TIMEOUT_S = 10  # not a setting: the cell's own timeout bounds it
-# The longest a limit or credential change can take: the connection wait, then eight
-# statements (begin, lock, row, check, update, audit, read-back, commit) and the pool's
-# reset of the connection as it is released, at the client bound each. Registration has
-# its own bound, below.
-OPERATOR_CHANGE_MAX_S = (  # not a setting: derived from the bound above
-    STATEMENT_TIMEOUT_S + (8 + 1) * (STATEMENT_TIMEOUT_S + 1)
-)
-# The longest a registration's directory write can take: the connection wait, then
-# thirteen statements (begin, lock, row, five refusal reads, three inserts, read-back,
-# commit); and its read before the probe: the connection wait, then six statements (the
-# row, the first cell, then the credential, deployment id, host and bucket reads). Each
-# adds the pool's reset of its connection on release (asyncpg's, at the client bound).
-# tests/unit/test_cell_register.py counts the statements against the code.
+
+
+def _bound_s(statements: int) -> int:
+    """The longest a directory call of `statements` statements can take: the connection
+    wait, then each statement and the pool's reset of the connection as it is released
+    (asyncpg's), at the client bound each."""
+    return STATEMENT_TIMEOUT_S + (statements + 1) * (STATEMENT_TIMEOUT_S + 1)
+
+
+# The longest a limit or credential change can take: eight statements (begin, lock, row,
+# check, update, audit, read-back, commit). Registration has its own bound, below.
+OPERATOR_CHANGE_MAX_S = _bound_s(8)  # not a setting: derived from the bound above
+# The longest a registration's directory write can take: thirteen statements (begin, lock,
+# row, five refusal reads, three inserts, read-back, commit); and its read before the probe:
+# six statements (the row, the first cell, then the credential, deployment id, host and
+# bucket reads). tests/unit/test_cell_register.py counts the statements against the code.
 REGISTER_STATEMENTS, REFUSAL_READ_STATEMENTS = 13, 6
-REGISTER_MAX_S = STATEMENT_TIMEOUT_S + (REGISTER_STATEMENTS + 1) * (STATEMENT_TIMEOUT_S + 1)
-REFUSAL_READ_MAX_S = STATEMENT_TIMEOUT_S + (REFUSAL_READ_STATEMENTS + 1) * (STATEMENT_TIMEOUT_S + 1)
+REGISTER_MAX_S = _bound_s(REGISTER_STATEMENTS)
+REFUSAL_READ_MAX_S = _bound_s(REFUSAL_READ_STATEMENTS)
+# The attach calls' statements, which tests/unit/test_router_attach.py counts against the
+# code: the operator's read of a cell's row (the row, then any other row); `begin`,
+# `enforced` and `serving` (begin, lock, row, other row, update, audit, read-back, commit);
+# a batch (begin, lock, row, other row, insert, placements elsewhere, count, audit, commit);
+# and the removal of an unattached cell (begin, lock, row, hosts, row, audit, commit).
+ATTACH_READ_STATEMENTS, ATTACH_CHANGE_STATEMENTS, ATTACH_PLACE_STATEMENTS = 2, 8, 9
+REMOVE_STATEMENTS = 7
+ATTACH_READ_MAX_S = _bound_s(ATTACH_READ_STATEMENTS)  # not a setting: derived
+ATTACH_CHANGE_MAX_S = _bound_s(ATTACH_CHANGE_STATEMENTS)  # not a setting: derived
+ATTACH_PLACE_MAX_S = _bound_s(ATTACH_PLACE_STATEMENTS)  # not a setting: derived
+REMOVE_MAX_S = _bound_s(REMOVE_STATEMENTS)  # not a setting: derived
 # Every directory connection commits through the synchronous standby and reads what
 # committed before each statement, whatever the database's defaults: a placement the
 # router answered survives a failover, and a later placement of one org sees the earlier.
@@ -408,9 +430,9 @@ async def register(reg: Registration) -> tuple[Cell, bool]:
     checks below.
 
     Refused: stores holding tenancy or state rows, a later cell whose bucket prefix holds
-    objects or whose processes run without its LOOM_CELL, a second first cell, a later
-    cell before the first, a first cell with no upstream to copy, a credential hash any
-    cell holds as current or next, a deployment id or host another cell holds, and a
+    objects or whose processes run without its LOOM_CELL, a second first cell, a later cell
+    before the first is `serving`, a first cell with no upstream to copy, a credential hash
+    any cell holds as current or next, a deployment id or host another cell holds, and a
     bucket prefix that shares objects with another cell's in a bucket of the same name."""
     async with _reading(), _connection() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", _DIRECTORY_LOCK)
@@ -497,14 +519,20 @@ def _rerun_refusal(held: Mapping[str, Any], reg: Registration) -> str:
     return ""
 
 
-def _order_refusal(reg: Registration, first: str | None) -> str:
-    """Why a new cell cannot register given the first cell's name (`first`, None before
-    one is), '' when it can: one first cell, registered before any other, with the
+def _order_refusal(reg: Registration, first: Mapping[str, Any] | None) -> str:
+    """Why a new cell cannot register given the first cell's name and state (`first`, None
+    before one is), '' when it can: one first cell, registered before any other and
+    `serving` before another registers (so no later cell appears mid-attach), with the
     router's upstream to copy."""
     if reg.is_first and first is not None:
-        return f"cell {first!r} is the deployment's first cell already"
+        return f"cell {first['cell']!r} is the deployment's first cell already"
     if not reg.is_first and first is None:
         return "the first cell is registered before any other"
+    if not reg.is_first and first is not None and first["state"] != "serving":
+        return (
+            f"the first cell {first['cell']!r} is not serving yet: a later cell registers "
+            "once the first cell's attach is done"
+        )
     if reg.is_first and not reg.upstream_url:
         return (
             "the router needs LOOM_ROUTER_UPSTREAM_URL (http or https with a host) to register "
@@ -557,7 +585,7 @@ def _held_refusal(reg: Registration) -> str:
 
 
 async def _refuse_registration(conn: Any, reg: Registration) -> None:
-    first = await conn.fetchval("SELECT cell FROM loom_router.cells WHERE is_first")
+    first = await conn.fetchrow("SELECT cell, state FROM loom_router.cells WHERE is_first")
     if refusal := _held_refusal(reg) or _order_refusal(reg, first):
         raise OperatorRefused(refusal)
     taken = await conn.fetchval(
@@ -607,43 +635,390 @@ async def first_cell_named(cell_name: str) -> Cell | None:
 
 
 async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tuple[str, str]:
-    """Place `org` in `cell_name` unless it is placed already; the (cell, deployment
-    id) that holds it. An org placed already answers its cell, whatever the cell's
-    state. Otherwise the cell's row is locked and judged (`refusal`, then its quota),
-    so a change to it waits for the placement and the quota holds across router
-    replicas; a refused placement raises PlacementRefused and writes nothing, and a new
-    org name longer than `cell.ORG_MAX_BYTES` raises OrgTooLong (one placed before the
-    limit answers its cell, as any placed org does)."""
+    """Place `org` in `cell_name` unless it is placed already; the (cell, deployment id)
+    that holds it. An org placed already answers its cell, whatever the cell's state.
+    Otherwise the cell's row is locked, the winner read again (an attach batch holds the row
+    lock, not the org's), and the row judged (`refusal`, then its quota), so a change to it
+    waits for the placement and the quota holds across router replicas; a refused placement
+    raises PlacementRefused and writes nothing, and a new org name longer than
+    `cell.ORG_MAX_BYTES` raises OrgTooLong (one placed before the limit answers its cell, as
+    any placed org does)."""
     async with _reading(), _connection() as conn, conn.transaction():
         # Placements of one org run one at a time, whichever cell asks: the later one
         # reads the earlier one's winner.
         await conn.execute("SELECT pg_advisory_xact_lock($1, hashtext($2))", _PLACE_LOCK, org)
         row = await conn.fetchrow(_WINNER, org)
         if row is None:
-            if reason := cell_state.org_name_refusal(org):
-                raise OrgTooLong(reason)
+            _refuse_long([org])
             locked = await conn.fetchrow(f"{_CELL} WHERE cell = $1 FOR UPDATE", cell_name)
             if locked is None:
                 raise PlacementRefused(f"cell {cell_name!r} is not in the directory")
-            candidate = _cell(locked)
-            if reason := refusal(candidate):
-                raise PlacementRefused(reason)
-            quota = candidate.placements_max
-            if quota is not None and candidate.placed >= quota:
-                raise PlacementRefused(f"cell {cell_name!r} holds its quota of orgs")
-            await conn.execute(
-                "INSERT INTO loom_router.placements (org, cell) VALUES ($1, $2)", org, cell_name
-            )
-            await conn.execute(
-                "UPDATE loom_router.cells SET placed = placed + 1 WHERE cell = $1", cell_name
-            )
-            await conn.execute(
-                "INSERT INTO loom_router.audit (actor, action, detail) VALUES ($1, 'place', $2)",
-                f"cell:{cell_name}",
-                {"org": org, "cell": cell_name},
-            )
+            # An attach batch of this cell, which holds the row lock and not the org's, may
+            # have placed the org since the first read: it is answered as placed.
             row = await conn.fetchrow(_WINNER, org)
+            if row is None:
+                await _place_one(conn, org, cell_name, _cell(locked), refusal)
+                row = await conn.fetchrow(_WINNER, org)
     return str(row["cell"]), str(row["deployment_id"])
+
+
+async def _place_one(
+    conn: Any, org: str, cell_name: str, candidate: Cell, refusal: Callable[[Cell], str]
+) -> None:
+    """Judge the locked row (`refusal`, then its quota) and insert the placement; its count
+    and audit row only when the insert wrote it."""
+    if reason := refusal(candidate):
+        raise PlacementRefused(reason)
+    quota = candidate.placements_max
+    if quota is not None and candidate.placed >= quota:
+        raise PlacementRefused(f"cell {cell_name!r} holds its quota of orgs")
+    inserted = await conn.fetchval(
+        "INSERT INTO loom_router.placements (org, cell) VALUES ($1, $2) "
+        "ON CONFLICT DO NOTHING RETURNING org",
+        org,
+        cell_name,
+    )
+    if inserted is None:
+        return
+    await conn.execute(
+        "UPDATE loom_router.cells SET placed = placed + 1 WHERE cell = $1", cell_name
+    )
+    await conn.execute(
+        "INSERT INTO loom_router.audit (actor, action, detail) VALUES ($1, 'place', $2)",
+        f"cell:{cell_name}",
+        {"org": org, "cell": cell_name},
+    )
+
+
+def _refuse_long(orgs: Iterable[str]) -> None:
+    """OrgTooLong for the first org longer than `cell.ORG_MAX_BYTES`: the one check every
+    route that inserts a placement runs, so no route places such an org."""
+    for org in orgs:
+        if reason := cell_state.org_name_refusal(org):
+            raise OrgTooLong(reason)
+
+
+# The first cell's attach (`loom cell attach`; docs/architecture/cells.md, "Attaching a
+# cell"). Every call runs under the directory lock, then the cell's row lock, the order
+# `register`, `_operator_change` and `remove` take, and refuses while another row exists: a
+# later cell registered before the first attach could share the first cell's stores.
+
+# The columns attach reads beside a Cell's.
+_ATTACH_EXTRA = ("bucket", "bucket_prefix", "probe_url", "upstream_url", "attach_started_at")
+_CELL_ATTACH = f"SELECT {_CELL_COLUMNS}, {', '.join(_ATTACH_EXTRA)} FROM loom_router.cells"
+_OTHER = "SELECT cell FROM loom_router.cells WHERE cell <> $1 ORDER BY cell LIMIT 1"
+
+
+@dataclass(frozen=True)
+class Attaching:
+    """A cell's row as attach reads it: the Cell, the stores and addresses its probe and
+    upstream check compare, when attach began, and the name of any other row."""
+
+    row: Cell
+    bucket: str
+    bucket_prefix: str
+    probe_url: str
+    upstream_url: str
+    attach_started_at: datetime | None
+    other: str | None
+
+    @property
+    def deployment_id(self) -> str:
+        return self.row.deployment_id
+
+
+def _attaching(found: Any, other: str | None) -> Attaching:
+    values = dict(found)
+    extra = {k: values.pop(k) for k in _ATTACH_EXTRA}
+    return Attaching(row=_cell(values), other=other, **extra)
+
+
+@dataclass(frozen=True)
+class Begin:
+    """What `attach/begin` posts: the deployment id the cell's stores record, its
+    fingerprints exactly as `loom.cell_self` stores them, its root-secret fingerprint and
+    the allow lists attach judged the stores by (audited, never stored)."""
+
+    deployment_id: str
+    current_fp: dict[str, Any]
+    next_fp: dict[str, Any] | None
+    keys_fp: str
+    allowed: dict[str, list[str]]
+
+
+def attach_refusal(found: Attaching, deployment_id: str, *, begun: bool = True) -> str:
+    """Why an attach call on this row is refused ('' when it is not): only the first cell,
+    while `attaching`, called with the deployment id the row records, with no other row, and
+    (`begun`) once `attach/begin` has written `attach_started_at` and the fingerprints."""
+    row = found.row
+    if not row.is_first:
+        return f"cell {row.cell!r} is a later cell: the router attaches the first cell only"
+    if row.state != "attaching":
+        return f"cell {row.cell!r} is {row.state} already"
+    if deployment_id != row.deployment_id:
+        return (
+            f"cell {row.cell!r} is registered with deployment id {row.deployment_id!r}, "
+            f"not {deployment_id!r}"
+        )
+    if found.other is not None:
+        return (
+            f"cell {found.other!r} is registered while the first cell attaches: remove it "
+            f"first (`loom cell remove --cell {found.other}`)"
+        )
+    if begun and (found.attach_started_at is None or row.current_fp is None):
+        return f"the attach of cell {row.cell!r} has not begun: post attach/begin first"
+    return ""
+
+
+def _fingerprint_refusal(found: Attaching, name: str, value: dict[str, Any]) -> str:
+    """Why a posted fingerprint is not this row's cell ('' when it is): its stores and
+    hosts, the servers' own values, equal the row's."""
+    fields = value.get("fields")
+    if type(value.get("v")) is not int or value["v"] != cell_state.FINGERPRINT_VERSION:
+        return f"{name} is no fingerprint of version {cell_state.FINGERPRINT_VERSION}"
+    if not isinstance(fields, dict):
+        return f"{name} holds no fields"
+    row = found.row
+    expected = {
+        "deployment_id": row.deployment_id,
+        "bucket": found.bucket,
+        "bucket_prefix": found.bucket_prefix,
+        "public_host": row.host,
+    }
+    differ = [k for k, want in expected.items() if fields.get(k, cell_state.DEFAULTS[k]) != want]
+    if differ:
+        return f"{name}'s {', '.join(differ)} differ from cell {row.cell!r}'s registration"
+    if fields.get("oauth_issuer_host", "") != row.host:
+        return (
+            f"{name}'s oauth_issuer_host is not cell {row.cell!r}'s host {row.host!r}: the "
+            "router attaches no issuer host other than the cell's own"
+        )
+    return ""
+
+
+def begin_refusal(found: Attaching, begin: Begin) -> str:
+    """Why `attach/begin` is refused on this row ('' when it is not), before the probe and
+    again under the lock."""
+    if reason := attach_refusal(found, begin.deployment_id, begun=False):
+        return reason
+    for name, value in (("current_fp", begin.current_fp), ("next_fp", begin.next_fp)):
+        if value is not None and (reason := _fingerprint_refusal(found, name, value)):
+            return reason
+    row = found.row
+    if row.current_fp is not None and (row.current_fp, row.next_fp) != (
+        begin.current_fp,
+        begin.next_fp,
+    ):
+        return f"cell {row.cell!r} records other fingerprints: change them with `loom cell update`"
+    return ""
+
+
+async def attach_read(cell_name: str) -> Attaching:
+    """The cell's row as attach reads it, and any other row's name; NoSuchCell without
+    one."""
+    async with _reading(), _connection() as conn:
+        found = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
+        other = await conn.fetchval(_OTHER, cell_name)
+    if found is None:
+        raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
+    return _attaching(found, other)
+
+
+@asynccontextmanager
+async def _attach_change(cell_name: str) -> AsyncIterator[tuple[Any, Attaching]]:
+    """A directory transaction holding the directory lock and then the cell's row lock, with
+    the row and any other row's name."""
+    async with _reading(), _connection() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock($1)", _DIRECTORY_LOCK)
+        found = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1 FOR UPDATE", cell_name)
+        if found is None:
+            raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
+        other = await conn.fetchval(_OTHER, cell_name)
+        yield conn, _attaching(found, other)
+
+
+async def _audit(conn: Any, action: str, detail: dict[str, Any]) -> None:
+    await conn.execute(
+        "INSERT INTO loom_router.audit (actor, action, detail) VALUES ('operator', $1, $2)",
+        action,
+        detail,
+    )
+
+
+async def attach_begin(cell_name: str, begin: Begin) -> Attaching:
+    """`attach/begin`: write `attach_started_at` once, the fingerprints while the row has
+    none, and the root-secret fingerprint on every call, audited with the allow lists.
+    Idempotent: a rerun posting the same fingerprints writes only `keys_fp`."""
+    async with _attach_change(cell_name) as (conn, found):
+        if reason := begin_refusal(found, begin):
+            raise OperatorRefused(reason)
+        # In SET, `current_fp` is the row's value before this statement.
+        await conn.execute(
+            "UPDATE loom_router.cells SET attach_started_at = COALESCE(attach_started_at, now()), "
+            "current_fp = COALESCE(current_fp, $2), "
+            "next_fp = CASE WHEN current_fp IS NULL THEN $3 ELSE next_fp END, "
+            "keys_fp = $4, updated_at = now() WHERE cell = $1",
+            cell_name,
+            begin.current_fp,
+            begin.next_fp,
+            begin.keys_fp,
+        )
+        await _audit(
+            conn,
+            "attach_begin",
+            {
+                "cell": cell_name,
+                "deployment_id": begin.deployment_id,
+                "keys_fp": begin.keys_fp,
+                "fingerprints_written": found.row.current_fp is None,
+                **begin.allowed,
+            },
+        )
+        written = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
+    return _attaching(written, None)
+
+
+async def attach_place(cell_name: str, deployment_id: str, orgs: list[str]) -> tuple[int, int]:
+    """`attach/place`: place a batch of the first cell's orgs, once its directory mode is
+    `enforced`, past its closed mark and quota (the orgs are the cell's already); the count
+    it placed now and the cell's count. An org already placed in the cell is skipped, so a
+    rerun places nothing twice; one placed in another cell refuses the batch, naming it, and
+    writes nothing. A fixed number of statements, whatever the batch's size. The router
+    cannot read the cell's Postgres: only attach, which posts this once the cell's mode
+    reads `enforced`, judges that."""
+    _refuse_long(orgs)
+    batch = sorted(set(orgs))
+    async with _attach_change(cell_name) as (conn, found):
+        if reason := attach_refusal(found, deployment_id):
+            raise OperatorRefused(reason)
+        if found.row.mode != "enforced":
+            raise OperatorRefused(
+                f"cell {cell_name!r} records mode {found.row.mode!r}: post attach/enforced first"
+            )
+        new = await conn.fetch(
+            "INSERT INTO loom_router.placements (org, cell) SELECT o, $2 FROM unnest($1::text[]) "
+            "AS o ON CONFLICT DO NOTHING RETURNING org",
+            batch,
+            cell_name,
+        )
+        elsewhere = await conn.fetchrow(
+            "SELECT org, cell FROM loom_router.placements WHERE org = ANY($1::text[]) "
+            "AND cell <> $2 ORDER BY org LIMIT 1",
+            batch,
+            cell_name,
+        )
+        if elsewhere is not None:
+            # Raised inside the transaction: the batch's inserts roll back.
+            raise OperatorRefused(
+                f"org {elsewhere['org']!r} is placed in cell {elsewhere['cell']!r}"
+            )
+        placed = await conn.fetchval(
+            "UPDATE loom_router.cells SET placed = placed + $2 WHERE cell = $1 RETURNING placed",
+            cell_name,
+            len(new),
+        )
+        await conn.execute(
+            "INSERT INTO loom_router.audit (actor, action, detail) "
+            "SELECT 'operator', 'place', jsonb_build_object('org', o, 'cell', $2::text) "
+            "FROM unnest($1::text[]) AS o",
+            [str(r["org"]) for r in new],
+            cell_name,
+        )
+    return len(new), int(placed)
+
+
+async def attach_enforced(cell_name: str, deployment_id: str) -> Attaching:
+    """`attach/enforced`: record directory mode `enforced` (registration wrote `recording`),
+    after which the cell places new orgs live; idempotent."""
+    async with _attach_change(cell_name) as (conn, found):
+        if reason := attach_refusal(found, deployment_id):
+            raise OperatorRefused(reason)
+        await conn.execute(
+            "UPDATE loom_router.cells SET mode = 'enforced', mode_set_at = now(), "
+            "updated_at = now() WHERE cell = $1 AND mode <> 'enforced'",
+            cell_name,
+        )
+        await _audit(
+            conn,
+            "attach_enforced",
+            {"cell": cell_name, "changed": found.row.mode != "enforced"},
+        )
+        written = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
+    return _attaching(written, None)
+
+
+def issuers(row: Cell) -> list[str]:
+    """The bearer-token issuers the cell's fingerprints accept (`bearer_issuers` of
+    `current` and `next`), which routing sends the shared host's tokens by."""
+    found: set[str] = set()
+    for value in (row.current_fp, row.next_fp):
+        fields = value.get("fields") if isinstance(value, dict) else None
+        listed = fields.get("bearer_issuers") if isinstance(fields, dict) else None
+        if isinstance(listed, list):
+            found.update(i for i in listed if isinstance(i, str) and i)
+    return sorted(found)
+
+
+async def attach_serving(cell_name: str, deployment_id: str) -> Attaching:
+    """`attach/serving`: mark the first cell `serving`, with the issuers its fingerprints
+    accept computed from the row as locked. A `serving` row is answered as it is."""
+    async with _attach_change(cell_name) as (conn, found):
+        row = found.row
+        if row.is_first and row.state == "serving" and row.deployment_id == deployment_id:
+            return found
+        if reason := attach_refusal(found, deployment_id):
+            raise OperatorRefused(reason)
+        if row.mode != "enforced":
+            raise OperatorRefused(
+                f"cell {cell_name!r} records mode {row.mode!r}: post attach/enforced first"
+            )
+        accepted = issuers(row)
+        await conn.execute(
+            "UPDATE loom_router.cells SET state = 'serving', issuers = $2, updated_at = now() "
+            "WHERE cell = $1",
+            cell_name,
+            accepted,
+        )
+        await _audit(conn, "attach_serving", {"cell": cell_name, "issuers": accepted})
+        written = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
+    return _attaching(written, None)
+
+
+async def remove(cell_name: str) -> Cell:
+    """`DELETE /cells/v1/operator/cells/<cell>` (`loom cell remove`): remove a cell's row
+    and its host rows, audited, while it is `attaching` with no placement, whatever its
+    directory mode. A placement in flight either commits first (and the removal refuses) or
+    finds no row. The router cannot read the cell's stores: `loom cell remove` checks that a
+    first cell's Postgres reads `open` first, and a direct call skips that check, leaving a
+    first cell still prepared answering its new orgs 503 and unable to register again until
+    the full back-out has run."""
+    async with _reading(), _connection() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock($1)", _DIRECTORY_LOCK)
+        found = await conn.fetchrow(f"{_CELL} WHERE cell = $1 FOR UPDATE", cell_name)
+        if found is None:
+            raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
+        row = _cell(found)
+        if row.state != "attaching":
+            raise OperatorRefused(f"cell {cell_name!r} is {row.state}: a cell stays attached")
+        if row.placed:
+            raise OperatorRefused(
+                f"cell {cell_name!r} holds {row.placed} placement(s): its attach goes forward, "
+                "never back"
+            )
+        await conn.execute("DELETE FROM loom_router.hosts WHERE cell = $1", cell_name)
+        await conn.execute("DELETE FROM loom_router.cells WHERE cell = $1", cell_name)
+        await _audit(
+            conn,
+            "remove",
+            {
+                "cell": cell_name,
+                "is_first": row.is_first,
+                "host": row.host,
+                "deployment_id": row.deployment_id,
+                "mode": row.mode,
+            },
+        )
+    return row
 
 
 async def lookup(org: str) -> tuple[str, str] | None:

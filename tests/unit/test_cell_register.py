@@ -541,10 +541,12 @@ class _CountingConnection:
 
     async def fetchval(self, sql: str, *_a: Any) -> Any:
         self.statements += 1
-        return self.first if "WHERE is_first" in sql else None
+        return None
 
     async def fetchrow(self, sql: str, *_a: Any) -> Any:
         self.statements += 1
+        if "WHERE is_first" in sql:  # the first cell, serving: a later cell may register
+            return {"cell": self.first, "state": "serving"} if self.first else None
         if not self.inserted:
             return None  # a new registration: no row until it inserts one
         return {
