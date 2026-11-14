@@ -879,6 +879,17 @@ def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
     assert not world.sources[-1].pending_delete
 
 
+def test_a_pass_leaves_a_mirrored_source_to_the_build_that_writes_mirrors(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.sources = [_source(access="mirrored")]
+    result = asyncio.run(source_sync.run_sync())
+    assert (result.sources, result.synced) == (0, 0) and world.upserts == []
+    # Removed with its documents, its request is kept for that build.
+    world.sources = [_source(access="mirrored", active=False, pending_delete=True)]
+    assert asyncio.run(source_sync.run_sync()).retired == 0
+    assert world.sources[-1].pending_delete
+
+
 def test_a_deleted_namespace_s_source_still_has_its_documents_retired(world: _World) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync())

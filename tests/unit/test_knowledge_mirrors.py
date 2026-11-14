@@ -17,8 +17,10 @@ from server.erasure.store.mutations import purge_mode, purge_scope
 from server.identity.store import namespace_census
 from server.knowledge.app import mirrors as app_mirrors
 from server.knowledge.store import mirrors
+from tests.unit.ch_fake import RecordingCH
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl
 from tests.unit.erasure_saga_stub import saga_runner
+from tests.unit.schema_ddl import column_names
 
 ORG = "o"
 MIRROR = "acl-" + "a" * 24
@@ -114,7 +116,7 @@ def test_a_namespace_erasure_purges_the_mirror_and_counts_it(
     # The namespace's rows are tombstoned, the mirror's deleted, in the same step.
     assert trace["memory.tombstone"][0] == ("UPDATE", "loom.memory")
     assert ("DELETE", "loom.memory") in trace["memory.tombstone"]
-    assert censused == [["team", MIRROR]]
+    assert censused == ["team", [MIRROR]]
     assert ("forget", {MIRROR: "team"}) in registry
 
 
@@ -131,3 +133,54 @@ def test_a_replay_runs_each_step_over_the_mirrors_too(registry: list[Any]) -> No
     body = ErasureRequestInput(org=ORG, scope_type="namespace", scope_value="team", requester="r")
     asyncio.run(replay._run_steps(body, "e1", [("memory.tombstone", step)]))
     assert seen == [("team", False), ([MIRROR], True)]
+
+
+def test_a_registry_write_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = RecordingCH()
+    ch.install(monkeypatch)
+    asyncio.run(mirrors.forget_mirrors(ORG, {MIRROR: "team"}))
+    [row] = ch.inserted("knowledge_mirrors")
+    # Every column but `version`, which the server's clock sets.
+    assert set(row) | {"version"} == set(column_names("knowledge_mirrors"))
+
+
+def _counted(monkeypatch: pytest.MonkeyPatch, left_in_mirror: int) -> list[Any]:
+    """The census answers `left_in_mirror` rows of loom.memory in the mirror, and only
+    when it counts as a purge does (every row, tombstoned or not)."""
+    counted: list[Any] = []
+
+    async def _count(org: str, scope_type: str, scope: Any, **_: Any) -> dict[str, int]:
+        counted.append((scope, purge_mode()))
+        return {"loom.memory": left_in_mirror if scope == [MIRROR] and purge_mode() else 0}
+
+    async def _pairs(org: str, scope_type: str, scope: Any, **_: Any) -> Any:
+        return await _count(org, scope_type, scope), {}
+
+    async def _objects(org: str, scope: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(erasure_census, "residue_census", _count)
+    monkeypatch.setattr(erasure_census, "evidence_census", _pairs)
+    monkeypatch.setattr(erasure_census, "object_residue", _objects)
+    return counted
+
+
+def test_a_tombstoning_erasure_fails_on_any_row_left_in_a_mirror(
+    registry: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counted = _counted(monkeypatch, left_in_mirror=1)
+    holder: dict[str, Any] = {}
+    with pytest.raises(saga_steps.ErasureResidueError):
+        asyncio.run(saga_steps._step_verify_residue(ORG, "namespace", "team", holder))
+    assert counted == [("team", False), ([MIRROR], True)]
+    assert holder["per_table"]["loom.memory"] == 1
+
+
+def test_the_evidence_census_counts_the_mirror_too(
+    registry: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _counted(monkeypatch, left_in_mirror=2)
+    found, unread = asyncio.run(
+        saga_steps.evidence_with_mirrors(ORG, "namespace", "team", spellings=None)
+    )
+    assert found == {"loom.memory": 2} and unread == {}

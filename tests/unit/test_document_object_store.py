@@ -27,6 +27,13 @@ from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWE
 from server.knowledge.store import blobs, pg_documents
 from server.knowledge.workers import blob_gc
 from server.settings import settings
+from tests.unit.erasure_saga_stub import stub_no_mirrors
+
+
+@pytest.fixture(autouse=True)
+def _no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_no_mirrors(monkeypatch)
+
 
 BUCKET = "originals"
 

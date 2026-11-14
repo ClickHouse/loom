@@ -67,17 +67,19 @@ async def _step_verify_residue(
 ) -> int:
     """Verified forgetting: count what is still live in scope across every
     substrate the read paths touch. Fills `holder` for the terminal
-    checkpoint; zero is the only pass. A namespace's mirrors are in its scope."""
-    if scope_type == "namespace" and (mirrors := list(await _mirrors_of(org, scope_value))):
-        scope_value = [*namespaces_of(scope_value), *mirrors]
+    checkpoint; zero is the only pass."""
     spellings = await census_spellings(org, scope_type, scope_value)
-    per_table = await erasure_census.residue_census(
-        org, scope_type, scope_value, spellings=spellings
-    )
-    if scope_type == "namespace":  # and the scope's objects left in the document bucket
-        per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
-            org, scope_value
-        )
+
+    async def count(scope: _NS) -> dict[str, int]:
+        per_table = await erasure_census.residue_census(org, scope_type, scope, spellings=spellings)
+        if scope_type == "namespace":  # and the scope's objects left in the document bucket
+            per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
+                org, scope
+            )
+        return per_table
+
+    per_table = await count(scope_value)
+    await _add_mirror_residue(org, scope_type, scope_value, per_table, count)
     holder["per_table"] = per_table
     holder["count"] = sum(per_table.values())
     holder["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
@@ -212,6 +214,47 @@ def with_mirrors(
         return n
 
     return run
+
+
+async def _add_mirror_residue(
+    org: str,
+    scope_type: str,
+    scope_value: _NS,
+    per_table: dict[str, int],
+    count: Callable[[_NS], Awaitable[dict[str, int]]],
+) -> None:
+    """Add what `count` finds in a namespace scope's mirrors, counted as a purge counts:
+    every row a mirror still holds is residue, whatever the erasure's mode."""
+    if scope_type != "namespace" or not (mirrors := list(await _mirrors_of(org, scope_value))):
+        return
+    with purge_scope(True):
+        found = await count(mirrors)
+    for table, n in found.items():
+        per_table[table] = per_table.get(table, 0) + n
+
+
+async def evidence_with_mirrors(
+    org: str,
+    scope_type: str,
+    scope_value: _NS,
+    *,
+    spellings: Sequence[str] | None,
+    ch: Any = None,
+) -> tuple[dict[str, int], dict[str, Exception]]:
+    """`erasure_census.evidence_census` of the scope and its mirrors, in the caller's
+    purge scope for the named namespaces (see `_add_mirror_residue`)."""
+    unread: dict[str, Exception] = {}
+
+    async def count(scope: _NS) -> dict[str, int]:
+        found, errors = await erasure_census.evidence_census(
+            org, scope_type, scope, ch=ch, spellings=spellings
+        )
+        unread.update(errors)
+        return found
+
+    per_table = await count(scope_value)
+    await _add_mirror_residue(org, scope_type, scope_value, per_table, count)
+    return per_table, unread
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:

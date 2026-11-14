@@ -583,8 +583,10 @@ async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.identity.store import namespace_census
     from server.knowledge.store import chunks as K
     from server.knowledge.store import documents as D
+    from server.knowledge.store import mirrors as M
 
     f = c["filters"]
     await K.count_active_by_uri(ORG, NS, ["doc://a"], ch=ch)
@@ -593,6 +595,8 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, ["h1"], excluding_source_uri="doc://b" if f else "", ch=ch
     )
     await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
+    await M.mirrors_of(ORG, [NS], ch=ch)
+    await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
     await K.find_doc_by_content_sha256(
         ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
     )

@@ -594,7 +594,7 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
-    from server.erasure.app.saga_steps import census_spellings
+    from server.erasure.app.saga_steps import census_spellings, evidence_with_mirrors
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
@@ -642,7 +642,7 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             rc = 1
             continue
         with erasure_mutations.purge_scope(purge):
-            census, unread = await erasure_census.evidence_census(
+            census, unread = await evidence_with_mirrors(
                 str(row["org"]), scope_type, scope_value, ch=ch, spellings=spellings
             )
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}

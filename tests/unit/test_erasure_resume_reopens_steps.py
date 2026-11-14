@@ -16,6 +16,13 @@ from server.erasure.api.erasure import ErasureRequestInput
 from server.erasure.store import census as erasure_census
 from server.erasure.store import health as erasure_health
 from server.erasure.store import ledger as erasure_ledger
+from tests.unit.erasure_saga_stub import stub_no_mirrors
+
+
+@pytest.fixture(autouse=True)
+def _no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_no_mirrors(monkeypatch)
+
 
 _OPERATOR_RESIDUE = {
     "loom.memory_belief_sources": 454610,

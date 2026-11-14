@@ -453,8 +453,7 @@ class KnowledgeSourceRemoveInput(BaseModel):
     confirm: str = Field(..., description="Type the source name to confirm.")
     delete_documents: bool = Field(
         False,
-        description="Record a request to retire the source's documents (default keep "
-        "them). A mirrored source's documents are always retired.",
+        description="Record a request to retire the source's documents (default keep them).",
     )
 
 
@@ -462,7 +461,7 @@ class KnowledgeSourceRemoveOutput(BaseModel):
     # The source retired.
     name: str
     # Live documents the recorded delete request covers (none retired yet), 0 without
-    # `delete_documents` and for a mirrored source, whose mirror is not counted.
+    # `delete_documents`.
     documents_pending: int = 0
 
 

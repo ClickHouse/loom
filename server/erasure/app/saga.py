@@ -40,6 +40,7 @@ from server.erasure.app.saga_steps import (
     _step_verify_residue,
     authority_steps,
     census_spellings,
+    evidence_with_mirrors,
     with_mirrors,
 )
 from server.erasure.domain.scopes import (
@@ -546,7 +547,7 @@ async def _census_tail(
     try:
         spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            per_table, unread = await erasure_census.evidence_census(
+            per_table, unread = await evidence_with_mirrors(
                 org, scope_type, scope_value, spellings=spellings
             )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
