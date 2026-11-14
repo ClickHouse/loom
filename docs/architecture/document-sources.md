@@ -1005,8 +1005,8 @@ The redirect URI to register with each store is
   token reads or exports a mirror, and `erasure.request` takes a mirror's name only from
   a platform admin, with auth on.
 - Every `crawl` and `connected` source is mirrored.
-- A stale, unexpanded or link-only permission, an `unread` list and a permission type
-  the sync does not know admit nobody.
+- Every permission the sync cannot trust admits nobody, and so does an `unread` list
+  ([who may read](#who-may-read)).
 - Every complete listing of a mirrored source reads every file's list again, and only a
   complete listing's start vouches for the lists.
 - No caller-supplied host or query string reaches a store.

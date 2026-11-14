@@ -16,10 +16,9 @@ _DRIVE_ROLES = frozenset({"owner", "organizer", "fileOrganizer", "writer", "comm
 
 @dataclass(frozen=True)
 class AccessList:
-    """A permission list; the parsers return it and `to_json` stores it, with `emails`,
-    `groups` and `domains` lower-cased and sorted, `owner` the subject of a connected
-    source's owner or empty, and, when `unread` (no current list is known), every entry
-    empty."""
+    """Who the store lets read a mirrored document. `owner` is a connected source's
+    owner subject. `unread`: no current list is known; it admits nobody. The parsers and
+    `to_json` lower-case and sort `emails`, `groups` and `domains`."""
 
     emails: tuple[str, ...] = ()
     owner: str = ""
