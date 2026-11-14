@@ -748,10 +748,10 @@ schema. These rules keep that safe. The operator procedure is in
     `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
     default (`namespace`) is what every row N-1 writes means. N stores a source whose
     `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
-    credential for it, and N itself serves none: its sync pass skips one, its retire
-    pass leaves its delete request alone, and `check`, `rotate`, `update` and `sync_now`
-    refuse one (`SOURCE_NOT_SERVED`), as does an `add` of a removed one's name while its
-    delete request waits, so beside the build that writes mirrors it never syncs a
+    credential for it. N serves none either: its sync pass skips one, its retire pass
+    leaves its delete request alone, and `check`, `rotate`, `update`, `sync_now` and an
+    `add` of a removed one's name while that request waits refuse with
+    `SOURCE_NOT_SERVED`. So beside the build that writes mirrors, N never syncs a
     mirrored source into the named namespace or drops its delete request.
 
     On N, each namespace erasure step reads the registry, which keeps every mirror the

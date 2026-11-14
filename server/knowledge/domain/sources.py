@@ -18,7 +18,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any
 
 from server.core.errors import BadConfigError
 from server.tracker.domain.sources import SOURCE_NAME_RE
@@ -100,7 +100,9 @@ SYNC_WORKER_ACTOR = "worker:knowledge-source-sync"
 STATE_KEY_PREFIX = "knowledge_source:"
 
 
-Access = Literal["namespace", "mirrored"]
+# `KnowledgeSource.access`: who a source's documents are shown to.
+NAMESPACE_ACCESS = "namespace"  # every reader of the namespace
+MIRRORED_ACCESS = "mirrored"  # a reader the store admits, from the namespace's mirror
 
 
 @dataclass(frozen=True)
@@ -123,9 +125,9 @@ class KnowledgeSource:
     # (a build without items can use it), else in `secret_enc`.
     credential_enc: str = ""
     secret_enc: str = ""
-    # Who the documents are shown to: `namespace` (every reader of the namespace) or
-    # `mirrored` (a reader the store admits, from the namespace's mirror).
-    access: Access = "namespace"
+    # Who the documents are shown to: NAMESPACE_ACCESS or MIRRORED_ACCESS; a later build
+    # may write another value, which `served` refuses.
+    access: str = NAMESPACE_ACCESS
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -529,7 +531,7 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
 def served(src: KnowledgeSource) -> bool:
     """Whether this build serves `src`: one shown to every reader of its namespace. A
     mirrored one, or any `access` a later build writes, is that build's."""
-    return src.access == "namespace"
+    return src.access == NAMESPACE_ACCESS
 
 
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:

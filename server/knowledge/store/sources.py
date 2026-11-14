@@ -24,14 +24,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.knowledge.domain.sources import (
+    NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
-    Access,
     KnowledgeSource,
     id_list_config,
     items_from_config,
@@ -82,7 +82,7 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         items=_items(str(row.get("items_json") or "")) or items_from_config(kind, config),
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
-        access=cast(Access, str(row.get("access") or "namespace")),
+        access=str(row.get("access") or NAMESPACE_ACCESS),
         created_by=str(row.get("created_by") or ""),
         active=bool(row.get("active")),
         pending_delete=bool(row.get("pending_delete")),

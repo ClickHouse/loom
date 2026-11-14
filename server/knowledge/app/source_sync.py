@@ -1041,10 +1041,10 @@ async def _servable(f: dict[str, Any], run: Pass) -> bool:
                 run.formats[fmt] = fmt in (await extractors.capabilities(url)).formats
             except extractors.ExtractorUnavailable:
                 run.formats[fmt] = None
-    served = run.formats[fmt]
-    if served is None:
+    supported = run.formats[fmt]
+    if supported is None:
         raise extractors.ExtractorUnavailable(f"the extractor for {fmt} could not be read")
-    return served
+    return supported
 
 
 async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:

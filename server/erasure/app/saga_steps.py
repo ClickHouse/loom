@@ -211,43 +211,32 @@ async def mirror_scope(
     return list(dict.fromkeys([*names, *mirrors]))  # a scope may name a mirror it has
 
 
-def with_mirrors(
-    step: Callable[[str, _NS], Awaitable[int]],
-) -> Callable[[str, _NS], Awaitable[int]]:
-    """`step` over the scope and its namespaces' mirrors. A scope that holds a mirror is
-    erased as a purge: no token reads or restores an `acl-` name, so its rows leave the
-    disk, and in one pass, so a Postgres step commits one mark and an org-wide step runs
-    once."""
-
-    async def run(org: str, namespace: _NS) -> int:
-        if (scope := await mirror_scope(org, namespace)) is None:
-            return await step(org, namespace)
-        with purge_scope(True):
-            return await step(org, scope)
-
-    return run
-
-
-def mirrored(
-    name: str, step: Callable[[str, _NS], Awaitable[int]]
-) -> Callable[[str, _NS], Awaitable[int]]:
-    """Namespace step `name` as a saga runs it: under `with_mirrors`, but for the forget
-    step, which reads the registry itself."""
-    return step if name == "knowledge_mirrors.forget" else with_mirrors(step)
-
-
 @asynccontextmanager
 async def counted_scope(
     org: str, scope_type: str, scope_value: _NS, *, ch: _CHClient | None = None
 ) -> AsyncIterator[_NS]:
-    """The scope a census counts as `with_mirrors` erased it: with its mirrors, as a
-    purge, when it holds one."""
+    """The scope a namespace step erases and a census counts: with its namespaces'
+    mirrors, as a purge, when it holds one."""
     scope = await mirror_scope(org, scope_value, ch=ch) if scope_type == "namespace" else None
     if scope is None:
         yield scope_value
         return
     with purge_scope(True):
         yield scope
+
+
+def with_mirrors(
+    step: Callable[[str, _NS], Awaitable[int]],
+) -> Callable[[str, _NS], Awaitable[int]]:
+    """`step` over the `counted_scope`. A scope that holds a mirror is erased as a purge:
+    no token reads or restores an `acl-` name, so its rows leave the disk, and in one
+    pass, so a Postgres step commits one mark and an org-wide step runs once."""
+
+    async def run(org: str, namespace: _NS) -> int:
+        async with counted_scope(org, "namespace", namespace) as scope:
+            return await step(org, scope)
+
+    return run
 
 
 async def evidence_with_mirrors(
