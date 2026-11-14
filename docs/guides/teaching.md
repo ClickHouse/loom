@@ -12,9 +12,11 @@ lab links the page that does its work.
 | A GitHub account and a browser | [Try it in GitHub Codespaces](../getting-started/quickstart.md#try-it-in-github-codespaces) |
 | Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone) |
 
-The codespace runs on a 4-core machine with 16 GB of memory, so each hour it runs uses
-four core-hours of the student's Codespaces quota. A stopped codespace still counts its
-disk against the storage quota until it is deleted, and deleting it deletes its data.
+The codespace's machine size, set by `hostRequirements` in
+[`.devcontainer/devcontainer.json`](../../.devcontainer/devcontainer.json), decides how many
+core-hours of the student's Codespaces quota each hour uses. A stopped codespace still
+counts its disk against the storage quota until it is deleted, and deleting it deletes its
+data.
 
 The stock install needs no API key: it embeds with a bundled local model, so search works
 offline, and no write verdict calls an LLM. Extraction, summaries and generated answers
@@ -22,10 +24,10 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
 
-Lab 1 also needs the Python SDK (Python 3.11 or newer) in a virtual environment, in a
-terminal on the laptop or the codespace's terminal. On Debian or Ubuntu, a codespace and
-WSL included, run `sudo apt-get update && sudo apt-get install -y python3-venv` first, and
-check `python3 --version`: an older release needs a newer Python installed first.
+Lab 1 also needs the Python SDK in a virtual environment, in a terminal on the laptop or
+the codespace's terminal. On Debian or Ubuntu, a codespace and WSL included, run
+`sudo apt-get update && sudo apt-get install -y python3-venv` before the commands below.
+The SDK needs Python 3.11 or newer; `python3 --version` says which one is installed.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
@@ -52,8 +54,8 @@ Exercises:
 
 ## Lab 2: document search with citations
 
-Ingest a few documents with `loom demo`, which on the stock stack also prints the top
-`knowledge.search` hits for a question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
+Ingest a few documents with `loom demo`, which on the stock stack (fake LLM) prints the top
+`knowledge.search` hits for a question instead of an answer ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
 The path is inside the container, which holds these docs under `/app/docs/`. Copy a file
 of your own in first, under a name that identifies it, since `loom demo` names the
 document by its path:
