@@ -1197,7 +1197,7 @@ An integration test with two cells and a router in CI's Postgres job:
   attached cell and on a later cell between prepare and attach, keeps serving on a first
   cell in `recording`, and keeps the last mode it read through a failed read,
   `recording` included after step 3 or step 4 returned the cell to it; a CLI command
-  declaring an org with it unset is refused on an `enforced` cell (the CLI's read), an
+  declaring an org with it unset is refused on an `enforced` or `partial` cell, an
   org-free one (a token revocation) runs, also with Postgres down on a deployment never
   prepared, and a `loom cell` store command refuses; `loom cell limit --closed` succeeds
   with the cell's Postgres down; after `loom cell credential --cell <cell> --next` both
@@ -1252,8 +1252,8 @@ An integration test with two cells and a router in CI's Postgres job:
   and named by `loom doctor`, a write for an unheld org on an `enforced` cell whose mode
   row was deleted is refused and the state named by `loom doctor`; on that cell a pod
   with `LOOM_CELL` unset is unready and runs no worker, and a CLI command declaring an
-  org with it unset is refused; updating, deleting or truncating the `first` row on an
-  `enforced` cell is refused, also under
+  org with it unset is refused, as a pod is; updating, deleting or truncating the
+  `first` row on an `enforced` cell is refused, also under
   `session_replication_role = replica`, and a missing or disabled `first`-row trigger is
   refused by attach and named by `loom doctor`; a running process with `LOOM_CELL` set
   on a cell whose mode row is removed answers 503 to a bearer request and runs no worker
