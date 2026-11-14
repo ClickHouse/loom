@@ -40,11 +40,13 @@ Exercises:
 
 Ingest a few documents with `loom demo`, which also prints the top search hits for a
 question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
-The path is inside the container, which holds these docs under `/app/docs/`; copy a file
-of your own in with `docker compose --project-directory <dir> cp`:
+The path is inside the container, which holds these docs under `/app/docs/`; a file of
+your own is copied in first:
 
 ```bash
 docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md
+docker compose --project-directory <dir> cp notes.md loom:/tmp/notes.md
+docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.md
 ```
 
 Then search the namespace's documents with `knowledge.search` over HTTP or the SDK
@@ -55,8 +57,9 @@ Exercises:
 - For ten questions, label the document and passage that answers each, and measure
   recall@k on `knowledge.search` ([evaluate your workload](../getting-started/evaluate.md#memory-and-rag)).
 - Add questions the documents do not answer. `knowledge.search` still returns hits for
-  them, so compare the top hit's `score` on answerable and unanswerable questions and pick
-  a cutoff that separates them.
+  them, so compare the top hit's `similarity` (1 minus the cosine distance) on answerable
+  and unanswerable questions and pick a cutoff that separates them. A hit's `score` is a
+  fused rank in the default hybrid mode and does not separate them.
 
 ## Lab 3: a code index
 
