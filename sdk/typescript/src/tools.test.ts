@@ -180,6 +180,6 @@ describe("AgentTools argument checks", () => {
     const tools = bot.tools({}, { only: ["loom_recall"], maxResultChars: 500 });
     const out = await tools.execute("loom_recall", { query: "seat" });
     expect(out.endsWith("…[truncated]")).toBe(true);
-    expect(out).not.toContain('"m1"');
+    expect(out.startsWith('{"memories":[{"memory_key":"m0"')).toBe(true);
   });
 });

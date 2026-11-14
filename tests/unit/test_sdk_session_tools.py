@@ -397,7 +397,7 @@ async def test_recall_over_the_cap_drops_whole_memories_and_stays_json() -> None
     await a.close()
 
 
-async def test_recall_refuses_a_top_k_outside_the_schema() -> None:
+async def test_tools_refuse_an_integer_outside_the_schema() -> None:
     a, calls = _agent({"memory.search": {"results": []}})
     tools = a.tools(only=["loom_recall"])
     with pytest.raises(LoomError, match="top_k must be within 1..20, got 500"):
@@ -417,5 +417,5 @@ async def test_recall_whose_best_memory_alone_is_over_the_cap_is_cut() -> None:
     tools = a.tools(only=["loom_recall"], max_result_chars=500)
     out = await tools.execute("loom_recall", {"query": "seat"})
     assert out.endswith("…[truncated]")  # one memory is kept, and cut as before
-    assert '"m1"' not in out
+    assert out.startswith('{"memories": [{"memory_key": "m0"')
     await a.close()

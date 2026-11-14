@@ -54,11 +54,11 @@ def loom_tools(
 ) -> list[FunctionTool]:
     """Loom's agent verbs as ``FunctionTool``s, bound to one scope.
 
-    ``only`` keeps a subset by name, e.g. ``["loom_remember", "loom_recall"]``;
-    ``max_result_chars`` caps the string each call returns to the model
-    (``loom_recall`` leaves out its lowest-ranked memories whole to fit, counted in
-    ``omitted``). A call
-    Loom refuses returns its error message to the model instead of failing the run.
+    ``only`` keeps a subset by name, e.g. ``["loom_remember",
+    "loom_recall"]``; ``max_result_chars`` caps the string each call returns
+    to the model (``loom_recall`` leaves out its lowest-ranked memories whole
+    to fit, counted in ``omitted``). A call Loom refuses returns its error
+    message to the model instead of failing the run.
     """
     tools = AgentTools(
         agent,
