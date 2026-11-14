@@ -22,7 +22,6 @@ from loom.memory import MemorySearchHit, MemorySearchResult
 class _FakeMemory:
     def __init__(self, hits: list[MemorySearchHit] | None = None, abstain: bool = False) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-        self.keys: list[str] = []
         self._hits = hits or []
         self._abstain = abstain
 
@@ -34,21 +33,7 @@ class _FakeMemory:
 
     async def set(self, key: str, value: str, **kw: Any) -> dict[str, Any]:
         self.calls.append(("set", (key, value), kw))
-        self.keys.append(key)
         return {}
-
-    async def list(self, **kw: Any) -> dict[str, Any]:
-        self.calls.append(("list", (), kw))
-        mine = [k for k in self.keys if k.startswith(kw["prefix"])]
-        page = mine[kw.get("offset", 0) :][:1]  # one per page: clear must page
-        return {
-            "entries": [{"memory_key": k} for k in page],
-            "truncated": kw.get("offset", 0) + 1 < len(mine),
-        }
-
-    async def delete(self, key: str, **kw: Any) -> bool:
-        self.calls.append(("delete", (key,), kw))
-        return True
 
 
 class _Agent:
@@ -146,16 +131,20 @@ def test_update_context_adds_nothing_without_a_match() -> None:
     assert len(asyncio.run(run())) == 1
 
 
-def test_clear_deletes_only_this_adapters_keys() -> None:
+def test_clear_refuses() -> None:
     fake = _FakeMemory()
-    memory = LoomMemory(_Agent(fake), user_id="alice")  # type: ignore[arg-type]
-    for text in ("one", "two", "three"):
-        asyncio.run(memory.add(_text(text)))
-    asyncio.run(memory.clear())
-    deleted = [c[1][0] for c in fake.calls if c[0] == "delete"]
-    assert sorted(deleted) == sorted(fake.keys)
-    assert all(c[2] == {"user_id": "alice"} for c in fake.calls if c[0] == "delete")
-    assert all(c[2]["prefix"] == "autogen/" for c in fake.calls if c[0] == "list")
+    with pytest.raises(NotImplementedError, match="memory.delete"):
+        asyncio.run(LoomMemory(_Agent(fake)).clear())  # type: ignore[arg-type]
+    assert fake.calls == []
+
+
+def test_a_top_k_below_one_is_refused_or_raised_to_one() -> None:
+    with pytest.raises(ValueError, match="top_k"):
+        LoomMemory(_Agent(_FakeMemory()), top_k=0)  # type: ignore[arg-type]
+    fake = _FakeMemory()
+    asyncio.run(LoomMemory(_Agent(fake)).query("seat", top_k=0))  # type: ignore[arg-type]
+    ((_, _, kw),) = fake.calls
+    assert kw["top_k"] == 1
 
 
 def test_a_real_agent_posts_memory_search() -> None:

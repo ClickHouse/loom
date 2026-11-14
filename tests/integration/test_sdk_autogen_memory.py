@@ -1,5 +1,5 @@
 """LoomMemory against a running Loom: a memory added through AutoGen's
-protocol comes back through query, and clear removes it."""
+protocol comes back through query."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ async def _recalled(memory: LoomMemory, text: str, word: str) -> bool:
     return any(word in str(r.content) for r in result.results)
 
 
-async def test_add_query_clear(agent) -> None:
+async def test_add_then_query(agent) -> None:
     memory = LoomMemory(agent, user_id="alice", honour_abstain=False)
     await memory.add(
         MemoryContent(
@@ -30,6 +30,3 @@ async def test_add_query_clear(agent) -> None:
     await eventually(
         lambda: _recalled(memory, "Alice aisle seat", "aisle"), description="'aisle' recalled"
     )
-    await memory.clear()
-    listed = await agent.memory.list(prefix="autogen/", user_id="alice")
-    assert listed["entries"] == []

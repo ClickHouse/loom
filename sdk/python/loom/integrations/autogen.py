@@ -6,6 +6,7 @@ the agent asks it to ``update_context``, and it adds the Loom memories that
 match the latest user message as a system message::
 
     from autogen_agentchat.agents import AssistantAgent
+    from autogen_core.memory import MemoryContent
     from loom import Agent
     from loom.integrations.autogen import LoomMemory
 
@@ -53,8 +54,9 @@ class LoomMemory(Memory):
     (``<key_prefix>/<first 20 hex of sha256>``), so adding the same text twice
     is one memory. ``query`` and ``update_context`` run ``memory.search`` of
     the namespace it writes to; with ``honour_abstain`` they leave out memories
-    below Loom's floor and return nothing when Loom abstains. ``clear`` deletes
-    the memories this adapter wrote under its key prefix, and nothing else.
+    below Loom's floor and return nothing when Loom abstains. ``clear`` raises:
+    Loom deletes a memory only when its key is named (``memory.delete``) or
+    through erasure. ``add`` keeps the text, not ``metadata`` or ``mime_type``.
     AutoGen awaits its memory, so the adapter takes a ``loom.Agent``.
     """
 
@@ -70,6 +72,8 @@ class LoomMemory(Memory):
     ) -> None:
         if isinstance(agent, SyncAgent):
             raise TypeError("LoomMemory needs a loom.Agent: AutoGen awaits its memory")
+        if top_k < 1:
+            raise ValueError("top_k must be at least 1")
         self._agent = agent
         self._user_id = user_id
         self._tags = list(tags or [])
@@ -100,7 +104,7 @@ class LoomMemory(Memory):
         text = query if isinstance(query, str) else _text(query)
         if not text.strip():
             return MemoryQueryResult(results=[])
-        top_k = min(int(kwargs.get("top_k", self._top_k)), 500)  # memory.search's bound
+        top_k = min(max(int(kwargs.get("top_k", self._top_k)), 1), 500)  # memory.search's bounds
         result = await self._agent.memory.search(
             text,
             top_k=top_k,
@@ -156,16 +160,10 @@ class LoomMemory(Memory):
         return UpdateContextResult(memories=memories)
 
     async def clear(self) -> None:
-        keys: list[str] = []
-        while True:  # every key first: deleting while paging would shift the pages
-            page = await self._agent.memory.list(
-                prefix=f"{self._key_prefix}/", offset=len(keys), user_id=self._user_id
-            )
-            keys.extend(entry["memory_key"] for entry in page["entries"])
-            if not page.get("truncated"):
-                break
-        for key in keys:
-            await self._agent.memory.delete(key, user_id=self._user_id)
+        raise NotImplementedError(
+            "LoomMemory does not clear: delete a memory by key with memory.delete, "
+            "or a user's memories through Loom's erasure"
+        )
 
     async def close(self) -> None:
         """The Loom agent belongs to the caller, who closes it."""

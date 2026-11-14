@@ -255,8 +255,8 @@ restores that, with a local store.
 
 `LoomMemory` implements AutoGen's `Memory` protocol (`autogen_core.memory`), which an
 `AssistantAgent` takes as `memory=[...]`. Install with
-`pip install 'clickhouse-loom[autogen]'` (`autogen-core` 0.7; `AssistantAgent` comes from
-`autogen-agentchat`, installed with it).
+`pip install 'clickhouse-loom[autogen]' autogen-agentchat` (`autogen-core` 0.7;
+`AssistantAgent` comes from `autogen-agentchat`, which the extra does not install).
 
 ```python
 from autogen_agentchat.agents import AssistantAgent
@@ -274,10 +274,10 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 
 | AutoGen          | Loom                                                                                                                                                                                       |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>`; text and JSON content, not bytes or images                                                                                |
+| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>` of the stripped text; text and JSON content, not bytes or images; `metadata` and `mime_type` are not kept                  |
 | `query`          | `memory.search` of the namespace it writes to; leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key` and `similarity` |
 | `update_context` | before each model call: `query` with the latest user message, the matches added as one system message                                                                                      |
-| `clear`          | deletes the memories this adapter wrote, the keys under its `key_prefix`, and nothing else                                                                                                 |
+| `clear`          | raises: Loom deletes a memory when its key is named (`memory.delete`) or through [erasure](../memory/retention-and-erasure.md)                                                             |
 
 `LoomMemory(agent, user_id=..., tags=[...], top_k=5, honour_abstain=True,
 key_prefix="autogen")`: `tags` are stamped on every `add` and keep a `query` to memories
