@@ -25,7 +25,7 @@ import asyncio
 import functools
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from server.core.errors import (
     BackendUnavailableError,
@@ -36,8 +36,6 @@ from server.core.errors import (
 from server.settings import settings
 
 if TYPE_CHECKING:
-    import httpx
-
     from server.auth.jwt import AuthInfo
 
 log = logging.getLogger(__name__)
@@ -287,15 +285,6 @@ def _placed(org: str, task: asyncio.Task[tuple[str, str]]) -> None:
         task.exception()  # retrieved: every waiter may have gone
 
 
-def _refusal(r: httpx.Response) -> dict[str, Any]:
-    """A router refusal's JSON body ({} when it is not a JSON object)."""
-    try:
-        body = r.json()
-    except ValueError:
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
 async def _place(org: str) -> tuple[str, str]:
     """Ask the router to place `org` in this cell; the (cell, deployment id) that holds
     it. The router inserts the placement if absent and reads the winner back, so a
@@ -325,9 +314,13 @@ async def _place(org: str) -> tuple[str, str]:
         raise BackendUnavailableError(
             f"the router did not answer the placement of org {org!r}", operation="placement"
         ) from e
-    if r.status_code == 400 and (refusal := _refusal(r)).get("code") == "ORG_TOO_LONG":
+    try:
+        answer = r.json()
+    except ValueError:
+        answer = None
+    if r.status_code == 400 and isinstance(answer, dict) and answer.get("code") == "ORG_TOO_LONG":
         # A new org longer than the router places: the caller's to fix, never retried.
-        raise ValidationError(str(refusal.get("error") or cell.org_name_refusal(org)))
+        raise ValidationError(str(answer.get("error", "")))
     if r.status_code != 200:
         log.warning("placement of %s: router answered %s", org, r.status_code)
         raise BackendUnavailableError(
@@ -338,10 +331,6 @@ async def _place(org: str) -> tuple[str, str]:
     unnamed = BackendUnavailableError(
         f"the router's placement answer for org {org!r} names no cell", operation="placement"
     )
-    try:
-        answer = r.json()
-    except ValueError:
-        raise unnamed from None
     if not isinstance(answer, dict):
         raise unnamed
     winner, deployment_id = answer.get("cell"), answer.get("deployment_id")
