@@ -597,7 +597,7 @@ def test_a_guard_refusal_of_the_row_answers_tenancy_refused_not_a_retry(
     """Sessions that lost the marker meet the `loom.tenancy` guard: an operator's fix."""
     from server.core import pg
 
-    async def _refused(_sql: str, _org: str) -> str:
+    async def _refused(_sql: str, _org: str) -> None:
         raise errors.TenancyRefusedError("cell refuses a tenancy row")
 
     _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
