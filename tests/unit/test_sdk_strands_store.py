@@ -60,7 +60,7 @@ def test_search_maps_hits_to_memory_entries_and_honours_max_search_results() -> 
     store = LoomMemoryStore(SimpleNamespace(memory=mem), tags=["customer"], max_search_results=3)
     out = asyncio.run(store.search("coffee", {"max_search_results": 1}))
     assert mem.searches[0]["top_k"] == 1 and mem.searches[0]["tags"] == ["customer"]
-    # Whole bodies whatever the top_k: above 15 an unpinned search serves excerpts.
+    # The stored clip whatever the top_k: unpinned, a large top_k serves excerpts.
     assert (mem.searches[0]["bodies"], mem.searches[0]["explain"]) == ("full", False)
     assert len(out) == 1 and isinstance(out[0], MemoryEntry)
     assert out[0].content == "oat-milk lattes"

@@ -261,7 +261,7 @@ def test_recall_keeps_the_memory_s_tags_and_narrows_by_category() -> None:
     assert [m.record.id for m in matches] == ["k1"]
     ((_, _, kw),) = fake.calls
     assert (kw["tags"], kw["include_tags"], kw["top_k"]) == (["crew-a"], True, 50)
-    assert (kw["bodies"], kw["explain"]) == ("full", False)  # whole bodies above top_k 15
+    assert (kw["bodies"], kw["explain"]) == ("full", False)  # the stored clip at any top_k
     fake.calls.clear()
     _memory(fake).recall("Alice", categories=["travel"])
     ((_, _, kw),) = fake.calls
