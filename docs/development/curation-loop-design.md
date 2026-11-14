@@ -15,7 +15,7 @@ rules with their ceiling setting ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
 The term leg, `memory.definitions.list` and the review path are not built yet, and none of
 their ops, tables or settings are served until the pull request that builds each part
-lands. That pull request moves its part into `docs/architecture/`, written as what Loom
+lands. That pull request moves its part into the page that owns it, written as what Loom
 does, and removes it here.
 
 ```mermaid

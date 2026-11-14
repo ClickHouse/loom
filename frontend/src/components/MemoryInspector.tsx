@@ -472,7 +472,7 @@ export function MemoryInspector({
     detail?.sensitivity !== "medium";
   const governed = isDefinition || underDefinitionKey;
   const shareable =
-    detail?.memory_type !== "profile" && detail?.sensitivity !== "high" && (governed ? definitionShareable : true);
+    detail?.memory_type !== "profile" && detail?.sensitivity !== "high" && (!governed || definitionShareable);
   const redactReason = why("memory.redact");
   const judgeReason = why("memory.outcome");
   // The value, its tags and its expiry are memory.set; Delete and Verify their own ops. Copy to

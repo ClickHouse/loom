@@ -6428,8 +6428,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
-    # The batched-insert shapes below are the base + the default
-    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
+    # The batched-insert shapes below (audited, webhook, undo, rewrite) are the base +
+    # the default ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
     # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
     # "undo": memory.restore's Undo, + its audit-record wait.
@@ -6443,8 +6443,7 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
-    # "definition": the namespace's claim around the name check and the insert, three
-    # lease statements (measured p95 98 ms, at most 110 ms, against 77 ms without them).
+    # "definition": the namespace's claim around the name check and the insert.
     "memory.promote": {"definition": 150},
     "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 220},
