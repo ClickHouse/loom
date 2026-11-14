@@ -344,13 +344,14 @@ const assistant = new MastraAgent({
 ```
 
 Mastra's own memory keeps threads and messages in a storage adapter that edits and deletes
-them; Loom's conversations are append-only, so the adapter offers Loom as tools rather than
-as that store. A Mastra `Memory` can keep its thread history in its own store while the
-model reads and writes long-term memory in Loom through these tools. Mastra checks each call
-against Loom's schema first and answers one outside it (a missing argument, a `top_k` above
-20, a quoted number) with its own validation message; a call within the schema that Loom
-refuses, or a server error, reaches the model as Mastra's failed tool result with Loom's
-message. Either way the model reads the message and the run goes on.
+them; Loom's conversations are append-only, so the adapter offers Loom as tools rather
+than as that store. A Mastra `Memory` can keep its thread history in its own store while
+the model reads and writes long-term memory in Loom through these tools. Mastra checks
+each call against Loom's schema first and answers one outside it (a missing argument, an
+extra key, a `top_k` above 20, a quoted number) with its own validation message; a call
+within the schema that Loom refuses, or a server error, reaches the model as Mastra's
+failed tool result with Loom's message. Either way the model reads the message and the run
+goes on.
 
 ## LangGraph
 
