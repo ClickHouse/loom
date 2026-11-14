@@ -140,6 +140,8 @@ async def _refusal(store: dict[str, Any], **over: Any) -> str:
         ("\uff33\uff21\uff34", "sat"),  # NFKC: full-width letters
         ("  Churn\u00a0  Rate ", "churn rate"),  # trimmed, every run of space made one
         ("Straße", "strasse"),  # case-folded
+        ("\u03aa\u0301", "\u0390"),  # case-folded, then composed again
+        ("\u0390", "\u0390"),
     ],
 )
 def test_a_name_folds_step_by_step(name: str, folded: str) -> None:
@@ -360,22 +362,27 @@ async def test_a_definition_is_checked_and_written_under_the_namespaces_claim(
     assert store["written"] == []
 
 
-async def test_another_row_takes_no_claim(store: dict[str, Any]) -> None:
+async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) -> None:
     store["row"] = _row(memory_type="semantic", memory_key="arr_note", agent="bot")
-    await promote.handle_memory_promote(_input(memory_key="arr_note", agent="bot"))
-    assert store["claims"] == [] and len(store["written"]) == 1
+    other = {"memory_key": "arr_note", "agent": "bot", "approver": "lead"}
+    out = await promote.handle_memory_promote(_input(**other, approved_sha256=None))
+    assert store["written"][0]["promoted_by"] == "lead" and out.ignored_args == []
+    out = await promote.handle_memory_promote(_input(**other))
+    assert out.ignored_args == ["approved_sha256"]
+    assert store["claims"] == []
+
+
+class _Embedder:
+    model_name, dim = "m", 2
+
+    async def embed(self, text: str) -> list[float]:
+        return [0.6, 0.8]
 
 
 async def test_a_definition_skips_the_close_shared_row_check(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from server.memory.app import conflicts
-
-    class _Embedder:
-        model_name, dim = "m", 2
-
-        async def embed(self, text: str) -> list[float]:
-            return [0.6, 0.8]
 
     async def check_against_shared(**kw: Any) -> list[dict[str, Any]]:
         raise AssertionError("a definition's names decide, not a close shared row")
@@ -393,12 +400,6 @@ async def test_a_definition_skips_the_close_shared_row_check(
 async def test_a_claim_that_runs_out_is_repaired_by_sending_the_promotion_again(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class _Embedder:
-        model_name, dim = "m", 2
-
-        async def embed(self, text: str) -> list[float]:
-            return [0.6, 0.8]
-
     embedded: list[str] = []
 
     async def embedding(row: dict[str, Any]) -> None:
@@ -417,61 +418,69 @@ async def test_a_claim_that_runs_out_is_repaired_by_sending_the_promotion_again(
     assert len(store["written"]) == 2 and embedded == [KEY]
 
 
-async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) -> None:
-    store["row"] = _row(memory_type="semantic", memory_key="arr_note", agent="bot")
-    out = await promote.handle_memory_promote(
-        _input(memory_key="arr_note", agent="bot", approved_sha256=None, approver="lead")
-    )
-    (row,) = store["written"]
-    assert row["promoted_by"] == "lead" and out.ignored_args == []
+@pytest.fixture
+def review(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """learnings.review of a pending definition candidate, for a destination."""
+    from server.memory.api.models_learnings import LearningsReviewInput
+    from server.memory.app import learnings
+    from server.memory.store import learnings as learnings_repo
 
+    candidate = {
+        "candidate_id": "c1",
+        "memory_key": KEY,
+        "memory_type": "definition",
+        "proposed_value": json.dumps(VALUE),
+        "supporters": [f"o/n/-/-/-/{KEY}"],
+        "source_kind": "memory_supporters",
+        "status": "pending",
+        "rationale": "",
+    }
 
-_DEFINITION_CANDIDATE = {
-    "candidate_id": "c1",
-    "memory_key": KEY,
-    "memory_type": "definition",
-    "proposed_value": json.dumps(VALUE),
-    "supporters": [f"o/n/-/-/-/{KEY}"],
-    "source_kind": "memory_supporters",
-    "status": "pending",
-    "rationale": "",
-}
+    async def find(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return candidate
+
+    async def nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(learnings_repo, "find_candidate", find)
+    monkeypatch.setattr(learnings_repo, "insert_row", nothing)
+
+    async def run(destination: str) -> Any:
+        return await learnings.handle_learnings_review(
+            LearningsReviewInput(
+                org="o",
+                namespace="n",
+                candidate_id="c1",
+                decision="promote",
+                destination=destination,
+            )
+        )
+
+    return run
 
 
 @pytest.mark.parametrize("destination", ["memory", "both"])
 async def test_review_promotes_no_definition_candidate_to_memory(
-    monkeypatch: pytest.MonkeyPatch, destination: str
+    review: Any, monkeypatch: pytest.MonkeyPatch, destination: str
 ) -> None:
-    from server.memory.api.models_learnings import LearningsReviewInput
     from server.memory.app import learnings
     from server.memory.store import learnings as learnings_repo
-
-    async def find(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return _DEFINITION_CANDIDATE
 
     async def must_not(*_a: Any, **_k: Any) -> None:
         raise AssertionError("a refused review writes nothing")
 
-    monkeypatch.setattr(learnings_repo, "find_candidate", find)
     monkeypatch.setattr(learnings_repo, "insert_row", must_not)
     monkeypatch.setattr(learnings, "_do_promote", must_not)
-    review = LearningsReviewInput(
-        org="o", namespace="n", candidate_id="c1", decision="promote", destination=destination
-    )
+    monkeypatch.setattr(learnings, "_do_promote_to_knowledge", must_not)
     with pytest.raises(LoomServerError) as e:
-        await learnings.handle_learnings_review(review)
+        await review(destination)
     assert e.value.code == "VALIDATION_FAILED"
 
 
 async def test_review_still_promotes_a_definition_candidate_to_knowledge(
-    monkeypatch: pytest.MonkeyPatch,
+    review: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.memory.api.models_learnings import LearningsReviewInput
     from server.memory.app import learnings
-    from server.memory.store import learnings as learnings_repo
-
-    async def find(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return _DEFINITION_CANDIDATE
 
     published: list[str] = []
 
@@ -479,25 +488,9 @@ async def test_review_still_promotes_a_definition_candidate_to_knowledge(
         published.append(row["memory_key"])
         return "loom://k/1"
 
-    async def nothing(*_a: Any, **_k: Any) -> None:
-        return None
-
-    monkeypatch.setattr(learnings_repo, "find_candidate", find)
-    monkeypatch.setattr(learnings_repo, "insert_row", nothing)
     monkeypatch.setattr(learnings, "_do_promote_to_knowledge", to_knowledge)
-    review = LearningsReviewInput(
-        org="o", namespace="n", candidate_id="c1", decision="promote", destination="knowledge"
-    )
-    await learnings.handle_learnings_review(review)
+    await review("knowledge")
     assert published == [KEY]
-
-
-async def test_another_rows_promotion_names_an_approved_hash_it_ignores(
-    store: dict[str, Any],
-) -> None:
-    store["row"] = _row(memory_type="semantic", memory_key="arr_note", agent="bot")
-    out = await promote.handle_memory_promote(_input(memory_key="arr_note", agent="bot"))
-    assert out.ignored_args == ["approved_sha256"]
 
 
 async def test_lineage_matches_no_candidate_by_time_for_a_definition(

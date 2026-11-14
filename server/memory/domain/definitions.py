@@ -2,7 +2,8 @@
 
 A name is folded by dropping format characters (Unicode category Cf, such as a pasted
 byte-order mark), then `canonical_document_text` (NFKC, trimmed, every run of whitespace
-made one space), then `str.casefold`, so `SAT`, `Sat` and `sat ` are one name.
+made one space), then `str.casefold` and NFKC once more (folding can leave a sequence
+that composes, as in Greek), so `SAT`, `Sat` and `sat ` are one name.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ DEFINITION_KEY_PREFIX = "definition/"
 def fold_name(name: str) -> str:
     """`name` in the form two names are compared in."""
     kept = "".join(c for c in name if unicodedata.category(c) != "Cf")
-    return canonical_document_text(kept).casefold()
+    return unicodedata.normalize("NFKC", canonical_document_text(kept).casefold())
 
 
 def definition_names(value: Any) -> set[str] | None:
