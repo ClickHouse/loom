@@ -935,3 +935,82 @@ def test_a_delete_left_to_the_delivery_worker_forgets_its_datasets(monkeypatch) 
             )
         )
     assert forgotten == [{"doc-a": doc.version}] * 2
+
+
+LISTED = '{"anyone":false,"domains":[],"emails":["a@example.com"],"groups":[],"unread":false}'
+
+
+def test_a_permission_list_is_written_only_by_the_writer_that_passes_it() -> None:
+    doc = _doc(access_json=LISTED)
+    assert documents_repo.build_document_row(doc, version=2)["access_json"] == ""
+    kept = documents_repo.build_document_row(doc, version=2, access_json=LISTED)
+    assert kept["access_json"] == LISTED
+    # A tombstone carries none, even one passed.
+    retired = documents_repo.build_document_row(
+        doc, version=3, superseded_at=ERASED, access_json=LISTED
+    )
+    assert retired["access_json"] == ""
+
+
+def test_the_repo_reads_select_the_permission_list() -> None:
+    seen: list[str] = []
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            seen.append(sql)
+            return []
+
+    asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
+    assert "access_json" in seen[0]
+
+
+def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> None:
+    from server.knowledge.api.models_knowledge import (
+        KnowledgeDeleteInput,
+        KnowledgeUpdateMetadataInput,
+    )
+
+    rows = _capture_inserts(monkeypatch)
+
+    async def _get_one(*a, **kw):
+        return _doc(access_json=LISTED)
+
+    async def _one_chunk(*a, **kw):
+        return 1
+
+    async def _noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(documents_repo, "get_one", _get_one)
+    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _one_chunk)
+    monkeypatch.setattr(datasets_repo, "forget_published", _noop)
+    asyncio.run(
+        kh.handle_knowledge_update_metadata(
+            KnowledgeUpdateMetadataInput(org="o", namespace="n", source_uri="doc-a", title="New")
+        )
+    )
+    asyncio.run(
+        kh.handle_knowledge_delete(KnowledgeDeleteInput(org="o", namespace="n", source_uri="doc-a"))
+    )
+    assert [r["access_json"] for r in rows] == ["", ""]
+
+
+def test_no_operation_answers_a_permission_list() -> None:
+    from pydantic import BaseModel
+
+    from server.operations.registry import ALL_OPERATIONS
+
+    def fields(model: type[BaseModel], seen: set[type]) -> set[str]:
+        if model in seen:
+            return set()
+        seen.add(model)
+        names = set(model.model_fields)
+        for f in model.model_fields.values():
+            for arg in getattr(f.annotation, "__args__", ()) + (f.annotation,):
+                if isinstance(arg, type) and issubclass(arg, BaseModel):
+                    names |= fields(arg, seen)
+        return names
+
+    for op in ALL_OPERATIONS:
+        assert "access_json" not in fields(op.output_model, set()), op.name
+        assert "access_json" not in fields(op.input_model, set()), op.name

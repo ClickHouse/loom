@@ -1625,6 +1625,7 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `parser` String DEFAULT '',
     `coverage` String DEFAULT '',
     `ingestion_id` String DEFAULT '',
+    `access_json` String DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)

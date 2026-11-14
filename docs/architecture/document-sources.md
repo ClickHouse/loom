@@ -936,6 +936,9 @@ statements and census keys against these, and its tests pin each one:
   implementing pull request adds both steps and specifies the command.
 - **Ownership.** In a namespace, one owner per address, found by its tag, is today's
   model, so N-1 and N agree on whose a document is; N-1 has no mirror leg.
+- **Lists.** N-1 knows no `access_json`, so a rewrite it makes of a mirror row keeps the
+  newest stored list through the carry of unknown columns, the list N last wrote; a
+  rewrite N makes other than the owning source's turn writes none (rule 53).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.

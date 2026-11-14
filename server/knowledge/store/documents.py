@@ -62,6 +62,9 @@ class DocumentRow(BaseModel):
     parser: str = ""
     coverage: str = ""
     ingestion_id: str = ""
+    # A mirrored document's permission list (`domain.access_list`); "" elsewhere. No read
+    # op returns it.
+    access_json: str = ""
 
 
 def _hydrate(row: dict[str, Any]) -> DocumentRow:
@@ -95,6 +98,7 @@ def _hydrate(row: dict[str, Any]) -> DocumentRow:
         parser=row.get("parser") or "",
         coverage=row.get("coverage") or "",
         ingestion_id=row.get("ingestion_id") or "",
+        access_json=row.get("access_json") or "",
     )
 
 
@@ -267,7 +271,7 @@ async def _read(
                original_filename, content_sha256, blob_erased_at,
                agent, user_id, session_id, actor, toString(source_class) AS source_class,
                revision, toString(format) AS format, artifact_sha256, parser, coverage,
-               ingestion_id
+               ingestion_id, access_json
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,
@@ -437,6 +441,7 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "parser",
     "coverage",
     "ingestion_id",
+    "access_json",
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
@@ -479,6 +484,7 @@ class DocumentInsertRow(TypedDict):
     parser: str
     coverage: str
     ingestion_id: str
+    access_json: str
 
 
 def version_of(doc: DocumentRow | None) -> int:
@@ -501,6 +507,7 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
     defaults, then takes every column of `existing` (carry-forward), then
     `fields`. `content_sha256` is not settable: it is recomputed from the
     row's final title + content, the hash knowledge.add / upsert dedup on.
+    `access_json` is never carried: it is the one in `fields`, or empty.
     """
     unknown = set(fields) - (set(DOCUMENT_COLUMNS) - {"content_sha256"})
     if unknown:
@@ -533,6 +540,10 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
     if existing is not None:
         row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})
     row.update(fields)
+    # Only the turn of the source that owns a mirrored document writes its permission
+    # list, passing it here; every other rewrite, and every tombstone, writes none, which
+    # reads `unread` and admits nobody.
+    row["access_json"] = "" if row["superseded_at"] is not None else fields.get("access_json", "")
     missing = [c for c in _REQUIRED_DOCUMENT_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"build_document_row: missing {missing}")
