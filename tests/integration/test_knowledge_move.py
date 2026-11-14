@@ -557,3 +557,33 @@ async def test_a_delete_that_fails_after_its_tombstone_leaves_the_copy_live(
     # Deleted where it was, so the copy is the document now: it stays.
     assert _live_rows(ch_client, src, uri) == 0
     assert _live_rows(ch_client, dst, uri) == 1 and _live(ch_client, dst, uri) == before
+
+
+@pytest.mark.asyncio
+async def test_a_retry_onto_a_copy_with_its_chunks_gone_copies_it_again(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    move = in_process
+    src, dst, uri = _places()
+    await _written(control_plane_url, src, uri)
+    before = _live(ch_client, src, uri)
+
+    async def cut_off(doc: Any) -> None:
+        raise RuntimeError("cut off before the delete")
+
+    with monkeypatch.context() as m:
+        m.setattr(move, "_delete_source", cut_off)
+        with pytest.raises(RuntimeError):
+            await _move_here(move, src, dst, uri)
+    # What a row insert that landed after its take-back leaves: the row, no chunks.
+    ch_client.command(
+        "DELETE FROM loom.chunks WHERE org = {org:String} AND namespace = {ns:String}"
+        " SETTINGS lightweight_deletes_sync = 2",
+        parameters={"org": ORG, "ns": dst},
+    )
+    assert _live_rows(ch_client, dst, uri) == 1 and _live(ch_client, dst, uri) == []
+
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": True, "reason": ""}
+    ]
+    assert _live(ch_client, dst, uri) == before and _live_rows(ch_client, src, uri) == 0

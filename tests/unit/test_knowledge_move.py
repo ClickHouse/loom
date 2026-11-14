@@ -4,6 +4,7 @@ source failing among others."""
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -64,6 +65,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "tables": {"src": [], "dst": []},
         "head_moved": False,
         "on_claim": None,
+        # Live chunks of the revision, by namespace: equal, a copy there is whole.
+        "chunks": {"src": 3, "dst": 3},
+        # What happened, in order: claims taken and given up, take-backs started and done.
+        "events": [],
     }
 
     async def get_one(org: str, ns: str, uri: str, *, include_superseded: bool = False) -> Any:
@@ -80,7 +85,14 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         if state["on_claim"] is not None:
             state.pop("on_claim")()
             state["on_claim"] = None
-        yield state["held"]
+        state["events"].append(f"claim {ns}")
+        try:
+            yield state["held"]
+        finally:
+            state["events"].append(f"release {ns}")
+
+    async def count(org: str, ns: str, uri: str, *, revision: int, upto_version: int) -> int:
+        return state["chunks"][ns]
 
     async def no(*args: Any) -> bool:
         return False
@@ -133,6 +145,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move, "_copy", copy)
     monkeypatch.setattr(move, "_delete_source", delete)
     monkeypatch.setattr(move, "_head_is", head_is)
+    monkeypatch.setattr(move.chunks_repo, "count_revision", count)
     monkeypatch.setattr(move.datasets_repo, "at_version", tables)
     monkeypatch.setattr(move, "_take_back", take_back)
     monkeypatch.setattr("server.auth.authz.row_in_scope", reach)
@@ -473,3 +486,138 @@ async def test_an_original_swept_meanwhile_is_cleared_from_the_copy(
 ) -> None:
     cleared = await move._store_originals(_doc("src", blob_path="sha"), "dst")
     assert cleared == documents_repo.NO_ORIGINAL and originals["put"] == []
+
+
+async def test_a_copy_there_with_chunks_missing_is_copied_again_before_the_delete(
+    store: dict[str, Any],
+) -> None:
+    # A cut-off row insert landed after its take-back: the row is there, its chunks are not.
+    store["dst"][URI] = _doc("dst", version=20)
+    store["chunks"]["dst"] = 0
+    assert _answers(await _run()) == [(URI, True, "")]
+    assert store["copied"] == [URI] and store["deleted"] == [URI]
+    assert store["originals"] == [URI]
+
+
+async def test_a_copy_there_with_chunks_missing_stays_where_it_was_if_the_copy_fails(
+    store: dict[str, Any],
+) -> None:
+    store["dst"][URI] = _doc("dst", version=20)
+    store["chunks"]["dst"] = 0
+    store["fail"] = {URI: ClaimExpired("cut off")}
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["deleted"] == []
+
+
+@pytest.fixture
+def real_copy(store: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """`store` with the move's own copy and take-back, over fake statements: the chunk copy
+    waits on `store["copy_gate"]` and the take-back on `store["take_back_gate"]`."""
+    store["copy_gate"] = asyncio.Event()
+    store["take_back_gate"] = asyncio.Event()
+    store["take_back_gate"].set()
+    real_take_back = move._take_back
+
+    async def copy_revision(*args: Any, **kwargs: Any) -> bool:
+        store["events"].append("copying")
+        await store["copy_gate"].wait()
+        return True
+
+    async def take_back(copy: move._Copy) -> None:
+        store["events"].append("taking back")
+        await store["take_back_gate"].wait()
+        await real_take_back(copy)
+        store["events"].append("taken back")
+
+    async def nothing(*args: Any, **kwargs: Any) -> Any:
+        return None
+
+    async def models(*args: Any) -> list[str]:
+        return ["m"]
+
+    monkeypatch.setattr(move, "_copy", _REAL_COPY)
+    monkeypatch.setattr(move, "_take_back", take_back)
+    monkeypatch.setattr(move.chunks_repo, "copy_revision", copy_revision)
+    monkeypatch.setattr(move.chunks_repo, "embedding_models", models)
+    for repo, names in (
+        (move.chunks_repo, ("retire_versions", "delete_versions")),
+        (move.documents_repo, ("insert_one", "drop_committed")),
+        (move.restore_repo, ("delete_row",)),
+        (move.datasets_repo, ("forget", "forget_snapshot", "insert_catalog")),
+    ):
+        for name in names:
+            monkeypatch.setattr(repo, name, nothing)
+    return store
+
+
+_REAL_COPY = move._copy
+
+
+async def _running_move() -> asyncio.Task[Any]:
+    task = asyncio.create_task(_run())
+    for _ in range(50):
+        await asyncio.sleep(0)
+    return task
+
+
+async def test_a_cancel_during_the_chunk_copy_takes_the_copy_back_under_the_claims(
+    real_copy: dict[str, Any],
+) -> None:
+    task = await _running_move()
+    assert real_copy["events"][-1] == "copying"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert real_copy["events"][-4:] == [
+        "taking back",
+        "taken back",
+        "release src",
+        "release dst",
+    ]
+    assert real_copy["deleted"] == []
+
+
+async def test_a_claim_cut_off_during_the_copy_takes_it_back_and_answers_busy(
+    real_copy: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = real_copy["events"]
+
+    @asynccontextmanager
+    async def cut_off_claim(org: str, ns: str, uri: str, *, wait_s: float = 10):
+        # As `leases.holding`: the block is cut off at its share of the TTL.
+        events.append(f"claim {ns}")
+        try:
+            async with asyncio.timeout(0.05):
+                yield True
+        except TimeoutError as e:
+            raise ClaimExpired("cut off") from e
+        finally:
+            events.append(f"release {ns}")
+
+    monkeypatch.setattr(move.ingest_run, "claim_source", cut_off_claim)
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert "taken back" in events
+    assert events.index("taken back") < min(
+        i for i, e in enumerate(events) if e.startswith("release")
+    )
+    assert real_copy["deleted"] == []
+
+
+async def test_a_second_cancel_during_the_take_back_still_waits_for_it(
+    real_copy: dict[str, Any],
+) -> None:
+    real_copy["take_back_gate"].clear()
+    task = await _running_move()
+    task.cancel()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert real_copy["events"][-1] == "taking back"
+    task.cancel()  # the request is cancelled again while the take-back runs
+    for _ in range(20):
+        await asyncio.sleep(0)
+    # The claims are still held: a retry cannot find the copy half removed.
+    assert not any(e.startswith("release") for e in real_copy["events"]) and not task.done()
+    real_copy["take_back_gate"].set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert real_copy["events"][-3:] == ["taken back", "release src", "release dst"]

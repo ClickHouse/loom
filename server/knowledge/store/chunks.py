@@ -402,6 +402,27 @@ async def embedding_models(
     return [str(r["m"]) for r in rows]
 
 
+async def count_revision(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    *,
+    revision: int,
+    upto_version: int,
+    ch: _CHClient | None = None,
+) -> int:
+    """The live chunks of the source's `revision` of any version up to `upto_version`:
+    those `copy_revision` copies, counted alike."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.chunks WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}"
+        f" AND doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}",
+        params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision, "v": upto_version},
+    )
+    return int(row["n"]) if row else 0
+
+
 async def copy_revision(
     org: str,
     namespace: str,
