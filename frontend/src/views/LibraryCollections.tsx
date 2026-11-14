@@ -104,7 +104,8 @@ export const REFRESH_WAIT_MS = 1000;
 
 /** The collections the caller can read in `org` (`collection.list`), every page. `reload`
  *  clears `rows` until its answer; a write elsewhere keeps them. `shown`: the collection the
- *  page shows, which only a reload's answer may find gone. */
+ *  page shows; a refresh that leaves it out reads again, up to `REFRESH_TRIES` times, before
+ *  it counts as gone. */
 export function useReadableCollections(org: string, shown = ""): ReadableCollections {
   const [answer, setAnswer] = useState<{
     org: string;
@@ -136,7 +137,7 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   );
   const expected = asked.expect.org === org ? asked.expect.name : "";
   // The collection shown, once the page's last reload is answered and lists it: a refresh
-  // that leaves it out asks again, as for a lagging replica; a reload's answer decides.
+  // that leaves it out reads again, up to REFRESH_TRIES times, before it counts as gone.
   // The read effect captures it when it starts: `shown` changing restarts no read.
   const answered = answer?.org === org && answer.reloads === asked.reloads;
   const hold = answered && answer.rows.some((c) => c.namespace === shown) ? shown : "";

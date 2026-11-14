@@ -28,7 +28,7 @@ const changeListeners = new Set<(made: string, org: string) => void>();
  *  `made` (a collection just created in `org`), when named, is not listed yet. */
 export function invalidateSharedCollections(made = "", org = ""): void {
   invalidateShared(COLLECTIONS_KEY);
-  for (const listener of [...changeListeners]) listener(made, org);
+  for (const listener of changeListeners) listener(made, org);
 }
 
 /** Call `listener` after each write to a collection, with the collection it made, if any, and

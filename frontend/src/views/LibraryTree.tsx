@@ -159,7 +159,7 @@ export const LibraryTree = memo(function LibraryTree({
   onPick: (collection: string | null, arriveFocus: string, note: string) => void;
   /** A collection made here, in `org`: read the list again and open it. It can land after
    *  the tree is gone (a resize, or a move to another org). */
-  onCreated: (collection: string, org: string) => void;
+  onCreated: (collection: string, org: string, arriveFocus: string) => void;
 }) {
   // What the person opened, remembered for the next visit.
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
@@ -440,7 +440,7 @@ function NewCollectionForm({
   parent: string;
   label: string;
   onClose: () => void;
-  onCreated: (collection: string, org: string) => void;
+  onCreated: (collection: string, org: string, arriveFocus: string) => void;
 }) {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
@@ -463,7 +463,7 @@ function NewCollectionForm({
     }
     announceCreated(r, trimmed);
     onClose();
-    onCreated(r.namespace, org);
+    onCreated(r.namespace, org, NEW_COLLECTION_FOCUS);
   };
   return (
     <form className="library-tree-form" onSubmit={(e) => void make(e)}>

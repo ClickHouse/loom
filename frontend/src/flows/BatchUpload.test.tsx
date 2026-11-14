@@ -1460,8 +1460,9 @@ describe("BatchUpload", () => {
       expect(vi.mocked(ingestKnowledge).mock.calls.map(([id, o]) => [id.namespace, o.source_uri])).toEqual([
         ["col-sub", "b.md"],
       ]);
-      // Closing has the Library read its collections again.
+      // Closing has the Library read its collections again, waiting for the one made.
       expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
+      expect(invalidateSharedCollections).toHaveBeenLastCalledWith("col-sub", "o");
     });
 
     it("lists the Library's collections again on close when a Stop cut a collection's create short", async () => {

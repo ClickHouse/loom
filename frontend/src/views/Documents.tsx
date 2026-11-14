@@ -63,7 +63,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { TopLevelPlaces } from "./LibraryHierarchy";
-import { LibraryTree, NEW_COLLECTION_FOCUS } from "./LibraryTree";
+import { LibraryTree } from "./LibraryTree";
 import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -191,7 +191,8 @@ export function Documents() {
     };
   }, []);
   // A collection just made: the read starts before the move so the old list never says it is
-  // missing. Nothing moves once this page closed or its org changed.
+  // missing. Nothing moves once this page closed or its org changed. The tree passes its New
+  // collection as `arriveFocus`, so the person goes on there.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
     (name: string, org: string, arriveFocus?: string) => {
@@ -200,11 +201,6 @@ export function Documents() {
       goTo(name, arriveFocus);
     },
     [reloadCollections, goTo],
-  );
-  // The person goes on in the tree: New collection keeps the focus.
-  const openCreatedInTree = useCallback(
-    (name: string, org: string) => openCreated(name, org, NEW_COLLECTION_FOCUS),
-    [openCreated],
   );
   const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
   // Read once for every list of places on the page, over the last answer (kept while it is
@@ -973,7 +969,7 @@ export function Documents() {
       shelf={ownShelf ? picked.namespace : null}
       current={shown?.namespace ?? (resolving ? collection : null)}
       onPick={goTo}
-      onCreated={openCreatedInTree}
+      onCreated={openCreated}
     />
   );
 

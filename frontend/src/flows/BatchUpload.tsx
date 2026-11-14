@@ -298,8 +298,8 @@ export function BatchUpload({
   const [stopping, setStopping] = useState(false);
   const [status, setStatus] = useState("");
   const ctrl = useRef<AbortController | null>(null);
-  // The collections this dialog's uploads made: a later upload finds them, and closing waits
-  // for the first to be listed.
+  // The collections this dialog's uploads made: a later upload finds them, and the Library's
+  // read after closing waits for the first to be listed.
   const madeHere = useRef<string[]>([]);
   // A folder upload ran: closing has the Library read its collections again, whatever it made.
   const foldersSent = useRef(false);
