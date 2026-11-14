@@ -362,18 +362,17 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Symptom:** a boot of a cell in any state but `open` logs
   `cell triggers: not applied on loom.<table> (...)`, and `loom doctor` names the table's
-  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's or
-  `loom.tenancy`'s guard in `enforced`).
-- **Cause:** the boot creates a cell's org triggers, and sets `loom.cell_first`'s back to
-  always, with a lock wait of 100 ms a try, three tries a second apart, and serves past a
-  table in two cases. The log names the sessions that held or queued a conflicting lock
-  when the table was still busy: a long transaction or a bulk write on it, or an
+  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's trigger
+  or the `loom.tenancy` guard in `enforced`).
+- **Cause:** the boot creates a cell's org triggers and guard, and sets `loom.cell_first`'s
+  back to always, with a lock wait of 100 ms a try, three tries a second apart, and serves
+  past a table in two cases. The log names the sessions that held or queued a conflicting
+  lock when the table was still busy: a long transaction or a bulk write on it, or an
   autovacuum, which the short tries do not make yield and which is left to finish (a wait
   long enough to cancel it would queue every writer of the table behind the boot). It says
   `this role cannot alter it` when the migrating role does not own the table, which
-  `loom doctor` names as an `owner` defect. Until a later boot finishes the table, a
-  writer that runs no tenancy check is not refused there; Loom's own writes are
-  unaffected.
+  `loom doctor` names as an `owner` defect. Until a later boot finishes the table, a writer
+  that runs no tenancy check is not refused there; Loom's own writes are unaffected.
 - **Fix:** for a busy table, end the transaction the log names if it is stale, or wait for
   the autovacuum to finish (`pg_stat_progress_vacuum`); for a table the role cannot alter,
   run the boot as the role that owns schema `loom`'s tables, or give the table to that
@@ -400,11 +399,11 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   writes, and any script's or bulk loader's, take longer per row, a role without `SELECT` on
   `loom.cell_first` gets "permission denied for table cell_first", or a script's
   `loom.tenancy` insert fails with SQLSTATE `LT001`.
-- **Cause:** the org triggers are still on its tables: a schema-only restore of a
-  prepared cell, or a cleanup that skipped the step that drops them. In `open` they let
-  every row through, but each unmarked write still reads the state. The `loom.tenancy`
-  guard, `tenancy_record`, refuses a script's tenancy row with SQLSTATE LT001: the row
-  itself makes the state `partial`.
+- **Cause:** the org triggers are still on its tables: a schema-only restore of a prepared
+  cell, or a cleanup that skipped the step that drops them. In `open` they let every row
+  through, but each unmarked write still reads the state. The `loom.tenancy` guard,
+  `tenancy_record`, refuses a script's tenancy row with SQLSTATE `LT001`: the row itself
+  makes the state `partial`.
 - **Check:**
 
   ```sql

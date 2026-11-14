@@ -21,7 +21,7 @@ DECLARE
     mode_now text;
     has_own boolean;
 BEGIN
-    IF TG_OP = 'UPDATE' AND OLD.org = NEW.org COLLATE "C" THEN
+    IF TG_OP = 'UPDATE' AND OLD.org = NEW.org THEN
         RETURN NULL;  -- an update that keeps the row's org
     END IF;
     SELECT f.is_first INTO first_is FROM loom.cell_first f;

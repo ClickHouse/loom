@@ -1147,8 +1147,9 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   workers' lease and the heartbeat read; `server/boot.py`'s `start_cell_gate` is a
   server process's boot read;
 - `server/core/cell_triggers.py`: the org triggers' marker, `ensure` (a migrating boot's
-  creation and repair of the triggers) and `missing` (what `loom doctor` names), with
-  their function in `schemas/pg_migrations/011_tenancy_triggers.sql`;
+  creation and repair of the triggers and the `loom.tenancy` guard) and `missing` (what
+  `loom doctor` names), with their functions in
+  `schemas/pg_migrations/011_tenancy_triggers.sql` and `012_tenancy_guard.sql`;
   `server/cli/doctor_cell.py`: `loom doctor`'s cell checks;
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;

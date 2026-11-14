@@ -700,7 +700,7 @@ def test_doctor_runs_the_cell_checks_only_with_loom_cell(
         ("O", None),
     ],
 )
-def test_ensure_creates_or_enables_the_guard_once_its_function_exists(
+def test_ensure_creates_enables_or_leaves_the_guard(
     monkeypatch: pytest.MonkeyPatch, found: str | None, ran: str | None
 ) -> None:
     class _Enforced(_Cell):
