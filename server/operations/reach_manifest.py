@@ -314,6 +314,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "knowledge.move": ("dashboard",),
     "knowledge.outline": (
         "sdk_method",
         "plugin_hook",
