@@ -65,9 +65,9 @@ Code
   `loom_code_impact`.
 - Grep your own uncommitted files and repositories the index does not cover. When a code
   tool answers `abstain: true`, grep instead of retrying with synonyms.
-- A code answer's `lessons` are the memories about the files it returns: follow them, and
-  check the code of one whose `code_state` is `changed`, `unresolved` or `missing` before
-  relying on it.
+- A code answer's `lessons` are memories about its top files: follow them, and check the
+  code of one whose `code_state` is `changed`, `unresolved` or `missing` before relying on
+  it.
 ```
 
 `code.repos` lists the repositories the token can read or ask to join, one row per
