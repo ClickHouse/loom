@@ -5,8 +5,8 @@
 ``loom_note``) as a Pydantic AI ``FunctionToolset``, so a model keeps and reads
 long-term memory in Loom during a run::
 
-    from pydantic_ai import Agent as PydanticAgent
     from loom import Agent
+    from pydantic_ai import Agent as PydanticAgent
     from loom.integrations.pydantic_ai import loom_toolset
 
     async with Agent(org="acme", namespace="support") as loom_agent:
