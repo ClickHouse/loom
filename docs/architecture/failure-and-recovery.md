@@ -546,15 +546,15 @@ nothing was deleted.
 
 ## Knowledge move
 
-`knowledge.move` ([moving documents](../features/knowledge.md#moving-documents)) writes
-each document into the namespace it goes to, then deletes it where it was, so a cut-off
-move leaves the document in both places and never in neither. Per document, it reads the
-document and the place it goes again, and answers `exists` for another live document
-there before it writes anything. It then stores the original and the extraction artifact
-in the new namespace, outside any claim (an original no row names yet is the sweep's, as
-any upload whose row did not land). An original held as a ClickHouse row is copied inside
-ClickHouse; one in the bucket, or one moved there meanwhile, is read and written again
-under the new namespace's place there.
+`knowledge.move` ([moving documents](../features/knowledge.md#moving-documents)) writes each
+document into the namespace it goes to, then deletes it where it was, so a cut-off move
+leaves the document in both places and never in neither. Per document, it reads the place it
+goes and answers `exists` for another live document there before it writes anything; under
+the claims it reads both again. It then stores the original and the extraction artifact in
+the new namespace, outside any claim (an original no row names yet is the sweep's, as any
+upload whose row did not land). An original held as a ClickHouse row is copied inside
+ClickHouse; one in the bucket, or one moved there meanwhile, is read and written again under
+the new namespace's place there.
 
 Then, under the source's claim in both namespaces, taken in sorted order and not waited for
 (a held source answers `busy` at once), it refuses (`busy`) when either place changed since

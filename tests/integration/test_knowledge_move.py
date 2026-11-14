@@ -639,3 +639,40 @@ async def test_a_retry_onto_a_copy_with_its_chunks_and_tables_gone_copies_it_aga
         parameters={"org": ORG, "ns": dst},
     ).result_rows
     assert [r[0] for r in rows] == ["north", "south"]
+
+
+def test_a_place_the_token_cannot_write_answers_found_false_and_moves_nothing(
+    control_plane_url: str, ch_client: Any, mint_test_token: Any
+) -> None:
+    import httpx
+
+    src, dst, uri = _places()
+    writer = mint_test_token(org=ORG, namespaces=[src, dst], roles=["writer"], subject="w")
+    # Writer where the documents are, and no grant on the place they would go.
+    src_only = mint_test_token(org=ORG, namespaces=[src], roles=["writer"], subject="mover")
+    headers = {"Authorization": f"Bearer {writer}"}
+    with httpx.Client(base_url=control_plane_url, timeout=30.0) as c:
+        r = c.post(
+            "/v1/knowledge.add",
+            json={"org": ORG, "namespace": src, "source_uri": uri, "content": "stays here"},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        before = _live(ch_client, src, uri)
+        r = c.post(
+            "/v1/knowledge.move",
+            json={"org": ORG, "namespace": src, "to_namespace": dst, "source_uris": [uri]},
+            headers={"Authorization": f"Bearer {src_only}"},
+        )
+        # Not a 403: the answer does not say whether the place exists.
+        assert r.status_code == 200, r.text
+        assert r.json() == {"found": False, "to_namespace": "", "results": []}
+        assert _live(ch_client, src, uri) == before and _live_rows(ch_client, src, uri) == 1
+        assert _live(ch_client, dst, uri) == [] and _live_rows(ch_client, dst, uri) == 0
+        # The same call by a token that writes both moves it: the refusal was the grant's.
+        allowed = c.post(
+            "/v1/knowledge.move",
+            json={"org": ORG, "namespace": src, "to_namespace": dst, "source_uris": [uri]},
+            headers=headers,
+        )
+    assert allowed.json()["results"] == [{"source_uri": uri, "moved": True, "reason": ""}]
