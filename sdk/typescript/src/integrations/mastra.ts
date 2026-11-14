@@ -15,10 +15,9 @@
 
 import { createTool } from "@mastra/core/tools";
 import type { Agent, Scope } from "../agent.js";
-import { LoomError } from "../errors.js";
 import { AgentTools, type AgentToolsOptions } from "../tools.js";
 
-/** The JSON-schema input a Mastra tool takes. */
+/** The schema a Mastra tool takes; Loom's JSON schema is one of its forms. */
 type InputSchema = NonNullable<Parameters<typeof createTool>[0]["inputSchema"]>;
 
 /** Loom's agent verbs as Mastra tools, keyed by tool name, bound to one user, session or run. */
@@ -36,15 +35,8 @@ export function loomTools(
         description: spec.description,
         // The same JSON schema: Loom's is readonly, createTool() takes mutable arrays.
         inputSchema: spec.parameters as unknown as InputSchema,
-        execute: async (input: unknown) => {
-          try {
-            return await tools.execute(spec.name, input);
-          } catch (e) {
-            // Mastra rethrows a tool's error wrapped in its own; the model can fix its call from Loom's message.
-            if (e instanceof LoomError) return `${spec.name} failed: ${e.message}`;
-            throw e;
-          }
-        },
+        // A thrown LoomError reaches the model as Mastra's failed tool result, with Loom's message.
+        execute: (input: unknown) => tools.execute(spec.name, input),
       }),
     ]),
   );

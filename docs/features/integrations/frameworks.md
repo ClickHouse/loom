@@ -327,8 +327,8 @@ refuses a `SyncAgent`. Message history stays with the caller, who passes it to e
 
 `loomTools(agent, scope)` returns Loom's agent verbs as Mastra tools built with
 `createTool`, keyed by name as a Mastra `Agent` takes them: the same `AgentTools` as the
-[OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` (1.x) is an optional peer
-dependency.
+[OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` 1.83 or a later 1.x is an
+optional peer dependency, and needs Node 22.13 or later.
 
 ```ts
 import { Agent as MastraAgent } from "@mastra/core/agent";
@@ -346,8 +346,11 @@ const assistant = new MastraAgent({
 Mastra's own memory keeps threads and messages in a storage adapter that edits and deletes
 them; Loom's conversations are append-only, so the adapter offers Loom as tools rather than
 as that store. A Mastra `Memory` can keep its thread history in its own store while the
-model reads and writes long-term memory in Loom through these tools. A call Loom refuses
-returns `<tool> failed: <message>` to the model, as with the other tool adapters.
+model reads and writes long-term memory in Loom through these tools. Mastra checks each call
+against Loom's schema first and answers one outside it (a missing argument, a `top_k` above
+20, a quoted number) with its own validation message; a call within the schema that Loom
+refuses, or a server error, reaches the model as Mastra's failed tool result with Loom's
+message. Either way the model reads the message and the run goes on.
 
 ## LangGraph
 
@@ -472,9 +475,10 @@ client can speak for several agents.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
-- **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK and
-  Mastra tools return Loom's error to the model as the call's result; the Pydantic AI tools
-  return it as a failed tool result.
+- **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK tools
+  return Loom's error to the model as the call's result; the Pydantic AI and Mastra tools
+  return it as a failed tool result (Mastra answers a call outside Loom's schema with its
+  own validation message first).
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).

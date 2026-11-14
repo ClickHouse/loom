@@ -411,7 +411,7 @@ import { loomTools } from "@clickhouse/loom/integrations/mastra";
 const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
 ```
 
-Loom's agent verbs (`AgentTools`) as Mastra tools built with `createTool`, keyed by name, from `@mastra/core`, an optional peer dependency.
+Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency.
 
 ## Strands Agents
 

@@ -113,8 +113,8 @@
   "peerDependencies": {
     "@aws-sdk/client-secrets-manager": "^3.0.0",
     "@langchain/core": ">=1.0.0 <2.0.0",
-    "@openai/agents": ">=0.22.0 <0.23.0",
-    "@mastra/core": ">=1.83.0 <2.0.0"
+    "@mastra/core": ">=1.83.0 <2.0.0",
+    "@openai/agents": ">=0.22.0 <0.23.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-secrets-manager": {
@@ -123,10 +123,10 @@
     "@langchain/core": {
       "optional": true
     },
-    "@openai/agents": {
+    "@mastra/core": {
       "optional": true
     },
-    "@mastra/core": {
+    "@openai/agents": {
       "optional": true
     }
   },
