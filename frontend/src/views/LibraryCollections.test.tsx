@@ -266,8 +266,7 @@ describe("LibraryCollections", () => {
     render(<Picker org="acme" namespace="team" collections={collections} current={null} onPick={() => undefined} />);
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
-    // Nothing is drawn: it reads again as a reload.
-    expect(collections.retry).toHaveBeenCalledWith(false);
+    expect(collections.retry).toHaveBeenCalled();
   });
 });
 

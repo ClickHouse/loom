@@ -97,8 +97,8 @@ export interface ReadableCollections {
    *  created, asked for again a few times while a replica's list has not caught up. */
   reload: (made?: string) => void;
   /** Read again after a failure, waiting for what the failed read waited for: in the
-   *  background with `keepRows`, else as a reload. */
-  retry: (keepRows: boolean) => void;
+   *  background while an answer is kept, else as a reload. */
+  retry: () => void;
   /** The collection the last reload or refresh waited for, or "". */
   expected: string;
 }
@@ -131,15 +131,10 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     },
     [org],
   );
-  // The failed read again, waiting for what it waited for: in the background, or as a reload.
-  const retry = useCallback((keepRows: boolean) => {
-    if (!keepRows) setError(null);
-    setAsked((r) => (keepRows ? { ...r, refreshes: r.refreshes + 1 } : { ...r, reloads: r.reloads + 1 }));
-  }, []);
-  // Any write to a collection, from a dialog since closed too: read again in the background.
+  // Any write to a collection, from a dialog since closed too: read again in the background;
+  // one made in another org is not waited for.
   useEffect(
     () =>
-      // A collection made in another org is not waited for here.
       onCollectionsChanged((made) =>
         setAsked((r) => ({
           ...r,
@@ -184,6 +179,11 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     [org, asked],
   );
   const kept = answer && answer.org === org ? answer : null;
+  // `expect` is left alone, so the retry waits for what the failed read waited for.
+  const retry = useCallback(() => {
+    setError(null);
+    setAsked((r) => (kept ? { ...r, refreshes: r.refreshes + 1 } : { ...r, reloads: r.reloads + 1 }));
+  }, [kept]);
   const current = kept && kept.reloads === asked.reloads ? kept : null;
   return {
     rows: current?.rows ?? null,
@@ -321,7 +321,8 @@ export function LibraryCollections({
     return namespaceLabel(namespace);
   };
   const lineName = placeName();
-  // The rows stay drawn: the tree keeps the last answer, the select not. A failure then is a refresh.
+  // Whether rows are still drawn (the tree keeps the last answer; the select does not): a
+  // failure then is a failed refresh.
   const rowsDrawn = !!(besideTree ? collections.kept : rows);
   // The collection shown, not My files: it has a path, members and a menu.
   const collection = current && !current.personal ? current : null;
@@ -442,7 +443,7 @@ export function LibraryCollections({
             {humanizeError(error, { bare: true, read: true })}
           </span>
           {/* With rows drawn it tries again in place: a reload would blank them and the documents. */}
-          <Button type="empty" htmlType="button" onClick={() => collections.retry(rowsDrawn)}>
+          <Button type="empty" htmlType="button" onClick={collections.retry}>
             Load collections again
           </Button>
         </p>
