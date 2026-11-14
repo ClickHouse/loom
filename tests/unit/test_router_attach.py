@@ -393,6 +393,19 @@ def test_begin_is_idempotent_and_takes_up_a_new_keys_fingerprint(
     assert store.audit[-1][2]["fingerprints_written"] is False
 
 
+def test_begin_tells_a_fingerprint_apart_by_its_json_types(
+    client: TestClient, store: _Store
+) -> None:
+    """`false` and `0` are equal Python values and different fingerprints: the cell's
+    processes compare type-strictly, so a rerun posting `0` is refused, not written."""
+    with_false = cell.as_value({**FIELDS, "scim": False})
+    assert _call(client, "POST", "attach/begin", _begin(current_fp=with_false)).status_code == 200
+    with_zero = cell.as_value({**FIELDS, "scim": 0})
+    r = _call(client, "POST", "attach/begin", _begin(current_fp=with_zero))
+    assert r.status_code == 409 and "loom cell update" in r.json()["error"]
+    assert store.cells["eu-1"]["current_fp"]["fields"]["scim"] is False
+
+
 def test_begin_refuses_other_fingerprints_once_the_row_has_them(
     client: TestClient, store: _Store
 ) -> None:

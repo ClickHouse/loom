@@ -74,7 +74,7 @@ REFUSAL_READ_MAX_S = _bound_s(REFUSAL_READ_STATEMENTS)
 # `begin`'s and `serving`'s probe (the row, any other row); `begin`, `enforced` and
 # `serving` (begin, lock, row, other row, update, audit, read-back, commit); a batch (begin,
 # lock, row, other row, insert, placements elsewhere, count, audit, commit); and the removal
-# of an unattached cell (begin, lock, row, hosts, row, audit, commit).
+# of an unattached cell (begin, lock, row, delete hosts, delete row, audit, commit).
 OPERATOR_READ_STATEMENTS, ATTACH_READ_STATEMENTS = 3, 2
 ATTACH_CHANGE_STATEMENTS, ATTACH_PLACE_STATEMENTS, REMOVE_STATEMENTS = 8, 9, 7
 OPERATOR_READ_MAX_S = _bound_s(OPERATOR_READ_STATEMENTS)  # not a setting: derived
@@ -825,6 +825,11 @@ def _placement_refusal(cell: str, name: str, value: dict[str, Any]) -> str:
     )
 
 
+def _as_json(*values: Any) -> str:
+    """Values in one canonical JSON text, which tells `false`, `0` and `0.0` apart."""
+    return json.dumps(values, sort_keys=True)
+
+
 def begin_refusal(found: Attaching, begin: Begin) -> str:
     """Why `attach/begin` is refused on this row ('' when it is not), before the probe and
     again under the lock."""
@@ -838,9 +843,10 @@ def begin_refusal(found: Attaching, begin: Begin) -> str:
             row.cell, name, value
         ):
             return reason
-    if row.current_fp is not None and (row.current_fp, row.next_fp) != (
-        begin.current_fp,
-        begin.next_fp,
+    # Compared as JSON, not as Python values, where `false == 0` and `1 == 1.0`: a rerun
+    # writes the fingerprints again only when they are the row's to the type.
+    if row.current_fp is not None and _as_json(row.current_fp, row.next_fp) != _as_json(
+        begin.current_fp, begin.next_fp
     ):
         return f"cell {row.cell!r} records other fingerprints: change them with `loom cell update`"
     return ""
