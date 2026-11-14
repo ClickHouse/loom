@@ -88,10 +88,10 @@ Exercises:
 
 Index a repository on the stack
 ([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)).
-Then ask where a symbol is defined, who calls it, and what a change to it touches
-([what the code index answers](../features/code-index/overview.md#what-it-answers)) over
-HTTP, with `POST /v1/code.<op>`. The single-user stack does not fill in `code.*` calls, so
-each body names `org` `"dev"` and the repository's `namespace` (`code-myrepo` in the
+Then ask where a symbol is defined, who calls it, and what a change to it touches ([what
+the code index answers](../features/code-index/overview.md#what-it-answers)) over HTTP,
+with `POST /v1/code.<op>`. The single-user stack does not fill in `code.*` calls, so each
+body names `"org": "dev"` and the repository's `"namespace"` (`code-myrepo` in the
 quickstart's entry).
 
 A coding agent can ask the same questions once connected
