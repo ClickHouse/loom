@@ -302,8 +302,8 @@ agent verbs as a `FunctionToolset`, the same `AgentTools` as the
 
 ```python
 from loom import Agent
-from pydantic_ai import Agent as PydanticAgent
 from loom.integrations.pydantic_ai import loom_toolset
+from pydantic_ai import Agent as PydanticAgent
 
 async with Agent(org="acme", namespace="support") as loom_agent:
     assistant = PydanticAgent(
