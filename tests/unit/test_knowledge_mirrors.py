@@ -226,13 +226,13 @@ def test_a_tombstoning_erasure_fails_on_any_row_left_in_a_mirror(
     assert holder["per_table"]["loom.memory"] == 1
 
 
-def test_the_counted_scope_reads_the_registry_on_the_caller_s_connection(
+def test_the_erased_scope_reads_the_registry_on_the_caller_s_connection(
     registry: list[Any],
 ) -> None:
     conn = object()
 
     async def scenario() -> Any:
-        async with saga_steps.counted_scope(ORG, "namespace", "team", ch=conn) as scope:  # type: ignore[arg-type]
+        async with saga_steps.erased_scope(ORG, "namespace", "team", ch=conn) as scope:  # type: ignore[arg-type]
             return scope, purge_mode()
 
     assert asyncio.run(scenario()) == (["team", MIRROR], True)
@@ -280,6 +280,7 @@ def test_erasure_re_verify_reports_what_a_mirror_still_holds(
     asyncio.run(hygiene._re_verify_run(None, args))
     out = capsys.readouterr().out
     assert 'residue now: 4 {"memory": 4}' in out and "purge=True" in out
+    assert "scope=2 name(s)" in out  # the namespace and its mirror
 
 
 def test_erasure_re_verify_of_a_completed_saga_reads_its_mirrors_links(

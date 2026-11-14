@@ -71,7 +71,7 @@ async def _step_verify_residue(
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
     spellings = await census_spellings(org, scope_type, scope_value)
-    async with counted_scope(org, scope_type, scope_value) as scope:
+    async with erased_scope(org, scope_type, scope_value) as scope:
         per_table = await erasure_census.residue_census(org, scope_type, scope, spellings=spellings)
         if scope_type == "namespace":  # and the scope's objects left in the document bucket
             per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
@@ -200,40 +200,31 @@ async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) 
         return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
 
 
-async def _mirror_scope(
-    org: str, namespace: _NS, *, ch: _CHClient | None = None
-) -> list[str] | None:
-    """The scope with its namespaces' mirrors, or None when it holds no mirror."""
-    names = namespaces_of(namespace)
-    mirrors = list(await _mirrors_of(org, namespace, ch=ch))
-    if not mirrors and not any(is_mirror_name(ns) for ns in names):
-        return None
-    return list(dict.fromkeys([*names, *mirrors]))  # a scope may name a mirror it has
-
-
 @asynccontextmanager
-async def counted_scope(
+async def erased_scope(
     org: str, scope_type: str, scope_value: _NS, *, ch: _CHClient | None = None
 ) -> AsyncIterator[_NS]:
-    """The scope a namespace step erases and a census counts: with its namespaces'
-    mirrors, as a purge, when it holds one."""
-    scope = await _mirror_scope(org, scope_value, ch=ch) if scope_type == "namespace" else None
-    if scope is None:
+    """The scope a namespace step erases and a census counts: when it holds a mirror,
+    every named namespace and every mirror they have had, as a purge."""
+    names = namespaces_of(scope_value) if scope_type == "namespace" else []
+    mirrors = list(await _mirrors_of(org, names, ch=ch)) if names else []
+    if not mirrors and not any(is_mirror_name(ns) for ns in names):
         yield scope_value
         return
     with purge_scope(True):
-        yield scope
+        # A scope that names one of its own mirrors lists it once.
+        yield list(dict.fromkeys([*names, *mirrors]))
 
 
 def with_mirrors(
     step: Callable[[str, _NS], Awaitable[int]],
 ) -> Callable[[str, _NS], Awaitable[int]]:
-    """`step` over the `counted_scope`. A scope that holds a mirror is erased as a purge:
+    """`step` over the `erased_scope`. A scope that holds a mirror is erased as a purge:
     no token reads or restores an `acl-` name, so its rows leave the disk, and in one
     pass, so a Postgres step commits one mark and an org-wide step runs once."""
 
     async def run(org: str, namespace: _NS) -> int:
-        async with counted_scope(org, "namespace", namespace) as scope:
+        async with erased_scope(org, "namespace", namespace) as scope:
             return await step(org, scope)
 
     return run
@@ -242,8 +233,7 @@ def with_mirrors(
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
     """The last Loom step, before the backends and the census: writes every mirror the
     named namespaces have had `deleted`, so the name registered again gets a new one; a
-    scope of only mirrors forgets none. It reads the registry itself, so the
-    `with_mirrors` it runs under, like every namespace step, changes nothing here."""
+    scope of only mirrors forgets none."""
     found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)

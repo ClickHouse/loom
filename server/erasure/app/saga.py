@@ -40,7 +40,7 @@ from server.erasure.app.saga_steps import (
     _step_verify_residue,
     authority_steps,
     census_spellings,
-    counted_scope,
+    erased_scope,
     with_mirrors,
 )
 from server.erasure.domain.scopes import (
@@ -548,7 +548,7 @@ async def _census_tail(
     try:
         spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            async with counted_scope(org, scope_type, scope_value) as scope:
+            async with erased_scope(org, scope_type, scope_value) as scope:
                 per_table, unread = await erasure_census.evidence_census(
                     org, scope_type, scope, spellings=spellings
                 )
