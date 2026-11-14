@@ -12,10 +12,8 @@ import {
   type ComponentPropsWithoutRef,
   forwardRef,
   type MouseEvent,
-  type MutableRefObject,
   type ReactNode,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -23,6 +21,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import type { CollectionEntry } from "../api";
+import { type ShowMoreRows, useShowMore } from "../lib/useShowMore";
 import { IconButton } from "../components/IconButton";
 import { PopoverTrigger } from "../components/ui/Menu";
 import { CHIP_OUTLINE_CLASS } from "../components/ui/Chip";
@@ -31,7 +30,6 @@ import { TextClamp, useClamped } from "../components/ui/TextClamp";
 import { Tip } from "../components/ui/Tooltip";
 import { COLLECTIONS_LISTED, collectionOrder, collectionTitle, distinctTitle, roleLabel } from "../lib/collections";
 import { fmtInt } from "../lib/format";
-import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { isModifiedClick } from "../lib/graphLink";
 import { navigationHref } from "../lib/state";
 
@@ -40,7 +38,6 @@ const SHARED_HEADING_ID = "library-collections-shared";
 
 /** Places listed at first, and how many more each "Show more" adds. */
 const FIRST_SHOWN = 6;
-export const MORE_SHOWN = 50;
 
 /** An ancestor missing from the list: its address, all `collection.list` says of it. */
 export interface HiddenPart {
@@ -412,57 +409,8 @@ function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]>
   });
 }
 
-/** A list of places drawn a step at a time (`useShowMore`). */
-export interface ShowMore {
-  /** The places drawn now. */
-  shown: CollectionEntry[];
-  /** The list's element, where the focus goes after a press. */
-  list: MutableRefObject<HTMLUListElement | null>;
-  /** Show more's label (what a press adds), or null once all are shown. */
-  moreLabel: string | null;
-  showMore: () => void;
-  /** More than the first are shown: Show fewer goes back to them. */
-  fewer: boolean;
-  showFewer: () => void;
-}
-
-/** The first `first` places, each Show more adding MORE_SHOWN; `extra` (one of `items`, on the
- *  way to the place shown) is drawn past them wherever it sits. `moreLabel` is the button's label,
- *  null once all are shown. The last press removes its button: the focus goes to the first
- *  place it added, else the last row shown, else `fallback`. */
-export function useShowMore(
-  items: CollectionEntry[],
-  first: number,
-  extra: CollectionEntry | null = null,
-  fallback: () => HTMLElement | null = () => null,
-): ShowMore {
-  const [count, setCount] = useState(first);
-  const list = useRef<HTMLUListElement | null>(null);
-  const shownAt = (n: number) => {
-    const head = items.slice(0, n);
-    return extra && !head.includes(extra) ? [...head, extra] : head;
-  };
-  const shown = shownAt(count);
-  // What the next press adds: `extra` may already be drawn among it.
-  const adds = shownAt(count + MORE_SHOWN).length - shown.length;
-  const markShown = useLastPageFocus({
-    loading: false,
-    more: adds > 0,
-    rows: () => placeLinks(list.current),
-    fallback,
-  });
-  return {
-    shown,
-    list,
-    moreLabel: adds > 0 ? `Show ${adds} more` : null,
-    showMore: () => {
-      markShown(shown.map((c) => c.namespace));
-      setCount(count + MORE_SHOWN);
-    },
-    fewer: count > first,
-    showFewer: () => setCount(first),
-  };
-}
+/** How a list of places is drawn a step at a time: by name, each row's link taking the focus. */
+export const PLACE_ROWS: ShowMoreRows<CollectionEntry> = { key: (c) => c.namespace, rows: placeLinks };
 
 /** One list of places to open, revealed a step at a time, each saying where it sits. */
 function PlaceList({
@@ -483,7 +431,7 @@ function PlaceList({
   onPick: (collection: string) => void;
   truncated: boolean;
 }) {
-  const { shown, list, moreLabel, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, null, () =>
+  const { shown, list, moreLabel, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, PLACE_ROWS, null, () =>
     document.getElementById(id),
   );
   if (items.length === 0) return null;
@@ -550,7 +498,7 @@ export function CollectionChips({
   onPick: (collection: string) => void;
 }) {
   const inside = useMemo(() => (rows && collection ? childrenOf(rows, collection) : []), [rows, collection]);
-  const { shown, list, moreLabel, showMore } = useShowMore(inside, FIRST_SHOWN);
+  const { shown, list, moreLabel, showMore } = useShowMore(inside, FIRST_SHOWN, PLACE_ROWS);
   if (!collection || inside.length === 0) return null;
   return (
     <nav aria-label={`Inside ${distinctTitle(collection, repeated)}`} className="library-chips">

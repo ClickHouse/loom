@@ -228,9 +228,7 @@ export function Documents() {
     [collections.kept],
   );
   const resolving = !!collection && collections.rows === null && !listFailed;
-  // The collection whose sharing the header shows: the last answer's while the list is read
-  // again, so the line is not read afresh on every refresh.
-  const sharing = shown ?? (collection ? (byName.get(collection) ?? null) : null);
+  const sharing = collection ? (byName.get(collection) ?? null) : null;
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.

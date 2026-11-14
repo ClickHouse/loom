@@ -383,8 +383,13 @@ describe("the collection header", () => {
     await screen.findByText(/^You, group eng/);
     fireEvent.click(screen.getByRole("button", { name: "See who" }));
     const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText("m149@example.com");
+    // Every page read: the count is all 151, drawn 50 at a time.
+    expect(await within(dialog).findByText("Members (151)")).toBeInTheDocument();
     expect(within(dialog).getByText("m0@example.com")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Show 50 more" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Show 50 more" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Show 1 more" }));
+    expect(within(dialog).getByText("m149@example.com")).toBeInTheDocument();
     const through = within(dialog).getByRole("region", { name: "Also can see it, through Engineering" });
     expect(within(through).getByText("group:eng")).toBeInTheDocument();
     const hidden = within(dialog).getByRole("region", { name: "Also can see it, through a collection you can't open" });
@@ -405,6 +410,22 @@ describe("the collection header", () => {
     const through = within(dialog).getByRole("region", { name: "Also can see it, through Engineering" });
     expect(within(through).getByText("group:eng")).toBeInTheDocument();
     expect(await axeViolations(dialog)).toEqual([]);
+  });
+
+  it("holds the dialog's empty line until the header has read the parents", async () => {
+    const { mid, byName } = family();
+    let answerTop: (v: unknown) => void = () => {};
+    api.listGrants.mockImplementation(async ({ namespace }: { namespace: string }) =>
+      namespace === "col-top" ? new Promise((r) => (answerTop = r)) : { rows: [] },
+    );
+    render(<Header collection={{ ...mid, role: "writer" }} byName={byName} />);
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Loading who else can see it")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/No members yet|No one is named here/)).not.toBeInTheDocument();
+    answerTop({ rows: [grant("group:eng")] });
+    expect(await within(dialog).findByText(/No one is named here; who can see it comes from/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^No members yet/)).not.toBeInTheDocument();
   });
 
   it("reads the grants again when the members dialog closes, keeping the words busy meanwhile", async () => {

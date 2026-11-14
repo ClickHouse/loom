@@ -333,7 +333,9 @@ export function useCollectionSharing({
       // A title, with the address beneath it; an untitled collection is named by its address once.
       label={shown.title?.trim() || undefined}
       admin={shown.role === "admin"}
-      inherited={inherited}
+      // Until the header answers for this collection, who else can see it is still being read;
+      // a failed answer names no parent.
+      inherited={answer === null ? null : inherited}
     />
   );
   return { line, button, dialog };

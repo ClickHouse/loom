@@ -1,8 +1,10 @@
 import { listGrants, type GrantEntry } from "../api";
 
 /** Grants read per page, and the pages read on one namespace before a list counts as cut. */
-export const GRANTS_PAGE = 500;
-export const GRANTS_PAGES = 20;
+const GRANTS_PAGE = 500;
+const GRANTS_PAGES = 20;
+/** The most grants read on one namespace. */
+export const GRANTS_READ = GRANTS_PAGE * GRANTS_PAGES;
 
 /** The grants on one namespace. `cut`: more pages followed than were read. */
 export interface GrantsAt {

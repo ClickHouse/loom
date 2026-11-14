@@ -25,7 +25,35 @@ import { fieldError, ListTime, Loading, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
-import { allGrants, GRANTS_PAGE, GRANTS_PAGES } from "../lib/grantPages";
+import { allGrants, GRANTS_READ } from "../lib/grantPages";
+import { fmtInt } from "../lib/format";
+import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
+
+/** A members list drawn a step at a time: rows by subject, each focusing its first control,
+ *  else itself. */
+const MEMBER_ROWS: ShowMoreRows<GrantEntry> = {
+  key: (r) => r.subject,
+  rows: (list) =>
+    [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-subject]") ?? [])].map((li) => [
+      li.dataset.subject ?? "",
+      li.querySelector<HTMLElement>("button") ?? li,
+    ]),
+};
+
+/** Whether a grant names `me`, under any of the person's spellings. */
+function namesMe(r: GrantEntry, me: string): boolean {
+  return !!me && [r.subject, ...(r.also ?? [])].includes(me);
+}
+
+/** Show more under a list drawn a step at a time. */
+function MoreButton({ label, onClick }: { label: string | null; onClick: () => void }) {
+  if (!label) return null;
+  return (
+    <Button type="empty" htmlType="button" onClick={onClick}>
+      {label}
+    </Button>
+  );
+}
 
 /** Who else can see a collection through one of the collections it sits in: read-only. */
 export interface InheritedAccess {
@@ -67,8 +95,9 @@ interface Props {
    *  collection's role reaches through its parents and the caller's groups. */
   admin?: boolean;
   /** A collection's parents, nearest first, and who can see it through each: listed under
-   *  its own members, read-only, since they are changed on the parent. */
-  inherited?: InheritedAccess[];
+   *  its own members, read-only, since they are changed on the parent. Null while they are
+   *  read: the dialog says nothing of an empty list until it knows who else can see it. */
+  inherited?: InheritedAccess[] | null;
 }
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
@@ -279,6 +308,8 @@ export function MembersDialog({
   }));
 
   const addLabel = isCode ? "Add reader" : "Add member";
+  // Every page is read, so counts and "(you)" hold; the rows are drawn a step at a time.
+  const members = useShowMore(activeRows, MORE_SHOWN, MEMBER_ROWS);
 
   return (
     <Modal
@@ -304,7 +335,7 @@ export function MembersDialog({
             {`Couldn't refresh the ${isCode ? "readers" : "members"}; showing the last read.`}
           </div>
         )}
-        {rows !== null && rows.length === 0 && (
+        {rows !== null && rows.length === 0 && inherited !== null && (
           <div className={`text-center text-sm text-text-muted ${inherited.length > 0 ? "py-3" : "py-8"}`}>
             {inherited.length > 0
               ? "No one is named here; who can see it comes from the collections it sits in."
@@ -314,7 +345,7 @@ export function MembersDialog({
         )}
         {cut && (
           <p className="mb-3 text-xs text-text-muted">
-            {`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} ${isCode ? "readers" : "members"} are listed here.`}
+            {`Only the first ${fmtInt(GRANTS_READ)} ${isCode ? "readers" : "members"} are listed here.`}
           </p>
         )}
         {pendingRows.length > 0 && (
@@ -416,62 +447,74 @@ export function MembersDialog({
         )}
         {activeRows.length > 0 && (
           <div className="space-y-1">
-            {pendingRows.length > 0 && (
-              <div className="mb-1 text-xs font-medium text-text-muted">Members ({activeRows.length})</div>
-            )}
-            {activeRows.map((r) => (
-              <div key={r.subject} className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-surface-2">
-                <RoleIcon role={r.role} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-sm">
-                    {r.subject}
-                    {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
-                  </div>
-                  <div className="text-xs text-text-muted">
-                    Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
-                  </div>
-                </div>
-                {canManage && r.subject !== me ? (
-                  <>
-                    <div className="w-36 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Role for ${r.subject}` }}
-                        value={r.role}
-                        disabled={busy === r.subject}
-                        onSelect={(value) => {
-                          const role = oneOf(roleValues, value);
-                          if (role !== null && role !== r.role) onChangeRole(r.subject, role);
-                        }}
-                        options={roles.map((opt) => ({ value: opt.value, label: opt.label }))}
-                      />
-                    </div>
-                    <IconButton
-                      icon="trash"
-                      type="danger"
-                      size="sm"
-                      label={`Remove ${r.subject}`}
-                      tooltip="Remove from namespace"
-                      onClick={() => onRemove(r.subject)}
-                      disabled={busy === r.subject}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
-                    {manageReason && r.subject !== me && (
-                      <Unavailable reason={manageReason}>
-                        <ClickIconButton type="danger" size="sm" icon="trash" aria-label={`Remove ${r.subject}`} />
-                      </Unavailable>
-                    )}
-                  </>
-                )}
+            {(pendingRows.length > 0 || activeRows.length > members.shown.length) && (
+              <div className="mb-1 text-xs font-medium text-text-muted">
+                {`${isCode ? "Readers" : "Members"} (${fmtInt(activeRows.length)})`}
               </div>
-            ))}
+            )}
+            <ul ref={members.list} className="space-y-1">
+              {members.shown.map((r) => (
+                <li
+                  key={r.subject}
+                  data-subject={r.subject}
+                  tabIndex={-1}
+                  className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-surface-2"
+                >
+                  <RoleIcon role={r.role} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-mono text-sm">
+                      {r.subject}
+                      {namesMe(r, me) && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
+                    </div>
+                    <div className="text-xs text-text-muted">
+                      Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
+                    </div>
+                  </div>
+                  {canManage && r.subject !== me ? (
+                    <>
+                      <div className="w-36 shrink-0">
+                        <Select
+                          triggerProps={{ "aria-label": `Role for ${r.subject}` }}
+                          value={r.role}
+                          disabled={busy === r.subject}
+                          onSelect={(value) => {
+                            const role = oneOf(roleValues, value);
+                            if (role !== null && role !== r.role) onChangeRole(r.subject, role);
+                          }}
+                          options={roles.map((opt) => ({ value: opt.value, label: opt.label }))}
+                        />
+                      </div>
+                      <IconButton
+                        icon="trash"
+                        type="danger"
+                        size="sm"
+                        label={`Remove ${r.subject}`}
+                        tooltip="Remove from namespace"
+                        onClick={() => onRemove(r.subject)}
+                        disabled={busy === r.subject}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                      {manageReason && r.subject !== me && (
+                        <Unavailable reason={manageReason}>
+                          <ClickIconButton type="danger" size="sm" icon="trash" aria-label={`Remove ${r.subject}`} />
+                        </Unavailable>
+                      )}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <MoreButton label={members.moreLabel} onClick={members.showMore} />
           </div>
         )}
-        {inherited.map((p) => (
-          <InheritedSection key={p.hidden ? "hidden" : p.namespace} access={p} me={me} />
-        ))}
+        {inherited === null ? (
+          <Loading label="Loading who else can see it" />
+        ) : (
+          inherited.map((p) => <InheritedSection key={p.hidden ? "hidden" : p.namespace} access={p} me={me} />)
+        )}
       </div>
 
       {canManage && adding && (
@@ -554,6 +597,7 @@ export function MembersDialog({
 function InheritedSection({ access, me }: { access: InheritedAccess; me: string }) {
   const active = (access.rows ?? []).filter((r) => r.status === "active");
   const heading = `Also can see it, through ${access.title}`;
+  const rows = useShowMore(active, MORE_SHOWN, MEMBER_ROWS);
   return (
     <section aria-label={heading} className="mt-4 border-t border-border pt-3">
       <div className="mb-1 text-xs font-medium text-text-muted">
@@ -574,20 +618,31 @@ function InheritedSection({ access, me }: { access: InheritedAccess; me: string 
         <p className="py-1 text-sm text-text-muted">No one is named there.</p>
       ) : (
         <div className="space-y-1">
-          {active.map((r) => (
-            <div key={r.subject} className="flex items-center gap-3 rounded-lg p-2.5">
-              <RoleIcon role={r.role} />
-              <div className="min-w-0 flex-1 truncate font-mono text-sm">
-                {r.subject}
-                {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
-              </div>
-              <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
-            </div>
-          ))}
+          {active.length > rows.shown.length && (
+            <div className="text-xs text-text-muted">{`${fmtInt(active.length)} there`}</div>
+          )}
+          <ul ref={rows.list} className="space-y-1">
+            {rows.shown.map((r) => (
+              <li
+                key={r.subject}
+                data-subject={r.subject}
+                tabIndex={-1}
+                className="flex items-center gap-3 rounded-lg p-2.5"
+              >
+                <RoleIcon role={r.role} />
+                <div className="min-w-0 flex-1 truncate font-mono text-sm">
+                  {r.subject}
+                  {namesMe(r, me) && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
+                </div>
+                <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+              </li>
+            ))}
+          </ul>
+          <MoreButton label={rows.moreLabel} onClick={rows.showMore} />
         </div>
       )}
       {access.cut && (
-        <p className="text-xs text-text-muted">{`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} members there are listed.`}</p>
+        <p className="text-xs text-text-muted">{`Only the first ${fmtInt(GRANTS_READ)} members there are listed.`}</p>
       )}
     </section>
   );
