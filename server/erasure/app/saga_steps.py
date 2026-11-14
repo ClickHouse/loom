@@ -240,8 +240,10 @@ def with_mirrors(
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
-    """Last: writes every mirror the named namespaces have had `deleted`, so the name
-    registered again gets a new one; a scope of only mirrors forgets none."""
+    """The last Loom step, before the backends and the census: writes every mirror the
+    named namespaces have had `deleted`, so the name registered again gets a new one; a
+    scope of only mirrors forgets none. It reads the registry itself, so the
+    `with_mirrors` it runs under, like every namespace step, changes nothing here."""
     found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)

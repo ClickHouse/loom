@@ -758,9 +758,9 @@ schema. These rules keep that safe. The operator procedure is in
     named namespaces have had, so every run of the step, a resume's or a replay's
     included, covers them: a scope that holds a mirror is erased as a purge, in one pass
     over the named namespaces and their mirrors, and the census counts it the same way.
-    The last step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a live
-    one keeps the name in use. N-1 runs no mirror pass and counts no registry row; this
-    build writes no mirror, so N-1 meets an empty registry.
+    The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a
+    live one keeps the name in use. N-1 runs no mirror pass and counts no registry row;
+    this build writes no mirror, so N-1 meets an empty registry.
     `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
     `tests/unit/test_knowledge_sources.py` and
     `tests/unit/test_knowledge_source_sync.py` check N's side.

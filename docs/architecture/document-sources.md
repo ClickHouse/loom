@@ -888,8 +888,8 @@ statements and census keys against these, and its tests pin each one:
   named namespace's mirrors as more names of the same erasure: a scope that holds a
   mirror is erased as a purge, in one pass over the named namespaces and their mirrors,
   since no token reads or restores an `acl-` name, and the census counts it the same
-  way. The last step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, so the
-  name registered again gets a new mirror; the registry keeps them, so a resume or a
+  way. The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, so
+  the name registered again gets a new mirror; the registry keeps them, so a resume or a
   replay after a restore still reaches them. A `user_id` erasure touches no mirror row
   (the sync writes them as `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those

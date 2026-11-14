@@ -1272,7 +1272,7 @@ are steps too and fail the saga closed. A namespace erasure tombstones the names
 promoted rows in `loom.shared` (`shared.tombstone`); a user erasure matches them by
 provenance. A namespace scope that holds a document mirror is erased as a purge, in one
 pass over the named namespaces and their mirrors, whatever the request asked, and its
-last step, `knowledge_mirrors.forget`, writes the mirrors `deleted` ([document
+last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted` ([document
 sources](document-sources.md#the-mirror)).
 
 The last step is a residue census over every table the read paths touch and, with a
