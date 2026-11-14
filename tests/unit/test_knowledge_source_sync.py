@@ -31,7 +31,12 @@ from server.knowledge.app import extractors, source_gdrive_items, source_sync, w
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import convert
 from server.knowledge.domain.extract.artifact import Artifact, Block, Coverage
-from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, KnowledgeSource, items_from_config
+from server.knowledge.domain.sources import (
+    MIRRORED_ACCESS,
+    SYNC_WORKER_ACTOR,
+    KnowledgeSource,
+    items_from_config,
+)
 from server.knowledge.store import documents
 from server.memory.domain.corpus_synthesis import ground_citations
 from server.memory.domain.provenance import pipeline_actor_var
@@ -881,11 +886,11 @@ def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
 
 def test_a_pass_leaves_a_mirrored_source_to_the_build_that_writes_mirrors(world: _World) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.sources = [_source(access="mirrored")]
+    world.sources = [_source(access=MIRRORED_ACCESS)]
     result = asyncio.run(source_sync.run_sync())
     assert (result.sources, result.synced) == (0, 0) and world.upserts == []
     # Removed with its documents, its request is kept for that build.
-    world.sources = [_source(access="mirrored", active=False, pending_delete=True)]
+    world.sources = [_source(access=MIRRORED_ACCESS, active=False, pending_delete=True)]
     assert asyncio.run(source_sync.run_sync()).retired == 0
     assert world.sources[-1].pending_delete
 

@@ -348,7 +348,7 @@ def _require_served(src: KnowledgeSource) -> None:
     one, which a later build writes, is that build's to read."""
     if not domain.served(src):
         raise ValidationError(
-            f"source {src.name!r} is mirrored, which this server does not serve; "
+            f"source {src.name!r} is not served by this server (access {src.access!r}); "
             "upgrade Loom to manage it",
             code="SOURCE_NOT_SERVED",
         )
@@ -541,9 +541,9 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
     # which only the build that writes mirrors acts on.
     if earlier is not None and earlier.pending_delete and not domain.served(earlier):
         raise ValidationError(
-            f"the removed source {name!r} is mirrored and its documents are still waiting "
-            "to be retired, which this server does not do; upgrade Loom, or register the "
-            "new source under another name",
+            f"the removed source {name!r} is not served by this server (access "
+            f"{earlier.access!r}) and its documents are still waiting to be retired; "
+            "upgrade Loom, or register the new source under another name",
             code="SOURCE_NOT_SERVED",
         )
     # A new source of the same name would take the earlier source's documents over:

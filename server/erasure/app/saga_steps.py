@@ -26,7 +26,7 @@ from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of, purge_mode, purge_scope
+from server.erasure.store.mutations import namespaces_of, purge_scope
 from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
@@ -200,7 +200,7 @@ async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) 
         return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
 
 
-async def mirror_scope(
+async def _mirror_scope(
     org: str, namespace: _NS, *, ch: _CHClient | None = None
 ) -> list[str] | None:
     """The scope with its namespaces' mirrors, or None when it holds no mirror."""
@@ -217,7 +217,7 @@ async def counted_scope(
 ) -> AsyncIterator[_NS]:
     """The scope a namespace step erases and a census counts: with its namespaces'
     mirrors, as a purge, when it holds one."""
-    scope = await mirror_scope(org, scope_value, ch=ch) if scope_type == "namespace" else None
+    scope = await _mirror_scope(org, scope_value, ch=ch) if scope_type == "namespace" else None
     if scope is None:
         yield scope_value
         return
@@ -237,23 +237,6 @@ def with_mirrors(
             return await step(org, scope)
 
     return run
-
-
-async def evidence_with_mirrors(
-    org: str,
-    scope_type: str,
-    scope_value: _NS,
-    *,
-    spellings: Sequence[str] | None,
-    ch: _CHClient | None = None,
-) -> tuple[dict[str, int], dict[str, Exception], bool]:
-    """`erasure_census.evidence_census` of the `counted_scope`, the stores it could not
-    read, and whether it counted as a purge."""
-    async with counted_scope(org, scope_type, scope_value, ch=ch) as scope:
-        per_table, unread = await erasure_census.evidence_census(
-            org, scope_type, scope, ch=ch, spellings=spellings
-        )
-        return per_table, unread, purge_mode()
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:

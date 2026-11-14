@@ -431,7 +431,7 @@ def test_remove_needs_the_name_and_keeps_documents_by_default(fake: _Store) -> N
 def test_a_mirrored_source_is_refused(fake: _Store, call: Any) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     key = (ORG, NS, "design-decks")
-    fake.rows[key] = dataclasses.replace(fake.rows[key], access="mirrored")
+    fake.rows[key] = dataclasses.replace(fake.rows[key], access=domain.MIRRORED_ACCESS)
     assert _code(call()) == "SOURCE_NOT_SERVED"
 
 
@@ -440,7 +440,7 @@ def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) 
     for name in ("design-decks", "other"):
         asyncio.run(app.handle_knowledge_source_add(_add(name=name)))
         key = (ORG, NS, name)
-        fake.rows[key] = dataclasses.replace(fake.rows[key], access="mirrored")
+        fake.rows[key] = dataclasses.replace(fake.rows[key], access=domain.MIRRORED_ACCESS)
     body = KnowledgeSourceRemoveInput(
         org=ORG, namespace=NS, name="design-decks", confirm="design-decks", delete_documents=True
     )
@@ -448,7 +448,7 @@ def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) 
     asyncio.run(app.deactivate_namespace_sources(ORG, NS))
     for name in ("design-decks", "other"):
         row = fake.rows[(ORG, NS, name)]
-        assert not row.active and row.access == "mirrored"
+        assert not row.active and row.access == domain.MIRRORED_ACCESS
 
 
 def test_a_removed_mirrored_source_s_delete_request_outlasts_an_add_of_its_name(
@@ -457,11 +457,11 @@ def test_a_removed_mirrored_source_s_delete_request_outlasts_an_add_of_its_name(
     asyncio.run(app.handle_knowledge_source_add(_add()))
     key = (ORG, NS, "design-decks")
     fake.rows[key] = dataclasses.replace(
-        fake.rows[key], access="mirrored", active=False, pending_delete=True
+        fake.rows[key], access=domain.MIRRORED_ACCESS, active=False, pending_delete=True
     )
     assert _code(app.handle_knowledge_source_add(_add())) == "SOURCE_NOT_SERVED"
     row = fake.rows[key]
-    assert row.access == "mirrored" and row.pending_delete
+    assert row.access == domain.MIRRORED_ACCESS and row.pending_delete
 
 
 def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:
@@ -689,14 +689,18 @@ def test_a_mirrored_source_is_stored_where_a_build_without_items_finds_nothing(
     config = {"folder_ids": [FOLDER]}
     src = KnowledgeSource(
         org=ORG, namespace=NS, name="d", kind="gdrive", source_id=str(uuid.uuid4()),
-        config=config, items=domain.items_from_config("gdrive", config), access="mirrored",
+        config=config, items=domain.items_from_config("gdrive", config), access=domain.MIRRORED_ACCESS,
     )  # fmt: skip
     asyncio.run(store.insert_source(app._with_credential(src, SECRET)))
     [row] = ch.inserted("knowledge_sources")
     assert row["kind"] == "" and row["source_kind"] == "gdrive"
-    assert row["credential_enc"] == "" and row["secret_enc"] and row["access"] == "mirrored"
+    assert (
+        row["credential_enc"] == ""
+        and row["secret_enc"]
+        and row["access"] == domain.MIRRORED_ACCESS
+    )
     # Read back, it is still mirrored; an empty value reads `namespace`.
-    assert store._source(row).access == "mirrored"
+    assert store._source(row).access == domain.MIRRORED_ACCESS
     assert store._source({**row, "access": ""}).access == "namespace"
 
 

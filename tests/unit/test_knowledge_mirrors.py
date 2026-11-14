@@ -219,16 +219,16 @@ def test_a_tombstoning_erasure_fails_on_any_row_left_in_a_mirror(
     assert holder["per_table"]["loom.memory"] == 1
 
 
-def test_the_evidence_census_counts_the_mirror_too(
-    registry: list[Any], monkeypatch: pytest.MonkeyPatch
+def test_the_counted_scope_reads_the_registry_on_the_caller_s_connection(
+    registry: list[Any],
 ) -> None:
-    _counted(monkeypatch, left_in_mirror=2)
     conn = object()
-    found, unread, purged = asyncio.run(
-        saga_steps.evidence_with_mirrors(ORG, "namespace", "team", spellings=None, ch=conn)  # type: ignore[arg-type]
-    )
-    assert found == {"loom.memory": 2} and unread == {} and purged
-    # The registry is read on the caller's connection, as the census is.
+
+    async def scenario() -> Any:
+        async with saga_steps.counted_scope(ORG, "namespace", "team", ch=conn) as scope:  # type: ignore[arg-type]
+            return scope, purge_mode()
+
+    assert asyncio.run(scenario()) == (["team", MIRROR], True)
     assert ("mirrors_of", ["team"], conn) in registry
 
 

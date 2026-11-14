@@ -932,14 +932,13 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The grants `collection.create` reads to find another holder of the name, and the
-    member count `namespace.inventory` takes over a collection's lineage; `grants.list`
-    reads through its handler."""
+    """The grants `collection.create` reads to find another holder of the name, the
+    member count `namespace.inventory` takes over a collection's lineage, and the check a
+    name registration makes (`in_use`); `grants.list` reads through its handler."""
     from server.identity.store import grants as grants_repo
     from server.identity.store import namespace_census
 
     await grants_repo.list_active(ORG, NS, ch=ch)
-    # Whether a name is held: by a grant, a source, a mirror or any census row.
     await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
     await grants_repo.member_count(ORG, ["col-a", "col-b"], ch=ch)
 
