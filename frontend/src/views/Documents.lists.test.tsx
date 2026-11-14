@@ -75,7 +75,7 @@ describe("Library list", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["Preview", "Download PDF, 1.8 MB", "Replace content", "Edit details", "Copy URI", "Delete"]);
+    ).toEqual(["Preview", "Download PDF, 1.8 MB", "Replace content", "Edit details", "Move to…", "Copy URI", "Delete"]);
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Download PDF, 1.8 MB" }));
     expect(api.downloadKnowledge).toHaveBeenCalledWith(
       { org: "acme", namespace: "team" },

@@ -1,13 +1,15 @@
 """The scope values of erasure requests as `loom.erasure_requests` holds them.
 
 Pure and I/O-free: the erasure plane validates and runs its sagas by them, and the
-knowledge plane's move of originals to the bucket, its document restore and a source's
-add read the ledger by them.
+knowledge plane's move of originals to the bucket, its document restore and move, and a
+source's add read the ledger by them.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import UTC
+from typing import Any
 
 from server.core.naming import is_mirror_name
 
@@ -83,6 +85,24 @@ def may_cover(scope_type: str, scope_value: str, namespace: str) -> bool:
     """Whether an erasure of this scope may reach rows of `namespace`. A user scope always
     may (a caller narrows those by writer); an unreadable list or unknown scope does too."""
     return names_namespace(scope_type, scope_value, namespace) is not False
+
+
+def reaches(row: dict[str, Any], namespace: str, user_id: str, since_s: int) -> bool:
+    """Whether the ledger row (`scope_type`, `scope_value`, `state`, `completed_at`) may
+    reach a row of `namespace` written by `user_id`: unfinished at `since_s` (not
+    completed, or completed since), and of the namespace, of the user, or of a scope that
+    may cover the namespace. `ledger.unfinished_reaching`'s test, for rows read once."""
+    done = row.get("completed_at")
+    if row["state"] == "completed" and (
+        done is None or done.replace(tzinfo=UTC).timestamp() < since_s
+    ):
+        return False
+    scope, value = str(row["scope_type"]), str(row["scope_value"])
+    if scope == "namespace":
+        return value == namespace
+    if scope == "user_id":
+        return value == user_id
+    return may_cover(scope, value, namespace)
 
 
 def _scope_flag(scope_value: str, key: str, default: bool) -> bool:

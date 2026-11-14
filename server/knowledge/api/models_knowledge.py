@@ -615,6 +615,49 @@ class KnowledgeDeleteOutput(BaseModel):
     chunks_tombstoned: int
 
 
+class KnowledgeMoveInput(BaseModel):
+    """Move documents to another namespace of the org: a collection, `@me`, or a namespace.
+
+    Each keeps its chunks and their vectors, its original file, its tables, its title,
+    description and tags, its author and its date, and takes the sharing of the place it
+    goes to. Where it was, it is deleted as `knowledge.delete` leaves it, so
+    `knowledge.restore` there brings it back. Needs writer on both namespaces."""
+
+    org: str
+    # Where the documents are.
+    namespace: str
+    # Where they go: a collection, `@me` (the caller's own files) or a namespace of the
+    # same org.
+    to_namespace: str = Field(min_length=1, max_length=256)
+    # The documents to move, by source, at most 50 a call; a source named twice moves once.
+    source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=50)
+
+
+# Why a document did not move; "" once it moved.
+MoveReason = Literal["", "not_found", "exists", "synced", "busy", "erased"]
+
+
+class _KnowledgeMoveResult(BaseModel):
+    source_uri: str
+    moved: bool = False
+    # Why it did not move: not_found (no live document there), exists (another document
+    # with this source is live where it goes), synced (a document source keeps it where it
+    # is), busy (another write of it, or of the place it goes, is in progress, or its copy
+    # did not finish and was taken back, or its delete was cut off and it may be in both
+    # places or only where it goes; call again shortly), erased (an erasure may
+    # reach it or the place it goes; it stays where it was).
+    reason: MoveReason = ""
+
+
+class KnowledgeMoveOutput(BaseModel):
+    # False when the caller cannot write to `to_namespace`: nothing moved.
+    found: bool
+    # Where the documents went (`@me` as the caller's own collection).
+    to_namespace: str = ""
+    # One per source asked for, in the order asked.
+    results: list[_KnowledgeMoveResult] = Field(default_factory=list)
+
+
 class KnowledgeRestoreInput(BaseModel):
     """Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document.
 

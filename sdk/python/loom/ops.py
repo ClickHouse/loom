@@ -180,6 +180,7 @@ OpName = Literal[
     "knowledge.ingest_status",
     "knowledge.inspect",
     "knowledge.list",
+    "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
     "knowledge.reads",
@@ -547,6 +548,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.ingest_status",
     "knowledge.inspect",
     "knowledge.list",
+    "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
     "knowledge.reads",
@@ -2464,6 +2466,18 @@ OPS: dict[str, OpSpec] = {
         150,
         False,
         True,
+    ),
+    "knowledge.move": OpSpec(
+        "knowledge.move",
+        "KnowledgeMoveInput",
+        "KnowledgeMoveBody",
+        "KnowledgeMoveOutput",
+        True,
+        "writer",
+        "experimental",
+        8000,
+        True,
+        False,
     ),
     "knowledge.outline": OpSpec(
         "knowledge.outline",
@@ -11063,6 +11077,36 @@ class KnowledgeListEntry(TypedDict, total=False):
     blob_content_type: NotRequired[str]
     original_filename: NotRequired[str]
     content_preview: NotRequired[str]
+
+
+class KnowledgeMoveInput(TypedDict, total=False):
+    "Move documents to another namespace of the org: a collection, `@me`, or a namespace."
+
+    org: Required[str]
+    namespace: Required[str]
+    to_namespace: Required[str]
+    source_uris: Required[list[str]]
+
+
+class KnowledgeMoveBody(TypedDict, total=False):
+    "Move documents to another namespace of the org: a collection, `@me`, or a namespace."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    to_namespace: Required[str]
+    source_uris: Required[list[str]]
+
+
+class KnowledgeMoveOutput(TypedDict, total=False):
+    found: Required[bool]
+    to_namespace: NotRequired[str]
+    results: NotRequired[list["KnowledgeMoveResult"]]
+
+
+class KnowledgeMoveResult(TypedDict, total=False):
+    source_uri: Required[str]
+    moved: NotRequired[bool]
+    reason: NotRequired[Literal["", "not_found", "exists", "synced", "busy", "erased"]]
 
 
 class KnowledgeOutlineInput(TypedDict, total=False):

@@ -6063,6 +6063,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # At most 50 documents, four at a time, in server/knowledge/app/move.py: the erasure
+    # ledger once a call, then per document about 22 statements (its claim in both
+    # namespaces, not waited for, its rows by (org, namespace, source_uri), the ledger again,
+    # its chunks and tables copied inside ClickHouse, its row, its delete), its original
+    # copied inside ClickHouse or read and stored again. 50 documents took 3.2-3.3 s on a
+    # development ClickHouse.
+    "knowledge.move": 8000,
     # The reads and writes in server/knowledge/app/restore.py: the document's rows by (org,
     # namespace, source_uri) (the chunk and supersession reads range over the namespace's key
     # prefix), the erasure ledger twice (every namespace list of the org's last 90 days is

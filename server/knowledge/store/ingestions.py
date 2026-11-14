@@ -317,6 +317,20 @@ async def older_open(job: dict[str, Any], *, limit: int, ch: _CHClient | None = 
     return [str(r["id"]) for r in rows]
 
 
+async def open_for_source(
+    org: str, namespace: str, source_uri: str, *, limit: int, ch: _CHClient | None = None
+) -> list[str]:
+    """The ids of at most `limit` jobs of the source still to run or running."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT toString(ingestion_id) AS id FROM {INGESTIONS} FINAL WHERE org = {{org:String}}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}"
+        f" AND state IN ('pending', 'processing') AND {UNEXPIRED} LIMIT {{lim:UInt32}}",
+        params={"org": org, "ns": namespace, "uri": source_uri, "lim": int(limit)},
+    )
+    return [str(r["id"]) for r in rows]
+
+
 def uuid_key_order(ingestion_id: str) -> tuple[int, int]:
     """Where ClickHouse sorts a UUID: by its last 8 bytes, then its first 8."""
     n = uuid.UUID(ingestion_id).int

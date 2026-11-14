@@ -544,6 +544,79 @@ keeps its chunks. It retires and counts only the chunks up to the tombstone; a n
 write's chunks, still to commit, stay, and a delete that finds only those answers that
 nothing was deleted.
 
+## Knowledge move
+
+`knowledge.move` ([moving documents](../features/knowledge.md#moving-documents)) writes each
+document into the namespace it goes to, then deletes it where it was, so a cut-off move
+leaves the document in both places and never in neither. Per document, it reads the place it
+goes and answers `exists` for another live document there before it writes anything; under
+the claims it reads both again. It then stores the original and the extraction artifact in
+the new namespace, outside any claim (an original no row names yet is the sweep's, as any
+upload whose row did not land). An original held as a ClickHouse row is copied inside
+ClickHouse; one in the bucket, or one moved there meanwhile, is read and written again under
+the new namespace's place there.
+
+Then, under the source's claim in both namespaces, taken in sorted order and not waited for
+(a held source answers `busy` at once), it refuses (`busy`) when either place changed since
+it read them, when a publication of either place may still land, or while an ingest job of
+either is open (its publish would write the document back where it was, or over the copy).
+It copies the chunks of the document's revision, with their vectors, inside ClickHouse
+(`INSERT … SELECT`, every version the row serves: a metadata edit leaves the chunks at their
+own version), then the tables, then the row, and deletes the source over the version it
+read. A copy left by an earlier move that stopped before its delete (the same text, title,
+description, tags, metadata, author and ingest time where it goes) is not written again when
+it serves as many live chunks as the source and the same tables: only the source is deleted.
+One with fewer chunks, or with no tables where the source has some (a cancelled row insert
+can land after its take-back, which leaves the row alone), is written over, as a deleted
+document is, before the source is deleted. One with more is whole: a delete cut off between
+retiring the source's chunks and writing its tombstone (it retires them first) leaves the
+source row live with none, and only the delete is left; a copy is never written over one
+that serves more chunks than the source. Tables there that differ otherwise were changed on
+one side since (an approval, a clarification), which cannot be told from a change on the
+other: that copy, like one whose text or metadata was edited, is another document and
+answers `exists`.
+
+Anything that does not land whole, or a write that took either place before the delete,
+takes back what the move wrote where it goes, and that source answers `busy`. The take-back
+runs to its end under the claims, however often the request is cancelled meanwhile (the
+cancel is raised once it is done), so no retry finds a half-removed copy; the other sources
+of the call still move. The take-back deletes its row (under the Postgres authority its
+commit first), retires its chunks under each embedding model they were copied under, then
+deletes them, and deletes its tables: a cancelled `INSERT … SELECT` runs on in ClickHouse
+and may land after the delete, and the retirement keeps what lands from serving. The work
+under the claims is cut off at 40% of the claim's 60 s TTL (24 s); a document whose copy
+runs past that is taken back and answers `busy`. Once the delete has begun, a failure (a
+cut-off, which answers `busy`, or a lost answer, which fails the call) may follow the
+tombstone, so the copy stays: the document is in both places, or only where it goes, and a
+retry finds the copy and only deletes the source, or answers `not_found`. Once the tombstone
+is in, the move is made: the source's tables are deleted after the claims are given up, as a
+delete of a live document takes none, so no cut-off reaches it; a failure there is logged,
+and a later delete of the source settles them. A failure that is not one source's (a store
+that does not answer) is raised once every source of the call has answered, after the audit
+row of those that moved.
+
+The erasure ledger is read once per call, before the first copy, for an erasure that may
+reach a document where it is (unfinished when its text was written there: its first chunk's
+`created_at`, which a move stamps with when it copied the chunks, while the row keeps its
+ingest time) or the place it goes (unfinished when the move started), and again for each
+document under the claims, just before its delete, for one registered since: one may have
+passed the copy, this move's or an earlier move's. That one takes back a copy this move
+wrote, leaves an earlier move's copy to the erasure, and answers `erased` without deleting
+the source, so an `erased` document always stays where it was. Under the Postgres authority
+a delete over a document an erasure removed meanwhile answers `erased` too. An `erased`
+answer also deletes the originals the call stored in the new place that no row there needs:
+the erasure's originals step may have run before they were stored. A copy taken back for
+another reason leaves its original, named by no row, to the sweep after
+`document_blob_min_age_seconds`, as any original whose row did not land.
+
+Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's
+row and the delete each commit over the version read, so a write that took the source or
+the place first refuses them (409), and the copy is taken back. Under the ClickHouse
+authority the move reads each head again just before its row and after it: a write with a
+later version wins and the copy is taken back, while one that landed in the instant
+between that read and the row, with an earlier version, is replaced, as with two text
+writes of one source.
+
 ## Invariants
 
 - A successful write has committed its primary rows; a failure of either fails the request.

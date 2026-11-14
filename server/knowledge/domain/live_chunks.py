@@ -22,3 +22,10 @@ def live_chunk_sql(alias: str = "") -> str:
 
 
 LIVE_CHUNK_SQL = live_chunk_sql()
+
+# A chunk of the document revision `{rev:UInt64}`, or one written before chunks recorded
+# their revision.
+OF_REVISION_SQL = (
+    "(JSONExtractUInt(chunk_metadata, 'revision') = {rev:UInt64}"
+    " OR NOT JSONHas(chunk_metadata, 'revision'))"
+)

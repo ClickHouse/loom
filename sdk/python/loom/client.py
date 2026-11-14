@@ -1406,6 +1406,14 @@ class KnowledgeOps:
             "_ops.KnowledgeListOutput", await self._agent.call("knowledge.list", body, **options)
         )
 
+    async def move(
+        self, body: _ops.KnowledgeMoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeMoveOutput:
+        """`knowledge.move`."""
+        return cast(
+            "_ops.KnowledgeMoveOutput", await self._agent.call("knowledge.move", body, **options)
+        )
+
     async def outline(
         self, body: _ops.KnowledgeOutlineBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeOutlineOutput:

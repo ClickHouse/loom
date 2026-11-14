@@ -61,7 +61,8 @@ import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
-import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
+import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
+import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
 import { TopLevelPlaces } from "./LibraryHierarchy";
 import { expandedKey, LibraryTree } from "./LibraryTree";
 import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
@@ -329,6 +330,15 @@ export function Documents() {
   const [tablesFor, setTablesFor] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
+  // The documents Move to… was opened for; another place shown closes it.
+  const [moving, setMoving] = useState<string[] | null>(null);
+  // Whether the open Move to… dialog moved any document: focus then goes to the search.
+  const movedSome = useRef(false);
+  const openMove = useCallback((uris: string[]) => {
+    movedSome.current = false;
+    setMoving(uris);
+  }, []);
+  useEffect(() => setMoving(null), [identity.org, identity.namespace]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
   // A reason that appears while Edit details is open closes it. Add and Replace stay: they
   // hold an upload in flight, which the server refuses if the role no longer reaches it.
@@ -521,7 +531,8 @@ export function Documents() {
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
   }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
-  // After a row's delete, the read that drops the row hands focus to the search field.
+  // After a row's delete, the read that drops the row hands focus to the search field (a
+  // move's dialog hands it there itself as it closes).
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
     focusSearchOnRead.current = false;
@@ -788,7 +799,7 @@ export function Documents() {
   // dialog is up (each owns its Escape).
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
   const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
-  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
+  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry || !!moving;
   const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
   const { selected } = selection;
   const clearSelection = selection.clear;
@@ -935,6 +946,7 @@ export function Documents() {
       replace: setReplaceEntry,
       edit: setEditEntry,
       remove: (uri) => void handlers.current.onDelete(uri),
+      move: (uri) => openMove([uri]),
       writeReason,
       ...(readOnly ? {} : { toggle: toggleRow }),
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
@@ -1002,6 +1014,47 @@ export function Documents() {
     collections.rows && !collections.truncated && (!collection || shown)
       ? { rows: collections.rows, shown }
       : undefined;
+  // Where documents can go from here: the header's namespace when the person adds there, and
+  // the collections they write, in tree order; not the place shown.
+  const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
+  const movePlaces = useMemo<MovePlace[]>(() => {
+    const out: MovePlace[] = [];
+    if (addsToHeader && identity.namespace !== picked.namespace) {
+      out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
+    }
+    for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
+      if (c.role === "viewer" || c.namespace === identity.namespace) continue;
+      out.push({
+        namespace: c.namespace,
+        label: c.personal ? collectionTitle(c) : distinctTitle(c, repeated),
+        depth: c.personal ? 0 : depth,
+        kind: c.personal ? "personal" : "collection",
+      });
+    }
+    return out;
+  }, [collections.kept, repeated, identity.namespace, addsToHeader, picked.namespace]);
+  const moveDialog = moving && (
+    <MoveDocumentsDialog
+      org={identity.org}
+      from={identity.namespace}
+      fromLabel={shown ? collectionTitle(shown) : `Namespace ${identity.namespace}`}
+      sourceUris={moving}
+      places={movePlaces}
+      placesReading={collections.kept ? null : collections.error ? "failed" : "loading"}
+      onMoved={(moved) => {
+        // Any answer may have changed the list, a failed call's too.
+        if (moved.length) movedSome.current = true;
+        reload();
+      }}
+      onClose={() => setMoving(null)}
+      onCloseAutoFocus={(e) => {
+        if (!movedSome.current) return;
+        // The rows, the menu or the selection bar that opened it may have left.
+        e.preventDefault();
+        searchRef.current?.focus();
+      }}
+    />
+  );
   // Mounted while open, beside either page, so a batch outlives a page move.
   const addDialog = addOpen && (
     <AddDocumentDialog
@@ -1031,6 +1084,7 @@ export function Documents() {
         {page}
       </div>
       {addDialog}
+      {moveDialog}
     </>
   );
 
@@ -1186,7 +1240,10 @@ export function Documents() {
                 count: selected.size,
                 onClear: clearSelection,
                 all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
-                actions: [{ label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete }],
+                actions: [
+                  { label: "Move to…", icon: "arrow-right", onClick: () => openMove(Array.from(selected)) },
+                  { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
+                ],
               }
             : null
         }
@@ -1586,6 +1643,7 @@ interface DocRowActions {
   replace: (r: KnowledgeEntry) => void;
   edit: (r: KnowledgeEntry) => void;
   remove: (sourceUri: string) => void;
+  move: (sourceUri: string) => void;
   /** Why the writes are unavailable, or null: a viewer of the collection shown, a role on
    *  the namespace known to be below writer, or the role still loading. The writes stay in
    *  the menu, unavailable, with it. */
@@ -1610,13 +1668,14 @@ interface DocRowProps {
 const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
-  const { replace, edit, remove, toggle, writeReason } = actions;
+  const { replace, edit, remove, move, toggle, writeReason } = actions;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
     // Uploading a file into a text-only document is the same replace flow.
     { label: "Replace content", icon: "refresh", reason: writeReason, onSelect: () => replace(r) },
     { label: "Edit details", icon: "pencil", reason: writeReason, onSelect: () => edit(r) },
+    { label: "Move to…", icon: "arrow-right", reason: writeReason, onSelect: () => move(r.source_uri) },
     {
       label: "Copy URI",
       icon: "copy",

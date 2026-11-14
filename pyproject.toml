@@ -25,6 +25,7 @@ dependencies = [
   "pyyaml>=6.0",
   "clickhouse-connect>=1.7", # older ones drop milliseconds (<1.2) or bind a naive datetime as local time
   "aiohttp>=3.10",           # clickhouse-connect's async client requires it
+  "anyio>=4",                # a wait no cancellation cuts short: server.core.shielded
   "httpx[http2]>=0.27",
   "idna>=3.7",               # UTS 46 host names: server.settings.catalog.ascii_host
   "dnspython>=2.6",          # a cancellable lookup for names a tenant chooses: server.core.hosts

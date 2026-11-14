@@ -782,6 +782,7 @@ version = "1.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "anyio" },
     { name = "argon2-cffi" },
     { name = "asyncpg" },
     { name = "clickhouse-connect" },
@@ -862,6 +863,7 @@ scip = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
+    { name = "anyio", specifier = ">=4" },
     { name = "argon2-cffi", specifier = ">=23.1" },
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.36" },

@@ -115,6 +115,55 @@ export async function restoreKnowledge(
   return post("/v1/knowledge.restore", { org: id.org, namespace: id.namespace, source_uri: sourceUri });
 }
 
+/** Why a document did not move (`knowledge.move`'s `reason`). */
+export type MoveRefusal = "not_found" | "exists" | "synced" | "busy" | "erased";
+
+export interface KnowledgeMoveResult {
+  source_uri: string;
+  moved: boolean;
+  reason: "" | MoveRefusal;
+}
+
+export interface KnowledgeMoved {
+  /** False when the caller cannot add to the place: nothing moved. */
+  found: boolean;
+  results: KnowledgeMoveResult[];
+  /** The failure of a call, after the answers of the calls before it. */
+  error?: unknown;
+}
+
+// The sources one knowledge.move call takes (its `source_uris` max_length).
+export const MOVE_MAX = 50;
+
+/** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were;
+ *  sent in calls of at most `MOVE_MAX`, their answers merged. A call that finds the place no
+ *  longer writable, or that fails, stops the rest: `found` is false, or `error` is set, with
+ *  the answers before it. An aborted `signal` sends no further call. It never throws. */
+export async function moveKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  to: string,
+  sourceUris: string[],
+  signal?: AbortSignal,
+): Promise<KnowledgeMoved> {
+  const results: KnowledgeMoveResult[] = [];
+  for (let i = 0; i < sourceUris.length && !signal?.aborted; i += MOVE_MAX) {
+    let r: KnowledgeMoved;
+    try {
+      r = await post<KnowledgeMoved>("/v1/knowledge.move", {
+        org: id.org,
+        namespace: id.namespace,
+        to_namespace: to,
+        source_uris: sourceUris.slice(i, i + MOVE_MAX),
+      });
+    } catch (error) {
+      return { found: true, results, error };
+    }
+    if (!r.found) return { found: false, results };
+    results.push(...(r.results ?? []));
+  }
+  return { found: true, results };
+}
+
 export interface KnowledgeBulkDeleteResult {
   source_uri: string;
   tombstoned: boolean;

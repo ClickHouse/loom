@@ -25,7 +25,11 @@ from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk, embedding_text
 from server.knowledge.domain.extract.structural import StructuralChunk
-from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL, SUPERSESSIONS_TABLE
+from server.knowledge.domain.live_chunks import (
+    LIVE_CHUNK_SQL,
+    OF_REVISION_SQL,
+    SUPERSESSIONS_TABLE,
+)
 from server.knowledge.domain.section_value import is_noise
 
 
@@ -374,6 +378,126 @@ async def count_active_for_doc(
         params={"org": org, "ns": namespace, "uri": source_uri},
     )
     return int(row["n"]) if row else 0
+
+
+# `chunk_metadata` with its `revision` set to `{to_rev:UInt64}`, its other keys kept. Every
+# reader parses it (`read_structure`), so the key order and spacing need not match
+# `build_chunk_rows`.
+_WITH_REVISION_SQL = (
+    "jsonMergePatch(if(chunk_metadata = '', '{}', chunk_metadata),"
+    " concat('{\"revision\":', toString({to_rev:UInt64}), '}'))"
+)
+
+
+async def embedding_models(
+    org: str, namespace: str, source_uri: str, *, ch: _CHClient | None = None
+) -> list[str]:
+    """The embedding models the source's chunks are stored under, live or not."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT DISTINCT embedding_model AS m FROM loom.chunks WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String} LIMIT 100",
+        params={"org": org, "ns": namespace, "uri": source_uri},
+    )
+    return [str(r["m"]) for r in rows]
+
+
+async def count_revision(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    *,
+    revision: int,
+    upto_version: int,
+    ch: _CHClient | None = None,
+) -> int:
+    """The live chunks of the source's `revision` of any version up to `upto_version`:
+    those `copy_revision` copies, counted alike."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.chunks WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}"
+        f" AND doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}",
+        params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision, "v": upto_version},
+    )
+    return int(row["n"]) if row else 0
+
+
+async def first_written_s(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    *,
+    revision: int,
+    upto_version: int,
+    ch: _CHClient | None = None,
+) -> int | None:
+    """The earliest `created_at` (Unix seconds) of the chunks `count_revision` counts;
+    None when there is none."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n, toUnixTimestamp(min(created_at)) AS s FROM loom.chunks"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
+        f" AND doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}",
+        params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision, "v": upto_version},
+    )
+    return int(row["s"]) if row and int(row["n"]) else None
+
+
+async def copy_revision(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    *,
+    revision: int,
+    upto_version: int,
+    to_namespace: str,
+    to_version: int,
+    to_revision: int,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Copy the live chunks of the source's `revision`, of any version up to
+    `upto_version` (a metadata edit writes a new row version and leaves the chunks at
+    theirs), into `to_namespace` at `to_version` and `to_revision`, every column and
+    vector with them, inside ClickHouse: a moved document's chunks. Whether every one
+    landed."""
+    ch = ch or _default_client()
+    params = {
+        "org": org,
+        "ns": namespace,
+        "uri": source_uri,
+        "rev": revision,
+        "v": upto_version,
+        "to_ns": to_namespace,
+        "to_v": to_version,
+        "to_rev": to_revision,
+    }
+    picked = (
+        "namespace = {ns:String} AND doc_version <= {v:UInt64}"
+        f" AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}"
+    )
+    # The rows are picked in an inner query: an outer WHERE would read the replaced
+    # columns, not the stored ones. `SELECT *` keeps a column a newer build added.
+    # `created_at` is when they were written there: what the erasure ledger is read
+    # against for a later move of them.
+    await ch.execute(
+        "INSERT INTO loom.chunks SELECT * REPLACE ({to_ns:String} AS namespace,"
+        f" {{to_v:UInt64}} AS doc_version, {_WITH_REVISION_SQL} AS chunk_metadata,"
+        " now() AS created_at)"
+        " FROM (SELECT * FROM loom.chunks WHERE org = {org:String}"
+        f" AND source_uri = {{uri:String}} AND {picked})",
+        params=params,
+        settings={"async_insert": 0},
+    )
+    row = await ch.query_one(
+        "SELECT countIf(namespace = {ns:String}) AS here,"
+        " countIf(namespace = {to_ns:String}) AS there FROM loom.chunks"
+        " WHERE org = {org:String} AND namespace IN ({ns:String}, {to_ns:String})"
+        f" AND source_uri = {{uri:String}} AND (({picked})"
+        " OR (namespace = {to_ns:String} AND doc_version = {to_v:UInt64}))",
+        params=params,
+    )
+    return row is not None and int(row["here"]) == int(row["there"])
 
 
 async def count_version(
