@@ -495,7 +495,7 @@ function NewCollectionForm({
           {...fieldError("library-tree-title-error", tooLong ? `At most ${MAX_TITLE} characters.` : null)}
         />
       </div>
-      <Button type="secondary" htmlType="submit" disabled={!trimmed || tooLong} loading={busy}>
+      <Button type="secondary" htmlType="submit" disabled={busy || !trimmed || tooLong} loading={busy}>
         Create
       </Button>
       <Button type="empty" htmlType="button" disabled={busy} onClick={onClose}>

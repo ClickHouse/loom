@@ -47,6 +47,22 @@ export function useKeyboard(bindings: Record<string, () => boolean | void>, enab
   }, [bindings, enabled]);
 }
 
+/** Resolves after `ms`, or rejects with the signal's reason as soon as it aborts. */
+export function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /** A data effect whose read is cancelled when its view moves on. `run` gets an
  *  `AbortSignal` to hand to the api wrapper and a `live()` predicate to consult after
  *  every await before writing state — a response that lands after the deps changed

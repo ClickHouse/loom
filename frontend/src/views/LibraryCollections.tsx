@@ -24,7 +24,7 @@ import {
 } from "../lib/collections";
 import { fmtInt } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
-import { useAbortableEffect } from "../lib/hooks";
+import { useAbortableEffect, wait } from "../lib/hooks";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
@@ -162,18 +162,7 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
           const rows = [...byName.values()];
           const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= REFRESH_TRIES - 1) return { rows, truncated: !!cursor };
-          await new Promise<void>((resolve, reject) => {
-            if (signal.aborted) return reject(signal.reason);
-            const onAbort = () => {
-              clearTimeout(timer);
-              reject(signal.reason);
-            };
-            const timer = setTimeout(() => {
-              signal.removeEventListener("abort", onAbort);
-              resolve();
-            }, REFRESH_WAIT_MS);
-            signal.addEventListener("abort", onAbort, { once: true });
-          });
+          await wait(REFRESH_WAIT_MS, signal);
         }
       })()
         .then(({ rows, truncated }) => {
