@@ -81,6 +81,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     @asynccontextmanager
     async def holding(name: str, **_k: Any) -> AsyncIterator[bool]:
         state["claims"].append(name)
+        state["claimed_at"] = promote.next_version()
         if state["free"] is None:
             raise LeaseUnavailable("the lease store did not answer", operation=name)
         state["held"] = state["free"]
@@ -360,6 +361,12 @@ async def test_a_definition_is_checked_and_written_under_the_namespaces_claim(
     with pytest.raises(LeaseUnavailable):
         await promote.handle_memory_promote(_input())
     assert store["written"] == []
+
+
+async def test_a_definitions_version_is_drawn_under_the_claim(store: dict[str, Any]) -> None:
+    await promote.handle_memory_promote(_input())
+    (row,) = store["written"]
+    assert row["version"] > store["claimed_at"]
 
 
 async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) -> None:

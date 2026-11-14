@@ -316,7 +316,9 @@ async def _insert_definition(
         if not held:
             raise OverloadedError("another definition promotion in this namespace is running")
         await _check_shared_definitions(org, namespace, names, row["memory_key"])
-        await shared_repo.insert_shared_row(row)
+        # Drawn under the claim, so the row that ran last wins, and a demote that came
+        # while this one waited stays demoted.
+        await shared_repo.insert_shared_row({**row, "version": next_version()})
 
 
 async def _check_shared_definitions(
