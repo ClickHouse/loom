@@ -97,13 +97,16 @@ def _ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+# A session that did not run the tenancy check: every trigger's WHEN starts with it.
+_UNMARKED = f"current_setting('{pg.TENANCY_MARKER}', true) IS DISTINCT FROM 'on'"
+
+
 def _when(event: str) -> str:
-    unmarked = f"current_setting('{pg.TENANCY_MARKER}', true) IS DISTINCT FROM 'on'"
     if event == "UPDATE":
         # Loom's own updates never change a row's org; an update of an org's existing
         # rows is not refused.
-        return f"({unmarked} AND OLD.org IS DISTINCT FROM NEW.org)"
-    return f"({unmarked})"
+        return f"({_UNMARKED} AND OLD.org IS DISTINCT FROM NEW.org)"
+    return f"({_UNMARKED})"
 
 
 _ON_TABLE = re.compile(r" ON \S+ FOR EACH ROW ")
@@ -172,7 +175,7 @@ def _create(qualified: str, name: str) -> str:
         # an update that keeps the row's org.
         return (
             f"CREATE TRIGGER {name} AFTER INSERT OR UPDATE OF org ON {qualified} FOR EACH ROW "
-            f"WHEN {_when('INSERT')} EXECUTE FUNCTION {TENANCY_FUNCTION}()"
+            f"WHEN ({_UNMARKED}) EXECUTE FUNCTION {TENANCY_FUNCTION}()"
         )
     event = "INSERT" if name == INSERT_TRIGGER else "UPDATE"
     return (
@@ -359,7 +362,7 @@ async def missing(conn: Any) -> list[Defect]:
             called = tenancy_fn if name == TENANCY_TRIGGER else fn
             if called is None or row["function_oid"] != called["oid"]:
                 found.append(Defect("function", f"loom.{table}: {name} calls {row['function']}"))
-            if not (tgtype & _ROW) or tgtype & (_BEFORE | _INSTEAD) or tgtype & event != event:
+            if not (tgtype & _ROW) or tgtype & (_BEFORE | _INSTEAD) or (tgtype & event) != event:
                 found.append(
                     Defect("shape", f"loom.{table}: {name} is not AFTER, row-level, on its events")
                 )

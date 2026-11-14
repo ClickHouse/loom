@@ -392,8 +392,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   release that names the function absent before the release's first migrating boot needs no
   fix: that boot runs the file.
 - **Fix:** run the migration file (`schemas/pg_migrations/011_tenancy_triggers.sql` or
-  `012_tenancy_guard.sql`) with `psql` as the role that owns schema `loom`'s tables, then
-  restart one pod with `LOOM_BOOT_MIGRATE` on: its boot creates the triggers.
+  `012_tenancy_guard.sql`) with `psql` as the role that owns schema `loom`'s tables, then,
+  on an `enforced` cell, restart one pod with `LOOM_BOOT_MIGRATE` on: its boot creates the
+  triggers (on any other cell, attach creates them later).
 
 ### Writes are slow, or a script is refused, on a deployment that is not a cell
 

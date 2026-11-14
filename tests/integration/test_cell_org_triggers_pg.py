@@ -61,7 +61,7 @@ async def _unmarked(dsn: str) -> Any:
     return await asyncpg.connect(dsn)
 
 
-async def _org_triggers(conn: Any) -> set[tuple[str, str, str]]:
+async def _cell_triggers(conn: Any) -> set[tuple[str, str, str]]:
     rows = await conn.fetch(
         "SELECT c.relname, t.tgname, t.tgenabled::text AS e FROM pg_trigger t "
         "JOIN pg_class c ON c.oid = t.tgrelid WHERE NOT t.tgisinternal "
@@ -84,7 +84,7 @@ async def _create_by_hand(conn: Any) -> None:
 async def test_a_deployment_never_prepared_gets_no_trigger_and_its_writes_pass() -> None:
     async with _cell("open", held=()) as (dsn, conn):
         await cell_triggers.ensure(conn)
-        assert await _org_triggers(conn) == set()
+        assert await _cell_triggers(conn) == set()
         plain = await _unmarked(dsn)
         try:
             await plain.execute(_INSERT, "any-org", "s")
@@ -106,7 +106,7 @@ async def test_ensure_guards_every_org_table_of_an_enforced_cell(
         assert "idempotency" not in guarded and "idempotency_fences" not in guarded
         want = {(t, n, "O") for t in guarded for n in cell_triggers.ORG_TRIGGERS}
         want.add(("tenancy", cell_triggers.TENANCY_TRIGGER, "O"))
-        assert await _org_triggers(conn) == want
+        assert await _cell_triggers(conn) == want
         assert [d for d in await cell_triggers.missing(conn)] == []
         # A second boot finds everything present: no statement runs.
         ran: list[list[str]] = []
@@ -201,7 +201,7 @@ async def test_ensure_creates_no_org_trigger_in_recording_or_partial(state: str)
 
     async with _cell(state) as (dsn, conn):
         await cell_triggers.ensure(conn)
-        assert await _org_triggers(conn) == set()
+        assert await _cell_triggers(conn) == set()
         # The function itself follows the state rule: recording passes, partial refuses.
         await _create_by_hand(conn)
         plain = await _unmarked(dsn)
@@ -221,7 +221,7 @@ async def test_a_later_cell_whose_mode_row_reads_recording_counts_as_enforced() 
     async with _cell("later-recording") as (_dsn, conn):
         assert await cell.read_state(conn) == "enforced"
         await cell_triggers.ensure(conn)
-        assert ("scope_generations", "tenancy_insert", "O") in await _org_triggers(conn)
+        assert ("scope_generations", "tenancy_insert", "O") in await _cell_triggers(conn)
 
 
 @pytest.mark.asyncio
@@ -249,7 +249,7 @@ async def test_ensure_repairs_triggers_left_in_another_state(state: str) -> None
         )
         assert [r["e"] for r in first] == ["A", "A"]
         if state == "enforced":
-            assert all(e == "O" for _t, _n, e in await _org_triggers(conn))
+            assert all(e == "O" for _t, _n, e in await _cell_triggers(conn))
 
 
 @pytest.mark.asyncio
@@ -275,12 +275,12 @@ async def test_ensure_moves_past_a_table_whose_lock_it_cannot_take(
             ]
             assert named and f"pid {holder.get_server_pid()}" in named[0]
             assert not any("secret-memory-literal" in r.getMessage() for r in caplog.records)
-            got = await _org_triggers(conn)
+            got = await _cell_triggers(conn)
             assert not any(t == "scope_generations" for t, _n, _e in got)
             assert any(t == "memory_current" for t, _n, _e in got)
             await tx.rollback()
             await cell_triggers.ensure(conn)  # the next boot finishes the table
-            assert ("scope_generations", "tenancy_insert", "O") in await _org_triggers(conn)
+            assert ("scope_generations", "tenancy_insert", "O") in await _cell_triggers(conn)
         finally:
             await holder.close()
 
@@ -361,9 +361,9 @@ async def test_a_migrating_boot_creates_the_triggers_and_its_files_pass_them(
                 await session.close()
 
         await pg_migrate.migrate(connect=_connect)
-        guarded = {(t[1], t[2]) for t in await _org_triggers(conn) if t[0] == "scope_generations"}
+        guarded = {(t[1], t[2]) for t in await _cell_triggers(conn) if t[0] == "scope_generations"}
         assert guarded == {("tenancy_insert", "O"), ("tenancy_update", "O")}
-        assert ("tenancy", "tenancy_record", "O") in await _org_triggers(conn)
+        assert ("tenancy", "tenancy_record", "O") in await _cell_triggers(conn)
         for f in pg_migrate.migration_files(pg_migrate.PG_MIGRATIONS_DIR):
             shutil.copy(f, tmp_path / f.name)
         (tmp_path / "999_stray_org.sql").write_text(
@@ -388,7 +388,7 @@ async def test_a_partitioned_org_table_is_named_unsupported_and_its_partitions_u
             "CREATE TABLE loom.parted_a PARTITION OF loom.parted FOR VALUES IN ('a')"
         )
         await cell_triggers.ensure(conn)
-        assert not {t for t in await _org_triggers(conn) if t[0] in ("parted", "parted_a")}
+        assert not {t for t in await _cell_triggers(conn) if t[0] in ("parted", "parted_a")}
         defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
         assert ("partitioned", "loom.parted is partitioned: unsupported") in defects
         assert not any("parted_a" in text for _kind, text in defects)
@@ -475,13 +475,13 @@ def _page_drop_step() -> tuple[str, str, str]:
 
 
 @pytest.mark.asyncio
-async def test_the_pages_drop_step_removes_the_org_triggers_for_good() -> None:
+async def test_the_pages_drop_step_removes_the_cell_triggers_for_good() -> None:
     import asyncpg
 
     before, query, after = _page_drop_step()
     async with _cell("enforced") as (dsn, conn):
         await cell_triggers.ensure(conn)
-        assert await _org_triggers(conn)
+        assert await _cell_triggers(conn)
         # The state transaction first (the gate's own test runs it), then the drop step.
         for table in ("cell_first", "tenancy_mode", "cell_self", "tenancy"):
             if table == "cell_first":
@@ -503,9 +503,9 @@ async def test_the_pages_drop_step_removes_the_org_triggers_for_good() -> None:
         for row in await conn.fetch(query):
             await conn.execute(row[0])
         await conn.execute(after)
-        assert await _org_triggers(conn) == set()
+        assert await _cell_triggers(conn) == set()
         await cell_triggers.ensure(conn)  # the next migrating boot: `open`, none again
-        assert await _org_triggers(conn) == set()
+        assert await _cell_triggers(conn) == set()
 
 
 @pytest.mark.asyncio
@@ -599,7 +599,7 @@ async def test_ensure_takes_a_lock_freed_between_its_tries() -> None:
             freeing = asyncio.ensure_future(_free_soon())
             await cell_triggers.ensure(conn)
             await freeing
-            assert ("scope_generations", "tenancy_insert", "O") in await _org_triggers(conn)
+            assert ("scope_generations", "tenancy_insert", "O") in await _cell_triggers(conn)
         finally:
             await holder.close()
 
@@ -681,7 +681,7 @@ async def test_a_dropped_guard_function_is_named_in_any_state_and_fails_an_enfor
         await conn.execute((pg_migrate.PG_MIGRATIONS_DIR / "012_tenancy_guard.sql").read_text())
         await cell_triggers.ensure(conn)
         if state == "enforced":
-            assert ("tenancy", "tenancy_record", "O") in await _org_triggers(conn)
+            assert ("tenancy", "tenancy_record", "O") in await _cell_triggers(conn)
             assert await cell_triggers.missing(conn) == []
 
 
