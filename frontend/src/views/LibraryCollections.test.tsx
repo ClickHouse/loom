@@ -72,7 +72,7 @@ const read = (rows: CollectionEntry[] | null, over: Partial<ReadableCollections>
   refreshing: false,
   error: null,
   reload: vi.fn(),
-  refresh: vi.fn(),
+  retry: vi.fn(),
   expected: "",
   ...over,
 });
@@ -266,7 +266,8 @@ describe("LibraryCollections", () => {
     render(<Picker org="acme" namespace="team" collections={collections} current={null} onPick={() => undefined} />);
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
-    expect(collections.reload).toHaveBeenCalled();
+    // Nothing is drawn: it reads again as a reload.
+    expect(collections.retry).toHaveBeenCalledWith(false);
   });
 });
 

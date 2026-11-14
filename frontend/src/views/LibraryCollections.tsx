@@ -27,7 +27,7 @@ import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
-import { type CreatedCollection, invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
+import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -96,8 +96,9 @@ export interface ReadableCollections {
   /** Read again; `rows` is null until the new answer lands. `made`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
   reload: (made?: string) => void;
-  /** Read again in the background, keeping `rows`; `made` as for `reload`. */
-  refresh: (made?: string) => void;
+  /** Read again after a failure, waiting for what the failed read waited for: in the
+   *  background with `keepRows`, else as a reload. */
+  retry: (keepRows: boolean) => void;
   /** The collection the last reload or refresh waited for, or "". */
   expected: string;
 }
@@ -130,19 +131,24 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     },
     [org],
   );
-  // A read in the background; a collection made in another org is not waited for here.
-  const refreshFor = useCallback(
-    (made?: CreatedCollection) =>
-      setAsked((r) => ({
-        ...r,
-        refreshes: r.refreshes + 1,
-        expect: { org: made?.org ?? org, name: made?.name ?? "" },
-      })),
+  // The failed read again, waiting for what it waited for: in the background, or as a reload.
+  const retry = useCallback((keepRows: boolean) => {
+    if (!keepRows) setError(null);
+    setAsked((r) => (keepRows ? { ...r, refreshes: r.refreshes + 1 } : { ...r, reloads: r.reloads + 1 }));
+  }, []);
+  // Any write to a collection, from a dialog since closed too: read again in the background.
+  useEffect(
+    () =>
+      // A collection made in another org is not waited for here.
+      onCollectionsChanged((made) =>
+        setAsked((r) => ({
+          ...r,
+          refreshes: r.refreshes + 1,
+          expect: { org: made?.org ?? org, name: made?.name ?? "" },
+        })),
+      ),
     [org],
   );
-  const refresh = useCallback((made = "") => refreshFor(made ? { name: made, org } : undefined), [refreshFor, org]);
-  // Any write to a collection, from a dialog since closed too.
-  useEffect(() => onCollectionsChanged(refreshFor), [refreshFor]);
   const expected = asked.expect.org === org ? asked.expect.name : "";
   // The collection shown, once the page's last reload is answered and lists it. The read
   // effect captures it when it starts: `showing` changing restarts no read.
@@ -186,7 +192,7 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     refreshing: !!kept && !error && (!current || current.refreshes !== asked.refreshes),
     error,
     reload,
-    refresh,
+    retry,
     expected,
   };
 }
@@ -241,7 +247,7 @@ export function LibraryCollections({
   // The collection Members was opened for: the dialog shows only while that one is shown, so
   // Back to another never lands a grant on it.
   const [members, setMembers] = useState<string | null>(null);
-  const { rows, error, reload } = collections;
+  const { rows, error } = collections;
   // New collection and Members belong to the place they opened in: a move to another
   // closes them, and coming back does not reopen them. The list answering (or read again)
   // moves nothing, so what was typed stays.
@@ -315,8 +321,8 @@ export function LibraryCollections({
     return namespaceLabel(namespace);
   };
   const lineName = placeName();
-  // "Refresh" while the rows are drawn: the tree keeps the last answer, the select not.
-  const refreshFailed = !!(besideTree ? collections.kept : rows);
+  // The rows stay drawn: the tree keeps the last answer, the select not. A failure then is a refresh.
+  const rowsDrawn = !!(besideTree ? collections.kept : rows);
   // The collection shown, not My files: it has a path, members and a menu.
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
@@ -432,16 +438,11 @@ export function LibraryCollections({
       {!!error && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
           <span>
-            {refreshFailed ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
+            {rowsDrawn ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
             {humanizeError(error, { bare: true, read: true })}
           </span>
-          {/* A refresh tries again in place: a reload would blank the rows and the documents.
-              Either still waits for a collection just made. */}
-          <Button
-            type="empty"
-            htmlType="button"
-            onClick={() => (refreshFailed ? collections.refresh(collections.expected) : reload(collections.expected))}
-          >
+          {/* With rows drawn it tries again in place: a reload would blank them and the documents. */}
+          <Button type="empty" htmlType="button" onClick={() => collections.retry(rowsDrawn)}>
             Load collections again
           </Button>
         </p>
