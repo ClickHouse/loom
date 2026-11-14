@@ -132,13 +132,191 @@ def test_a_connect_that_declares_nothing_is_refused() -> None:
 
 
 def test_outside_a_cell_nothing_is_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under the ClickHouse authority no cell runs: with LOOM_CELL unset nothing is read."""
     monkeypatch.setattr(settings, "cell", "")
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
 
-    async def _never(*_a: Any) -> None:
+    async def _never(*_a: Any, **_k: Any) -> None:
         raise AssertionError("checked")
 
     monkeypatch.setattr(tenancy, "ensure_held", _never)
+    monkeypatch.setattr(pg, "dedicated", _never)
     asyncio.run(_ch.check_orgs(["acme"]))
+
+
+class _StateConn:
+    """A dedicated session answering the state read: how many state tables exist, then
+    the state rows."""
+
+    def __init__(self, present: int, row: dict[str, Any] | None = None) -> None:
+        self.present = present
+        self.row = row or {}
+        self.reads: list[str] = []
+
+    async def fetchval(self, sql: str, *_args: Any) -> int:
+        self.reads.append(sql)
+        return self.present
+
+    async def fetchrow(self, sql: str, *_args: Any) -> dict[str, Any]:
+        self.reads.append(sql)
+        return self.row
+
+
+def _unset_on(
+    monkeypatch: pytest.MonkeyPatch, conn: _StateConn | BaseException, *, fail: int = 0
+) -> list[int]:
+    """LOOM_CELL unset under the Postgres authority, `pg.dedicated` answering with
+    `conn` (or raising it), after `fail` refusals for too many connections."""
+    import contextlib
+
+    monkeypatch.setattr(settings, "cell", "")
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(_ch, "_BUSY_PAUSE_S", 0.0)
+    opened: list[int] = []
+
+    @contextlib.asynccontextmanager
+    async def _dedicated(**_kw: Any) -> Any:
+        opened.append(1)
+        if len(opened) <= fail:
+            full = Exception("too many connections for role")
+            full.sqlstate = "53300"  # type: ignore[attr-defined]
+            raise errors.BackendUnavailableError("Postgres is unavailable") from full
+        if isinstance(conn, BaseException):
+            raise conn
+        yield conn
+
+    monkeypatch.setattr(pg, "dedicated", _dedicated)
+    monkeypatch.setattr(
+        tenancy, "ensure_held", AsyncMock(side_effect=AssertionError("ensure_held ran"))
+    )
+    return opened
+
+
+def _rows(*, mode: str, first: tuple[bool, str] | None = (True, "eu-1")) -> dict[str, Any]:
+    return {
+        "is_first": first[0] if first else None,
+        "cell": first[1] if first else None,
+        "mode": mode,
+        "has_own": True,
+        "has_tenancy": True,
+    }
+
+
+def test_unset_cell_lets_an_open_or_recording_deployment_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With LOOM_CELL unset, a deployment that is no cell, or a first cell still
+    recording, serves an org-declaring CLI as it serves a server with LOOM_CELL unset,
+    and `ensure_held` never runs."""
+    _unset_on(monkeypatch, _StateConn(4, _rows(mode="recording")))
+    asyncio.run(_ch.check_orgs(["acme"]))
+    empty = {"is_first": None, "cell": None, "mode": None, "has_own": False, "has_tenancy": False}
+    _unset_on(monkeypatch, _StateConn(4, empty))
+    asyncio.run(_ch.check_orgs(["acme"]))
+
+
+@pytest.mark.parametrize(
+    ("row", "named"),
+    [
+        (_rows(mode="enforced"), "enforced state (cell 'eu-1')"),
+        (_rows(mode="recording", first=(False, "eu-2")), "enforced state (cell 'eu-2')"),
+        (_rows(mode="", first=(True, "eu-1")), "partial state (cell 'eu-1')"),
+    ],
+)
+def test_unset_cell_refuses_a_cell_past_recording(
+    monkeypatch: pytest.MonkeyPatch, row: dict[str, Any], named: str
+) -> None:
+    _unset_on(monkeypatch, _StateConn(4, row))
+    with pytest.raises(_ch.OrgNotHeld, match="LOOM_CELL is unset") as refused:
+        asyncio.run(_ch.check_orgs(["acme"]))
+    assert named in str(refused.value)
+
+
+def test_unset_cell_reads_absent_state_tables_as_open_and_some_as_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A schema that predates the state tables cannot be a cell; one with some of them
+    is a partial state, refused (judged by `to_regclass`, not by a privilege error)."""
+    none = _StateConn(0)
+    _unset_on(monkeypatch, none)
+    asyncio.run(_ch.check_orgs(["acme"]))
+    assert len(none.reads) == 1 and "to_regclass" in none.reads[0]
+    _unset_on(monkeypatch, _StateConn(2))
+    with pytest.raises(_ch.OrgNotHeld, match="partial state"):
+        asyncio.run(_ch.check_orgs(["acme"]))
+
+
+def test_unset_cell_refuses_when_the_state_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A role missing a grant, or a Postgres that does not answer, refuses: never read
+    as `open`."""
+    denied = Exception("permission denied for schema loom")
+    _unset_on(monkeypatch, denied)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read .*permission denied"):
+        asyncio.run(_ch.check_orgs(["acme"]))
+
+
+def test_unset_cell_retries_a_full_connection_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened = _unset_on(monkeypatch, _StateConn(4, _rows(mode="recording")), fail=2)
+    asyncio.run(_ch.check_orgs(["acme"]))
+    assert len(opened) == 3
+    opened = _unset_on(monkeypatch, _StateConn(4, _rows(mode="recording")), fail=3)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+        asyncio.run(_ch.check_orgs(["acme"]))
+    assert len(opened) == _ch._BUSY_TRIES
+
+
+def test_an_org_free_command_with_loom_cell_unset_reads_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _unset_on(monkeypatch, AssertionError("read"))
+    asyncio.run(_ch.check_orgs([]))
+
+
+def test_an_org_declaring_command_checks_its_deployment_cell_or_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`check_configured` runs for every org-declaring command, code-plane ones
+    included, so the cell state is read from this deployment's Postgres; an org-free
+    command without `check_authority` skips it."""
+    monkeypatch.setattr(settings, "cell", "")
+    checked: list[int] = []
+
+    async def _configured(_ch_client: Any) -> None:
+        checked.append(1)
+
+    monkeypatch.setattr(pg_profile, "check_configured", _configured)
+    monkeypatch.setattr(_ch, "check_orgs", AsyncMock(return_value=None))
+
+    class _Client:
+        connected = True
+
+    asyncio.run(_ch.connect_declared(_Client(), orgs=("acme",)))
+    assert checked == [1]
+    asyncio.run(_ch.connect_declared(_Client(), org_free="reads"))
+    assert checked == [1]
+
+
+def test_a_cli_with_loom_cell_set_judges_only_its_stores(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CLI verifies no token and its fingerprint never reaches the router: a CI image
+    whose issuer settings differ from the servers' passes, one pointed at another
+    bucket refuses."""
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(settings, "document_s3_bucket", "docs")
+    monkeypatch.setattr(cell, "_deployment_id", "d1")
+    servers = dict(cell.fingerprint("d1"), oidc_issuer="https://idp.example", scim=True)
+    first = {"is_first": True, "cell": "eu-1"}
+    own = {"current_fp": cell.as_value(servers), "next_fp": None}
+    monkeypatch.setattr(
+        cell,
+        "_view",
+        cell._decoded({"first": first, "mode": "enforced", "own": own, "tenancy": True}),
+    )
+    assert cell.gate_reason() != ""
+    assert cell.cli_gate_reason() == ""
+    monkeypatch.setattr(settings, "document_s3_bucket", "other")
+    assert "matches neither value" in cell.cli_gate_reason()
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +331,7 @@ def _serving_cell(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "cell", "eu-1")
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=True))
-    monkeypatch.setattr(cell, "gate_reason", lambda: "")
+    monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
 
 
 def test_a_cell_the_transports_would_close_refuses_the_command(
@@ -274,7 +452,7 @@ def test_a_cli_process_reads_the_cells_mode_before_it_checks(
     monkeypatch.setattr(pg, "fetchrow", _fetchrow)
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
-    monkeypatch.setattr(cell, "gate_reason", lambda: "")
+    monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
     if recorded:
         asyncio.run(_ch.check_orgs(["acme"]))
         assert statements == [tenancy._HOLDS, tenancy._RECORD]
@@ -304,7 +482,7 @@ def test_a_cli_recording_insert_that_finds_enforced_refuses_and_places_nothing(
     monkeypatch.setattr(pg, "fetchrow", _fetchrow)
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
-    monkeypatch.setattr(cell, "gate_reason", lambda: "")
+    monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
     monkeypatch.setattr(tenancy, "_place", AsyncMock(side_effect=AssertionError("placed")))
     with pytest.raises(_ch.OrgNotHeld, match="loom cell place --org acme"):
         asyncio.run(_ch.check_orgs(["acme"]))
@@ -392,6 +570,7 @@ def test_a_code_index_command_declares_the_org_it_writes(
     monkeypatch.setattr(settings, "cell", "")
     monkeypatch.setattr(settings, "code_org", code_org)
     monkeypatch.setattr(_ch, "check_orgs", _check)
+    monkeypatch.setattr(pg_profile, "check_configured", AsyncMock(return_value=None))
     args = argparse.Namespace(org=arg_org, namespace="code-x", dry_run=dry_run)
     asyncio.run(_ch.connect_code_plane(_Client(), args))
     assert seen == [declared]
@@ -542,13 +721,14 @@ def test_scip_retry_declares_its_org_only_once_it_has_the_batch(
     monkeypatch.setattr("server.core.ch.get_client", lambda: _UnusedClient())
     monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
     monkeypatch.setattr(_ch, "check_orgs", _check)
+    monkeypatch.setattr(pg_profile, "check_configured", AsyncMock(return_value=None))
     args = argparse.Namespace(org="acmee", namespace="code-x", batch_id="b-1")
     assert asyncio.run(code_scip._scip_retry(args)) == (0 if found else 2)
     # The org is checked only once its batch is found, and before anything is written.
     assert steps == (["read", "check ('acmee',)", "write"] if found else ["read"])
 
 
-def test_on_a_cell_a_declared_connect_verifies_the_deployment_first(
+def test_a_declared_connect_verifies_the_deployment_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     order: list[str] = []
@@ -599,7 +779,7 @@ def test_reconcile_records_its_org_on_a_recording_cell_only_when_it_heals(
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     monkeypatch.setattr(pg_profile, "check_configured", AsyncMock())
-    monkeypatch.setattr(cell, "gate_reason", lambda: "")
+    monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
     monkeypatch.setattr(ch_mod, "get_client", lambda: types.SimpleNamespace(connected=True))
     monkeypatch.setattr(code_maintenance, "_repo_cfg", lambda _a: types.SimpleNamespace(org="acme"))
 
@@ -672,7 +852,7 @@ def _cli_cell(monkeypatch: pytest.MonkeyPatch, mode: str, statements: list[str])
     monkeypatch.setattr(pg, "fetchrow", AsyncMock(return_value=row))
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
-    monkeypatch.setattr(cell, "gate_reason", lambda: "")
+    monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
 
 
 def test_a_restored_first_cell_the_directory_marks_serving_records_nothing_for_the_cli(

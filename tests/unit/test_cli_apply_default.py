@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -94,6 +95,8 @@ def test_answers_purge_dry_run_samples_and_writes_nothing(
             return r
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    # An org-declaring run checks its deployment first; this fake ClickHouse records none.
+    monkeypatch.setattr("server.core.pg_profile.check_configured", AsyncMock(return_value=None))
     monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
     args = _parser().parse_args(
         ["code", "answers-purge", "--all", "--org", "o", "--namespace", "n"]

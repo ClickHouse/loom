@@ -6,7 +6,9 @@ its own rows, a read). On a cell (`LOOM_CELL`), each declared org must be one th
 holds before the command runs (`server.auth.tenancy`), judged by the cell's rows read
 for the command: recorded while the cell is `recording` and the directory answers that
 it is `attaching`, refused once it is `enforced` (or the directory does not say
-`attaching`), never placed (`loom cell place` places one).
+`attaching`), never placed (`loom cell place` places one). With `LOOM_CELL` unset, under
+the Postgres authority, a command that declares an org is refused once its deployment is a
+cell past `recording` (`check_unset_cell`): its rows would land unchecked in a cell.
 `tests/unit/test_cell_cli_orgs.py` fails on a connect that declares neither, and on a
 connect under `server/cli/` outside this module.
 """
@@ -44,6 +46,65 @@ def _declared(orgs: Iterable[str | None] | None, org_free: str) -> tuple[str, ..
     return tuple(o for o in orgs or () if o)
 
 
+# Bounds on the one state read an org-declaring CLI makes with LOOM_CELL unset, and on
+# its retries when the role's connection limit is reached.
+_UNSET_READ_S = 10.0  # not a setting: a bound on one CLI read, not on serving
+_UNSET_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
+_BUSY_TRIES = 3
+_BUSY_PAUSE_S = 0.5  # not a setting: a full connection limit clears in moments
+
+
+def _connections_full(e: BaseException | None) -> bool:
+    """Whether Postgres refused the connection for too many (SQLSTATE 53300), as the
+    driver's error or as the cause of the 503 `pg.dedicated` raises."""
+    while e is not None:
+        if getattr(e, "sqlstate", None) == "53300":
+            return True
+        e = e.__cause__
+    return False
+
+
+async def _read_unset_state() -> tuple[str, str]:
+    from server.core import cell, pg
+
+    tries = 0
+    while True:
+        try:
+            async with pg.dedicated(statement_timeout_ms=_UNSET_STATEMENT_MS) as conn:
+                return await cell.read_state_if_present(conn)
+        except Exception as e:
+            # CI jobs share the role's CONNECTION LIMIT: a full one clears in moments.
+            tries += 1
+            if tries == _BUSY_TRIES or not _connections_full(e):
+                raise
+            await asyncio.sleep(_BUSY_PAUSE_S * tries)
+
+
+async def check_unset_cell() -> None:
+    """With `LOOM_CELL` unset, refuse an org-declaring command once its deployment is a
+    cell past `recording`, as the transports gate a server process with it unset; under
+    the ClickHouse authority no cell runs and nothing is read. A failed read refuses."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return
+    try:
+        found, name = await asyncio.wait_for(_read_unset_state(), timeout=_UNSET_READ_S)
+    except Exception as e:  # noqa: BLE001 — an unread cell state refuses the command
+        reason = str(e) or "no answer within the bound"
+        raise OrgNotHeld(
+            f"refusing: this deployment's cell state could not be read "
+            f"({type(e).__name__}: {reason})"
+        ) from None
+    if found in ("open", "recording"):
+        return
+    cell_name = f" (cell {name!r})" if name else ""
+    raise OrgNotHeld(
+        f"refusing: this deployment is a cell in {found} state{cell_name} and LOOM_CELL is "
+        f"unset: set LOOM_CELL{f'={name}' if name else ''} for a command that writes an org"
+    )
+
+
 async def check_orgs(orgs: Iterable[str]) -> None:
     """Refuse, before the command does anything, an org this cell does not hold."""
     from server.auth import tenancy
@@ -53,7 +114,10 @@ async def check_orgs(orgs: Iterable[str]) -> None:
     from server.settings import settings
 
     orgs = tuple(orgs)
-    if not settings.cell or not orgs:
+    if not orgs:
+        return
+    if not settings.cell:
+        await check_unset_cell()
         return
     # Boot hands the code orgs' reader in for a server; a CLI process does it here, so
     # its fingerprint is the one its server reports.
@@ -65,8 +129,8 @@ async def check_orgs(orgs: Iterable[str]) -> None:
     except Exception as e:  # noqa: BLE001 — an unread Postgres refuses the command
         raise OrgNotHeld(f"refusing: this cell's Postgres could not be read ({e})") from None
     await cell.refresh()
-    if reason := cell.gate_reason():
-        raise OrgNotHeld(f"refusing: this cell serves nothing now: {reason}")
+    if reason := cell.cli_gate_reason():
+        raise OrgNotHeld(f"refusing: {reason}")
     # The router credential can place orgs in the shared directory: a CLI holds it only
     # for the state read a first cell in `recording` makes (a later cell reads `enforced`).
     if settings.cell_router_token and cell.mode() != "recording":
@@ -93,17 +157,16 @@ async def connect_declared(
     check_authority: bool = False,
 ) -> None:
     """Connect `ch` for a command that writes for `orgs` (or for none, `org_free` saying
-    why), refusing, disconnected, an org this cell does not hold. On a cell with orgs to
-    check, or with `check_authority`, it first refuses a deployment other than its own
-    (`check_configured`): a tenancy row is written only into this deployment's Postgres."""
-    from server.settings import settings
-
+    why), refusing, disconnected, an org this cell does not hold. With orgs to check, or
+    with `check_authority`, it first refuses a deployment other than its own
+    (`check_configured`): an org's rows and its tenancy row land only in this
+    deployment's stores, and the cell state is read from this deployment's Postgres."""
     named = _declared(orgs, org_free)
     # A `loom code` command connects again inside the connect `code_run` made.
     if not ch.connected:
         await ch.connect()
     try:
-        if check_authority or (settings.cell and named):
+        if check_authority or named:
             from server.core.pg_profile import check_configured
 
             await check_configured(ch)

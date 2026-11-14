@@ -452,7 +452,9 @@ A process with `LOOM_CELL` unset runs no tenancy check. Under the Postgres autho
 (`LOOM_STORAGE_AUTHORITY=postgres`, the only one a cell runs) a server process still
 reads, in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
 `loom.cell_self` row exists, with the mode cache's rules (below), and so does a CLI
-command that declares an org (the CLI's read ships with attach); an org-free command,
+command that declares an org, on one bounded session of its own per command, every state
+table absent (judged by `to_regclass`, so a role missing a grant still refuses) reading
+as `open` and a failed read refusing; an org-free command,
 such as a token revocation, `loom migrate` or `loom doctor`, is not gated by the mode
 and runs as it does today, Postgres outage included. Both rows absent with no tenancy or
 own row, as on a deployment never prepared, or the first cell in `recording`, leave the
@@ -581,9 +583,14 @@ lists any tenancy row the directory does not place.
   tenancy-checked or org-free.
 - **The CLI declares its orgs.** Every CLI command that connects goes through
   `run_connected`, `connect_checked` or `connect_declared` (`server/cli/_ch.py`), which
-  take the orgs the command writes, or why it writes for none. On a cell, before
-  checking a declared org, they read the cell's rows and refuse the command wherever the
-  transports would serve nothing (rows unread, or not this process's cell). An org the
+  take the orgs the command writes, or why it writes for none. A command that declares
+  an org first checks its deployment (`check_configured`), so under the Postgres
+  authority it needs `LOOM_PG_DSN`. On a cell, before checking a declared org, they read
+  the cell's rows and refuse the command unless the `first` row names its cell and its
+  stores (`deployment_id`, `bucket`, `bucket_prefix`) match a value of the cell's own
+  row: a CLI verifies no token and its fingerprint never reaches the router, so it may
+  run where the transports refuse on another fingerprint field. With `LOOM_CELL` unset
+  the command is refused on a cell past `recording` (above). An org the
   cell does not hold is recorded on the first cell in `recording`, as a request's org is
   (reading the cell's state with the cell's router credential, `LOOM_CELL_ROUTER_TOKEN`,
   in the first cell's CLI configuration while its mode is `recording`, and only while
@@ -1045,6 +1052,8 @@ the directory row.
 | A recording insert held open during first attach                         | attach stops trying once too little of `--wait` is left for the wait, reporting the mode it reads back; a rerun resumes                                                                                                                                                                                                                                                                                                              |
 | Attach stalls while it holds the mode table's lock                       | Postgres ends its session within seconds and releases the lock; new orgs answer within their deadline                                                                                                                                                                                                                                                                                                                                |
 | A transaction open since before step 4's snapshot                        | attach refuses once `--wait` runs out (a prepared one at once), naming what it waited on, and leaves `enforced`                                                                                                                                                                                                                                                                                                                      |
+| A CLI command with `LOOM_CELL` unset, started before attach's step 3     | it read the state while the first cell was `recording` and keeps writing ClickHouse after `serving`; the runbook sets `LOOM_CELL` on every CLI before attach                                                                                                                                                                                                                                                                         |
+| A CLI of a build before the state read                                   | it is not refused on an `enforced` cell; every CLI and CI image runs a build with the read before attach ([upgrades](../operations/upgrades.md#upgrade-procedure))                                                                                                                                                                                                                                                                   |
 
 ## Rolling upgrades
 
@@ -1248,7 +1257,7 @@ An integration test with two cells and a router in CI's Postgres job:
   and named by `loom doctor`, a write for an unheld org on an `enforced` cell whose mode
   row was deleted is refused and the state named by `loom doctor`; on that cell a pod
   with `LOOM_CELL` unset is unready and runs no worker, and a CLI command declaring an
-  org with it unset is refused (with attach); updating, deleting or truncating the
+  org with it unset is refused; updating, deleting or truncating the
   `first` row on an `enforced` cell is refused, also under
   `session_replication_role = replica`, and a missing or disabled `first`-row trigger is
   refused by attach and named by `loom doctor`; a running process with `LOOM_CELL` set
