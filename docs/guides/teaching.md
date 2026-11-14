@@ -2,8 +2,8 @@
 
 Loom can serve as the lab environment for a course on AI agents, information retrieval,
 databases or software engineering. Each student runs their own single-user stack, on a
-laptop with Docker or in a GitHub codespace with nothing installed, and every lab below
-uses pages from these docs, so the steps stay current with each release.
+laptop with Docker or in a GitHub codespace with nothing installed on their machine, and
+every lab below uses pages from these docs, so the steps stay current with each release.
 
 ## Setup
 
@@ -18,14 +18,16 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
 
-The commands below run in the stack's containers and name its install directory as
-`<dir>`: `~/.loom` on a laptop and `/workspaces/.loom` in a codespace. Lab 1 also needs the
-Python SDK in a virtual environment (in a codespace, run
-`sudo apt-get update && sudo apt-get install -y python3-venv` first):
+Lab 1 also needs the Python SDK (Python 3.11 or newer) in a virtual environment on the
+host; in a codespace, run `sudo apt-get update && sudo apt-get install -y python3-venv`
+first:
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
 ```
+
+The `docker compose` commands in the labs run in the stack's containers and name its
+install directory as `<dir>`: `~/.loom` on a laptop and `/workspaces/.loom` in a codespace.
 
 ## Lab 1: an agent that remembers
 
