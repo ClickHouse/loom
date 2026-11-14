@@ -23,12 +23,20 @@ def test_every_role_a_reader_and_group_grants_and_discoverable_shares_count() ->
             # Offered ownership, and a writer meanwhile.
             _perm("user", role="writer", emailAddress="c@example.com", pendingOwner=True),
             _perm("group", role="writer", emailAddress="Team@Example.com"),
+            _perm("user", role="organizer", emailAddress="d@example.com"),
+            _perm("user", role="fileOrganizer", emailAddress="e@example.com"),
             _perm("domain", domain="Example.com", allowFileDiscovery=True),
             _perm("anyone", allowFileDiscovery=True),
         ]
     )
     assert got == AccessList(
-        emails=("b@example.com", "c@example.com", "owner@example.com"),
+        emails=(
+            "b@example.com",
+            "c@example.com",
+            "d@example.com",
+            "e@example.com",
+            "owner@example.com",
+        ),
         groups=("team@example.com",),
         domains=("example.com",),
         anyone=True,
@@ -85,6 +93,7 @@ def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
         '{"unread": false, "anyone": true, "emails": "a@example.com"}',
         '{"unread": false, "anyone": "yes"}',
         '{"unread": false, "owner": 7}',
+        '{"unread": false, "emails": ["a@example.com", 5]}',
     ],
 )
 def test_anything_but_a_read_list_is_unread(text: str) -> None:

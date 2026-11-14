@@ -6,6 +6,7 @@ reads `unread`, which admits nobody."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
@@ -15,7 +16,8 @@ _DRIVE_ROLES = frozenset({"owner", "organizer", "fileOrganizer", "writer", "comm
 
 @dataclass(frozen=True)
 class AccessList:
-    """`emails`, `groups` and `domains` lower-cased and sorted; `owner` the subject of a
+    """`emails`, `groups` and `domains` lower-cased and sorted, as `to_json` and the
+    parsers write them; `owner` the subject of a
     connected source's owner, or empty; `unread` when no current list is known, with
     every other entry empty."""
 
@@ -46,20 +48,22 @@ def to_json(access: AccessList) -> str:
 
 def from_json(text: str) -> AccessList:
     """The stored list; `unread` for an empty or unreadable value, one without
-    `unread: false`, or one with a field of the wrong type."""
+    `unread: false`, or one with a field or an entry of the wrong type."""
     try:
         data = json.loads(text) if text else None
     except ValueError:
         return UNREAD
     if not isinstance(data, dict) or data.get("unread") is not False:
         return UNREAD
-    lists = [data.get(k, []) for k in ("emails", "groups", "domains")]
+    emails, groups, domains = (data.get(k, []) for k in ("emails", "groups", "domains"))
     owner, anyone = data.get("owner", ""), data.get("anyone", False)
-    if not all(isinstance(v, list) for v in lists) or not isinstance(owner, str):
+    if not (
+        all(_strings(v) for v in (emails, groups, domains))
+        and isinstance(owner, str)
+        and isinstance(anyone, bool)
+    ):
         return UNREAD
-    if not isinstance(anyone, bool):
-        return UNREAD
-    emails, groups, domains = (_names(v) for v in lists)
+    emails, groups, domains = _names(emails), _names(groups), _names(domains)
     return AccessList(emails=emails, owner=owner, groups=groups, domains=domains, anyone=anyone)
 
 
@@ -91,10 +95,12 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
     )
 
 
-def _names(values: Any) -> tuple[str, ...]:
-    """Distinct non-empty strings, lower-cased and sorted; nothing from a non-sequence."""
-    if not isinstance(values, (list, tuple)):
-        return ()
+def _strings(values: Any) -> bool:
+    return isinstance(values, list) and all(isinstance(v, str) for v in values)
+
+
+def _names(values: Iterable[Any]) -> tuple[str, ...]:
+    """Distinct non-empty strings, lower-cased and sorted; a non-string is dropped."""
     return tuple(sorted({v.strip().lower() for v in values if isinstance(v, str) and v.strip()}))
 
 

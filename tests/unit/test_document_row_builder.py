@@ -81,7 +81,7 @@ def test_builder_refuses_unknown_and_hash_fields() -> None:
         documents_repo.build_document_row(_doc(), version=2, content_sha256="x")
 
 
-def test_the_repo_reads_select_the_hash_and_the_erasure_stamp() -> None:
+def test_the_repo_reads_select_the_hash_the_erasure_stamp_and_the_permission_list() -> None:
     seen: list[str] = []
 
     class _CH:
@@ -987,9 +987,20 @@ def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> N
 def test_no_operation_takes_or_answers_a_permission_list() -> None:
     from server.operations.registry import ALL_OPERATIONS
 
+    def property_sets(node: object) -> list[set[str]]:
+        if isinstance(node, dict):
+            found = [set(node["properties"])] if isinstance(node.get("properties"), dict) else []
+            return found + [p for v in node.values() for p in property_sets(v)]
+        if isinstance(node, list):
+            return [p for v in node for p in property_sets(v)]
+        return []
+
     for op in ALL_OPERATIONS:
         for model in (op.input_model, op.output_model):
-            assert "access_json" not in json.dumps(model.model_json_schema()), op.name
+            schema = model.model_json_schema()
+            assert "access_json" not in json.dumps(schema), op.name
+            # Nor a list under another name.
+            assert not any({"unread", "anyone"} <= p for p in property_sets(schema)), op.name
 
 
 @pytest.mark.parametrize(
@@ -1022,3 +1033,30 @@ def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
     asyncio.run(kh.handle_knowledge_upsert(body, **passed))
     # Over a listed prior row too: a list is never carried, only passed.
     assert [r["access_json"] for r in rows] == [written]
+
+
+def test_a_metadata_edit_that_reindexes_writes_no_permission_list(monkeypatch) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
+
+    rows = _capture_inserts(monkeypatch)
+
+    async def _prior(*a: Any, **kw: Any) -> DocumentRow:
+        return _doc(access_json=LISTED)
+
+    async def _none(*a: Any, **kw: Any) -> None:
+        return None
+
+    async def _zero(*a: Any, **kw: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(kh, "get_embedder", lambda: _FakeEmbedder())
+    monkeypatch.setattr(documents_repo, "get_one", _prior)
+    monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
+    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)
+    monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", _zero)
+    monkeypatch.setattr(knowledge_repo, "insert_chunks", _zero)
+    body = KnowledgeUpdateMetadataInput(
+        org="o", namespace="n", source_uri="doc-a", title="New", reindex=True
+    )
+    asyncio.run(kh.handle_knowledge_update_metadata(body))
+    assert rows and all(r["access_json"] == "" for r in rows)

@@ -1163,7 +1163,8 @@ async def _supersede_documents(
     return await count_then_mutate(
         "loom.documents",
         count_where=where,
-        mutation="UPDATE superseded_at = {now:DateTime}",
+        # A mirrored document's list names other people: it goes with the document.
+        mutation="UPDATE superseded_at = {now:DateTime}, access_json = ''",
         mutation_where=where,
         params={"org": org, "ns": namespace},
         ch=ch,
