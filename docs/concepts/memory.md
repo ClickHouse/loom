@@ -448,6 +448,18 @@ The links are read where the code is:
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read.
+- `code.search`, `code.callers`, `code.callees`, `code.impact`, `code.outline` and a task's
+  `code.context_pack` attach `lessons` for the answer's top files
+  (`code_result_lessons_paths`): from the same namespaces, less any other repository's code
+  namespace, the memories linked to code in each file or naming it by its path or a tail of it
+  (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
+  root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
+  row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, and `supersedes_key`
+  when it replaces an older row; a row another row read for the answer supersedes is not
+  served. `lessons_left_out` counts the rows the cap, a cut or that rule left out. A decision
+  or constraint is served whole or left out. The read runs after the answer, never enters the
+  search memo, and is skipped for `include_lessons: false`, with `code_result_lessons` off, or
+  for a token narrowed to its own user or session.
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it. A line whose code changed, was not found again or went says so and
   names the first indexed commit at which it read so; `context.pack` decision lines

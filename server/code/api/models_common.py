@@ -9,7 +9,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 from server.core.naming import present
 from server.operations.base import MCP_HIDDEN
@@ -31,6 +37,47 @@ class _CodeIdentity(BaseModel):
     user_id: str = "-"
     # trace attribution: which integration is calling (clickgap|claude-code|…)
     consumer: str = ""
+
+
+class _ResultLessons(BaseModel):
+    """The `lessons` a code answer carries for the files it returns."""
+
+    # Attach `lessons`: the team's memories about the answer's top files (for
+    # code.context_pack, a `task` briefing's only). False = none.
+    # Not in the MCP listing (every session pays for it) but accepted there.
+    include_lessons: bool = Field(default=True, json_schema_extra=MCP_HIDDEN)
+    # The memory namespaces `lessons` reads besides the repository's team rules (over
+    # MCP the caller's memory home, filled in); one the caller cannot read is skipped.
+    lesson_namespaces: list[str] = Field(
+        default_factory=list, max_length=4, json_schema_extra=MCP_HIDDEN
+    )
+
+
+def _drop_empty_lessons(data: dict[str, Any]) -> dict[str, Any]:
+    """`lessons` and `lessons_left_out` stay off the wire until they say something."""
+    for key in ("lessons", "lessons_left_out"):
+        if not data.get(key):
+            data.pop(key, None)
+    return data
+
+
+class _LessonsOut(BaseModel):
+    # An output with its own serializer calls `_drop_empty_lessons` there: a subclass's
+    # serializer replaces this one.
+    @model_serializer(mode="wrap")
+    def _drop_empty(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return _drop_empty_lessons(handler(self))
+
+    # The memories about the answer's top files, best first, capped at
+    # `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt,
+    # code_state}, and `supersedes_key` when it replaces an older row. `code_state` is the
+    # worst state of the row's links to code in the file: `fresh`, `moved`, or `changed`,
+    # `unresolved` or `missing` when that code differs from what the memory was written
+    # against; '' for a row that names the file only.
+    lessons: list[dict[str, Any]] = Field(default_factory=list)
+    # How many rows about those files the lessons' token cap or a cut left out, with
+    # the rows another row read for the answer supersedes.
+    lessons_left_out: int = 0
 
 
 class _PrPostImage(BaseModel):

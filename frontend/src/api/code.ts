@@ -316,6 +316,7 @@ export async function codeSearch(
     query,
     top_k: opts.top_k ?? 10,
     path_prefix: opts.path_prefix ?? "",
+    include_lessons: false,
   });
 }
 
@@ -360,6 +361,7 @@ export async function codeCallers(id: CodeId, name: string, depth = 1): Promise<
     name,
     depth,
     max_nodes: 100,
+    include_lessons: false,
   });
 }
 
@@ -369,6 +371,7 @@ export async function codeCallees(id: CodeId, name: string): Promise<CodeEdgesRe
     name,
     depth: 1,
     max_nodes: 100,
+    include_lessons: false,
   });
 }
 

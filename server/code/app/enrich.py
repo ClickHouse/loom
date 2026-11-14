@@ -21,9 +21,13 @@ from server.settings import settings
 logger = logging.getLogger(__name__)
 
 
-async def _bounded[T](coro: Awaitable[T], fallback: T) -> T:
+async def bounded[T](coro: Awaitable[T], fallback: T, seconds: float | None = None) -> T:
+    """`coro`'s answer within `seconds` (`code_enrich_timeout_s` when None), else
+    `fallback`."""
     try:
-        return await asyncio.wait_for(coro, timeout=settings.code_enrich_timeout_s)
+        return await asyncio.wait_for(
+            coro, timeout=settings.code_enrich_timeout_s if seconds is None else seconds
+        )
     except Exception as e:  # noqa: BLE001 — enrichment degrades, never fails
         logger.debug("code enrich degraded: %s", e)
         return fallback
@@ -32,7 +36,7 @@ async def _bounded[T](coro: Awaitable[T], fallback: T) -> T:
 async def recent_prs(
     repo: CodeRepo, org: str, ns: str, paths: list[str], *, limit: int = 5
 ) -> list[dict[str, Any]]:
-    rows = await _bounded(repo.pr_history_for(org, ns, paths=paths, limit=limit), [])
+    rows = await bounded(repo.pr_history_for(org, ns, paths=paths, limit=limit), [])
     return [
         {
             "pr_number": int(r["pr_number"]),
@@ -50,14 +54,14 @@ async def usage_examples(
     repo: CodeRepo, org: str, ns: str, symbol_ids: list[str], *, limit: int = 3
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, test-covered callers first, newest first."""
-    edges = await _bounded(
+    edges = await bounded(
         repo.edges_for_symbols(org, ns, symbol_ids, direction="callers", limit=50),
         [],
     )
     if not edges:
         return []
     caller_paths = sorted({str(e["path"]) for e in edges})  # fixed order into the 50-cut
-    tested = await _bounded(repo.test_map_for(org, ns, caller_paths), [])
+    tested = await bounded(repo.test_map_for(org, ns, caller_paths), [])
     tested_paths = {str(t["src_path"]) for t in tested}
     ranked = sorted(
         edges,
@@ -111,4 +115,4 @@ async def lessons_for_symbol(
             limit=limit,
         )
 
-    return await _bounded(read(), [])
+    return await bounded(read(), [])

@@ -6,16 +6,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
-from server.code.api.models_common import _CodeIdentity
+from server.code.api.models_common import _CodeIdentity, _LessonsOut, _ResultLessons
 
 # ============================================================
 # code.context_pack / code.map
 # ============================================================
 
 
-class CodeContextPackInput(_CodeIdentity):
+class CodeContextPackInput(_CodeIdentity, _ResultLessons):
     # Indexed merged PR -> precomputed pack; 0 -> orientation map; unknown PR
     # -> explicit abstention. ge=0 because a negative number would reach
     # ClickHouse as a UInt32 bind and surface as a 500.
@@ -38,7 +38,7 @@ class CodeContextPackInput(_CodeIdentity):
     )
 
 
-class CodeContextPackOutput(BaseModel):
+class CodeContextPackOutput(_LessonsOut):
     # The pack as Markdown text; for `unavailable`, a short note saying the PR has no pack yet.
     context: str
     # Estimated tokens of `context`.
@@ -52,6 +52,8 @@ class CodeContextPackOutput(BaseModel):
     merge_commit_sha: str = ""
     # Id of this call's trace row; pass it to `code.outcome`.
     trace_run_id: str = ""
+    # The files a task briefing names, best first: what its `lessons` are read for.
+    _paths: list[str] = PrivateAttr(default_factory=list)
 
 
 class CodeMapInput(_CodeIdentity):

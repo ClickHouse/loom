@@ -141,3 +141,22 @@ async def test_conventions_sends_only_the_given_source_and_rules() -> None:
     body = ag.transport.calls[1][1]
     assert body["files"] == ["src/a.cpp"] and body["diff"].startswith("diff --git")
     assert "pr_number" not in body and "head_sha" not in body and "org" not in body
+
+
+@pytest.mark.asyncio
+async def test_each_code_read_with_lessons_sends_the_opt_out_only_when_asked() -> None:
+    ag = _Agent()
+    c = CodeClient(ag)  # type: ignore[arg-type]
+    calls = [
+        (c.search, ("q",)),
+        (c.outline, ("a.py",)),
+        (c.callers, ("f",)),
+        (c.callees, ("f",)),
+        (c.impact, ("f",)),
+    ]
+    for fn, args in calls:
+        await fn(*args)
+        await fn(*args, include_lessons=False)
+    bodies = [body for _, body in ag.transport.calls]
+    assert all("include_lessons" not in b for b in bodies[0::2])  # the server's default
+    assert all(b["include_lessons"] is False for b in bodies[1::2])

@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     field_validator,
     model_serializer,
@@ -17,13 +18,16 @@ from pydantic import (
 
 from server.code.api.models_common import (
     _CodeIdentity,
+    _drop_empty_lessons,
     _drop_empty_presence_keys,
     _drop_unfired_symbol_blocks,
     _drop_unset_overlay,
     _drop_unset_resolved_by,
     _drop_unset_symbol_context,
     _lead_namespaces,
+    _LessonsOut,
     _PrPostImage,
+    _ResultLessons,
     _trim_namespaces,
 )
 from server.code.domain.units import CodeUnit
@@ -207,7 +211,7 @@ class CodeSymbolOutput(BaseModel):
 # ============================================================
 
 
-class CodeCallersInput(_CodeIdentity, _PrPostImage):
+class CodeCallersInput(_CodeIdentity, _PrPostImage, _ResultLessons):
     # Bare, qualified or partly qualified name of the seed symbol, or `path:line` for the
     # innermost function containing that line.
     name: str = ""
@@ -333,7 +337,7 @@ class CodeCandidateSitesWire(BaseModel):
     note: str = ""
 
 
-class CodeCallersOutput(BaseModel):
+class CodeCallersOutput(_LessonsOut):
     @model_serializer(mode="wrap")
     def _drop_unrequested_candidates(
         self, handler: SerializerFunctionWrapHandler
@@ -342,7 +346,7 @@ class CodeCallersOutput(BaseModel):
         data: dict[str, Any] = handler(self)
         if data.get("candidate_sites") is None:
             data.pop("candidate_sites", None)
-        return _drop_unset_overlay(_drop_unset_resolved_by(data))
+        return _drop_empty_lessons(_drop_unset_overlay(_drop_unset_resolved_by(data)))
 
     # The call-graph edges found, hop by hop; the far end (`from_*` for callers, `to_*`
     # for callees) is the answer. Empty when the seed is ambiguous or nothing was recorded.
@@ -434,7 +438,7 @@ class CodeCallersOutput(BaseModel):
 # ============================================================
 
 
-class CodeImpactInput(_CodeIdentity, _PrPostImage):
+class CodeImpactInput(_CodeIdentity, _PrPostImage, _ResultLessons):
     """Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast
     radius. Diff-shaped is the CI/pre-commit question — "I changed these
     files: what feels it, which tests reach it, and what usually changes
@@ -477,10 +481,10 @@ class CodeImpactInput(_CodeIdentity, _PrPostImage):
     pr_number: int = Field(default=0, ge=0)
 
 
-class CodeImpactOutput(BaseModel):
+class CodeImpactOutput(_LessonsOut):
     @model_serializer(mode="wrap")
     def _drop_unset(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
-        return _drop_unset_overlay(_drop_unset_resolved_by(handler(self)))
+        return _drop_empty_lessons(_drop_unset_overlay(_drop_unset_resolved_by(handler(self))))
 
     # Each row {qualified_name, path, hop, tier}; a row whose function is a
     # registration function (`REGISTER_FUNCTION(X)`, `registerStorageFoo`)
@@ -580,3 +584,6 @@ class CodeImpactOutput(BaseModel):
     overlay_note: str = ""
     # Id of this call's trace row; pass it to `code.outcome`.
     trace_run_id: str = ""
+    # The seed's files (the symbol's, or the change's): what its `lessons` are read for
+    # first.
+    _paths: list[str] = PrivateAttr(default_factory=list)

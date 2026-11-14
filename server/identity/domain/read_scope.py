@@ -319,6 +319,9 @@ SCOPED_OPS = frozenset(
 )
 
 _CODE_INDEX = "the code index: repository content, no user's memory"
+# A code answer that carries `lessons` (memories about its files or symbol) reads none for
+# a narrowed token: those rows are not filtered by user.
+_CODE_LESSONS = "the code index; its memory lessons are left out for a narrowed token"
 
 # Ops a narrowed token may call as they are, with the reason: they return no
 # other user's memory, either none at all or only what they read under the
@@ -334,9 +337,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.bisect_candidates": _CODE_INDEX,
     "code.blame_range": _CODE_INDEX,
     "code.calibrate": _CODE_INDEX,
-    "code.callees": _CODE_INDEX,
-    "code.callers": _CODE_INDEX,
-    "code.context_pack": _CODE_INDEX,
+    "code.callees": _CODE_LESSONS,
+    "code.callers": _CODE_LESSONS,
+    "code.context_pack": _CODE_LESSONS,
     "code.context_packs": _CODE_INDEX,
     "code.conventions": _CODE_INDEX,
     "code.coverage": _CODE_INDEX,
@@ -349,12 +352,12 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.first_build": _CODE_INDEX,
     "code.grep": _CODE_INDEX,
     "code.history": _CODE_INDEX,
-    "code.impact": _CODE_INDEX,
+    "code.impact": _CODE_LESSONS,
     "code.index_errors": _CODE_INDEX,
     "code.index_status": _CODE_INDEX,
     "code.map": _CODE_INDEX,
     "code.outcome": _CODE_INDEX,
-    "code.outline": _CODE_INDEX,
+    "code.outline": _CODE_LESSONS,
     "code.path_guards": _CODE_INDEX,
     "code.pr_check": _CODE_INDEX,
     "code.recent_commits": _CODE_INDEX,
@@ -371,10 +374,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.scip_ingest": _CODE_INDEX,
     "code.scip_status": _CODE_INDEX,
     # The tie-break reads the files named by memories inside the caller's read scope.
-    "code.search": _CODE_INDEX,
+    "code.search": _CODE_LESSONS,
     "code.setting_facts": _CODE_INDEX,
-    # Attaches no lessons under a narrowed scope.
-    "code.symbol": _CODE_INDEX,
+    "code.symbol": _CODE_LESSONS,
     "code.symbol_history": _CODE_INDEX,
     "code.test_gate": _CODE_INDEX,
     "code.test_home": _CODE_INDEX,

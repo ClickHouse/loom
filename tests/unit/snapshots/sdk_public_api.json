@@ -1927,7 +1927,8 @@
           "max_nodes",
           "min_confidence",
           "include_ambiguous",
-          "candidate_min_confidence"
+          "candidate_min_confidence",
+          "include_lessons"
         ],
         "callers": [
           "name",
@@ -1937,7 +1938,8 @@
           "min_confidence",
           "include_ambiguous",
           "candidate_min_confidence",
-          "pr_number"
+          "pr_number",
+          "include_lessons"
         ],
         "context_pack": [
           "pr_number",
@@ -2021,7 +2023,8 @@
           "files",
           "diff",
           "exclude_authors",
-          "pr_number"
+          "pr_number",
+          "include_lessons"
         ],
         "index_status": [
           "org",
@@ -2045,7 +2048,8 @@
         "outline": [
           "path",
           "kinds",
-          "token_budget"
+          "token_budget",
+          "include_lessons"
         ],
         "pr_check": [
           "title",
@@ -2081,7 +2085,8 @@
           "path_globs",
           "exclude_globs",
           "langs",
-          "namespaces"
+          "namespaces",
+          "include_lessons"
         ],
         "symbol": [
           "name",

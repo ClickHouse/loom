@@ -82,7 +82,7 @@ async def test_path_and_basename_are_bound_and_both_shapes_are_matched(
         assert column in ch.sql
     assert f"value_len > {mff._READ_BYTES} AS value_truncated" in ch.sql
     # a decision or constraint is read up to the ceiling, every other row up to 600 bytes
-    assert ch.params["whole_bytes"] == 1500 * mff._CHARS_PER_TOKEN * 12
+    assert ch.params["whole_bytes"] == 1500 * mff.CHARS_PER_TOKEN * 12
     assert "if((memory_type = 'decision' OR hasAny(tags, ['decision', 'constraint']))" in ch.sql
 
 
@@ -115,7 +115,7 @@ async def test_hits_carry_their_matched_files_and_render_within_budget(
     assert 'more; memory.for_file(path="src/a.cpp") lists them.' in out.rendered
     # the constraint prints outside the budget; the other rows fit inside it
     constraint = out.rendered.splitlines()[1]
-    assert len(out.rendered) - len(constraint) - 1 <= 60 * mff._CHARS_PER_TOKEN
+    assert len(out.rendered) - len(constraint) - 1 <= 60 * mff.CHARS_PER_TOKEN
     assert "- third: Third fact about the file." in out.rendered
     # The hit carries the stored value whole; only the rendered block is cut.
     assert out.hits[1].value == "x" * 900
@@ -342,7 +342,7 @@ def test_decisions_do_not_count_against_the_token_budget() -> None:
     budgeted = [ln for ln in lines if not ln.startswith("- Decision")]
     assert truncated is True and len(budgeted) - 3 < len(notes)
     assert "- … " in lines[-2] and "lists them." in lines[-2]
-    assert sum(len(ln) + 1 for ln in budgeted) - 1 <= 100 * mff._CHARS_PER_TOKEN
+    assert sum(len(ln) + 1 for ln in budgeted) - 1 <= 100 * mff.CHARS_PER_TOKEN
 
 
 def test_decisions_past_the_ceiling_are_left_out_and_named(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -353,7 +353,7 @@ def test_decisions_past_the_ceiling_are_left_out_and_named(monkeypatch: pytest.M
     lines = text.splitlines()
     shown = [ln for ln in lines if ln.startswith("- Decision")]
     assert truncated is True and len(shown) == 2
-    assert sum(len(ln) + 1 for ln in shown) <= 250 * mff._CHARS_PER_TOKEN
+    assert sum(len(ln) + 1 for ln in shown) <= 250 * mff.CHARS_PER_TOKEN
     assert lines[-2] == (
         "- … 4 more decisions or constraints left out to keep this block short; memory.get on "
         'the key reads each, or loom_search: design/2 (namespace "code-repo"), design/3 '
@@ -403,7 +403,7 @@ async def test_an_escaped_constraint_under_the_ceiling_prints_whole(
     monkeypatch.setattr(settings, "memory_for_file_whole_tokens", 100)
     text = "决" * 300
     rule = _row("rules/zh", json.dumps(text), tags=["constraint"])
-    assert len(rule["value"]) > 100 * mff._CHARS_PER_TOKEN
+    assert len(rule["value"]) > 100 * mff.CHARS_PER_TOKEN
     monkeypatch.setattr(mff, "get_client", lambda: _CuttingCH([rule]))
     out = await mff.handle_memory_for_file(
         MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
@@ -450,7 +450,7 @@ def test_a_more_line_from_a_left_out_constraint_fits_the_budget(
     lines = text.splitlines()
     assert truncated is True and lines[0] == header
     budgeted = "\n".join(ln for ln in lines if "decision or constraint" not in ln)
-    assert len(budgeted) <= 60 * mff._CHARS_PER_TOKEN
+    assert len(budgeted) <= 60 * mff.CHARS_PER_TOKEN
     assert any(ln.startswith("- … ") and "lists them" in ln for ln in lines)
 
 
@@ -466,7 +466,7 @@ def test_notes_that_fit_exactly_print_beside_a_constraint_left_out_at_the_ceilin
     text, _, truncated = mff.render_block("src/a.cpp", [rule, note], 60, home="me", now=_NOW)
     lines = text.splitlines()
     assert truncated is True and lines[1] == "- notes/f: " + "f" * size
-    assert len("\n".join(lines[:2])) == 60 * mff._CHARS_PER_TOKEN
+    assert len("\n".join(lines[:2])) == 60 * mff.CHARS_PER_TOKEN
     assert lines[2].endswith("loom_search: rules/long.")
 
 
@@ -683,7 +683,7 @@ def test_mixed_rows_stay_inside_the_budget() -> None:
     hits = [_row(f"k{i}", json.dumps("r" * (20 + 37 * i % 200))) for i in range(12)]
     for budget in range(50, 600):
         text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me")
-        assert len(text) <= budget * mff._CHARS_PER_TOKEN and tokens <= budget
+        assert len(text) <= budget * mff.CHARS_PER_TOKEN and tokens <= budget
         assert truncated is text.splitlines()[-1].startswith("- … ")
 
 
@@ -691,7 +691,7 @@ def test_the_more_line_fits_inside_the_budget() -> None:
     hits = [_row(f"k{i}", json.dumps("r" * 100)) for i in range(12)]
     for budget in range(50, 400):
         text, tokens, truncated = mff.render_block("src/a.cpp", hits, budget, home="me")
-        assert len(text) <= budget * mff._CHARS_PER_TOKEN and tokens <= budget
+        assert len(text) <= budget * mff.CHARS_PER_TOKEN and tokens <= budget
         assert truncated is text.splitlines()[-1].startswith("- … ")
 
 
@@ -701,7 +701,7 @@ def test_a_block_filling_the_budget_prints_whole_and_one_more_character_cuts_it(
     budget = 80
     # The three lines and the two newlines between them fill the 320 characters of 80
     # tokens exactly.
-    row1_chars = budget * mff._CHARS_PER_TOKEN - len(header) - len(row0) - 2
+    row1_chars = budget * mff.CHARS_PER_TOKEN - len(header) - len(row0) - 2
     row1 = "- k1: " + "b" * (row1_chars - len("- k1: "))
 
     def block(second: str) -> tuple[str, int, bool]:
@@ -996,3 +996,37 @@ def test_an_attested_decision_whose_source_changed_reads_source_changed() -> Non
     )
     line = _lines([hit])[1]
     assert line.startswith("- Decision (by alice, 3 days ago) (source changed): ")
+
+
+@pytest.mark.asyncio
+async def test_listing_rows_carry_what_each_row_supersedes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lessons on code answers read `supersedes_ids` from here to leave an older row
+    out with its superseder."""
+    older = _row("rules/old", json.dumps("Keep 32."), updated_at=datetime(2026, 9, 20))
+    newer = _row("rules/new", json.dumps("Keep 48."), updated_at=datetime(2026, 9, 22))
+    newer["conflict_with"], older["conflict_with"] = [older["memory_id"]], [newer["memory_id"]]
+    monkeypatch.setattr(mff, "get_client", lambda: _CH([older, newer]))
+    rows, _ = await mff.listing_rows(MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp"))
+    assert [r["memory_key"] for r in rows] == ["rules/new", "rules/old"]
+    assert rows[0]["supersedes_ids"] == [older["memory_id"]] and rows[1]["supersedes_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_listing_and_the_block_keep_the_commit_a_changed_link_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review brief reads `code_changed_since` from the listing, and the rendered block
+    names it: the shared row helper keeps it beside the ids."""
+    row = _row(
+        "rules/x", json.dumps("Keep 32."), code_state="changed", code_changed_since="ab" * 20
+    )
+
+    async def _merged(*_a: Any, **_k: Any) -> tuple[list[dict[str, Any]], bool]:
+        return [dict(row)], False
+
+    monkeypatch.setattr(mff, "_merged_rows", _merged)
+    request = MemoryForFileInput(org="o", namespace="ns", path="src/a.cpp")
+    rows, _ = await mff.listing_rows(request)
+    assert rows[0]["code_changed_since"] == "ab" * 20
+    out = await mff.handle_memory_for_file(request)
+    assert "commit abababababab" in out.rendered

@@ -1538,6 +1538,25 @@
           "default": null,
           "description": "Numeric gid of the prepared var/code_repos: mirror and checkout directories in it 2770, locks 0660, server and `loom code` umask 007. Unset: 0700, 0600, the caller's umask."
         },
+        "code_result_lessons": {
+          "default": true,
+          "type": "boolean",
+          "description": "Whether the code ops that return files carry `lessons`, the readable memories about their top files."
+        },
+        "code_result_lessons_paths": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "How many of an answer's files, in rank order, its `lessons` are read for."
+        },
+        "code_result_lessons_tokens": {
+          "default": 250,
+          "maximum": 2000,
+          "minimum": 50,
+          "type": "integer",
+          "description": "Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token."
+        },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,
           "exclusiveMinimum": 0,

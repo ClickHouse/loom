@@ -127,6 +127,7 @@ from server.code.api.models_verify import (
     CodeVerifyInput,
     CodeVerifyOutput,
 )
+from server.code.app import result_lessons
 from server.code.app.admin import handle_code_calibrate, handle_code_reindex
 from server.code.app.ask import handle_code_ask
 from server.code.app.backport import handle_code_backport_gap
@@ -196,7 +197,7 @@ OPERATIONS: list[Operation] = [
         name="code.search",
         input_model=CodeSearchInput,
         output_model=CodeSearchOutput,
-        handler=handle_code_search,
+        handler=result_lessons.WithLessons(handle_code_search, result_lessons.search_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),
@@ -220,7 +221,7 @@ OPERATIONS: list[Operation] = [
         name="code.callers",
         input_model=CodeCallersInput,
         output_model=CodeCallersOutput,
-        handler=handle_code_callers,
+        handler=result_lessons.WithLessons(handle_code_callers, result_lessons.edge_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),
@@ -229,7 +230,7 @@ OPERATIONS: list[Operation] = [
         maturity="experimental",
         input_model=CodeCallersInput,
         output_model=CodeCallersOutput,
-        handler=handle_code_callees,
+        handler=result_lessons.WithLessons(handle_code_callees, result_lessons.edge_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),
@@ -237,7 +238,7 @@ OPERATIONS: list[Operation] = [
         name="code.impact",
         input_model=CodeImpactInput,
         output_model=CodeImpactOutput,
-        handler=handle_code_impact,
+        handler=result_lessons.WithLessons(handle_code_impact, result_lessons.impact_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),
@@ -388,7 +389,7 @@ OPERATIONS: list[Operation] = [
         maturity="experimental",
         input_model=CodeOutlineInput,
         output_model=CodeOutlineOutput,
-        handler=handle_code_outline,
+        handler=result_lessons.WithLessons(handle_code_outline, result_lessons.outline_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),
@@ -430,7 +431,7 @@ OPERATIONS: list[Operation] = [
         name="code.context_pack",
         input_model=CodeContextPackInput,
         output_model=CodeContextPackOutput,
-        handler=handle_code_context_pack,
+        handler=result_lessons.WithLessons(handle_code_context_pack, result_lessons.pack_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),

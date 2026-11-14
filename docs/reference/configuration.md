@@ -261,6 +261,14 @@ One code namespace indexes one repository. No repository is configured by defaul
 | `LOOM_CODE_ASK_MEMORY_NAMESPACE` | `str` | `''` |  | The memory namespace code.ask fuses decision/rationale memories (the "why") from into its answer; empty = no enrichment, never guessed. |
 | `LOOM_CODE_ASK_MEMORY_ORG` | `str` | `''` |  | The org of `code_ask_memory_namespace`; empty = `code_org`. |
 
+### Memories on code results
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_RESULT_LESSONS` | `bool` | `True` | live | Whether the code ops that return files carry `lessons`, the readable memories about their top files. |
+| `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `250` | live | Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token. |
+| `LOOM_CODE_RESULT_LESSONS_PATHS` | `int` | `3` | live | How many of an answer's files, in rank order, its `lessons` are read for. |
+
 ### Repository access
 
 | Variable | Type | Default | Live | Meaning |

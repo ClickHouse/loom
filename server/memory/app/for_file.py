@@ -44,7 +44,7 @@ _ESCAPE_CHARS = 6
 # A character outside the Basic Multilingual Plane (an emoji) is two escapes.
 _PAIR_ESCAPE_CHARS = 2 * _ESCAPE_CHARS
 # Rough prompt-token estimate for English prose and code paths.
-_CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4
 
 # A file reference matches the requested path when either side is the bare
 # filename of the other, or both are the same string. `p` is the request,
@@ -94,7 +94,7 @@ _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
 def _whole_bytes() -> int:
     """The stored JSON a decision or constraint is read up to: the ceiling's characters,
     each as long as the longest escape of one (a surrogate pair's)."""
-    return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
+    return settings.memory_for_file_whole_tokens * CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
 
 
 def value_text(hit: dict[str, Any]) -> str:
@@ -331,8 +331,8 @@ def render_block(
     if not hits:
         return "", 0, False
     now = now or naive_utc_now()
-    budget_chars = token_budget * _CHARS_PER_TOKEN
-    whole_chars = settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN
+    budget_chars = token_budget * CHARS_PER_TOKEN
+    whole_chars = settings.memory_for_file_whole_tokens * CHARS_PER_TOKEN
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
@@ -386,7 +386,7 @@ def render_block(
         lines.append(footer)
     text = "\n".join(lines)
     truncated = bool(left_out or whole_left)
-    return text, (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN, truncated
+    return text, (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN, truncated
 
 
 def _stamp(r: dict[str, Any]) -> float:
@@ -630,19 +630,26 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
 async def listing_rows(
     input: MemoryForFileInput, *, whole_only: bool = False
 ) -> tuple[list[dict[str, Any]], bool]:
-    """(rows, links skipped) for a reader that lists several files' rows itself: each
-    row the hit memory.for_file serves with its `memory_id`, and whether the code-links
-    read failed (a row reached only by a link is then missing). `whole_only` keeps the
-    decisions and constraints (typed `decision`, or tagged `decision` or `constraint`)."""
+    """(rows, links skipped) for a reader that lists several files' rows itself: each row the
+    hit memory.for_file serves with its `memory_id` and `supersedes_ids` (the older rows it
+    is placed above), and whether the code-links read failed (a row reached only by a link
+    is then missing). `whole_only` keeps the decisions and constraints (typed `decision`, or
+    tagged `decision` or `constraint`)."""
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
-    listed = [
-        _hit(r, input).model_dump()
-        | {"memory_id": str(r["memory_id"]), "code_changed_since": r.get("code_changed_since", "")}
-        for r in rows
-    ]
-    return listed, skipped
+    return [_with_ids(_hit(r, input), r) for r in rows], skipped
+
+
+def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:
+    """The hit with the row fields a reader needs that are not on the wire: `memory_id` and
+    `supersedes_ids` (to leave a superseded row out with its superseder) and
+    `code_changed_since` (the commit a changed link's code changed at)."""
+    return hit.model_dump() | {
+        "memory_id": str(row.get("memory_id") or ""),
+        "supersedes_ids": row.get("supersedes_ids") or [],
+        "code_changed_since": row.get("code_changed_since", ""),
+    }
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:
@@ -651,20 +658,11 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     rows, _skipped = await _merged_rows(input, path, base)
 
     hits: list[_MemoryForFileHit] = []
-    # The ids are not on the wire; render_block needs them to leave a superseded row out
-    # with its superseder.
     to_render: list[dict[str, Any]] = []
     for r in rows:
         hit = _hit(r, input)
         hits.append(hit)
-        to_render.append(
-            hit.model_dump()
-            | {
-                "memory_id": r.get("memory_id"),
-                "supersedes_ids": r.get("supersedes_ids") or [],
-                "code_changed_since": r.get("code_changed_since", ""),
-            }
-        )
+        to_render.append(_with_ids(hit, r))
 
     shown: list[dict[str, Any]] = []
     rendered, tokens, truncated = render_block(

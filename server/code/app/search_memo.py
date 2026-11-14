@@ -159,7 +159,10 @@ def put(org: str, ns: str, key: str, output: Any, *, indexed_commit: str) -> Non
         asyncio.get_running_loop()
     except RuntimeError:
         return
-    payload = output.model_dump_json(exclude={"trace_run_id", "as_of"})
+    # lessons are the caller's, read after the memo (`result_lessons`): never stored
+    payload = output.model_dump_json(
+        exclude={"trace_run_id", "as_of", "lessons", "lessons_left_out"}
+    )
     if cap and len(payload) > cap:
         return
     row = {
