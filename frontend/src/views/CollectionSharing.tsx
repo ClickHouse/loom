@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
-import type { CollectionEntry } from "../api";
+import { type CollectionEntry, isAuthDisabled } from "../api";
 import { distinctTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
@@ -142,18 +142,19 @@ export function whoCanSee({
     : more > 0
       ? `${head.join(", ")} and ${fmtInt(more)} more`
       : joined(head);
-  // Counted on the collection itself only: the server folds a person's spellings within one
-  // place (`also`), never across places, so a sum over parents could count one person twice.
-  const here = new Map<string, string>();
+  // Counted on the collection itself only: `grants.list` folds a person's spellings within
+  // the one place it reads (`also`), so rows from two places can name one person twice. The
+  // one read that folds them over the whole lineage, `namespace.inventory`'s member count,
+  // also tallies every plane of the namespace (some ten statements, an 800 ms p99 budget
+  // against `grants.list`'s 80 ms), too heavy for every collection the Library opens.
+  const here = new Set<string>();
   for (const r of grants[0]?.rows ?? []) {
-    if (r.status !== "active") continue;
-    const k = namesMe(r, mine) ? "" : r.subject;
-    if (!here.has(k)) here.set(k, k);
+    if (r.status === "active") here.add(namesMe(r, mine) ? "" : r.subject);
   }
-  const hereSubjects = [...here.keys()];
+  const hereSubjects = [...here];
   const hereGroups = hereSubjects.filter((x) => x.startsWith("group:")).length;
   const hereAgents = hereSubjects.filter((x) => x !== "" && isAgentSubject(x)).length;
-  const herePeople = hereSubjects.filter((x) => x !== "everyone").length - hereGroups - hereAgents;
+  const herePeople = hereSubjects.length - hereGroups - hereAgents;
   const counts = joined(
     [
       herePeople > 0 ? plural(herePeople, "person", "people") : "",
@@ -233,7 +234,9 @@ export function useCollectionSharing({
   // loading, so its words never show under this one; a read again of these places keeps it.
   const [state, setState] = useState<SharingAnswer | null>(null);
   const [reading, setReading] = useState(false);
-  const personal = !collection || collection.personal;
+  // With sign-in off every request is served, so the grants say nothing of who can see it.
+  const open = isAuthDisabled();
+  const personal = !collection || collection.personal || open;
   useAbortableEffect(
     (signal, live) => {
       if (personal) return;
@@ -270,7 +273,9 @@ export function useCollectionSharing({
   const hiddenWords = above ? hiddenWhat(truncated) : null;
 
   let line: ReactNode = null;
-  if (collection?.personal) {
+  if (collection && open) {
+    line = <Words icon="users" who="Everyone who can reach this server" how="sign-in is off" />;
+  } else if (collection?.personal) {
     line = <Words icon="lock" who="Only you" how="Your own files: no one else's grants reach them" />;
   } else if (collection && answer === null) {
     line = (
@@ -372,7 +377,10 @@ export function useCollectionSharing({
       manage={shown.role === "admin"}
       // Until the header answers for this collection, who else can see it is still being read;
       // a failed answer names no parent.
-      inherited={answer === null ? null : inherited}
+      inherited={open ? [] : answer === null ? null : inherited}
+      notice={
+        open ? "Sign-in is off: everyone who can reach this server can see it, whoever is listed here." : undefined
+      }
     />
   );
   return { line, button, dialog };

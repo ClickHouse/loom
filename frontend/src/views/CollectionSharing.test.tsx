@@ -11,7 +11,7 @@ import { PHONE_QUERY } from "../lib/useMedia";
 import { axeViolations } from "../test/axe";
 import { type ReadAt, ShareButton, useCollectionSharing, whoCanSee } from "./CollectionSharing";
 
-const api = vi.hoisted(() => ({ listGrants: vi.fn() }));
+const api = vi.hoisted(() => ({ listGrants: vi.fn(), isAuthDisabled: vi.fn(() => false) }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 
 const at = "2026-09-17T14:50:28Z";
@@ -498,6 +498,25 @@ describe("the collection header", () => {
     render(<Header collection={chain[0]} byName={new Map(chain.map((c) => [c.namespace, c]))} />);
     expect(await screen.findByText("Only you")).toBeInTheDocument();
     expect(api.listGrants.mock.calls.map((c) => c[0].namespace)).toEqual(chain.slice(0, 9).map((c) => c.namespace));
+  });
+
+  it("says everyone who reaches the server can see it with sign-in off, reads no grants, and lists the members", async () => {
+    api.isAuthDisabled.mockReturnValue(true);
+    useStore.setState({ whoami: { authenticated: false } });
+    api.listGrants.mockResolvedValue({ rows: [grant("bob")] });
+    try {
+      render(<Header collection={entry("col-a")} />);
+      expect(line()).toHaveTextContent("Everyone who can reach this server · sign-in is off");
+      expect(api.listGrants).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Share" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(await within(dialog).findByText("bob")).toBeInTheDocument();
+      expect(dialog).toHaveTextContent("Sign-in is off: everyone who can reach this server can see it");
+      expect(dialog).not.toHaveTextContent("(you)");
+      expect(within(dialog).queryByText("Loading who else can see it")).not.toBeInTheDocument();
+    } finally {
+      api.isAuthDisabled.mockReturnValue(false);
+    }
   });
 
   it("reads the grants again when the members dialog closes, keeping the words busy meanwhile", async () => {

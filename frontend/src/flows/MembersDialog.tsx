@@ -28,7 +28,12 @@ import { oneOf } from "../lib/oneOf";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
-import { mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { grantSpellings, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+
+/** "a", "a and b", "a, b and c". */
+function joinedTitles(parts: string[]): string {
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
+}
 
 /** A row's name: the subject as a person reads it, with the subject itself beneath when the
  *  two differ. */
@@ -113,6 +118,8 @@ interface Props {
    *  its own members, read-only, since they are changed on the parent. Null while they are
    *  read: the dialog says nothing of an empty list until it knows who else can see it. */
   inherited?: InheritedAccess[] | null;
+  /** A line above the members that changes what they mean (sign-in off, say). */
+  notice?: string;
 }
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
@@ -132,6 +139,7 @@ export function MembersDialog({
   onChanged,
   manage,
   inherited = [],
+  notice,
 }: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
@@ -262,11 +270,17 @@ export function MembersDialog({
   };
 
   const onRemove = async (subject: string) => {
+    // Who still lets them in: a parent whose grants name them under any spelling.
+    const theirs = grantSpellings(rows?.find((r) => r.subject === subject) ?? { subject });
+    const through = (inherited ?? [])
+      .filter((p) => p.rows?.some((x) => x.status === "active" && grantSpellings(x).some((sp) => theirs.includes(sp))))
+      .map((p) => p.title);
     if (
       !(await confirmAction({
         title: `Remove ${subject} from ${name}?`,
-        message:
-          "Their token keeps any org-level roles, but the grant here is revoked. They can ask for access again later.",
+        message: through.length
+          ? `Their grant here is revoked. They can still see it through ${joinedTitles(through)}.`
+          : "Their grant here is revoked.",
         confirmLabel: "Remove",
         danger: true,
       }))
@@ -348,6 +362,7 @@ export function MembersDialog({
       className="w-full max-w-[600px]"
     >
       <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
+        {notice && <p className="mb-3 text-sm text-text-muted">{notice}</p>}
         {rows === null && loadError === null && <Loading label={isCode ? "Loading readers" : "Loading members"} />}
         {loadError !== null && rows === null && (
           <ListState kind="error" things={isCode ? "readers" : "members"} error={loadError} onRetry={load} />
@@ -441,7 +456,7 @@ export function MembersDialog({
                         onClick={async () => {
                           if (
                             !(await confirmAction({
-                              title: `Withdraw your ${r.requested_role} request on ${namespace}?`,
+                              title: `Withdraw your ${r.requested_role} request on ${name}?`,
                               message: "Keeps any current access; the request just leaves the admin queue.",
                               confirmLabel: "Withdraw",
                             }))
@@ -535,7 +550,7 @@ export function MembersDialog({
         {inherited === null ? (
           <Loading label="Loading who else can see it" />
         ) : (
-          inherited.map((p) => <InheritedSection key={p.namespace} access={p} me={me} org={org} isCode={isCode} />)
+          inherited.map((p) => <InheritedSection key={p.namespace} access={p} me={me} org={org} />)
         )}
       </div>
 
@@ -616,17 +631,7 @@ export function MembersDialog({
 }
 
 /** "Also can see it, through <parent>": the parent's active members, read-only, and its link. */
-function InheritedSection({
-  access,
-  me,
-  org,
-  isCode,
-}: {
-  access: InheritedAccess;
-  me: readonly string[];
-  org: string;
-  isCode: boolean;
-}) {
+function InheritedSection({ access, me, org }: { access: InheritedAccess; me: readonly string[]; org: string }) {
   const active = (access.rows ?? []).filter((r) => r.status === "active");
   const heading = `Also can see it, through ${access.title}`;
   const rows = useShowMore(active, MORE_SHOWN, MEMBER_ROWS);
@@ -649,7 +654,7 @@ function InheritedSection({
       ) : (
         <div className="space-y-1">
           {active.length > MORE_SHOWN && (
-            <div className="text-xs text-text-muted">{`${isCode ? "Readers" : "Members"} there (${fmtInt(active.length)})`}</div>
+            <div className="text-xs text-text-muted">{`Members there (${fmtInt(active.length)})`}</div>
           )}
           <ul ref={rows.list} className="space-y-1">
             {rows.shown.map((r) => (

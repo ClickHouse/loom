@@ -7,6 +7,12 @@ import { MembersDialog } from "./MembersDialog";
 import { useStore } from "../lib/state";
 import * as api from "../api";
 
+const confirm = vi.hoisted(() => vi.fn(async (_opts: { title: string; message: string }) => false));
+vi.mock("../components/ConfirmDialog", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/ConfirmDialog")>()),
+  confirmAction: confirm,
+}));
+
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return { ...actual, listGrants: vi.fn() };
@@ -23,6 +29,7 @@ const grant = (subject: string) => ({
 
 beforeEach(() => {
   vi.mocked(api.listGrants).mockReset();
+  confirm.mockClear();
   useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["ADMIN"] } });
 });
 
@@ -286,5 +293,39 @@ describe("MembersDialog paging", () => {
     expect(screen.getByRole("button", { name: "Remove bob" })).toHaveAccessibleDescription(
       "Needs admin on Q3 plans. An admin of it can grant that.",
     );
+  });
+
+  it("says a member removed here can still see it through a parent that names them", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("carol")] });
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-a"
+        label="Runbooks"
+        inherited={[
+          { namespace: "col-top", title: "Engineering", rows: [{ ...grant("bob@example.com"), also: ["bob"] }] },
+        ]}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0]).toMatchObject({
+      title: "Remove bob from Runbooks?",
+      message: "Their grant here is revoked. They can still see it through Engineering.",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Remove carol" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(confirm.mock.calls[1][0].message).toBe("Their grant here is revoked.");
+  });
+
+  it("names the place in the Withdraw confirm", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: [] } });
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [{ ...grant("alice"), status: "pending" as const }] });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Withdraw" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls.at(-1)?.[0].title).toBe("Withdraw your viewer request on Runbooks?");
   });
 });
