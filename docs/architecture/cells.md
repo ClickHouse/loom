@@ -162,20 +162,21 @@ The operator's routes, each with the router's operator credential, are under
 `/cells/v1/operator/cells/<cell>`: `limit`, `credential` and `register` (prepare's), the row
 itself (`GET`, with the name of any other row, which attach reads for its refusals, its done
 check and its resume), the first cell's attach (`attach/begin`, `attach/place`,
-`attach/enforced` and `attach/serving`, in that order), and `DELETE`. Each answers a cell
-the directory does not hold 404 with the code `NO_SUCH_CELL`, so a 404 without it is a
-router replica of an earlier build. Every call that succeeds, the read included, is written
-to the audit log, and every call runs a fixed number of statements, each bounded by the
-directory's statement timeout (enforced on the directory's server too); the read and the
-removal carry the derived bounds `loom cell` waits for. Every change takes the directory
-lock and then the cell's row lock (the order registration, the operator changes and the
-removal take). Every router replica runs a build with these routes before a first cell's
-attach starts: an earlier build's placement collides with an attach batch's as a transient
-503, and its registration can add a later cell mid-attach, which every attach call then
-refuses until it is removed. Each attach call refuses unless the row is the first cell's,
-`attaching`, and records the deployment id the call names, and while any other row exists
-(registration refuses a later cell until the first is `serving`, and a router replica of an
-earlier build could still register one):
+`attach/enforced` and `attach/serving`, in that order), and `DELETE`. Each but `register`
+answers a cell the directory does not hold 404 with the code `NO_SUCH_CELL`, so a 404
+without it is a router replica of an earlier build. Every call that succeeds, the read
+included, is written to the audit log (a registration rerun, which changes nothing, writes
+none), and every call runs a fixed number of statements, each bounded by the directory's
+statement timeout (enforced on the directory's server too); the read and the removal carry
+the derived bounds `loom cell` waits for. Every change takes the directory lock and then the
+cell's row lock (the order registration, the operator changes and the removal take). Every
+router replica runs a build with these routes before a first cell's attach starts: an
+earlier build's placement collides with an attach batch's as a transient 503, and its
+registration can add a later cell mid-attach, which every attach call then refuses until it
+is removed. Each attach call refuses unless the row is the first cell's, `attaching`, and
+records the deployment id the call names, and while any other row exists (registration
+refuses a later cell until the first is `serving`, and a router replica of an earlier build
+could still register one):
 
 - `attach/begin` carries the cell's fingerprints exactly as `loom.cell_self` stores them,
   its root-secret fingerprint, the allow lists attach judged the stores by, and fresh
@@ -193,10 +194,11 @@ earlier build could still register one):
   `begin` has run and the directory mode is `enforced`, past the cell's closed mark and
   quota. It runs a fixed number of statements: one insert of the batch that skips an org
   placed already, one read refusing the batch (rolled back, naming the org) when an org is
-  placed in another cell, one count, and one audit row per org it placed. A live placement
-  of the same org runs beside it once the mode is `enforced`; both hold the cell's row lock,
-  a live placement reads the winner again once it holds it, and every insert skips an org
-  placed already and counts only what it wrote, so the org is placed and counted once.
+  placed in another cell, one count, and one audit row per org it placed and one for the
+  call. A live placement of the same org runs beside it once the mode is `enforced`; both
+  hold the cell's row lock, a live placement reads the winner again once it holds it, and
+  every insert skips an org placed already and counts only what it wrote, so the org is
+  placed and counted once.
 - `attach/enforced` records the directory mode `enforced`, after which the first cell places
   new orgs live; it is idempotent.
 - `attach/serving` runs the probe and the upstream check again, then, under the locks,

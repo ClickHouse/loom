@@ -902,7 +902,15 @@ _ALLOW_LISTS = (
 
 
 def _fingerprint_shaped(value: Any) -> bool:
-    return isinstance(value, dict) and isinstance(value.get("fields"), dict)
+    """An object with a `fields` object, every value of which Postgres's jsonb stores: no
+    NaN or infinity, no lone surrogate, no NUL (malformed, never a directory outage)."""
+    if not (isinstance(value, dict) and isinstance(value.get("fields"), dict)):
+        return False
+    try:
+        encoded = json.dumps(value, allow_nan=False, ensure_ascii=False).encode()
+    except (ValueError, UnicodeEncodeError):
+        return False
+    return b"\\u0000" not in encoded
 
 
 def _begin(body: dict[str, Any]) -> tuple[directory.Begin, dict[str, str | None]] | JSONResponse:

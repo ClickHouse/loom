@@ -511,6 +511,21 @@ def test_a_malformed_begin_answers_400_and_reads_nothing(
     assert r.status_code == 400 and store.statements == 0
 
 
+@pytest.mark.parametrize("value", ["a\x00b", "\ud800", float("nan"), float("inf")])
+def test_a_fingerprint_jsonb_cannot_store_answers_400_and_reads_nothing(
+    client: TestClient, store: _Store, value: Any
+) -> None:
+    """A NUL, a lone surrogate or a non-finite number: malformed, never a directory outage."""
+    fingerprint = {**CURRENT, "fields": {**CURRENT["fields"], "public_host": value}}
+    raw = json.dumps(_begin(current_fp=fingerprint))  # escapes them, as a client could
+    r = client.post(
+        "/cells/v1/operator/cells/eu-1/attach/begin",
+        content=raw,
+        headers={"Authorization": f"Bearer {OPERATOR}", "Content-Type": "application/json"},
+    )
+    assert r.status_code == 400 and store.statements == 0
+
+
 def test_begins_body_has_its_own_bound(client: TestClient, store: _Store) -> None:
     # Past the placement bound and within begin's: read (the allow lists are long).
     long_lists = [f"db{i:06d}.*" for i in range(MAX_BODY_BYTES // 10)]
@@ -882,6 +897,11 @@ def test_the_attach_lock_is_a_positive_bigint_the_troubleshooting_page_prints() 
     # The holder query splits the key into its two halves.
     assert f"classid = ({key} >> 32)::oid" in section
     assert f"objid = ({key} & 4294967295)::oid" in section
+    # Advisory locks are per database, and a bigint key is the lock with objsubid 1.
+    assert "l.objsubid = 1" in section
+    assert (
+        "l.database = (SELECT oid FROM pg_database WHERE datname = current_database())" in section
+    )
 
 
 # `loom cell remove`.
