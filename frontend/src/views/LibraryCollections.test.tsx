@@ -1,16 +1,23 @@
-// The Library shows the header's namespace or one of the collections the caller reads: a
-// tree with each one's description, a menu that shares or deletes it, and New collection.
+// The place picker (a select, or the tree beside the page), the path and chips, the
+// collection's menu, New collection, and how the list is read again after a write.
 import { useState, type ComponentProps } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
+import { TREE_PAGE_MIN } from "../lib/useTreeHeight";
+import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
+import { arriveAt } from "../lib/place";
+import { NEW_COLLECTION_FOCUS, placeFocusKey, placeTree } from "./LibraryTree";
 import { axeViolations } from "../test/axe";
 import { Documents } from "./Documents";
 import {
+  REFRESH_TRIES,
+  REFRESH_WAIT_MS,
   LibraryCollections,
   collectionLabel,
   treeOrder,
@@ -61,11 +68,23 @@ const ROWS = [
 const read = (rows: CollectionEntry[] | null, over: Partial<ReadableCollections> = {}): ReadableCollections => ({
   rows,
   truncated: false,
+  kept: rows && { rows, truncated: false },
+  refreshing: false,
   error: null,
   reload: vi.fn(),
+  retry: vi.fn(),
   expected: "",
   ...over,
 });
+
+/** A window where only `query` matches. */
+function matchOnly(query: string) {
+  vi.stubGlobal("matchMedia", (q: string) => ({
+    matches: q === query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
 
 async function settle() {
   for (let i = 0; i < 3; i++)
@@ -129,16 +148,38 @@ describe("collection names and order", () => {
     ]);
   });
 
-  it("keeps collections a cycle in the tree cuts off from the top", () => {
+  it("keeps collections a cycle in the tree cuts off, starting it where the tree does", () => {
     const rows = [entry("col-a", { parent: "col-b" }), entry("col-b", { parent: "col-a" })];
-    expect(treeOrder(rows).map(({ c }) => c.namespace)).toEqual(["col-a", "col-b"]);
+    expect(treeOrder(rows).map(({ c, depth }) => [c.namespace, depth])).toEqual([
+      ["col-b", 0],
+      ["col-a", 1],
+    ]);
+    const tree = placeTree(rows);
+    expect(tree.mine.map((c) => c.namespace)).toEqual(["col-b"]);
+    expect(tree.children.get("col-b")?.map((c) => c.namespace)).toEqual(["col-a"]);
   });
 });
 
 /** The picker as Documents mounts it: the New collection dialog's open state is the page's. */
-function Picker(props: Omit<ComponentProps<typeof LibraryCollections>, "creating" | "onCreatingChange">) {
+function Picker(
+  props: Omit<
+    ComponentProps<typeof LibraryCollections>,
+    "creating" | "onCreatingChange" | "onCreated" | "claimCreateVersion" | "repeated" | "byName"
+  >,
+) {
   const [creating, setCreating] = useState(false);
-  return <LibraryCollections {...props} creating={creating} onCreatingChange={setCreating} />;
+  const rows = props.collections.rows ?? [];
+  return (
+    <LibraryCollections
+      {...props}
+      repeated={repeatedTitles(rows)}
+      byName={new Map(rows.map((c) => [c.namespace, c]))}
+      creating={creating}
+      onCreatingChange={setCreating}
+      claimCreateVersion={() => 0}
+      onCreated={vi.fn()}
+    />
+  );
 }
 
 describe("LibraryCollections", () => {
@@ -204,11 +245,7 @@ describe("LibraryCollections", () => {
   });
 
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === PHONE_QUERY,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    matchOnly(PHONE_QUERY);
     const rows = [
       ROWS[1],
       entry("col-q3-k", { parent: "col-q3", title: "Kid" }),
@@ -230,7 +267,7 @@ describe("LibraryCollections", () => {
     render(<Picker org="acme" namespace="team" collections={collections} current={null} onPick={() => undefined} />);
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
-    expect(collections.reload).toHaveBeenCalled();
+    expect(collections.retry).toHaveBeenCalled();
   });
 });
 
@@ -286,14 +323,43 @@ describe("useReadableCollections", () => {
     api.listCollections
       .mockResolvedValueOnce({ collections: [entry("col-a")], next_cursor: null })
       .mockResolvedValue({ collections: [entry("col-a"), entry("col-new")], next_cursor: null });
-    await act(async () => probe?.reload("col-new"));
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 1200));
-    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await act(async () => probe?.reload("col-new"));
+      // Past the retry's wait.
+      await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+    } finally {
+      vi.useRealTimers();
+    }
     await settle();
     expect(screen.getByTestId("names")).toHaveTextContent("col-a,col-new");
     // The page tells "just created, not listed yet" apart from "not yours".
     expect((probe as ReadableCollections | null)?.expected).toBe("col-new");
+  });
+
+  it("lists a collection two pages both return once", async () => {
+    api.listCollections
+      .mockResolvedValueOnce({ collections: [entry("col-a"), entry("col-b")], next_cursor: "col-b" })
+      .mockResolvedValueOnce({ collections: [entry("col-b"), entry("col-c")], next_cursor: null });
+    render(<Probe />);
+    await settle();
+    expect(screen.getByTestId("probe")).toHaveTextContent("col-a,col-b,col-c");
+  });
+
+  it("keeps the last answer while the list is read again", async () => {
+    let probe: ReadableCollections | null = null;
+    function Holder() {
+      probe = useReadableCollections("acme");
+      return null;
+    }
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a")], next_cursor: null });
+    render(<Holder />);
+    await settle();
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    act(() => probe?.reload());
+    const now = probe as ReadableCollections | null;
+    expect(now?.rows).toBeNull();
+    expect(now?.kept?.rows.map((c) => c.namespace)).toEqual(["col-a"]);
   });
 
   it("reads every page", async () => {
@@ -307,6 +373,57 @@ describe("useReadableCollections", () => {
   });
 });
 
+/** The <main> App draws, the page's container: made when missing. */
+function inMain(): HTMLElement {
+  const found = document.getElementById("main");
+  if (found) return found;
+  const main = Object.assign(document.createElement("main"), { id: "main" });
+  document.body.append(main);
+  return main;
+}
+
+/** <main>, measured `width` px wide (room for the tree by default), where the page looks for
+ *  it; the function it returns resizes it, narrower than the tree by default. */
+function resizable(width = TREE_PAGE_MIN) {
+  const observers: Array<() => void> = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(f: () => void) {
+        observers.push(f);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
+  });
+  inMain();
+  return (to = TREE_PAGE_MIN - 1) => {
+    width = to;
+    for (const f of observers) f();
+  };
+}
+
+async function createInTree() {
+  let answer: (v: unknown) => void = () => {};
+  api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+  api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+  history.replaceState(null, "", "/library?collection=col-q3");
+  // In <main>, as App draws it: an arrival focuses the page's h1 there.
+  render(<Documents />, { container: inMain() });
+  const tree = await screen.findByRole("navigation", { name: "Library places" });
+  await within(tree).findByRole("link", { name: "col-q3" });
+  fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /^New collection in/ }), { target: { value: "Q4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  return (r: unknown) => act(async () => answer(r));
+}
+const q4 = { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+
 describe("the Library on a collection", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
@@ -319,12 +436,16 @@ describe("the Library on a collection", () => {
   });
   afterEach(() => {
     cleanup();
+    document.getElementById("main")?.remove();
+    useStore.setState({ myNamespaces: null });
+    localStorage.clear();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     history.replaceState(null, "", "/");
   });
 
-  it("lists the collections inside below the documents, six again when another is opened", async () => {
+  it("lists the top level's collections below the documents, and a collection's as chips only", async () => {
     const kids = (parent: string) =>
       Array.from({ length: 10 }, (_, i) => entry(`${parent}-k${i}`, { parent, title: `${parent} kid ${i}` }));
     api.listCollections.mockResolvedValue({
@@ -332,26 +453,34 @@ describe("the Library on a collection", () => {
       next_cursor: null,
     });
     api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
-    history.replaceState(null, "", "/library?collection=col-q3");
+    history.replaceState(null, "", "/library");
     const { container } = render(<Documents />);
     const section = await screen.findByRole("region", { name: /Collections/ });
     // After the documents: they start where the list rules want them.
     await waitFor(() => expect(container.querySelector("[data-doc-row]")).not.toBeNull());
     const row = container.querySelector("[data-doc-row]") as Element;
     expect(row.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(within(section).getByRole("button", { name: "Show 4 more" }));
-    expect(within(section).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
-    fireEvent.click(within(section).getByRole("link", { name: "col-q3 kid 0" }));
+    fireEvent.click(within(section).getByRole("link", { name: "col-q3" }));
     await settle();
-    expect(within(screen.getByRole("region", { name: /Collections/ })).getAllByRole("link")).toHaveLength(6);
+    // Inside a collection the chips on its path's line list what is inside, once.
+    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+    // The first six, then Show more for the rest, with the focus on the first it adds.
+    const chips = screen.getByRole("navigation", { name: "Inside col-q3" });
+    expect(within(chips).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(6);
+    fireEvent.click(within(chips).getByRole("button", { name: "Show 4 more" }));
+    expect(within(chips).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
+    expect(within(chips).getAllByRole("link")[6]).toHaveFocus();
+    expect(within(chips).queryByRole("button")).toBeNull();
+    // The next place starts at six again.
+    fireEvent.click(within(chips).getByRole("link", { name: "col-q3 kid 0" }));
+    await settle();
+    const next = screen.getByRole("navigation", { name: "Inside col-q3 kid 0" });
+    expect(within(next).getAllByRole("link")).toHaveLength(6);
+    expect(within(next).getByRole("button", { name: "Show 4 more" })).toBeInTheDocument();
   });
 
   it("lists no collections inside on a phone, where the select lists them", async () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === PHONE_QUERY,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    matchOnly(PHONE_QUERY);
     api.listCollections.mockResolvedValue({
       collections: [ROWS[1], entry("col-q3-k", { parent: "col-q3" })],
       next_cursor: null,
@@ -361,6 +490,14 @@ describe("the Library on a collection", () => {
     await settle();
     expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-q3");
     expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+  });
+
+  it("names no place in the browser tab while a linked collection is read", async () => {
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    expect(document.title).toBe("Library · Loom");
   });
 
   it("reads a linked collection only once collection.list names it", async () => {
@@ -469,8 +606,125 @@ describe("the Library on a collection", () => {
     await user.click(await screen.findByRole("button", { name: "Done" }));
     await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads));
     expect(
-      await within(await screen.findByRole("region", { name: /Collections/ })).findByRole("link", { name: "Q4" }),
+      await within(await screen.findByRole("navigation", { name: "Inside col-q3" })).findByRole("link", {
+        name: "Q4",
+      }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the documents and the dialog's place while a folder upload reads the collections again", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockImplementation(async () => {
+      // The read the upload asks for after it made its collection stays in flight.
+      api.listCollections.mockReturnValue(new Promise(() => {}));
+      return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+    });
+    api.uploadKnowledgeFile.mockReturnValue(new Promise(() => {}));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    const { container } = render(<Documents />);
+    await settle();
+    const docReads = api.listKnowledge.mock.calls.length;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["a.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    const listReads = api.listCollections.mock.calls.length;
+    await user.click(upload);
+    await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(listReads));
+    await settle();
+    expect(screen.getByRole("dialog", { name: /col-q3/ })).toBeInTheDocument();
+    expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    expect(api.listKnowledge.mock.calls.length).toBe(docReads);
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+  });
+
+  it("keeps the documents when the dialog of a folder upload into a collection closes", async () => {
+    const q4 = entry("col-q4", { parent: "col-q3", title: "Q4" });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockImplementation(async () => {
+      api.listCollections.mockResolvedValue({ collections: [...ROWS, q4], next_cursor: null });
+      return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+    });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    api.knowledgeIngestStatus.mockImplementation(async (_id: unknown, job: string) => ({
+      found: true,
+      ingestion_id: job,
+      source_uri: job,
+      state: "ready",
+      revision: 1,
+    }));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    const { container } = render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["b.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    const done = await screen.findByRole("button", { name: "Done" });
+    await settle();
+    const docReads = api.listKnowledge.mock.calls.length;
+    await user.click(done);
+    await settle();
+    expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    expect(api.listKnowledge.mock.calls.length).toBe(docReads);
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+  });
+
+  it("waits on close for the collection a folder upload made, keeping the documents", async () => {
+    const q4 = entry("col-q4", { parent: "col-q3", title: "Q4" });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockResolvedValue({ namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    api.knowledgeIngestStatus.mockImplementation(async (_id: unknown, job: string) => ({
+      found: true,
+      ingestion_id: job,
+      source_uri: job,
+      state: "ready",
+      revision: 1,
+    }));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    const { container } = render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["b.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    const done = await screen.findByRole("button", { name: "Done" });
+    await settle();
+    // A replica that has not caught up answers the first read without it.
+    api.listCollections
+      .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
+      .mockResolvedValue({ collections: [...ROWS, q4], next_cursor: null });
+    const docReads = api.listKnowledge.mock.calls.length;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await user.click(done);
+      // Past the retry's wait.
+      await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      const chips = await screen.findByRole("navigation", { name: "Inside col-q3" });
+      expect(await within(chips).findByRole("link", { name: "Q4" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    expect(api.listKnowledge.mock.calls.length).toBe(docReads);
   });
 
   it("says on an empty collection that a folder can be uploaded there", async () => {
@@ -767,6 +1021,28 @@ describe("the Library on a collection", () => {
     expect(screen.queryByRole("dialog", { name: "A" })).not.toBeInTheDocument();
   });
 
+  it("leaves a refused collection on the first answer when a write's refresh overtakes the reload", async () => {
+    const { ApiError } = await import("../lib/errors");
+    api.listCollections
+      .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
+      // The page's reload, asked for after the refusal, stays unanswered.
+      .mockReturnValueOnce(new Promise(() => {}))
+      .mockResolvedValue({ collections: [], next_cursor: null });
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }) => {
+      if (id.namespace === "col-q3") throw new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "no" });
+      return { rows: [], next_cursor: null };
+    });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    expect(api.listCollections).toHaveBeenCalledTimes(2);
+    act(() => invalidateSharedCollections());
+    await settle();
+    // The refresh's first answer decides, as the reload's would have: no wait for col-q3.
+    expect(api.listCollections).toHaveBeenCalledTimes(3);
+    expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+  });
+
   it("leaves a collection refused while shown, for the namespace", async () => {
     const { ApiError } = await import("../lib/errors");
     api.listCollections
@@ -795,6 +1071,990 @@ describe("the Library on a collection", () => {
     expect(within(section).getAllByRole("link").length).toBeGreaterThan(0);
   });
 
+  it("beside the tree, on a code namespace names no place and asks only for a pick", async () => {
+    resizable();
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    useStore.setState({
+      identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
+      myNamespaces: [{ namespace: "code-repo", kind: "code" } as never],
+    });
+    render(<Documents />);
+    await settle();
+    const tree = screen.getByRole("navigation", { name: "Library places" });
+    expect(within(tree).getByRole("link", { name: "My files" })).not.toHaveAttribute("aria-current");
+    // My files is in the tree only: nothing beside the page says it is shown.
+    expect(screen.getAllByText("My files").every((el) => tree.contains(el))).toBe(true);
+    expect(
+      screen.getByText(
+        "code-repo holds no documents. Pick a collection, or a memory namespace from the namespace picker.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  describe("a resize that swaps the tree and the picker", () => {
+    const widen = async (path: string, focus: () => HTMLElement) => {
+      const resize = resizable(TREE_PAGE_MIN - 1);
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", path);
+      render(<Documents />, { container: inMain() });
+      await settle();
+      act(() => focus().focus());
+      act(() => resize(TREE_PAGE_MIN));
+      return screen.getByRole("navigation", { name: "Library places" });
+    };
+
+    it("hands focus on the picker to the tree's row for the place shown", async () => {
+      const tree = await widen("/library?collection=col-q3", () =>
+        screen.getByRole("button", { name: PLACE_PICKER_LABEL }),
+      );
+      await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    });
+
+    it("hands focus on the picker's New collection to the tree's row for the place shown", async () => {
+      const tree = await widen("/library?collection=col-q3", () =>
+        screen.getByRole("button", { name: "New collection" }),
+      );
+      await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    });
+
+    it("hands focus on a place listed below the documents to the tree's row for the place shown", async () => {
+      const tree = await widen(
+        "/library",
+        () => within(screen.getByRole("region", { name: /Collections/ })).getAllByRole("link")[0],
+      );
+      await waitFor(() => expect(within(tree).getByRole("link", { current: "page" })).toHaveFocus());
+    });
+
+    it("hands focus on the picker to the tree's first row on a code namespace", async () => {
+      useStore.setState({
+        identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
+        myNamespaces: [{ namespace: "code-repo", kind: "code" } as never],
+      });
+      const tree = await widen("/library", () => screen.getByRole("button", { name: PLACE_PICKER_LABEL }));
+      await waitFor(() => expect(within(tree).getAllByRole("link")[0]).toHaveFocus());
+    });
+
+    it("hands focus in the tree to the picker when the page narrows", async () => {
+      const resize = resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      render(<Documents />, { container: inMain() });
+      await settle();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      act(() => within(tree).getAllByRole("link")[0].focus());
+      act(() => resize());
+      expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
+      await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
+    });
+
+    it("moves nothing once the focus left <main> before the resize", async () => {
+      // A dialog outside <main> took the focus, then closed with nowhere to give it back.
+      const outside = document.body.appendChild(document.createElement("button"));
+      const tree = await widen("/library?collection=col-q3", () => {
+        act(() => screen.getByRole("button", { name: PLACE_PICKER_LABEL }).focus());
+        return outside;
+      });
+      act(() => outside.remove());
+      await settle();
+      expect(tree.contains(document.activeElement)).toBe(false);
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it("hands focus in the picker's list, portalled outside <main>, to the tree's row", async () => {
+      const resize = resizable(TREE_PAGE_MIN - 1);
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      await settle();
+      // The open select's search field, as Radix portals it into <body>.
+      const popper = document.body.appendChild(document.createElement("div"));
+      popper.setAttribute("data-radix-popper-content-wrapper", "");
+      const search = popper.appendChild(document.createElement("input"));
+      act(() => screen.getByRole("button", { name: PLACE_PICKER_LABEL }).focus());
+      act(() => search.focus());
+      act(() => {
+        popper.remove();
+        resize(TREE_PAGE_MIN);
+      });
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    });
+
+    it("moves nothing when the focus is still on the page", async () => {
+      const tree = await widen("/library?collection=col-q3", () =>
+        screen.getByRole("textbox", { name: "Search library" }),
+      );
+      await settle();
+      expect(screen.getByRole("textbox", { name: "Search library" })).toHaveFocus();
+      expect(tree.contains(document.activeElement)).toBe(false);
+    });
+  });
+
+  describe("a create's answer, and the reads it starts", () => {
+    it("still opens it when a resize took the tree away", async () => {
+      const narrow = resizable();
+      const answer = await createInTree();
+      act(() => narrow());
+      expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
+      // The form went with the tree: its focus goes to the picker.
+      await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      // The move asks for New collection, which went with the tree: the arrival App makes
+      // then focuses the page's h1, as for any other move.
+      expect(useStore.getState().arriveFocus).toBe(NEW_COLLECTION_FOCUS);
+      act(() => arriveAt(null, useStore.getState().arriveFocus));
+      await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Library" })).toHaveFocus());
+    });
+
+    it("keeps the place drawn when a create answers with the collection already shown", async () => {
+      // col-q3 is a top-level collection titled Q3, shown below the tree's width.
+      const rows = ROWS.map((c) => (c.namespace === "col-q3" ? { ...c, title: "Q3" } : c));
+      api.listCollections.mockResolvedValue({ collections: rows, next_cursor: null });
+      api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      // A new top-level collection titled as col-q3 is: the server answers with col-q3 itself.
+      const inside = within(dialog).getByRole("button", { name: "Inside" });
+      fireEvent.pointerDown(inside, { button: 0, ctrlKey: false });
+      fireEvent.click(inside);
+      fireEvent.click(screen.getByText("Top level, in the org"));
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q3" } });
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      expect(api.createCollection).toHaveBeenCalledWith(
+        "acme",
+        expect.any(String),
+        expect.objectContaining({ parent: "", title: "Q3" }),
+      );
+      const at = location.search;
+      const docs = api.listKnowledge.mock.calls.length;
+      await act(async () => answer({ namespace: "col-q3", parent: "", created: false, title: "Q3" }));
+      expect(document.querySelector("[data-doc-row]")).not.toBeNull();
+      expect(screen.getByRole("navigation", { name: "Collection path" })).toBeInTheDocument();
+      await settle();
+      expect(location.search).toBe(at);
+      expect(document.querySelector("[data-doc-row]")).not.toBeNull();
+      expect(api.listKnowledge.mock.calls.length).toBe(docs);
+    });
+
+    it("still opens what the tree made when a dialog was opened and cancelled meanwhile", async () => {
+      const resize = resizable();
+      const answer = await createInTree();
+      act(() => resize());
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await settle();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      // Nothing was sent from the dialog: the tree's create is still the latest.
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+    });
+
+    it("opens only the later of two tree creates, across a resize away and back", async () => {
+      const resize = resizable();
+      const answerA = await createInTree();
+      act(() => resize());
+      act(() => resize(TREE_PAGE_MIN));
+      let answerB: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answerB = resolve)));
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q5" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      const both = [
+        ...ROWS,
+        entry("col-q4", { parent: "col-q3", title: "Q4" }),
+        entry("col-q5", { parent: "col-q3", title: "Q5" }),
+      ];
+      api.listCollections.mockResolvedValue({ collections: both, next_cursor: null });
+      await answerA(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      await act(async () => answerB({ namespace: "col-q5", parent: "col-q3", created: true, title: "Q5" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
+    });
+
+    it("a failed dialog create still supersedes a pending tree create", async () => {
+      const narrow = resizable();
+      const answer = await createInTree();
+      act(() => narrow());
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
+      // A create sent claims the version, failed or not.
+      api.createCollection.mockRejectedValue(new Error("refused"));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      await settle();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await settle();
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
+    it("leaves a dialog whose create was sent since the tree's alone when the tree's answers", async () => {
+      const narrow = resizable();
+      const answer = await createInTree();
+      act(() => narrow());
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
+      // The dialog's create is sent, and still unanswered.
+      api.createCollection.mockReturnValue(new Promise(() => {}));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      // The dialog's later create supersedes it: the dialog stays, with its title, and nothing
+      // moves.
+      expect(dialog).toBeInTheDocument();
+      expect(within(dialog).getByRole("textbox", { name: "Title" })).toHaveValue("Q5");
+      expect(location.search).toBe(at);
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
+    it("moves nothing once the person left the Library and came back, and lists what was made", async () => {
+      resizable();
+      const answer = await createInTree();
+      const at = location.search;
+      // App mounts a view afresh on each visit: leaving closes this page, coming back opens another.
+      cleanup();
+      render(<Documents />, { container: inMain() });
+      await settle();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      // The page shown reads the list again once, and lists the new collection.
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/col-q4/), "info");
+    });
+
+    it("has the page opened again wait for a collection whose create was sent before it, while a replica lags", async () => {
+      resizable();
+      const answer = await createInTree();
+      cleanup();
+      render(<Documents />, { container: inMain() });
+      await settle();
+      const reads = api.listCollections.mock.calls.length;
+      // The first read after the answer comes from a replica that has not listed it yet.
+      api.listCollections.mockResolvedValueOnce({ collections: ROWS, next_cursor: null }).mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await answer(q4);
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+      }
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBe(reads + 2);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+    });
+
+    it("reads the list once for a tree create that opens what it made", async () => {
+      resizable();
+      const answer = await createInTree();
+      // The create's refresh and the page's read for the move are one read.
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+    });
+
+    it("reads the list once for a dialog create that opens what it made", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await act(async () => answer(q4));
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+    });
+
+    it("reads again when the place the URL names is picked in the tree after its read failed", async () => {
+      resizable();
+      const answer = await createInTree();
+      // The title names col-plans, already listed: the page moves there, and its read fails.
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer({ namespace: "col-plans", parent: "col-q3", created: false, title: "col-plans" });
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-plans");
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "col-plans" })).not.toHaveAttribute("aria-current");
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.click(within(tree).getByRole("link", { name: "col-plans" }));
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(within(tree).getByRole("link", { name: "col-plans" })).toHaveAttribute("aria-current", "page");
+    });
+
+    it("reads again and opens another collection picked in the tree after the read failed", async () => {
+      resizable();
+      const answer = await createInTree();
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer({ namespace: "col-plans", parent: "col-q3", created: false, title: "col-plans" });
+      await settle();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      const reads = api.listCollections.mock.calls.length;
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("link", { name: "col-q3" }));
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+    });
+
+    it("opens a second collection made in the tree after the first one's read failed", async () => {
+      resizable();
+      const answer = await createInTree();
+      // The read for the first fails: the URL names it, and the tree shows no place as current.
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      api.createCollection.mockResolvedValue({ namespace: "col-q5", parent: "", created: true, title: "Q5" });
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" }), entry("col-q5", { title: "Q5" })],
+        next_cursor: null,
+      });
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q5" } });
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+    });
+
+    it("moves nothing once the page shows another org", async () => {
+      resizable();
+      const answer = await createInTree();
+      api.listCollections.mockReturnValue(new Promise(() => {}));
+      act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+      await settle();
+      const at = location.search;
+      await answer(q4);
+      await settle();
+      // Nothing opens; the other org's list reads again, as after any write.
+      expect(location.search).toBe(at);
+      expect(api.listCollections).toHaveBeenLastCalledWith("other", expect.anything());
+    });
+  });
+
+  describe("a create answered after the person moved on", () => {
+    it("lists, and does not open, what the dialog made once the person moved on", async () => {
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      // The person goes to the header's namespace before the answer.
+      act(() => useStore.getState().navigate("knowledge", { query: {} }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await act(async () => answer(q4));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      // The select lists it.
+      fireEvent.pointerDown(screen.getByRole("button", { name: PLACE_PICKER_LABEL }), { button: 0, ctrlKey: false });
+      fireEvent.click(screen.getByRole("button", { name: PLACE_PICKER_LABEL }));
+      expect(within(screen.getByRole("dialog")).getByText("Q4")).toBeInTheDocument();
+    });
+
+    it("lists, and does not open, what the dialog made after its Cancel", async () => {
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await settle();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await act(async () => answer(q4));
+      await settle();
+      expect(location.search).toBe(at);
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      expect(
+        within(screen.getByRole("navigation", { name: "Inside col-q3" })).getByRole("link", { name: "Q4" }),
+      ).toBeInTheDocument();
+    });
+
+    it("does not open what an earlier dialog made once the person moved and opened it again", async () => {
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      act(() => useStore.getState().navigate("knowledge", { query: {} }));
+      await settle();
+      // The move closed the dialog; a second open, on the place moved to, is its own.
+      expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
+      await act(async () => answer(q4));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      // The second dialog stays open with what was typed in it.
+      expect(dialog).toBeInTheDocument();
+      expect(within(dialog).getByRole("textbox", { name: "Title" })).toHaveValue("Q5");
+    });
+
+    it("does not open what the tree made at the namespace once the header picked another", async () => {
+      resizable();
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q4" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      act(() => useStore.setState({ identity: { org: "acme", namespace: "elsewhere", agent: "loom-ui" } }));
+      await settle();
+      await act(async () => answer({ namespace: "col-q4", parent: "", created: true, title: "Q4" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
+    it("lists, and does not open, what was made once the person picked another place", async () => {
+      resizable();
+      const answer = await createInTree();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      const mine = within(tree).getByRole("link", { name: "My files" });
+      fireEvent.click(mine);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      // The arrival App makes on a move focuses the row picked.
+      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
+      await waitFor(() => expect(mine).toHaveFocus());
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      // Listed inside col-q3, which the earlier visit left open.
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      expect(mine).toHaveFocus();
+    });
+
+    it("lists, and does not open, what the tree made once the person went to the search field", async () => {
+      resizable();
+      const answer = await createInTree();
+      const search = screen.getByRole("textbox", { name: "Search library" });
+      act(() => search.focus());
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      expect(search).toHaveFocus();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("button", { name: "New collection" })).not.toHaveFocus();
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
+    it("leaves the focus on the row picked when the tree's create fails after the pick", async () => {
+      resizable();
+      let fail: (e: Error) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection in/ }), { target: { value: "Q4" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      const mine = within(tree).getByRole("link", { name: "My files" });
+      fireEvent.click(mine);
+      await settle();
+      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
+      await waitFor(() => expect(mine).toHaveFocus());
+      await act(async () => fail(new Error("refused")));
+      await settle();
+      expect(mine).toHaveFocus();
+      // The form keeps what was typed, for another try.
+      expect(screen.getByRole("textbox", { name: /^New collection in/ })).toHaveValue("Q4");
+    });
+  });
+
+  it("beside the tree keeps the person in it: a picked row takes the focus, and My files is named", async () => {
+    resizable();
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library");
+    render(<Documents />, { container: inMain() });
+    const tree = await screen.findByRole("navigation", { name: "Library places" });
+    await settle();
+    // Nor has the namespace: the path line names it too, before its About button. The tree's
+    // row alone is marked as the place shown.
+    const besideTree = (name: string) => screen.getAllByText(name).filter((el) => !tree.contains(el));
+    const current = () => [...document.querySelectorAll("main [aria-current='page']")];
+    const shelf = within(tree).getByRole("link", { current: "page" });
+    expect(besideTree(shelf.textContent ?? "")).toHaveLength(1);
+    expect(current()).toEqual([shelf]);
+    fireEvent.click(await within(tree).findByRole("link", { name: "col-q3" }));
+    await settle();
+    // The arrival App makes on a move focuses the row the move asked for and says its name.
+    const status = document.body.appendChild(Object.assign(document.createElement("p"), { id: "loom-nav-status" }));
+    const { arriveFocus, navNote } = useStore.getState();
+    expect(arriveFocus).toBe(placeFocusKey("col-q3"));
+    act(() => arriveAt(navNote, arriveFocus));
+    await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    await waitFor(() => expect(status).toHaveTextContent("col-q3"));
+    status.remove();
+    fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
+    await settle();
+    // My files has no path; the page's path line names it beside the tree.
+    expect(besideTree("My files")).toHaveLength(1);
+    expect(current()).toEqual([within(tree).getByRole("link", { name: "My files" })]);
+  });
+
+  describe("where <main> can be measured", () => {
+    it.each([
+      [TREE_PAGE_MIN, true],
+      [TREE_PAGE_MIN - 1, false],
+    ] as const)("at %i px of <main> draws the tree: %s", async (width, tree) => {
+      resizable(width);
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library");
+      render(<Documents />);
+      await settle();
+      expect(screen.queryAllByRole("navigation", { name: "Library places" })).toHaveLength(tree ? 1 : 0);
+      expect(screen.queryAllByRole("button", { name: "Show the documents of" })).toHaveLength(tree ? 0 : 1);
+    });
+  });
+
+  describe("refreshes", () => {
+    it("stays on the collection shown when a refresh's answer leaves it out", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      const { container } = render(<Documents />);
+      await settle();
+      // A replica that lags answers once without it, then with it.
+      api.listCollections
+        .mockResolvedValueOnce({ collections: ROWS.filter((c) => c.namespace !== "col-q3"), next_cursor: null })
+        .mockResolvedValue({ collections: ROWS, next_cursor: null });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        act(() => invalidateSharedCollections());
+        // Past the retry's wait.
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+        await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(3));
+        await act(() => vi.advanceTimersByTimeAsync(100));
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    });
+
+    it("leaves the collection shown once three refresh answers in a row leave it out", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      const reads = api.listCollections.mock.calls.length;
+      api.listCollections.mockResolvedValue({
+        collections: ROWS.filter((c) => c.namespace !== "col-q3"),
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        act(() => invalidateSharedCollections());
+        // Past both retries' waits.
+        await act(() => vi.advanceTimersByTimeAsync((REFRESH_TRIES - 1) * REFRESH_WAIT_MS + 100));
+        await act(() => vi.advanceTimersByTimeAsync(100));
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(api.listCollections.mock.calls.length).toBe(reads + REFRESH_TRIES);
+      expect(toast).toHaveBeenCalledWith(
+        expect.stringMatching(/col-q3 is not among the collections you can read now/),
+        "info",
+      );
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+    });
+
+    it("reads once for a delete of the collection shown beside the tree, not waiting for it", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      await settle();
+      api.listCollections.mockResolvedValue({
+        collections: ROWS.filter((c) => c.namespace !== "col-q3"),
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-q3" }), { button: 0, ctrlKey: false });
+      await settle();
+      confirm.next = true;
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole("menuitem", { name: "Delete collection" }));
+        // Past every retry's wait: none is made for what was deleted.
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_TRIES * REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+        confirm.next = false;
+      }
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(tree).not.toHaveAttribute("aria-busy");
+      expect(within(tree).queryByRole("link", { name: "col-q3" })).toBeNull();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+    });
+
+    it("waits for a created collection in its own org only", async () => {
+      resizable();
+      const answer = await createInTree();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      api.listCollections.mockClear();
+      api.listCollections.mockResolvedValue({ collections: [entry("col-b", { title: "B" })], next_cursor: null });
+      act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+      // The other org's first answer is the answer: nothing there is waited for.
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(await within(tree).findByRole("link", { name: "B" }, { timeout: 500 })).toBeInTheDocument();
+      expect(api.listCollections.mock.calls.filter(([o]) => o === "other")).toHaveLength(1);
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
+    it("reads once for a delete after a create, not waiting again for what was made", async () => {
+      resizable();
+      const answer = await createInTree();
+      const withQ4 = [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })];
+      api.listCollections.mockResolvedValue({ collections: withQ4, next_cursor: null });
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      // Delete it: the list read after no longer holds it, and that is the answer.
+      api.deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Q4" }), { button: 0, ctrlKey: false });
+      await settle();
+      confirm.next = true;
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete collection" }));
+      await settle();
+      confirm.next = false;
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(tree).not.toHaveAttribute("aria-busy");
+      expect(within(tree).queryByRole("link", { name: "Q4" })).toBeNull();
+    });
+
+    it("says it could not load the collections when the page's own read again fails", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.createCollection.mockImplementation(async () => {
+        // The read the page asks for once the collection is made fails.
+        api.listCollections.mockRejectedValue(new Error("offline"));
+        return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+      });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      await settle();
+      // The select, the path and the chips are empty while the page reads again: nothing to refresh.
+      expect(await screen.findByText(/Couldn't load collections/)).toBeInTheDocument();
+      expect(screen.queryByText(/Couldn't refresh collections/)).toBeNull();
+      // Its retry still waits for the collection made: a lagging answer, then one listing it.
+      api.listCollections.mockResolvedValueOnce({ collections: ROWS, next_cursor: null }).mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+      }
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      expect(screen.getByRole("button", { name: PLACE_PICKER_LABEL })).toHaveTextContent("Q4");
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
+      cleanup();
+      // Beside the tree, which still draws the last answer, it is a refresh that failed.
+      resizable();
+      const answer = await createInTree();
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer(q4);
+      await settle();
+      expect(await screen.findByText(/Couldn't refresh collections/)).toBeInTheDocument();
+    });
+
+    it("marks the tree busy only while it reads again for a create, not after that read failed", async () => {
+      resizable();
+      const answer = await createInTree();
+      let fail: (e: Error) => void = () => {};
+      api.listCollections.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      await answer(q4);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(tree).toHaveAttribute("aria-busy", "true");
+      await act(async () => fail(new Error("offline")));
+      await settle();
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
+    it("keeps the tree's rows, marked busy, while a write elsewhere reads the list again", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      expect(tree).not.toHaveAttribute("aria-busy");
+      let answer: (v: unknown) => void = () => {};
+      api.listCollections.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(tree).toHaveAttribute("aria-busy", "true");
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+      await act(async () => answer({ collections: ROWS, next_cursor: null }));
+      await settle();
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
+    it("says it could not refresh the collections when a write's read again fails, keeping the list", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(screen.getByText(/Couldn't refresh collections/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Load collections again" })).toBeInTheDocument();
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
+    it("beside the tree, a retry after a failed refresh keeps the rows drawn while it reads", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(screen.getByText(/Couldn't refresh collections/)).toBeInTheDocument();
+      let answer: (v: unknown) => void = () => {};
+      api.listCollections.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+      await settle();
+      expect(tree).toHaveAttribute("aria-busy", "true");
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+      await act(async () => answer({ collections: ROWS, next_cursor: null }));
+      await settle();
+      expect(tree).not.toHaveAttribute("aria-busy");
+      expect(screen.queryByText(/Couldn't (refresh|load) collections/)).toBeNull();
+    });
+
+    it("beside the tree, a retry after a failed read for a collection just made still waits for it", async () => {
+      resizable();
+      const answer = await createInTree();
+      // The read the create asks for fails.
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer(q4);
+      await settle();
+      expect(screen.getByText(/Couldn't (refresh|load) collections/)).toBeInTheDocument();
+      // The retry's first answer is from a replica that has not listed it yet.
+      api.listCollections.mockResolvedValueOnce({ collections: ROWS, next_cursor: null }).mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+      }
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toHaveAttribute("aria-current", "page");
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
+    });
+
+    it("a retry after a failed refresh keeps the documents", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      const { container } = render(<Documents />);
+      await settle();
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(screen.getByText(/Couldn't refresh collections/)).toBeInTheDocument();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      const reads = api.listCollections.mock.calls.length;
+      const docReads = api.listKnowledge.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+      // The documents stay drawn while the list is read again, and are not read again.
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      expect(api.listKnowledge.mock.calls.length).toBe(docReads);
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+      expect(screen.queryByText(/Couldn't refresh collections/)).toBeNull();
+    });
+  });
+
+  it("beside the tree, shows none of one org's collections after a switch to another", async () => {
+    resizable();
+    useStore.setState({ whoami: { authenticated: true, subject: "ann" } as never });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library");
+    render(<Documents />);
+    const tree = await screen.findByRole("navigation", { name: "Library places" });
+    expect(await within(tree).findByRole("link", { name: "col-q3" })).toBeInTheDocument();
+    fireEvent.click(within(tree).getByRole("button", { name: "Collections in col-q3" }));
+    expect(localStorage.getItem("loom_library_expanded_v1:ann:acme")).toBe('["col-q3"]');
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+    await settle();
+    const after = screen.getByRole("navigation", { name: "Library places" });
+    expect(within(after).queryByRole("link", { name: "col-q3" })).toBeNull();
+    expect(within(after).queryByRole("link", { name: "My files" })).toBeNull();
+    // Acme's folds stay acme's; the other org's tree opens nothing.
+    expect(localStorage.getItem("loom_library_expanded_v1:ann:acme")).toBe('["col-q3"]');
+    expect(within(after).queryByRole("button", { expanded: true })).toBeNull();
+  });
+
+  it("beside the tree, draws another person's own folds after a sign-in as them", async () => {
+    // A real sign-in as someone else reloads the page (lib/tokenElsewhere.ts): this pins only the per-person key.
+    resizable();
+    useStore.setState({ whoami: { authenticated: true, subject: "ann" } as never });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library");
+    render(<Documents />);
+    const tree = await screen.findByRole("navigation", { name: "Library places" });
+    fireEvent.click(await within(tree).findByRole("button", { name: "Collections in col-q3" }));
+    act(() => useStore.setState({ whoami: { authenticated: true, subject: "bob" } as never }));
+    await settle();
+    const bobs = screen.getByRole("navigation", { name: "Library places" });
+    expect(within(bobs).getByRole("button", { name: "Collections in col-q3" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(localStorage.getItem("loom_library_expanded_v1:ann:acme")).toBe('["col-q3"]');
+  });
+
   it("on a code namespace reads only a collection picked, and lists no namespace to pick", async () => {
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     useStore.setState({
@@ -814,7 +2074,6 @@ describe("the Library on a collection", () => {
     fireEvent.click(menu.getByText(/col-q3/));
     await settle();
     expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-q3" });
-    useStore.setState({ myNamespaces: null });
   });
 
   it("with no namespace, opens one's own files in place of the page; with none, lists every collection", async () => {
@@ -841,7 +2100,7 @@ describe("the Library on a collection", () => {
     await settle();
     // No files of its own (a token that is not a person's): the top level, where both lists show.
     expect(new URLSearchParams(window.location.search).get("collection")).toBeNull();
-    expect(screen.getByText("Collections are shared document libraries. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.getByText("Collections are shared document libraries. Pick a collection.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Find public namespaces to join" })).toBeNull();
     expect(
       within(screen.getByRole("region", { name: /^Collections/ })).getByRole("link", { name: "Zeta" }),
@@ -900,7 +2159,7 @@ describe("the Library on a collection", () => {
     expect(screen.queryByText("No collection yet", { selector: "h2, h3, p, div" })).not.toBeInTheDocument();
     expect(screen.getByText("Pick a collection", { selector: "h2, h3, p, div" })).toBeInTheDocument();
     // Not known to hold one: the page says what is missing, and offers to join a namespace.
-    expect(screen.getByText("Your token reaches no namespace yet. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.getByText("Your token reaches no namespace yet. Pick a collection.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Find public namespaces to join" })).toBeInTheDocument();
   });
 
@@ -916,7 +2175,6 @@ describe("the Library on a collection", () => {
       expect(screen.getByRole("button", { name: "Open in Patterns" }), kind).toBeInTheDocument();
       cleanup();
     }
-    useStore.setState({ myNamespaces: null });
   });
 
   it("with no namespace and no collection, says so and points at Namespaces in your org", async () => {
@@ -1004,7 +2262,6 @@ describe("the Library on a collection", () => {
     await settle();
     // A code namespace holds no documents: the header offers none to add there.
     expect(useStore.getState().libraryElsewhere).toBe(true);
-    useStore.setState({ myNamespaces: null });
   });
 
   it("keeps the whole description in an item for the search, past the cut", () => {

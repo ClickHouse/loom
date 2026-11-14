@@ -3,20 +3,32 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { createCollection, type CollectionEntry } from "../api";
+import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
-import { distinctTitle, placeholderName, plainName, repeatedTitles } from "../lib/collections";
+import { distinctTitle, MAX_TITLE, placeholderName, plainName, repeatedTitles, titleTooLong } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/errorWords";
 import { COLLECTION_PREFIX, isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
+import { useMounted } from "../lib/hooks";
 
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
-// server/identity/api/models_collections.py: the title field's max_length.
-const MAX_TITLE = 200;
+
+/** Advances the place version for a create about to be sent and returns it: only the latest
+ *  create opens what it made. */
+export type ClaimCreateVersion = () => number;
+
+/** After collection.create in `org`: the shared reads start again, and every Library list
+ *  open when the answer lands waits for the new collection. The person is told whether it was
+ *  made or one of that title already sits there; `typed` is shown when the answer names none. */
+export function announceCreated(r: CollectionCreated, typed: string, org: string): void {
+  invalidateSharedCollections({ name: r.namespace, org });
+  const shown = r.title || typed || r.namespace;
+  toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
+}
 
 /** Why `name` cannot be a collection's name, or null when it can. */
 export function collectionNameError(name: string): string | null {
@@ -26,12 +38,6 @@ export function collectionNameError(name: string): string | null {
   if (isPersonalCollection(name)) return `"${PERSONAL_COLLECTION_PREFIX}" is kept for personal collections.`;
   if (!NAMESPACE_NAME.test(name)) return "Use lowercase letters, digits and dashes only, at most 128 characters.";
   return null;
-}
-
-/** The collections a new one may sit in: those the caller writes, never a personal one,
- *  which holds no other collection. */
-export function parentChoices(collections: CollectionEntry[]): CollectionEntry[] {
-  return collections.filter((c) => !c.personal && c.role !== "viewer");
 }
 
 /** A refused name: what to say, and a free name to offer. */
@@ -55,8 +61,10 @@ interface Props {
   /** The header's namespace when it holds documents, named so a top-level collection is not
    *  taken to sit in it. */
   headerNamespace?: string | null;
-  /** Fires with the collection's name: the new one, or the one the title already names there. */
-  onCreated: (namespace: string) => void;
+  claimCreateVersion: ClaimCreateVersion;
+  /** Fires with the collection's name (the new one, or the one the title already names there)
+   *  and the version its Create claimed, only while this dialog is still open. */
+  onCreated: (namespace: string, version: number) => void;
 }
 
 /**
@@ -74,6 +82,7 @@ export function CreateCollectionDialog({
   parents,
   initialParent = "",
   headerNamespace = null,
+  claimCreateVersion,
   onCreated,
 }: Props) {
   const [title, setTitle] = useState("");
@@ -83,6 +92,9 @@ export function CreateCollectionDialog({
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; suggestion: string } | null>(null);
+  // False once this open's dialog is gone: a late answer then leaves the page, and any dialog
+  // opened since, alone.
+  const mounted = useMounted();
 
   const reset = () => {
     setTitle("");
@@ -100,14 +112,12 @@ export function CreateCollectionDialog({
 
   const trimmedTitle = title.trim();
   const trimmed = name.trim();
-  // Counted by character after the NFC the server applies (an emoji, or an accent typed
-  // as two, is one).
-  const titleTooLong = Array.from(trimmedTitle.normalize("NFC")).length > MAX_TITLE;
+  const tooLong = titleTooLong(trimmedTitle);
   const descriptionTooLong = Array.from(description.trim()).length > 2000;
   // Said once something past the prefix is typed, not on the prefilled prefix.
   const nameError = !ownAddress || trimmed === COLLECTION_PREFIX ? null : collectionNameError(trimmed);
   const named = ownAddress ? collectionNameError(trimmed) === null : trimmedTitle !== "";
-  const canSubmit = named && !titleTooLong && !descriptionTooLong && !busy;
+  const canSubmit = named && !tooLong && !descriptionTooLong && !busy;
   const derived = plainName(trimmedTitle);
   const repeated = repeatedTitles(parents);
 
@@ -115,6 +125,7 @@ export function CreateCollectionDialog({
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    const version = claimCreateVersion();
     const into = parent === TOP_LEVEL ? "" : parent;
     try {
       const r = ownAddress
@@ -126,10 +137,9 @@ export function CreateCollectionDialog({
             title: trimmedTitle,
             deriveName: true,
           });
-      invalidateSharedCollections();
-      const shown = r.title || trimmedTitle || r.namespace;
-      toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
-      onCreated(r.namespace);
+      announceCreated(r, trimmedTitle, org);
+      if (!mounted.current) return;
+      onCreated(r.namespace, version);
       reset();
       onOpenChange(false);
     } catch (e) {
@@ -167,7 +177,7 @@ export function CreateCollectionDialog({
             onChange={setTitle}
             placeholder="Q3 plans"
             autoFocus
-            {...fieldError("create-collection-title-error", titleTooLong ? `At most ${MAX_TITLE} characters.` : null)}
+            {...fieldError("create-collection-title-error", tooLong ? `At most ${MAX_TITLE} characters.` : null)}
           />
           {!ownAddress && (
             <p className="mt-1 text-xs text-text-muted">

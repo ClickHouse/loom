@@ -38,6 +38,7 @@ function mount(onCreated = vi.fn(), parents: CollectionEntry[] = [], initialPare
       org="acme"
       parents={parents}
       initialParent={initialParent}
+      claimCreateVersion={() => 1}
       onCreated={onCreated}
     />,
   );
@@ -61,7 +62,7 @@ describe("CreateCollectionDialog", () => {
     type("Title", "Q3 Plans");
     expect(screen.getByText(/Its address is col-q3-plans, with a short suffix if that is taken/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q3-plans"));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q3-plans", 1));
     expect(create).toHaveBeenCalledWith("acme", "col-q3-plans", {
       parent: "col-team",
       description: "",
@@ -79,6 +80,7 @@ describe("CreateCollectionDialog", () => {
         org="acme"
         parents={[parent("col-team", "Team")]}
         headerNamespace="research"
+        claimCreateVersion={() => 1}
         onCreated={vi.fn()}
       />,
     );
@@ -102,7 +104,7 @@ describe("CreateCollectionDialog", () => {
     const onCreated = mount();
     type("Title", "docs");
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-docs"));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-docs", 1));
     expect(toast).toHaveBeenCalledWith("Docs already exists here", "info");
   });
 

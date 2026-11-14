@@ -405,6 +405,9 @@ test.describe("open overlays", () => {
   });
 
   test("the Library's collections, a collection's menu and the New collection dialog", async ({ page }) => {
+    // Under 1280 px, where the select lists the places (the tree's own scan is in
+    // library-tree.spec.ts).
+    await page.setViewportSize({ width: 1100, height: 900 });
     await open(page, "/library");
     await page.getByRole("button", { name: "Show the documents of" }).click();
     await expect(page.locator("[cui-select-item]").first()).toBeVisible();

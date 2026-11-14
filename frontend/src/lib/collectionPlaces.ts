@@ -1,7 +1,8 @@
 /**
  * How a collection is named outside the Library: by its title and its place, never as a
  * namespace. Its `col-…` name is its address, shown in details, and beside a title that looks
- * like another.
+ * like another. The bus that tells the Library's lists a collection changed
+ * (`onCollectionsChanged`) sits beside the shared-read invalidation every write already calls.
  *
  * The boot loads this module on demand, so the index chunk does not carry it.
  */
@@ -20,9 +21,26 @@ export function sharedCollections(org: string): Promise<CollectionListPage> {
   return shared(`${COLLECTIONS_KEY}${org}`, 30_000, () => listCollections(org));
 }
 
-/** For a write that changes a collection: the next asker reads `collection.list` afresh. */
-export function invalidateSharedCollections(): void {
+/** A collection a write just created, which the Library's lists wait for: its name and org. */
+export type AwaitedCollection = { name: string; org: string };
+
+const changeListeners = new Set<(made?: AwaitedCollection) => void>();
+
+/** For a write that changes a collection: the next asker reads `collection.list` afresh, and
+ *  the Library's lists (useReadableCollections) read it again, asking again a few times while
+ *  `made`, when given, is not listed yet. */
+export function invalidateSharedCollections(made?: AwaitedCollection): void {
   invalidateShared(COLLECTIONS_KEY);
+  for (const listener of changeListeners) listener(made);
+}
+
+/** Call `listener` after each write to a collection, with the collection it made, if any;
+ *  returns the unsubscribe. */
+export function onCollectionsChanged(listener: (made?: AwaitedCollection) => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
 }
 
 /** Whether `m` is a direct grant on a shared collection, one the collection gate admits: not

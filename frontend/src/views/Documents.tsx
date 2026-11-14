@@ -7,10 +7,12 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -33,10 +35,10 @@ import {
   type KnowledgeEntry,
   type KnowledgeDocument,
   type InlinePreview,
+  type CollectionEntry,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
-import { collectionTitle } from "../lib/collections";
 import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
@@ -55,12 +57,15 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
-import { distinctTitle, repeatedTitles } from "../lib/collections";
+import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "../lib/collections";
 import { formatBytesShort } from "../lib/format";
-import { useAbortableEffect } from "../lib/hooks";
+import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
-import { CollectionsInside } from "./LibraryHierarchy";
+import { TopLevelPlaces } from "./LibraryHierarchy";
+import { expandedKey, LibraryTree } from "./LibraryTree";
+import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
+import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -73,6 +78,7 @@ import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
+import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -122,11 +128,27 @@ async function findDocument(
   return null;
 }
 
+/** What the browser tab names: the collection shown, else the namespace shown (`shelf`), else
+ *  nothing (a linked collection still read). My files without its address, even when another
+ *  collection is titled so, as the tree's row shows it. */
+function placeTitle(shown: CollectionEntry | null, repeated: Set<string>, shelf: string | null): string | undefined {
+  if (shown) return shown.personal ? collectionTitle(shown) : distinctTitle(shown, repeated);
+  if (shelf !== null) return namespaceLabel(shelf);
+  return undefined;
+}
+
 /** The collection a Library link names (`?collection=`), or null for the header's namespace. */
 function linkedCollection(): string | null {
   const name = new URLSearchParams(window.location.search).get("collection");
   // The page never prints text a link made up: only a collection's name counts.
   return isCollectionName(name) ? name : null;
+}
+
+/** A move is a new history entry, so Back steps through the places picked. `arriveFocus` and
+ *  `note` are the arrival's focus and words (a tree pick keeps the person on its row). */
+function moveTo(c: string | null, arriveFocus?: string, note?: string): void {
+  useStore.getState().clearPendingDoc();
+  useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
 }
 
 // Why a restore left the document deleted (`knowledge.restore`'s `reason`).
@@ -160,18 +182,51 @@ export function Documents() {
     useStore.getState().clearPendingDoc();
     setPicks((n) => n + 1);
   }, []);
-  // A person's pick is a new history entry, so Back steps through the places they picked;
-  // the page's own corrections (leaving a collection it cannot show) replace the entry.
-  const goTo = (c: string | null) => {
-    if (c === collection) return; // the place already shown: nothing moves
-    useStore.getState().clearPendingDoc();
-    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {} });
-  };
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
-  const collections = useReadableCollections(picked.org);
+  const collections = useReadableCollections(picked.org, collection);
+  const { error: listFailed, retry: retryList, reload: reloadCollections } = collections;
+  const goTo = useCallback(
+    (c: string | null, arriveFocus?: string, note?: string) => {
+      // A collection is opened only once the list names it: a list that failed reads again.
+      if (c && listFailed) retryList();
+      if (c !== linkedCollection()) moveTo(c, arriveFocus, note);
+    },
+    [listFailed, retryList],
+  );
+  const mounted = useMounted();
+  // Bumped whenever the place shown changes (a pick, Back, a correction, another namespace or
+  // org), and by each create sent (tree or dialog), so only the latest opens what it made; a
+  // failed read leaves it.
+  const placeVersion = useRef(0);
+  useLayoutEffect(() => {
+    placeVersion.current += 1;
+  }, [picked.org, picked.namespace, collection]);
+  const claimCreateVersion = useCallback<ClaimCreateVersion>(() => {
+    placeVersion.current += 1;
+    return placeVersion.current;
+  }, []);
+  const openCreated = useCallback(
+    (name: string, version: number, arriveFocus?: string) => {
+      if (!mounted.current || version !== placeVersion.current) return;
+      // The answer named the collection already shown: the create's refresh is enough.
+      if (name === linkedCollection()) return;
+      // The read starts before the move so the old list never says it is missing.
+      flushSync(() => reloadCollections(name));
+      moveTo(name, arriveFocus);
+    },
+    [reloadCollections],
+  );
   const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
-  const resolving = !!collection && collections.rows === null && !collections.error;
+  // Read once for every list of places on the page, over the last answer (kept while it is
+  // read again): titles two collections share show their address too.
+  const repeated = useMemo(() => repeatedTitles(collections.kept?.rows ?? []), [collections.kept]);
+  const byName = useMemo(
+    () => new Map((collections.kept?.rows ?? []).map((c) => [c.namespace, c])),
+    [collections.kept],
+  );
+  const resolving = !!collection && collections.rows === null && !listFailed;
+  const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
   const mine = useStore((s) => s.myNamespaces);
@@ -218,6 +273,9 @@ export function Documents() {
   // the server decides.
   const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
+  // Who the tree remembers folds for. App draws no page before whoami answers (with auth off
+  // it answers "local"), so it is "" only for a token that names no subject.
+  const subject = whoami?.subject ?? "";
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
@@ -233,6 +291,11 @@ export function Documents() {
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
   const phone = useMedia(PHONE_QUERY);
+  // The places are a tree beside the documents where <main> has room for both; narrower, or
+  // not measured yet, the select stands in.
+  const treeHeight = useTreeHeight();
+  const besideTree = treeHeight !== null;
+  useTreeFocusHandoff(besideTree);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -381,7 +444,6 @@ export function Documents() {
     [403, 404].includes(loadError.status);
   // Once per collection: replicas can disagree for a moment (one has the revoke, another
   // not yet), so when the list still names it after a re-read the page leaves it.
-  const reloadCollections = collections.reload;
   const reReadFor = useRef("");
   useEffect(() => {
     if (!refusedShown || !shown) return;
@@ -880,14 +942,16 @@ export function Documents() {
     [toggleRow, readOnly, writeReason],
   );
 
-  // Below the documents, so they start where the list rules want them; on a phone the
-  // select, a tree, lists the collections inside.
-  const inside = !phone && collections.rows && (
-    <CollectionsInside
+  // The top level's collections, below the documents so they start where the list rules
+  // want them. Inside a collection the chips on its path's line list them; on a phone the
+  // select, a tree, does.
+  const topLevel = !phone && !besideTree && collections.rows && (!shown || shown.personal) && (
+    <TopLevelPlaces
       key={shown?.namespace ?? ""}
       rows={collections.rows}
+      repeated={repeated}
+      byName={byName}
       truncated={collections.truncated}
-      current={shown}
       onPick={goTo}
       className="mt-6"
     />
@@ -897,6 +961,8 @@ export function Documents() {
       org={picked.org}
       namespace={ownShelf ? picked.namespace : null}
       collections={collections}
+      repeated={repeated}
+      byName={byName}
       current={shown}
       opening={resolving ? collection : null}
       place={collection ?? picked.namespace}
@@ -904,6 +970,29 @@ export function Documents() {
       onLeave={pickCollection}
       creating={creatingCollection}
       onCreatingChange={setCreatingCollection}
+      claimCreateVersion={claimCreateVersion}
+      onCreated={openCreated}
+      besideTree={besideTree}
+    />
+  );
+  const placesTree = treeHeight !== null && (
+    <LibraryTree
+      // One per person and org: nothing read or opened in one shows in, or is saved for, another.
+      key={expandedKey(subject, picked.org)}
+      subject={subject}
+      org={picked.org}
+      rows={collections.kept?.rows ?? null}
+      repeated={repeated}
+      byName={byName}
+      truncated={collections.kept?.truncated}
+      viewHeight={treeHeight}
+      failed={!!listFailed}
+      busy={collections.refreshing}
+      namespace={ownShelf ? picked.namespace : null}
+      current={treeCurrent}
+      onPick={goTo}
+      claimCreateVersion={claimCreateVersion}
+      onCreated={openCreated}
     />
   );
 
@@ -911,7 +1000,7 @@ export function Documents() {
   // folder be placed where the person looks, so the dialog takes one.
   const folderTree =
     collections.rows && !collections.truncated && (!collection || shown)
-      ? { rows: collections.rows, shown, onMade: (first: string) => collections.reload(first) }
+      ? { rows: collections.rows, shown }
       : undefined;
   // Mounted while open, beside either page, so a batch outlives a page move.
   const addDialog = addOpen && (
@@ -925,7 +1014,7 @@ export function Documents() {
         batchStarted.current = v;
       }}
       identity={{ org: identity.org, namespace: identity.namespace }}
-      place={shown ? distinctTitle(shown, repeatedTitles(collections.rows ?? [])) : identity.namespace}
+      place={shown ? distinctTitle(shown, repeated) : identity.namespace}
       tree={folderTree}
       // Folders wait for a list still being read (or read again after it failed), or one too
       // long to show; a collection not in a whole list takes none.
@@ -933,10 +1022,14 @@ export function Documents() {
       onAdded={reload}
     />
   );
-  // The dialog keeps one place in the tree whichever page shows, so React keeps it.
-  const withDialog = (page: ReactNode) => (
+  // Either page beside the places tree, when there is room for one. The dialog keeps one
+  // place in React's tree whichever page shows, so React keeps it.
+  const libraryPage = (page: ReactNode) => (
     <>
-      {page}
+      <div className={besideTree ? "library-layout" : undefined}>
+        {placesTree}
+        {page}
+      </div>
       {addDialog}
     </>
   );
@@ -948,7 +1041,7 @@ export function Documents() {
     // The list's answer decides: none while it is read, and a failure is not "none".
     const listed = collections.rows;
     // Nothing said while the list is read, or while one's own files open by themselves.
-    const unknown = !picked.namespace && ((listed === null && !collections.error) || !!opensFirst);
+    const unknown = !picked.namespace && ((listed === null && !listFailed) || !!opensFirst);
     // No namespace, but collections to pick: the page asks only for the pick.
     const picking = !picked.namespace && !!listed?.length;
     const action = picking
@@ -961,7 +1054,8 @@ export function Documents() {
             ? { label: "Open repositories", onClick: () => go.setView("code") }
             : undefined;
     const none = listed !== null && listed.length === 0;
-    const pick = none ? "Create a collection" : "Pick a collection above";
+    // Width-neutral: the places are a select above the page, or the tree beside it.
+    const pick = none ? "Create a collection" : "Pick a collection";
     const orNamespace = !picked.namespace
       ? ""
       : none
@@ -1003,16 +1097,17 @@ export function Documents() {
             </Link>
           </p>
         )}
-        {inside}
+        {topLevel}
       </PageContainer>
     );
-    return withDialog(page);
+    return libraryPage(page);
   }
 
-  return withDialog(
+  return libraryPage(
     <PageContainer>
       <PageHeader
         title="Library"
+        tab={placeTitle(shown, repeated, ownShelf && !resolving ? picked.namespace : null)}
         actions={
           <>
             {!resolving && !shown?.personal && (
@@ -1047,7 +1142,7 @@ export function Documents() {
       >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
-          {/* On a collection the select below names where the documents are. */}
+          {/* On a collection the select or the path below names where the documents are. */}
           {!shown && !resolving && <ScopeBadge kind="namespace" value={picked.namespace} />}
         </span>
       </PageHeader>
@@ -1101,8 +1196,11 @@ export function Documents() {
             ref={searchRef}
             value={query}
             onChange={(value) => setQuery(value)}
-            // A phone's field holds the short form only.
-            placeholder={phone ? "Search, or tag:specs" : "Search title, filename, description, or tag — try tag:specs"}
+            // The short form on a phone and beside the tree, whose column leaves the field
+            // narrow.
+            placeholder={
+              phone || besideTree ? "Search, or tag:specs" : "Search title, filename, description, or tag (tag:specs)"
+            }
             aria-label="Search library"
           />
         </ListToolbarSearch>
@@ -1247,7 +1345,7 @@ export function Documents() {
         </div>
       )}
 
-      {inside}
+      {topLevel}
 
       <Modal
         open={!!previewEntry}

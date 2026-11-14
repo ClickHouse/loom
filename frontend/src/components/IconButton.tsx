@@ -14,10 +14,13 @@ interface IconButtonProps extends Omit<ClickIconButtonProps, "aria-label" | "tit
   label: string;
   /** Longer tooltip copy when the spoken name should stay short. */
   tooltip?: ReactNode;
+  /** At least 24 px each way for a mouse (WCAG 2.5.8): Click UI's xs box is 18 px. A coarse
+   *  pointer already gets 44 px, as every button does. */
+  minTarget?: boolean;
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { label, tooltip, type, htmlType = "button", ...rest },
+  { label, tooltip, type, htmlType = "button", minTarget = false, className, ...rest },
   ref,
 ) {
   // A Radix trigger (`asChild`) hands its child `type="button"`, which on Click UI's
@@ -30,6 +33,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         type={variant}
         htmlType={htmlType}
         aria-label={label}
+        className={minTarget ? `pointer-fine:min-h-6 pointer-fine:min-w-6 ${className ?? ""}`.trim() : className}
         {...rest}
         // A tooltip that only repeats the name would be read again as its description;
         // a longer one keeps the description Radix ties to it, and a caller's own stays.

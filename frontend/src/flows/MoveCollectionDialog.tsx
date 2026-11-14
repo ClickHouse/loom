@@ -19,7 +19,6 @@ export function MoveCollectionDialog({
   collection,
   parents,
   all,
-  onMoved,
   onClose,
 }: {
   org: string;
@@ -28,7 +27,6 @@ export function MoveCollectionDialog({
   parents: CollectionEntry[];
   /** Every collection the person sees, so the tree walks through ones they only read. */
   all: CollectionEntry[];
-  onMoved: () => void;
   onClose: () => void;
 }) {
   const [parent, setParent] = useState(collection.parent || TOP);
@@ -51,7 +49,6 @@ export function MoveCollectionDialog({
       await moveCollection(org, collection.namespace, target);
       invalidateSharedCollections();
       toast(target ? `Moved ${self} into ${shown(target)}` : `${self} is top-level`, "ok");
-      onMoved();
       onClose();
     } catch (e) {
       setError(humanizeError(e));

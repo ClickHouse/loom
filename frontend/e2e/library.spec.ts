@@ -132,12 +132,13 @@ test.describe("a collection's path on a phone with a touch pointer", () => {
   });
 });
 
-// On a desktop the path leads the select's row on one line, and the collections inside follow
-// the documents: a collection four deep still starts its first document within y ≤ 300.
+// On a desktop beside the tree, the path and the chips of the collections inside share one
+// line: a collection four deep, with eight inside, still starts its first document within
+// y ≤ 300.
 test.describe("a collection's path at 1400 px", () => {
   test.use({ viewport: { width: 1400, height: 900 } });
 
-  test("keeps the first document within the budget, the collections inside after it", async ({ page }) => {
+  test("keeps the first document within the budget, the collections inside on the path's line", async ({ page }) => {
     await installApi(page, { knowledgeRows: 4 });
     const entry = (namespace: string, parent: string, title: string) => ({
       namespace,
@@ -159,9 +160,12 @@ test.describe("a collection's path at 1400 px", () => {
     await page.goto("/library?collection=col-notes");
     const path = page.getByRole("navigation", { name: "Collection path" });
     await expect(path).toBeVisible();
-    // The path and the select share one line.
-    const select = page.getByRole("button", { name: "Show the documents of" });
-    expect(Math.abs((await boxOf(path)).y - (await boxOf(select)).y)).toBeLessThan(16);
+    // The path and the chips share one line; the tree stands in for the select.
+    await expect(page.getByRole("button", { name: "Show the documents of" })).toHaveCount(0);
+    const chips = page.getByRole("navigation", { name: "Inside Interview notes" });
+    await expect(chips.getByRole("link")).toHaveCount(6);
+    await expect(chips.getByRole("button", { name: "Show 2 more" })).toBeVisible();
+    expect(Math.abs((await boxOf(path)).y - (await boxOf(chips)).y)).toBeLessThan(16);
     // Cut on screen, whole as the link's name.
     const long = path.getByRole("link", { name: "Customer interviews from the third quarter's discovery round" });
     await expect(long).toBeVisible();
@@ -176,8 +180,8 @@ test.describe("a collection's path at 1400 px", () => {
     const first = page.locator("main [data-doc-row]").first();
     await expect(first).toBeVisible();
     expect((await boxOf(first)).y).toBeLessThanOrEqual(300);
-    const inside = page.getByRole("region", { name: /Collections/ });
-    expect((await boxOf(inside)).y).toBeGreaterThan((await boxOf(first)).y);
+    // The chips list them: no list of them below the documents.
+    await expect(page.getByRole("region", { name: /Collections/ })).toHaveCount(0);
     // Enter on the cut title opens its collection, and no tooltip is left over the page.
     await long.focus();
     await expect(page.getByRole("tooltip")).toBeVisible();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { deleteCollection, listCollections, type CollectionEntry } from "../api";
@@ -8,24 +8,27 @@ import { Popover } from "@clickhouse/click-ui/Popover";
 import { PopoverTrigger } from "../components/ui/Menu";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
-import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
+import { type ClaimCreateVersion, CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { CollectionBack, CollectionPath } from "./LibraryHierarchy";
+import { CollectionBack, CollectionChips, CollectionPath, cycleStart } from "./LibraryHierarchy";
 import {
   COLLECTIONS_LISTED,
   COLLECTIONS_PAGES,
+  canHold,
   collectionOrder,
   collectionTitle,
   distinctTitle,
+  namespaceLabel,
   roleLabel,
-  repeatedTitles,
 } from "../lib/collections";
 import { fmtInt } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
+import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
-import { invalidateSharedCollections } from "../lib/collectionPlaces";
+import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
+import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -54,10 +57,10 @@ export function collectionLabel(c: CollectionEntry, repeated: Set<string> = new 
  *  collection whose parent the caller cannot read, or that a cycle in the tree cuts off,
  *  sits at the top. */
 export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth: number }[] {
-  const names = new Set(rows.map((c) => c.namespace));
+  const byName = new Map(rows.map((c) => [c.namespace, c]));
   const children = new Map<string, CollectionEntry[]>();
   for (const c of rows) {
-    const parent = c.parent && names.has(c.parent) ? c.parent : "";
+    const parent = c.parent && byName.has(c.parent) ? c.parent : "";
     const siblings = children.get(parent);
     if (siblings) siblings.push(c);
     else children.set(parent, [c]);
@@ -71,75 +74,137 @@ export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth:
     for (const child of [...(children.get(c.namespace) ?? [])].sort(collectionOrder)) visit(child, depth + 1);
   };
   for (const c of [...(children.get("") ?? [])].sort(collectionOrder)) visit(c, 0);
-  // A cycle reaches no top-level collection: its members start at the top.
-  for (const c of [...rows].sort(collectionOrder)) visit(c, 0);
+  // A cycle reaches no top-level collection: it starts at the top, as the tree's does.
+  for (const c of [...rows].sort(collectionOrder)) {
+    if (!seen.has(c.namespace)) visit(cycleStart(c, byName), 0);
+  }
   return out;
 }
 
 export interface ReadableCollections {
-  /** Every collection the caller can read, or null while the read is in flight. */
+  /** Every collection the caller can read, or null while a reload is in flight; a refresh
+   *  keeps them. */
   rows: CollectionEntry[] | null;
-  /** More pages than the select reads. */
+  /** More pages than the Library reads (`COLLECTIONS_PAGES`). */
   truncated: boolean;
+  /** The last answer for this org, kept while it is read again: what stays on screen. Null
+   *  before the first answer. */
+  kept: { rows: CollectionEntry[]; truncated: boolean } | null;
+  /** A read is in flight, of either kind, while an answer for this org is kept (`kept`);
+   *  false once it answers or fails. */
+  refreshing: boolean;
   error: unknown;
   /** Read again; `rows` is null until the new answer lands. `expect`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
   reload: (expect?: string) => void;
-  /** The collection the last read waited for, or "". */
+  /** Read again after a failure, waiting for what the failed read waited for: in the
+   *  background while an answer is kept, else as a reload. */
+  retry: () => void;
+  /** The collection the last reload or refresh waited for, or "". */
   expected: string;
 }
 
-/** The collections the caller can read in `org` (`collection.list`), every page. */
-export function useReadableCollections(org: string): ReadableCollections {
-  const [read, setRead] = useState<{ org: string; rows: CollectionEntry[]; truncated: boolean } | null>(null);
+/** Reads of the list while it leaves out a collection waited for, and the wait between them. */
+export const REFRESH_TRIES = 3;
+export const REFRESH_WAIT_MS = 1000;
+
+/** The collections the caller can read in `org` (`collection.list`), every page. `reload`
+ *  clears `rows` until its answer; a write elsewhere keeps them. `showing`: the collection the
+ *  page shows; a refresh that leaves it out reads again, up to `REFRESH_TRIES` times, before
+ *  it counts as gone. */
+export function useReadableCollections(org: string, showing: string | null = null): ReadableCollections {
+  const [answer, setAnswer] = useState<{
+    org: string;
+    reloads: number;
+    refreshes: number;
+    rows: CollectionEntry[];
+    truncated: boolean;
+  } | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [reads, setReads] = useState<{ n: number; expect: string }>({ n: 0, expect: "" });
-  const reload = useCallback((expect = "") => {
-    setRead(null);
-    // An old failure would read as "no collections" before the new answer lands.
-    setError(null);
-    setReads((r) => ({ n: r.n + 1, expect }));
-  }, []);
+  // Each read waits for `expect` (a name in an org), which the reload or write that asked for
+  // it sets; a later reload or write replaces it, a retry keeps it.
+  const [asked, setAsked] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
+  const reload = useCallback(
+    (expect = "") => {
+      // An old failure would read as "no collections" before the new answer lands.
+      setError(null);
+      setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name: expect } }));
+    },
+    [org],
+  );
+  // Any write to a collection, from a dialog since closed too: read again in the background;
+  // one made in another org is not waited for.
+  useEffect(
+    () =>
+      onCollectionsChanged((made) =>
+        setAsked((r) => ({
+          ...r,
+          refreshes: r.refreshes + 1,
+          expect: { org: made?.org ?? org, name: made?.name ?? "" },
+        })),
+      ),
+    [org],
+  );
+  const expected = asked.expect.org === org ? asked.expect.name : "";
+  // The collection shown, once the page's last reload is answered and lists it. The read
+  // effect captures it when it starts: `showing` changing restarts no read.
+  const answered = answer?.org === org && answer.reloads === asked.reloads;
+  const hold = answered && showing !== null && answer.rows.some((c) => c.namespace === showing) ? showing : "";
   useAbortableEffect(
     (signal, live) => {
       setError(null);
       void (async () => {
         for (let attempt = 0; ; attempt++) {
-          const rows: CollectionEntry[] = [];
+          // Pages read from replicas that disagree can list a collection twice: once here.
+          const byName = new Map<string, CollectionEntry>();
           let cursor: string | null = null;
           for (let page = 0; page < COLLECTIONS_PAGES; page++) {
             const r = await listCollections(org, { cursor, signal });
-            rows.push(...r.collections);
+            for (const c of r.collections) if (!byName.has(c.namespace)) byName.set(c.namespace, c);
             cursor = r.next_cursor;
             if (!cursor) break;
           }
-          const caughtUp = !reads.expect || rows.some((c) => c.namespace === reads.expect);
-          if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
-          await new Promise((r) => setTimeout(r, 1000));
+          const rows = [...byName.values()];
+          const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
+          if (caughtUp || attempt >= REFRESH_TRIES - 1) return { rows, truncated: !!cursor };
+          await wait(REFRESH_WAIT_MS, signal);
         }
       })()
         .then(({ rows, truncated }) => {
-          if (live()) setRead({ org, rows, truncated });
+          if (live()) setAnswer({ org, reloads: asked.reloads, refreshes: asked.refreshes, rows, truncated });
         })
         .catch((e) => {
           if (live()) setError(e);
         });
     },
-    [org, reads],
+    [org, asked],
   );
-  const current = read && read.org === org ? read : null;
-  return { rows: current?.rows ?? null, truncated: current?.truncated ?? false, error, reload, expected: reads.expect };
+  const kept = answer && answer.org === org ? answer : null;
+  const retry = useCallback(() => {
+    setError(null);
+    setAsked((r) => (kept ? { ...r, refreshes: r.refreshes + 1 } : { ...r, reloads: r.reloads + 1 }));
+  }, [kept]);
+  const current = kept && kept.reloads === asked.reloads ? kept : null;
+  return {
+    rows: current?.rows ?? null,
+    truncated: current?.truncated ?? false,
+    kept,
+    refreshing: !!kept && !error && (!current || current.refreshes !== asked.refreshes),
+    error,
+    reload,
+    retry,
+    expected,
+  };
 }
 
-/**
- * Where the Library reads: the namespace picked in the header, or one of the collections
- * the caller can read. A collection is a shelf of documents that only grants open; its
- * menu shares it (Members) and deletes it, and New collection adds one inside it.
- */
+/** The Library's place line: the place picker (where no tree is shown), the path, the chips
+ *  and the collection's menu (Members, Move, Delete). */
 export function LibraryCollections({
   org,
   namespace,
   collections,
+  repeated,
+  byName,
   current,
   opening = null,
   place = "",
@@ -147,12 +212,19 @@ export function LibraryCollections({
   onLeave,
   creating,
   onCreatingChange: setCreating,
+  claimCreateVersion,
+  onCreated,
+  besideTree = false,
 }: {
   org: string;
   /** The header's namespace, or null when it holds no documents (a code or tracker
    *  namespace, or none). */
   namespace: string | null;
   collections: ReadableCollections;
+  /** Titles two collections share (`repeatedTitles`): those show their address too. */
+  repeated: Set<string>;
+  /** Every collection the caller can read, by name. */
+  byName: Map<string, CollectionEntry>;
   /** The collection shown, or null for the header's namespace. */
   current: CollectionEntry | null;
   /** A collection the URL names that the list has not confirmed yet. */
@@ -166,12 +238,20 @@ export function LibraryCollections({
   /** The New collection dialog's open state: the page's, whose empty state opens it too. */
   creating: boolean;
   onCreatingChange: (open: boolean) => void;
+  claimCreateVersion: ClaimCreateVersion;
+  /** A collection the New collection dialog made (or found by its title), reported only while
+   *  that dialog is open: the page opens it unless the person moved or sent another create
+   *  since. */
+  onCreated: (collection: string, version: number) => void;
+  /** The tree beside the page lists the places and makes new ones: the select and its New
+   *  collection button step aside, and the path names where the page is. */
+  besideTree?: boolean;
 }) {
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
   // The collection Members was opened for: the dialog shows only while that one is shown, so
   // Back to another never lands a grant on it.
   const [members, setMembers] = useState<string | null>(null);
-  const { rows, error, reload } = collections;
+  const { rows, error } = collections;
   // New collection and Members belong to the place they opened in: a move to another
   // closes them, and coming back does not reopen them. The list answering (or read again)
   // moves nothing, so what was typed stays.
@@ -180,21 +260,20 @@ export function LibraryCollections({
     setMembers(null);
     setMoving(null);
   }, [place]);
-  const ordered = useMemo(() => treeOrder(rows ?? []), [rows]);
-  // A phone gets the path as one back button in the select's row, and no Collections list.
+  // The select's order; beside the tree there is no select.
+  const ordered = useMemo(() => (besideTree ? [] : treeOrder(rows ?? [])), [rows, besideTree]);
+  // A phone gets the path as one back button in the select's row, and no chips.
   const phone = useMedia(PHONE_QUERY);
   // Above the top of a collection's path: the header's namespace, else the user's own files,
   // the places that list the top-level collections.
   const own = (rows ?? []).find((c) => c.personal);
   const home =
     namespace !== null
-      ? { label: `Namespace ${namespace}`, collection: null, open: () => onPick(null) }
+      ? { label: namespaceLabel(namespace), collection: null, open: () => onPick(null) }
       : own
         ? { label: collectionTitle(own), collection: own.namespace, open: () => onPick(own.namespace) }
         : undefined;
-  const repeated = useMemo(() => repeatedTitles(rows ?? []), [rows]);
-  const byName = useMemo(() => new Map((rows ?? []).map((c) => [c.namespace, c])), [rows]);
-  const parents = useMemo(() => parentChoices(rows ?? []), [rows]);
+  const parents = useMemo(() => (rows ?? []).filter(canHold), [rows]);
 
   const onDelete = async (c: CollectionEntry) => {
     const ok = await confirmAction({
@@ -218,7 +297,6 @@ export function LibraryCollections({
       // Only while it is still the one shown: a Back during the confirm moved elsewhere. A
       // correction, so the entry is replaced: Back does not return to what is gone.
       if (shownRef.current === c.namespace) (onLeave ?? onPick)(null);
-      reload();
     } catch (e) {
       toastError(`Couldn't delete ${collectionTitle(c)}`, e);
     }
@@ -229,7 +307,7 @@ export function LibraryCollections({
     const p = byName.get(parent);
     return p ? collectionTitle(p) : parent;
   };
-  // What the place shown is, behind the info button beside the select (and the role, which
+  // What the place shown is, behind the info button on the place line (and the role, which
   // a phone has no room to print).
   const about = current
     ? current.personal
@@ -238,12 +316,31 @@ export function LibraryCollections({
     : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
   const shownRef = useRef<string | null>(null);
   shownRef.current = current?.namespace ?? null;
+  // My files and the namespace have no path; beside the tree no select names them either, so
+  // the line starts with the place's name, not the About button alone.
+  const placeName = (): string | null => {
+    if (!besideTree) return null;
+    if (current?.personal) return collectionTitle(current);
+    if (current || opening || namespace === null) return null;
+    return namespaceLabel(namespace);
+  };
+  const lineName = placeName();
+  // Whether rows are still drawn (the tree keeps the last answer through a reload too; the
+  // select's rows go with it): a failure then is a failed refresh.
+  const rowsDrawn = !!(besideTree ? collections.kept : rows);
+  // The collection shown, not My files: it has a path, members and a menu.
+  const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
-  if (current && !current.personal) {
-    items.push({ label: "Members", icon: "users", onSelect: () => setMembers(current.namespace) });
-    if (current.role === "admin") {
-      items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(current) });
-      items.push({ label: "Delete collection", icon: "trash", danger: true, onSelect: () => void onDelete(current) });
+  if (collection) {
+    items.push({ label: "Members", icon: "users", onSelect: () => setMembers(collection.namespace) });
+    if (collection.role === "admin") {
+      items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(collection) });
+      items.push({
+        label: "Delete collection",
+        icon: "trash",
+        danger: true,
+        onSelect: () => void onDelete(collection),
+      });
     }
   }
 
@@ -252,48 +349,53 @@ export function LibraryCollections({
       {/* One row at the widths the list budget measures, so the documents start where the list
           rules want them: the path leads it (on a phone, one back button). Narrower, it wraps. */}
       <div className="flex flex-wrap items-center gap-2">
-        {!phone && current && !current.personal && (
+        {!phone && collection && (
           <CollectionPath
-            current={current}
-            rows={rows ?? []}
+            current={collection}
+            byName={byName}
+            repeated={repeated}
             truncated={collections.truncated}
             home={home}
             onPick={onPick}
+            named={besideTree}
           />
         )}
-        {phone && current && !current.personal && (
+        {lineName && <span className="text-sm">{lineName}</span>}
+        {phone && collection && (
           <CollectionBack
-            current={current}
-            rows={rows ?? []}
+            current={collection}
+            byName={byName}
             truncated={collections.truncated}
             home={home}
             onPick={onPick}
           />
         )}
-        <Select
-          value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
-          placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
-          onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v)}
-          triggerProps={{ "aria-label": "Show the documents of" }}
-          // A long list is found by typing a name or a description.
-          showSearch
-          className="min-w-0 flex-1 sm:flex-none sm:w-96"
-        >
-          {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{`Namespace ${namespace}`}</Select.Item>}
-          {ordered.map(({ c, depth }) => (
-            <Select.Item key={c.namespace} value={c.namespace}>
-              {/* Indented, not marked: the closed select and a screen reader read the name. */}
-              <span className="collection-depth" style={{ "--depth": depth } as CSSProperties}>
-                {collectionLabel(c, repeated)}
-                {/* The name a title hides and the whole description, unseen, so the select's
-                    search finds them. */}
-                {(c.title || c.description) && (
-                  <span hidden>{` ${c.title ? c.namespace : ""} ${c.description ?? ""}`}</span>
-                )}
-              </span>
-            </Select.Item>
-          ))}
-        </Select>
+        {!besideTree && (
+          <Select
+            value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
+            placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
+            onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v)}
+            triggerProps={{ "aria-label": PLACE_PICKER_LABEL }}
+            // A long list is found by typing a name or a description.
+            showSearch
+            className="min-w-0 flex-1 sm:flex-none sm:w-96"
+          >
+            {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{namespaceLabel(namespace)}</Select.Item>}
+            {ordered.map(({ c, depth }) => (
+              <Select.Item key={c.namespace} value={c.namespace}>
+                {/* Indented, not marked: the closed select and a screen reader read the name. */}
+                <span className="collection-depth" style={{ "--depth": depth } as CSSProperties}>
+                  {collectionLabel(c, repeated)}
+                  {/* The name a title hides and the whole description, unseen, so the select's
+                      search finds them. */}
+                  {(c.title || c.description) && (
+                    <span hidden>{` ${c.title ? c.namespace : ""} ${c.description ?? ""}`}</span>
+                  )}
+                </span>
+              </Select.Item>
+            ))}
+          </Select>
+        )}
         {current && (
           <span className="hidden shrink-0 text-sm text-text-muted sm:inline">{roleLabel(current.role)}</span>
         )}
@@ -306,18 +408,31 @@ export function LibraryCollections({
             {about}
           </Popover.Content>
         </Popover>
-        {items.length > 0 && current && <RowMenu name={collectionTitle(current)} items={items} />}
+        {collection && <RowMenu name={collectionTitle(collection)} items={items} />}
+        {/* The collections inside, after the path; a phone's select lists them. */}
+        {!phone && (
+          // One per place, so Show more starts again in the next.
+          <CollectionChips
+            key={current?.namespace ?? ""}
+            rows={rows}
+            repeated={repeated}
+            collection={collection}
+            onPick={onPick}
+          />
+        )}
         {/* Its words only where there is room; a phone shows the plus. */}
-        <Button
-          type="secondary"
-          htmlType="button"
-          iconLeft="plus"
-          aria-label="New collection"
-          className="shrink-0"
-          onClick={() => setCreating(true)}
-        >
-          <span className="hidden sm:inline">New collection</span>
-        </Button>
+        {!besideTree && (
+          <Button
+            type="secondary"
+            htmlType="button"
+            iconLeft="plus"
+            aria-label="New collection"
+            className="shrink-0"
+            onClick={() => setCreating(true)}
+          >
+            <span className="hidden sm:inline">New collection</span>
+          </Button>
+        )}
       </div>
       {collections.truncated && (
         <p className="text-xs text-text-muted">
@@ -327,8 +442,12 @@ export function LibraryCollections({
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}
       {!!error && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
-          <span>Couldn't load collections: {humanizeError(error, { bare: true, read: true })}</span>
-          <Button type="empty" htmlType="button" onClick={() => reload()}>
+          <span>
+            {rowsDrawn ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
+            {humanizeError(error, { bare: true, read: true })}
+          </span>
+          {/* With rows drawn it tries again in place: a reload would blank them and the documents. */}
+          <Button type="empty" htmlType="button" onClick={collections.retry}>
             Load collections again
           </Button>
         </p>
@@ -339,7 +458,6 @@ export function LibraryCollections({
           collection={moving}
           parents={parents}
           all={rows ?? []}
-          onMoved={() => reload()}
           onClose={() => setMoving(null)}
         />
       )}
@@ -352,12 +470,8 @@ export function LibraryCollections({
           parents={parents}
           headerNamespace={namespace}
           initialParent={current && parents.includes(current) ? current.namespace : ""}
-          onCreated={(name) => {
-            // No rows until a read that lists the new collection lands (or gives up), so the
-            // pick holds.
-            reload(name);
-            onPick(name);
-          }}
+          claimCreateVersion={claimCreateVersion}
+          onCreated={onCreated}
         />
       )}
       {members && current && members === current.namespace && (
