@@ -937,9 +937,8 @@ statements and census keys against these, and its tests pin each one:
   implementing pull request adds both steps and specifies the command.
 - **Ownership.** In a namespace, one owner per address, found by its tag, is today's
   model, so N-1 and N agree on whose a document is; N-1 has no mirror leg.
-- **Lists.** N-1 never meets a list: the build that first writes one runs beside the
-  build that adds the column, whose every rewrite other than a source's turn writes none
-  (rule 53).
+- **Lists.** N-1 never meets a list: the build that adds the column writes none and
+  carries none forward, and the first build that writes one runs beside it (rule 53).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.

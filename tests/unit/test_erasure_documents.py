@@ -74,7 +74,6 @@ async def test_tombstone_documents_uses_superseded_at_guard(monkeypatch) -> None
     mut_sql, _ = ch.execute_calls[0]
     assert "ALTER TABLE loom.documents" in mut_sql
     assert "UPDATE superseded_at" in mut_sql
-    assert "access_json = ''" in mut_sql  # a mirrored document's list goes with it
     assert "mutations_sync = 0" in mut_sql
 
 
@@ -227,19 +226,3 @@ def test_knowledge_tables_are_census_rows_owned_by_their_steps() -> None:
     for table in ("loom.documents", "loom.document_blobs"):
         assert erasure_census.steps_to_reopen({table: 1}, "namespace") == {"documents.tombstone"}
     assert "documents.blob_erase" not in erasure_census.STEP_ONLY_TABLES
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("purge", [False, True])
-async def test_a_users_document_tombstone_clears_the_permission_list(
-    monkeypatch, purge: bool
-) -> None:
-    from server.erasure.store import mutations, steps_memory
-
-    ch = StubCH()
-    ch.query_one_returns.extend([{"n": 1}, {"n": 1}])
-    ch.query_all_returns.append([{"h": 7}])  # one document the user wrote, for the purge
-    with mutations.purge_scope(purge):
-        await steps_memory.tombstone_documents_by_user("o", "alice", ch=ch)
-    tombstones = [sql for sql, _ in ch.execute_calls if "UPDATE superseded_at" in sql]
-    assert tombstones and all("access_json = ''" in sql for sql in tombstones)

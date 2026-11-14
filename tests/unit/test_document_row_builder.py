@@ -26,6 +26,7 @@ from tests.unit.schema_ddl import column_names
 
 ERASED = datetime(2026, 5, 1, 12, 0, 0)
 INGESTED = datetime(2026, 4, 1, 9, 0, 0)
+LISTED = access_list.to_json(access_list.AccessList(emails=("a@example.com",)))
 
 
 def _doc(**over: Any) -> DocumentRow:
@@ -937,9 +938,6 @@ def test_a_delete_left_to_the_delivery_worker_forgets_its_datasets(monkeypatch) 
             )
         )
     assert forgotten == [{"doc-a": doc.version}] * 2
-
-
-LISTED = access_list.to_json(access_list.AccessList(emails=("a@example.com",)))
 
 
 def test_a_permission_list_is_written_only_by_the_writer_that_passes_it() -> None:

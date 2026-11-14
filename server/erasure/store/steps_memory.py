@@ -879,11 +879,6 @@ _REPLACED_BY_USER = (
 )
 
 
-# A document tombstone; a mirrored document's permission list names other people, so it
-# goes with the document.
-_RETIRE_DOCUMENT = "UPDATE superseded_at = {now:DateTime}, access_json = ''"
-
-
 async def tombstone_documents_by_user(
     org: str,
     user_id: str,
@@ -900,7 +895,7 @@ async def tombstone_documents_by_user(
             await count_then_mutate(
                 "loom.documents",
                 count_where=_REPLACED_BY_USER,
-                mutation=_RETIRE_DOCUMENT,
+                mutation="UPDATE superseded_at = {now:DateTime}",
                 mutation_where=_REPLACED_BY_USER,
                 params={"org": org, "uid": user_id, "docs": part},
                 final=False,  # those versions are hidden under FINAL until the delete
@@ -919,7 +914,7 @@ async def tombstone_documents_by_user(
     return await count_then_mutate(
         "loom.documents",
         count_where=where,
-        mutation=_RETIRE_DOCUMENT,
+        mutation="UPDATE superseded_at = {now:DateTime}",
         mutation_where=where,
         params={"org": org, "uid": user_id},
         ch=ch,
@@ -1168,7 +1163,7 @@ async def _supersede_documents(
     return await count_then_mutate(
         "loom.documents",
         count_where=where,
-        mutation=_RETIRE_DOCUMENT,
+        mutation="UPDATE superseded_at = {now:DateTime}",
         mutation_where=where,
         params={"org": org, "ns": namespace},
         ch=ch,
