@@ -563,15 +563,19 @@ _EMB_SHARED_PREWHERE = (
 
 
 async def live_shared_embedding_rows_for_key(
-    ch: _CHClient, *, org: str, namespace: str, memory_key: str
+    ch: _CHClient, *, org: str, namespace: str, memory_key: str, strong: bool = False
 ) -> list[dict[str, Any]]:
     """Every live scope='shared' memory_embeddings row of one key (the
-    promote mirror carries agent='_shared'; the key is namespace-wide)."""
+    promote mirror carries agent='_shared'; the key is namespace-wide);
+    `strong` reads every acknowledged write."""
+    from server.memory.store.sql import _SEQUENTIAL
+
     return await ch.query_all(
         f"""
         SELECT * FROM loom.memory_embeddings FINAL
         PREWHERE {_EMB_SHARED_PREWHERE}
         WHERE tombstoned_at IS NULL
+        {_SEQUENTIAL if strong else ""}
         """,
         params={"org": org, "ns": namespace, "k": memory_key},
     )
@@ -582,14 +586,15 @@ async def reemit_shared_embedding_rows(
     namespace: str,
     memory_key: str,
     *,
+    strong: bool = False,
     ch: _CHClient | None = None,
     **overrides: Any,
 ) -> int:
     """`reemit_embedding_rows_for_key` for the scope='shared' rows of a key
-    (memory.demote's mirror, shared_repo)."""
+    (memory.demote's mirror, shared_repo), read strongly when `strong`."""
     ch = ch or _default_client()
     rows = await live_shared_embedding_rows_for_key(
-        ch, org=org, namespace=namespace, memory_key=memory_key
+        ch, org=org, namespace=namespace, memory_key=memory_key, strong=strong
     )
     return await reemit_rows(rows, overrides, ch=ch)
 

@@ -105,10 +105,11 @@ class RateLimited(BackendUnavailable):
 
 
 class Overloaded(BackendUnavailable):
-    """503 OVERLOADED — every pooled ClickHouse connection of the serving
-    process was busy for longer than its slot wait. Retry
-    after `retry_after_s`; a client that spreads its calls or lowers its
-    concurrency stops seeing it."""
+    """503 OVERLOADED — the server was too busy: every pooled ClickHouse connection of
+    the serving process was busy for longer than its slot wait, or a lock or claim
+    (such as a namespace's definition promotion) stayed held past its wait. Retry after
+    `retry_after_s`; a client that spreads its calls or lowers its concurrency stops
+    seeing it."""
 
     code = "OVERLOADED"
     retry_after_s: float = DEFAULT_RETRY_AFTER_S
@@ -216,11 +217,15 @@ class IdempotentConflict(LoomError):
 
 
 class PreconditionFailed(LoomError):
-    """An if_match_sha256 precondition didn't match the live row's hash, or an
-    erasure landed while a namespace.restore ran (retry the restore; no hash).
+    """An if_match_sha256 (or a definition's approved_sha256) precondition didn't
+    match the live row's hash, or an erasure landed while a namespace.restore ran
+    (retry the restore; no hash).
 
     A mismatch carries the server's current hash in `.current_sha256` so a caller
-    can re-read and retry without an extra get round-trip.
+    can re-read and retry without an extra get round-trip. For a definition's
+    `approved_sha256`, show the current text again and approve that: never resend
+    `.current_sha256` unseen. Any 409 the SDK has no class for (such as
+    `DEFINITION_NAME_TAKEN`) arrives as this class, with no hash: check `.code`.
     """
 
     code = "PRECONDITION_FAILED"
