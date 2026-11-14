@@ -171,9 +171,9 @@ describe("LibraryTree", () => {
     const legal = screen.getByRole("link", { name: "Legal" });
     expect(legal.getAttribute("href")).toContain("collection=col-legal");
     await userEvent.click(legal);
-    expect(onPick).toHaveBeenLastCalledWith("col-legal", placeFocusKey("col-legal"));
+    expect(onPick).toHaveBeenLastCalledWith("col-legal", placeFocusKey("col-legal"), "Legal");
     await userEvent.click(screen.getByRole("link", { name: "Namespace bench" }));
-    expect(onPick).toHaveBeenLastCalledWith(null, placeFocusKey(null));
+    expect(onPick).toHaveBeenLastCalledWith(null, placeFocusKey(null), "Namespace bench");
     onPick.mockClear();
     fireEvent.click(legal, { ctrlKey: true });
     expect(onPick).not.toHaveBeenCalled();
@@ -440,7 +440,7 @@ describe("LibraryTree", () => {
       act(() => link.focus());
       expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
       fireEvent.click(link);
-      expect(onPick).toHaveBeenCalledWith("col-eng", placeFocusKey("col-eng"));
+      expect(onPick).toHaveBeenCalledWith("col-eng", placeFocusKey("col-eng"), long);
       await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
     });
 

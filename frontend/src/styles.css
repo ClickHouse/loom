@@ -1747,7 +1747,6 @@ textarea[aria-invalid="true"]:focus-visible {
     align-items: center;
     justify-content: center;
     padding: 0;
-    color: var(--color-text-muted);
   }
   /* New collection's form at the tree's foot: where it goes, its title, then its two
      buttons on their own line: the column is narrow. */

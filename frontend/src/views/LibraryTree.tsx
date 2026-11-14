@@ -143,8 +143,9 @@ export const LibraryTree = memo(function LibraryTree({
   shelf: string | null;
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
-  /** `arriveFocus`: the picked row's focus key, so the person stays in the tree. */
-  onPick: (collection: string | null, arriveFocus?: string) => void;
+  /** `arriveFocus`: the picked row's focus key, so the person stays in the tree; `note`: the
+   *  place's name, said on arrival. */
+  onPick: (collection: string | null, arriveFocus: string, note: string) => void;
   /** A collection made here, in `org`: read the list again and open it. It can land after
    *  the tree is gone (a resize, or a move to another org). */
   onCreated: (collection: string, org: string) => void;
@@ -368,9 +369,9 @@ function PlaceRow({
   here: boolean;
   expanded?: boolean;
   onToggle?: () => void;
-  /** `arriveFocus`: the picked row's focus key, so the person stays in the tree. */
-  onPick: (collection: string | null, arriveFocus?: string) => void;
+  onPick: (collection: string | null, arriveFocus: string, note: string) => void;
 }) {
+  const focusKey = placeFocusKey(collection);
   return (
     <div className="library-tree-row" data-selected={here || undefined} style={{ "--depth": depth } as CSSProperties}>
       {onToggle ? (
@@ -392,8 +393,8 @@ function PlaceRow({
         icon={icon}
         aria-current={here ? "page" : undefined}
         className="library-tree-link"
-        data-focus-key={placeFocusKey(collection)}
-        onOpen={() => onPick(collection, placeFocusKey(collection))}
+        data-focus-key={focusKey}
+        onOpen={() => onPick(collection, focusKey, label)}
       />
     </div>
   );

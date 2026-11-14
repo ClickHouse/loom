@@ -1151,14 +1151,19 @@ describe("the Library on a collection", () => {
     const tree = await screen.findByRole("navigation", { name: "Library places" });
     fireEvent.click(await within(tree).findByRole("link", { name: "col-q3" }));
     await settle();
-    // The arrival App makes on a move focuses the row the move asked for.
-    expect(useStore.getState().arriveFocus).toBe(placeFocusKey("col-q3"));
-    act(() => arriveAt(null, useStore.getState().arriveFocus));
+    // The arrival App makes on a move focuses the row the move asked for and says its name.
+    const status = document.body.appendChild(Object.assign(document.createElement("p"), { id: "loom-nav-status" }));
+    const { arriveFocus, navNote } = useStore.getState();
+    expect(arriveFocus).toBe(placeFocusKey("col-q3"));
+    act(() => arriveAt(navNote, arriveFocus));
     await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    await waitFor(() => expect(status).toHaveTextContent("col-q3"));
+    status.remove();
     fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
     await settle();
-    // My files has no path; the page names it beside the tree.
-    expect(screen.getAllByText("My files").some((el) => !tree.contains(el))).toBe(true);
+    // My files has no path; the page's path line names it beside the tree.
+    const named = [...document.querySelectorAll("main [aria-current='page']")].filter((el) => !tree.contains(el));
+    expect(named.map((el) => el.textContent)).toEqual(["My files"]);
   });
 
   describe("where <main> can be measured", () => {

@@ -177,10 +177,11 @@ export function Documents() {
   // the page's own corrections (leaving a collection it cannot show) replace the entry.
   // `arriveFocus`: the control that takes the focus on arrival, in place of the h1.
   // Stable, so the tree beside the page does not draw again for each render of the page.
-  const goTo = useCallback((c: string | null, arriveFocus?: string) => {
+  // `note`: what the arrival says in place of the page's title (the place picked in the tree).
+  const goTo = useCallback((c: string | null, arriveFocus?: string, note?: string) => {
     if (c === linkedCollection()) return; // the place already shown: nothing moves
     useStore.getState().clearPendingDoc();
-    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus });
+    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
   }, []);
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.

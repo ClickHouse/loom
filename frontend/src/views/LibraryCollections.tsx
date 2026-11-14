@@ -334,7 +334,11 @@ export function LibraryCollections({
           />
         )}
         {/* My files has no path; beside the tree no select names it either. */}
-        {besideTree && current?.personal && <span className="text-sm">{collectionTitle(current)}</span>}
+        {besideTree && current?.personal && (
+          <span aria-current="page" className="text-sm">
+            {collectionTitle(current)}
+          </span>
+        )}
         {phone && collection && (
           <CollectionBack
             current={collection}
