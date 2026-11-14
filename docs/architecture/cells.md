@@ -722,11 +722,11 @@ lists any tenancy row the directory does not place.
   `/v1/health?include=capacity` and by `loom doctor`, which names a cell with no quota.
   Every org the first cell's attach places (step 2's snapshot, its configured orgs included,
   and step 4's) is counted but never refused by quota or a closed cell, since the cell
-  already serves it and refusing it would strand its data (one past `ORG_MAX_BYTES` is the
-  length limit's, below); every other placement of an org the directory does not place yet,
-  a later cell's configured orgs at attach and a changed one at `loom cell update` included,
-  passes the gate, a closed cell and `placements_max` included, so a later cell closed or
-  full before attach refuses the attach, naming the org.
+  already serves it and refusing it would strand its data (one past `ORG_MAX_BYTES` the
+  directory refuses, below); every other placement of an org the directory does not place
+  yet, a later cell's configured orgs at attach and a changed one at `loom cell update`
+  included, passes the gate, a closed cell and `placements_max` included, so a later cell
+  closed or full before attach refuses the attach, naming the org.
 - **The first cell records until `enforced` as a single deployment does.** In
   `recording`, which lasts until step 3 writes `enforced` to the cell's mode (and again
   whenever step 3 or step 4 returns the cell to it), a verified request for a new org
