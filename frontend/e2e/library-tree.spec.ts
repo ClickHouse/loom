@@ -244,6 +244,16 @@ test.describe("1100 px", () => {
     await expect(page.getByText(/is not listed yet/)).toHaveCount(0);
   });
 
+  test("a wider window draws the tree and hands it the picker's focus", async ({ page }) => {
+    await open(page, "/library?collection=col-runbooks");
+    const picker = page.getByLabel("Show the documents of");
+    await expect(picker).toContainText("Runbooks");
+    await picker.focus();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const tree = page.getByRole("navigation", { name: "Library places" });
+    await expect(tree.getByRole("link", { name: "Runbooks" })).toBeFocused();
+  });
+
   test("no tree: the select and the chips stand in", async ({ page }) => {
     await open(page, "/library?collection=col-eng");
     await expect(page.getByRole("navigation", { name: "Library places" })).toHaveCount(0);

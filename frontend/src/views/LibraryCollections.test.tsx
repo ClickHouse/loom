@@ -382,7 +382,7 @@ function inMain(): HTMLElement {
 }
 
 /** <main>, measured `width` px wide (room for the tree by default), where the page looks for
- *  it; the function it returns narrows it. */
+ *  it; the function it returns resizes it, narrower than the tree by default. */
 function resizable(width = TREE_PAGE_MIN) {
   const observers: Array<() => void> = [];
   vi.stubGlobal(
@@ -400,8 +400,8 @@ function resizable(width = TREE_PAGE_MIN) {
     return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
   });
   inMain();
-  return () => {
-    width = TREE_PAGE_MIN - 1;
+  return (to = TREE_PAGE_MIN - 1) => {
+    width = to;
     for (const f of observers) f();
   };
 }
@@ -1089,48 +1089,69 @@ describe("the Library on a collection", () => {
     ).toBeInTheDocument();
   });
 
-  it("hands focus in the tree to the place picker when a resize takes the tree away", async () => {
-    const narrow = resizable();
-    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
-    render(<Documents />);
-    await settle();
-    const tree = screen.getByRole("navigation", { name: "Library places" });
-    within(tree).getAllByRole("link")[0].focus();
-    act(() => narrow());
-    expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
-    await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
-  });
+  describe("a resize that swaps the tree and the picker", () => {
+    const widen = async (path: string, focus: () => HTMLElement) => {
+      const resize = resizable(TREE_PAGE_MIN - 1);
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", path);
+      render(<Documents />, { container: inMain() });
+      await settle();
+      act(() => focus().focus());
+      act(() => resize(TREE_PAGE_MIN));
+      return screen.getByRole("navigation", { name: "Library places" });
+    };
 
-  it("hands focus on the place picker to the tree's row for the place when a resize draws the tree", async () => {
-    // <main> starts too narrow for the tree, then widens.
-    let width = TREE_PAGE_MIN - 1;
-    const observers: Array<() => void> = [];
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(f: () => void) {
-          observers.push(f);
-        }
-        observe() {}
-        disconnect() {}
-      },
-    );
-    const rect = HTMLElement.prototype.getBoundingClientRect;
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
+    it("hands focus on the picker to the tree's row for the place shown", async () => {
+      const tree = await widen("/library?collection=col-q3", () =>
+        screen.getByRole("button", { name: PLACE_PICKER_LABEL }),
+      );
+      await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
     });
-    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
-    history.replaceState(null, "", "/library?collection=col-q3");
-    render(<Documents />, { container: inMain() });
-    await settle();
-    screen.getByRole("button", { name: PLACE_PICKER_LABEL }).focus();
-    width = TREE_PAGE_MIN;
-    act(() => {
-      for (const f of observers) f();
+
+    it("hands focus on the picker's New collection to the tree's row for the place shown", async () => {
+      const tree = await widen("/library?collection=col-q3", () =>
+        screen.getByRole("button", { name: "New collection" }),
+      );
+      await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
     });
-    const tree = screen.getByRole("navigation", { name: "Library places" });
-    expect(screen.queryByRole("button", { name: PLACE_PICKER_LABEL })).toBeNull();
-    await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+
+    it("hands focus on a place listed below the documents to the tree's row for the place shown", async () => {
+      const tree = await widen(
+        "/library",
+        () => within(screen.getByRole("region", { name: /Collections/ })).getAllByRole("link")[0],
+      );
+      await waitFor(() => expect(within(tree).getByRole("link", { current: "page" })).toHaveFocus());
+    });
+
+    it("hands focus on the picker to the tree's first row on a code namespace", async () => {
+      useStore.setState({
+        identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
+        myNamespaces: [{ namespace: "code-repo", kind: "code" } as never],
+      });
+      const tree = await widen("/library", () => screen.getByRole("button", { name: PLACE_PICKER_LABEL }));
+      await waitFor(() => expect(within(tree).getAllByRole("link")[0]).toHaveFocus());
+    });
+
+    it("hands focus in the tree to the picker when the page narrows", async () => {
+      const resize = resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      render(<Documents />, { container: inMain() });
+      await settle();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      act(() => within(tree).getAllByRole("link")[0].focus());
+      act(() => resize());
+      expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
+      await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
+    });
+
+    it("moves nothing when the focus is still on the page", async () => {
+      const tree = await widen("/library?collection=col-q3", () =>
+        screen.getByRole("textbox", { name: "Search library" }),
+      );
+      await settle();
+      expect(screen.getByRole("textbox", { name: "Search library" })).toHaveFocus();
+      expect(tree.contains(document.activeElement)).toBe(false);
+    });
   });
 
   describe("a create answered after the tree is gone", () => {

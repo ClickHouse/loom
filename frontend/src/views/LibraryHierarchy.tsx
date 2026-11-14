@@ -13,8 +13,6 @@ import {
   forwardRef,
   type MouseEvent,
   type ReactNode,
-  type RefObject,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -120,26 +118,8 @@ function pathText(
   return `in ${parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ")}`;
 }
 
-/** The place picker's name, shown where no tree is; the tree hands it the focus when it leaves. */
+/** The place picker's name, shown where no tree is: the page hands it the focus when the tree goes. */
 export const PLACE_PICKER_LABEL = "Show the documents of";
-
-/** When `box`'s element leaves with the focus inside it (a resize swaps the tree and the
- *  picker), `target` takes it on the next frame, once the other is drawn. Only focus that fell
- *  to the page moves: a navigation away places its own. */
-export function useFocusHandoff(box: RefObject<HTMLElement | null>, target: () => HTMLElement | null): void {
-  const latest = useRef(target);
-  latest.current = target;
-  useLayoutEffect(() => {
-    const el = box.current;
-    return () => {
-      if (!el?.contains(document.activeElement)) return;
-      requestAnimationFrame(() => {
-        if (document.activeElement && document.activeElement !== document.body) return;
-        latest.current()?.focus();
-      });
-    };
-  }, [box]);
-}
 
 /** The place above the top: its label, the collection it is (null for the header's
  *  namespace) and how to open it. */

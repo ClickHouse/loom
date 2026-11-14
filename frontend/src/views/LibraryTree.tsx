@@ -23,11 +23,9 @@ import {
   cycleStart,
   isSharedWithMe,
   MORE_SHOWN,
-  PLACE_PICKER_LABEL,
   PlaceTitleLink,
   sharedWithMe,
   topLevelCollections,
-  useFocusHandoff,
   useShowMore,
 } from "./LibraryHierarchy";
 
@@ -242,14 +240,8 @@ export const LibraryTree = memo(function LibraryTree({
     );
   };
 
-  // A narrower page takes the tree away: focus in it goes to the place picker drawn instead.
-  // A title typed in its New collection form is dropped.
-  const nav = useRef<HTMLElement | null>(null);
-  useFocusHandoff(nav, () => document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`));
-
   return (
     <nav
-      ref={nav}
       aria-label="Library places"
       aria-busy={busy || undefined}
       className="library-tree"

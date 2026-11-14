@@ -61,7 +61,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
-import { TopLevelPlaces } from "./LibraryHierarchy";
+import { PLACE_PICKER_LABEL, TopLevelPlaces } from "./LibraryHierarchy";
 import { LibraryTree } from "./LibraryTree";
 import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
@@ -76,6 +76,7 @@ import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
+import { useLayoutFocusHandoff } from "../lib/useLayoutFocusHandoff";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -274,6 +275,14 @@ export function Documents() {
   // not measured yet, the select stands in.
   const treeHeight = useTreeHeight();
   const besideTree = treeHeight !== null;
+  // A resize that draws the tree or takes it away takes the controls only one layout has (the
+  // tree, the picker, the places below the documents): their focus goes to the place shown in
+  // the tree, else to the picker. A title typed in the tree's New collection form is dropped.
+  useLayoutFocusHandoff(besideTree, () => {
+    if (!besideTree) return document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`);
+    const tree = document.querySelector('nav[aria-label="Library places"]');
+    return tree?.querySelector<HTMLElement>('a[aria-current="page"]') ?? tree?.querySelector<HTMLElement>("a") ?? null;
+  });
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
