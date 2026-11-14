@@ -15,7 +15,6 @@ import { NEW_COLLECTION_FOCUS, placeFocusKey, placeTree } from "./LibraryTree";
 import { axeViolations } from "../test/axe";
 import { Documents } from "./Documents";
 import {
-  PLACE_PICKER_LABEL,
   REFRESH_TRIES,
   REFRESH_WAIT_MS,
   LibraryCollections,
@@ -24,6 +23,7 @@ import {
   useReadableCollections,
   type ReadableCollections,
 } from "./LibraryCollections";
+import { PLACE_PICKER_LABEL } from "./LibraryHierarchy";
 
 const api = vi.hoisted(() => ({
   listCollections: vi.fn(),

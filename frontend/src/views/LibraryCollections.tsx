@@ -11,7 +11,7 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { CollectionBack, CollectionChips, CollectionPath, cycleStart } from "./LibraryHierarchy";
+import { CollectionBack, CollectionChips, CollectionPath, cycleStart, PLACE_PICKER_LABEL } from "./LibraryHierarchy";
 import {
   COLLECTIONS_LISTED,
   COLLECTIONS_PAGES,
@@ -26,9 +26,6 @@ import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
-
-/** The place picker's name; the tree hands it the focus when it leaves. */
-export const PLACE_PICKER_LABEL = "Show the documents of";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";

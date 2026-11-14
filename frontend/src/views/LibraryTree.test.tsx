@@ -264,7 +264,7 @@ describe("LibraryTree", () => {
   it("sends one create while it is answered, however often Enter or Create is pressed", async () => {
     let answer: (r: unknown) => void = () => {};
     api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
-    tree();
+    const { onCreated } = tree();
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     const field = screen.getByRole("textbox", { name: "New collection at the top level" });
     await userEvent.type(field, "Plans{enter}");
@@ -272,6 +272,9 @@ describe("LibraryTree", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(api.createCollection).toHaveBeenCalledTimes(1);
     await act(async () => answer({ namespace: "col-plans", parent: "", created: true, title: "Plans" }));
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(toast.toast).toHaveBeenCalledTimes(1);
+    expect(toast.toast).toHaveBeenCalledWith("Created Plans", "ok");
   });
 
   it("lists a cycle in the list once, from the top, without hanging", () => {

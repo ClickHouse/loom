@@ -25,12 +25,12 @@ import {
   cycleStart,
   isSharedWithMe,
   MORE_SHOWN,
+  PLACE_PICKER_LABEL,
   PlaceTitleLink,
   sharedWithMe,
   topLevelCollections,
   useShowMore,
 } from "./LibraryHierarchy";
-import { PLACE_PICKER_LABEL } from "./LibraryCollections";
 
 /** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
 export const placeFocusKey = (collection: string | null) => `library-tree-place-${collection ?? ""}`;
