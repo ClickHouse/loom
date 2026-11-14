@@ -16,7 +16,7 @@ from ag2 import Middleware
 from ag2.assembly import AssemblerMiddleware
 from ag2.events import ModelRequest, TextInput, ToolCallEvent, ToolErrorEvent, ToolResultEvent
 from ag2.testing import TestConfig, TrackingConfig
-from ag2.tools.final.function_tool import FunctionTool
+from ag2.tools.final import FunctionTool
 from loom import Agent, SyncAgent
 from loom.errors import LoomError
 from loom.integrations.ag2 import LoomRecallPolicy, loom_tools

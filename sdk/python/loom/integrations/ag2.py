@@ -43,7 +43,7 @@ try:
     )
     from ag2.middleware import ToolExecution, ToolResultType
     from ag2.tools import tool
-    from ag2.tools.final.function_tool import FunctionTool
+    from ag2.tools.final import FunctionTool
 except ImportError as e:  # the framework is an optional extra
     raise ImportError("loom.integrations.ag2 needs ag2: pip install 'clickhouse-loom[ag2]'") from e
 
