@@ -325,13 +325,8 @@ async def _read_first_cell() -> tuple[str, str]:
 async def _first_cell_refusal(deployment_id: str) -> str:
     """Why the first cell's row may not be removed yet ('' when it may): its Postgres still
     holds a cell state, or is another deployment's. It reads `LOOM_PG_DSN` alone."""
-    from server.core import pg
-
-    if not pg.enabled() or not settings.pg_dsn:
-        return (
-            "the first cell keeps its state in Postgres: set LOOM_STORAGE_AUTHORITY=postgres "
-            "and LOOM_PG_DSN to the cell's"
-        )
+    if not settings.pg_dsn:
+        return "the first cell keeps its state in Postgres: set LOOM_PG_DSN to the cell's"
     state, recorded = await asyncio.wait_for(_read_first_cell(), timeout=_CHECK_S)
     if state != "open":
         return (

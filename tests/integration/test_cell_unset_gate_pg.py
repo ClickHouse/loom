@@ -250,7 +250,6 @@ async def test_loom_cell_removes_check_reads_the_first_cells_postgres_alone(
     from server.cli import cell as cell_cli
 
     async with own_database() as dsn:
-        monkeypatch.setattr(settings, "storage_authority", "postgres")
         monkeypatch.setattr(settings, "pg_dsn", dsn)
         monkeypatch.setattr(pg, "_expected", None)
         conn = await asyncpg.connect(dsn)

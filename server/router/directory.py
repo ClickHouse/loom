@@ -899,12 +899,9 @@ async def attach_begin(cell_name: str, begin: Begin) -> Attaching:
     async with _attach_change(cell_name) as (conn, found):
         if reason := begin_refusal(found, begin):
             raise OperatorRefused(reason)
-        # In SET, `current_fp` is the row's value before this statement.
         await conn.execute(
             "UPDATE loom_router.cells SET attach_started_at = COALESCE(attach_started_at, now()), "
-            "current_fp = COALESCE(current_fp, $2), "
-            "next_fp = CASE WHEN current_fp IS NULL THEN $3 ELSE next_fp END, "
-            "keys_fp = $4, updated_at = now() WHERE cell = $1",
+            "current_fp = $2, next_fp = $3, keys_fp = $4, updated_at = now() WHERE cell = $1",
             cell_name,
             begin.current_fp,
             begin.next_fp,

@@ -7,6 +7,7 @@ Needs LOOM_ROUTER_PG_DSN: a database of its own, never a cell's."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -673,75 +674,116 @@ async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) 
         await conn.close()
 
 
-@pytest.mark.asyncio
-async def test_a_live_placement_racing_a_batch_of_the_same_org_places_it_once(
-    own_dsn: str,
-) -> None:
-    """The batch holds the cell's row lock, not the org's: a live placement that read no
-    winner waits on the row lock, reads the batch's placement once it holds it, and answers
-    it as placed, with no quota judged and nothing counted twice."""
-    import asyncpg
-
+async def _attaching_first(own_dsn: str) -> tuple[str, str]:
+    """A first cell registered, begun and `enforced`: live placements and batches run."""
     await directory.migrate()
     name = f"lr-{uuid.uuid4().hex[:8]}"
     dep = f"dep-{name}"
     await directory.register(_first(name))
     await directory.attach_begin(name, directory.Begin(dep, _fp(name), None, "k", {}))
     await directory.attach_enforced(name, dep)
+    return name, dep
+
+
+async def _waits_on_the_row_lock(conn: Any, sql_part: str) -> None:
+    """Until a router connection whose statement holds `sql_part` waits on a lock, for at
+    most ten seconds."""
+    for _ in range(200):
+        waiting = await conn.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'loom-router' "
+            "AND wait_event_type = 'Lock' AND query LIKE $1",
+            f"%{sql_part}%",
+        )
+        if waiting:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"no router statement with {sql_part!r} waits on a lock")
+
+
+async def _placements_of(conn: Any, name: str) -> tuple[int, list[tuple[str, str]]]:
+    placed = await conn.fetchval("SELECT placed FROM loom_router.cells WHERE cell = $1", name)
+    audit = await conn.fetch(
+        "SELECT actor, detail->>'org' AS org FROM loom_router.audit WHERE action = 'place' "
+        "AND detail->>'cell' = $1 ORDER BY id",
+        name,
+    )
+    return placed, [(r["actor"], r["org"]) for r in audit]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_racing_a_live_placement_of_the_same_org_skips_it(
+    own_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A live placement holds the cell's row lock from its insert to its commit: a batch
+    naming the same org waits on that lock, then its insert skips the org, so it is placed,
+    counted and audited once."""
+    import asyncpg
+
+    name, dep = await _attaching_first(own_dsn)
+    inserted, release = asyncio.Event(), asyncio.Event()
+    real = directory._place_one
+
+    async def _held(*a: Any) -> None:
+        await real(*a)
+        inserted.set()
+        await release.wait()  # its transaction stays open, holding the row lock
+
+    monkeypatch.setattr(directory, "_place_one", _held)
     conn = await asyncpg.connect(own_dsn)
-    holder = await asyncpg.connect(own_dsn)
+    try:
+        async with asyncio.timeout(30):
+            live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
+            await inserted.wait()
+            batch = asyncio.ensure_future(directory.attach_place(name, dep, ["acme", "beta"]))
+            await _waits_on_the_row_lock(conn, "FOR UPDATE")
+            release.set()
+            assert await live == (name, dep)
+            assert await batch == (1, 2)  # beta alone is new
+        assert await _placements_of(conn, name) == (
+            2,
+            [(f"cell:{name}", "acme"), ("operator", "beta")],
+        )
+    finally:
+        release.set()
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_a_live_placement_racing_a_batch_of_the_same_org_answers_it_placed(
+    own_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A batch holds the cell's row lock, not the org's: a live placement that read no
+    winner waits on the row lock, reads the batch's placement once it holds it, and answers
+    it as placed, with no quota judged and nothing counted twice."""
+    import asyncpg
+
+    name, dep = await _attaching_first(own_dsn)
+    written, release = asyncio.Event(), asyncio.Event()
+    real = directory._attach_change
+
+    @contextlib.asynccontextmanager
+    async def _held(cell_name: str) -> Any:
+        async with real(cell_name) as locked:
+            yield locked
+            written.set()
+            await release.wait()  # the batch's writes are done, its commit held
+
+    monkeypatch.setattr(directory, "_attach_change", _held)
+    conn = await asyncpg.connect(own_dsn)
     try:
         # A full quota: a live placement judged on it would be refused.
         await conn.execute("UPDATE loom_router.cells SET placements_max = 0 WHERE cell = $1", name)
-        tx = holder.transaction()
-        await tx.start()
-        await holder.execute("SELECT pg_advisory_xact_lock($1)", directory._DIRECTORY_LOCK)
-        await holder.execute("SELECT 1 FROM loom_router.cells WHERE cell = $1 FOR UPDATE", name)
-        live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
-        for _ in range(100):  # the live placement waits on the row lock
-            waiting = await conn.fetchval(
-                "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'loom-router' "
-                "AND wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE%'"
-            )
-            if waiting:
-                break
-            await asyncio.sleep(0.05)
-        assert waiting == 1
-        # What the batch writes under the row lock, then commits.
-        await holder.execute(
-            "INSERT INTO loom_router.placements (org, cell) VALUES ('acme', $1)", name
-        )
-        await holder.execute(
-            "UPDATE loom_router.cells SET placed = placed + 1 WHERE cell = $1", name
-        )
-        await tx.commit()
-        assert await live == (name, dep)
-        assert (
-            await conn.fetchval("SELECT placed FROM loom_router.cells WHERE cell = $1", name) == 1
-        )
-        assert (
-            await conn.fetchval(
-                "SELECT count(*) FROM loom_router.audit WHERE actor = $1", f"cell:{name}"
-            )
-            == 0
-        )
-        # The other order: placed live first, then named in a batch, which skips it.
-        await conn.execute(
-            "UPDATE loom_router.cells SET placements_max = NULL WHERE cell = $1", name
-        )
-        assert await directory.place("beta", name, lambda _row: "") == (name, dep)
-        assert await directory.attach_place(name, dep, ["acme", "beta", "gamma"]) == (1, 3)
-        audit = await conn.fetch(
-            "SELECT actor, detail->>'org' AS org FROM loom_router.audit WHERE action = 'place' "
-            "AND detail->>'cell' = $1 ORDER BY id",
-            name,
-        )
-        assert [(r["actor"], r["org"]) for r in audit] == [
-            (f"cell:{name}", "beta"),
-            ("operator", "gamma"),
-        ]
+        async with asyncio.timeout(30):
+            batch = asyncio.ensure_future(directory.attach_place(name, dep, ["acme"]))
+            await written.wait()
+            live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
+            await _waits_on_the_row_lock(conn, "FOR UPDATE")
+            release.set()
+            assert await batch == (1, 1)
+            assert await live == (name, dep)
+        assert await _placements_of(conn, name) == (1, [("operator", "acme")])
     finally:
-        await holder.close()
+        release.set()
         await conn.close()
 
 

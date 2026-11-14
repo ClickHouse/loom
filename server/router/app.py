@@ -628,7 +628,8 @@ class Router:
         if refusal := _malformed_cell_refusal(request):
             return refusal
         return await _answered(
-            lambda: directory.operator_read(request.path_params["cell"]), _attach_answer
+            lambda: directory.operator_read(request.path_params["cell"]),
+            lambda found: {**_attach_answer(found), "other": found.other},
         )
 
     async def attach_begin(self, request: Request) -> JSONResponse:

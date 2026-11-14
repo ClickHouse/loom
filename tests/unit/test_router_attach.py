@@ -107,9 +107,7 @@ class _Conn:
         if "SET attach_started_at" in sql:
             row = cells[a[0]]
             row["attach_started_at"] = row["attach_started_at"] or NOW
-            if row["current_fp"] is None:
-                row["current_fp"], row["next_fp"] = a[1], a[2]
-            row["keys_fp"] = a[3]
+            row["current_fp"], row["next_fp"], row["keys_fp"] = a[1], a[2], a[3]
         elif "SET mode = 'enforced'" in sql:
             cells[a[0]]["mode"] = "enforced"
         elif "SET state = 'serving'" in sql:
@@ -290,7 +288,11 @@ def test_the_operator_reads_the_cells_row(client: TestClient, store: _Store) -> 
         "attach_started_at": None,
         "current_fp": None,
         "next_fp": None,
+        "other": None,
     }
+    # Any other row is named: every attach call refuses while it exists.
+    store.cells["eu-2"] = _cell_row(cell="eu-2", is_first=False, host="eu-2.example")
+    assert _call(client, "GET").json()["other"] == "eu-2"
 
 
 @pytest.mark.parametrize(
@@ -1033,7 +1035,8 @@ def test_the_first_cell_check_needs_an_open_postgres_of_the_rows_deployment(
     def _no_pool(*_a: Any, **_kw: Any) -> None:
         raise AssertionError("the check reads no pool")
 
-    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    # LOOM_PG_DSN alone: the CLI's storage authority setting is not read.
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
     monkeypatch.setattr(pg, "dedicated", _dedicated)
     monkeypatch.setattr(pg, "fetchrow", _no_pool)
@@ -1043,9 +1046,6 @@ def test_the_first_cell_check_needs_an_open_postgres_of_the_rows_deployment(
     assert (why in refusal) if why else refusal == ""
     assert sessions == [{"statement_timeout_ms": cell_cli._CHECK_STATEMENT_MS}]
     monkeypatch.setattr(settings, "pg_dsn", "")
-    assert "LOOM_PG_DSN" in asyncio.run(cell_cli._first_cell_refusal("dep-1"))
-    monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
-    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     assert "LOOM_PG_DSN" in asyncio.run(cell_cli._first_cell_refusal("dep-1"))
 
 
