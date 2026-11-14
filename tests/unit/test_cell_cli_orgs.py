@@ -257,6 +257,18 @@ def test_unset_cell_refuses_when_the_state_cannot_be_read(
         asyncio.run(_ch.check_orgs(["acme"]))
 
 
+def test_unset_cell_refuses_a_read_that_does_not_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Hung(_StateConn):
+        async def fetchval(self, sql: str, *_args: Any) -> int:
+            await asyncio.Event().wait()
+            return 0
+
+    _unset_on(monkeypatch, _Hung(4))
+    monkeypatch.setattr(_ch, "_UNSET_READ_S", 0.05)
+    with pytest.raises(_ch.OrgNotHeld, match="no answer within the bound"):
+        asyncio.run(_ch.check_orgs(["acme"]))
+
+
 def test_unset_cell_retries_a_full_connection_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     opened = _unset_on(monkeypatch, _StateConn(4, _rows(mode="recording")), fail=2)
     asyncio.run(_ch.check_orgs(["acme"]))

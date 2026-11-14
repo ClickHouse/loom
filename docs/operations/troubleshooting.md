@@ -267,8 +267,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   or that its "cell state is not read yet". A CLI command that declares an org refuses
   with "this deployment is a cell in enforced mode (cell ...) and LOOM_CELL is unset",
   "holds a partial cell state and LOOM_CELL is unset", or "cell state could not be read
-  (...)"; for the first, set `LOOM_CELL` on the CLI, and for the last, give its role the
-  grants of [upgrade step 15](upgrades.md#upgrade-procedure).
+  (...)"; for the first, set `LOOM_CELL` on the CLI, and for the last, act on the reason
+  it names: a missing grant ([upgrade step 15](upgrades.md#upgrade-procedure)) or a
+  Postgres that does not answer.
 - **Cause:** under the Postgres authority every server process reads the deployment's
   cell state (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`).
   With `LOOM_CELL` unset it serves only while none of them holds a row, or while they

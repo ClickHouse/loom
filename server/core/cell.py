@@ -8,10 +8,9 @@ single deployment while the deployment is no cell (`open`) or a first cell still
 failed reads. A process whose view is never read with `LOOM_CELL` unset (a CLI, the
 workers child) and every process under the ClickHouse authority read as `open`; a CLI
 command that declares an org judges the state on a session of its own instead
-(`server.cli._ch.check_unset_cell`). With
-`LOOM_CELL` set, a process serves only while three rows of its cell's Postgres are
-read and agree with its configuration (docs/architecture/cells.md, "The cell's own
-row"):
+(`server.cli._ch.check_unset_cell`). With `LOOM_CELL` set, a process serves only while
+three rows of its cell's Postgres are read and agree with its configuration
+(docs/architecture/cells.md, "The cell's own row"):
 
 - `loom.cell_first`: whether this cell is the deployment's first, and its name;
 - `loom.tenancy_mode`: `recording` or `enforced`;

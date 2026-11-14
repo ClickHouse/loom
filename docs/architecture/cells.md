@@ -455,15 +455,15 @@ in one statement, the mode row, the `first` row and whether any `loom.tenancy` o
 declares an org reads the same on a bounded session of its own: every state table absent
 (judged by `to_regclass`, so a role missing a grant still refuses) reads as `open`, and a
 failed read refuses. An org-free command, such as a token revocation, `loom migrate` or
-`loom doctor`, is not gated by the mode and runs, a Postgres outage included.
-Both rows absent with no tenancy or own row, as on a deployment never prepared, or the first
-cell in `recording`, leave the process serving as a single deployment; every state the
-`first` row's rule (above) counts as `enforced`, or as a `partial` state, gates it as
-`enforced` does. `enforced` (which attach sets on the first cell once every live process has
-`LOOM_CELL` set, and prepare on a later cell, whose processes run with it from their first
-boot) makes a server process unready, run no worker and answer nothing but its health probes
-and the probe route (so a prepare rerun can reach it), and makes the CLI command refuse; the
-readiness reason and the refusal name `LOOM_CELL`. So a pod or an operator's CLI that loses
+`loom doctor`, is not gated by the mode and runs, a Postgres outage included. Both rows
+absent with no tenancy or own row, as on a deployment never prepared, or the first cell in
+`recording`, leave the process serving as a single deployment; every state the `first` row's
+rule (above) counts as `enforced`, or as a `partial` state, gates it as `enforced` does.
+`enforced` (which attach sets on the first cell once every live process has `LOOM_CELL` set,
+and prepare on a later cell, whose processes run with it from their first boot) makes a
+server process unready, run no worker and answer nothing but its health probes and the probe
+route (so a prepare rerun can reach it), and makes the CLI command refuse; the readiness
+reason and the refusal name `LOOM_CELL`. So a pod or an operator's CLI that loses
 `LOOM_CELL` on an `enforced` cell writes for no org; one that also loses `LOOM_PG_DSN` or
 `LOOM_STORAGE_AUTHORITY` is refused by the authority check the deployment already runs
 (ClickHouse's `loom.storage_authority` record). The `loom cell` commands that connect to a

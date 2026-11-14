@@ -136,7 +136,7 @@ async def test_the_deployment_check_runs_on_the_state_session_with_the_steps_gra
         monkeypatch.setattr(pg, "_expected", ("dep-a", 1))
         await _ch.check_unset_cell()
         monkeypatch.setattr(pg, "_expected", ("dep-b", 1))
-        with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+        with pytest.raises(pg.AuthorityMismatch):
             await _ch.check_unset_cell()
 
 

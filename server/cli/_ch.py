@@ -90,6 +90,8 @@ async def check_unset_cell() -> None:
         return
     try:
         found, name = await asyncio.wait_for(_read_unset_state(), timeout=_UNSET_READ_S)
+    except pg.AuthorityMismatch:
+        raise  # another deployment's Postgres: refused as `check_configured` refuses it
     except Exception as e:  # noqa: BLE001 — an unread cell state refuses the command
         reason = str(e) or "no answer within the bound"
         raise OrgNotHeld(
