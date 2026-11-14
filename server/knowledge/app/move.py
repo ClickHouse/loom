@@ -27,7 +27,7 @@ from server.core.pg_lease import PublicationPending
 from server.core.shielded import to_its_end
 from server.erasure.app import ledger_reads
 from server.erasure.domain.scopes import may_cover
-from server.identity.app.namespace_autoregister import ensure_registered
+from server.identity.app.namespace_autoregister import maybe_autoregister
 from server.knowledge.api.models_knowledge import (
     KnowledgeMoveInput,
     KnowledgeMoveOutput,
@@ -88,20 +88,22 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
     from server.auth.authz import Role, row_in_scope
 
     named = present(input.to_namespace)
-    if named is None:
-        raise ValidationError("to_namespace names no namespace")
+    if named is None or named == "*":
+        raise ValidationError("to_namespace names no one namespace")
+    auth = current_auth()
     try:
-        to = personal_namespace(current_auth(), input.org, named)
+        to = personal_namespace(auth, input.org, named)
     except ValueError:
         raise ValidationError("to_namespace @me names an end user's own files") from None
     if to == input.namespace:
         raise ValidationError("to_namespace is the namespace the documents are in")
     if not await row_in_scope(input.org, to, Role.WRITER):
         return KnowledgeMoveOutput(found=False)
-    # The transport registers the request's namespace; the one written to is this call's.
-    auth = current_auth()
-    if auth is not None and auth.subject:
-        await ensure_registered(input.org, to, subject=str(auth.subject), op_name="knowledge.move")
+    # The transport registers the request's namespace; the one written to is this call's,
+    # under the transport's own rule (`should_autoregister`).
+    from server.knowledge.api.ops_knowledge import knowledge_move
+
+    await maybe_autoregister(knowledge_move, org=input.org, namespace=to, auth=auth)
     uris = list(dict.fromkeys(input.source_uris))
     with own_write_reads():  # a document written a call ago moves too
         started = await blobs.ch_now_s()
@@ -502,10 +504,9 @@ async def _store_one(doc: DocumentRow, sha: str, dst: str) -> bool:
             doc.org, doc.namespace, sha, dst, size=held.size, uploader=doc.user_id
         ):
             return True
-        # Its row went after it was located: moved to the bucket, or swept.
+        # Not copied whole: read it again where it is now (still a row, or moved to the
+        # bucket) and store its bytes; gone only when no row holds it.
         held = await blobs.locate(doc.org, doc.namespace, sha)
-        if held is not None and not held.location:
-            held = None
     data = await blobs.read(doc.org, doc.namespace, sha, stored=held) if held else None
     if data is None:
         return False

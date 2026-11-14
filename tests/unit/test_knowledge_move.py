@@ -494,7 +494,7 @@ async def test_which_erasures_reach_a_document(
 def originals(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """An original held as a ClickHouse row in `src` whose copy does not land, and what
     `locate` answers after that; what was stored again."""
-    state: dict[str, Any] = {"after": None, "put": [], "located": 0}
+    state: dict[str, Any] = {"after": None, "put": [], "located": 0, "read": []}
 
     async def locate(org: str, ns: str, sha: str) -> Any:
         state["located"] += 1
@@ -504,7 +504,7 @@ def originals(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return False
 
     async def read(org: str, ns: str, sha: str, *, stored: Any) -> bytes:
-        assert stored.location
+        state["read"].append(stored)
         return b"bytes"
 
     async def put(org: str, ns: str, data: bytes, *, uploader: str) -> str:
@@ -979,3 +979,42 @@ async def test_a_delete_refused_after_the_claims_cut_off_still_takes_the_copy_ba
     monkeypatch.setattr(move, "_delete_source", refused_late)
     assert _answers(await _run()) == [(URI, False, "busy")]
     assert store["taken_back"] == [URI] and store["audited"] == []
+
+
+async def test_an_original_whose_copy_did_not_land_is_stored_from_its_row_again(
+    originals: dict[str, Any],
+) -> None:
+    # The source still holds it as a row (a newer row of the same bytes there, or a replica
+    # behind, made the copy's check fail): its bytes are stored, and the copy keeps it.
+    originals["after"] = blobs.Stored(5, "")
+    assert await move._store_originals(_doc("src", blob_path="sha"), "dst") == {}
+    assert originals["put"] == [("dst", b"bytes")]
+    assert originals["read"] == [blobs.Stored(5, "")]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_the_namespace_moved_to_is_registered_under_the_transports_rule(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from server.identity.app import namespace_autoregister
+    from server.settings import settings
+
+    registered: list[tuple[str, str]] = []
+
+    async def ensure(org: str, ns: str, *, subject: str, op_name: str) -> bool:
+        registered.append((ns, op_name))
+        return True
+
+    monkeypatch.setattr(namespace_autoregister, "ensure_registered", ensure)
+    monkeypatch.setattr(settings, "namespace_autoregister_enabled", enabled)
+    monkeypatch.setattr(move, "current_auth", lambda: SimpleNamespace(subject="svc"))
+    assert _answers(await _run()) == [(URI, True, "")]
+    assert registered == ([("dst", "knowledge.move")] if enabled else [])
+
+
+async def test_a_wildcard_namespace_is_refused(store: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        await _run(to="*")
+    assert store["copied"] == []
