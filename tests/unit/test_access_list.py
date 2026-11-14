@@ -76,7 +76,8 @@ def test_unread_is_stored_empty_as_every_other_writer_stores_it() -> None:
 def test_a_read_list_that_admits_nobody_is_stored_apart_from_unread() -> None:
     nobody = access_list.AccessList()
     assert access_list.to_json(nobody) != ""
-    assert access_list.from_json(access_list.to_json(nobody)) == nobody != access_list.UNREAD
+    assert access_list.from_json(access_list.to_json(nobody)) == nobody
+    assert nobody != access_list.UNREAD
 
 
 def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
