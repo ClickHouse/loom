@@ -666,6 +666,9 @@ def test_a_mirrored_source_is_stored_where_a_build_without_items_finds_nothing(
     [row] = ch.inserted("knowledge_sources")
     assert row["kind"] == "" and row["source_kind"] == "gdrive"
     assert row["credential_enc"] == "" and row["secret_enc"] and row["access"] == "mirrored"
+    # Read back, it is still mirrored; an empty value reads `namespace`.
+    assert store._source(row).access == "mirrored"
+    assert store._source({**row, "access": ""}).access == "namespace"
 
 
 def test_a_sync_state_write_leaves_the_version_to_the_server(

@@ -197,7 +197,7 @@ async def _run_steps(
         await marks.bump(input.org, marks.ORG_WIDE, "erasure")
     with erasure_mutations.saga_scope(erasure_id), erasure_mutations.purge_scope(purge):
         for name, step in steps:
-            run = step if input.scope_type == "user_id" else with_mirrors(step)
+            run = step if input.scope_type == "user_id" else with_mirrors(name, step)
             with erasure_mutations.step_scope(name):
                 try:
                     await run(input.org, scope)

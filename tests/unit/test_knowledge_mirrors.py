@@ -63,8 +63,8 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """`team` has one mirror; the calls the steps make on the registry."""
     calls: list[Any] = []
 
-    async def _mirrors_of(org: str, namespaces: list[str], **_: Any) -> dict[str, str]:
-        calls.append(("mirrors_of", namespaces))
+    async def _mirrors_of(org: str, namespaces: list[str], ch: Any = None) -> dict[str, str]:
+        calls.append(("mirrors_of", namespaces) if ch is None else ("mirrors_of", namespaces, ch))
         return {MIRROR: "team"} if "team" in namespaces else {}
 
     async def _forget(org: str, found: dict[str, str]) -> None:
@@ -84,15 +84,29 @@ def test_a_step_runs_over_the_mirrors_as_a_purge(registry: list[Any], purge: boo
         return 1
 
     with purge_scope(purge):
-        assert asyncio.run(saga_steps.with_mirrors(step)(ORG, "team")) == 2
+        assert asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, "team")) == 2
     assert seen == [("team", purge), ([MIRROR], True)]
+
+
+def test_a_postgres_step_runs_once_over_the_namespace_and_its_mirrors(
+    registry: list[Any],
+) -> None:
+    seen: list[Any] = []
+
+    async def step(org: str, namespace: Any) -> int:
+        seen.append(namespace)
+        return 1
+
+    # One transaction, so the one mark it commits covers the mirror for a replay.
+    asyncio.run(saga_steps.with_mirrors("pg_memory.delete", step)(ORG, "team"))
+    assert seen == [["team", MIRROR]]
 
 
 def test_a_mirror_is_never_looked_up_for_a_mirror(registry: list[Any]) -> None:
     async def step(org: str, namespace: Any) -> int:
         return 0
 
-    asyncio.run(saga_steps.with_mirrors(step)(ORG, ["other", MIRROR]))
+    asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, ["other", MIRROR]))
     assert registry == [("mirrors_of", ["other"])]
 
 
@@ -181,10 +195,13 @@ def test_the_evidence_census_counts_the_mirror_too(
     registry: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _counted(monkeypatch, left_in_mirror=2)
+    conn = object()
     found, unread = asyncio.run(
-        saga_steps.evidence_with_mirrors(ORG, "namespace", "team", spellings=None)
+        saga_steps.evidence_with_mirrors(ORG, "namespace", "team", spellings=None, ch=conn)  # type: ignore[arg-type]
     )
     assert found == {"loom.memory": 2} and unread == {}
+    # The registry is read on the caller's connection, as the census is.
+    assert ("mirrors_of", ["team"], conn) in registry
 
 
 def test_a_failed_saga_s_census_counts_the_mirror(

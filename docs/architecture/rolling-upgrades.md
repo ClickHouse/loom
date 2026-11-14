@@ -739,10 +739,11 @@ schema. These rules keep that safe. The operator procedure is in
     it holds, `code.repo.remove` for a repository and `namespace.delete`. The build that
     writes mirrors comes after this one, so the build beside it already refuses the
     form; the one gap is a name an N-1 process registers or writes after the migration
-    ran. No build writes a mirror yet; the step that first writes one runs the same
-    check (`server/core/schema/prechecks.py`) before its first write, so no such
-    namespace is ever taken for a mirror. `tests/unit/test_mirror_names_refused.py`
-    checks N's side, and the mixed-version gate does not check this rule.
+    ran. This build writes no mirror, so no namespace of the form is taken for one; the
+    code that first writes a mirror runs the same check
+    (`server/core/schema/prechecks.py`) before its first write.
+    `tests/unit/test_mirror_names_refused.py` checks N's side, and the mixed-version
+    gate does not check this rule.
 52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
     `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
     default (`namespace`) is what every row N-1 writes means. N stores a source with
@@ -751,8 +752,9 @@ schema. These rules keep that safe. The operator procedure is in
     pass leaves its delete request alone, and `check`, `rotate`, `update` and `sync_now`
     refuse one (`BAD_KIND`), so beside the build that writes mirrors it never syncs a
     mirrored source into the named namespace. On N, each namespace erasure step runs
-    over the named namespaces and then over every mirror they have had, as a purge, and
-    the census counts every row a mirror still holds, so a step a resume or replay runs
+    over the named namespaces and then over every mirror they have had, as a purge (a
+    Postgres step over both in one transaction, so its one mark covers both), and the
+    census counts every row a mirror still holds, so a step a resume or replay runs
     again covers the mirrors too; the last step, `knowledge_mirrors.forget`, writes the
     mirrors `deleted`, and a live one keeps the name in use. N-1 runs no mirror pass and
     counts no registry row; this build writes no mirror, so N-1 meets an empty registry.
@@ -764,9 +766,9 @@ schema. These rules keep that safe. The operator procedure is in
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
 once with a Keeper and once without) boots the base build on an empty ClickHouse, then
-this build, which applies its migrations, then the base again on the newer schema, and
-a third process of this build with a changed dashboard bundle and one no-op migration
-more (N+1). It checks:
+this build, which applies its migrations, then the base again on the newer schema, and a
+third process of this build with a changed dashboard bundle and one no-op migration more
+(N+1). It checks:
 
 - each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict

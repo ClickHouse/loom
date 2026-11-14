@@ -721,7 +721,7 @@ async def _saga_namespace(
         )
 
     for name, fn in authority_steps(NAMESPACE_STEPS):
-        await _step(name, with_mirrors(fn), org, namespace)
+        await _step(name, with_mirrors(name, fn), org, namespace)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse

@@ -202,14 +202,19 @@ async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) 
 
 
 def with_mirrors(
-    step: Callable[[str, _NS], Awaitable[int]],
+    name: str, step: Callable[[str, _NS], Awaitable[int]]
 ) -> Callable[[str, _NS], Awaitable[int]]:
-    """`step` over the named namespaces in the erasure's mode, then over their mirrors as
-    a purge: no token reads or restores an `acl-` name, so its rows leave the disk."""
+    """Step `name` over the named namespaces in the erasure's mode, then over their
+    mirrors as a purge: no token reads or restores an `acl-` name, so its rows leave the
+    disk. A Postgres step deletes in either mode and marks its commit for a replay, so
+    it runs once over both, in one transaction."""
 
     async def run(org: str, namespace: _NS) -> int:
+        mirrors = list(await _mirrors_of(org, namespace))
+        if name in PG_ONLY_STEPS:
+            return await step(org, [*namespaces_of(namespace), *mirrors] if mirrors else namespace)
         n = await step(org, namespace)
-        if mirrors := list(await _mirrors_of(org, namespace)):
+        if mirrors:
             with purge_scope(True):
                 n += await step(org, mirrors)
         return n
