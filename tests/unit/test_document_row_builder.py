@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import time
 from datetime import datetime
 from typing import Any
@@ -26,7 +25,8 @@ from tests.unit.schema_ddl import column_names
 
 ERASED = datetime(2026, 5, 1, 12, 0, 0)
 INGESTED = datetime(2026, 4, 1, 9, 0, 0)
-LISTED = access_list.to_json(access_list.AccessList(emails=("a@example.com",)))
+LISTED_ACCESS = access_list.AccessList(emails=("a@example.com",))
+LISTED = access_list.to_json(LISTED_ACCESS)
 
 
 def _doc(**over: Any) -> DocumentRow:
@@ -951,7 +951,9 @@ def test_a_permission_list_is_written_only_by_the_writer_that_passes_it() -> Non
         documents_repo.build_document_row(doc, version=3, superseded_at=ERASED, access_json=LISTED)
 
 
-def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> None:
+def test_a_metadata_edit_and_a_delete_write_no_permission_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from server.knowledge.api.models_knowledge import (
         KnowledgeDeleteInput,
         KnowledgeUpdateMetadataInput,
@@ -959,13 +961,13 @@ def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> N
 
     rows = _capture_inserts(monkeypatch)
 
-    async def _get_one(*a, **kw):
+    async def _get_one(*a: Any, **kw: Any) -> DocumentRow:
         return _doc(access_json=LISTED)
 
-    async def _one_chunk(*a, **kw):
+    async def _one_chunk(*a: Any, **kw: Any) -> int:
         return 1
 
-    async def _noop(*a, **kw):
+    async def _noop(*a: Any, **kw: Any) -> None:
         return None
 
     monkeypatch.setattr(documents_repo, "get_one", _get_one)
@@ -980,15 +982,6 @@ def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> N
         kh.handle_knowledge_delete(KnowledgeDeleteInput(org="o", namespace="n", source_uri="doc-a"))
     )
     assert [r["access_json"] for r in rows] == ["", ""]
-
-
-def test_no_operation_takes_or_answers_a_permission_list() -> None:
-    from server.operations.registry import ALL_OPERATIONS
-
-    for op in ALL_OPERATIONS:
-        for model in (op.input_model, op.output_model):
-            schema = json.dumps(model.model_json_schema())
-            assert "access_json" not in schema and "AccessList" not in schema, op.name
 
 
 def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1011,7 +1004,7 @@ def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     ("passed", "written"),
-    [({"access": access_list.AccessList(emails=("a@example.com",))}, LISTED), ({}, "")],
+    [({"access": LISTED_ACCESS}, LISTED), ({}, "")],
 )
 def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
     monkeypatch: pytest.MonkeyPatch, passed: dict[str, Any], written: str
@@ -1027,7 +1020,9 @@ def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
     assert [r["access_json"] for r in rows] == [written]
 
 
-def test_a_metadata_edit_that_reindexes_writes_no_permission_list(monkeypatch) -> None:
+def test_a_metadata_edit_that_reindexes_writes_no_permission_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
 
     rows = _capture_inserts(monkeypatch)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -47,6 +48,7 @@ def test_every_drive_role_and_discoverable_share_is_listed() -> None:
     "permission",
     [
         _perm("domain", domain="example.com", allowFileDiscovery=False),  # link-only
+        _perm("domain", domain="example.com"),  # discoverability unknown
         _perm("anyone", allowFileDiscovery=False),
         _perm("anyone"),  # discoverability unknown
         _perm("user", emailAddress="gone@example.com", deleted=True),
@@ -76,11 +78,15 @@ def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
     a = AccessList(emails=("a@example.com",), owner="user:a", domains=("example.com",), anyone=True)
     text = access_list.to_json(a)
     assert access_list.from_json(text) == a
-    reordered = access_list.from_drive_permissions(
-        [_perm("user", emailAddress="A@example.com"), _perm("user", emailAddress="a@example.com")]
+    respelled = access_list.from_drive_permissions(
+        [
+            _perm("user", emailAddress="b@example.com"),
+            _perm("user", emailAddress="A@example.com"),
+            _perm("user", emailAddress="a@example.com"),
+        ]
     )
-    assert access_list.to_json(reordered) == access_list.to_json(
-        AccessList(emails=("a@example.com",))
+    assert access_list.to_json(respelled) == access_list.to_json(
+        AccessList(emails=("a@example.com", "b@example.com"))
     )
 
 
@@ -109,3 +115,12 @@ def test_a_list_built_directly_is_stored_in_the_one_spelling() -> None:
     assert access_list.to_json(built) == access_list.to_json(
         AccessList(emails=("a@example.com", "b@example.com"))
     )
+
+
+def test_no_operation_takes_or_answers_a_permission_list() -> None:
+    from server.operations.registry import ALL_OPERATIONS
+
+    for op in ALL_OPERATIONS:
+        for model in (op.input_model, op.output_model):
+            schema = json.dumps(model.model_json_schema())
+            assert "access_json" not in schema and "AccessList" not in schema, op.name
