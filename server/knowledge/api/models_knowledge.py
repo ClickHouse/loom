@@ -656,7 +656,7 @@ class KnowledgeMoveOutput(BaseModel):
     found: bool
     # Where the documents went (`@me` resolved to the end user's own collection).
     to_namespace: str = ""
-    # One per source asked for, in the order asked.
+    # One per distinct source asked for, in the order first asked.
     results: list[_KnowledgeMoveResult] = Field(default_factory=list)
 
 

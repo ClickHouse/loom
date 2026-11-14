@@ -395,7 +395,7 @@ Move documents to another namespace of the org: a collection, `@me` (an end user
 | --- | --- | --- |
 | `found` | `bool` | False when the caller cannot write to `to_namespace`: nothing moved. |
 | `to_namespace` | `str` | Where the documents went (`@me` resolved to the end user's own collection). |
-| `results` | `list[_KnowledgeMoveResult]` | One per source asked for, in the order asked. |
+| `results` | `list[_KnowledgeMoveResult]` | One per distinct source asked for, in the order first asked. |
 
 ## `knowledge.outline`
 

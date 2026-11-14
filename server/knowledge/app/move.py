@@ -132,7 +132,8 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
         found=True,
         to_namespace=to,
         results=[
-            # A cut-off as its claims were given up answers busy, after the tombstone.
+            # Moved once its tombstone is in, even when a cut-off as its claims were given up
+            # made `_move` answer busy.
             _KnowledgeMoveResult(source_uri=u, moved=True, reason="")
             if u in moved
             else _KnowledgeMoveResult(source_uri=u, reason=reasons[u])

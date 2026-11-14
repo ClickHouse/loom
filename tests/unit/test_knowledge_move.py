@@ -837,3 +837,19 @@ async def test_a_cancel_while_the_claims_are_given_up_still_audits_the_move(
         await _run()
     assert store["deleted"] == [URI] and store["forgotten"] == [URI]
     assert store["audited"][0]["subject"]["source_uris"] == [URI]
+
+
+async def test_me_from_an_end_user_moves_into_their_own_collection(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from server.core.principals import personal_name
+
+    mine = personal_name(ORG, "user:u1")
+    store[mine] = {}
+    monkeypatch.setattr(move, "current_auth", lambda: SimpleNamespace(subject="user:u1"))
+    out = await _run(to="@me")
+    assert out.to_namespace == mine
+    assert _answers(out) == [(URI, True, "")]
+    assert store["audited"][0]["namespace"] == mine

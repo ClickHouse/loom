@@ -789,3 +789,19 @@ async def test_an_erased_move_leaves_an_original_a_concurrent_write_of_its_bytes
     ).result_rows
     assert data.hex().upper() in {r[0] for r in stored}
     assert _live_rows(ch_client, src, uri) == 1
+
+
+def test_me_from_a_service_token_is_refused_over_http(
+    control_plane_url: str, mint_test_token: Any
+) -> None:
+    import httpx
+
+    src, _, uri = _places()
+    token = mint_test_token(org=ORG, namespaces=[src], roles=["writer"], subject="svc")
+    with httpx.Client(base_url=control_plane_url, timeout=30.0) as c:
+        r = c.post(
+            "/v1/knowledge.move",
+            json={"org": ORG, "namespace": src, "to_namespace": "@me", "source_uris": [uri]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert r.status_code == 422, r.text
