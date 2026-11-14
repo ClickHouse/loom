@@ -416,16 +416,22 @@ one slow source never holds the others back.
 
 What fails for every file is the turn's: the token exchange, the listing, a `401` on any
 request (`credential_invalid`), a rate limit, and an extractor whose capabilities cannot
-be read. Such a turn keeps the stamp, so the next pass lists the same files again. A
-folder source holds at most 50,000 documents (not a setting): at that bound a turn
-writes no new file and notes `too_many_documents`, and goes on updating and retiring the
-stored ones, so removing an item brings the source back under it; a held file comes in
-with the next full listing once there is room (the periodic one, or `sync_now` with
-`full`), and only a turn that lists it notes the bound, so a clean status between full
-listings does not mean every file is in; a read of the stored copies that finds more
-than the bound ends the turn `failed` with `too_many_documents`, since past it a stored
-file would read as new; such a source retires nothing, so only `remove` with
-`delete_documents` brings it back. Trouble with one file is that file's:
+be read. Such a turn keeps the stamp, so the next pass lists the same files again.
+
+A source of any kind holds at most `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents
+(default 50,000, at most 200,000), its stored ones plus the new ones a turn writes. At
+that bound a turn tries no new file and notes `too_many_documents` with how many it held
+back, and goes on updating and retiring the stored ones. Removing an item or raising the
+setting brings a source back under it; a `recording` source, which retires nothing,
+comes back only by raising the setting or by `knowledge.delete` of some of its
+documents. A held file comes in with the next full listing once there is room (the
+periodic one, or `sync_now` with `full`). The count is of the new files the turn did not
+try, so it includes any that might never be written (a format no extractor reads), and
+only a turn that lists them notes it, so a clean status between full listings does not
+mean every file is in. The turn reads the stored copies in pages by address, so a source
+over the bound (a lowered setting) still compares every file and retires as usual.
+
+Trouble with one file is that file's:
 
 - A file the store refuses on its own (a `403` or `404` on its export, download or deck
   read: an export over the store's limit, downloads turned off), one over
@@ -623,7 +629,9 @@ A recording its store no longer lists retires nothing: both stores delete record
 and transcripts on their own retention schedule (a conference record after 30 days), so
 absence is not the writer asking. A recording's document goes with
 `remove(delete_documents=true)` or `knowledge.delete`; while the store still lists it, a
-full listing writes it again.
+full listing writes it again. So a recording source only grows, and at
+`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` it holds back every new recording until the
+setting is raised or some of its documents are deleted.
 
 Speaker names are text of the transcript like any other, under the same rules as every
 document: the document is written as the sync worker with `user_id` `-`, so a

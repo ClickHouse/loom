@@ -72,22 +72,18 @@ account has no recordings folder of its own.
 
 A source holds at most 300 items (a wire contract, not a setting; a `linear` or `notion`
 source keeps its 20 until its turn bounds what it lists), and at most
-`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents (default 50,000: today's bound on the
-read of a source's stored copies, made a setting). The bound counts the source's stored
-documents plus the new files a listing finds. A turn over it (a listing grown past it,
-an item swap whose new files are listed before the old copies retire, or a lowered
-setting) holds back new documents only: it finishes its listing, rewrites changed lists,
-retires, and lands its listing row, so its copies drain back under the bound and no list
-goes stale; `inspect` and `loom doctor` show `too_many_documents` meanwhile, with the
-count, for a `namespace` source; for a mirrored source, its connected owner sees the
-code without the count, and a platform admin sees both (exception 4). The read of a
-source's stored copies goes in pages by `source_uri`, so it never cuts one off. Not
-built yet: the setting and the paged read. Until then the bound is the constant
-`REVISIONS_LIMIT` (50,000), the read takes one row past it, and a source that holds more
-fails every turn (`too_many_documents: more than 50000`) and retires nothing, so only
-`remove` with `delete_documents` brings it back; under the bound a turn holds back new
-files as described. A listing asks the store about at most 50 parent folders per query
-(not a setting), so a source of many folders lists in several queries; a recursive
+`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents (default 50,000). The bound counts the
+source's stored documents plus the new ones a turn writes (at most 200,000, since the
+paged read of the stored copies costs about the square of the bound over 10,000). A turn
+over it (a listing grown past it, an item swap whose new files are listed before the old
+copies retire, or a lowered setting) holds back new documents only: it finishes its
+listing, rewrites changed lists, retires, and lands its listing row, so its copies drain
+back under the bound and no list goes stale; `inspect` and `loom doctor` show
+`too_many_documents` meanwhile, with the count, for a `namespace` source; for a mirrored
+source, its connected owner sees the code without the count, and a platform admin sees
+both (exception 4). The read of a source's stored copies goes in pages by `source_uri`,
+so it never cuts one off. A listing asks the store about at most 50 parent folders per
+query (not a setting), so a source of many folders lists in several queries; a recursive
 folder's subfolders are walked on every listing, so a new file in a new subfolder
 arrives with the next turn, and files moved in with it (a move keeps a file's change
 time) with the next full listing; a walk the pass deadline cuts leaves the listing
@@ -949,26 +945,23 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
   every org: an SDK app that has not opted in, and a third-party MCP client, which
   cannot.
 - `recording` sources lose the `meet` provider.
-- A source whose stored documents plus new files pass
-  `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
-  reports `too_many_documents`, where today it syncs on with a truncated comparison.
 - The gate of `add`, `update`, `check`, `sync_now` and `remove` takes `writer`, with
   `admin` checked by the handler for shared and crawl sources; `rotate` is refused for a
   connected source.
 
 ## Settings
 
-| Setting                                              | Default | Meaning                                                                                                    |
-| ---------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
-| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`            | 3600    | a source's listing or group members row older than this admits nobody                                      |
-| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents plus new files; past it a turn holds back new documents                        |
-| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                                              |
-| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                                            |
-| `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`            | false   | mirrored sources may be added; set once every Loom client and hook honours `mirrored: true`                |
-| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`    | 40      | documents a pass fetches, writes and retires for mirrored sources, apart from the namespace sources' bound |
-| `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off                                   |
-| `LOOM_CONNECT_NOTION_CLIENT_ID`, `_SECRET`           | unset   | the page store's public integration                                                                        |
-| `LOOM_CONNECT_LINEAR_CLIENT_ID`, `_SECRET`           | unset   | the project tracker's OAuth application                                                                    |
+| Setting                                              | Default | Meaning                                                                                                      |
+| ---------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`            | 3600    | a source's listing or group members row older than this admits nobody                                        |
+| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents plus the new ones a turn writes, at most 200,000; at it a turn tries no new file |
+| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                                                |
+| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                                              |
+| `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`            | false   | mirrored sources may be added; set once every Loom client and hook honours `mirrored: true`                  |
+| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`    | 40      | documents a pass fetches, writes and retires for mirrored sources, apart from the namespace sources' bound   |
+| `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off                                     |
+| `LOOM_CONNECT_NOTION_CLIENT_ID`, `_SECRET`           | unset   | the page store's public integration                                                                          |
+| `LOOM_CONNECT_LINEAR_CLIENT_ID`, `_SECRET`           | unset   | the project tracker's OAuth application                                                                      |
 
 The redirect URI to register with each store is
 `<LOOM_PUBLIC_BASE_URL>/v1/connect/<kind>/callback`.

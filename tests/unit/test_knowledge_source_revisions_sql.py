@@ -54,6 +54,38 @@ async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
     assert hashes == expected
 
 
+def _chunk(name: str) -> str:
+    return (
+        "INSERT INTO loom.chunks (org, namespace, source_uri, chunk_idx, content, doc_version,"
+        " embedding_model, embedding_dim, embedding, tags) VALUES ('o', 'ns',"
+        f" 'https://docs.example.com/document/d/{name}/edit', 0, 'x', 1, 'm', 3072,"
+        f" arrayWithConstant(3072, toBFloat16(0)), ['{source_tag('drive')}'])"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pictures", [True, False])
+@pytest.mark.parametrize("searchable_only", [True, False])
+async def test_the_read_pages_by_address_to_the_last_document(
+    monkeypatch: pytest.MonkeyPatch, pictures: bool, searchable_only: bool
+) -> None:
+    monkeypatch.setattr(store, "REVISIONS_PAGE", 2)
+    # Every document but "link" has live chunks, so four of five are searchable.
+    searchable = [n for n in DOCS if n != "link"]
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        *(_row(n, c) for n, c in DOCS.items()),
+        *(_chunk(n) for n in searchable),
+    )
+    rows = await store.source_revisions(
+        "o", "ns", "drive", searchable_only=searchable_only, pictures=pictures, ch=ch
+    )
+    assert sorted(r["file_id"] for r in rows) == sorted(searchable if searchable_only else DOCS)
+
+
 # Each line, whether the stored check flags it and whether the conversion drops it: the
 # check flags every line the conversion drops, and a line that only starts like a
 # definition too, which the stored-copy comparison then finds unchanged.

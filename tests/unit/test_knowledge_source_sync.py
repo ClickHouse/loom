@@ -2848,11 +2848,9 @@ def _three_docs(world: _World) -> None:
 def test_a_source_at_its_bound_writes_no_new_file_but_syncs_on(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.knowledge.store import sources as sources_store
-
     _three_docs(world)
     # Exactly at the bound: the read is whole, the turn goes on, a new file waits.
-    monkeypatch.setattr(sources_store, "REVISIONS_LIMIT", 3)
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 3)
     world.files.append(_file("doc4", DOCS, "2026-01-04T00:00:00.000Z"))
     asyncio.run(source_sync.run_sync(full=True))
     detail = _detail(world)
@@ -2860,28 +2858,97 @@ def test_a_source_at_its_bound_writes_no_new_file_but_syncs_on(
     assert detail["error"].startswith("too_many_documents: 1 new files past 3")
 
 
-def test_a_source_whose_read_is_cut_at_the_bound_writes_nothing(
+def test_a_source_over_a_lowered_bound_still_retires_and_writes_nothing_new(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.knowledge.store import sources as sources_store
-
     _three_docs(world)
-    # More stored than the bound: the read is cut, so the turn trusts none of it.
-    monkeypatch.setattr(sources_store, "REVISIONS_LIMIT", 2)
-    world.files = world.files[:1]
+    # More stored than the bound: every stored copy is still read and compared.
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 2)
+    world.files = [world.files[0], _file("doc4", DOCS, "2026-01-04T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync(full=True))
     detail = _detail(world)
-    assert len(world.docs) == 3 and detail["status"] == "failed"
-    assert detail["error"].startswith("too_many_documents: more than 2")
+    assert sorted(world.docs) == [_uri("doc1")] and detail["status"] == "ok"
+    assert detail["error"].startswith("too_many_documents: 1 new files past 2")
+
+
+def test_a_new_file_another_writer_holds_takes_no_room_under_the_bound(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
+    world.docs[_uri("doc1")] = {"actor": "human:ann", "tags": [], "metadata": {}}
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    asyncio.run(source_sync.run_sync())
+    assert _uri("doc2") in world.docs and _detail(world)["error"] == ""
+
+
+def test_a_held_file_costs_no_read_of_its_address(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
+    asked: list[str] = []
+    may_write = source_sync._may_write
+
+    async def _counted(src: Any, uri: str) -> bool:
+        asked.append(uri)
+        return await may_write(src, uri)
+
+    monkeypatch.setattr(source_sync, "_may_write", _counted)
+    world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
+    asyncio.run(source_sync.run_sync(full=True))
+    assert _uri("doc2") not in asked and _uri("doc2") not in world.docs
+
+
+def test_a_new_file_the_store_refuses_takes_no_room_under_the_bound(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
+    world.files = [
+        _file("bad1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    world.file_answers["bad1"] = httpx.Response(403)
+    asyncio.run(source_sync.run_sync())
+    assert list(world.docs) == [_uri("doc2")] and "too_many" not in _detail(world)["error"]
+
+
+def test_a_new_file_past_the_room_is_counted_held_untried(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("bad2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    # It would be refused, but past the room it is not tried, so it counts as held.
+    world.file_answers["bad2"] = httpx.Response(403)
+    asyncio.run(source_sync.run_sync())
+    detail = _detail(world)
+    assert list(world.docs) == [_uri("doc1")] and detail["unconverted"] == 0
+    assert detail["error"] == "too_many_documents: 1 new files past 1"
+
+
+def test_a_moved_file_at_the_bound_takes_no_room(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
+    moved = "https://docs.example.com/document/d/doc1/view"
+    world.files = [_file("doc1", DOCS, "2026-01-02T00:00:00.000Z", webViewLink=moved)]
+    asyncio.run(source_sync.run_sync(full=True))
+    assert list(world.docs) == [moved] and _detail(world)["error"] == ""
 
 
 def test_a_source_at_its_bound_still_retires_and_shrinks_back(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.knowledge.store import sources as sources_store
-
     _three_docs(world)
-    monkeypatch.setattr(sources_store, "REVISIONS_LIMIT", 3)
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 3)
     # Two files leave the folder and one comes: the two are retired, the new one waits.
     world.files = [world.files[0], _file("doc4", DOCS, "2026-01-04T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync(full=True))
@@ -2894,14 +2961,12 @@ def test_a_source_at_its_bound_still_retires_and_shrinks_back(
 def test_the_bound_s_note_survives_a_long_run_of_item_notes(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.knowledge.store import sources as sources_store
-
     items = [{"type": "folder", "id": FOLDER, "recursive": False}]
     items += [{"type": "file", "id": f"missing{n:02d}"} for n in range(20)]
     world.sources = [_source(items=items)]
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(sources_store, "REVISIONS_LIMIT", 1)
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
     world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
     asyncio.run(source_sync.run_sync())
     assert _detail(world)["error"].startswith("too_many_documents: 1 new files past 1")
@@ -3047,11 +3112,9 @@ def test_a_trashed_file_item_is_noted(world: _World) -> None:
 def test_a_cut_turn_s_marks_lead_the_held_back_files(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.knowledge.store import sources as sources_store
-
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync())
-    monkeypatch.setattr(sources_store, "REVISIONS_LIMIT", 1)
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
     world.incomplete_search = True
     world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))
     asyncio.run(source_sync.run_sync())
