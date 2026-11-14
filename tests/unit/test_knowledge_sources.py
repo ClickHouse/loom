@@ -409,6 +409,22 @@ def test_remove_needs_the_name_and_keeps_documents_by_default(fake: _Store) -> N
     asyncio.run(app.handle_knowledge_source_add(_add()))
 
 
+@pytest.mark.parametrize("documents", [10, 10_000])
+def test_remove_of_a_mirrored_source_always_retires_its_documents_and_counts_none(
+    fake: _Store, documents: int
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    key = (ORG, NS, "design-decks")
+    fake.rows[key] = dataclasses.replace(fake.rows[key], access="mirrored")
+    fake.documents["design-decks"] = documents
+    body = KnowledgeSourceRemoveInput(
+        org=ORG, namespace=NS, name="design-decks", confirm="design-decks"
+    )
+    # The same answer whatever the mirror holds, and the retirement asked for regardless.
+    assert asyncio.run(app.handle_knowledge_source_remove(body)).documents_pending == 0
+    assert fake.rows[key].pending_delete and not fake.rows[key].active
+
+
 def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     fake.states["design-decks"] = {"state_value": "stamp", "detail": json.dumps({"status": "ok"})}

@@ -57,6 +57,8 @@ class _TraceCH:
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
         if sql.startswith("SELECT group_id FROM loom.principal_groups"):
             return [{"group_id": "g"}]
+        if "FROM loom.knowledge_mirrors" in sql:
+            return []  # no mirror: its own purging saga is tested in test_knowledge_mirrors
         if sql.startswith(("SELECT DISTINCT", "SELECT namespace,", "SELECT cityHash64")):
             return [_AnyRow()]
         if "blob_path" in sql and "loom.documents" in sql:

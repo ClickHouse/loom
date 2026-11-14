@@ -120,6 +120,11 @@ class KnowledgeSource:
     # (a build without items can use it), else in `secret_enc`.
     credential_enc: str = ""
     secret_enc: str = ""
+    # Who the documents are shown to: `namespace` (every reader of the namespace) or
+    # `mirrored` (a reader the store admits, from the namespace's mirror).
+    access: str = "namespace"
+    # Whose credential the source reads with: `shared`, an admin's.
+    credential_mode: str = "shared"
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -522,7 +527,10 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
 
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when it cannot
-    express the source: such a source is stored with `kind` empty."""
+    express the source: such a source is stored with `kind` empty. A build without
+    items knows only shared sources every reader of the namespace reads."""
+    if src.access != "namespace" or src.credential_mode != "shared":
+        return None
     if src.kind == "recording":
         return src.config
     return config_from_items(src.kind, src.items, include_in(src.config))

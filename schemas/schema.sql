@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 188 tables + 5 views + 19 materialized views.
+-- Counts: 189 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (188)
+-- Tables (189)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -2136,6 +2136,20 @@ ORDER BY (org, namespace, ingestion_id)
 TTL toDateTime(updated_at) + toIntervalDay(30)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
 
+-- loom.knowledge_mirrors
+CREATE TABLE IF NOT EXISTS loom.knowledge_mirrors
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `mirror` String,
+    `deleted` Bool DEFAULT false,
+    `created_at` DateTime DEFAULT now(),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace)
+SETTINGS index_granularity = 8192;
+
 -- loom.knowledge_sources
 CREATE TABLE IF NOT EXISTS loom.knowledge_sources
 (
@@ -2154,7 +2168,9 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     `source_kind` LowCardinality(String) DEFAULT '',
     `items_json` String DEFAULT '[]',
-    `secret_enc` String DEFAULT ''
+    `secret_enc` String DEFAULT '',
+    `access` LowCardinality(String) DEFAULT 'namespace',
+    `credential_mode` LowCardinality(String) DEFAULT 'shared'
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)

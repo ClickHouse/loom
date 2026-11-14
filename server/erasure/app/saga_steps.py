@@ -16,6 +16,7 @@ from server.auth.grant_claims import account_change, collections_change, group_c
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
 from server.core.errors import caller_text
+from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
@@ -24,6 +25,7 @@ from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
 from server.erasure.store.mutations import namespaces_of
+from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
@@ -186,6 +188,28 @@ async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> in
 async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
     """First of all, so no source writes back what the later steps erase."""
     return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
+
+
+# Who a mirror's own erasure names as its requester.
+MIRROR_ERASURE_REQUESTER = "the erasure of the namespace the mirror belongs to"
+
+
+async def _step_erase_mirrors_by_ns(org: str, namespace: _NS) -> int:
+    """Last: each named namespace's mirror is erased in a purging saga of its own (no
+    token reads or restores an `acl-` name, so its rows leave whatever the mode), then
+    its registry row goes, so the name registered again gets a new mirror. Rerun by a
+    resumed saga, it finds the rows it has not yet written deleted."""
+    from server.erasure.app.handlers import erase_namespace
+
+    # A mirror has no mirror of its own, so a mirror's erasure reads no registry row.
+    named = [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]
+    found = await knowledge_mirrors.mirrors_of(org, named)
+    for mirror in found.values():
+        out = await erase_namespace(org, mirror, requester=MIRROR_ERASURE_REQUESTER)
+        if out.status != "completed":
+            raise RuntimeError(f"the mirror's erasure {out.erasure_id} ended {out.status}")
+    await knowledge_mirrors.forget_mirrors(org, found)
+    return len(found)
 
 
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
@@ -375,4 +399,5 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("chunks.supersede", memory_steps.supersede_chunks_by_namespace),
     ("documents.tombstone", _step_tombstone_documents_by_ns),
     *_LATE_STEPS_NS,
+    ("knowledge_mirrors.erase", _step_erase_mirrors_by_ns),
 )

@@ -870,8 +870,12 @@ async def handle_knowledge_source_remove(
                     f"no document source {domain.shown(name)} in {input.namespace!r}",
                     code="SOURCE_NOT_FOUND",
                 )
+            # A mirrored source's documents never outlast it, and nothing the request
+            # answers depends on how many its mirror holds.
+            mirrored = src.access == "mirrored"
+            delete_documents = input.delete_documents or mirrored
             pending = 0
-            if input.delete_documents:
+            if input.delete_documents and not mirrored:
                 pending = await store.count_documents(src.org, src.namespace, src.name)
         # The delete request rides on the inactive registry row, which no sync-state
         # write touches. It is recorded even with no documents counted now: a sync
@@ -882,7 +886,7 @@ async def handle_knowledge_source_remove(
             active=False,
             credential_enc="",
             secret_enc="",
-            pending_delete=input.delete_documents,
+            pending_delete=delete_documents,
         )
         await store.insert_source(retired)
     return KnowledgeSourceRemoveOutput(name=src.name, documents_pending=pending)
