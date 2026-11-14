@@ -22,15 +22,16 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
 
-Lab 1 also needs the Python SDK (Python 3.11 or newer) in a virtual environment on the
-host. On Debian or Ubuntu, a codespace and WSL included, run
-`sudo apt-get update && sudo apt-get install -y python3-venv` first:
+Lab 1 also needs the Python SDK (Python 3.11 or newer) in a virtual environment, in a
+terminal on the laptop or the codespace's terminal. On Debian or Ubuntu, a codespace and
+WSL included, run `sudo apt-get update && sudo apt-get install -y python3-venv` first, and
+check `python3 --version`: an older release needs a newer Python installed first.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
 ```
 
-The `docker compose` commands in the labs run in the host's terminal, act on the stack's
+The `docker compose` commands in the labs run in that same terminal, act on the stack's
 containers, and name its install directory as `<dir>`: `~/.loom` on a laptop and
 `/workspaces/.loom` in a codespace.
 
@@ -51,8 +52,8 @@ Exercises:
 
 ## Lab 2: document search with citations
 
-Ingest a few documents with `loom demo`, which also prints the top search hits for a
-question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
+Ingest a few documents with `loom demo`, which on the stock stack also prints the top
+`knowledge.search` hits for a question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
 The path is inside the container, which holds these docs under `/app/docs/`. Copy a file
 of your own in first, under a name that identifies it, since `loom demo` names the
 document by its path:
@@ -82,9 +83,10 @@ Index a repository on the stack
 ([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)),
 then ask where a symbol is defined, who calls it, and what a change to it touches
 ([what the code index answers](../features/code-index/overview.md#what-it-answers)), over
-HTTP or the SDK, naming `org` `dev` and the repository's `namespace` on each call. A coding agent can ask the same questions once connected
-([connect a coding agent](../getting-started/connect-a-coding-agent.md)); it needs its own
-model account.
+HTTP or the SDK, naming `org` `"dev"` and the repository's `namespace` (`code-myrepo` in
+the quickstart's entry) on each call. A coding agent can ask the same questions once
+connected ([connect a coding agent](../getting-started/connect-a-coding-agent.md)); it
+needs its own model account.
 
 Exercises:
 
