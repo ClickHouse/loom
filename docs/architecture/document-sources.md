@@ -670,27 +670,26 @@ A token reads as one person, for both the `owner` entry and the emails, or as no
   (`X-Loom-On-Behalf-Of`) reads as nobody, so it sees only `anyone` documents.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
-a link-only permission, a permission the store marks deleted or pending (its address may
-now belong to someone else) and a permission type the sync does not know admit nobody. A
-missing registry or listing row admits nobody. A leg whose per-request reads (the
-statements it issues whatever matched, the reader's canonical subject and verified
-emails among them) fail shows no mirrored document and marks the answer
-`degraded: mirror_unread`; a read it issues only for candidates (the lists, the members
-rows, the heads) that fails drops every mirrored result without the marker, so the
-marker says nothing about what matched. Each leg reads the registry row and the listing
-row first and then the members rows and the lists, under `sequential_reads()`, so a
-lagging replica cannot pair a fresh listing row with an older list. It computes the
-addresses the reader may see before its `LIMIT`, so a page is never cut short by the
-check, and caches no admitted set. No score depends on a document the reader may not
-see: a mirror's chunks add nothing to any corpus statistic (the lexical leg's document
-counts, lengths and term frequencies), and a mirror leg scores its lexical hits with
-fixed corpus constants, which depend on no document, so a namespace fed only by mirrored
-sources still ranks by both legs. Under the Postgres authority each leg judges the
-addresses it is about to answer by their heads, so a narrowing or a retirement committed
-and not yet published already applies, and a missing head drops the address; a leg that
-cannot read the heads shows no mirrored document. The implementing pull request measures
-the leg on a mirror of a million documents under both storage authorities and puts the
-figures here.
+a link-only permission, a permission the store marks deleted (its address may now belong
+to someone else) and a permission type the sync does not know admit nobody. A missing
+registry or listing row admits nobody. A leg whose per-request reads (the statements it
+issues whatever matched, the reader's canonical subject and verified emails among them)
+fail shows no mirrored document and marks the answer `degraded: mirror_unread`; a read
+it issues only for candidates (the lists, the members rows, the heads) that fails drops
+every mirrored result without the marker, so the marker says nothing about what matched.
+Each leg reads the registry row and the listing row first and then the members rows and
+the lists, under `sequential_reads()`, so a lagging replica cannot pair a fresh listing
+row with an older list. It computes the addresses the reader may see before its `LIMIT`,
+so a page is never cut short by the check, and caches no admitted set. No score depends
+on a document the reader may not see: a mirror's chunks add nothing to any corpus
+statistic (the lexical leg's document counts, lengths and term frequencies), and a
+mirror leg scores its lexical hits with fixed corpus constants, which depend on no
+document, so a namespace fed only by mirrored sources still ranks by both legs. Under
+the Postgres authority each leg judges the addresses it is about to answer by their
+heads, so a narrowing or a retirement committed and not yet published already applies,
+and a missing head drops the address; a leg that cannot read the heads shows no mirrored
+document. The implementing pull request measures the leg on a mirror of a million
+documents under both storage authorities and puts the figures here.
 
 ### Every complete listing reads the lists again
 
@@ -936,9 +935,11 @@ statements and census keys against these, and its tests pin each one:
   implementing pull request adds both steps and specifies the command.
 - **Ownership.** In a namespace, one owner per address, found by its tag, is today's
   model, so N-1 and N agree on whose a document is; N-1 has no mirror leg.
-- **Lists.** N-1 knows no `access_json`, so a rewrite it makes of a mirror row keeps the
-  newest stored list through the carry of unknown columns, the list N last wrote; a
-  rewrite N makes other than the owning source's turn writes none (rule 53).
+- **Lists.** N-1 knows no `access_json`. In ClickHouse a rewrite it makes of a mirror
+  row keeps the newest stored list through the carry of unknown columns; under the
+  Postgres authority its head row has none, so the document reads `unread` until its
+  source's next turn. A rewrite N makes other than the owning source's turn writes none
+  (rule 53).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.

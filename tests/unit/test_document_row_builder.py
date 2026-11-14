@@ -95,7 +95,7 @@ def test_the_repo_reads_select_the_hash_and_the_erasure_stamp() -> None:
     asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
     assert len(seen) == 2, seen
     for sql in seen:
-        assert "content_sha256" in sql and "blob_erased_at" in sql
+        assert "content_sha256" in sql and "blob_erased_at" in sql and "access_json" in sql
 
 
 def _capture_inserts(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
@@ -945,23 +945,10 @@ def test_a_permission_list_is_written_only_by_the_writer_that_passes_it() -> Non
     assert documents_repo.build_document_row(doc, version=2)["access_json"] == ""
     kept = documents_repo.build_document_row(doc, version=2, access_json=LISTED)
     assert kept["access_json"] == LISTED
-    # A tombstone carries none, even one passed.
-    retired = documents_repo.build_document_row(
-        doc, version=3, superseded_at=ERASED, access_json=LISTED
-    )
+    retired = documents_repo.build_document_row(doc, version=3, superseded_at=ERASED)
     assert retired["access_json"] == ""
-
-
-def test_the_repo_reads_select_the_permission_list() -> None:
-    seen: list[str] = []
-
-    class _CH:
-        async def query_all(self, sql, params=None):
-            seen.append(sql)
-            return []
-
-    asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
-    assert "access_json" in seen[0]
+    with pytest.raises(ValueError, match="tombstone"):
+        documents_repo.build_document_row(doc, version=3, superseded_at=ERASED, access_json=LISTED)
 
 
 def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> None:
@@ -995,22 +982,48 @@ def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> N
     assert [r["access_json"] for r in rows] == ["", ""]
 
 
-def test_no_operation_answers_a_permission_list() -> None:
-    from pydantic import BaseModel
+def test_no_operation_takes_or_answers_a_permission_list() -> None:
+    import json
 
     from server.operations.registry import ALL_OPERATIONS
 
-    def fields(model: type[BaseModel], seen: set[type]) -> set[str]:
-        if model in seen:
-            return set()
-        seen.add(model)
-        names = set(model.model_fields)
-        for f in model.model_fields.values():
-            for arg in getattr(f.annotation, "__args__", ()) + (f.annotation,):
-                if isinstance(arg, type) and issubclass(arg, BaseModel):
-                    names |= fields(arg, seen)
-        return names
-
     for op in ALL_OPERATIONS:
-        assert "access_json" not in fields(op.output_model, set()), op.name
-        assert "access_json" not in fields(op.input_model, set()), op.name
+        for model in (op.input_model, op.output_model):
+            assert "access_json" not in json.dumps(model.model_json_schema()), op.name
+
+
+class _Embedder:
+    model_name = "fake-e"
+    dim = 3
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0, 0.0] for _ in texts]
+
+
+@pytest.mark.parametrize(("passed", "written"), [({"access_json": LISTED}, LISTED), ({}, "")])
+def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
+    monkeypatch: pytest.MonkeyPatch, passed: dict[str, str], written: str
+) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
+
+    rows = _capture_inserts(monkeypatch)
+
+    async def _prior(*a: Any, **kw: Any) -> DocumentRow:
+        return _doc(access_json=LISTED)
+
+    async def _none(*a: Any, **kw: Any) -> None:
+        return None
+
+    async def _zero(*a: Any, **kw: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(kh, "get_embedder", _Embedder)
+    monkeypatch.setattr(documents_repo, "get_one", _prior)
+    monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
+    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)
+    monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", _zero)
+    monkeypatch.setattr(knowledge_repo, "insert_chunks", _zero)
+    body = KnowledgeUpsertInput(org="o", namespace="n", source_uri="doc-a", content="new body")
+    asyncio.run(kh.handle_knowledge_upsert(body, **passed))
+    # Over a listed prior row too: a list is never carried, only passed.
+    assert [r["access_json"] for r in rows] == [written]

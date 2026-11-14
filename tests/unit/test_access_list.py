@@ -20,13 +20,15 @@ def test_every_role_a_reader_and_group_grants_and_discoverable_shares_count() ->
         [
             _perm("user", role="owner", emailAddress="Owner@Example.com"),
             _perm("user", role="commenter", emailAddress="b@example.com"),
+            # Offered ownership, and a writer meanwhile.
+            _perm("user", role="writer", emailAddress="c@example.com", pendingOwner=True),
             _perm("group", role="writer", emailAddress="Team@Example.com"),
             _perm("domain", domain="Example.com", allowFileDiscovery=True),
             _perm("anyone", allowFileDiscovery=True),
         ]
     )
     assert got == AccessList(
-        emails=("b@example.com", "owner@example.com"),
+        emails=("b@example.com", "c@example.com", "owner@example.com"),
         groups=("team@example.com",),
         domains=("example.com",),
         anyone=True,
@@ -40,7 +42,6 @@ def test_every_role_a_reader_and_group_grants_and_discoverable_shares_count() ->
         _perm("anyone", allowFileDiscovery=False),
         _perm("anyone"),  # discoverability unknown
         _perm("user", emailAddress="gone@example.com", deleted=True),
-        _perm("user", emailAddress="next@example.com", pendingOwner=True),
         _perm("user", role="unknownRole", emailAddress="x@example.com"),
         _perm("audience", emailAddress="x@example.com"),
         _perm("user", emailAddress="  "),
@@ -55,8 +56,12 @@ def test_no_permissions_from_the_store_read_unread() -> None:
     assert access_list.from_drive_permissions([]) == AccessList()  # read, and empty
 
 
+def test_unread_is_stored_empty_as_every_other_writer_stores_it() -> None:
+    assert access_list.to_json(UNREAD) == ""
+
+
 def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
-    a = AccessList(emails=("a@example.com",), domains=("example.com",), anyone=True)
+    a = AccessList(emails=("a@example.com",), owner="user:a", domains=("example.com",), anyone=True)
     text = access_list.to_json(a)
     assert access_list.from_json(text) == a
     reordered = access_list.from_drive_permissions(

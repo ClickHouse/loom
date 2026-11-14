@@ -771,17 +771,18 @@ schema. These rules keep that safe. The operator procedure is in
     `tests/unit/test_knowledge_sources.py` and
     `tests/unit/test_knowledge_source_sync.py` check N's side.
 
-53. **A document's permission list** (migration `099_document_access_lists.sql`): N
-    adds `loom.documents.access_json`, the permission list of a mirrored document
-    ([document sources](document-sources.md#the-permission-list)); under the Postgres
-    authority it rides in the head's `row`, with no Postgres migration. Only a mirrored
-    source's turn passes a list to the row builder, which carries none forward: every
-    other rewrite N makes, and every tombstone, writes the column empty, which a mirror
-    leg reads as `unread` and which admits nobody. N-1 knows no such column, so its
-    rewrites keep the newest stored list through rule 2's carry, the list N last wrote.
-    No op's input or output has the field. This build writes no list yet;
-    `tests/unit/test_access_list.py` and `tests/unit/test_document_row_builder.py` check
-    N's side.
+53. **A document's permission list** (migration `099_document_access_lists.sql`): N adds
+    `loom.documents.access_json`, the permission list of a mirrored document ([document
+    sources](document-sources.md#the-permission-list)); under the Postgres authority it
+    rides in the head's `row`, with no Postgres migration. Only a mirrored source's turn
+    passes a list to the row builder, which carries none forward: every other rewrite N
+    makes, and every tombstone, writes the column empty, which a mirror leg reads as
+    `unread` and which admits nobody. N-1 knows no such column: in ClickHouse its
+    rewrites keep the newest stored list through rule 2's carry, and under the Postgres
+    authority the head row it commits has none, so the document reads `unread` until its
+    source's next turn. Both fail closed. No op's input or output has the field. This
+    build writes no list yet; `tests/unit/test_access_list.py` and
+    `tests/unit/test_document_row_builder.py` check N's side.
 
 ## What checks them
 

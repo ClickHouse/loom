@@ -507,7 +507,9 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
     defaults, then takes every column of `existing` (carry-forward), then
     `fields`. `content_sha256` is not settable: it is recomputed from the
     row's final title + content, the hash knowledge.add / upsert dedup on.
-    `access_json` is never carried: it is the one in `fields`, or empty.
+    `access_json` is never carried: only the turn of the source that owns a mirrored
+    document passes one, and every other row, a tombstone included, has none, which
+    reads `unread` and admits nobody.
     """
     unknown = set(fields) - (set(DOCUMENT_COLUMNS) - {"content_sha256"})
     if unknown:
@@ -540,10 +542,9 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
     if existing is not None:
         row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})
     row.update(fields)
-    # Only the turn of the source that owns a mirrored document writes its permission
-    # list, passing it here; every other rewrite, and every tombstone, writes none, which
-    # reads `unread` and admits nobody.
-    row["access_json"] = "" if row["superseded_at"] is not None else fields.get("access_json", "")
+    row["access_json"] = fields.get("access_json", "")
+    if row["superseded_at"] is not None and row["access_json"]:
+        raise ValueError("build_document_row: a tombstone carries no permission list")
     missing = [c for c in _REQUIRED_DOCUMENT_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"build_document_row: missing {missing}")
