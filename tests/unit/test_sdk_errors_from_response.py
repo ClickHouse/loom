@@ -142,6 +142,10 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "ENTRY_LEASE_NOT_HELD": PreconditionFailed,  # the uploading pass no longer holds its entry
     "SOURCE_REPLACED": PreconditionFailed,  # a 409 with no SDK class: mapped by status
     "COLLECTION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "DEFINITION_CEILING": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "DEFINITION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "DEFINITION_PROMOTION_REFUSED": ValidationError,  # a 422 with no SDK class
+    "SENSITIVE_DEFINITION_REFUSED": ValidationError,  # a 422 with no SDK class
     "ERASURE_RUNNING": PreconditionFailed,  # a 409 the server names retryable
     "WRONG_CELL": WrongCell,
     "TENANCY_REFUSED": BackendUnavailable,  # a 503 with no SDK class, never retried

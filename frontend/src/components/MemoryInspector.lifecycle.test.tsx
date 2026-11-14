@@ -564,10 +564,22 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
   });
 
+  it("offers no share for a definition that is not the namespace-wide row", async () => {
+    await open("admin", { ...LIVE, memory_type: "definition", agent: "bot", session_id: "s1" });
+    expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
+  });
+
   it("shares a definition with the hash of the text it shows", async () => {
-    await open("admin", { ...LIVE, memory_type: "definition", content_sha256: "abc123" });
+    const shared = { agent: "-", user_id: "-", session_id: "-" };
+    await open("admin", { ...LIVE, ...shared, memory_type: "definition", content_sha256: "abc123" });
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", "abc123"));
+    await waitFor(() =>
+      expect(lc.shareMemory).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: "-", user_id: "-", session_id: "-" }),
+        "coffee_pref",
+        "abc123",
+      ),
+    );
   });
 
   it("shares with every agent and stops sharing, for an admin, each after a confirmation", async () => {

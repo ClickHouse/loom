@@ -31,7 +31,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.sensitivity_level import decoded_text, detect_level
 from server.memory.domain.definitions import DEFINITION_KEY_PREFIX, definition_names
 from server.memory.domain.memory_types import (
-    DEFINITION,
+    is_definition,
     is_namespace_definition,
     is_searchable_type,
 )
@@ -105,9 +105,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         )
 
     target_key = input.target_key or input.memory_key
-    is_definition_promotion = src.memory_type == DEFINITION or target_key.startswith(
-        DEFINITION_KEY_PREFIX
-    )
+    is_definition_promotion = is_definition(src) or target_key.startswith(DEFINITION_KEY_PREFIX)
     ignored: list[str] = []
     if is_definition_promotion:
         await _check_definition_promotion(input, src, target_key)
@@ -124,7 +122,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     )
     # A definition's promoter is the token's actor: the admin who answers for it.
     promoted_by = (
-        writer_actor("explicit") if is_definition_promotion else input.approver or "explicit"
+        writer_actor("explicit") if is_definition_promotion else (input.approver or "explicit")
     )
     src_value_json = json.dumps(src.value, default=str)
 
@@ -275,8 +273,8 @@ async def _check_definition_promotion(
     names = definition_names(src.value)
     if names is None:
         raise ValidationError(
-            "a definition's value is a JSON object with a string term and, optionally, a list "
-            "of string aliases"
+            "a definition's value is a JSON object with a non-empty string term and, optionally, "
+            "a list of string aliases"
         )
     # The value itself is graded, whatever its label or the autodetect setting: an import or
     # a restore leaves the label empty.

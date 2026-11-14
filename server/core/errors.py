@@ -111,8 +111,8 @@ class DefinitionPromotionRefusedError(LoomServerError):
 
 
 class SensitiveDefinitionRefusedError(LoomServerError):
-    """422 — a definition whose value is labelled or reads as `medium` or `high` is not
-    promoted: the shared layer serves it to every reader of the namespace."""
+    """422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is
+    not promoted: the shared layer serves it to every reader of the namespace."""
 
     code = "SENSITIVE_DEFINITION_REFUSED"
     status_code = 422

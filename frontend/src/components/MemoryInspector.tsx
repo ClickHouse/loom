@@ -460,8 +460,14 @@ export function MemoryInspector({
   const rejectReason = why("memory.reject");
   const shareReason = why("memory.promote");
   const unshareReason = why("memory.demote");
-  // memory.promote refuses a profile row and a high one.
-  const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
+  // memory.promote refuses a profile row and a high one, and a definition that is not the
+  // namespace-wide row or is labelled medium.
+  const definitionRow = detail?.memory_type === "definition";
+  const namespaceWide = [detail?.agent, detail?.user_id, detail?.session_id].every((v) => !v || v === "-");
+  const shareable =
+    detail?.memory_type !== "profile" &&
+    detail?.sensitivity !== "high" &&
+    !(definitionRow && (!namespaceWide || detail?.sensitivity === "medium"));
   const redactReason = why("memory.redact");
   const judgeReason = why("memory.outcome");
   // The value, its tags and its expiry are memory.set; Delete and Verify their own ops. Copy to

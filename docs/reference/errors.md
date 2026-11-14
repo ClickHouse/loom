@@ -842,7 +842,7 @@ Raised in `server/auth/self_signup.py`.
 
 #### `SENSITIVE_DEFINITION_REFUSED`
 
-HTTP 422, raised as `server.core.errors.SensitiveDefinitionRefusedError`. 422 — a definition whose value is labelled or reads as `medium` or `high` is not promoted: the shared layer serves it to every reader of the namespace. Category `input`, retryable: no.
+HTTP 422, raised as `server.core.errors.SensitiveDefinitionRefusedError`. 422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is not promoted: the shared layer serves it to every reader of the namespace. Category `input`, retryable: no.
 
 #### `SHARED_CONFLICT`
 

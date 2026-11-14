@@ -23,7 +23,7 @@ from server.memory.api.models_learnings import (
 from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.app import blacklist_guard
 from server.memory.domain import assistant_rules
-from server.memory.domain.memory_types import DEFINITION
+from server.memory.domain.memory_types import is_definition
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
 
@@ -223,7 +223,7 @@ async def handle_learnings_review(
     promoted_to_knowledge = False
     knowledge_source_uri = ""
     if input.decision == "promote":
-        if row.get("memory_type") == DEFINITION:
+        if is_definition(row):
             # A definition is promoted only through memory.promote of its namespace-wide row,
             # which checks the approved hash.
             raise ValidationError(

@@ -286,12 +286,14 @@ async def test_a_definition_is_promoted_with_the_hash_get_serves(
         """,
         parameters={"org": org, "ns": ns},
     ).result_rows
-    (row,) = rows
-    assert row[0] == "definition" and json.loads(row[1]) == value
-    assert row[2] == "process:definer"  # the token's actor, not the body's approver
-    assert row[3] == [f"{org}/{ns}/-/-/-/definition/arr"]
-    assert row[4] is None and str(row[5]) == out["promotion_event"]
-    assert row[6] == "the finance glossary" and row[7] == 1.0
+    (
+        (memory_type, stored, promoted_by, promoted_from, candidate, event, rationale, confidence),
+    ) = rows
+    assert memory_type == "definition" and json.loads(stored) == value
+    assert promoted_by == "process:definer"  # the token's actor, not the body's approver
+    assert promoted_from == [f"{org}/{ns}/-/-/-/definition/arr"]
+    assert candidate is None and str(event) == out["promotion_event"]
+    assert rationale == "the finance glossary" and confidence == 1.0
 
 
 @pytest.mark.asyncio
