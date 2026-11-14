@@ -62,6 +62,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
+import { CollectionSharingLine, ShareButton, useShareDialog } from "./CollectionSharing";
 import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
 import { TopLevelPlaces } from "./LibraryHierarchy";
 import { expandedKey, LibraryTree } from "./LibraryTree";
@@ -227,6 +228,10 @@ export function Documents() {
     [collections.kept],
   );
   const resolving = !!collection && collections.rows === null && !listFailed;
+  // The collection whose sharing the header shows: the last answer's while the list is read
+  // again, so the line is not read afresh on every refresh.
+  const sharing = shown ?? (collection ? (byName.get(collection) ?? null) : null);
+  const share = useShareDialog(picked.org, sharing, collection ?? picked.namespace);
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
@@ -1087,6 +1092,7 @@ export function Documents() {
       </div>
       {addDialog}
       {moveDialog}
+      {share.dialog}
     </>
   );
 
@@ -1185,6 +1191,7 @@ export function Documents() {
                 />
               </Suspense>
             )}
+            {sharing && !sharing.personal && <ShareButton collection={sharing} onOpen={share.open} />}
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && !resolving && (
               <Unavailable reason={writeReason}>
@@ -1204,25 +1211,38 @@ export function Documents() {
       </PageHeader>
       {picker}
       {seesGaps && !resolving && <KnowledgeGaps org={identity.org} namespace={identity.namespace} />}
-      {/* One line: the library's figures once they are read, what the library is behind the tip.
-          A phone, with the place picker above the list, has no room for it: the bar's count
-          says how many are shown. */}
-      <div className="mb-4 hidden min-h-6 items-center gap-1 text-sm text-text-muted tabular sm:flex">
-        <span className="min-w-0 truncate">
-          {docCount && aggregateStats && rows && rows.length > 0
-            ? [
-                `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
-                `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
-                ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
-              ].join(" · ")
-            : "Reference docs your agents can read."}
+      {/* One line: who can see the collection shown, the library's figures once they are read,
+          what the library is behind the tip. A phone, with the place picker above the list, has
+          room for who can see it only: the bar's count says how many are shown. */}
+      <div
+        className={`mb-4 min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted tabular ${sharing ? "flex" : "hidden sm:flex"}`}
+      >
+        {sharing && (
+          <CollectionSharingLine
+            org={picked.org}
+            collection={sharing}
+            byName={byName}
+            version={share.version}
+            empty={emptyLibrary}
+          />
+        )}
+        <span className={`min-w-0 items-center gap-1 ${sharing ? "hidden shrink-0 sm:flex" : "flex"}`}>
+          <span className="min-w-0 truncate">
+            {docCount && aggregateStats && rows && rows.length > 0
+              ? [
+                  `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
+                  `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
+                  ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
+                ].join(" · ")
+              : "Reference docs your agents can read."}
+          </span>
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About the library"
+            tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
+          />
         </span>
-        <IconButton
-          icon="info-in-circle"
-          size="xs"
-          label="About the library"
-          tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
-        />
       </div>
 
       {/* The Sources button opens the place's sources here, so a closed list costs the rows
