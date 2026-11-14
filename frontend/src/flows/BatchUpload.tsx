@@ -241,8 +241,8 @@ export function BatchUpload({
   tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null };
   onClose: () => void;
 }) {
-  // Where the files go, as it was when the dialog opened: the Library reloads its list
-  // after an upload, and the place it shows meanwhile is not where these files go.
+  // Where the files go, as it was when the dialog opened: the Library reads its list
+  // again after an upload, and the place it shows meanwhile is not where these files go.
   const [identity] = useState(identityProp);
   const [place] = useState(placeProp);
   const [tree] = useState(treeProp);

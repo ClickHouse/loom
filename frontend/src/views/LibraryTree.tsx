@@ -191,8 +191,8 @@ export const LibraryTree = memo(function LibraryTree({
     });
   }, [rows, truncated]);
   useEffect(() => saveExpanded(org, open), [org, open]);
-  // The way from the top to the place shown, which a move opens, once the list names it (a
-  // person can close any of it after), and on which each list draws its step wherever it sits.
+  // The place shown and its parents: a move opens them, and each list draws its member of the
+  // path even past Show more.
   const onPath = useMemo(() => {
     const shown = current ? byName.get(current) : undefined;
     return new Set(shown ? collectionPath(shown, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : []);
@@ -474,7 +474,7 @@ function NewCollectionForm({
       field.current?.focus();
       return;
     }
-    announceCreated(r, trimmed);
+    announceCreated(r, trimmed, org);
     onClose();
     onCreated(r.namespace, org, NEW_COLLECTION_FOCUS);
   };

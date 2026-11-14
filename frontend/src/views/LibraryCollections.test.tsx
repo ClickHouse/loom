@@ -1141,6 +1141,31 @@ describe("the Library on a collection", () => {
       expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/col-q4/), "info");
     });
 
+    it("has the page opened again wait for a collection made before it, while a replica lags", async () => {
+      resizable();
+      const answer = await startCreate();
+      cleanup();
+      render(<Documents />, { container: inMain() });
+      await settle();
+      const reads = api.listCollections.mock.calls.length;
+      // The first read after the answer comes from a replica that has not listed it yet.
+      api.listCollections.mockResolvedValueOnce({ collections: ROWS, next_cursor: null }).mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        await answer(q4);
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+      }
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBe(reads + 2);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+    });
+
     it("moves nothing once the page shows another org", async () => {
       resizable();
       const answer = await startCreate();

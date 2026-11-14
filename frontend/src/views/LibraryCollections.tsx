@@ -314,13 +314,13 @@ export function LibraryCollections({
   shownRef.current = current?.namespace ?? null;
   // My files and the namespace have no path; beside the tree no select names them either, so
   // the line starts with the place's name, not the About button alone.
-  const lineName = !besideTree
-    ? null
-    : current?.personal
-      ? collectionTitle(current)
-      : !current && !opening && namespace !== null
-        ? namespaceLabel(namespace)
-        : null;
+  const placeName = (): string | null => {
+    if (!besideTree) return null;
+    if (current?.personal) return collectionTitle(current);
+    if (current || opening || namespace === null) return null;
+    return namespaceLabel(namespace);
+  };
+  const lineName = placeName();
   // The collection shown, not My files: it has a path, members and a menu.
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];

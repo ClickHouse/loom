@@ -16,11 +16,12 @@ import { invalidateSharedCollections } from "../lib/collectionPlaces";
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
 
-/** After collection.create: the shared reads of the collections start again, and the person
- *  is told whether it was made or one of that title already sits there. `typed`: the title
- *  asked for, shown when the answer names none. */
-export function announceCreated(r: CollectionCreated, typed: string): void {
-  invalidateSharedCollections();
+/** After collection.create in `org`: the shared reads of the collections start again, and
+ *  the Library's lists wait for it to be listed, even one opened after the create was sent.
+ *  The person is told whether it was made or one of that title already sits there. `typed`:
+ *  the title asked for, shown when the answer names none. */
+export function announceCreated(r: CollectionCreated, typed: string, org: string): void {
+  invalidateSharedCollections({ name: r.namespace, org });
   const shown = r.title || typed || r.namespace;
   toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
 }
@@ -125,7 +126,7 @@ export function CreateCollectionDialog({
             title: trimmedTitle,
             deriveName: true,
           });
-      announceCreated(r, trimmedTitle);
+      announceCreated(r, trimmedTitle, org);
       onCreated(r.namespace);
       reset();
       onOpenChange(false);
