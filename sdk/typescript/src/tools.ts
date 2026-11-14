@@ -217,7 +217,14 @@ export class AgentTools {
     if (!spec || !this.has(spec.name))
       throw new LoomError(`unknown tool ${name}; this agent offers ${Array.from(this.names).join(", ")}`);
     const out = await this.run(spec.name, checkArgs(spec, args));
-    const text = typeof out === "string" ? out : JSON.stringify(out);
+    let text = typeof out === "string" ? out : JSON.stringify(out);
+    const recalled = out as { memories?: unknown[]; omitted?: number };
+    // Recalled memories over the cap: drop the lowest ranked whole, so the JSON stays valid.
+    while (Array.isArray(recalled.memories) && recalled.memories.length > 1 && text.length > this.maxResultChars) {
+      recalled.memories.pop();
+      recalled.omitted = (recalled.omitted ?? 0) + 1;
+      text = JSON.stringify(recalled);
+    }
     return text.length > this.maxResultChars ? `${text.slice(0, this.maxResultChars)}…[truncated]` : text;
   }
 

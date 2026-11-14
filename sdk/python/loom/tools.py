@@ -227,6 +227,12 @@ class AgentTools:
         a = _parse_args(args)
         out = await self._run(name, a)
         text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
+        memories = out.get("memories") if isinstance(out, dict) else None
+        # Recalled memories over the cap: drop the lowest ranked whole, so the JSON stays valid.
+        while memories and len(memories) > 1 and len(text) > self.max_result_chars:
+            memories.pop()
+            out["omitted"] = out.get("omitted", 0) + 1
+            text = json.dumps(out, ensure_ascii=False, default=str)
         if len(text) > self.max_result_chars:
             return text[: self.max_result_chars] + "…[truncated]"
         return text

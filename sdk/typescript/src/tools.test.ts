@@ -160,4 +160,17 @@ describe("AgentTools argument checks", () => {
     expect(calls.at(-1)?.body).toMatchObject({ query: "q", top_k: 3 });
     expect(calls.at(-1)?.body).not.toHaveProperty("unknown_extra");
   });
+
+  it("drops whole recalled memories over the cap, so the result stays JSON", async () => {
+    const results = [0, 1, 2, 3, 4].map((i) => ({
+      memory_key: `m${i}`,
+      content_excerpt: "x".repeat(400),
+      similarity: 0.9 - i / 100,
+    }));
+    const { bot } = harness({ "memory.search": { results } });
+    const tools = bot.tools({}, { only: ["loom_recall"], maxResultChars: 1_000 });
+    const out = JSON.parse(await tools.execute("loom_recall", { query: "seat", top_k: 5 }));
+    expect(out.memories.map((m: { memory_key: string }) => m.memory_key)).toEqual(["m0", "m1"]);
+    expect(out.omitted).toBe(3);
+  });
 });

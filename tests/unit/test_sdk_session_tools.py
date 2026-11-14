@@ -382,3 +382,16 @@ def test_sync_session_is_a_with_block_and_task_stream_iterates() -> None:
             if len(got) == 3:
                 break
         assert got == ["t1", "t2", "t3"]
+
+
+async def test_recall_over_the_cap_drops_whole_memories_and_stays_json() -> None:
+    hits = [
+        {"memory_key": f"m{i}", "content_excerpt": "x" * 400, "similarity": 0.9 - i / 100}
+        for i in range(5)
+    ]
+    a, _ = _agent({"memory.search": {"results": hits}})
+    tools = a.tools(only=["loom_recall"], max_result_chars=1_000)
+    out = json.loads(await tools.execute("loom_recall", {"query": "seat", "top_k": 5}))
+    assert [m["memory_key"] for m in out["memories"]] == ["m0", "m1"]  # the best ranked, whole
+    assert out["omitted"] == 3
+    await a.close()
