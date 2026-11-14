@@ -213,20 +213,21 @@ def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postg
 # Commands whose kind depends on their flags: each flag the pick reads, and how many call
 # sites in the file pick. A dry run, check or listing writes nothing, so with LOOM_CELL
 # set and Postgres down it still runs; a revocation that can give access back is a write.
+# The last entry is the kind the pick gives when its flags are set.
 _MODE_PICKED = {
-    "secrets.py": ({"dry_run", "check"}, 1),
-    "restore.py": ({"dry_run"}, 1),
-    "ops.py": ({"dry_run"}, 2),
-    "hygiene.py": ({"resume", "erase"}, 1),
-    "code_maintenance.py": ({"dry_run"}, 1),
-    "deployment.py": ({"check"}, 1),
-    "sso.py": ({"dry_run"}, 1),
+    "secrets.py": ({"dry_run", "check"}, 1, "reads"),
+    "restore.py": ({"dry_run"}, 1, "reads"),
+    "ops.py": ({"dry_run"}, 2, "reads"),
+    "hygiene.py": ({"resume", "erase"}, 1, "writes"),
+    "code_maintenance.py": ({"dry_run"}, 1, "reads"),
+    "deployment.py": ({"check"}, 1, "reads"),
+    "sso.py": ({"dry_run"}, 1, "reads"),
 }
 
 
 @pytest.mark.parametrize("file", sorted(_MODE_PICKED))
 def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(file: str) -> None:
-    flags, sites = _MODE_PICKED[file]
+    flags, sites, when_set = _MODE_PICKED[file]
     source = (ROOT / "server" / "cli" / file).read_text()
     picked = [
         k.value
@@ -240,8 +241,8 @@ def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(file: str)
         ast.unparse(n.test) for v in picked for n in ast.walk(v) if isinstance(n, ast.IfExp)
     )
     assert all(f in tests for f in flags), f"{file}: the pick reads {sorted(flags)}"
-    kinds = {_name(n) for v in picked for n in ast.walk(v) if isinstance(n, ast.Call)}
-    assert "reads" in kinds
+    # The branch taken when the flags are set, so an inverted pick fails.
+    assert all(_name(v.body) == when_set for v in picked), f"{file}: set flags give {when_set}"
 
 
 @pytest.mark.parametrize(

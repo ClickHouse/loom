@@ -269,11 +269,7 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   "holds a partial cell state and LOOM_CELL is unset", or "cell state could not be read
   (...)"; for the first, set `LOOM_CELL` on the CLI, and for the last, act on the reason
   it names: a missing grant ([upgrade step 15](upgrades.md#upgrade-procedure)) or a
-  Postgres that does not answer. With `LOOM_CELL` set, a command that writes for no org
-  or revokes refuses with "this Postgres's first row names cell ..., not LOOM_CELL=...",
-  pointed at another cell's stores, or "this cell's state could not be read (...)"; a
-  revocation that cannot give access back runs through an outage and prints that the
-  cell was not checked.
+  Postgres that does not answer.
 - **Cause:** under the Postgres authority every server process reads the deployment's
   cell state (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`).
   With `LOOM_CELL` unset it serves only while none of them holds a row, or while they
@@ -340,6 +336,26 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   - **A restored copy of a cell's Postgres** on another deployment carries the source
     cell's deployment id, so the check returns the live source cell's row. Do not clear
     it, and do not serve it beside the source.
+
+### A CLI with LOOM_CELL set refuses a command that writes for no org
+
+- **Symptom:** a command that writes for no org or revokes (`loom secrets reseal`,
+  `loom settings set`, `loom ch-setup`, `loom revoke-token` and the rest) exits with
+  "refusing: this Postgres's first row names cell ..., not LOOM_CELL=...", "refusing:
+  this cell's state could not be read (...)" or "refusing: this ClickHouse could not be
+  read for the cell check (...)".
+- **Cause:** with `LOOM_CELL` set such a command reads the cell's `first` row from its
+  `LOOM_PG_DSN`, and checks its ClickHouse against that Postgres, before it changes
+  anything ([cells](../architecture/cells.md#the-tenancy-check-and-placement)). A first
+  row naming another cell means the CLI is pointed at that cell's stores. A revocation
+  that cannot give access back runs through a Postgres outage instead, printing that the
+  cell was not checked.
+- **Fix:** never clear the state the refusal names: it is another cell's. Point
+  `LOOM_PG_DSN` and the ClickHouse settings at this cell's own stores, or set `LOOM_CELL`
+  to the cell the first row names if that is the cell you meant. For a state that could
+  not be read, act on the reason it names: a missing grant
+  ([upgrade step 15](upgrades.md#upgrade-procedure)) or a Postgres or ClickHouse that does
+  not answer.
 
 ### A boot logs "cell triggers: not applied"
 
