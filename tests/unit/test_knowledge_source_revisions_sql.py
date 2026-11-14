@@ -44,7 +44,7 @@ async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
 ) -> None:
     ch = LocalCH(ddl("documents"), *(_row(n, c) for n, c in DOCS.items()))
     rows = await store.source_revisions(
-        "o", "ns", "drive", searchable_only=False, pictures=pictures, ch=ch
+        "o", "ns", source_tag("drive"), searchable_only=False, pictures=pictures, ch=ch
     )
     flagged = {r["file_id"] for r in rows if r["inline_pictures"]}
     assert len(rows) == len(DOCS)
@@ -81,7 +81,7 @@ async def test_the_read_pages_by_address_to_the_last_document(
         *(_chunk(n) for n in searchable),
     )
     rows = await store.source_revisions(
-        "o", "ns", "drive", searchable_only=searchable_only, pictures=pictures, ch=ch
+        "o", "ns", source_tag("drive"), searchable_only=searchable_only, pictures=pictures, ch=ch
     )
     assert sorted(r["file_id"] for r in rows) == sorted(searchable if searchable_only else DOCS)
 

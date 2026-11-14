@@ -117,16 +117,19 @@ from server.knowledge.api.models_knowledge import KnowledgeDeleteInput, Knowledg
 from server.knowledge.app import extractors, writes
 from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.app import sources as source_ops
-from server.knowledge.domain import convert
+from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
+    MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
+    home,
     include_in,
     json_object,
     served,
     source_key,
     source_tag,
+    synced,
     turn_lease_name,
 )
 from server.knowledge.store import documents
@@ -380,8 +383,8 @@ async def run_sync(
 
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
     """The sources a pass syncs: those whose namespace is active, of the sources this
-    build serves (a mirrored one is a later build's)."""
-    syncable = [s for s in found if served(s)]
+    build's worker runs (`synced`)."""
+    syncable = [s for s in found if synced(s)]
     inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in syncable}))
     return [s for s in syncable if (s.org, s.namespace) not in inactive]
 
@@ -420,7 +423,7 @@ async def _sync_one(
     try:
         async with _source_turn(src):
             try:
-                turn = await _turn_of(src.kind)(src, state, run)
+                turn = await _turn_of(src)(src, state, run)
             except SourceGone:
                 log.info("knowledge_source_sync: %s was removed during its turn", _cursor_of(src))
                 return None
@@ -451,9 +454,15 @@ async def _sync_one(
     return turn
 
 
-def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
-    """The turn function of a source kind; this module's `_turn` reads a folder."""
+def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
+    """The turn function of a source; this module's `_turn` reads a folder, and a
+    mirrored folder source writes into its namespace's mirror."""
+    kind = src.kind
     # Imported here: a kind's module builds on this one's helpers.
+    if not served(src):
+        from server.knowledge.app import source_sync_mirror
+
+        return source_sync_mirror.turn
     if kind == "linear":
         from server.knowledge.app import source_sync_linear
 
@@ -515,10 +524,10 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     except gdrive.VendorError as e:
         turn.fail("failed", client_error(e))
         return turn
-    _note_listing(turn, listing)
+    note_listing(turn, listing)
     if listing.ran_out:
         return turn  # out of pass time: nothing more is written or retired this turn
-    if turn.full and not await _items_visible(token, src.items, turn, run.budget.exhausted):
+    if turn.full and not await items_visible(token, src.items, turn, run.budget.exhausted):
         return turn
     files = listing.files
     # Only a whole listing of items the account still sees, every folder walked,
@@ -543,19 +552,21 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     # Only a full listing lists an unchanged file, so only it asks for the pictures.
     stored = await stored_copies_with_room(src, turn, pictures=turn.full)
     for f in files:
-        if not await _sync_file(src, token, f, stored.get(str(f["id"])), run, turn):
+        if not await sync_file(
+            src, token, f, source_uri_of(f), stored.get(str(f["id"])), run, turn
+        ):
             break
     if turn.full and turn.complete:
         # A file listed without an address it can be stored at counts as absent, so
         # its document is kept only if the lookup finds the file still there.
         addresses = {str(f["id"]): source_uri_of(f) for f in files}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
-        gone = functools.partial(_file_gone, token, listing=listing, turn=turn)
+        gone = functools.partial(file_gone, token, listing=listing, turn=turn)
         await retire_absent(src, listed, gone, run, turn)
     return turn
 
 
-def _note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
+def note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
     """The listing's notes on the turn. An incomplete listing (the store could not search
     everything, or an item listed nothing) has its files written, but the turn keeps its
     stamp, retires nothing and lists again next pass; a listing the pass ran out on
@@ -575,7 +586,7 @@ async def stored_copies_with_room(
     """The source's searchable stored copies by file id (`store.source_revisions`), and
     the turn's room for new documents: LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS less what it
     holds, so past the bound a turn still updates and retires but writes no new file."""
-    revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=pictures)
+    revisions = await store.source_revisions(src.org, *home(src), pictures=pictures)
     stored = {d["file_id"]: d for d in revisions}
     turn.bound = settings.knowledge_source_max_documents
     turn.room = max(0, turn.bound - len(stored))
@@ -646,7 +657,7 @@ def _visibility_checks(
             yield gdrive.require_folder, item["in"]
 
 
-async def _items_visible(
+async def items_visible(
     token: str, items: list[dict[str, Any]], turn: TurnResult, out_of_time: Callable[[], bool]
 ) -> bool:
     """Whether the turn may go on after checking that the account still sees every folder
@@ -690,7 +701,7 @@ async def retire_absent(
     with `gone(id)`: a listing paged while items changed can miss one, so only an
     item the store reports gone counts. `gone` answers False when the lookup fails
     (nothing is retired) and None when the turn must stop (it records why)."""
-    docs = await store.source_revisions(src.org, src.namespace, src.name, searchable_only=False)
+    docs = await store.source_revisions(src.org, *home(src), searchable_only=False)
     for doc in docs:
         address = listed.get(doc["file_id"])
         if address == doc["source_uri"]:
@@ -710,7 +721,7 @@ async def retire_absent(
             turn.removed += 1
 
 
-async def _file_gone(
+async def file_gone(
     token: str, file_id: str, listing: gdrive_items.Listing, turn: TurnResult
 ) -> bool | None:
     """Whether the store says the file is gone: not found, trashed, or reached by none
@@ -836,19 +847,19 @@ async def sync_item(
     return True
 
 
-async def _sync_file(
+async def sync_file(
     src: KnowledgeSource,
     token: str,
     f: dict[str, Any],
+    uri: str,
     prior: dict[str, str] | None,
     run: Pass,
     turn: TurnResult,
 ) -> bool:
-    """Handle one listed file; False when the turn must stop listing. A native
-    document whose stored text still holds its pictures' bytes (an earlier
+    """Handle one listed file at address `uri`; False when the turn must stop listing. A
+    native document whose stored text still holds its pictures' bytes (an earlier
     conversion's) is fetched and converted again at its same revision when a full
     listing lists it."""
-    uri = source_uri_of(f)
     revision = str(f.get("modifiedTime") or "")
     # A copy stored with its pictures' bytes, at this revision and address, is converted
     # again; a moved file takes the ordinary write-and-retire path.
@@ -1078,12 +1089,13 @@ def counted(turn: TurnResult, written: bool) -> str:
 async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     """Whether the live document at `uri`, if any, is this source's: a document
     another writer or another source holds is never overwritten or retired."""
-    doc = await documents.get_one(src.org, src.namespace, uri, include_superseded=False)
-    return doc is None or _ours(src, doc)
+    namespace, _ = home(src)
+    doc = await documents.get_one(src.org, namespace, uri, include_superseded=False)
+    return doc is None or ours(src, doc)
 
 
-def _ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
-    return doc.actor == SYNC_WORKER_ACTOR and source_tag(src.name) in doc.tags
+def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
+    return doc.actor == SYNC_WORKER_ACTOR and home(src)[1] in doc.tags
 
 
 async def require_current(src: KnowledgeSource) -> None:
@@ -1115,13 +1127,16 @@ async def write_document(
     extra_metadata: dict[str, Any] | None = None,
 ) -> bool:
     """Write one item (`f`: its `id`, `name`, `modifiedTime` and, with an original,
-    its `mimeType`) at `uri` with `knowledge.upsert`, as the sync worker: tagged
-    `source-kind:design_doc`, `source:<name>` and, on a repository's trunk code
+    its `mimeType`) at `uri` in the source's home (`domain.home`) with
+    `knowledge.upsert`, as the sync worker: tagged `source-kind:design_doc`,
+    `source:<name>`, in a mirror `source-id:<id>` and, on a repository's trunk code
     namespace, its `repo:<id>`, class `imported`, with the source's kind and name, the
-    item's id and revision and the conversion in its metadata. False, writing nothing,
-    when another writer took the address while the item was fetched: the check before
-    the fetch is seconds old by now."""
-    tags = ["source-kind:design_doc", source_tag(src.name)]
+    item's id and revision and the conversion in its metadata. A mirrored item carries
+    the permission list of its listed `permissions`; one listed without them is
+    `unread`. False, writing nothing, when another writer took the address while the
+    item was fetched: the check before the fetch is seconds old by now."""
+    namespace, tag = home(src)
+    tags = list(dict.fromkeys(["source-kind:design_doc", source_tag(src.name), tag]))
     if repo := _repo_tag(src):
         tags.insert(1, repo)
     metadata: dict[str, Any] = {
@@ -1139,7 +1154,7 @@ async def write_document(
     pass_context.check_stop()  # a stopped pass or a lost lease writes nothing
     request = KnowledgeUpsertInput(
         org=src.org,
-        namespace=src.namespace,
+        namespace=namespace,
         source_uri=uri,
         content=content,
         title=str(f.get("name") or ""),
@@ -1151,14 +1166,18 @@ async def write_document(
         blob_content_type=str(f.get("mimeType") or "") if original else "",
         source_class="imported",
     )
+    permissions = access_list.UNREAD
+    if src.access == MIRRORED_ACCESS:
+        permissions = access_list.from_drive_permissions(f.get("permissions"))
     with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
-        await writes.handle_knowledge_upsert(request)
+        await writes.handle_knowledge_upsert(request, permissions=permissions)
     return True
 
 
 async def retire(src: KnowledgeSource, uri: str) -> bool:
     """Retire one of the source's documents, with the audit row the transport would
     have written for `knowledge.delete`; False when it is no longer the source's."""
+    namespace, _ = home(src)
     with sequential_reads():  # a replica behind a person's write would say still ours
         ours = await _may_write(src, uri)
     if not ours:
@@ -1166,7 +1185,7 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
     pass_context.check_stop()
     try:
         out = await writes.handle_knowledge_delete(
-            KnowledgeDeleteInput(org=src.org, namespace=src.namespace, source_uri=uri)
+            KnowledgeDeleteInput(org=src.org, namespace=namespace, source_uri=uri)
         )
         deleted = out.deleted
     except PublicationPending:  # the delete is committed; the worker publishes it
@@ -1175,7 +1194,7 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
         await audit.emit(
             "knowledge.delete",
             org=src.org,
-            namespace=src.namespace,
+            namespace=namespace,
             actor=SYNC_WORKER_ACTOR,
             subject={"source_uri": uri, "source_name": src.name},
         )
@@ -1254,7 +1273,7 @@ async def _retire_removed_sources(
 
 
 async def _retire_all(src: KnowledgeSource, run: Pass, result: PassResult) -> None:
-    docs = await store.source_documents(src.org, src.namespace, src.name)
+    docs = await store.source_documents(src.org, *home(src))
     for doc in docs:
         if run.spent():
             result.cut = True
@@ -1263,7 +1282,7 @@ async def _retire_all(src: KnowledgeSource, run: Pass, result: PassResult) -> No
         if await retire(src, str(doc["source_uri"])):
             result.retired += 1
     with sequential_reads():
-        if await store.count_documents(src.org, src.namespace, src.name):
+        if await store.count_documents(src.org, *home(src)):
             return
     try:
         async with source_ops.sources_lease(src.org, src.namespace):
@@ -1348,6 +1367,9 @@ async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: Pass
     the reason current."""
     from server.memory.app.decision_extract import no_model_error
 
+    # A mirrored document is shown only to the readers its list admits, and a decision
+    # row to every reader of the namespace: nothing of a mirror is mined.
+    order = [s for s in order if served(s)]
     with sequential_reads():
         # What this pass's turns just wrote.
         states = await _states(order)
@@ -1355,7 +1377,7 @@ async def _extract_pending(order: list[KnowledgeSource], run: Pass, result: Pass
         for src in order:
             detail = json_object(states.get(_cursor_of(src), {}).get("detail", ""))
             try:
-                docs = await store.source_revisions(src.org, src.namespace, src.name)
+                docs = await store.source_revisions(src.org, *home(src))
             except Exception as e:  # noqa: BLE001 — one source's failed read must not stop the others
                 result.errors.append(f"{_cursor_of(src)}: extraction {type(e).__name__}")
                 result.failed += 1

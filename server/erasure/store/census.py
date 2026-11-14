@@ -315,6 +315,10 @@ _CENSUS: tuple[Substrate, ...] = (
     # A gap names no user, so the census counts it in the namespace scope only; the
     # user's search_misses.delete step also deletes the builds of the user's namespaces.
     Substrate("loom.knowledge_gaps", "1", None, "knowledge_gaps.delete", None),
+    # When each mirrored source last listed, under its mirror's name: names and times.
+    Substrate(
+        "loom.knowledge_source_listings", "1", None, "knowledge_source_listings.delete", None
+    ),
     # A replayed response body quotes whatever the op returned. The rows name
     # the caller's org and subject but no namespace and no end user, so both
     # scopes clear and count the org's rows (a cache — the cost is one miss

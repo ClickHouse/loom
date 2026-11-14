@@ -288,6 +288,20 @@ async def delete_events_by_user(org: str, user_id: str, *, ch: _CHClient | None 
     return await _delete_events(org, UID, {"uid": user_id}, ch)
 
 
+async def delete_source_listings_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """When each mirrored source last listed (names and times); `namespace` is the
+    mirror, which a scope holding it erases."""
+    return await delete_scoped(
+        "loom.knowledge_source_listings",
+        org=org,
+        scope_where=NS_EQ,
+        params={"ns": namespace},
+        ch=ch,
+    )
+
+
 async def delete_memory_drops_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:

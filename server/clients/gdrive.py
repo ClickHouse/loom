@@ -49,9 +49,14 @@ _FILE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
 # store's query length.
 MAX_PARENTS = 50  # not a setting: a bound on one query, the same on every deployment
 # What a listing reads of each file.
-_LISTED = "id,name,mimeType,modifiedTime,webViewLink,size"
+LISTED = "id,name,mimeType,modifiedTime,webViewLink,size"
 # What a probe's first listing page reads of each file.
 _PAGE_FIELDS = "id,name,mimeType,modifiedTime"
+# What a mirrored source reads of each permission (`domain.access_list`).
+_PERMISSION_FIELDS = "type,role,emailAddress,domain,allowFileDiscovery,deleted,pendingOwner,view"
+# A listing that also reads each file's permissions; the store leaves them out for a
+# file the account cannot share, and for a shared drive's files (`file_permissions`).
+LISTED_WITH_PERMISSIONS = f"{LISTED},permissions({_PERMISSION_FIELDS})"
 
 
 @dataclass(frozen=True)
@@ -215,6 +220,7 @@ async def list_all(
     mime_types: list[str],
     *,
     modified_after: str = "",
+    fields: str = LISTED,
     pace_s: float = PAGE_PACE_S,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Every file of `mime_types` in any of `folder_ids`, oldest change first, or only
@@ -225,7 +231,7 @@ async def list_all(
     for start in range(0, len(folder_ids), MAX_PARENTS):
         query = folder_query(folder_ids[start : start + MAX_PARENTS], mime_types)
         found, complete = await list_query(
-            token, query, modified_after=modified_after, pace_s=pace_s
+            token, query, modified_after=modified_after, fields=fields, pace_s=pace_s
         )
         files.extend(found)
         whole = whole and complete
@@ -238,7 +244,7 @@ async def list_query(
     *,
     drive_id: str = "",
     modified_after: str = "",
-    fields: str = _LISTED,
+    fields: str = LISTED,
     pace_s: float = PAGE_PACE_S,
     limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
@@ -305,16 +311,53 @@ async def any_subfolder(token: str, parent_ids: list[str], seen: set[str]) -> bo
     return False
 
 
-async def file_meta(token: str, file_id: str) -> dict[str, Any]:
-    """One file as a listing reads it, with `trashed`; NotFound when the account
-    cannot see it."""
+async def file_meta(token: str, file_id: str, *, fields: str = LISTED) -> dict[str, Any]:
+    """One file as a listing reads it (`fields`), with `trashed`; NotFound when the
+    account cannot see it."""
     return await bearer_get(
         get_client(),
         _file_url(file_id),
         token,
         f"file {file_id}",
-        params={"fields": f"{_LISTED},trashed", "supportsAllDrives": "true"},
+        params={"fields": f"{fields},trashed", "supportsAllDrives": "true"},
     )
+
+
+async def file_permissions(
+    token: str, file_id: str, *, pace_s: float = PAGE_PACE_S
+) -> list[dict[str, Any]] | None:
+    """Every permission of one file, read page by page; None when the store will not
+    say (the file is gone, or the account may not see who it is shared with). A rate
+    limit or a refused credential raises."""
+    params = {
+        "fields": f"nextPageToken,permissions({_PERMISSION_FIELDS})",
+        "pageSize": "100",
+        "supportsAllDrives": "true",
+    }
+    found: list[dict[str, Any]] = []
+    while True:
+        try:
+            data = await bearer_get(
+                get_client(),
+                _file_url(file_id, "/permissions"),
+                token,
+                f"file {file_id}",
+                params=params,
+            )
+        except NotFound:
+            return None
+        except CredentialRefused as e:
+            # A 403 here is the account not being let see the file's sharing (a rate
+            # limit is `RateLimited`); a 401 is the credential itself.
+            if e.status == 403:
+                return None
+            raise
+        found.extend(p for p in data.get("permissions") or [] if isinstance(p, dict))
+        page_token = data.get("nextPageToken")
+        if not isinstance(page_token, str) or not page_token:
+            return found
+        params = {**params, "pageToken": page_token}
+        await asyncio.sleep(pace_s)
 
 
 async def file_state(token: str, file_id: str) -> dict[str, Any]:

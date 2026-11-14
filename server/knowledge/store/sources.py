@@ -37,7 +37,6 @@ from server.knowledge.domain.sources import (
     items_from_config,
     json_object,
     options_in,
-    source_tag,
     state_key,
     stored_config,
 )
@@ -285,9 +284,10 @@ async def write_state(
 
 
 async def source_documents(
-    org: str, namespace: str, name: str, *, ch: _CHClient | None = None
+    org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The source's live documents, newest first, at most DOCUMENTS_LIMIT.
+    """The live documents the sync wrote under `tag` (`domain.home`), newest first, at
+    most DOCUMENTS_LIMIT.
     A tag filter over the namespace's key prefix: `metadata` is a JSON string
     the table's key does not cover."""
     rows = await (ch or _default_client()).query_all(
@@ -298,7 +298,7 @@ async def source_documents(
         "AND actor = {actor:String} AND superseded_at IS NULL "
         "ORDER BY ingested_at DESC, source_uri "
         f"LIMIT {DOCUMENTS_LIMIT}",
-        params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
+        params={"org": org, "ns": namespace, "tag": tag, "actor": SYNC_WORKER_ACTOR},
     )
     return [dict(r) for r in rows]
 
@@ -311,14 +311,15 @@ _INLINE_PICTURE = r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*<?data:"
 async def source_revisions(
     org: str,
     namespace: str,
-    name: str,
+    tag: str,
     *,
     searchable_only: bool = True,
     pictures: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
-    """Each live document of the source: its address, the store's file id it came
-    from, the revision stamp of the ingested copy, and for a kind that keeps them
+    """Each live document the sync wrote under `tag` (`domain.home`): its address, the
+    store's file id it came from, the revision stamp of the ingested copy, its
+    permission list (`access_json`, "" outside a mirror), and for a kind that keeps them
     (else "") when the copy was read (`read_at`) and the exact hash of what was
     written (`text_sha256`). With `pictures`, also whether the stored text still
     holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
@@ -328,15 +329,20 @@ async def source_revisions(
     filter over the namespace's key prefix like `source_documents`, read in pages of
     `REVISIONS_PAGE` by address, so no document is left out.
 
-    With `searchable_only`, only a version whose chunks are live counts: a write cut
+    With `searchable_only`, only a document whose chunks are live counts: a write cut
     between its document row and its chunks leaves a version nobody can search, and
-    its revision must not let the next turn skip the file. Without it every live
-    document counts, which is what removal needs."""
-    chunks = (
-        "AND (source_uri, version) IN ("
-        "SELECT source_uri, doc_version FROM loom.chunks "
+    its revision must not let the next turn skip the file. Its chunks are those of its
+    version or of its revision, since a rewrite of the row alone (a new list, a
+    metadata edit) keeps the revision and its chunks. Without it every live document
+    counts, which is what removal needs."""
+    live = (
+        "SELECT source_uri, arrayJoin([doc_version, "
+        "JSONExtractUInt(chunk_metadata, 'revision')]) FROM loom.chunks "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
-        f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}) "
+        f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}"
+    )
+    chunks = (
+        f"AND ((source_uri, version) IN ({live}) OR (source_uri, revision) IN ({live})) "
         if searchable_only
         else ""
     )
@@ -350,7 +356,7 @@ async def source_revisions(
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
         "JSONExtractString(metadata, 'read_at') AS read_at, "
-        "JSONExtractString(metadata, 'text_sha256') AS text_sha256, "
+        "JSONExtractString(metadata, 'text_sha256') AS text_sha256, access_json, "
         f"{checks} "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
@@ -361,7 +367,7 @@ async def source_revisions(
     params = {
         "org": org,
         "ns": namespace,
-        "tag": source_tag(name),
+        "tag": tag,
         "actor": SYNC_WORKER_ACTOR,
         **({"pic": _INLINE_PICTURE} if pictures else {}),
     }
@@ -383,20 +389,21 @@ async def source_revisions(
             "text_sha256": str(r.get("text_sha256") or ""),
             "inline_pictures": "1" if r.get("inline_pictures") else "",
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
+            "access_json": str(r.get("access_json") or ""),
         }
         for r in rows
     ]
 
 
 async def count_documents(
-    org: str, namespace: str, name: str, *, ch: _CHClient | None = None
+    org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
 ) -> int:
-    """How many live documents the source has."""
+    """How many live documents the sync wrote under `tag` (`domain.home`)."""
     row = await (ch or _default_client()).query_one(
         "SELECT count() AS n FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL",
-        params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
+        params={"org": org, "ns": namespace, "tag": tag, "actor": SYNC_WORKER_ACTOR},
     )
     return int((row or {}).get("n") or 0)
 

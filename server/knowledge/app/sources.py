@@ -410,7 +410,7 @@ async def handle_knowledge_source_inspect(
 ) -> KnowledgeSourceInspectOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
     states = await store.read_states(src.org, src.namespace, [src.name])
-    docs = await store.source_documents(src.org, src.namespace, src.name)
+    docs = await store.source_documents(src.org, src.namespace, domain.source_tag(src.name))
     return KnowledgeSourceInspectOutput(
         name=src.name,
         kind=src.kind,
@@ -535,7 +535,7 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
                 "(LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE); remove one first",
                 code="SOURCE_QUOTA",
             )
-        documents = await store.count_documents(org, namespace, name)
+        documents = await store.count_documents(org, namespace, domain.source_tag(name))
         earlier = await store.latest_source(org, namespace, name)
     # A new row under the name would orphan a removed mirrored source's documents and
     # any delete request for them, which only the build that writes mirrors acts on.
@@ -895,7 +895,9 @@ async def handle_knowledge_source_remove(
                 )
             pending = 0
             if input.delete_documents:
-                pending = await store.count_documents(src.org, src.namespace, src.name)
+                pending = await store.count_documents(
+                    src.org, src.namespace, domain.source_tag(src.name)
+                )
         # The delete request rides on the inactive registry row, which no sync-state
         # write touches. It is recorded even with no documents counted now: a sync
         # turn running meanwhile may still write one, and the worker clears the

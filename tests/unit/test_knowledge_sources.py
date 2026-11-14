@@ -114,11 +114,11 @@ class _Store:
     async def write_state(self, org: str, ns: str, name: str, *, state_value: str, detail: Any):
         self.states[name] = {"state_value": state_value, "detail": json.dumps(detail)}
 
-    async def source_documents(self, org: str, ns: str, name: str) -> list[dict[str, Any]]:
+    async def source_documents(self, org: str, ns: str, tag: str) -> list[dict[str, Any]]:
         return [{"source_uri": "https://x/1", "title": "Deck", "source_revision": "r1"}]
 
-    async def count_documents(self, org: str, ns: str, name: str) -> int:
-        return self.documents.get(name, 0)
+    async def count_documents(self, org: str, ns: str, tag: str) -> int:
+        return self.documents.get(tag.removeprefix("source:"), 0)
 
 
 @pytest.fixture
@@ -668,12 +668,12 @@ def test_statements_read_final_on_the_key_prefix(monkeypatch: pytest.MonkeyPatch
     asyncio.run(store.list_sources(ORG, NS))
     asyncio.run(store.get_source(ORG, NS, "d"))
     asyncio.run(store.read_states(ORG, NS, ["d"]))
-    asyncio.run(store.source_documents(ORG, NS, "d"))
+    asyncio.run(store.source_documents(ORG, NS, domain.source_tag("d")))
     for st in ch.statements("FROM loom."):
         assert "FINAL" in st.sql and "org = {org:String} AND namespace = {ns:String}" in st.sql
     assert ch.statements("FROM loom.code_index_state")[0].params["keys"] == ["knowledge_source:d"]
     # A source's documents are those the sync worker wrote, never a caller's tagged ones.
-    asyncio.run(store.count_documents(ORG, NS, "d"))
+    asyncio.run(store.count_documents(ORG, NS, domain.source_tag("d")))
     for st in ch.statements("FROM loom.documents"):
         assert st.params["tag"] == "source:d"
         assert st.params["actor"] == domain.SYNC_WORKER_ACTOR == "worker:knowledge-source-sync"
@@ -1041,7 +1041,7 @@ def test_remove_counts_documents_with_sequential_consistency(
     asyncio.run(app.handle_knowledge_source_add(_add()))
     seen: list[bool] = []
 
-    async def _count(org: str, ns: str, name: str) -> int:
+    async def _count(org: str, ns: str, tag: str) -> int:
         seen.append(sequential_reads_active())
         return 2
 

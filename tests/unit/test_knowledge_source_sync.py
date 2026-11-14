@@ -29,7 +29,7 @@ from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import extractors, source_gdrive_items, source_sync, writes
 from server.knowledge.app import sources as source_ops
-from server.knowledge.domain import convert
+from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.extract.artifact import Artifact, Block, Coverage
 from server.knowledge.domain.sources import (
     MIRRORED_ACCESS,
@@ -155,7 +155,7 @@ class _World:
         self.sources = [s for s in self.sources if s.name != src.name] + [src]
 
     async def source_revisions(
-        self, org: str, ns: str, name: str, *, searchable_only: bool = True, pictures: bool = False
+        self, org: str, ns: str, tag: str, *, searchable_only: bool = True, pictures: bool = False
     ) -> list[dict[str, str]]:
         return [
             {
@@ -167,18 +167,19 @@ class _World:
                 "stored_content_sha256": sha256_text(d.get("content", ""))
                 if pictures and "]: <data:" in d.get("content", "")
                 else "",
+                "access_json": d.get("access_json", ""),
             }
             for uri, d in self.docs.items()
             if d["actor"] == SYNC_WORKER_ACTOR
-            and f"source:{name}" in d["tags"]
+            and tag in d["tags"]
             and (d.get("chunks", True) or not searchable_only)
         ]
 
-    async def source_documents(self, org: str, ns: str, name: str) -> list[dict[str, Any]]:
-        return await self.source_revisions(org, ns, name, searchable_only=False)
+    async def source_documents(self, org: str, ns: str, tag: str) -> list[dict[str, Any]]:
+        return await self.source_revisions(org, ns, tag, searchable_only=False)
 
-    async def count_documents(self, org: str, ns: str, name: str) -> int:
-        return len(await self.source_documents(org, ns, name))
+    async def count_documents(self, org: str, ns: str, tag: str) -> int:
+        return len(await self.source_documents(org, ns, tag))
 
     # the folder store
     def answer(self, request: httpx.Request) -> httpx.Response:
@@ -271,22 +272,25 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
                 source_uri=uri,
                 doc_id="d",
                 content=d.get("content", ""),
-                version=1,
+                version=d.get("version", 1),
                 ingested_at="2026-01-01T00:00:00",
                 actor=d["actor"],
                 tags=d["tags"],
+                access_json=d.get("access_json", ""),
             )
         )
 
     monkeypatch.setattr(documents, "get_one", _get_one)
 
-    async def _upsert(inp: Any) -> Any:
+    async def _upsert(inp: Any, permissions: Any = access_list.UNREAD, **_: Any) -> Any:
         w.upserts.append((inp, pipeline_actor_var.get()))
         w.docs[inp.source_uri] = {
             "actor": pipeline_actor_var.get(),
             "tags": list(inp.tags),
             "metadata": dict(inp.metadata),
             "content": inp.content,
+            "namespace": inp.namespace,
+            "access_json": access_list.to_json(permissions),
         }
 
     async def _delete(inp: Any) -> Any:
@@ -614,7 +618,7 @@ def test_a_reconverting_write_cut_before_its_chunks_still_mines_the_new_text(
     world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
     real = writes.handle_knowledge_upsert
 
-    async def _cut_before_chunks(inp: Any) -> Any:
+    async def _cut_before_chunks(inp: Any, **_: Any) -> Any:
         await real(inp)
         world.docs[inp.source_uri]["chunks"] = False  # the document row, no live chunks
         raise RuntimeError("cut before the chunks")
@@ -635,7 +639,7 @@ def test_a_failed_reconverting_write_leaves_the_document_to_be_mined_again(
     world.states["decks"] = {"state_value": "", "detail": json.dumps({"mined": {uri: REV1}})}
     real = writes.handle_knowledge_upsert
 
-    async def _down(inp: Any) -> Any:
+    async def _down(inp: Any, **_: Any) -> Any:
         raise RuntimeError("store down")
 
     monkeypatch.setattr(writes, "handle_knowledge_upsert", _down)
@@ -884,9 +888,9 @@ def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
     assert not world.sources[-1].pending_delete
 
 
-def test_a_pass_leaves_a_mirrored_source_to_the_build_that_writes_mirrors(world: _World) -> None:
+def test_a_pass_leaves_a_mirrored_source_of_a_store_without_a_mirror_turn(world: _World) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
-    world.sources = [_source(access=MIRRORED_ACCESS)]
+    world.sources = [dataclasses.replace(_source(access=MIRRORED_ACCESS), kind="notion")]
     result = asyncio.run(source_sync.run_sync())
     assert (result.sources, result.synced) == (0, 0) and world.upserts == []
     # Removed with its documents, its request is kept for that build.
@@ -931,7 +935,7 @@ def test_a_remove_during_the_turn_stops_it_before_the_next_write(
     ]
     real = writes.handle_knowledge_upsert
 
-    async def _upsert_then_remove(inp: Any) -> Any:
+    async def _upsert_then_remove(inp: Any, **_: Any) -> Any:
         await real(inp)
         # The maintainer removes the source while the turn runs.
         world.sources = [dataclasses.replace(world.sources[0], active=False)]
@@ -1098,7 +1102,7 @@ def test_a_write_cut_before_its_chunks_is_done_again(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     real = writes.handle_knowledge_upsert
 
-    async def _cut(inp: Any) -> Any:
+    async def _cut(inp: Any, **_: Any) -> Any:
         await real(inp)
         world.docs[inp.source_uri]["chunks"] = False  # the document row landed, no chunk
         raise RuntimeError("cut")
@@ -1312,7 +1316,7 @@ def test_a_committed_write_that_awaits_publication_counts_as_written(
 
     world.files = [_file("doc1", DOCS, REV1)]
 
-    async def _pending(inp: Any) -> Any:
+    async def _pending(inp: Any, **_: Any) -> Any:
         raise PublicationPending()
 
     monkeypatch.setattr(writes, "handle_knowledge_upsert", _pending)
@@ -1330,7 +1334,7 @@ def test_a_committed_retirement_that_awaits_publication_counts_as_retired(
     asyncio.run(source_sync.run_sync())
     world.sources = [_source(active=False, pending_delete=True, credential_enc="")]
 
-    async def _pending(inp: Any) -> Any:
+    async def _pending(inp: Any, **_: Any) -> Any:
         raise PublicationPending()
 
     monkeypatch.setattr(writes, "handle_knowledge_delete", _pending)
@@ -1572,7 +1576,7 @@ def test_a_maintainer_s_delete_request_goes_before_the_changed_files(
 def test_a_write_the_store_refuses_is_unconverted_at_once(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _refuse(inp: Any) -> Any:
+    async def _refuse(inp: Any, **_: Any) -> Any:
         raise ValidationError("the original is too large", code="TOO_LARGE")
 
     monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
@@ -1686,7 +1690,7 @@ def test_folder_checks_run_ten_at_a_time_each_folder_once(
     monkeypatch.setattr(gdrive, "require_folder", _require)
     items = [*_folders(25), {"type": "filter", "in": "f0"}]
     turn = source_sync.TurnResult()
-    assert asyncio.run(source_sync._items_visible("t", items, turn, lambda: False))
+    assert asyncio.run(source_sync.items_visible("t", items, turn, lambda: False))
     assert most == 10 and len(checked) == 25 and turn.complete
 
 
@@ -1704,7 +1708,7 @@ def test_folder_checks_stop_at_the_pass_bound(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(gdrive, "require_folder", _require)
     turn = source_sync.TurnResult()
-    assert not asyncio.run(source_sync._items_visible("t", _folders(25), turn, _out_of_time))
+    assert not asyncio.run(source_sync.items_visible("t", _folders(25), turn, _out_of_time))
     assert len(checked) == 10 and turn.cut
 
 
@@ -1727,7 +1731,7 @@ def test_the_worst_folder_check_in_a_batch_decides_the_turn(
 
     monkeypatch.setattr(gdrive, "require_folder", _require)
     turn = source_sync.TurnResult()
-    assert not asyncio.run(source_sync._items_visible("t", _folders(4), turn, lambda: False))
+    assert not asyncio.run(source_sync.items_visible("t", _folders(4), turn, lambda: False))
     assert turn.status == status
 
 
@@ -1738,7 +1742,7 @@ def test_a_folder_check_s_own_bug_is_raised(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(gdrive, "require_folder", _require)
     with pytest.raises(KeyError):
         asyncio.run(
-            source_sync._items_visible("t", _folders(2), source_sync.TurnResult(), lambda: False)
+            source_sync.items_visible("t", _folders(2), source_sync.TurnResult(), lambda: False)
         )
 
 
@@ -1971,7 +1975,7 @@ def test_a_file_refused_at_once_is_tried_again_when_it_changes_and_on_a_full_lis
         world.extract_errors["f1"] = extractors.ExtractionFailed("corrupt", "damaged")
     else:
 
-        async def _refuse(inp: Any) -> Any:
+        async def _refuse(inp: Any, **_: Any) -> Any:
             raise ValidationError("refused", code="TOO_LARGE")
 
         monkeypatch.setattr(writes, "handle_knowledge_upsert", _refuse)
@@ -2700,10 +2704,10 @@ def test_a_failed_read_of_a_source_s_documents_is_that_source_s_error(
     revisions = source_sync.store.source_revisions
     noted: list[str] = []
 
-    async def _decks_down(org: str, ns: str, name: str, **kw: Any) -> Any:
-        if name == "decks" and kw.get("searchable_only", True) and noted == ["sync-done"]:
+    async def _decks_down(org: str, ns: str, tag: str, **kw: Any) -> Any:
+        if tag == "source:decks" and kw.get("searchable_only", True) and noted == ["sync-done"]:
             raise ConnectionError("store down")
-        return await revisions(org, ns, name, **kw)
+        return await revisions(org, ns, tag, **kw)
 
     write_state = source_sync._write_state
 
@@ -2752,7 +2756,7 @@ def test_the_folder_turn_ends_a_source_stored_without_a_kind_before_any_request(
 ) -> None:
     # What a build without items reads of such a row: kind '', no credential in
     # `credential_enc`, a config with no folder.
-    assert source_sync._turn_of("") is source_sync._turn
+    assert source_sync._turn_of(dataclasses.replace(_source(), kind="")) is source_sync._turn
     world.sources = [
         dataclasses.replace(
             _source(), kind="", config={"include": ["docs"]}, items=[], credential_enc=""

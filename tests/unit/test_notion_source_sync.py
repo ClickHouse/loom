@@ -132,7 +132,7 @@ class _Store:
         return next((s for s in self.sources if s.name == name and s.active), None)
 
     async def source_revisions(
-        self, org: str, ns: str, name: str, *, searchable_only: bool = True, pictures: bool = False
+        self, org: str, ns: str, tag: str, *, searchable_only: bool = True, pictures: bool = False
     ) -> list[dict[str, str]]:
         return [
             {
@@ -143,7 +143,7 @@ class _Store:
                 "text_sha256": d["metadata"].get("text_sha256", ""),
             }
             for uri, d in self.docs.items()
-            if d["actor"] == SYNC_WORKER_ACTOR and f"source:{name}" in d["tags"]
+            if d["actor"] == SYNC_WORKER_ACTOR and tag in d["tags"]
         ]
 
     def answer(self, request: httpx.Request) -> httpx.Response:
@@ -243,7 +243,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _Store:
 
     monkeypatch.setattr(documents, "get_one", _get_one)
 
-    async def _upsert(inp: Any) -> Any:
+    async def _upsert(inp: Any, **_: Any) -> Any:
         w.upserts += 1
         w.docs[inp.source_uri] = {
             "actor": pipeline_actor_var.get(),

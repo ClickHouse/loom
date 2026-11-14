@@ -40,7 +40,7 @@ from server.core.hashing import sha256_text
 from server.knowledge.app import source_sync as sync
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import convert
-from server.knowledge.domain.sources import KnowledgeSource, item_ids, json_object
+from server.knowledge.domain.sources import KnowledgeSource, home, item_ids, json_object
 from server.knowledge.store import sources as store
 from server.settings import settings
 
@@ -167,9 +167,7 @@ async def _forget_unlisted_without_documents(t: _Turn) -> None:
     src = t.src
     held = {
         d["file_id"]
-        for d in await store.source_revisions(
-            src.org, src.namespace, src.name, searchable_only=False
-        )
+        for d in await store.source_revisions(src.org, *home(src), searchable_only=False)
     }
     for child_id in list(t.known):
         if child_id in t.absent and child_id not in held:

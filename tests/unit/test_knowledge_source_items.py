@@ -718,10 +718,13 @@ def test_a_probe_names_a_file_of_a_kind_the_source_does_not_read(
 def test_the_file_lookup_and_listings_ask_the_store_for_no_person(drive: _Drive) -> None:
     drive.files = [{"id": FILE, "mimeType": DOCS, "parents": [FOLDER]}]
     asyncio.run(gdrive.file_state("tok", FILE))
-    # Loom keeps no person's address: no owner, sharing or user field is read, by the
-    # retirement lookup, a listing or a probe's first page.
-    for fields in (drive.requests[-1].url.params["fields"], gdrive._LISTED, gdrive._PAGE_FIELDS):
+    # A namespace source keeps no person's address: no owner, sharing or user field is
+    # read by the retirement lookup, a listing or a probe's first page. Only a mirrored
+    # listing reads the permissions, and never the owners or a user's name.
+    for fields in (drive.requests[-1].url.params["fields"], gdrive.LISTED, gdrive._PAGE_FIELDS):
         assert not any(word in fields.lower() for word in ("owner", "permission", "user"))
+    mirrored = gdrive.LISTED_WITH_PERMISSIONS.lower()
+    assert not any(word in mirrored for word in ("owners", "displayname", "lastmodifyinguser"))
 
 
 def test_the_tracker_lookup_refuses_more_than_one_page_of_short_ids() -> None:

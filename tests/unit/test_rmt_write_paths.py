@@ -39,6 +39,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "memory_webhooks": ("builder", "test_memory_webhooks.py"),
     "knowledge_sources": ("builder", "test_knowledge_sources.py"),
     "knowledge_mirrors": ("builder", "test_knowledge_mirrors.py"),
+    "knowledge_source_listings": ("builder", "test_knowledge_mirrors.py"),
     "machine_identities": ("builder", "test_machines.py"),
     "org_model_calls": ("builder", "test_model_calls_switch.py"),
     "extraction_policies": ("builder", "test_extraction_policy.py"),

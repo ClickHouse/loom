@@ -311,3 +311,13 @@ def test_erasure_re_verify_of_a_completed_saga_reads_its_mirrors_links(
     }  # fmt: skip
     assert asyncio.run(hygiene._re_verify_completed(None, row, resume=False)) == 0
     assert scopes == [["team", MIRROR]]
+
+
+def test_a_listing_row_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+
+    ch = RecordingCH()
+    ch.install(monkeypatch)
+    asyncio.run(mirrors.record_listing(ORG, MIRROR, "sid", "decks", datetime.now(UTC)))
+    [row] = ch.inserted("knowledge_source_listings")
+    assert set(row) | {"version"} == set(column_names("knowledge_source_listings"))
