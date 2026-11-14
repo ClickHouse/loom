@@ -74,8 +74,8 @@ class _LessonsOut(BaseModel):
     # the worst state of the row's links to code in the file: `fresh`, `moved`, or
     # `changed`, `unresolved` or `missing` when that code differs from what the memory was
     # written against; '' for a row that names the file only. `changed_since` is the commit
-    # that put its code in one of the last three states, when known; `supersedes_key` the
-    # key of the older row it replaces.
+    # that put its code in a `changed`, `unresolved` or `missing` state, when known;
+    # `supersedes_key` the key of the older row it replaces.
     lessons: list[dict[str, Any]] = Field(default_factory=list)
     # How many rows about those files the lessons' token cap or a cut left out, with
     # the rows another row read for the answer supersedes.

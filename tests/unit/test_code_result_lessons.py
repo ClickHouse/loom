@@ -125,7 +125,7 @@ async def test_a_lesson_whose_code_changed_names_the_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     changed = dict(_hit("rule/changed", state="changed"), code_changed_since="ab" * 20)
-    fresh = _hit("rule/fresh", state="fresh")
+    fresh = dict(_hit("rule/fresh", state="fresh"), code_changed_since="")  # as the listing sends
     rows = await _lessons(monkeypatch, {"a.py": [changed, fresh]}, ["a.py"])
     assert rows[0]["changed_since"] == "ab" * 20
     # no commit to name, no key: as `supersedes_key`, absent rather than empty

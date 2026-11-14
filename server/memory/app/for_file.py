@@ -644,7 +644,8 @@ async def listing_rows(
 def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:
     """The hit with the row fields a reader needs that are not on the wire: `memory_id` and
     `supersedes_ids` (to leave a superseded row out with its superseder) and
-    `code_changed_since` (the commit a changed link's code changed at)."""
+    `code_changed_since` (the commit that put its worst link in a changed, unresolved or
+    missing state)."""
     return hit.model_dump() | {
         "memory_id": str(row.get("memory_id") or ""),
         "supersedes_ids": row.get("supersedes_ids") or [],
