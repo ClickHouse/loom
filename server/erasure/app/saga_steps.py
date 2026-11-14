@@ -191,13 +191,15 @@ async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
     return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
 
 
-async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) -> dict[str, str]:
-    """Every mirror the named namespaces have had, read from every replica's writes; a
-    mirror has none of its own."""
+async def _mirrors_of(
+    org: str, namespace: _NS, *, live_only: bool = False, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """The named namespaces' mirrors (`knowledge_mirrors.mirrors_of`), read from every
+    replica's writes; a mirror has none of its own."""
     if not (named := [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]):
         return {}
     with sequential_reads():
-        return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
+        return await knowledge_mirrors.mirrors_of(org, named, live_only=live_only, ch=ch)
 
 
 @asynccontextmanager
@@ -231,10 +233,10 @@ def with_mirrors(
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
-    """The last Loom step, before the backends and the census: writes every mirror the
-    named namespaces have had `deleted`, so the name registered again gets a new one; a
+    """The last Loom step, before the backends and the census: writes the named
+    namespaces' live mirrors `deleted`, so the name registered again gets a new one; a
     scope of only mirrors forgets none."""
-    found = await _mirrors_of(org, namespace)
+    found = await _mirrors_of(org, namespace, live_only=True)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)
 

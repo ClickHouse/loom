@@ -9,15 +9,18 @@ TABLE = "loom.knowledge_mirrors"
 
 
 async def mirrors_of(
-    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+    org: str, namespaces: list[str], *, live_only: bool = False, ch: _CHClient | None = None
 ) -> dict[str, str]:
-    """Every mirror the namespaces have had, written `deleted` or not, with its namespace,
-    in name order: an erasure step binds them, and its mutation tag must not change."""
+    """Each mirror the namespaces have had, with its namespace, in name order (an erasure
+    step binds them, and its mutation tag must not change): every one, written `deleted`
+    or not, or with `live_only` those not yet written `deleted`."""
     if not namespaces:
         return {}
+    live = " AND NOT deleted" if live_only else ""
     rows = await (ch or _default_client()).query_all(
         f"SELECT mirror, namespace FROM {TABLE} FINAL "
-        "WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} ORDER BY mirror",
+        "WHERE org = {org:String} AND namespace IN {namespaces:Array(String)}"
+        f"{live} ORDER BY mirror",
         params={"org": org, "namespaces": namespaces},
     )
     return {str(r["mirror"]): str(r["namespace"]) for r in rows}

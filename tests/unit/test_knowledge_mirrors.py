@@ -43,9 +43,13 @@ def test_the_registry_keeps_every_mirror_a_namespace_had(tmp_path: Path) -> None
         assert list(found.items()) == [(MIRROR, "team"), (OLD_MIRROR, "team")]
         assert await mirrors.mirrors_of("other-org", ["team"], ch=ch) == {}
         assert await namespace_census.in_use(ORG, "team", [], ch=ch)  # type: ignore[arg-type]
+        # Only the new mirror is live: the old one was forgotten.
+        assert await mirrors.mirrors_of(ORG, ["team"], live_only=True, ch=ch) == {MIRROR: "team"}
         await mirrors.forget_mirrors(ORG, found, ch=ch)
-        # Forgotten, the mirrors still reach a later erasure, and no longer hold the name.
+        # Forgotten, the mirrors still reach a later erasure, and no longer hold the name;
+        # a later forget finds none live to write again.
         assert await mirrors.mirrors_of(ORG, ["team"], ch=ch) == found
+        assert await mirrors.mirrors_of(ORG, ["team"], live_only=True, ch=ch) == {}
         assert not await namespace_census.in_use(ORG, "team", [], ch=ch)  # type: ignore[arg-type]
 
     asyncio.run(scenario())
@@ -64,7 +68,9 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """`team` has one mirror; the calls the steps make on the registry."""
     calls: list[Any] = []
 
-    async def _mirrors_of(org: str, namespaces: list[str], ch: Any = None) -> dict[str, str]:
+    async def _mirrors_of(
+        org: str, namespaces: list[str], live_only: bool = False, ch: Any = None
+    ) -> dict[str, str]:
         # Read on every replica's writes, or a mirror made on another one is missed.
         assert sequential_reads_active()
         calls.append(("mirrors_of", namespaces, ch))
@@ -118,7 +124,9 @@ def test_a_scope_naming_its_own_mirror_lists_it_once(registry: list[Any]) -> Non
 def test_a_list_scope_covers_every_named_namespace_s_mirrors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _mirrors_of(org: str, namespaces: list[str], ch: Any = None) -> dict[str, str]:
+    async def _mirrors_of(
+        org: str, namespaces: list[str], live_only: bool = False, ch: Any = None
+    ) -> dict[str, str]:
         return {m: ns for m, ns in [(MIRROR, "a"), (OLD_MIRROR, "b")] if ns in namespaces}
 
     monkeypatch.setattr(app_mirrors, "mirrors_of", _mirrors_of)

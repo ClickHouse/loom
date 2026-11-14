@@ -575,8 +575,8 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     # Memories written since the census are not the saga's, even soft-deleted.
     cut = row["verified_at"]
     print(f"  {row['id']} {org}/{row['scope_type']} completed")
-    # With the scope's mirrors, as the saga erased them; the orphan-link reads ignore the
-    # purge mode.
+    # With the scope's mirrors, as the saga erased them; the orphan-link count and delete
+    # do not depend on the purge mode.
     async with erased_scope(org, scope_type, scope_value, ch=ch) as scope:
         orphans = await steps_graph.count_orphan_row_links(
             org, scope_type, scope, verified_at=cut, ch=ch

@@ -624,6 +624,7 @@
 4d76718ea54e	ALTER TABLE loom.memory DELETE WHERE (org = {org:String} AND has(tags, ?) AND hasAny(tags, {src:Array(String)}) AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))})) A
 4d7bac78429c	ALTER TABLE loom.memory_record_versions DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 4d9ea3bc8811	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
+4e6e72b7fe21	SELECT mirror, namespace FROM loom.knowledge_mirrors FINAL WHERE org = {org:String} AND namespace IN {namespaces:Array(String)} AND NOT deleted ORDER BY mirror
 4e7c07737d13	SELECT session_id, toString(coalesce(valid_at, created_at)) AS d FROM loom.session_summaries FINAL WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL AND has(derived_from, {k:
 4ea6d54ef2ba	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
 4ea86416312c	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g

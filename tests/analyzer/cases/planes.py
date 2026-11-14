@@ -595,6 +595,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
     await M.mirrors_of(ORG, [NS], ch=ch)
+    await M.mirrors_of(ORG, [NS], live_only=True, ch=ch)
     await K.find_doc_by_content_sha256(
         ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
     )
