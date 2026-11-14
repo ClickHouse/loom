@@ -26,6 +26,10 @@ class EvidenceItem:
     author: str = ""
     # The keys a digest compressed, so a summary says what it derives from.
     derived_from: tuple[str, ...] = ()
+    # `<state>@<commit>` (the state alone when no commit is known) when the memory's
+    # linked code changed, was not found again or went (` code_state=…` on the line);
+    # "" otherwise.
+    code_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -101,7 +105,8 @@ def pack_evidence(
         group = item.group or item.source or "fact"
         marker = " conflict=true" if item.conflict else ""
         date = f" date={item.temporal_anchor[:10]}" if item.temporal_anchor else ""
-        labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}"
+        code = f" code_state={item.code_state}" if item.code_state else ""
+        labels = f"source={item.source}{item.author}{_derived(item)}{date}{marker}{code}"
         line = one_item(f"- [{label_part(item.citation)} {labels}] {item.text}")
         tentative = "\n".join([*lines, line])
         if len(tentative) > char_budget:

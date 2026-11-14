@@ -1524,7 +1524,9 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
     monkeypatch.setattr(fanout, "tracker_leg", leg_down)
     monkeypatch.setattr(fanout, "request_scope", lambda: None)
     monkeypatch.setattr("server.auth.fanout.namespaces_to_search", namespaces)
-    monkeypatch.setattr(fanout, "answer_first", lambda payload, _ns, explain: payload)
+    monkeypatch.setattr(
+        fanout, "answer_first", lambda payload, _ns, explain, moved=frozenset(): payload
+    )
     payload = await fanout.search_sections(
         org="o",
         namespace="ns",

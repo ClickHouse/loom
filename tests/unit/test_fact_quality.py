@@ -315,6 +315,16 @@ def test_chunks_behind_a_home_fact_are_capped():
     assert af.cap_chunks_behind_fact(only_chunks, "z") == 0
 
 
+def test_chunks_behind_a_fact_the_search_ranked_down_are_not_capped():
+    p = _payload(
+        {"memory_key": "chunk:1", "namespace": "z", "source": "chunk"},
+        {"memory_key": "chunk:2", "namespace": "z", "source": "chunk"},
+        {"memory_key": "fact", "namespace": "z", "source": "fact"},
+    )
+    stale = frozenset({id(p["memory"]["results"][2])})
+    assert af.cap_chunks_behind_fact(p, "z", stale) == 0
+
+
 def test_answer_first_says_why_weak_hits_left(monkeypatch):
     from server.settings import settings
 

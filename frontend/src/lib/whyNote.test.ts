@@ -39,6 +39,12 @@ describe("signed / whyTerms", () => {
     expect(big.map((t) => t.label)).toEqual(["reranked", "rank score before defer"]);
   });
 
+  it("names the places a memory whose code changed moved down, after a reranker's move", () => {
+    const terms = whyTerms({ code_changed_places: -3, rerank_delta: 2, semantic: 0.25 });
+    expect(terms.map((t) => t.label)).toEqual(["reranked", "code changed", "semantic"]);
+    expect(terms.map(termText)).toEqual(["+2", "-3", "+0.25"]);
+  });
+
   it("shows an unknown component under its own spelling rather than hiding it", () => {
     expect(whyTerms({ brand_new_term: 0.2 })).toEqual([{ label: "brand new term", value: 0.2 }]);
   });

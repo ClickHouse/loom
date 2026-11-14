@@ -527,6 +527,10 @@ class _MemorySearchHit(BaseModel):
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None
+    # Its worst readable link is changed, unresolved or missing, links are kept current
+    # and nobody holds it: `code_change.rank_down` moves it unless something other than
+    # score places it (a date-ordered search spends the mark).
+    _code_ranked_down: bool = False
 
     memory_key: str
     memory_type: MemoryType
@@ -568,7 +572,9 @@ class _MemorySearchHit(BaseModel):
     # the itemised boosts, bounded to the pool (the identifier lift does not
     # add a flat 1.0). After an external reranker that changed the order it is
     # the pool's score for the rank the row now holds, its own in
-    # score_components.rank_score_pre_rerank; a kept order changes no score.
+    # score_components.rank_score_pre_rerank; a kept order changes no score. A
+    # row moved down for stale code (score_components.code_changed_places) scores
+    # between its new neighbours; a decision loom_search merges in keeps its own.
     # For the per-component decomposition read score_components (explain=true).
     rank_score: float = 0.0
     # ISO datetime the fact is ABOUT (distinct from valid_at = when it became

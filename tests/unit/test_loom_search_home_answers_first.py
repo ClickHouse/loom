@@ -187,7 +187,7 @@ def test_the_handler_applies_the_rule_before_it_counts_the_sections() -> None:
 
     fan = inspect.getsource(fanout.search_sections)
     assert fan.rstrip().endswith("return payload")
-    assert "payload = answer_first(payload, namespace, explain=explain)" in fan
+    assert "payload = answer_first(payload, namespace, explain=explain, moved=moved)" in fan
     # The MCP text counts the sections of the payload the handler returned.
     src = inspect.getsource(mcp_tools.search_answer)
     assert src.index('mem_hits = payload["memory"]') < src.index("withheld_note(payload)")
@@ -368,3 +368,16 @@ def test_the_lead_margin_does_not_promote_a_fact_far_below_a_leading_chunk() -> 
         "no home fact within 0.03 of the lead: nothing withheld"
     )
     assert leading_home_fact(p["memory"]["results"], "jdoe") is None
+
+
+def test_a_fact_the_search_moved_for_stale_code_is_never_lifted_to_lead() -> None:
+    p = _where_do_i_live_pool()
+    assert leading_home_fact(p["memory"]["results"], "jdoe")["memory_key"] == "where_i_live"
+    hits = p["memory"]["results"]
+    # the rule reads the search's moves, not `code_state`: one its search did not move
+    # (held, or the move off) still leads
+    hits[1]["code_state"] = "changed"
+    assert leading_home_fact(hits, "jdoe")["memory_key"] == "where_i_live"
+    # the search moved it down: it stays where the search put it, and the next one leads
+    lead = leading_home_fact(hits, "jdoe", moved=frozenset({id(hits[1])}))
+    assert lead is not None and lead["memory_key"] == "user_favorite_place"

@@ -1016,6 +1016,10 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.
+   When the served rows are shaped, after the tiers and the body floor, a row whose
+   linked code changed, was not found again or is gone moves down within them (`output.move_stale`,
+   `code_change.rank_down`); the verdict has already been read, so a move never decides
+   whether the search abstains.
    Trace, exposure and query-node rows are inserted directly, fire-and-forget (an exposure a
    breadth rule counts is a waited insert before the answer).
 

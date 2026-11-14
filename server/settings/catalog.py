@@ -3424,6 +3424,9 @@ class MemorySearchSettings(BaseModel):
     # or builtin:cohere) may take to answer; past it the search keeps its input order and
     # says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s.
     memory_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Places a search hit moves down within the served results when its linked code
+    # changed, was not found again or is gone (0 moves nothing).
+    memory_search_code_changed_places: Annotated[int, LIVE] = Field(default=3, ge=0)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
     # a 30k-row namespace); "off" reads the value vector only; "auto" turns it

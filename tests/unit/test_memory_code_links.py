@@ -4320,3 +4320,172 @@ async def test_a_found_definition_that_cannot_be_fingerprinted_leaves_a_live_lin
     monkeypatch.setattr(files, "defs", no_fingerprints)
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
     assert [m.link.state for m in moves] == ["unresolved"]
+
+
+# ---- a memory whose code changed ranks below its match ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_memory_whose_code_changed_or_went_is_marked_to_rank_down(served) -> None:
+    states = {"c": "changed", "u": "unresolved", "p": "missing", "m": "moved", "f": "fresh"}
+    for mid, state in states.items():
+        served.heads.append(_row(mid, memory_key=mid))
+        served.links[mid] = [_link(mid, state)] + ([_link(mid, "fresh")] if mid == "p" else [])
+    hits = [_hit(k) for k in states]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [(h.code_state, h._code_ranked_down) for h in hits] == [
+        ("changed", True),
+        ("unresolved", True),
+        ("missing", True),
+        ("moved", False),
+        ("fresh", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_held_unreadable_or_unkept_code_is_not_ranked_down(served, monkeypatch) -> None:
+    served.heads += [
+        _row("pinned", memory_key="pinned", pinned=1),
+        _row("hidden", memory_key="hidden"),
+        _row("plain", memory_key="plain"),
+    ]
+    served.links.update(
+        pinned=[_link("pinned", "changed")],
+        hidden=[{**_link("hidden", "changed"), "code_namespace": "code-secret"}],
+        plain=[_link("plain", "changed")],
+    )
+
+    async def readable(org, nss):
+        return set(nss) - {"code-secret"}
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    hits = [_hit("pinned"), _hit("hidden"), _hit("plain")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [(h.code_state, h._code_ranked_down) for h in hits] == [
+        ("changed", False),
+        ("", False),
+        ("changed", True),
+    ]
+    # links nothing keeps current rank nothing down
+    monkeypatch.setattr(settings, "memory_code_links_enabled", False)
+    unkept = [_hit("plain")]
+    await code_link_reads.annotate_hits(_search(), unkept)
+    assert [(h.code_state, h._code_ranked_down) for h in unkept] == [("changed", False)]
+
+
+def _ranked(*keys: str, down: tuple[str, ...] = ()) -> list[Any]:
+    hits = []
+    for i, key in enumerate(keys):
+        hit = _hit(key)
+        hit.rank_score = 0.05 - 0.01 * i
+        hit._code_ranked_down = key in down
+        hits.append(hit)
+    return hits
+
+
+def test_a_marked_hit_moves_down_within_the_served_results() -> None:
+    out = code_change.rank_down(_ranked("a", "b", "c", "d", "e", down=("a",)), 3)
+    assert [h.memory_key for h in out] == ["b", "c", "d", "a", "e"]
+    moved = out[3]
+    assert moved.rank_score < out[2].rank_score == pytest.approx(0.02)  # just below the hit above
+    assert moved.rank_score > out[4].rank_score
+    assert moved.score_components == {"code_changed_places": -3.0, "rank_score": moved.rank_score}
+    # a sort by score keeps the order, as context.pack's evidence sort does
+    assert sorted(out, key=lambda h: -h.rank_score) == out
+
+
+def test_a_marked_hit_never_leaves_the_results_and_unmarked_ones_never_move() -> None:
+    out = code_change.rank_down(_ranked("a", "b", "c", down=("a", "b")), 3)
+    assert [h.memory_key for h in out] == ["c", "a", "b"]  # in their own order, last
+    # each counts the rows it moved below, the other stale one not among them
+    assert [h.score_components["code_changed_places"] for h in out[1:]] == [-1.0, -1.0]
+    assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", "c"), 3)] == [
+        "a",
+        "b",
+        "c",
+    ]
+    last = code_change.rank_down(_ranked("a", "b", down=("b",)), 3)
+    # nothing below it to pass: it stays, and says it was to move, so nothing lifts it
+    assert [(h.memory_key, h.score_components) for h in last] == [
+        ("a", {}),
+        ("b", {"code_changed_places": 0.0}),
+    ]
+    assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", down=("a",)), 0)] == [
+        "a",
+        "b",
+    ]
+
+
+def test_a_move_keeps_a_negative_score_in_order() -> None:
+    hits = _ranked("a", "b", down=("a",))
+    hits[0].rank_score, hits[1].rank_score = -1.0, -2.0
+    out = code_change.rank_down(hits, 1)
+    assert [h.memory_key for h in out] == ["b", "a"]
+    assert out[1].rank_score < out[0].rank_score == -2.0
+
+
+def test_a_row_placed_by_an_identifier_or_a_tier_keeps_its_slot() -> None:
+    hits = _ranked("t1", "pin", "stale", "b", "c", "d", down=("pin", "stale"))
+    hits[0].score_components = {"recent_first": 1.0}
+    hits[1].score_components = {"identifier_match": 1.0}
+    out = code_change.rank_down(hits, 2)
+    # the pinned stale row stays; the other moves past two rows its score places
+    assert [h.memory_key for h in out] == ["t1", "pin", "b", "c", "stale", "d"]
+    # a placed row the move passes is never counted, and rises a slot
+    passed = _ranked("stale", "a", "pin", "b", "c", down=("stale",))
+    passed[2].score_components = {"identifier_match": 1.0}
+    out = code_change.rank_down(passed, 3)
+    assert [h.memory_key for h in out] == ["a", "pin", "b", "c", "stale"]
+    # a tier row below is not one of the places a move counts
+    tail = _ranked("stale", "b", "anchor", down=("stale",))
+    tail[2].score_components = {"anchor_first": 1.0}
+    assert [h.memory_key for h in code_change.rank_down(tail, 3)] == ["b", "stale", "anchor"]
+
+
+def test_two_stale_rows_each_move_past_their_places_and_say_so() -> None:
+    out = code_change.rank_down(_ranked("a", "b", "c", "d", "e", "f", down=("a", "b")), 3)
+    assert [h.memory_key for h in out] == ["c", "d", "e", "a", "b", "f"]
+    assert [out[i].score_components["code_changed_places"] for i in (3, 4)] == [-3.0, -3.0]
+    assert sorted(out, key=lambda h: -h.rank_score) == out
+
+
+def test_a_moved_row_ties_the_row_above_it_inside_a_tie_and_packs_in_place() -> None:
+    from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
+
+    hits = _ranked("s", "b", "c", "d", "e", down=("s",))
+    hits[0].rank_score = 0.9
+    for h in hits[1:]:
+        h.rank_score = 0.5
+    out = code_change.rank_down(hits, 1)
+    assert [h.memory_key for h in out] == ["b", "s", "c", "d", "e"]
+    assert out[1].rank_score == 0.5
+    items = [
+        EvidenceItem(citation=h.memory_key, text=h.memory_key, score=h.rank_score) for h in out
+    ]
+    assert pack_evidence(items, char_budget=10_000).citations == ["b", "s", "c", "d", "e"]
+
+
+def test_a_move_stops_at_the_similarity_floor() -> None:
+    hits = _ranked("s", "b", "f1", "f2", down=("s",))
+    for h in hits[2:]:
+        h.score_components = {"below_floor": 1.0}
+    out = code_change.rank_down(hits, 3)
+    assert [h.memory_key for h in out] == ["b", "s", "f1", "f2"]
+    assert out[1].score_components["code_changed_places"] == -1.0
+
+
+def test_a_move_stops_at_a_row_flagged_below_the_threshold() -> None:
+    hits = _ranked("s", "b", "f1", "f2", down=("s",))
+    for h in hits[2:]:
+        h.below_threshold = True
+    out = code_change.rank_down(hits, 3)
+    assert [h.memory_key for h in out] == ["b", "s", "f1", "f2"]
+
+
+def test_a_row_moved_by_an_earlier_pass_is_not_a_place_a_later_move_counts() -> None:
+    # a merge moves a stale decision among base rows, one of which the base search moved
+    hits = _ranked("a", "d", "b", "c", "s", "e", down=("d",))
+    hits[4].score_components = {"code_changed_places": -3.0}
+    out = code_change.rank_down(hits, 3, rescore=False)
+    assert [h.memory_key for h in out] == ["a", "b", "c", "s", "e", "d"]
+    assert out[5].score_components["code_changed_places"] == -3.0

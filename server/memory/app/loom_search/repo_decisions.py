@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any
 
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
+from server.memory.domain import code_change
 from server.settings import settings
 
 log = logging.getLogger("loom.loom_search")
@@ -94,15 +96,20 @@ async def search_repo_decisions(
 def merge_memory_hits(
     base: list[_MemorySearchHit], extra: list[_MemorySearchHit], home_ns: str
 ) -> tuple[list[_MemorySearchHit], list[_MemorySearchHit]]:
-    """One memory list and the `extra` hits added to it. `base` keeps its
-    own order (rank order, not always falling similarity); each `extra` hit
-    goes after the last base hit whose similarity is at least its own (the
-    rank scores of two searches do not compare). An `extra` hit whose
-    (namespace, memory_key) the base or an earlier extra hit holds is left
-    out. Nothing is cut: the extra hits are bounded by the caller's
-    `top_k` (`search_repo_decisions` keeps one per key), and a base hit pushed
-    out would be served on no page."""
+    """One memory list and the `extra` hits added to it. `base` keeps its own order
+    (rank order, not always falling similarity); each `extra` hit goes after the
+    last base hit whose similarity is at least its own (the rank scores of two
+    searches do not compare). A base row its search ranked down for stale code
+    (moved, or left in place with nothing to pass) holds no slot: an `extra` hit
+    lands after it only when a row below it that its search did not rank down is at
+    least as similar, and its `code_changed_places` counts only its own search's
+    rows. An `extra` hit whose (namespace, memory_key) the base or an earlier extra
+    hit holds is left out. Nothing is cut: the extra hits are bounded by the
+    caller's `top_k` (`search_repo_decisions` keeps one per key), and a base hit
+    pushed out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
+    # the similarity each base row holds its slot at: none for one moved for stale code
+    slot_sims = [-math.inf if code_change.moved_for_stale_code(b) else b.similarity for b in base]
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
     added: list[_MemorySearchHit] = []
@@ -111,7 +118,7 @@ def merge_memory_hits(
         if key in seen:
             continue
         seen.add(key)
-        after = max((i + 1 for i, b in enumerate(base) if b.similarity >= h.similarity), default=0)
+        after = max((i + 1 for i, s in enumerate(slot_sims) if s >= h.similarity), default=0)
         slots[after].append(h)
         added.append(h)
     out = list(slots[0])
@@ -147,10 +154,14 @@ async def memory_with_repo_decisions(
     hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace)
     if not added:
         return base
+    home = base._settled_input or mem_input
+    # the decisions whose code changed move down among the merged rows, as the base's
+    # did; the two searches' scores do not compare, so each keeps its own
+    places = settings.memory_search_code_changed_places
+    hits = code_change.rank_down(hits, places, rescore=False)
     # Credited and elided as the base search credits and elides its own: for the hits
     # it hands on, before the section's floors and answer-first rules, in its window
     # (the settled top_k, not the decision pass's over-fetch).
-    home = base._settled_input or mem_input
     await credit_merged_hits(settled.model_copy(update={"top_k": home.top_k}), added)
     apply_explain_default(added, home)
     update: dict[str, Any] = {

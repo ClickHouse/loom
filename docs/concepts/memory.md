@@ -399,6 +399,35 @@ Loom never writes the memory. The namespace's `code_change_policy`
 | `flag`                     | Flagged.                                                                                                                                                                                                                               | Flagged.                                                                                                                                                              |
 | `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
 
+Under every policy, a memory that a search still serves ranks lower when its worst link
+is `changed`, `unresolved` or `missing`: it moves below the next
+`memory_search_code_changed_places` (3) rows that rank by score (a row also moving down,
+or already moved, is not counted), never out of the results nor below a row served only
+as filler (under the similarity floor, or flagged below the abstain threshold), after the
+confidence and abstain checks have read them in relevance order;
+`score_components.code_changed_places` says how far among its own search's rows
+(`loom_search` places its merged repository decisions by similarity among the rows its
+search did not rank down). These are never moved down:
+
+- a memory a person holds;
+- a memory whose only such links are into code the caller may not read, or are links
+  nothing keeps current (`memory_code_links_enabled` off);
+- a row placed by an identifier match or by an `anchor_first` or `recent_first` tier,
+  which a move does not count as a place either;
+- every row a search serves for a query whose answer is a date order (`loom_search`'s
+  merged repository decisions, placed by similarity, still move);
+- the rows of a later page (`page=<handle>`), served in their parked order;
+- a chunk, record or summary hit, which carries no `code_state`.
+
+A reader block (`render="reader"`, `loom_search`'s block) whose question carries a time
+word (`when`, `after`, `since`, `latest`, …) lists its rows by date, so the move does
+not show in it; `results` keeps the move.
+
+`memory.ask` re-sorts the search's rows by similarity and recency while
+`memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier
+lookups place their own rows; a `context.pack` startup read with no query does not
+search. A move does not show in any of these.
+
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
 to the model. A memory a person pinned, locked (until the lock lapses) or verified, and
@@ -420,7 +449,9 @@ The links are read where the code is:
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read.
 - `memory.for_file` serves memories linked to code in the file beside those whose
-  `files` name it.
+  `files` name it. A line whose code changed, was not found again or went says so and
+  names the first indexed commit at which it read so; `context.pack` decision lines
+  carry the same note, and its memory lines a `code_state=<state>@<commit>` label.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` (a chunk, record or
   summary hit carries none and is never left out); `memory.ask` notes the memories whose

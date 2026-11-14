@@ -947,3 +947,156 @@ async def test_a_re_entered_pass_never_re_reads(monkeypatch) -> None:
         input=inp, search_budget=SearchBudget(max_wall_ms=60_000), namespaces=["n"]
     )
     assert await _consistency_reread(ctx, []) is None  # type: ignore[arg-type]
+
+
+async def test_a_memory_whose_code_changed_is_served_lower_after_the_verdict(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_link_reads
+
+    def hits() -> list[SearchHit]:
+        sims = {"stale": 0.9, "b": 0.6, "c": 0.5, "d": 0.4, "e": 0.35}
+        return [_svc_hit(k, sim=s) for k, s in sims.items()]
+
+    marked: set[str] = set()
+
+    async def annotate(input: Any, pool: list[Any]) -> None:
+        for h in pool:
+            h._code_ranked_down = h.memory_key in marked
+
+    monkeypatch.setattr(code_link_reads, "annotate_hits", annotate)
+    search_env.hits = hits()
+    plain = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in plain.results][0] == "stale"
+    marked.add("stale")
+    search_env.hits = hits()
+    out = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in out.results] == ["b", "c", "d", "stale", "e"]
+    assert out.results[3].score_components["code_changed_places"] == -3.0
+    # its explanation names the score it is served with
+    assert f"rank_score={out.results[3].rank_score:.2f}" in out.results[3].explanation
+    # the verdict read the results in relevance order
+    assert (out.abstain, out.retrieval_confidence) == (plain.abstain, plain.retrieval_confidence)
+    # a retry pass leaves the move to the search it joins
+    search_env.hits = hits()
+    child = _input(top_k=5)
+    child._merged_into_parent = True
+    from server.memory.app.search import handle_memory_search
+
+    joined = await handle_memory_search(child)
+    assert [h.memory_key for h in joined.results][0] == "stale"
+    assert joined.results[0].explanation  # explained as any pass's rows are
+    # 0 places moves nothing
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_code_changed_places", 0)
+    search_env.hits = hits()
+    off = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in off.results][0] == "stale"
+
+
+async def test_a_moved_memory_is_never_cut_by_a_tier_and_a_date_order_stays(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_link_reads
+    from server.memory.app.search import handler, output
+
+    async def annotate(input: Any, pool: list[Any]) -> None:
+        for h in pool:
+            h._code_ranked_down = h.memory_key == "stale"
+
+    async def recent(hits: list[Any], input: Any, counted: Any) -> tuple[list[Any], int]:
+        # two tier rows ahead of the similarity hits, cut to top_k as the tier window does
+        tier = []
+        for key in ("r1", "r2"):
+            row = hits[0].model_copy()
+            row.memory_key, row.score_components, row.rank_score = key, {"recent_first": 1.0}, 0.0
+            tier.append(row)
+        return (tier + hits)[: input.top_k], 0
+
+    def hits() -> list[SearchHit]:
+        sims = {"stale": 0.9, "b": 0.6, "c": 0.5, "d": 0.4, "e": 0.35}
+        return [_svc_hit(k, sim=s) for k, s in sims.items()]
+
+    monkeypatch.setattr(code_link_reads, "annotate_hits", annotate)
+    monkeypatch.setattr(output, "_prepend_recent", recent)
+    search_env.hits = hits()
+    out = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in out.results] == ["r1", "r2", "b", "c", "stale"]
+
+    enrich = handler._resolve_query_enrichment
+
+    async def dated(input: Any, work: Any) -> Any:
+        obs, parsed, (dates, _intent, *rest) = await enrich(input, work)
+        return obs, parsed, (dates, "asc", *rest)
+
+    monkeypatch.setattr(handler, "_resolve_query_enrichment", dated)
+    search_env.hits = hits()
+    out = await _run(search_env, top_k=5)
+    assert "code_changed_places" not in out.results[2].score_components
+    assert [h.memory_key for h in out.results][:3] == ["r1", "r2", "stale"]
+    # its mark is spent, so a search that merges these rows moves nothing either
+    assert not out.results[2]._code_ranked_down
+    # a pass another search merges keeps its marks, however it reads the query: the
+    # search that merges it decides
+    from server.memory.app.search import handle_memory_search
+
+    child = _input(top_k=5)
+    child._merged_into_parent = True
+    search_env.hits = hits()
+    joined = await handle_memory_search(child)
+    assert "stale" in [h.memory_key for h in joined.results if h._code_ranked_down]
+
+
+async def test_a_move_counts_only_the_rows_the_body_floor_serves(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_link_reads
+
+    async def annotate(input: Any, pool: list[Any]) -> None:
+        for h in pool:
+            h._code_ranked_down = h.memory_key == "stale"
+
+    monkeypatch.setattr(code_link_reads, "annotate_hits", annotate)
+    # "fact about b" is 12 characters: under a floor of 13 it is not served
+    sims = {"stale": 0.9, "b": 0.7, "ccc": 0.6, "ddd": 0.5, "eee": 0.4, "fff": 0.35}
+    search_env.hits = [_svc_hit(k, sim=s) for k, s in sims.items()]
+    out = await _run(search_env, top_k=6, min_body_chars=13)
+    assert [h.memory_key for h in out.results] == ["ccc", "ddd", "eee", "stale", "fff"]
+    assert out.results[3].score_components["code_changed_places"] == -3.0
+
+
+async def test_the_parent_moves_and_explains_a_stale_row_its_retry_merged(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.app.search as search_pkg
+    from server.memory.api.models_search import MemorySearchOutput, _MemorySearchHit
+
+    real = search_pkg.handle_memory_search
+
+    async def search(inp: Any) -> Any:
+        if not getattr(inp, "_merged_into_parent", False):
+            return await real(inp)
+        # the retry pass: its stale row unmoved, explained by the score it was found at
+        stale = _MemorySearchHit(
+            memory_key="stale",
+            memory_type="semantic",
+            content_excerpt="fact about stale",
+            distance=0.05,
+            similarity=0.95,
+            rank_score=0.95,
+            explanation="fact hit from namespace ns; similarity=0.95; rank_score=0.95",
+        )
+        stale._code_ranked_down = True
+        return MemorySearchOutput(results=[stale], embedding_model="fake")
+
+    monkeypatch.setattr(search_pkg, "handle_memory_search", search)
+    search_env.judge_result = (False, "where is the stale code")
+    search_env.hits = [_svc_hit(k, sim=s) for k, s in {"b": 0.6, "c": 0.5, "d": 0.4}.items()]
+    out = await search(_input(top_k=4, recipe="quality"))
+    assert len(search_env.judge_calls) == 1
+    assert [h.memory_key for h in out.results] == ["b", "c", "d", "stale"]
+    moved = out.results[3]
+    assert moved.score_components["code_changed_places"] == -3.0
+    assert f"rank_score={moved.rank_score:.2f}" in moved.explanation
+    assert "rank_score=0.95" not in moved.explanation

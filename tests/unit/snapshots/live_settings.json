@@ -254,6 +254,7 @@
  "memory_search_bm25_live_tail",
  "memory_search_chunk_date_source",
  "memory_search_chunk_min_share",
+ "memory_search_code_changed_places",
  "memory_search_default_mode",
  "memory_search_default_namespace_scope",
  "memory_search_digest_descent_k",

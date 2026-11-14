@@ -36,7 +36,9 @@ from server.memory.app.search.tiers import (
     _prepend_anchor,
     _prepend_recent,
 )
+from server.memory.domain import code_change
 from server.observability import degradations as _degradations
+from server.settings import settings
 
 if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration
@@ -212,13 +214,26 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     return (named & set(mine)) | authorized
 
 
+def move_stale(hits: list[Any], input: Any) -> list[Any]:
+    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`),
+    its explanation rewritten with the score it is served with."""
+    out = code_change.rank_down(hits, settings.memory_search_code_changed_places)
+    moved = [h for h in out if h.score_components.get("code_changed_places")]
+    for h in moved:
+        # only fact rows are marked, and their explanation is `_decorate_hits`' own:
+        # cleared here, it is written again with the score the row is served with
+        h.explanation = ""
+    _decorate_hits(moved, input=input)
+    return out
+
+
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — decorate, prepend recent/anchor
-    rows, body floor, unit and source bodies, relative-date wording, foreign
-    namespace marks, grounded excerpts, optional fields. Returns the hits,
-    the unit-body counts and the namespaces searched."""
+    """Phase 22: shape the served hits — decorate, prepend recent/anchor rows, body
+    floor, move down those whose code changed, unit and source bodies, relative-date
+    wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
+    hits, the unit-body counts and the namespaces searched."""
     input = ctx.input
     namespaces = ctx.namespaces
     actual_work = ctx.actual_work
@@ -228,6 +243,16 @@ async def _shape_final_hits(
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
     ctx.stale_dropped += stale_recent + stale_anchor
     final_hits = _apply_min_body_chars(anchored, input)
+    # After the verdict, which read relevance, and the tiers and body floor, which cut
+    # rows: a memory whose code changed is served lower, never left out. A pass another
+    # search merges leaves the move, marks and all, to that search, whatever it reads the
+    # query as. A date order is the answer and stays as it is, its marks spent so no
+    # merge moves its rows (rows merged in from another search are its own to move).
+    if not getattr(input, "_merged_into_parent", False):
+        if ctx.chronological_intent:
+            code_change.spend_marks(final_hits)
+        else:
+            final_hits = move_stale(final_hits, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )

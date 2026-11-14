@@ -934,3 +934,85 @@ async def test_merged_decisions_follow_the_home_searchs_settled_top_k(monkeypatc
     out = await repo_decisions.memory_with_repo_decisions(inp, repo_namespace=TRUNK)
     (decision,) = [h for h in out.results if h.memory_key == "decision:evict"]
     assert not getattr(decision, "_elide", frozenset()) and credited == [10]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_whose_code_changed_moves_down_after_the_merge_and_says_why(
+    monkeypatch,
+) -> None:
+    stale = _hit("decision:evict", 0.7, mtype="decision", rank=0.9)
+    stale._code_ranked_down = True  # its code changed: the search's code annotation marked it
+    stale_explanation = "fact hit from namespace code-kj; similarity=0.70; rank_score=0.90"
+    stale.explanation = stale_explanation
+    planes = {**PLANES, TRUNK: [stale]}
+    out = await _leg(monkeypatch, TRUNK, [], planes=planes)
+    assert [h.memory_key for h in out.results] == ["note-a", "note-b", "decision:evict"]
+    moved = out.results[2]
+    assert moved.score_components["code_changed_places"] == -2.0
+    # the two searches' scores do not compare: it keeps its own, and its explanation
+    assert moved.rank_score == 0.9
+    assert moved.explanation == stale_explanation
+
+
+@pytest.mark.parametrize(
+    ("similarity", "order"),
+    [
+        (0.85, ["decision:x", "b", "c", "d", "stale"]),  # not after its own 0.9
+        (0.5, ["b", "c", "d", "decision:x", "stale"]),  # among the current rows
+    ],
+)
+def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision(similarity, order) -> None:
+    stale = _hit("stale", 0.9, "me")
+    stale.score_components = {"code_changed_places": -3.0}
+    base = [_hit("b", 0.8, "me"), _hit("c", 0.7, "me"), _hit("d", 0.6, "me"), stale]
+    fresh = _hit("decision:x", similarity, TRUNK, mtype="decision")
+    hits, added = repo_decisions.merge_memory_hits(base, [fresh], "me")
+    assert [h.memory_key for h in hits] == order
+
+
+def test_a_stale_base_row_left_in_place_holds_no_slot_for_a_decision() -> None:
+    stale = _hit("stale", 0.3, "me")
+    stale.score_components = {"code_changed_places": 0.0}  # nothing below it to pass
+    fresh = _hit("decision:x", 0.2, TRUNK, mtype="decision")
+    hits, _ = repo_decisions.merge_memory_hits([_hit("a", 0.9, "me"), stale], [fresh], "me")
+    assert [h.memory_key for h in hits] == ["a", "decision:x", "stale"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "moved", [None, -1.0, 0.0], ids=["current", "moved-for-stale-code", "nothing-to-pass"]
+)
+async def test_loom_search_never_lifts_a_fact_the_search_moved_to_lead(monkeypatch, moved) -> None:
+    chunk = _hit("chunk:s1:0", 0.452, "me", rank=0.53)
+    chunk.source = "chunk"
+    fact = _hit("where_i_live", 0.47, "me", rank=0.49)  # within the lead margin of the chunk
+    if moved is not None:
+        fact.score_components = {"code_changed_places": moved}
+    far = _hit("unrelated", 0.1, "me")  # a lead fact withholds it
+    out = MemorySearchOutput(results=[chunk, fact, far], embedding_model="fake")
+    payload = await _assemble(monkeypatch, out, namespace_scope="this")
+    lead = (payload.get("withheld") or {}).get("lead")
+    assert lead == ("where_i_live" if moved is None else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("moved", "near", "lead"),
+    [
+        (None, False, "where_i_live"),
+        (0.0, False, None),
+        (0.0, True, "near_fact"),  # another home fact within the margin leads instead
+    ],
+    ids=["current", "nothing-to-pass", "a-fact-near-it-leads"],
+)
+async def test_a_fact_the_search_ranked_down_never_leads_from_the_top(
+    monkeypatch, moved, near, lead
+) -> None:
+    fact = _hit("where_i_live", 0.47, "me")
+    if moved is not None:
+        fact.score_components = {"code_changed_places": moved}
+    rows = [fact, _hit("near_fact", 0.46, "me")] if near else [fact]
+    far = _hit("unrelated", 0.1, "me")  # a lead fact withholds it
+    out = MemorySearchOutput(results=[*rows, far], embedding_model="fake")
+    payload = await _assemble(monkeypatch, out, namespace_scope="this")
+    assert (payload.get("withheld") or {}).get("lead") == lead
