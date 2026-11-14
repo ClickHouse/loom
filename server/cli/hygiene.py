@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, run_connected
+from server.cli._ch import OrgFree, dry_run_orgs, reads, run_connected, writes
 from server.core.error_summary import error_summary
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 
@@ -95,7 +95,7 @@ def _cmd_drops(args: argparse.Namespace) -> int:
         print(_format_drops(rows, namespace=args.namespace, hours=int(args.hours)))
         return 0
 
-    return run_connected(_run, org_free="reads")
+    return run_connected(_run, org_free=reads("reads"))
 
 
 # ----------------------------------------------------------------------
@@ -496,7 +496,10 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         return await _re_verify_run(ch, args)
 
     # --erase files purges for rows already in this cell, which stay erasable.
-    return run_connected(_run, org_free="re-verifies and files erasures of this cell's rows")
+    return run_connected(
+        _run,
+        org_free=_re_verify_org_free(args),
+    )
 
 
 def _utc_instant(text: str) -> datetime:
@@ -898,3 +901,10 @@ def _add_namespaces_adopt_parser(sub: Any) -> None:
     add_apply_flags(p_adopt, writes="write the rows")
     p_adopt.add_argument("--show", type=int, default=30, help="Namespaces to print (default 30)")
     p_adopt.set_defaults(func=_cmd_namespaces_adopt)
+
+
+def _re_verify_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.resume or args.erase:
+        return writes("re-verifies and files erasures of this cell's rows")
+    return reads("re-verifies erasures of this cell's rows")

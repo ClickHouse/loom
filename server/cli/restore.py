@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, reads, run_connected, writes
 
 
 def _add_reconcile_parser(sub: Any) -> None:
@@ -71,7 +71,10 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
             args.restored, point, apply=not args.dry_run, live=args.allow_live, ch=ch
         )
 
-    return run_connected(_go, org_free="reconciles a restore of the cell's own stores")
+    return run_connected(
+        _go,
+        org_free=_reconcile_org_free(args),
+    )
 
 
 def margin() -> timedelta:
@@ -235,3 +238,10 @@ async def _step(run: Any) -> Any:
         print(f"  failed: {error_summary(e)}", file=sys.stderr)
         return "failed"
     return out
+
+
+def _reconcile_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("lists what a reconcile would write")
+    return writes("reconciles a restore of the cell's own stores")

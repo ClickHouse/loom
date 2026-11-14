@@ -272,7 +272,7 @@ def call_counts(days: int) -> dict[str, dict[str, Any]]:
     """``{op: {calls, last_ts, agents}}`` over the last ``days``, read from the
     ClickHouse the server CLI would use (``server.settings``: LOOM_ENV_FILE,
     else ``.env``, and the LOOM_CH_* environment), as a background read."""
-    from server.cli._ch import run_connected
+    from server.cli._ch import reads, run_connected
     from server.core.ch import query_tag_var
     from server.observability.traffic_class import bind_background, reset_traffic_class
     from server.settings import settings
@@ -282,7 +282,8 @@ def call_counts(days: int) -> dict[str, dict[str, Any]]:
     tag = query_tag_var.set("cli.op_reach_census")
     try:
         rows = run_connected(
-            lambda ch: ch.query_all(CALLS_SQL, {"days": days}), org_free="reads the call ledger"
+            lambda ch: ch.query_all(CALLS_SQL, {"days": days}),
+            org_free=reads("reads the call ledger"),
         )
     finally:
         query_tag_var.reset(tag)

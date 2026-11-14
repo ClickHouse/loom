@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from server.cli._ch import connect_code_plane, connect_declared
+from server.cli._ch import connect_code_plane, connect_declared, writes
 from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
@@ -394,7 +394,7 @@ async def _scip_delta(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
     from server.workers import pass_context
 
-    await connect_declared(get_client(), org_free="the cell's configured repositories")
+    await connect_declared(get_client(), org_free=writes("the cell's configured repositories"))
     started = time.monotonic()
     # Bound so the pass's set_namespace() lands on the row.
     ctx = pass_context.begin("code_scip_delta")

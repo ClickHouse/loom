@@ -1,24 +1,31 @@
 """One ClickHouse connection for the whole of a CLI command, and the orgs it writes.
 
 Every command that connects declares what it writes for: `orgs=`, the orgs a command
-writes rows for, or `org_free=`, why it writes for none (the cell's settings, a sweep of
-its own rows, a read). On a cell (`LOOM_CELL`), each declared org must be one the cell
-holds before the command runs (`server.auth.tenancy`), judged by the cell's rows read
-for the command: recorded while the cell is `recording` and the directory answers that
-it is `attaching`, refused once it is `enforced` (or the directory does not say
-`attaching`), never placed (`loom cell place` places one). With `LOOM_CELL` unset, under
-the Postgres authority, a command that declares an org is refused once its deployment is a
-cell past `recording` (`check_unset_cell`): its rows would land unchecked in a cell.
-`tests/unit/test_cell_cli_orgs.py` fails on a connect that declares neither, and on a
-connect under `server/cli/` outside this module.
+writes rows for, or `org_free=`, why it writes for none and whether it `reads`, `writes`
+(the cell's settings, a sweep of its own rows) or `revokes`. With `LOOM_CELL` set an
+org-free write or revocation is refused on another cell's stores (`check_org_free`), a
+revocation running through a Postgres outage. On a cell (`LOOM_CELL`), each declared org
+must be one the cell holds before the command runs (`server.auth.tenancy`), judged by
+the cell's rows read for the command: recorded while the cell is `recording` and the
+directory answers that it is `attaching`, refused once it is `enforced` (or the
+directory does not say `attaching`), never placed (`loom cell place` places one). With
+`LOOM_CELL` unset, under the Postgres authority, a command that declares an org is
+refused once its deployment is a cell past `recording` (`check_unset_cell`): its rows
+would land unchecked in a cell.
+`tests/unit/test_cell_cli_orgs.py` fails on a connect that declares neither, on an
+org-free one that does not say which kind it is, and on a connect under `server/cli/`
+outside this module.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import sys
 from collections.abc import Awaitable, Callable, Iterable
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from server.core.ch import CHClient
@@ -35,10 +42,32 @@ def dry_run_orgs(args: object) -> tuple[str | None, ...]:
     return () if getattr(args, "dry_run", False) else (getattr(args, "org", None),)
 
 
-def _declared(orgs: Iterable[str | None] | None, org_free: str) -> tuple[str, ...]:
+@dataclass(frozen=True)
+class OrgFree:
+    """Why a command writes for no org, and what it does to the cell's stores: `read`
+    (not gated), `write` (refused unless the cell's `first` row, where one exists, names
+    `LOOM_CELL`) or `revocation` (gated as `write`, but run through a Postgres outage)."""
+
+    kind: Literal["read", "write", "revocation"]
+    reason: str
+
+
+def reads(reason: str) -> OrgFree:
+    return OrgFree("read", reason)
+
+
+def writes(reason: str) -> OrgFree:
+    return OrgFree("write", reason)
+
+
+def revokes(reason: str) -> OrgFree:
+    return OrgFree("revocation", reason)
+
+
+def _declared(orgs: Iterable[str | None] | None, org_free: OrgFree | None) -> tuple[str, ...]:
     """The orgs to check. Passing `orgs` declares them, an unset one (a command's
     optional `--org`) naming none; omitting both `orgs` and `org_free` is refused."""
-    if orgs is None and not org_free:
+    if orgs is None and org_free is None:
         raise TypeError(
             "a command that connects declares the orgs it writes (orgs=) or why it writes "
             "for none (org_free=)"
@@ -46,10 +75,11 @@ def _declared(orgs: Iterable[str | None] | None, org_free: str) -> tuple[str, ..
     return tuple(o for o in orgs or () if o)
 
 
-# Bounds on the one state read an org-declaring CLI makes with LOOM_CELL unset, and on
-# its retries when the role's connection limit is reached.
-_UNSET_READ_S = 10.0  # not a setting: a bound on one CLI read, not on serving
-_UNSET_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
+# Bounds on the one state read a CLI makes (an org-declaring one with LOOM_CELL unset, an
+# org-free write or revocation with it set), and on its retries when the role's
+# connection limit is reached.
+_STATE_READ_S = 10.0  # not a setting: a bound on one CLI read, not on serving
+_STATE_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
 _BUSY_TRIES = 3  # not a setting: a full connection limit clears in moments
 _BUSY_PAUSE_S = 0.5  # not a setting: a full connection limit clears in moments
 
@@ -64,13 +94,13 @@ def _connections_full(e: BaseException | None) -> bool:
     return False
 
 
-async def _read_unset_state() -> tuple[str, str]:
+async def _read_state() -> tuple[str, str]:
     from server.core import cell, pg
 
     tries = 0
     while True:
         try:
-            async with pg.dedicated(statement_timeout_ms=_UNSET_STATEMENT_MS) as conn:
+            async with pg.dedicated(statement_timeout_ms=_STATE_STATEMENT_MS) as conn:
                 return await cell.read_state_if_present(conn)
         except Exception as e:
             # CI jobs share the role's CONNECTION LIMIT: a full one clears in moments.
@@ -89,17 +119,13 @@ async def check_unset_cell() -> None:
     if not pg.enabled():
         return
     try:
-        found, name = await asyncio.wait_for(_read_unset_state(), timeout=_UNSET_READ_S)
+        found, name = await asyncio.wait_for(_read_state(), timeout=_STATE_READ_S)
     except pg.AuthorityMismatch:
         raise  # another deployment's Postgres: refused as `check_configured` refuses it
     except Exception as e:  # noqa: BLE001 — an unread cell state refuses the command
-        if isinstance(e, TimeoutError):
-            reason = f"no answer within {_UNSET_READ_S:g} s"
-        else:
-            reason = str(e) or "no reason given"
         raise OrgNotHeld(
             f"refusing: this deployment's cell state could not be read "
-            f"({type(e).__name__}: {reason})"
+            f"({type(e).__name__}: {_read_failure(e)})"
         ) from None
     if found in ("open", "recording"):
         return
@@ -112,6 +138,95 @@ async def check_unset_cell() -> None:
         f"refusing: this deployment is a cell in enforced mode (cell {name!r}) and "
         f"LOOM_CELL is unset: set LOOM_CELL={name} for a command that writes an org"
     )
+
+
+def _read_failure(e: BaseException) -> str:
+    """Why a state read failed, as a refusal names it."""
+    if isinstance(e, TimeoutError):
+        return f"no answer within {_STATE_READ_S:g} s"
+    return str(e) or "no reason given"
+
+
+def _outage(e: BaseException) -> bool:
+    """Whether a state read failed for a Postgres that does not answer: a lost or refused
+    connection or no answer within the bound, never a missing grant."""
+    from server.core import pg
+
+    return isinstance(e, pg.PostgresUnavailableError) or pg.is_outage(e)
+
+
+async def check_org_free(free: OrgFree) -> None:
+    """With `LOOM_CELL` set, refuse an org-free `write` or `revocation` command whose
+    stores belong to another cell: their `first` row names it. A CLI pointed at another
+    cell's stores always finds one there; an absent row, or state tables not migrated
+    yet, passes, so a later cell runs these before it is prepared. A failed read refuses,
+    but a revocation runs through an outage (docs/architecture/cells.md, "Invariants")."""
+    from server.core import pg
+    from server.settings import settings
+
+    if free.kind == "read" or not settings.cell or not pg.enabled():
+        return
+    try:
+        _found, name = await asyncio.wait_for(_read_state(), timeout=_STATE_READ_S)
+    except pg.AuthorityMismatch:
+        raise  # another deployment's Postgres: refused as `check_configured` refuses it
+    except Exception as e:  # noqa: BLE001 — an unread cell state refuses a write
+        if free.kind == "revocation" and _outage(e):
+            print(
+                f"⚠ this cell's state was not checked: its Postgres did not answer "
+                f"({type(e).__name__}); revoking anyway",
+                file=sys.stderr,
+            )
+            return
+        raise OrgNotHeld(
+            f"refusing: this cell's state could not be read "
+            f"({type(e).__name__}: {_read_failure(e)})"
+        ) from None
+    if name and name != settings.cell:
+        raise OrgNotHeld(
+            f"refusing: this Postgres's first row names cell {name!r}, not "
+            f"LOOM_CELL={settings.cell!r}: the command would change another cell's stores"
+        )
+
+
+async def check_setup_stores() -> None:
+    """For a command that sets up a cell's ClickHouse on a client of its own before any
+    gated connect (`loom ch-setup`), the gate a gated connect would run, before it writes:
+    its ClickHouse, where it already records a deployment, must record its Postgres's, and
+    the Postgres `first` row must not name another cell. A ClickHouse with no Loom
+    database or record yet (a service set up before the first boot) passes."""
+    from server.core import pg, pg_profile
+    from server.core.ch import get_client
+    from server.core.ch_errors import error_code, error_line
+    from server.settings import settings
+
+    if not settings.cell or not pg.enabled():
+        return
+    ch = get_client()
+    # The driver logs a line of its own for a failed connect; the refusal below names it.
+    driver_log = logging.getLogger("clickhouse_connect")
+    level = driver_log.level
+    driver_log.setLevel(logging.CRITICAL)
+    try:
+        try:
+            await ch.connect()
+            recorded = await pg_profile.recorded_authority(ch)
+        except pg.AuthorityMismatch:
+            raise
+        except Exception as e:  # noqa: BLE001 — every failure is one line, not a traceback
+            if error_code(e) != 81:  # UNKNOWN_DATABASE: a service set up before first boot
+                raise OrgNotHeld(
+                    f"refusing: this ClickHouse could not be read for the cell check "
+                    f"({error_line(e)})"
+                ) from None
+            recorded = None
+        finally:
+            driver_log.setLevel(level)
+        if recorded is not None:
+            pg.expect_deployment((str(recorded["deployment_id"]), int(recorded["epoch"])))
+        await check_org_free(writes("ClickHouse users and grants, no tenant rows"))
+    finally:
+        await disconnect(ch)
 
 
 async def check_orgs(orgs: Iterable[str]) -> None:
@@ -162,24 +277,33 @@ async def connect_declared(
     ch: CHClient,
     *,
     orgs: Iterable[str | None] | None = None,
-    org_free: str = "",
+    org_free: OrgFree | None = None,
     check_authority: bool = False,
 ) -> None:
     """Connect `ch` for a command that writes for `orgs` (or for none, `org_free` saying
-    why), refusing, disconnected, an org this cell does not hold. With orgs to check, or
-    with `check_authority`, it first refuses a deployment other than its own
-    (`check_configured`): an org's rows and its tenancy row land only in this
-    deployment's stores, and the cell state is read from this deployment's Postgres."""
+    why), refusing, disconnected, an org this cell does not hold. With orgs to check, with
+    `check_authority`, or on a cell for an org-free write or revocation, it first refuses a
+    deployment other than its own (`check_configured`): an org's rows and its tenancy row
+    land only in this deployment's stores, and the cell state is read from this
+    deployment's Postgres. An org-free command is then judged by `check_org_free`."""
+    from server.settings import settings
+
     named = _declared(orgs, org_free)
     # A `loom code` command connects again inside the connect `code_run` made.
     if not ch.connected:
         await ch.connect()
     try:
-        if check_authority or named:
+        # On a cell, a write or a revocation also checks its ClickHouse against its
+        # Postgres, so a CLI whose ClickHouse is another cell's is refused with the rest.
+        gated = org_free is not None and org_free.kind != "read" and bool(settings.cell)
+        if check_authority or named or gated:
             from server.core.pg_profile import check_configured
 
             await check_configured(ch)
-        await check_orgs(named)
+        if org_free is not None and not named:
+            await check_org_free(org_free)
+        else:
+            await check_orgs(named)
     except BaseException:
         await disconnect(ch)
         raise
@@ -197,7 +321,7 @@ async def connect_code_plane(ch: CHClient, args: argparse.Namespace) -> None:
 
 
 async def connect_checked(
-    ch: CHClient, *, orgs: Iterable[str | None] | None = None, org_free: str = ""
+    ch: CHClient, *, orgs: Iterable[str | None] | None = None, org_free: OrgFree | None = None
 ) -> None:
     """`connect_declared`, always refusing a command configured for another memory
     authority than the deployment's, as a replica refuses: an erasure or an import run
@@ -220,7 +344,7 @@ def run_connected[T](
     run: Callable[[CHClient], Awaitable[T]],
     *,
     orgs: Iterable[str | None] | None = None,
-    org_free: str = "",
+    org_free: OrgFree | None = None,
 ) -> T:
     """`asyncio.run(run(ch))` on a connected client (`connect_checked`, with the orgs the
     command writes), disconnected on every path — an open client at loop close leaks its

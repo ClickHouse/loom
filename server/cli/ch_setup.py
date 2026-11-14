@@ -19,11 +19,13 @@ else of that name is left alone.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import re
 import sys
 from typing import Any, Literal, NamedTuple
 
+from server.cli._ch import OrgNotHeld, check_setup_stores, run_connected, writes
 from server.core.ch_errors import error_code, error_line
 from server.core.ch_names import DEFAULT_READER, database, quote, telemetry_database
 from server.core.schema import preflight
@@ -420,25 +422,30 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
 def _analyst_sql() -> list[str]:
     """The analyst user's SQL with this deployment's key and password, which
     the first call makes and stores (sealed) when there are none yet."""
-    from server.cli._ch import run_connected
     from server.insights.app import analysis
 
     async def _go(_ch: Any) -> list[str]:
         await analysis.load_for_print()
         return analysis.printed_statements(await analysis.own_grant_revokes())
 
-    return run_connected(_go, org_free="ClickHouse users and grants, no tenant rows")
+    return run_connected(_go, org_free=writes("ClickHouse users and grants, no tenant rows"))
 
 
 def _write_analyst() -> None:
     """Write insights.query's analyst user under this deployment's key, for a
     deployment whose server user cannot (one with access management writes it
     at boot)."""
-    from server.cli._ch import run_connected
     from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
 
     try:
-        run_connected(lambda _ch: rewrite(), org_free="ClickHouse users and grants, no tenant rows")
+        run_connected(
+            lambda _ch: rewrite(), org_free=writes("ClickHouse users and grants, no tenant rows")
+        )
+    except OrgNotHeld as e:
+        # `check_setup_stores` checked these stores before the reader was written; a state
+        # read that fails now leaves this optional step unwritten, never the setup.
+        print(f"· loom_analyst (insights.query): not written ({e})")
+        return
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
         if isinstance(e, SetupRefused):
@@ -508,6 +515,9 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         print(f"✗ {e}", file=sys.stderr)
         return 1
     try:
+        # On a cell, refused before any user or grant is written when these stores are
+        # another cell's or another deployment's (a fresh service passes).
+        asyncio.run(check_setup_stores())
         return _set_up(ch, user, reader)
     finally:
         ch.close()

@@ -595,11 +595,26 @@ lists any tenancy row the directory does not place.
   `enforced`; it is never placed. A code-index command declares the org it writes: its
   `--org`, else `LOOM_CODE_ORG`. A pass over every configured repository declares none,
   since attach, or the `loom cell update` that changes one, places configured orgs, and a
-  read-only command or a dry run declares none, since a read records nothing. A census test
-  fails on a connect that declares neither, on a connect under `server/cli/` outside
-  `_ch.py`, and on a `loom code` command that resolves its org without connecting for it. A
-  holder of the cell's router credential can place orgs for the cell, within the cell's rate
-  and `placements_max`, as the operator credential `loom cell place` uses can for any cell
+  read-only command or a dry run declares none, since a read records nothing. An org-free
+  command says what it does to the stores: it reads, writes (`loom ch-setup`, `secrets`, a
+  settings change, prepare and the rest; a dry run reads) or revokes (`loom revoke-token`, a
+  SQL user's revocation, `loom signing-key retire`, `loom bot disable`, `loom sso unlink`;
+  one that can give access back is a write), per subcommand where one connect serves several
+  (`loom signing-key`: `list` reads, `retire` revokes, `rotate` and `record-root` write).
+  With `LOOM_CELL` set, a write or a revocation checks its ClickHouse against its Postgres
+  (`check_configured`), reads the `first` row on a bounded session of its own and refuses
+  when it names another cell, which a CLI pointed at another cell's stores always finds, or
+  when the read fails; an absent row, or state tables not migrated yet, passes, so a later
+  cell runs these before it is prepared. A revocation runs through an outage (the fourth
+  exception under Invariants); a write refuses during one; a read is not gated.
+  `loom ch-setup`, which sets ClickHouse up on a client of its own, runs the same gate
+  before it writes, a ClickHouse with no record yet passing; `loom migrate` and
+  `loom provider-lock clear` write through the schema runner's own client and are not gated.
+  A census test fails on a connect that declares neither, on an org-free one that does not
+  say which kind it is, on a connect under `server/cli/` outside `_ch.py`, and on a
+  `loom code` command that resolves its org without connecting for it. A holder of the
+  cell's router credential can place orgs for the cell, within the cell's rate and
+  `placements_max`, as the operator credential `loom cell place` uses can for any cell
   within its `placements_max` (an operator's call is not rate-limited, nor counted toward
   the cell's rate), and a placement is permanent, so an org name it takes is lost to every
   other cell: a power over the shared directory that the cell's store credentials lack. So
@@ -1089,7 +1104,7 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   no worker.
 - No bearer-token issuer, host, OIDC client, org pattern or bucket prefix is accepted by
   two cells, and no deployment id or router credential is held by two.
-- Every security path fails closed, with three exceptions. First, a server process with
+- Every security path fails closed, with four exceptions. First, a server process with
   `LOOM_CELL` unset keeps its verdict through failed reads of the state rows with no
   stale bound: open in `open` and `recording`, as a single deployment's partial outage
   is, and gated in every other state; a failed first read fails its boot, or with
@@ -1105,7 +1120,12 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   taken in three tries of 100 ms, or a table the role cannot alter), logs it and serves,
   leaving that table unguarded until a later boot succeeds: the triggers are a backstop
   only against writers that send no marker, refusing the boot would take a cell down for a
-  backstop, and attach refuses a missing trigger.
+  backstop, and attach refuses a missing trigger. Fourth, an org-free revocation command
+  that cannot give access back (a plain `loom revoke-token`, not one that narrows or lapses,
+  a SQL user's revocation, `loom signing-key retire`, `loom bot disable`, `loom sso unlink`)
+  with `LOOM_CELL` set whose read of the cell's `first` row fails for a Postgres that does
+  not answer runs and prints that the cell was not checked, since a revocation must work
+  through an outage; any other failed read, a missing grant among them, refuses.
 
 ## Source entry points
 

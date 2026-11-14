@@ -199,3 +199,28 @@ async def test_a_write_by_a_role_holding_only_the_column_grants_is_a_permission_
             finally:
                 await plain.close()
         assert refused.value.sqlstate == "42501"
+
+
+@pytest.mark.asyncio
+async def test_an_org_free_write_with_loom_cell_set_refuses_another_cells_stores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CLI with LOOM_CELL set pointed at another cell's Postgres finds that cell's
+    `first` row there and refuses a write; a read runs; before prepare, a write runs."""
+    # Upgrade step 15's grant set for a CLI with LOOM_CELL set.
+    grants = (
+        *_GRANTS,
+        "GRANT SELECT ON loom.cell_self, loom.tenancy TO {role}",
+    )
+    async with own_database() as dsn, _cli_role(dsn, grants=grants) as cli:
+        monkeypatch.setattr(settings, "cell", "eu-1")
+        monkeypatch.setattr(settings, "storage_authority", "postgres")
+        monkeypatch.setattr(settings, "pg_dsn", cli)
+        monkeypatch.setattr(pg, "_expected", None)
+        await _ch.check_org_free(_ch.writes("w"))  # not prepared yet: no first row
+        await _admin(dsn, "INSERT INTO loom.cell_first (is_first, cell) VALUES (false, 'us-1')")
+        with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1'"):
+            await _ch.check_org_free(_ch.writes("w"))
+        await _ch.check_org_free(_ch.reads("r"))
+        monkeypatch.setattr(settings, "cell", "us-1")
+        await _ch.check_org_free(_ch.revokes("r"))

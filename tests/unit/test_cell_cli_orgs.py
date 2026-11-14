@@ -65,6 +65,441 @@ def test_every_connect_declares_the_orgs_it_writes() -> None:
     assert not undeclared, f"declare orgs= or org_free= on: {undeclared}"
 
 
+# What an `org_free=` may be: a typed value (`reads`, `writes`, `revokes`), one a helper
+# picks per subcommand, a conditional between those and None, or a parameter passed on.
+_KINDS = {"reads", "writes", "revokes"}
+_PICKERS = {"_org_free", "_revoke_kind"}
+
+
+def _typed(node: ast.expr) -> bool:
+    if isinstance(node, ast.Call):
+        return _name(node) in _KINDS | _PICKERS or _name(node).endswith("_org_free")
+    if isinstance(node, ast.IfExp):
+        return all(
+            _typed(b) or (isinstance(b, ast.Constant) and b.value is None)
+            for b in (node.body, node.orelse)
+        )
+    return isinstance(node, ast.Name) and node.id == "org_free"
+
+
+def test_every_org_free_connect_says_whether_it_reads_writes_or_revokes() -> None:
+    """A `write` or `revocation` is gated on the cell's `first` row; a `read` is not
+    (docs/architecture/cells.md, "The CLI declares its orgs")."""
+    untyped = []
+    for path in _sources():
+        for call in _calls(ast.parse(path.read_text())):
+            if _name(call) not in _CONNECTS:
+                continue
+            for k in call.keywords:
+                if k.arg == "org_free" and not _typed(k.value):
+                    untyped.append(f"{path.relative_to(ROOT)}:{call.lineno}")
+    assert not untyped, f"pass reads(...), writes(...) or revokes(...) on: {untyped}"
+
+
+def test_each_signing_key_subcommand_has_its_own_kind() -> None:
+    from server.cli import signing_keys
+
+    kinds = {c: signing_keys._org_free(c).kind for c in ("list", "retire", "rotate", "record-root")}
+    assert kinds == {
+        "list": "read",
+        "retire": "revocation",
+        "rotate": "write",
+        "record-root": "write",
+    }
+
+
+def _cell_set(monkeypatch: pytest.MonkeyPatch, answer: Any) -> None:
+    """LOOM_CELL set under the Postgres authority, the state read answering `answer`
+    (a (state, cell) pair, or an exception it raises)."""
+
+    async def _read() -> tuple[str, str]:
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(_ch, "_read_state", _read)
+
+
+@pytest.mark.parametrize("free", [_ch.writes("w"), _ch.revokes("r")])
+def test_a_write_or_revocation_on_another_cells_stores_refuses(
+    monkeypatch: pytest.MonkeyPatch, free: _ch.OrgFree
+) -> None:
+    _cell_set(monkeypatch, ("enforced", "us-1"))
+    with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1', not LOOM_CELL='eu-1'"):
+        asyncio.run(_ch.check_org_free(free))
+
+
+@pytest.mark.parametrize(
+    "answer", [("enforced", "eu-1"), ("recording", "eu-1"), ("open", ""), ("partial", "")]
+)
+def test_a_write_on_its_own_cell_or_one_not_prepared_yet_runs(
+    monkeypatch: pytest.MonkeyPatch, answer: tuple[str, str]
+) -> None:
+    """Its own `first` row passes; no row, or tables not migrated yet, passes too, so a
+    later cell runs these before it is prepared."""
+    _cell_set(monkeypatch, answer)
+    asyncio.run(_ch.check_org_free(_ch.writes("w")))
+
+
+def test_a_read_is_not_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    _cell_set(monkeypatch, AssertionError("read"))
+    asyncio.run(_ch.check_org_free(_ch.reads("r")))
+
+
+def test_a_write_refuses_when_the_state_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import pg as pg_mod
+
+    down = pg_mod.PostgresUnavailableError("Postgres is unavailable")
+    _cell_set(monkeypatch, down)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+        asyncio.run(_ch.check_org_free(_ch.writes("w")))
+
+
+def test_a_revocation_runs_through_an_outage_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.core import pg as pg_mod
+
+    _cell_set(monkeypatch, pg_mod.PostgresUnavailableError("Postgres is unavailable"))
+    asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+    assert "state was not checked" in capsys.readouterr().err
+    _cell_set(monkeypatch, TimeoutError())
+    asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+    assert "state was not checked" in capsys.readouterr().err
+
+
+def test_a_revocation_refuses_on_a_missing_grant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only an outage lets a revocation through; any other error refuses."""
+    denied = Exception("permission denied for table cell_first")
+    denied.sqlstate = "42501"  # type: ignore[attr-defined]
+    _cell_set(monkeypatch, denied)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read .*permission denied"):
+        asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+
+
+@pytest.mark.parametrize(
+    ("org_free", "cell_name", "checked"),
+    [
+        (_ch.writes("w"), "eu-1", True),
+        (_ch.revokes("x"), "eu-1", True),
+        (_ch.reads("r"), "eu-1", False),
+        (_ch.writes("w"), "", False),
+    ],
+)
+def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postgres(
+    monkeypatch: pytest.MonkeyPatch, org_free: _ch.OrgFree, cell_name: str, checked: bool
+) -> None:
+    """On a cell, `check_configured` ties ClickHouse's recorded deployment to
+    Postgres's, so a CLI whose ClickHouse is another cell's is refused with its writes;
+    a read, or a write with LOOM_CELL unset, reads nothing new."""
+    monkeypatch.setattr(settings, "cell", cell_name)
+    seen: list[int] = []
+
+    async def _configured(_c: Any) -> None:
+        seen.append(1)
+
+    monkeypatch.setattr(pg_profile, "check_configured", _configured)
+    monkeypatch.setattr(_ch, "check_org_free", AsyncMock(return_value=None))
+
+    class _Client:
+        connected = True
+
+    asyncio.run(_ch.connect_declared(_Client(), org_free=org_free))
+    assert seen == ([1] if checked else [])
+
+
+# A command whose kind depends on its flags: the picker, the flags of its read-only mode,
+# and the kind each mode gets.
+_MODE_PICKED = [
+    ("secrets", "_reseal_org_free", {"dry_run": True, "check": False}, "read"),
+    ("secrets", "_reseal_org_free", {"dry_run": False, "check": True}, "read"),
+    ("secrets", "_reseal_org_free", {"dry_run": False, "check": False}, "write"),
+    ("restore", "_reconcile_org_free", {"dry_run": True}, "read"),
+    ("restore", "_reconcile_org_free", {"dry_run": False}, "write"),
+    ("ops", "_sweep_org_free", {"dry_run": True}, "read"),
+    ("ops", "_sweep_org_free", {"dry_run": False}, "write"),
+    ("ops", "_repair_org_free", {"dry_run": True}, "read"),
+    ("ops", "_repair_org_free", {"dry_run": False}, "write"),
+    ("hygiene", "_re_verify_org_free", {"resume": False, "erase": False}, "read"),
+    ("hygiene", "_re_verify_org_free", {"resume": True, "erase": False}, "write"),
+    ("hygiene", "_re_verify_org_free", {"resume": False, "erase": True}, "write"),
+    ("code_maintenance", "_compact_org_free", {"dry_run": True}, "read"),
+    ("code_maintenance", "_compact_org_free", {"dry_run": False}, "write"),
+    ("deployment", "_publish_org_free", {"check": True}, "read"),
+    ("deployment", "_publish_org_free", {"check": False}, "write"),
+    ("sso", "_unlink_org_free", {"dry_run": True}, "read"),
+    ("sso", "_unlink_org_free", {"dry_run": False}, "revocation"),
+]
+
+
+@pytest.mark.parametrize(("module", "picker", "flags", "kind"), _MODE_PICKED)
+def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(
+    module: str, picker: str, flags: dict[str, Any], kind: str
+) -> None:
+    """A mode that writes nothing reads, so with LOOM_CELL set and Postgres down it still
+    runs; the mode that writes is gated."""
+    import argparse
+    import importlib
+
+    mod = importlib.import_module(f"server.cli.{module}")
+    assert getattr(mod, picker)(argparse.Namespace(**flags)).kind == kind
+
+
+def test_every_flag_picked_connect_uses_a_tested_picker() -> None:
+    tested = {(m, p) for m, p, _f, _k in _MODE_PICKED}
+    used = set()
+    for path in sorted((ROOT / "server" / "cli").glob("*.py")):
+        for call in _calls(ast.parse(path.read_text())):
+            for k in call.keywords:
+                if k.arg == "org_free" and isinstance(k.value, ast.Call):
+                    name = _name(k.value)
+                    if name.endswith("_org_free") and name != "_org_free":
+                        used.add((path.stem, name))
+    assert used == tested
+
+
+@pytest.mark.parametrize(
+    ("flags", "kind"),
+    [
+        ({"list": True}, "read"),
+        ({"jti": "j1"}, "revocation"),
+        ({"subject": "s1"}, "revocation"),
+        ({"subject": "s1", "scim": True, "issued_before": "t"}, "write"),
+        ({"jti": "j1", "expires_at": "t"}, "write"),
+        ({"subject": "s1", "issued_before": "t"}, "write"),
+    ],
+)
+def test_a_revocation_that_can_give_access_back_is_gated_as_a_write(
+    flags: dict[str, Any], kind: str
+) -> None:
+    """Narrowing SCIM's revocation, or one that lapses or covers older tokens only, is
+    not run through an outage: only a plain revocation is."""
+    import argparse
+
+    from server.cli import access
+
+    args = argparse.Namespace(**{"list": False, "scim": False, "jti": None, **flags})
+    picked = access._revoke_kind(
+        args, expires_at=flags.get("expires_at"), issued_before=flags.get("issued_before")
+    )
+    assert picked.kind == kind
+
+
+def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On another cell's stores, `loom ch-setup` refuses after its preflight connect and
+    before `_set_up` writes the reader or a grant."""
+    import argparse
+
+    from server.cli import ch_setup
+
+    class _Admin:
+        def close(self) -> None:
+            return None
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    async def _recorded(_ch: Any) -> None:
+        return None  # a fresh service: no record yet
+
+    _cell_set(monkeypatch, ("enforced", "us-1"))
+    monkeypatch.setattr(ch_setup.preflight, "connect", lambda: _Admin())
+    monkeypatch.setattr(ch_setup, "_set_up", lambda *_a: pytest.fail("set ClickHouse up"))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
+    monkeypatch.setattr(settings, "ch_user", "loom")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    args = argparse.Namespace(print_analyst_sql=False, print_sql=False)
+    with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1'"):
+        ch_setup._cmd_ch_setup(args)
+
+
+def test_ch_setup_is_refused_on_another_deployments_clickhouse_before_it_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ClickHouse that records another deployment than this Postgres is refused before
+    the reader or a grant is written; the deployment check runs on the state session."""
+    import argparse
+
+    from server.cli import ch_setup
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    async def _recorded(_ch: Any) -> dict[str, Any]:
+        return {"deployment_id": "dep-other", "epoch": 1}
+
+    armed: list[Any] = []
+
+    async def _read() -> tuple[str, str]:
+        armed.append(pg._expected)
+        raise pg.AuthorityMismatch("Postgres records deployment dep-eu-1")
+
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(_ch, "_read_state", _read)
+    monkeypatch.setattr(pg, "_expected", None)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
+
+    class _Admin:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(ch_setup.preflight, "connect", lambda: _Admin())
+    monkeypatch.setattr(ch_setup, "_set_up", lambda *_a: pytest.fail("set ClickHouse up"))
+    monkeypatch.setattr(settings, "ch_user", "loom")
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    with pytest.raises(pg.AuthorityMismatch):
+        ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False))
+    assert armed == [("dep-other", 1)]
+
+
+def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service with no Loom database or record yet is set up: the gate reads only the
+    Postgres `first` row there."""
+    import argparse
+
+    from server.cli import ch_setup
+
+    class _NoLoom(Exception):
+        pass
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    async def _recorded(_ch: Any) -> None:
+        raise _NoLoom("Code: 81")
+
+    class _Admin:
+        def close(self) -> None:
+            return None
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch_errors.error_code", lambda e: 81)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
+    monkeypatch.setattr(ch_setup.preflight, "connect", lambda: _Admin())
+    set_up: list[int] = []
+    monkeypatch.setattr(ch_setup, "_set_up", lambda *_a: set_up.append(1) or 0)
+    monkeypatch.setattr(settings, "ch_user", "loom")
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False)) == 0
+    assert set_up == [1]
+
+
+def test_ch_setups_optional_analyst_step_is_left_unwritten_when_a_state_read_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.cli import ch_setup
+
+    def _refused(*_a: Any, **_k: Any) -> None:
+        raise _ch.OrgNotHeld("refusing: this cell's state could not be read (TimeoutError)")
+
+    monkeypatch.setattr(ch_setup, "run_connected", _refused)
+    ch_setup._write_analyst()
+    assert "loom_analyst (insights.query): not written" in capsys.readouterr().out
+
+
+def test_a_setup_check_on_a_service_with_no_loom_database_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The driver refuses a database that does not exist yet at connect (code 81): a
+    service set up before the first boot, which passes to the Postgres check."""
+
+    class _Client:
+        async def connect(self) -> None:
+            raise RuntimeError("Code: 81. DB::Exception: Database loom does not exist")
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    asyncio.run(_ch.check_setup_stores())
+
+
+def test_a_setup_check_that_cannot_read_clickhouse_refuses_in_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Client:
+        async def connect(self) -> None:
+            raise RuntimeError("Code: 497. DB::Exception: loom: Not enough privileges")
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    import logging
+
+    driver = logging.getLogger("clickhouse_connect")
+    monkeypatch.setattr(driver, "level", logging.INFO)
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read for the cell check"):
+        asyncio.run(_ch.check_setup_stores())
+    assert driver.level == logging.INFO  # the mute is undone
+
+
+def test_the_setup_check_mutes_the_drivers_own_failed_connect_line(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    class _Client:
+        async def connect(self) -> None:
+            logging.getLogger("clickhouse_connect").error("failed to connect")
+            raise RuntimeError("Code: 81. DB::Exception: Database loom does not exist")
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(_ch.check_setup_stores())
+    assert not [r for r in caplog.records if r.name == "clickhouse_connect"]
+
+
+def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:
+    """The reconnect that drains buffered writes runs after every `loom code`
+    subcommand, reads included; the subcommand's own connect gated its writes, so the
+    drain must not gate again (an outage would turn a read's exit 0 into a refusal)."""
+    drained = [
+        k.value
+        for call in _calls(ast.parse((ROOT / "server/cli/code_run.py").read_text()))
+        if _name(call) == "connect_declared"
+        for k in call.keywords
+        if k.arg == "org_free"
+    ]
+    assert drained and all(isinstance(v, ast.Call) and _name(v) == "reads" for v in drained)
+
+
+def test_an_org_free_connect_runs_its_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    async def _gate(free: _ch.OrgFree) -> None:
+        seen.append(free.kind)
+
+    monkeypatch.setattr(_ch, "check_org_free", _gate)
+    monkeypatch.setattr(pg_profile, "check_configured", AsyncMock(return_value=None))
+    monkeypatch.setattr(settings, "cell", "")
+
+    class _Client:
+        connected = True
+
+    asyncio.run(_ch.connect_declared(_Client(), org_free=_ch.writes("w")))
+    assert seen == ["write"]
+
+
 def test_no_cli_command_connects_outside_the_one_module() -> None:
     stray = []
     for path in sorted((ROOT / "server" / "cli").glob("*.py")):
@@ -124,11 +559,11 @@ def test_a_command_with_a_dry_run_declares_no_org_on_it() -> None:
 
 def test_a_connect_that_declares_nothing_is_refused() -> None:
     with pytest.raises(TypeError, match="declares the orgs"):
-        _ch._declared(None, "")
+        _ch._declared(None, None)
     # A declared but unset org (an optional --org) names none, and checks nothing.
-    assert _ch._declared((None, ""), "") == ()
-    assert _ch._declared(("acme", None, ""), "") == ("acme",)
-    assert _ch._declared(None, "the cell's settings") == ()
+    assert _ch._declared((None, ""), None) == ()
+    assert _ch._declared(("acme", None, ""), None) == ("acme",)
+    assert _ch._declared(None, _ch.writes("the cell's settings")) == ()
 
 
 def test_outside_a_cell_nothing_is_checked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,7 +699,7 @@ def test_unset_cell_refuses_a_read_that_does_not_answer(monkeypatch: pytest.Monk
             return 0
 
     _unset_on(monkeypatch, _Hung(4))
-    monkeypatch.setattr(_ch, "_UNSET_READ_S", 0.05)
+    monkeypatch.setattr(_ch, "_STATE_READ_S", 0.05)
     with pytest.raises(_ch.OrgNotHeld, match="TimeoutError: no answer within 0.05 s"):
         asyncio.run(_ch.check_orgs(["acme"]))
 
@@ -306,7 +741,7 @@ def test_an_org_declaring_command_checks_its_deployment_cell_or_not(
 
     asyncio.run(_ch.connect_declared(_Client(), orgs=("acme",)))
     assert checked == [1]
-    asyncio.run(_ch.connect_declared(_Client(), org_free="reads"))
+    asyncio.run(_ch.connect_declared(_Client(), org_free=_ch.reads("reads")))
     assert checked == [1]
 
 
@@ -426,7 +861,7 @@ def test_a_connected_client_is_not_connected_again(monkeypatch: pytest.MonkeyPat
         async def connect(self) -> None:
             connects.append(1)
 
-    asyncio.run(_ch.connect_declared(_Client(), org_free="reads"))
+    asyncio.run(_ch.connect_declared(_Client(), org_free=_ch.reads("reads")))
     assert connects == []
 
 

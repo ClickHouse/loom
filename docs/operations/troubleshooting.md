@@ -337,6 +337,26 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     cell's deployment id, so the check returns the live source cell's row. Do not clear
     it, and do not serve it beside the source.
 
+### A CLI with LOOM_CELL set refuses a command that writes for no org
+
+- **Symptom:** a command that writes for no org or revokes (`loom secrets reseal`,
+  `loom settings set`, `loom ch-setup`, `loom revoke-token` and the rest) exits with
+  "refusing: this Postgres's first row names cell ..., not LOOM_CELL=...", "refusing:
+  this cell's state could not be read (...)" or "refusing: this ClickHouse could not be
+  read for the cell check (...)".
+- **Cause:** with `LOOM_CELL` set such a command reads the cell's `first` row from its
+  `LOOM_PG_DSN`, and checks its ClickHouse against that Postgres, before it changes
+  anything ([cells](../architecture/cells.md#the-tenancy-check-and-placement)). A first
+  row naming another cell means the CLI is pointed at that cell's stores. A revocation
+  that cannot give access back runs through a Postgres outage instead, printing that the
+  cell was not checked.
+- **Fix:** never clear the state the refusal names: it is another cell's. Point
+  `LOOM_PG_DSN` and the ClickHouse settings at this cell's own stores, or set `LOOM_CELL`
+  to the cell the first row names if that is the cell you meant. For a state that could
+  not be read, act on the reason it names: a missing grant
+  ([upgrade step 15](upgrades.md#upgrade-procedure)) or a Postgres or ClickHouse that does
+  not answer.
+
 ### A boot logs "cell triggers: not applied"
 
 - **Symptom:** a boot of a cell in any state but `open` logs
