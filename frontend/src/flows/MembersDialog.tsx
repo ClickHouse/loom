@@ -29,6 +29,8 @@ import { allGrants, GRANTS_PAGE, GRANTS_PAGES } from "../lib/grantPages";
 
 /** Who else can see a collection through one of the collections it sits in: read-only. */
 export interface InheritedAccess {
+  /** The parent's name ("" for one the person cannot open): what keys its section. */
+  namespace: string;
   /** The parent's title, or the words for one the person cannot open (`hidden`). */
   title: string;
   /** Its grants; null when they could not be read, or the parent cannot be opened. */
@@ -132,9 +134,11 @@ export function MembersDialog({
   useEffect(() => {
     if (!open) return;
     let live = true;
+    // A read of many pages stops when the dialog closes, moves or reads again.
+    const ctl = new AbortController();
     setRefreshing(true);
     setLoadError(null);
-    allGrants({ org, namespace })
+    allGrants({ org, namespace }, ctl.signal)
       .then((r) => {
         if (!live) return;
         setRows(r.rows);
@@ -148,6 +152,7 @@ export function MembersDialog({
       });
     return () => {
       live = false;
+      ctl.abort();
     };
   }, [open, org, namespace, reloadSeq]);
 
@@ -308,8 +313,8 @@ export function MembersDialog({
           </div>
         )}
         {cut && (
-          <p className="mb-3 text-xs text-text-muted" role="status">
-            {`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} members are listed here.`}
+          <p className="mb-3 text-xs text-text-muted">
+            {`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} ${isCode ? "readers" : "members"} are listed here.`}
           </p>
         )}
         {pendingRows.length > 0 && (
@@ -465,7 +470,7 @@ export function MembersDialog({
           </div>
         )}
         {inherited.map((p) => (
-          <InheritedSection key={p.title} access={p} me={me} />
+          <InheritedSection key={p.hidden ? "hidden" : p.namespace} access={p} me={me} />
         ))}
       </div>
 
@@ -582,7 +587,7 @@ function InheritedSection({ access, me }: { access: InheritedAccess; me: string 
         </div>
       )}
       {access.cut && (
-        <p className="text-xs text-text-muted">{`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} are listed.`}</p>
+        <p className="text-xs text-text-muted">{`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} members there are listed.`}</p>
       )}
     </section>
   );

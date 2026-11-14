@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import type { CollectionEntry, GrantEntry } from "../api";
 import { ApiError } from "../lib/errors";
+import { repeatedTitles } from "../lib/collections";
 import { useStore } from "../lib/state";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { axeViolations } from "../test/axe";
@@ -122,6 +123,34 @@ describe("who can see a collection, in words", () => {
     });
   });
 
+  it("keeps each unseen parent's notice by place, not by its words", () => {
+    // "Eng" is a prefix of "Engineering": the first unseen parent says who, the other keeps its notice.
+    const w = whoCanSee({
+      grants: [
+        { namespace: "col-a", rows: [] },
+        { namespace: "col-eng", rows: [], failed: true },
+        { namespace: "col-engineering", rows: [], failed: true },
+      ],
+      me: ME,
+      org: "acme",
+      titleOf: (ns) => (ns === "col-eng" ? "Eng" : "Engineering"),
+    });
+    expect(w.who).toBe("Everyone who can see Eng");
+    expect(w.how).toBe("Also everyone who can see Engineering, whose members couldn't be read");
+    // Two parents of one title: the second keeps its notice.
+    const twins = whoCanSee({
+      grants: [
+        { namespace: "col-a", rows: [] },
+        { namespace: "col-n1", rows: [], failed: true },
+        { namespace: "col-n2", rows: [], failed: true },
+      ],
+      me: ME,
+      org: "acme",
+      titleOf: () => "Notes",
+    });
+    expect(twins.how).toBe("Also everyone who can see Notes, whose members couldn't be read");
+  });
+
   it("names the parent when no grant the person reads names anyone", () => {
     expect(words([{ namespace: "col-a", rows: [] }], { above: "Hidden" }).who).toBe("Everyone who can see Hidden");
   });
@@ -134,10 +163,12 @@ function Header(props: {
   truncated?: boolean;
   onOpenPlace?: (c: string) => void;
 }) {
+  const byName = props.byName ?? new Map([[props.collection.namespace, props.collection]]);
   const { line, button, dialog } = useCollectionSharing({
     org: "acme",
     collection: props.collection,
-    byName: props.byName ?? new Map([[props.collection.namespace, props.collection]]),
+    byName,
+    repeated: repeatedTitles([...byName.values()]),
     truncated: props.truncated,
     place: props.collection.namespace,
     onOpenPlace: props.onOpenPlace ?? (() => {}),
@@ -285,6 +316,46 @@ describe("the collection header", () => {
     expect(api.listGrants).toHaveBeenCalledTimes(2);
     // Retry left with the error line: focus is on the page's heading, not the body.
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Library" }));
+  });
+
+  it("says a second failure with no request id in a fresh alert, after the placeholder", async () => {
+    api.listGrants.mockRejectedValue(new ApiError({ status: 503, code: "UNAVAILABLE", message: "down" }));
+    render(<Header collection={entry("col-a")} />);
+    const first = await screen.findByRole("alert");
+    let answer: (v: unknown) => void = () => {};
+    api.listGrants.mockReturnValueOnce(new Promise((_, reject) => (answer = reject)));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading who can see it" })).toBeInTheDocument();
+    answer(new ApiError({ status: 503, code: "UNAVAILABLE", message: "down" }));
+    const second = await screen.findByRole("alert");
+    expect(second).not.toBe(first);
+    expect(second.textContent).toBe(first.textContent);
+  });
+
+  it("tells apart two parents of one title, in the line and as two dialog sections", async () => {
+    const top = entry("col-notes", { title: "Notes" });
+    const archive = entry("col-archive", { title: "Archive", parent: "col-notes" });
+    const inner = entry("col-notes-2", { title: "Notes", parent: "col-archive" });
+    const here = entry("col-here", { title: "This", parent: "col-notes-2", role: "writer" });
+    const byName = new Map([top, archive, inner, here].map((c) => [c.namespace, c]));
+    pages((ns) => (ns === "col-here" ? [grant("ada")] : [grant(`${ns}@example.com`)]));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<Header collection={here} byName={byName} />);
+    expect(
+      await screen.findByText(/Inherited from Notes \(col-notes-2\), Archive and Notes \(col-notes\)/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("region", { name: "Also can see it, through Archive" });
+    expect(
+      within(dialog).getByRole("region", { name: "Also can see it, through Notes (col-notes-2)" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("region", { name: "Also can see it, through Notes (col-notes)" }),
+    ).toBeInTheDocument();
+    expect(errors.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    errors.mockRestore();
   });
 
   it("says who can see it is not shown to a person refused the collection's grants, with no Retry", async () => {

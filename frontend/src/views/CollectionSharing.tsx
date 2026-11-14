@@ -3,7 +3,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import type { CollectionEntry } from "../api";
-import { collectionTitle } from "../lib/collections";
+import { distinctTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
 import { displaySubject, isServiceSubject } from "../lib/format";
@@ -87,21 +87,27 @@ export function whoCanSee({
     }
   }
   const cut = grants.some((g) => g.cut);
-  const unread = grants.filter((g) => g.failed).map((g) => titleOf(g.namespace));
+  // The parents whose grants reach it unseen: one whose grants failed to read, then the
+  // first one missing from the list. Each says who it is and its notice.
+  const unseen = [
+    ...grants
+      .filter((g) => g.failed)
+      .map((g) => ({ who: titleOf(g.namespace), notice: "whose members couldn't be read" })),
+    ...(above ? [{ who: above, notice: "" }] : []),
+  ];
+  const noticeOf = (u: { who: string; notice: string }) =>
+    `Also everyone who can see ${u.who}${u.notice ? `, ${u.notice}` : ""}`;
   const shown = grants[0]?.namespace ?? "";
   const inherited = [...new Set([...from.values()].filter((ns) => ns !== shown))].map(titleOf);
   const subjects = [...from.keys()];
   const others = subjects.filter((s) => s !== "");
-  const tail = [
-    inherited.length > 0 ? `Inherited from ${joined(inherited)}` : "",
-    ...unread.map((t) => `Also everyone who can see ${t}, whose members couldn't be read`),
-    above ? `Also everyone who can see ${above}` : "",
-  ];
+  const inheritedFrom = inherited.length > 0 ? `Inherited from ${joined(inherited)}` : "";
+  const tail = [inheritedFrom, ...unseen.map(noticeOf)];
   const shared = empty ? "Anything added here is shared with them" : "";
   if (others.includes("everyone")) {
     return { who: `Everyone in ${org}`, how: [...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
   }
-  if (others.length === 0 && !above && !cut && unread.length === 0) {
+  if (others.length === 0 && unseen.length === 0 && !cut) {
     return {
       who: subjects.length > 0 ? "Only you" : "No one is named on it",
       how: "Shared with no one else",
@@ -111,25 +117,24 @@ export function whoCanSee({
   const groups = others.filter((s) => s.startsWith("group:"));
   const agents = others.filter(isAgentSubject);
   const people = others.filter((s) => !groups.includes(s) && !agents.includes(s));
-  const you = subjects.includes("") ? 1 : 0;
-  const names = [...(subjects.includes("") ? ["You"] : []), ...[...groups, ...people, ...agents].map(subjectLabel)];
+  const you = subjects.includes("");
+  const names = [...(you ? ["You"] : []), ...[...groups, ...people, ...agents].map(subjectLabel)];
   const head = names.slice(0, 3);
   const more = names.length - head.length;
-  // Named by no grant the person can read: the parents above say who.
+  // Named by no grant the person can read: the first parent unseen says who, and the line
+  // keeps the others' notices.
   if (names.length === 0) {
-    const through = unread[0] ?? above;
+    const [through, ...rest] = unseen;
     return {
-      who: through ? `Everyone who can see ${through}` : "More people than are shown here",
-      how: [...tail.filter((t) => !t.startsWith(`Also everyone who can see ${through}`)), shared]
-        .filter(Boolean)
-        .join(" · "),
+      who: through ? `Everyone who can see ${through.who}` : "More people than are shown here",
+      how: [inheritedFrom, ...rest.map(noticeOf), shared].filter(Boolean).join(" · "),
       onlyYou: false,
     };
   }
   const who = cut ? `${head.join(", ")} and more` : more > 0 ? `${head.join(", ")} and ${more} more` : joined(head);
   const counts = joined(
     [
-      people.length + you > 0 ? plural(people.length + you, "person", "people") : "",
+      people.length + Number(you) > 0 ? plural(people.length + Number(you), "person", "people") : "",
       groups.length > 0 ? plural(groups.length, "group", "groups") : "",
       agents.length > 0 ? plural(agents.length, "agent", "agents") : "",
     ].filter(Boolean),
@@ -167,6 +172,7 @@ export function useCollectionSharing({
   org,
   collection,
   byName,
+  repeated,
   truncated = false,
   empty = false,
   place,
@@ -177,6 +183,9 @@ export function useCollectionSharing({
   collection: CollectionEntry | null;
   /** Every collection the person can read, by name: the parents whose grants reach it. */
   byName: Map<string, CollectionEntry>;
+  /** Titles two collections share (`repeatedTitles`): those name their address too, as the
+   *  path does. */
+  repeated: Set<string>;
   /** The list of collections was cut short: a parent missing from it may be past its end. */
   truncated?: boolean;
   /** It holds no documents yet. */
@@ -233,7 +242,7 @@ export function useCollectionSharing({
 
   const titleOf = (ns: string) => {
     const c = byName.get(ns);
-    return c ? collectionTitle(c) : ns;
+    return c ? distinctTitle(c, repeated) : ns;
   };
   const answer = state?.key === key ? state : null;
   const read = answer && "grants" in answer ? answer.grants : null;
@@ -265,9 +274,12 @@ export function useCollectionSharing({
             component="button"
             type="button"
             size="sm"
-            // Retry leaves with this line: focus goes to the page's heading, as a list's does.
+            // Retry swaps the error for the placeholder until the read answers, so a second
+            // failure mounts a fresh alert, which is announced; focus goes to the page's
+            // heading, as a list's Retry sends it.
             onClick={() => {
               focusInMain(null);
+              setState(null);
               setRetries((n) => n + 1);
             }}
           >
@@ -298,13 +310,14 @@ export function useCollectionSharing({
   if (read) {
     for (const at of read.slice(1)) {
       inherited.push({
+        namespace: at.namespace,
         title: titleOf(at.namespace),
         rows: at.failed ? null : at.rows,
         cut: at.cut,
         onOpen: () => onOpenPlace(at.namespace),
       });
     }
-    if (hiddenWords) inherited.push({ title: hiddenWords, rows: null, hidden: true });
+    if (hiddenWords) inherited.push({ namespace: "", title: hiddenWords, rows: null, hidden: true });
   }
   const shown = collection && !collection.personal && openFor === collection.namespace ? collection : null;
   const dialog = shown && (

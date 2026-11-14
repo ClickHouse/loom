@@ -479,6 +479,7 @@ export function Documents() {
     org: picked.org,
     collection: sharing,
     byName,
+    repeated,
     truncated: collections.kept?.truncated ?? false,
     empty: emptyLibrary,
     place: collection ?? picked.namespace,
