@@ -373,9 +373,11 @@ const { text } = await generateText({
 });
 ```
 
-The AI SDK has no memory store of its own: the messages of a conversation are the caller's,
-and the tools give the model Loom's long-term memory. A call Loom refuses reaches the model
-as the AI SDK's tool-error result with Loom's message, and the run goes on.
+The AI SDK has no memory store of its own: the messages of a conversation are the
+caller's, and the tools give the model Loom's long-term memory. The AI SDK passes the
+model's arguments through unchecked, and Loom checks them: it reads a quoted number as a
+number and ignores an extra key. A call Loom refuses reaches the model as the AI SDK's
+tool-error result with Loom's message, and the run goes on.
 
 ## LangGraph
 

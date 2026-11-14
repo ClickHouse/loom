@@ -44,8 +44,22 @@ describe("loomTools (AI SDK adapter)", () => {
 
   it("leaves the arguments to Loom's own check: a quoted top_k is read as a number", async () => {
     const { agent, calls } = harness({ results: [] });
-    const { loom_recall } = loomTools(agent, {}, { only: ["loom_recall"] });
-    await loom_recall.execute?.({ query: "seat", top_k: "3" }, { toolCallId: "c1", messages: [] } as never);
+    const model = new MockLanguageModelV4({
+      doGenerate: {
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "c1",
+            toolName: "loom_recall",
+            input: JSON.stringify({ query: "seat", top_k: "3" }),
+          },
+        ],
+        finishReason: { unified: "tool-calls", raw: undefined },
+        usage,
+        warnings: [],
+      } as never,
+    });
+    await generateText({ model, tools: loomTools(agent, {}, { only: ["loom_recall"] }), prompt: "seat?" });
     expect(calls[0].body).toMatchObject({ query: "seat", top_k: 3 });
   });
 
