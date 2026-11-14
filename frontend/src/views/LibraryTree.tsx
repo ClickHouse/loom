@@ -3,7 +3,7 @@
 import { type CSSProperties, type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { createCollection, type CollectionEntry } from "../api";
+import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
 import { toastError } from "../components/Toast";
 import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
@@ -422,9 +422,10 @@ function NewCollectionForm({
   const tooLong = titleTooLong(trimmed);
   const make = async (e: FormEvent) => {
     e.preventDefault();
-    if (!trimmed || tooLong || busy) return;
+    // Create is disabled without a title, or with one too long, and so is the form's submit.
+    if (busy) return;
     setBusy(true);
-    let r: Awaited<ReturnType<typeof createCollection>>;
+    let r: CollectionCreated;
     try {
       r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });
     } catch (err) {

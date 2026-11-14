@@ -386,7 +386,7 @@ export function LibraryCollections({
             {about}
           </Popover.Content>
         </Popover>
-        {collection && items.length > 0 && <RowMenu name={collectionTitle(collection)} items={items} />}
+        {collection && <RowMenu name={collectionTitle(collection)} items={items} />}
         {/* The collections inside, after the path; a phone's select lists them. */}
         {!phone && (
           // One per place, so Show more starts again in the next.

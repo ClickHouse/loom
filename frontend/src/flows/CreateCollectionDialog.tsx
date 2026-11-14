@@ -3,7 +3,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { createCollection, type CollectionEntry } from "../api";
+import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
@@ -15,10 +15,11 @@ import { invalidateSharedCollections } from "../lib/collectionPlaces";
 
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
+
 /** After collection.create: the shared reads of the collections start again, and the person
  *  is told whether it was made or one of that title already sits there. `typed`: the title
  *  asked for, shown when the answer names none. */
-export function announceCreated(r: Awaited<ReturnType<typeof createCollection>>, typed: string): void {
+export function announceCreated(r: CollectionCreated, typed: string): void {
   invalidateSharedCollections();
   const shown = r.title || typed || r.namespace;
   toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");

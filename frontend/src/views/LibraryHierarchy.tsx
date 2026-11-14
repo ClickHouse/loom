@@ -517,10 +517,8 @@ function PlaceList({
   );
 }
 
-/** The collections inside the one shown, as folder chips on the path's line, so the list
- *  drills down too: one line that scrolls sideways, so the documents start where they did.
- *  Each is a link: a plain click opens it here. Nothing for a place with no collections
- *  inside, nor for the top level (the tree, or the list below the documents, holds those). */
+/** The collections inside the one shown, as link chips on the path's line; nothing at the top
+ *  level, whose places the tree or the list below the documents shows. */
 export function CollectionChips({
   rows,
   repeated,
