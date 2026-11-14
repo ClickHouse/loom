@@ -395,6 +395,15 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 
 Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
+## Mastra
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/mastra";
+const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
+```
+
+Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency (1.83 or a later 1.x, which needs Node 22.13 or later).
+
 ## OpenAI Agents SDK
 
 ```ts
@@ -403,15 +412,6 @@ const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ name: "assistan
 ```
 
 Loom's agent verbs (`AgentTools`: `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as function tools built with `tool()` from `@openai/agents`, an optional peer dependency, bound to one user, session or run.
-
-## Mastra
-
-```ts
-import { loomTools } from "@clickhouse/loom/integrations/mastra";
-const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
-```
-
-Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency.
 
 ## Strands Agents
 

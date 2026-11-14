@@ -258,7 +258,8 @@ or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
 
 `loomTools(agent, scope)` from `@clickhouse/loom/integrations/mastra` returns `AgentTools`
 as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer
-dependency. See [Frameworks](../features/integrations/frameworks.md#mastra).
+dependency (`@mastra/core` 1.83 or a later 1.x, which needs Node 22.13 or later). See
+[Frameworks](../features/integrations/frameworks.md#mastra).
 
 ## OpenAI Agents SDK adapter
 
