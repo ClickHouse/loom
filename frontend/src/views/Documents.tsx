@@ -197,13 +197,13 @@ export function Documents() {
     placeVersion.current += 1;
     return placeVersion.current;
   }, []);
-  // The read starts before the move so the old list never says it is missing.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
     (name: string, arriveFocus: string | undefined, version: number) => {
       if (!mounted.current || version !== placeVersion.current) return;
       // The answer named the collection already shown: the create's refresh is enough.
       if (name === linkedCollection()) return;
+      // The read starts before the move so the old list never says it is missing.
       flushSync(() => reloadCollections(name));
       goTo(name, arriveFocus);
     },

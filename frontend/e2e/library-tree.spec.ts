@@ -128,8 +128,9 @@ for (const [pointer, touch, side] of [
   });
 }
 
-// A folder upload nests eight deep: past the fourth level rows share its indent, so the
-// deepest title keeps room (139 px measured at 1440 px).
+// Collections nest at most eight deep: a level indents 1rem for the first four steps and
+// 0.25rem after, so every level still moves right and the deepest title keeps room (123 px
+// measured at 1440 px).
 const DEEP = Array.from({ length: 9 }, (_, i) => ({
   namespace: `col-d${i}`,
   parent: i === 0 ? "" : `col-d${i - 1}`,

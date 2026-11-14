@@ -1690,8 +1690,9 @@ textarea[aria-invalid="true"]:focus-visible {
     align-items: start;
   }
   /* Click UI's sidebar navigation has no nesting: rows take its item's padding, radius and
-     text (30 px) and the Table row tints; a level indents 1rem, as `.collection-depth`, up to
-     four: deeper levels (a folder upload nests eight) share the fourth's, so titles keep room. */
+     text (30 px) and the Table row tints. Collections nest at most eight deep: a level indents
+     1rem for the first four steps and 0.25rem after, so every level still moves right and the
+     deepest titles keep room. */
   .library-tree {
     position: sticky;
     top: 0;
@@ -1714,7 +1715,7 @@ textarea[aria-invalid="true"]:focus-visible {
     display: flex;
     align-items: center;
     gap: var(--spaces-1);
-    padding-inline: calc(min(var(--depth, 0), 4) * 1rem) var(--spaces-2);
+    padding-inline: calc((min(var(--depth, 0), 4) + max(var(--depth, 0) - 4, 0) * 0.25) * 1rem) var(--spaces-2);
     border-radius: var(--click-sidebar-navigation-item-radii-all);
   }
   /* Show more takes a row's indent, not its hover: it is a button, not a place. */
