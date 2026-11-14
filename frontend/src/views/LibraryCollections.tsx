@@ -410,7 +410,7 @@ export function LibraryCollections({
           // answer while it is read again, as the tree and the path show.
           <CollectionChips
             key={current?.namespace ?? ""}
-            rows={besideTree ? (collections.kept?.rows ?? null) : rows}
+            rows={rows}
             repeated={repeated}
             collection={collection}
             onPick={onPick}

@@ -261,16 +261,6 @@ describe("LibraryCollections", () => {
     expect(screen.queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
   });
 
-  it("beside the tree keeps the chips while the list is read again", () => {
-    // A reload: no rows until it answers, the last answer kept.
-    const collections = { ...read(ROWS), rows: null };
-    render(
-      <Picker org="acme" namespace="team" collections={collections} current={ROWS[1]} besideTree onPick={() => {}} />,
-    );
-    const chips = screen.getByRole("navigation", { name: "Inside col-q3" });
-    expect(within(chips).getByRole("link", { name: "col-plans" })).toBeInTheDocument();
-  });
-
   it("says when the collections cannot be read, and reads them again on request", () => {
     const collections = read(null, { error: new Error("offline") });
     render(<Picker org="acme" namespace="team" collections={collections} current={null} onPick={() => undefined} />);
