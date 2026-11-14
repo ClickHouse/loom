@@ -1376,6 +1376,22 @@ describe("the Library on a collection", () => {
       // The select, the path and the chips are empty while the page reads again: nothing to refresh.
       expect(await screen.findByText(/Couldn't load collections/)).toBeInTheDocument();
       expect(screen.queryByText(/Couldn't refresh collections/)).toBeNull();
+      // Its retry still waits for the collection made: a lagging answer, then one listing it.
+      api.listCollections.mockResolvedValueOnce({ collections: ROWS, next_cursor: null }).mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+      }
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      expect(screen.getByRole("button", { name: PLACE_PICKER_LABEL })).toHaveTextContent("Q4");
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
       cleanup();
       // Beside the tree, which still draws the last answer, it is a refresh that failed.
       resizable();

@@ -244,6 +244,7 @@ export function BatchUpload({
   // Where the files go, as it was when the dialog opened: the Library reads its list
   // again after an upload, and the place it shows meanwhile is not where these files go.
   const [identity] = useState(identityProp);
+  const { org, namespace } = identity;
   const [place] = useState(placeProp);
   const [tree] = useState(treeProp);
   // Folders become collections inside the collection shown; on "My files" or a namespace,
@@ -335,7 +336,6 @@ export function BatchUpload({
   // rest is not looked for, and a file whose source exists is skipped (a new source
   // publishes only while none is live). The upload waits for a check that succeeds. A
   // folder's collection that is new holds nothing yet; one it already is is read.
-  const { org, namespace } = identity;
   // The place itself only when some file goes there (a loose one, or one kept by its path).
   const toPlace = rows.some((r) => r.state !== "skipped" && !r.folder);
   // A folder that holds only folders gets no file: its collection is not read.
