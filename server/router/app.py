@@ -716,12 +716,8 @@ class Router:
             return _refused(404, e.reason, code="NO_SUCH_CELL")
         except directory.DirectoryUnavailable as e:
             return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
-        row = found.row
         if not found.served(deployment_id):
-            reason = directory.attach_refusal(found, deployment_id)
-            if not reason and row.mode != "enforced":
-                reason = f"cell {name!r} records mode {row.mode!r}: post attach/enforced first"
-            if reason:
+            if reason := directory.attach_refusal(found, deployment_id, enforced=True):
                 return _refused(409, reason)
             if refusal := await self._stores_check(found, nonces):
                 return refusal

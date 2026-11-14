@@ -333,6 +333,8 @@ async def _first_cell_refusal(deployment_id: str) -> str:
             f"the first cell's Postgres reads `{state}`: unset LOOM_CELL on every process, run "
             f"the full-state cleanup ({TROUBLESHOOTING}), then remove the row"
         )
+    if not recorded:
+        return "this Postgres records no deployment id: point LOOM_PG_DSN at the cell's own"
     if recorded != deployment_id:
         return (
             f"this Postgres records deployment id {recorded!r}, and the directory's row "
@@ -356,10 +358,12 @@ def _cmd_remove(args: argparse.Namespace) -> int:
         not isinstance(state, str)
         or type(placed) is not int
         or type(row.get("is_first")) is not bool
+        or not isinstance(row.get("deployment_id"), str)
+        or not row["deployment_id"]
     ):
         print(
-            "loom cell remove: the router's answer names no state, placement count or "
-            "first-cell flag",
+            "loom cell remove: the router's answer names no state, placement count, "
+            "first-cell flag or deployment id",
             file=sys.stderr,
         )
         return 1
@@ -368,9 +372,9 @@ def _cmd_remove(args: argparse.Namespace) -> int:
         return 1
     if row.get("is_first") is True:
         try:
-            refusal = asyncio.run(_first_cell_refusal(str(row.get("deployment_id", ""))))
+            refusal = asyncio.run(_first_cell_refusal(row["deployment_id"]))
         except Exception as e:  # noqa: BLE001 — an unread state refuses the removal
-            reason = str(e) or f"no answer within {_CHECK_S:g} s"
+            reason = f"no answer within {_CHECK_S:g} s" if isinstance(e, TimeoutError) else str(e)
             refusal = f"the first cell's Postgres could not be read ({type(e).__name__}: {reason})"
         if refusal:
             print(f"loom cell remove: refusing: {refusal}", file=sys.stderr)
@@ -379,7 +383,7 @@ def _cmd_remove(args: argparse.Namespace) -> int:
         args,
         "",
         None,
-        "a retry refused as not in the directory (NO_SUCH_CELL) means it was",
+        "a retry refused as not in the directory (NO_SUCH_CELL) means the row was removed",
         method="DELETE",
         router=router,
         coded_404=True,

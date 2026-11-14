@@ -979,8 +979,9 @@ def test_remove_reads_no_store_for_a_later_cell(
     [
         ({"state": "serving"}, "is serving: a cell stays attached"),
         ({"placed_orgs": 1}, "holds 1 placement(s): its attach goes forward, never back"),
-        ({"placed_orgs": None}, "names no state, placement count or first-cell flag"),
-        ({"is_first": None}, "names no state, placement count or first-cell flag"),
+        ({"placed_orgs": None}, "names no state, placement count, first-cell flag or"),
+        ({"is_first": None}, "names no state, placement count, first-cell flag or"),
+        ({"deployment_id": ""}, "names no state, placement count, first-cell flag or"),
     ],
 )
 def test_remove_refuses_a_live_or_placed_cell_before_reading_its_postgres(
@@ -1017,6 +1018,7 @@ def test_remove_tells_an_older_router_from_an_unknown_cell(
         ("recording", "dep-1", "reads `recording`"),
         ("partial", "dep-1", "reads `partial`"),
         ("open", "dep-2", "records deployment id 'dep-2'"),
+        ("open", "", "records no deployment id"),
         ("open", "dep-1", ""),
     ],
 )

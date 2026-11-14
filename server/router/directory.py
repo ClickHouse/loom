@@ -752,10 +752,13 @@ class Begin:
     allowed: dict[str, list[str]]
 
 
-def attach_refusal(found: Attaching, deployment_id: str, *, begun: bool = True) -> str:
+def attach_refusal(
+    found: Attaching, deployment_id: str, *, begun: bool = True, enforced: bool = False
+) -> str:
     """Why an attach call on this row is refused ('' when it is not): only the first cell,
-    while `attaching`, called with the deployment id the row records, with no other row, and
-    (`begun`) once `attach/begin` has written `attach_started_at` and the fingerprints."""
+    while `attaching`, called with the deployment id the row records, with no other row,
+    (`begun`) once `attach/begin` has written `attach_started_at` and the fingerprints, and
+    (`enforced`) once `attach/enforced` has recorded the directory mode."""
     row = found.row
     if not row.is_first:
         return f"cell {row.cell!r} is a later cell: the router attaches the first cell only"
@@ -773,6 +776,8 @@ def attach_refusal(found: Attaching, deployment_id: str, *, begun: bool = True) 
         )
     if begun and (found.attach_started_at is None or row.current_fp is None):
         return f"the attach of cell {row.cell!r} has not begun: post attach/begin first"
+    if enforced and row.mode != "enforced":
+        return f"cell {row.cell!r} records mode {row.mode!r}: post attach/enforced first"
     return ""
 
 
@@ -930,12 +935,8 @@ async def attach_place(cell_name: str, deployment_id: str, orgs: list[str]) -> t
     _refuse_long(orgs)
     batch = sorted(set(orgs))
     async with _attach_change(cell_name) as (conn, found):
-        if reason := attach_refusal(found, deployment_id):
+        if reason := attach_refusal(found, deployment_id, enforced=True):
             raise OperatorRefused(reason)
-        if found.row.mode != "enforced":
-            raise OperatorRefused(
-                f"cell {cell_name!r} records mode {found.row.mode!r}: post attach/enforced first"
-            )
         new = await conn.fetch(
             "INSERT INTO loom_router.placements (org, cell) SELECT o, $2 FROM unnest($1::text[]) "
             "AS o ON CONFLICT DO NOTHING RETURNING org",
@@ -1014,12 +1015,8 @@ async def attach_serving(cell_name: str, deployment_id: str) -> Attaching:
         if found.served(deployment_id):
             await _audit(conn, "attach_serving", {"cell": cell_name, "serving_already": True})
             return found
-        if reason := attach_refusal(found, deployment_id):
+        if reason := attach_refusal(found, deployment_id, enforced=True):
             raise OperatorRefused(reason)
-        if row.mode != "enforced":
-            raise OperatorRefused(
-                f"cell {cell_name!r} records mode {row.mode!r}: post attach/enforced first"
-            )
         accepted = issuers(row)
         await conn.execute(
             "UPDATE loom_router.cells SET state = 'serving', issuers = $2, updated_at = now() "
