@@ -22,21 +22,21 @@ export function sharedCollections(org: string): Promise<CollectionListPage> {
 }
 
 /** A collection a write just created: its name and its org. */
-export type Made = { name: string; org: string };
+export type CreatedCollection = { name: string; org: string };
 
-const changeListeners = new Set<(made?: Made) => void>();
+const changeListeners = new Set<(made?: CreatedCollection) => void>();
 
 /** For a write that changes a collection: the next asker reads `collection.list` afresh, and
  *  the Library's lists (useReadableCollections) read it again, asking again a few times while
  *  `made`, when given, is not listed yet. */
-export function invalidateSharedCollections(made?: Made): void {
+export function invalidateSharedCollections(made?: CreatedCollection): void {
   invalidateShared(COLLECTIONS_KEY);
   for (const listener of changeListeners) listener(made);
 }
 
 /** Call `listener` after each write to a collection, with the collection it made, if any;
  *  returns the unsubscribe. */
-export function onCollectionsChanged(listener: (made?: Made) => void): () => void {
+export function onCollectionsChanged(listener: (made?: CreatedCollection) => void): () => void {
   changeListeners.add(listener);
   return () => {
     changeListeners.delete(listener);

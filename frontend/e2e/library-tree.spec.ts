@@ -139,7 +139,7 @@ test.describe("1440 px under a reload bar", () => {
 test.describe("1280 px", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("the tree is drawn, a classic scrollbar on a long list or not", async ({ page }) => {
+  test("the tree is drawn under a classic scrollbar on a long list", async ({ page }) => {
     await installApi(page, { knowledgeRows: 40, collections: COLLECTIONS });
     // A classic 16 px scrollbar on #main, which takes width from it.
     await page.addInitScript(() => {

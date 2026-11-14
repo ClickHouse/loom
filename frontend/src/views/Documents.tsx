@@ -273,7 +273,7 @@ export function Documents() {
   // The places are a tree beside the documents where <main> has room for both; narrower, or
   // not measured yet, the select stands in.
   const treeHeight = useTreeHeight();
-  const wide = treeHeight !== null;
+  const besideTree = treeHeight !== null;
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -923,7 +923,7 @@ export function Documents() {
   // The top level's collections, below the documents so they start where the list rules
   // want them. Inside a collection the chips on its path's line list them; on a phone the
   // select, a tree, does.
-  const topLevel = !phone && !wide && collections.rows && (!shown || shown.personal) && (
+  const topLevel = !phone && !besideTree && collections.rows && (!shown || shown.personal) && (
     <TopLevelPlaces
       key={shown?.namespace ?? ""}
       rows={collections.rows}
@@ -949,7 +949,7 @@ export function Documents() {
       creating={creatingCollection}
       onCreatingChange={setCreatingCollection}
       onCreated={(name) => openCreated(name, picked.org)}
-      besideTree={wide}
+      besideTree={besideTree}
     />
   );
   const tree = treeHeight !== null && (
@@ -1001,7 +1001,7 @@ export function Documents() {
   // place in React's tree whichever page shows, so React keeps it.
   const libraryPage = (page: ReactNode) => (
     <>
-      <div className={wide ? "library-layout" : undefined}>
+      <div className={besideTree ? "library-layout" : undefined}>
         {tree}
         {page}
       </div>
@@ -1174,7 +1174,7 @@ export function Documents() {
             // The short form on a phone and beside the tree, whose column leaves the field
             // narrow.
             placeholder={
-              phone || wide ? "Search, or tag:specs" : "Search title, filename, description, or tag (tag:specs)"
+              phone || besideTree ? "Search, or tag:specs" : "Search title, filename, description, or tag (tag:specs)"
             }
             aria-label="Search library"
           />

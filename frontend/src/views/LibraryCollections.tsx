@@ -162,8 +162,17 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
           const rows = [...byName.values()];
           const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= REFRESH_TRIES - 1) return { rows, truncated: !!cursor };
-          await new Promise((r) => setTimeout(r, REFRESH_WAIT_MS));
-          if (signal.aborted) throw signal.reason;
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, REFRESH_WAIT_MS);
+            signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
         }
       })()
         .then(({ rows, truncated }) => {
