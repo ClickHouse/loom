@@ -28,12 +28,7 @@ import { oneOf } from "../lib/oneOf";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
-import { grantSpellings, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
-
-/** "a", "a and b", "a, b and c". */
-function joinedTitles(parts: string[]): string {
-  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
-}
+import { grantSpellings, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 
 /** A row's name: the subject as a person reads it, with the subject itself beneath when the
  *  two differ. */
@@ -270,17 +265,25 @@ export function MembersDialog({
   };
 
   const onRemove = async (subject: string) => {
-    // Who still lets them in: a parent whose grants name them under any spelling.
+    // Who still lets them in: a grant to everyone here, else a parent whose grants name them
+    // under any spelling, or name everyone.
     const theirs = grantSpellings(rows?.find((r) => r.subject === subject) ?? { subject });
-    const through = (inherited ?? [])
-      .filter((p) => p.rows?.some((x) => x.status === "active" && grantSpellings(x).some((sp) => theirs.includes(sp))))
-      .map((p) => p.title);
+    const reaches = (list: GrantEntry[] | null | undefined) =>
+      !!list?.some(
+        (x) =>
+          x.status === "active" && (x.subject === "everyone" || grantSpellings(x).some((sp) => theirs.includes(sp))),
+      );
+    const everyoneHere = !!rows?.some((x) => x.status === "active" && x.subject === "everyone");
+    const through = (inherited ?? []).filter((p) => reaches(p.rows)).map((p) => p.title);
+    const still = everyoneHere
+      ? ` Everyone in ${org} can still see it.`
+      : through.length
+        ? ` They can still see it through ${joined(through)}.`
+        : "";
     if (
       !(await confirmAction({
         title: `Remove ${subject} from ${name}?`,
-        message: through.length
-          ? `Their grant here is revoked. They can still see it through ${joinedTitles(through)}.`
-          : "Their grant here is revoked.",
+        message: `Their grant here is revoked.${still}`,
         confirmLabel: "Remove",
         danger: true,
       }))

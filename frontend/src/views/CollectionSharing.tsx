@@ -6,8 +6,8 @@ import { type CollectionEntry, isAuthDisabled } from "../api";
 import { distinctTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
-import { fmtInt, isServiceSubject } from "../lib/format";
-import { grantSpellings, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { fmtInt } from "../lib/format";
+import { grantSpellings, isAgentSubject, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 import { allGrants, type GrantsAt } from "../lib/grantPages";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useAbortableEffect } from "../lib/hooks";
@@ -35,18 +35,8 @@ export interface WhoCanSee {
   onlyYou: boolean;
 }
 
-/** An agent's subject: one an end-user token signs in, or a service account. */
-function isAgentSubject(subject: string): boolean {
-  return subject.startsWith("agent:") || isServiceSubject(subject);
-}
-
 function plural(n: number, one: string, many: string): string {
   return `${fmtInt(n)} ${n === 1 ? one : many}`;
-}
-
-/** "a", "a and b", "a, b and c". */
-function joined(parts: string[]): string {
-  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
 }
 
 /** Who can see a collection, in words, from the active grants on it and on the parents the
@@ -142,11 +132,7 @@ export function whoCanSee({
     : more > 0
       ? `${head.join(", ")} and ${fmtInt(more)} more`
       : joined(head);
-  // Counted on the collection itself only: `grants.list` folds a person's spellings within
-  // the one place it reads (`also`), so rows from two places can name one person twice. The
-  // one read that folds them over the whole lineage, `namespace.inventory`'s member count,
-  // also tallies every plane of the namespace (some ten statements, an 800 ms p99 budget
-  // against `grants.list`'s 80 ms), too heavy for every collection the Library opens.
+  // Counted here only: grants.list folds a person's spellings within one place, not across the lineage.
   const here = new Set<string>();
   for (const r of grants[0]?.rows ?? []) {
     if (r.status === "active") here.add(namesMe(r, mine) ? "" : r.subject);
