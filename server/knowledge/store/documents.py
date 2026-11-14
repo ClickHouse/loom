@@ -507,12 +507,9 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
 
     loom.documents is ReplacingMergeTree(version): a version row that omits a
     column resets it for every FINAL reader. The row starts from the schema
-    defaults, then takes every column of `existing` (carry-forward), then
-    `fields`. `content_sha256` is not settable: it is recomputed from the
+    defaults, then takes the columns of `existing` in `_CARRIED` (carry-forward),
+    then `fields`. `content_sha256` is not settable: it is recomputed from the
     row's final title + content, the hash knowledge.add / upsert dedup on.
-    `access_json` is never carried: only the turn of the source that owns a mirrored
-    document passes one, and every other row, a tombstone included, has none, which
-    reads `unread` and admits nobody.
     """
     unknown = set(fields) - (set(DOCUMENT_COLUMNS) - {"content_sha256"})
     if unknown:
