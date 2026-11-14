@@ -1,16 +1,6 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
  *  no keys of their own), with New collection at its foot. */
-import {
-  type CSSProperties,
-  type FormEvent,
-  memo,
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
@@ -37,6 +27,7 @@ import {
   PlaceTitleLink,
   sharedWithMe,
   topLevelCollections,
+  useFocusHandoff,
   useShowMore,
 } from "./LibraryHierarchy";
 
@@ -254,17 +245,7 @@ export const LibraryTree = memo(function LibraryTree({
   // A narrower page takes the tree away: focus in it goes to the place picker drawn instead.
   // A title typed in its New collection form is dropped.
   const nav = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => {
-    const el = nav.current;
-    return () => {
-      if (!el?.contains(document.activeElement)) return;
-      requestAnimationFrame(() => {
-        // Only focus that fell to the page: a navigation away has placed its own.
-        if (document.activeElement && document.activeElement !== document.body) return;
-        document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`)?.focus();
-      });
-    };
-  }, []);
+  useFocusHandoff(nav, () => document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`));
 
   return (
     <nav

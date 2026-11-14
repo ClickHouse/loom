@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { deleteCollection, listCollections, type CollectionEntry } from "../api";
@@ -11,7 +11,15 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { CollectionBack, CollectionChips, CollectionPath, cycleStart, PLACE_PICKER_LABEL } from "./LibraryHierarchy";
+import {
+  CollectionBack,
+  CollectionChips,
+  CollectionPath,
+  cycleStart,
+  PLACE_PICKER_LABEL,
+  useFocusHandoff,
+} from "./LibraryHierarchy";
+import { placeFocusKey } from "./LibraryTree";
 import {
   COLLECTIONS_LISTED,
   COLLECTIONS_PAGES,
@@ -196,6 +204,18 @@ export function useReadableCollections(org: string, showing: string | null = nul
   };
 }
 
+/** Controls drawn where the tree is not: a wider page that draws the tree hands their focus
+ *  to the tree's row for `place`. No box of its own, so the line's layout is unchanged. */
+function ToTreeRow({ place, children }: { place: string | null; children: ReactNode }) {
+  const box = useRef<HTMLDivElement | null>(null);
+  useFocusHandoff(box, () => document.querySelector<HTMLElement>(`[data-focus-key="${placeFocusKey(place)}"]`));
+  return (
+    <div ref={box} className="contents">
+      {children}
+    </div>
+  );
+}
+
 /** The Library's place line: the place picker (where no tree is shown), the path, the chips
  *  and the collection's menu (Members, Move, Delete). */
 export function LibraryCollections({
@@ -366,30 +386,32 @@ export function LibraryCollections({
           />
         )}
         {!besideTree && (
-          <Select
-            value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
-            placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
-            onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v)}
-            triggerProps={{ "aria-label": PLACE_PICKER_LABEL }}
-            // A long list is found by typing a name or a description.
-            showSearch
-            className="min-w-0 flex-1 sm:flex-none sm:w-96"
-          >
-            {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{namespaceLabel(namespace)}</Select.Item>}
-            {ordered.map(({ c, depth }) => (
-              <Select.Item key={c.namespace} value={c.namespace}>
-                {/* Indented, not marked: the closed select and a screen reader read the name. */}
-                <span className="collection-depth" style={{ "--depth": depth } as CSSProperties}>
-                  {collectionLabel(c, repeated)}
-                  {/* The name a title hides and the whole description, unseen, so the select's
+          <ToTreeRow place={current?.namespace ?? null}>
+            <Select
+              value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
+              placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
+              onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v)}
+              triggerProps={{ "aria-label": PLACE_PICKER_LABEL }}
+              // A long list is found by typing a name or a description.
+              showSearch
+              className="min-w-0 flex-1 sm:flex-none sm:w-96"
+            >
+              {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{namespaceLabel(namespace)}</Select.Item>}
+              {ordered.map(({ c, depth }) => (
+                <Select.Item key={c.namespace} value={c.namespace}>
+                  {/* Indented, not marked: the closed select and a screen reader read the name. */}
+                  <span className="collection-depth" style={{ "--depth": depth } as CSSProperties}>
+                    {collectionLabel(c, repeated)}
+                    {/* The name a title hides and the whole description, unseen, so the select's
                     search finds them. */}
-                  {(c.title || c.description) && (
-                    <span hidden>{` ${c.title ? c.namespace : ""} ${c.description ?? ""}`}</span>
-                  )}
-                </span>
-              </Select.Item>
-            ))}
-          </Select>
+                    {(c.title || c.description) && (
+                      <span hidden>{` ${c.title ? c.namespace : ""} ${c.description ?? ""}`}</span>
+                    )}
+                  </span>
+                </Select.Item>
+              ))}
+            </Select>
+          </ToTreeRow>
         )}
         {current && (
           <span className="hidden shrink-0 text-sm text-text-muted sm:inline">{roleLabel(current.role)}</span>
@@ -406,8 +428,7 @@ export function LibraryCollections({
         {collection && <RowMenu name={collectionTitle(collection)} items={items} />}
         {/* The collections inside, after the path; a phone's select lists them. */}
         {!phone && (
-          // One per place, so Show more starts again in the next. Beside the tree, the last
-          // answer while it is read again, as the tree and the path show.
+          // One per place, so Show more starts again in the next.
           <CollectionChips
             key={current?.namespace ?? ""}
             rows={rows}
@@ -418,16 +439,18 @@ export function LibraryCollections({
         )}
         {/* Its words only where there is room; a phone shows the plus. */}
         {!besideTree && (
-          <Button
-            type="secondary"
-            htmlType="button"
-            iconLeft="plus"
-            aria-label="New collection"
-            className="shrink-0"
-            onClick={() => setCreating(true)}
-          >
-            <span className="hidden sm:inline">New collection</span>
-          </Button>
+          <ToTreeRow place={current?.namespace ?? null}>
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="plus"
+              aria-label="New collection"
+              className="shrink-0"
+              onClick={() => setCreating(true)}
+            >
+              <span className="hidden sm:inline">New collection</span>
+            </Button>
+          </ToTreeRow>
         )}
       </div>
       {collections.truncated && (

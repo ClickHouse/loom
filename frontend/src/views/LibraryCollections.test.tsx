@@ -1101,6 +1101,38 @@ describe("the Library on a collection", () => {
     await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
   });
 
+  it("hands focus on the place picker to the tree's row for the place when a resize draws the tree", async () => {
+    // <main> starts too narrow for the tree, then widens.
+    let width = TREE_PAGE_MIN - 1;
+    const observers: Array<() => void> = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(f: () => void) {
+          observers.push(f);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const rect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
+    });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />, { container: inMain() });
+    await settle();
+    screen.getByRole("button", { name: PLACE_PICKER_LABEL }).focus();
+    width = TREE_PAGE_MIN;
+    act(() => {
+      for (const f of observers) f();
+    });
+    const tree = screen.getByRole("navigation", { name: "Library places" });
+    expect(screen.queryByRole("button", { name: PLACE_PICKER_LABEL })).toBeNull();
+    await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+  });
+
   describe("a create answered after the tree is gone", () => {
     it("still opens it when a resize took the tree away", async () => {
       const narrow = resizable();
