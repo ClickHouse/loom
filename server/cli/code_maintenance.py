@@ -248,10 +248,7 @@ async def _compact(args: argparse.Namespace) -> int:
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    await connect_declared(
-        get_client(),
-        org_free=_compact_org_free(args),
-    )
+    await connect_declared(get_client(), org_free=_compact_org_free(args))
     ch = get_client()
     min_ratio = args.min_ratio if args.min_ratio is not None else settings.code_compact_min_ratio
     rc = 0

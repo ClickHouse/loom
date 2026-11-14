@@ -68,7 +68,7 @@ def test_every_connect_declares_the_orgs_it_writes() -> None:
 # What an `org_free=` may be: a typed value (`reads`, `writes`, `revokes`), one a helper
 # picks per subcommand, a conditional between those and None, or a parameter passed on.
 _KINDS = {"reads", "writes", "revokes"}
-_PICKERS = {"_org_free", "_revoke_kind"}
+_PICKERS = {"_revoke_kind"}
 
 
 def _typed(node: ast.expr) -> bool:

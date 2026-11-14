@@ -496,10 +496,7 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         return await _re_verify_run(ch, args)
 
     # --erase files purges for rows already in this cell, which stay erasable.
-    return run_connected(
-        _run,
-        org_free=_re_verify_org_free(args),
-    )
+    return run_connected(_run, org_free=_re_verify_org_free(args))
 
 
 def _utc_instant(text: str) -> datetime:

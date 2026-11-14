@@ -52,10 +52,7 @@ def _cmd_publish(args: argparse.Namespace) -> int:
         print("✓ published")
         return 0
 
-    return run_connected(
-        _go,
-        org_free=_publish_org_free(args),
-    )
+    return run_connected(_go, org_free=_publish_org_free(args))
 
 
 def register_deployment_cli(sub: Any) -> None:

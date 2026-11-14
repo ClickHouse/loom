@@ -180,10 +180,7 @@ def _cmd_unlink(args: argparse.Namespace) -> int:
         )
         return 0
 
-    return run_connected(
-        _run,
-        org_free=_unlink_org_free(args),
-    )
+    return run_connected(_run, org_free=_unlink_org_free(args))
 
 
 def _cmd_password_link(args: argparse.Namespace) -> int:

@@ -71,10 +71,7 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
             args.restored, point, apply=not args.dry_run, live=args.allow_live, ch=ch
         )
 
-    return run_connected(
-        _go,
-        org_free=_reconcile_org_free(args),
-    )
+    return run_connected(_go, org_free=_reconcile_org_free(args))
 
 
 def margin() -> timedelta:
