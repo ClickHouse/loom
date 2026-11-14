@@ -69,6 +69,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "chunks": {"src": 3, "dst": 3},
         # What happened, in order: claims taken and given up, take-backs started and done.
         "events": [],
+        "forgotten": [],
+        "forget_wait_s": 0.0,
     }
 
     async def get_one(org: str, ns: str, uri: str, *, include_superseded: bool = False) -> Any:
@@ -121,6 +123,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def head_is(doc: DocumentRow) -> bool:
         return not state["head_moved"]
 
+    async def forget(org: str, ns: str, through: dict[str, int]) -> None:
+        await asyncio.sleep(state["forget_wait_s"])
+        state["forgotten"].extend(through)
+
     async def tables(org: str, ns: str, uri: str, version: int) -> list[dict[str, Any]]:
         return state["tables"][ns]
 
@@ -146,6 +152,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move, "_delete_source", delete)
     monkeypatch.setattr(move, "_head_is", head_is)
     monkeypatch.setattr(move.chunks_repo, "count_revision", count)
+    monkeypatch.setattr(move.datasets_repo, "forget_published", forget)
     monkeypatch.setattr(move.datasets_repo, "at_version", tables)
     monkeypatch.setattr(move, "_take_back", take_back)
     monkeypatch.setattr("server.auth.authz.row_in_scope", reach)
@@ -630,3 +637,45 @@ async def test_a_copy_there_with_its_tables_gone_is_copied_again(store: dict[str
     store["tables"]["src"] = [{**table, "row_count": 2}]
     assert _answers(await _run()) == [(URI, True, "")]
     assert store["copied"] == [URI] and store["deleted"] == [URI]
+
+
+async def test_an_erasure_registered_before_the_claims_leaves_an_earlier_copy_and_the_source(
+    store: dict[str, Any],
+) -> None:
+    # An earlier move's whole copy is there; an erasure of the target registers after the
+    # call's first ledger read. Deleting the source now could leave it in neither place.
+    store["dst"][URI] = _doc("dst", version=20)
+    store["ledger_later"] = [_erasure("namespace", "dst")]
+    assert _answers(await _run()) == [(URI, False, "erased")]
+    assert store["deleted"] == [] and store["taken_back"] == [] and store["copied"] == []
+
+
+async def test_a_table_cleanup_past_the_claims_cut_off_still_counts_the_move(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @asynccontextmanager
+    async def cut_off_claim(org: str, ns: str, uri: str, *, wait_s: float = 10):
+        # As `leases.holding`: the block is cut off at its share of the TTL.
+        try:
+            async with asyncio.timeout(0.05):
+                yield True
+        except TimeoutError as e:
+            raise ClaimExpired("cut off") from e
+
+    monkeypatch.setattr(move.ingest_run, "claim_source", cut_off_claim)
+    store["forget_wait_s"] = 0.2  # longer than the claims last
+    out = await _run()
+    assert _answers(out) == [(URI, True, "")]
+    assert store["deleted"] == [URI] and store["forgotten"] == [URI]
+    assert store["audited"][0]["subject"]["source_uris"] == [URI]
+
+
+async def test_a_failed_table_cleanup_after_the_tombstone_counts_the_move(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def failed(org: str, ns: str, through: dict[str, int]) -> None:
+        raise RuntimeError("the datasets delete failed")
+
+    monkeypatch.setattr(move.datasets_repo, "forget_published", failed)
+    assert _answers(await _run()) == [(URI, True, "")]
+    assert store["audited"][0]["subject"]["source_uris"] == [URI]

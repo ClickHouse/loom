@@ -74,7 +74,7 @@ describe("moveSummary", () => {
       ok: false,
     });
     expect(moveSummary([{ source_uri: "a", moved: false, reason: "busy" }], "Storage").text).toBe(
-      "Nothing moved: 1 document stayed (busy, or cut off partway; moving it again finishes it)",
+      "Nothing moved: 1 document stayed (busy, or cut off partway; try moving it again shortly)",
     );
   });
 });
