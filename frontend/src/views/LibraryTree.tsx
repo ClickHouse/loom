@@ -9,18 +9,17 @@ import { toastError } from "../components/Toast";
 import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { Tip } from "../components/ui/Tooltip";
-import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { announceCreated } from "../flows/CreateCollectionDialog";
 import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
 import {
   collectionPath,
   cycleStart,
   MORE_SHOWN,
-  placeLinks,
   isSharedWithMe,
   PlaceTitleLink,
   sharedWithMe,
   topLevelCollections,
+  useShowMore,
 } from "./LibraryHierarchy";
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
@@ -71,9 +70,10 @@ export function placeTree(rows: CollectionEntry[]): {
   shared: CollectionEntry[];
   children: Map<string, CollectionEntry[]>;
 } {
-  const names = new Set(rows.map((c) => c.namespace));
+  const byName = new Map(rows.map((c) => [c.namespace, c]));
   const under = new Map<string, CollectionEntry[]>();
   for (const c of rows) {
+    // My files has a row of its own; collection.move does not refuse it a parent.
     if (!c.parent || c.personal) continue;
     const list = under.get(c.parent);
     if (list) list.push(c);
@@ -92,10 +92,9 @@ export function placeTree(rows: CollectionEntry[]): {
     return true;
   };
   const mine = topLevelCollections(rows);
-  const shared = sharedWithMe(rows).filter((c) => !c.parent || !names.has(c.parent));
+  const shared = sharedWithMe(rows).filter((c) => !c.parent || !byName.has(c.parent));
   for (const c of [...mine, ...shared]) visit(c);
   // What is left hangs off a cycle (cycleStart).
-  const byName = new Map(rows.map((c) => [c.namespace, c]));
   for (const c of [...rows].sort(collectionOrder)) {
     if (c.personal || seen.has(c.namespace)) continue;
     const top = cycleStart(c, byName);
@@ -224,17 +223,17 @@ export const LibraryTree = memo(function LibraryTree({
           onToggle={kids.length > 0 ? () => toggle(c.namespace) : undefined}
           onPick={onPick}
         />
-        {expanded && <ul>{kids.map((k) => branch(k, depth + 1))}</ul>}
+        {expanded && <PlaceBranches items={kids} depth={depth + 1} onPath={onPath} branch={branch} />}
       </li>
     );
   };
 
-  // The top of the place shown (its highest readable parent), drawn however far down its
-  // section it sits.
+  // The way from the top to the place shown: each list in the tree draws its step on it,
+  // however far down the list it sits.
   const shownEntry = current ? byName.get(current) : undefined;
-  const shownTop = shownEntry
-    ? ((collectionPath(shownEntry, byName).find((p) => "namespace" in p) as CollectionEntry | undefined) ?? null)
-    : null;
+  const onPath = new Set(
+    shownEntry ? collectionPath(shownEntry, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : [],
+  );
 
   return (
     <nav
@@ -274,13 +273,19 @@ export const LibraryTree = memo(function LibraryTree({
       {/* Below the namespace's row while the list is read; a failed read says so beside the
           page, with a button to read it again. */}
       {rows === null && !failed && <Loading label="Loading collections" layout="inline" className="px-2" />}
-      <PlaceSection id="library-tree-mine" label="Collections" roots={tree.mine} shownTop={shownTop} branch={branch} />
-      <PlaceSection
-        id="library-tree-shared"
-        label="Shared with you"
-        roots={tree.shared}
-        shownTop={shownTop}
+      <PlaceBranches
+        items={tree.mine}
+        depth={0}
+        onPath={onPath}
         branch={branch}
+        label={{ id: "library-tree-mine", text: "Collections" }}
+      />
+      <PlaceBranches
+        items={tree.shared}
+        depth={0}
+        onPath={onPath}
+        branch={branch}
+        label={{ id: "library-tree-shared", text: "Shared with you" }}
       />
       <div className="library-tree-foot">
         {making ? (
@@ -311,55 +316,44 @@ export const LibraryTree = memo(function LibraryTree({
   );
 });
 
-/** A section's top-level places: the first MORE_SHOWN, Show more adding MORE_SHOWN at a time,
- *  and the top of the place shown wherever it sits. */
-function PlaceSection({
-  id,
-  label,
-  roots,
-  shownTop,
+/** A list of places in the tree (a section's, under its `label`, or a collection's): the
+ *  first MORE_SHOWN, Show more adding MORE_SHOWN at a time, and the one on the way to the
+ *  place shown wherever it sits. */
+function PlaceBranches({
+  items,
+  depth,
+  onPath,
   branch,
+  label,
 }: {
-  id: string;
-  label: string;
-  roots: CollectionEntry[];
-  shownTop: CollectionEntry | null;
+  items: CollectionEntry[];
+  depth: number;
+  /** The collections from the top to the place shown. */
+  onPath: Set<string>;
   branch: (c: CollectionEntry, depth: number) => ReactNode;
+  label?: { id: string; text: string };
 }) {
-  const [count, setCount] = useState(MORE_SHOWN);
-  const list = useRef<HTMLUListElement | null>(null);
-  const left = roots.length - count;
-  // The last Show more removes its button: the focus goes to the first place it added.
-  const markShown = useLastPageFocus({
-    loading: false,
-    more: left > 0,
-    rows: () => placeLinks(list.current),
-    fallback: () => null,
-  });
-  if (roots.length === 0) return null;
-  const head = roots.slice(0, count);
-  const extra = shownTop && !head.includes(shownTop) && roots.includes(shownTop) ? shownTop : null;
+  const extra = items.find((c) => onPath.has(c.namespace)) ?? null;
+  const { shown, list, more, showMore } = useShowMore(items, MORE_SHOWN, extra);
+  if (items.length === 0) return null;
   return (
     <>
-      <p id={id} className="section-label library-tree-label">
-        {label}
-      </p>
-      <ul ref={list} aria-labelledby={id}>
-        {head.map((c) => branch(c, 0))}
-        {extra && branch(extra, 0)}
-      </ul>
-      {left > 0 && (
-        <Button
-          type="empty"
-          htmlType="button"
-          onClick={() => {
-            markShown(head.map((c) => c.namespace));
-            setCount(count + MORE_SHOWN);
-          }}
-        >
-          {`Show ${Math.min(left, MORE_SHOWN)} more`}
-        </Button>
+      {label && (
+        <p id={label.id} className="section-label library-tree-label">
+          {label.text}
+        </p>
       )}
+      <ul ref={list} aria-labelledby={label?.id}>
+        {shown.map((c) => branch(c, depth))}
+        {more && (
+          <li className="library-tree-row" style={{ "--depth": depth } as CSSProperties}>
+            <span className="library-tree-twist" aria-hidden="true" />
+            <Button type="empty" htmlType="button" onClick={showMore}>
+              {more}
+            </Button>
+          </li>
+        )}
+      </ul>
     </>
   );
 }

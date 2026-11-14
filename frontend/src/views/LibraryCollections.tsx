@@ -54,10 +54,10 @@ export function collectionLabel(c: CollectionEntry, repeated: Set<string> = new 
  *  collection whose parent the caller cannot read, or that a cycle in the tree cuts off,
  *  sits at the top. */
 export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth: number }[] {
-  const names = new Set(rows.map((c) => c.namespace));
+  const byName = new Map(rows.map((c) => [c.namespace, c]));
   const children = new Map<string, CollectionEntry[]>();
   for (const c of rows) {
-    const parent = c.parent && names.has(c.parent) ? c.parent : "";
+    const parent = c.parent && byName.has(c.parent) ? c.parent : "";
     const siblings = children.get(parent);
     if (siblings) siblings.push(c);
     else children.set(parent, [c]);
@@ -72,8 +72,9 @@ export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth:
   };
   for (const c of [...(children.get("") ?? [])].sort(collectionOrder)) visit(c, 0);
   // A cycle reaches no top-level collection: it starts at the top, as the tree's does.
-  const byName = new Map(rows.map((c) => [c.namespace, c]));
-  for (const c of [...rows].sort(collectionOrder)) visit(cycleStart(c, byName), 0);
+  for (const c of [...rows].sort(collectionOrder)) {
+    if (!seen.has(c.namespace)) visit(cycleStart(c, byName), 0);
+  }
   return out;
 }
 
@@ -244,7 +245,8 @@ export function LibraryCollections({
     setMembers(null);
     setMoving(null);
   }, [place]);
-  const ordered = useMemo(() => treeOrder(rows ?? []), [rows]);
+  // The select's order; beside the tree there is no select.
+  const ordered = useMemo(() => (besideTree ? [] : treeOrder(rows ?? [])), [rows, besideTree]);
   // A phone gets the path as one back button in the select's row, and no Collections list.
   const phone = useMedia(PHONE_QUERY);
   // Above the top of a collection's path: the header's namespace, else the user's own files,

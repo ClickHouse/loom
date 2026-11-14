@@ -124,6 +124,30 @@ describe("LibraryTree", () => {
     expect(names()).toHaveLength(100);
     await userEvent.click(screen.getByRole("button", { name: "Show 20 more" }));
     expect(names()).toHaveLength(120);
+    // The last press takes its button away: the focus goes to the first place it added.
+    expect(screen.getByRole("link", { name: "Kid 100" })).toHaveFocus();
+  });
+
+  it("counts the one shown past the first fifty as drawn", () => {
+    const pad = (i: number) => String(i).padStart(3, "0");
+    const many = Array.from({ length: 51 }, (_, i) => entry(`col-k${pad(i)}`, { title: `Kid ${pad(i)}` }));
+    tree({ rows: many, shelf: null, current: "col-k050" });
+    expect(within(screen.getByRole("list", { name: "Collections" })).getAllByRole("link")).toHaveLength(51);
+    expect(screen.queryByRole("button", { name: /^Show \d+ more$/ })).toBeNull();
+  });
+
+  it("draws an open collection's first fifty children, and the one shown past them", async () => {
+    const pad = (i: number) => String(i).padStart(3, "0");
+    const kids = Array.from({ length: 60 }, (_, i) =>
+      entry(`col-k${pad(i)}`, { parent: "col-eng", title: `Kid ${pad(i)}` }),
+    );
+    const rows = [entry("col-eng", { title: "Engineering" }), ...kids];
+    tree({ rows, shelf: null, current: "col-k055" });
+    const kidLinks = () => screen.getAllByRole("link", { name: /^Kid / });
+    expect(kidLinks()).toHaveLength(51);
+    expect(kidLinks().at(-1)).toHaveTextContent("Kid 055");
+    await userEvent.click(screen.getByRole("button", { name: "Show 9 more" }));
+    expect(kidLinks()).toHaveLength(60);
   });
 
   it("names a show or hide button in a tooltip on focus", async () => {

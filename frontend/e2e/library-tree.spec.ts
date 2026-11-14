@@ -166,6 +166,9 @@ test.describe("1280 px", () => {
   });
 });
 
+// The page's padding and the tree column's border around the documents' toolbar.
+const TOOLBAR_SLACK = 120;
+
 // Ask AI beside the page narrows <main>: the tree shows only where the page keeps the width
 // it has at 1280 px without the panel.
 for (const [width, tree] of [
@@ -192,7 +195,7 @@ for (const [width, tree] of [
         : 0;
       await expect
         .poll(async () => (await toolbar.boundingBox())?.width ?? 0)
-        .toBeGreaterThanOrEqual(room - treeWidth - 120);
+        .toBeGreaterThanOrEqual(room - treeWidth - TOOLBAR_SLACK);
     });
   });
 }

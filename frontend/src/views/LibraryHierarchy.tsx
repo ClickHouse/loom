@@ -407,6 +407,41 @@ export function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLEl
   });
 }
 
+/** A list of places shown `first` at a time, each Show more adding MORE_SHOWN, `extra` (the
+ *  place on the way to the one shown) drawn past them wherever it sits. `more` is the button's
+ *  label, null once all are shown. The last press removes its button: the focus goes to the
+ *  first place it added, else `fallback`. */
+export function useShowMore<T extends { namespace: string }>(
+  items: T[],
+  first: number,
+  extra: T | null = null,
+  fallback: () => HTMLElement | null = () => null,
+) {
+  const [count, setCount] = useState(first);
+  const list = useRef<HTMLUListElement | null>(null);
+  const head = items.slice(0, count);
+  const shown = extra && !head.includes(extra) && items.includes(extra) ? [...head, extra] : head;
+  const left = items.length - shown.length;
+  const markShown = useLastPageFocus({
+    loading: false,
+    more: left > 0,
+    rows: () => placeLinks(list.current),
+    fallback,
+  });
+  return {
+    shown,
+    list,
+    more: left > 0 ? `Show ${Math.min(left, MORE_SHOWN)} more` : null,
+    showMore: () => {
+      markShown(shown.map((c) => c.namespace));
+      setCount(count + MORE_SHOWN);
+    },
+    /** More than `first` are shown, and back to `first`. */
+    grown: count > first,
+    shrink: () => setCount(first),
+  };
+}
+
 /** One list of places to open, revealed a step at a time, each saying where it sits. */
 function PlaceList({
   id,
@@ -426,16 +461,9 @@ function PlaceList({
   onPick: (collection: string) => void;
   truncated: boolean;
 }) {
-  const [count, setCount] = useState(FIRST_SHOWN);
-  const list = useRef<HTMLUListElement | null>(null);
-  const left = items.length - count;
-  // The last Show more removes its button: the focus goes to the first collection it added.
-  const markShown = useLastPageFocus({
-    loading: false,
-    more: left > 0,
-    rows: () => placeLinks(list.current),
-    fallback: () => document.getElementById(id),
-  });
+  const { shown, list, more, showMore, grown, shrink } = useShowMore(items, FIRST_SHOWN, null, () =>
+    document.getElementById(id),
+  );
   if (items.length === 0) return null;
   // Links to other places, not rows of this list: a plain list, revealed a step at a time
   // (the select above finds any of them).
@@ -443,7 +471,7 @@ function PlaceList({
     <section aria-labelledby={id} className="space-y-1">
       <SectionHeading id={id} level={2} label={label} count={items.length} focusable />
       <ul ref={list} className="space-y-1">
-        {items.slice(0, count).map((c) => {
+        {shown.map((c) => {
           const path = pathText(c, byName, repeated, truncated);
           return (
             <li key={c.namespace} data-collection={c.namespace}>
@@ -460,26 +488,19 @@ function PlaceList({
         })}
       </ul>
       <div className="flex gap-3">
-        {left > 0 && (
-          <Button
-            type="empty"
-            htmlType="button"
-            onClick={() => {
-              markShown(items.slice(0, count).map((c) => c.namespace));
-              setCount(count + MORE_SHOWN);
-            }}
-          >
-            {`Show ${Math.min(left, MORE_SHOWN)} more`}
+        {more && (
+          <Button type="empty" htmlType="button" onClick={showMore}>
+            {more}
           </Button>
         )}
-        {count > FIRST_SHOWN && (
+        {grown && (
           <Button
             type="empty"
             htmlType="button"
             onClick={() => {
               // Its button goes with the list it shortens; the heading stays.
               document.getElementById(id)?.focus();
-              setCount(FIRST_SHOWN);
+              shrink();
             }}
           >
             Show fewer
@@ -509,23 +530,12 @@ export function CollectionChips({
   onPick: (collection: string) => void;
 }) {
   const inside = useMemo(() => (rows && collection ? childrenOf(rows, collection) : []), [rows, collection]);
-  const [count, setCount] = useState(FIRST_SHOWN);
-  const list = useRef<HTMLUListElement | null>(null);
-  const left = inside.length - count;
-  // The last Show more removes its button: the focus goes to the first chip it added.
-  const markShown = useLastPageFocus({
-    loading: false,
-    more: left > 0,
-    rows: () => placeLinks(list.current),
-    // The last press adds at least one chip, so there is always one to focus.
-    fallback: () => null,
-  });
+  const { shown, list, more, showMore } = useShowMore(inside, FIRST_SHOWN);
   if (!collection || inside.length === 0) return null;
-  const chips = inside.slice(0, count);
   return (
     <nav aria-label={`Collections in ${distinctTitle(collection, repeated)}`} className="library-chips">
       <ul ref={list}>
-        {chips.map((c) => (
+        {shown.map((c) => (
           <li key={c.namespace} data-collection={c.namespace}>
             <PlaceTitleLink
               collection={c.namespace}
@@ -537,17 +547,10 @@ export function CollectionChips({
             />
           </li>
         ))}
-        {left > 0 && (
+        {more && (
           <li>
-            <Button
-              type="empty"
-              htmlType="button"
-              onClick={() => {
-                markShown(chips.map((c) => c.namespace));
-                setCount(count + MORE_SHOWN);
-              }}
-            >
-              {`Show ${Math.min(left, MORE_SHOWN)} more`}
+            <Button type="empty" htmlType="button" onClick={showMore}>
+              {more}
             </Button>
           </li>
         )}
