@@ -65,9 +65,9 @@ Code
   `loom_code_impact`.
 - Grep your own uncommitted files and repositories the index does not cover. When a code
   tool answers `abstain: true`, grep instead of retrying with synonyms.
-- A code answer's `lessons` are the team's memories about the files it returns: follow
-  their constraints and decisions, and check the code of one whose `code_state` is
-  `changed`, `unresolved` or `missing` before relying on it.
+- A code answer's `lessons` are the memories about the files it returns: follow them, and
+  check the code of one whose `code_state` is `changed`, `unresolved` or `missing` before
+  relying on it.
 ```
 
 `code.repos` lists the repositories the token can read or ask to join, one row per
@@ -131,7 +131,7 @@ Nothing in a session without hooks prompts a recall, and a listed memory tool is
 choice among many, so the block makes loading context part of every task, as the
 plugins' hooks do.
 
-Each line is the short form of what the plugins teach:
+Each line is the short form of what the plugins teach, or of what Loom's answers carry:
 
 - load context at the start of a task and before an edit: the plugins' session-start and
   file-context hooks, which call `context.pack` and `memory.for_file`;
@@ -140,7 +140,10 @@ Each line is the short form of what the plugins teach:
   skill;
 - the code index before grep, and grep where the index cannot answer: the
   [`loom-code`](../../../integrations/claude-code-plugin/skills/loom-code/SKILL.md)
-  skill, which the plugins' code shunt enforces.
+  skill, which the plugins' code shunt enforces;
+- read the memories a code answer carries: its `lessons`
+  ([memories linked to code](../../concepts/memory.md#memories-linked-to-code)), which a
+  plugin session gets on the same answers.
 
 The block's last memory line stands for the end-of-task review; to spell it out, copy
 its questions from the [agent-integration
