@@ -349,9 +349,8 @@ def test_ch_setup_is_refused_on_another_deployments_clickhouse_before_it_writes(
     assert armed == [("dep-other", 1)]
 
 
-@pytest.mark.parametrize("code", [60, 81])
 def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
-    monkeypatch: pytest.MonkeyPatch, code: int
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A service with no Loom database or record yet is set up: the gate reads only the
     Postgres `first` row there."""
@@ -367,14 +366,14 @@ def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
             return None
 
     async def _recorded(_ch: Any) -> None:
-        raise _NoLoom(f"Code: {code}")
+        raise _NoLoom("Code: 81")
 
     class _Admin:
         def close(self) -> None:
             return None
 
     _cell_set(monkeypatch, ("open", ""))
-    monkeypatch.setattr("server.core.ch_errors.error_code", lambda e: code)
+    monkeypatch.setattr("server.core.ch_errors.error_code", lambda e: 81)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
     monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
     monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
@@ -386,6 +385,20 @@ def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
     monkeypatch.setattr(settings, "ch_reader_user", "")
     assert ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False)) == 0
     assert set_up == [1]
+
+
+def test_a_setup_check_that_cannot_read_clickhouse_refuses_in_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Client:
+        async def connect(self) -> None:
+            raise RuntimeError("Code: 497. DB::Exception: loom: Not enough privileges")
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    with pytest.raises(_ch.OrgNotHeld, match="could not be read for the cell check"):
+        asyncio.run(_ch.check_setup_stores())
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:

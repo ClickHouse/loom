@@ -272,7 +272,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   Postgres that does not answer. With `LOOM_CELL` set, a command that writes for no org
   or revokes refuses with "this Postgres's first row names cell ..., not LOOM_CELL=...",
   pointed at another cell's stores, or "this cell's state could not be read (...)"; a
-  revocation runs through an outage and prints that the cell was not checked.
+  revocation that cannot give access back runs through an outage and prints that the
+  cell was not checked.
 - **Cause:** under the Postgres authority every server process reads the deployment's
   cell state (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`).
   With `LOOM_CELL` unset it serves only while none of them holds a row, or while they

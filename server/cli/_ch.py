@@ -194,22 +194,35 @@ async def check_setup_stores() -> None:
     its ClickHouse, where it already records a deployment, must record its Postgres's, and
     the Postgres `first` row must not name another cell. A ClickHouse with no Loom
     database or record yet (a service set up before the first boot) passes."""
+    import logging
+
     from server.core import pg, pg_profile
     from server.core.ch import get_client
-    from server.core.ch_errors import error_code
+    from server.core.ch_errors import error_code, error_line
     from server.settings import settings
 
     if not settings.cell or not pg.enabled():
         return
     ch = get_client()
+    # The driver logs a line of its own for a failed connect; the refusal below names it.
+    driver_log = logging.getLogger("clickhouse_connect")
+    level = driver_log.level
+    driver_log.setLevel(logging.CRITICAL)
     try:
         try:
             await ch.connect()
             recorded = await pg_profile.recorded_authority(ch)
-        except Exception as e:
-            if error_code(e) not in (60, 81):  # UNKNOWN_TABLE, UNKNOWN_DATABASE: fresh
-                raise
+        except pg.AuthorityMismatch:
+            raise
+        except Exception as e:  # noqa: BLE001 — every failure is one line, not a traceback
+            if error_code(e) != 81:  # UNKNOWN_DATABASE: a service set up before first boot
+                raise OrgNotHeld(
+                    f"refusing: this ClickHouse could not be read for the cell check "
+                    f"({error_line(e)})"
+                ) from None
             recorded = None
+        finally:
+            driver_log.setLevel(level)
         if recorded is not None:
             pg.expect_deployment((str(recorded["deployment_id"]), int(recorded["epoch"])))
         await check_org_free(writes("ClickHouse users and grants, no tenant rows"))
