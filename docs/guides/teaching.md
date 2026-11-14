@@ -1,9 +1,9 @@
 # Teaching with Loom
 
-Loom can serve as the lab environment for a course on AI agents, information retrieval and
-databases, or software engineering. Students run it on a laptop or in a GitHub codespace
-with nothing installed, and every lab below uses pages from these docs, so the steps stay
-current with each release.
+Loom can serve as the lab environment for a course on AI agents, information retrieval,
+databases or software engineering. Students run it on a laptop with Docker, or in a GitHub
+codespace with nothing installed, and every lab below uses pages from these docs, so the
+steps stay current with each release.
 
 ## Setup
 
@@ -18,6 +18,11 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 (`memory.ask`, `knowledge.synthesize`) need a real LLM
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
+
+The `loom` commands below run inside the stack's `loom` container:
+`docker compose --project-directory "$HOME/.loom" exec loom loom <command>` on a laptop
+(in a codespace, the install directory the creation log prints). On a shared server the
+instructor runs them.
 
 ## Lab 1: an agent that remembers
 
@@ -35,25 +40,29 @@ Exercises:
 
 ## Lab 2: document search with citations
 
-Ingest a document and ask a question about it
-([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)),
-then search a set of course notes with `knowledge.search`
-([knowledge documents](../features/knowledge.md)).
+Ingest a document with `loom demo --file <path>`, which also prints the top search hits for
+a question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document));
+the container holds these docs under `/app/docs/`. Then search the namespace's documents
+with `knowledge.search` over HTTP or the SDK ([knowledge documents](../features/knowledge.md)).
 
 Exercises:
 
 - For ten questions, label the document and passage that answers each, and measure
   recall@k on `knowledge.search` ([evaluate your workload](../getting-started/evaluate.md#memory-and-rag)).
-- Add questions the notes do not answer and measure how often search returns nothing
-  useful.
+- Add questions the documents do not answer, and measure how often a labelled passage
+  still appears in the top k.
 
-## Lab 3: a code index for a coding agent
+## Lab 3: a code index
 
-Index a repository and connect a coding agent to it
-([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack),
-[connect a coding agent](../getting-started/connect-a-coding-agent.md)). Then ask where a
-symbol is defined, who calls it, and what a change to it touches
-([what the code index answers](../features/code-index/overview.md#what-it-answers)).
+The instructor indexes a repository
+([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack));
+on a shared server, an entry marked `"public": true` lets any member of the org join its
+index as a reader. Students
+ask where a symbol is defined, who calls it, and what a change to it touches
+([what the code index answers](../features/code-index/overview.md#what-it-answers)), over
+HTTP or the SDK. A coding agent can ask the same questions once connected
+([connect a coding agent](../getting-started/connect-a-coding-agent.md)); it needs its own
+model account.
 
 Exercises:
 
@@ -63,14 +72,22 @@ Exercises:
 
 ## Lab 4: memory as a database
 
-Loom keeps its data as rows in ClickHouse tables. The instructor runs
-`loom sql-access grant` once to make a read-only ClickHouse user, and students read a
-namespace's memories, conversations and usage with SQL through its views
-([SQL surface](../reference/sql-surface.md)).
+Loom keeps its data as rows in ClickHouse tables, and a read-only ClickHouse user reads a
+namespace through its views ([SQL surface](../reference/sql-surface.md)). The instructor
+makes one user per student, for that student's namespace:
+
+```bash
+loom sql-access grant --user student1 --org dev --namespaces local
+```
+
+On a laptop or in a codespace, the student then queries with the stack's client:
+`docker compose --project-directory "$HOME/.loom" exec clickhouse clickhouse-client --user student1 --password <password>`.
+On a shared server, students need a route to ClickHouse the instructor provides.
 
 Exercises:
 
-- Write a query for the facts saved in the last hour, by agent.
+- Write a query over `loom.sql_v1_memories` for the facts saved in the last hour, by
+  agent.
 - Compare a `memory.search` result with a SQL query over the same rows and explain what
   ranking adds.
 
