@@ -120,8 +120,8 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     truncated: boolean;
   } | null>(null);
   const [error, setError] = useState<unknown>(null);
-  // Each read waits for `expect` (a name in an org), which the reload or refresh that asked
-  // for it sets: a later one clears it.
+  // Each read waits for `expect` (a name in an org), which the reload or write that asked for
+  // it sets; a later reload or write replaces it, a retry keeps it.
   const [asked, setAsked] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
   const reload = useCallback(
     (made = "") => {

@@ -378,7 +378,7 @@ function PlaceBranches({
       <ul ref={list} aria-labelledby={label?.id}>
         {shown.map((c) => branch(c, depth))}
         {more && (
-          <li className="library-tree-row" style={{ "--depth": depth } as CSSProperties}>
+          <li className="library-tree-row library-tree-more" style={{ "--depth": depth } as CSSProperties}>
             <span className="library-tree-twist" aria-hidden="true" />
             <Button type="empty" htmlType="button" onClick={showMore}>
               {more}

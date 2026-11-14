@@ -1716,7 +1716,8 @@ textarea[aria-invalid="true"]:focus-visible {
     padding-inline: calc(var(--depth, 0) * 1rem) var(--spaces-2);
     border-radius: var(--click-sidebar-navigation-item-radii-all);
   }
-  .library-tree-row:hover {
+  /* Show more takes a row's indent, not its hover: it is a button, not a place. */
+  .library-tree-row:not(.library-tree-more):hover {
     background: var(--click-table-row-color-background-hover);
   }
   .library-tree-row[data-selected] {
