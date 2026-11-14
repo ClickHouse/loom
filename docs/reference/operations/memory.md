@@ -542,6 +542,23 @@ Resolve one duplicate pair.
 | `duplicate_tombstoned` | `bool` | True when `keep_canonical` tombstoned the duplicate row. |
 | `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys and the removed key fields. |
 
+## `memory.definitions.list`
+
+The namespace's shared definitions and whether each is governed.
+
+`POST /v1/memory.definitions.list` · MCP `loom_memory_definitions_list` · role `admin` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `count` | `int` | How many live shared definitions the namespace holds, capped ones included. |
+| `ceiling` | `int` | `memory_shared_definitions_max`. |
+| `definitions` | `list[DefinitionEntry]` | At most twice the ceiling, the most recently promoted first. |
+
 ## `memory.delete`
 
 WHAT: Tombstone a memory by key (14-day recovery in the dashboard).

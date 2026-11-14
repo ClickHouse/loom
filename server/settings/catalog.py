@@ -6156,6 +6156,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.dedup_list": 300,
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
+    # A namespace at the ceiling of 500 definitions: one shared read, one bulk head read
+    # and a grade of each value (p95 225 ms on one server).
+    "memory.definitions.list": 400,
     "memory.delete": 30,
     # memory.delete's work plus two committed check inserts and the read after the
     # tombstone: about 2.6x memory.delete's p99 on one server.

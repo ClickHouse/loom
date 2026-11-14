@@ -35,6 +35,7 @@ from server.memory.api.models_lifecycle import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.app.sensitivity_level import decoded_text, detect_level
+from server.memory.domain.definition_check import liveness_lapse, sensitivity_lapse
 from server.memory.domain.definitions import (
     DEFINITION_KEY_PREFIX,
     definition_names,
@@ -42,10 +43,9 @@ from server.memory.domain.definitions import (
 )
 from server.memory.domain.memory_types import (
     is_definition,
-    is_namespace_definition,
     is_searchable_type,
 )
-from server.memory.domain.sensitivity import HIGH, MEDIUM, max_sensitivity
+from server.memory.domain.promotion_source import promotion_source
 from server.memory.domain.trust import verification_state
 from server.memory.store import shared as shared_repo
 from server.memory.store.rows import MemoryRow, next_version, version_over
@@ -106,8 +106,8 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     reversible_until = now_naive + timedelta(days=input.reversible_for_days)
     # The row read, not the request: an `agent="*"` lookup names no identity, and erasure
     # finds a copy by its source's.
-    promoted_from_repr = (
-        f"{src.org}/{src.namespace}/{src.agent}/{src.user_id}/{src.session_id}/{src.memory_key}"
+    promoted_from_repr = promotion_source(
+        src.org, src.namespace, src.agent, src.user_id, src.session_id, src.memory_key
     )
     src_value_json = json.dumps(src.value, default=str)
 
@@ -199,14 +199,6 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     )
 
 
-def _live(row: MemoryRow) -> bool:
-    """Whether the row is live: active and not past its `expires_at` or `valid_to` (a
-    deleted row is not read at all)."""
-    now = naive_utc_now()
-    ended = [t for t in (row.expires_at, row.valid_to) if t is not None]
-    return row.status == "active" and all(to_naive_utc(t) > now for t in ended)
-
-
 async def _approved_definition_names(
     src: MemoryRow, target_key: str, approved_sha256: str | None
 ) -> set[str]:
@@ -216,7 +208,8 @@ async def _approved_definition_names(
         raise DefinitionPromotionRefusedError(
             "only a row of type definition is promoted under a definition/ key"
         )
-    if not is_namespace_definition(src):
+    # Exactly '-': the read-time check finds the source under that identity.
+    if (src.agent, src.user_id, src.session_id) != ("-", "-", "-"):
         raise DefinitionPromotionRefusedError(
             "a definition is promoted from its namespace-wide row: agent, user and session '-'"
         )
@@ -224,10 +217,15 @@ async def _approved_definition_names(
         raise DefinitionPromotionRefusedError(
             "a definition is promoted under its own definition/ key (no other target_key)"
         )
-    if not _live(src):
-        raise DefinitionPromotionRefusedError(
-            "the definition's row is not live (not active, or past its expires_at or valid_to)"
-        )
+    not_live = liveness_lapse(
+        status=src.status,
+        invalid_at=src.invalid_at,
+        expires_at=to_naive_utc(src.expires_at),
+        valid_to=to_naive_utc(src.valid_to),
+        now=naive_utc_now(),
+    )
+    if not_live is not None:
+        raise DefinitionPromotionRefusedError(f"the definition's row is not live ({not_live})")
     if not approved_sha256:
         raise ValidationError("a definition promotion names the hash it approves (approved_sha256)")
     current = served_content_sha256(src.value)
@@ -244,7 +242,7 @@ async def _approved_definition_names(
     # The value itself is graded, whatever its label or the autodetect setting: an import or
     # a restore leaves the label empty.
     graded = await detect_level(await decoded_text(src.value))
-    if max_sensitivity([src.sensitivity, graded]) in (MEDIUM, HIGH):
+    if sensitivity_lapse(src.sensitivity, graded) is not None:
         raise SensitiveDefinitionRefusedError(
             "a definition is served to every reader of the namespace: one that "
             "reads as medium or high sensitivity is not promoted"

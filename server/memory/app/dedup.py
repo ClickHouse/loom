@@ -43,26 +43,8 @@ from server.memory.api.models_graph import (
 from server.memory.app import webhooks
 from server.memory.domain import assistant_rules
 from server.memory.domain.memory_types import is_definition
+from server.memory.domain.promotion_source import parse_promotion_source
 from server.memory.store.rows import MemoryRow
-
-
-def _parse_supporter(tuple_str: str) -> dict[str, str] | None:
-    """Parse one entry of `loom.shared.promoted_from`.
-
-    Wire format: `org/namespace/agent/user_id/session_id/memory_key`.
-    Returns None on mismatch so one malformed row doesn't 500 the lineage.
-    """
-    parts = tuple_str.split("/")
-    if len(parts) != 6:
-        return None
-    return {
-        "org": parts[0],
-        "namespace": parts[1],
-        "agent": parts[2],
-        "user_id": parts[3],
-        "session_id": parts[4],
-        "memory_key": parts[5],
-    }
 
 
 async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageOutput:
@@ -246,7 +228,7 @@ async def handle_memory_lineage(input: MemoryLineageInput) -> MemoryLineageOutpu
 
     supporters: list[_LineageSupporter] = []
     for s in target.get("promoted_from") or []:
-        parsed = _parse_supporter(str(s))
+        parsed = parse_promotion_source(str(s))
         if parsed is not None:
             supporters.append(_LineageSupporter(**parsed))
 

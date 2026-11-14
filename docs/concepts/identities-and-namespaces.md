@@ -339,10 +339,10 @@ copies a row into another namespace, with provenance, for a caller who is admin 
 
 A `definition` is promoted only:
 
-- From its live namespace-wide row (agent, user and session `'-'`, `active` and not past
-  its `expires_at` or `valid_to`) under a `definition/` key, to that same key; a row of
-  another type is never promoted under a `definition/` key. Else 422
-  `DEFINITION_PROMOTION_REFUSED`.
+- From its live namespace-wide row (agent, user and session `'-'`, `active`, not retired
+  by a supersession and not past its `expires_at` or `valid_to`) under a `definition/`
+  key, to that same key; a row of another type is never promoted under a `definition/`
+  key. Else 422 `DEFINITION_PROMOTION_REFUSED`.
 - With the hash it approves (`approved_sha256`, the row's `content_sha256`): refused
   without it (422 `VALIDATION_FAILED`), and with 409 `PRECONDITION_FAILED` when the text
   no longer has it.
@@ -364,6 +364,23 @@ definition gives back its name and its place. The token's actor is its `promoted
 `approver` and `promoted_from_candidate_id` are ignored and named in `ignored_args`, and
 no close shared row under another key refuses it. `learnings.review` promotes no candidate
 of type `definition` to memory.
+
+A shared definition is **governed** while it was promoted from exactly one row, the
+namespace-wide row under its key, and that row is `active`, not retired by a supersession,
+not past its `expires_at` or `valid_to`, neither labelled nor graded `medium` or `high`,
+and holds the text the shared copy holds (the served hash of both, so a store that orders
+an object's keys differently is no change). An edit, a relabel to `medium` or `high` or a
+tombstone of the source ends it; reverting the edit to the approved text makes it governed
+again with no new promotion. `memory.definitions.list` (admin) lists the namespace's live
+shared definitions, the most recently promoted first and at most twice
+`memory_shared_definitions_max`, with `count` of them all. Each entry carries its key and
+`promoted_at`; one within the ceiling also carries its term and aliases, its `verdict`
+(`governed` or `lapsed`), the `lapse_reason` (`not_namespace_wide`, `no_term`, `gone`,
+`superseded`, `conflicted`, `duplicate`, `not_active` for any other status, `expired`,
+`ended` past its `valid_to`, `changed` or `sensitive`) and, for a governed one, `lost`:
+each name it loses to another governed definition that holds it, as `name` and the
+`winner`'s key (the latest promotion wins, a tie settled by its promotion event). One past
+the ceiling is `capped`, and its source is not read.
 
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an

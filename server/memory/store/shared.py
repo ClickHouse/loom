@@ -220,6 +220,44 @@ async def newest_shared_vector_version(
     return int(row["version"]) if row else 0
 
 
+async def definition_rows(
+    org: str, namespace: str, ceiling: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live shared definitions' key, `value`, `promoted_from`, `promoted_at`,
+    `promotion_event` and `total` (the count of every live shared definition), the most
+    recently promoted first (`promoted_at`, then `promotion_event` as text), at most twice
+    `ceiling`, read strongly. Past the first `ceiling` the value is ''."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT memory_key, if(rn <= {ceiling:UInt32}, value, '') AS value, promoted_from,
+               promoted_at, promotion_event, total
+        FROM (
+            SELECT memory_key, value, promoted_from, promoted_at, promotion_event,
+                   row_number() OVER (
+                       ORDER BY promoted_at DESC, toString(promotion_event) DESC
+                   ) AS rn,
+                   count() OVER () AS total
+            FROM loom.shared FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
+              AND tombstoned_at IS NULL
+        )
+        ORDER BY rn
+        LIMIT {lim:UInt32}
+        """
+        + _SEQUENTIAL,
+        params={
+            "org": org,
+            "ns": namespace,
+            "ceiling": ceiling,
+            "lim": 2 * ceiling,
+            "type": DEFINITION,
+            "prefix": DEFINITION_KEY_PREFIX,
+        },
+    )
+
+
 async def shared_definitions(
     org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:

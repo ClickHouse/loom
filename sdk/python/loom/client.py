@@ -1755,6 +1755,15 @@ class MemoryOps:
             await self._agent.call("memory.dedup_resolve", body, **options),
         )
 
+    async def definitions_list(
+        self, body: _ops.MemoryDefinitionsListBody | None = None, /, **options: Any
+    ) -> _ops.MemoryDefinitionsListOutput:
+        """`memory.definitions.list`."""
+        return cast(
+            "_ops.MemoryDefinitionsListOutput",
+            await self._agent.call("memory.definitions.list", body, **options),
+        )
+
     async def delete(
         self, body: _ops.MemoryDeleteBody | None = None, /, **options: Any
     ) -> _ops.MemoryDeleteOutput:

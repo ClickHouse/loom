@@ -36,6 +36,14 @@ def definition_names(value: Any) -> set[str] | None:
     return names_of(value["term"], aliases) or None
 
 
+def written_names(value: Any) -> list[str]:
+    """A definition value's term, then its aliases, as written; empty when it holds no
+    names."""
+    if definition_names(value) is None:
+        return []
+    return [value["term"], *(value.get("aliases") or [])]
+
+
 def names_of(term: str, aliases: list[str]) -> set[str]:
     """The folded term and aliases, an empty set when the term folds to nothing."""
     folded = fold_name(term)

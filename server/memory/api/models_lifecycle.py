@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from server.memory.api.models_common import _Identity
+from server.memory.domain.definition_check import LapseReason
 
 # ============================================================
 # memory.promote / memory.demote — shared memory plane
@@ -73,6 +74,51 @@ class MemoryDemoteOutput(BaseModel):
     was_reversible: bool  # whether within the reversal window
     # When the shared row and its embedding were tombstoned; None when nothing was demoted.
     tombstoned_at: datetime | None = None
+
+
+# ============================================================
+# memory.definitions.list — the shared definitions and whether each is governed
+# ============================================================
+
+
+class MemoryDefinitionsListInput(BaseModel):
+    """The namespace's shared definitions and whether each is governed.
+
+    The most recently promoted come first, with why a lapsed one lapsed and the names a
+    governed one loses."""
+
+    org: str
+    namespace: str
+
+
+class LostName(BaseModel):
+    name: str  # as the definition writes it
+    winner: str  # the key of the definition that holds it
+
+
+class DefinitionEntry(BaseModel):
+    memory_key: str
+    promoted_at: datetime
+    # Beyond the ceiling's most recently promoted: its source is not read and the fields
+    # below stay empty.
+    capped: bool = False
+    term: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    # None for a capped entry.
+    verdict: Literal["governed", "lapsed"] | None = None
+    # Why a lapsed definition lapsed (docs/concepts/identities-and-namespaces.md).
+    lapse_reason: LapseReason | None = None
+    # The names a governed definition loses to another that holds them.
+    lost: list[LostName] = Field(default_factory=list)
+
+
+class MemoryDefinitionsListOutput(BaseModel):
+    # How many live shared definitions the namespace holds, capped ones included.
+    count: int
+    # `memory_shared_definitions_max`.
+    ceiling: int
+    # At most twice the ceiling, the most recently promoted first.
+    definitions: list[DefinitionEntry]
 
 
 # ============================================================

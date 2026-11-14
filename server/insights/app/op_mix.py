@@ -40,6 +40,7 @@ _READ = {
     "memory.get_by_id",
     "memory.statuses",
     "memory.auto_retirements",
+    "memory.definitions.list",
     "memory.bulk_get",
     "memory.search",
     "memory.ask",

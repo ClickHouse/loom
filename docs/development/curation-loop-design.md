@@ -11,12 +11,11 @@ and the list), governed definitions (the shared-layer changes and the term leg),
 review path the second part builds. Knowledge gaps are built and described in [knowledge
 gaps](../architecture/knowledge-gaps.md). So are a definition's write-time rules
 ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)) and its promotion
-rules with their ceiling setting ([the shared
-layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
-The term leg, `memory.definitions.list` and the review path are not built yet, and none of
-their ops, tables or settings are served until the pull request that builds each part
-lands. That pull request moves its part into the page that owns it, written as what Loom
-does, and removes it here.
+rules with their ceiling setting, the read-time check and `memory.definitions.list` ([the
+shared layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
+The term leg and the review path are not built yet, and none of their ops, tables or
+settings are served until the pull request that builds each part lands. That pull request
+moves its part into the page that owns it, written as what Loom does, and removes it here.
 
 ```mermaid
 flowchart LR
@@ -57,22 +56,15 @@ A definition's value is a JSON object, which `memory.set` stores whole in `value
 The admin who promotes a definition answers for it (`promoted_by`, stamped from the
 token); the value names no owner, so it holds no person's name for an erasure to miss.
 
-A definition is **governed** while three things hold, checked when the term leg reads it:
-a live `loom.shared` row of type `definition` under a `definition/` key exists; its
-provenance (`promoted_from`) names exactly one source, the namespace-wide row under that
-key (`user_id`, `agent` and `session_id` all `'-'`); and that source is live (`status =
-'active'`, not tombstoned, superseded, or past its `expires_at` or `valid_to`), neither
-labelled nor graded `medium` or `high` (the value itself is graded, since some write paths
-store the label empty), and holds the same text as the shared copy: the hash of the
-source's value as read equals the hash of the shared `value`, both the canonical-JSON hash
-every read and precondition compares (`served_content_sha256` in `server/core/hashing.py`,
-which the approved-content check below uses too), so a store that orders an object's keys
-differently is not a change. The source is read from the memory authority (Postgres when
-it holds live memory, [storage authority](../architecture/storage-authority.md)), and a
-source whose head cannot be read fails closed: the definition is not served. A read-time
-check covers every path into that state that it can see, rows promoted before this design
-and through N-1 included; what it cannot see is named under rolling upgrades. The shared
-layer already is the namespace's admin-approved copy of a fact ([the shared
+The term leg serves a definition only while it is **governed** ([the shared
+layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer),
+`server/memory/domain/definition_check.py`), checked when the leg reads it. The source is
+read from the memory authority (Postgres when it holds live memory, [storage
+authority](../architecture/storage-authority.md)), and a source whose head cannot be read
+fails closed: the definition is not served. A read-time check covers every path into that
+state that it can see, rows promoted before this design and through N-1 included; what it
+cannot see is named under rolling upgrades. The shared layer already is the namespace's
+admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and the candidate it came from (`promoted_from_candidate_id`),
@@ -89,24 +81,15 @@ still serves until the admin deletes it, and a later draft of its term is a new 
 a new key. Only `memory.promote` promotes into `loom.shared` (the op and
 `learnings.review`'s path through it; demote, erasure, a redact and a relabel to `medium`
 or `high` only retire or scrub there, as the changes below say); no worker promotes on its
-own. An admin read, `memory.definitions.list`, lists the namespace's shared definitions
-with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
-changed, it is `medium` or `high`, gone, expired, past its `valid_to`, promoted from a row
-that is not the namespace-wide one, or no longer `active`). A definition that passes the
-check but loses one of its names to another promotion that wins it under the rule below is
-`shadowed` for each name it loses, naming the winner of each; it is still served for the
-names it keeps. A definition beyond the term leg's read when a namespace holds more than
-the ceiling (the most recently promoted are read) is `capped`, and no other verdict is
-computed for it. Each entry carries its key, `promoted_at`, `promoted_from_candidate_id`
-and a `capped` flag; an entry that is not `capped` also carries its term, aliases, the
-check's verdict with its lapse reason and a list of (name, winner) pairs for the names it
-lost. A `capped` entry's source is not read. A changed text is promoted again. On N no
-automatic verdict retires or marks a definition's source (the exemptions below, and the
-negative-outcome quarantine of `memory.outcome`, which skips a definition's namespace-wide
-row as it skips a locked one; `memory.outcome_run` records harm events and quarantines
-nothing), so a source that is no longer `active` was rejected by a writer, or left that
-way by N-1 or before this design. The sensitivity sweep can still relabel a source, which
-lapses it as a relabel does. The admin brings it back by the way it lapsed:
+own. `memory.definitions.list` shows each definition's verdict; a definition that loses a
+name to another is still served for the names it keeps, and one past the ceiling is not
+read. A changed text is promoted again. On N no automatic verdict retires or marks a
+definition's source (the exemptions below, and the negative-outcome quarantine of
+`memory.outcome`, which skips a definition's namespace-wide row as it skips a locked one;
+`memory.outcome_run` records harm events and quarantines nothing), so a source that is no
+longer `active` was rejected by a writer, or left that way by N-1 or before this design.
+The sensitivity sweep can still relabel a source, which lapses it as a relabel does. The
+admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -328,12 +311,12 @@ was cut. Once a document can be hidden from some readers (the `mirrored` access 
 The parts land in the order the opening section gives: 1 knowledge gaps, 2 governed
 definitions, 3 `knowledge.gaps.draft` and query history.
 
-| Op                                                | Part | Role  | What it does                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------------- | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`                             | 1    | admin | Built: [knowledge gaps](../architecture/knowledge-gaps.md).                                                                                                                                                                                                                                                                                              |
-| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with its key, `promoted_at`, `promoted_from_candidate_id` and a `capped` flag, and, unless `capped`, its term, aliases, the read-time check's verdict and lapse reason and its `shadowed` (name, winner) pairs; and the count against `memory_shared_definitions_max`. |
-| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                                                                                                                                                                                                                    |
-| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                                                                                                       |
+| Op                                                | Part | Role  | What it does                                                                                                          |
+| ------------------------------------------------- | ---- | ----- | --------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`                             | 1    | admin | Built: [knowledge gaps](../architecture/knowledge-gaps.md).                                                           |
+| `memory.definitions.list`                         | 2    | admin | Built: [the shared layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer).          |
+| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`). |
+| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                    |
 
 The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
 manage a source, not documents, so none honours a read-narrowed token: the check that
@@ -434,8 +417,7 @@ draft for a new term is written under the key its queue row carries (`memory_key
 of one review uses one key, and a draft queued again after a rollback gets a new one.
 `learnings.list` shows that key; for a revision the review writes under the matched shared
 definition's key instead, which the listed key does not name; the admin finds it in
-`memory.definitions.list` by its term, and each entry there carries the
-`promoted_from_candidate_id` the shared row holds. A definition promotes to memory only; a
+`memory.definitions.list` by its term. A definition promotes to memory only; a
 `destination` of `knowledge` or `both` is refused for these candidates. A draft rejected
 before any promotion attempt leaves nothing behind but its queue row. Between the write
 and the promotion the row is an ordinary namespace-wide row, which the ordinary legs read
@@ -562,15 +544,12 @@ the op budgets before they ship it.
   of the matched definitions' source rows, and a grading of each matched source's value,
   on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
 - A definition's promotion, through `memory.promote` or `learnings.review`, reads the
-  namespace's definition rows once, at most `memory_shared_definitions_max` plus one
-  (past it the promotion is refused), to check its term and aliases; the review path runs
-  the read twice, once before its write and once at the promotion.
-- `memory.definitions.list` counts the rows (`count()`), reads the full values of at most
-  the ceiling's rows, the ones the term leg reads, to find names held by more than one,
-  and marks the rest `capped` from their key, `promoted_at`, `promotion_event` and
-  `promoted_from_candidate_id` alone. It returns a page, with a limit and a cursor, and
-  reads and grades the source row of each listed definition that is not `capped` and of
-  each definition that competes for one of its names.
+  namespace's definition rows once, at most `memory_shared_definitions_max` plus one (past
+  it the promotion is refused), to check its term and aliases; the review path runs the
+  read twice, once before its write and once at the promotion.
+- `memory.definitions.list` reads the definition rows once and returns at most twice the
+  ceiling, with values for the ceiling's most recent only; it reads their sources in one
+  bulk read and grades the value of each source nothing else lapses.
 
 ## Rolling upgrades
 

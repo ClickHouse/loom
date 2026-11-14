@@ -7,6 +7,8 @@ from server.memory.api.models_lifecycle import (
     MemoryCopyToOutput,
     MemoryCrossPromoteInput,
     MemoryCrossPromoteOutput,
+    MemoryDefinitionsListInput,
+    MemoryDefinitionsListOutput,
     MemoryDemoteInput,
     MemoryDemoteOutput,
     MemoryEvidenceInput,
@@ -21,6 +23,7 @@ from server.memory.api.models_lifecycle import (
     MemoryStackOutput,
 )
 from server.memory.app.copy_ops import handle_memory_copy_to, handle_memory_cross_promote
+from server.memory.app.definitions import handle_memory_definitions_list
 from server.memory.app.evidence_reads import handle_memory_evidence, handle_memory_provenance
 from server.memory.app.ops import handle_memory_reject
 from server.memory.app.promote import handle_memory_demote, handle_memory_promote
@@ -52,6 +55,17 @@ memory_demote = Operation(
     idempotent=True,  # demoting a tombstoned row is a no-op
     required_role=Role.ADMIN,
     audit=True,
+)
+
+memory_definitions_list = Operation(
+    name="memory.definitions.list",
+    maturity="experimental",
+    input_model=MemoryDefinitionsListInput,
+    output_model=MemoryDefinitionsListOutput,
+    handler=handle_memory_definitions_list,
+    idempotent=True,
+    required_role=Role.ADMIN,
+    audit=False,
 )
 
 memory_reject = Operation(

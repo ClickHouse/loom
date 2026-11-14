@@ -450,3 +450,42 @@ async def test_a_promotion_racing_a_demote_leaves_the_row_and_its_vector_agreein
         parameters=params,
     ).result_rows[0]
     assert vectors[1] and bool(vectors[0]) == bool(live_row), (live_row, vectors)
+
+
+@pytest.mark.asyncio
+async def test_the_definitions_list_says_which_are_governed(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through the server: a promoted definition is governed until its source is edited,
+    and governed again when the edit is reverted; a writer may not list."""
+    from loom import Agent
+    from loom.errors import AuthInsufficient
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-list"), f"def-{uuid.uuid4().hex[:8]}"
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="lead")
+    writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"], subject="bot")
+    key, value = "definition/arr", {"term": "ARR", "body": "Annual recurring revenue."}
+
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=admin
+    ) as a:
+
+        async def verdict() -> tuple[str, str | None]:
+            (entry,) = (await a.client.memory.definitions_list())["definitions"]
+            return entry["verdict"], entry["lapse_reason"]
+
+        await a.memory.set(key, value, "definition", agent_id="-")
+        got = await a.memory.get(key, agent_id="-")
+        await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+        assert await verdict() == ("governed", None)
+        await a.memory.set(key, {**value, "body": "Edited."}, "definition", agent_id="-")
+        assert await verdict() == ("lapsed", "changed")
+        await a.memory.set(key, value, "definition", agent_id="-")
+        assert await verdict() == ("governed", None)
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=writer
+    ) as w:
+        with pytest.raises(AuthInsufficient):
+            await w.client.memory.definitions_list()

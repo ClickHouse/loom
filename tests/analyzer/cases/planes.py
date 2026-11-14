@@ -802,6 +802,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await CF.resolve_conflict_floor(ORG, NS, "preference")
     await SH.shared_definitions(ORG, NS, 10, ch=ch)
+    await SH.definition_rows(ORG, NS, 10, ch=ch)
     await SH.fetch_shared(ORG, NS, "definition/arr", strong=True, ch=ch)
     await SH.newest_shared_vector_version(ORG, NS, "definition/arr", ch=ch)
     RD.clear_cache()

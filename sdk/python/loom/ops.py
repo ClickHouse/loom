@@ -218,6 +218,7 @@ OpName = Literal[
     "memory.dedup_collapse",
     "memory.dedup_list",
     "memory.dedup_resolve",
+    "memory.definitions.list",
     "memory.delete",
     "memory.delete_version",
     "memory.demonstrate",
@@ -586,6 +587,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.dedup_collapse",
     "memory.dedup_list",
     "memory.dedup_resolve",
+    "memory.definitions.list",
     "memory.delete",
     "memory.delete_version",
     "memory.demonstrate",
@@ -2921,6 +2923,18 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         True,
+        False,
+    ),
+    "memory.definitions.list": OpSpec(
+        "memory.definitions.list",
+        "MemoryDefinitionsListInput",
+        "MemoryDefinitionsListBody",
+        "MemoryDefinitionsListOutput",
+        True,
+        "admin",
+        "experimental",
+        400,
+        False,
         False,
     ),
     "memory.delete": OpSpec(
@@ -12999,6 +13013,58 @@ class MemoryDedupResolveOutput(TypedDict, total=False):
     canonical_tombstoned: NotRequired[bool]
     duplicate_tombstoned: NotRequired[bool]
     ignored_args: NotRequired[list[str]]
+
+
+class MemoryDefinitionsListInput(TypedDict, total=False):
+    "The namespace's shared definitions and whether each is governed."
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class MemoryDefinitionsListBody(TypedDict, total=False):
+    "The namespace's shared definitions and whether each is governed."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class MemoryDefinitionsListOutput(TypedDict, total=False):
+    count: Required[int]
+    ceiling: Required[int]
+    definitions: Required[list["DefinitionEntry"]]
+
+
+class DefinitionEntry(TypedDict, total=False):
+    memory_key: Required[str]
+    promoted_at: Required[str]  # date-time as ISO-8601 text
+    capped: NotRequired[bool]
+    term: NotRequired[Optional[str]]
+    aliases: NotRequired[list[str]]
+    verdict: NotRequired[Optional[Literal["governed", "lapsed"]]]
+    lapse_reason: NotRequired[
+        Optional[
+            Literal[
+                "not_namespace_wide",
+                "no_term",
+                "gone",
+                "superseded",
+                "conflicted",
+                "duplicate",
+                "not_active",
+                "expired",
+                "ended",
+                "changed",
+                "sensitive",
+            ]
+        ]
+    ]
+    lost: NotRequired[list["LostName"]]
+
+
+class LostName(TypedDict, total=False):
+    name: Required[str]
+    winner: Required[str]
 
 
 class MemoryDeleteInput(TypedDict, total=False):

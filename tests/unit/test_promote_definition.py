@@ -206,6 +206,7 @@ async def test_a_definition_promotion_needs_its_approved_hash(store: dict[str, A
     [
         {"agent": "bot"},  # a writer's own row
         {"user_id": "u1"},
+        {"user_id": ""},  # stored as given, so not the row the read-time check reads
         {"session_id": "s1"},
         {"memory_key": "arr_note"},  # not under definition/
     ],
@@ -224,6 +225,7 @@ async def test_a_definition_comes_from_its_namespace_wide_row_only(
     [
         {"status": "rejected"},
         {"status": "conflicted"},
+        {"invalid_at": datetime(2026, 9, 1)},  # retired by a supersession
         {"expires_at": NOW.replace(tzinfo=UTC) - timedelta(seconds=1)},
         {"valid_to": NOW.replace(tzinfo=UTC) - timedelta(seconds=1)},
     ],
