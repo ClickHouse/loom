@@ -4412,7 +4412,7 @@ WHERE (((org, namespace) IN (
         org,
         namespace
     FROM restricted
-)) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)));
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)));
 
 -- loom.sql_v1_conversations
 CREATE VIEW IF NOT EXISTS loom.sql_v1_conversations
@@ -4487,7 +4487,7 @@ WHERE (((org, namespace) IN (
         org,
         namespace
     FROM restricted
-))
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     namespace,
@@ -4599,7 +4599,7 @@ WHERE (tombstoned_at IS NULL) AND (status NOT IN ('rejected', 'tombstoned')) AND
         org,
         namespace
     FROM restricted
-));
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'));
 
 -- loom.sql_v1_memory_history
 CREATE VIEW IF NOT EXISTS loom.sql_v1_memory_history
@@ -4704,7 +4704,7 @@ FROM
             org,
             namespace
         FROM restricted
-    ))
+    )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 )
 WHERE status != 'rejected';
 
@@ -4793,7 +4793,7 @@ WHERE (((org, namespace) IN (
         org,
         namespace
     FROM restricted
-)) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
 GROUP BY
     day,
     org,

@@ -31,6 +31,7 @@ from server.auth.fail_closed import (
     unreadable,
 )
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.naming import MIRROR_REFUSED, is_mirror_name
 from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -187,7 +188,8 @@ async def check_authorized(
 ) -> None:
     """Raise PermissionError if `auth` lacks `required_role` or access to `(org,
     namespace)`. Consults `loom.namespace_grants` as a fallback when the JWT role alone
-    is insufficient. No-op when `auth is None` (LOOM_AUTH_REQUIRED=false mode).
+    is insufficient. With `auth is None` (LOOM_AUTH_REQUIRED=false) it refuses only a
+    mirror's name.
     `deployment_scoped`: the op reads the deployment's own facts and no namespace, so a
     scoped token is gated on its best per-namespace role instead of being refused as
     IDENTITY_INCOMPLETE. `row_scoped`: the op is addressed by an id and its handler
@@ -197,6 +199,9 @@ async def check_authorized(
     the restricted check): what a caller that already read them hands in."""
     from server.auth.jwt import AuthInfo  # circular import sidestep
 
+    # A mirror opens to no token, with auth off too: only the stores' own workers reach one.
+    if namespace is not None and is_mirror_name(namespace):
+        raise PermissionError(MIRROR_REFUSED)
     if auth is None:
         return
 
@@ -789,11 +794,12 @@ async def row_in_scope(
 ) -> bool:
     """Second gate for ops addressed by an org-wide id (memory_id, …), asked
     once the handler has the row. True when the current principal may act on
-    (org, namespace) at `required_role`, or with no auth context; False on
-    any refusal, so the caller hides the row (`found=False`): a 403 would
-    confirm the id exists. A refusal that could not be verified marks the
-    request the server's (`fail_closed`); `hides_answer=False` when this
-    refusal does not decide what the caller asked for."""
+    (org, namespace) at `required_role`, or with no auth context (but never on
+    a mirror); False on any refusal, so the caller hides the row
+    (`found=False`): a 403 would confirm the id exists. A refusal that could
+    not be verified marks the request the server's (`fail_closed`);
+    `hides_answer=False` when this refusal does not decide what the caller
+    asked for."""
     verdict = await row_reach(org, namespace, required_role)
     if verdict is None and hides_answer:  # the server's failure
         note_answered_unverified()
@@ -806,8 +812,6 @@ async def row_reach(org: str, namespace: str, required_role: Role = Role.VIEWER)
     from server.core.errors import IdentityIncompleteError
 
     auth = current_auth()
-    if auth is None:
-        return True
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
     except PermissionError as e:

@@ -16,6 +16,7 @@ import pytest
 
 from server.auth import context
 from server.auth.jwt import AuthInfo
+from server.core.naming import not_mirror_sql
 from server.operations.base import Role
 
 
@@ -46,10 +47,12 @@ def _scope(org_of_token: str, role: Role, org: str, namespaces: tuple[str, ...] 
     return asyncio.run(context.resolve_org_scope(org))
 
 
+# Every org-wide view leaves out the mirrors.
+_NO_MIRROR = f" AND {not_mirror_sql()}"
 # An org admin's view leaves out the collections its grants do not reach.
 _UNREAD_COLLECTIONS = (
     " AND (NOT startsWith(namespace, {col_prefix:String})"
-    " OR namespace IN {col_readable:Array(String)})"
+    " OR namespace IN {col_readable:Array(String)})" + _NO_MIRROR
 )
 
 
@@ -65,7 +68,7 @@ def test_an_org_admin_of_another_org_gets_the_member_filter() -> None:
 
 
 def test_a_platform_admin_spans_orgs_whole() -> None:
-    assert _scope("a", Role.PLATFORM_ADMIN, "b").where == ""
+    assert _scope("a", Role.PLATFORM_ADMIN, "b").where == _NO_MIRROR
 
 
 def test_a_wildcard_org_admin_spans_orgs_but_their_unread_collections() -> None:

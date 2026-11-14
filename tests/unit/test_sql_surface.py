@@ -12,18 +12,23 @@ from typing import Any
 
 import pytest
 
+from server.core.naming import not_mirror_sql
 from server.core.paths import MIGRATIONS_DIR
+from server.core.schema.journal import sorted_migrations
 from server.insights.domain import sql_surface as surface
 from tests.unit.ch_fake import RecordingCH
 from tests.unit.schema_ddl import ddl
 
-MIGRATION = MIGRATIONS_DIR / "090_sql_surface.sql"
 NOW = datetime(2026, 1, 2, tzinfo=UTC)
-_VIEW = re.compile(r"CREATE VIEW IF NOT EXISTS loom\.(\w+)(.*?);", re.S)
+_VIEW = re.compile(r"CREATE (?:OR REPLACE VIEW|VIEW IF NOT EXISTS) loom\.(sql_v1_\w+)(.*?);", re.S)
 
 
 def _views() -> dict[str, str]:
-    return dict(_VIEW.findall(MIGRATION.read_text(encoding="utf-8")))
+    """Each view as the last migration that defines it leaves it."""
+    views: dict[str, str] = {}
+    for path in sorted_migrations(MIGRATIONS_DIR.glob("*.sql")):
+        views.update(_VIEW.findall(path.read_text(encoding="utf-8")))
+    return views
 
 
 def test_the_granted_views_are_the_migrations_views() -> None:
@@ -38,8 +43,11 @@ def test_each_view_reads_through_its_definer(view: str) -> None:
 
 
 _SCOPE_CTE = re.compile(r"WITH scope AS \(.*?\)\s*SELECT", re.S)
+# Ends with the mirror term: no view shows a mirror's rows, whatever the grant.
 _ADMIT = re.compile(
-    r"\(\(org, namespace\) IN \(SELECT org, namespace FROM scope\).*?restricted\)", re.S
+    r"\(\(org, namespace\) IN \(SELECT org, namespace FROM scope\).*?restricted\)"
+    + re.escape(f" AND {not_mirror_sql()}"),
+    re.S,
 )
 
 

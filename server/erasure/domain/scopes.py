@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+from server.core.naming import is_mirror_name
+
 
 def parse_namespace_list(scope_value: str) -> list[str]:
     """The namespaces of a `namespace_list` scope: a JSON array of strings or
@@ -24,6 +26,44 @@ def parse_namespace_list(scope_value: str) -> list[str]:
     for x in raw:
         seen.setdefault(x.strip(), None)
     return list(seen)
+
+
+def _scope_namespaces(scope_type: str, scope_value: str) -> list[str]:
+    """The namespaces a namespace scope names; none for any other scope, or a list it
+    cannot read (which the saga refuses as unreadable)."""
+    if scope_type == "namespace":
+        return [scope_value]
+    if scope_type == "namespace_list":
+        try:
+            return parse_namespace_list(scope_value)
+        except ValueError:
+            return []
+    return []
+
+
+def names_mirror(scope_type: str, scope_value: str) -> bool:
+    """Whether a namespace scope names a mirror."""
+    return any(is_mirror_name(ns) for ns in _scope_namespaces(scope_type, scope_value))
+
+
+def only_mirrors(scope_type: str, scope_value: str) -> bool:
+    """Whether a namespace scope names mirrors and nothing else: such a saga is a platform
+    admin's to see."""
+    names = _scope_namespaces(scope_type, scope_value)
+    return bool(names) and all(is_mirror_name(ns) for ns in names)
+
+
+def shown_scope(scope_type: str, scope_value: str) -> str:
+    """A saga's scope as it is answered or audited: a mirror's name as `-`, a namespace
+    list without its mirrors, every other scope as it is."""
+    if scope_type == "namespace":
+        return "-" if is_mirror_name(scope_value) else scope_value
+    names = _scope_namespaces(scope_type, scope_value)
+    kept = [ns for ns in names if not is_mirror_name(ns)]
+    if kept == names:
+        return scope_value
+    parsed = json.loads(scope_value)
+    return json.dumps({**parsed, "namespaces": kept} if isinstance(parsed, dict) else kept)
 
 
 def names_namespace(scope_type: str, scope_value: str, namespace: str) -> bool | None:

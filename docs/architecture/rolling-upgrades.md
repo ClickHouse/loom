@@ -726,6 +726,24 @@ schema. These rules keep that safe. The operator procedure is in
     `test_knowledge_source_recordings.py` check N's side; N-1's is read from its code,
     and the mixed-version gate does not check this rule.
 
+51. **Mirror names are reserved** (migration `097_mirror_names_reserved.sql`): N's gate
+    refuses every request that names a namespace of the form `acl-` and 24 hex digits
+    (only a platform admin's `erasure.request` may name one), with auth on or off.
+    `namespace.register` and `namespace.restore` refuse the form, and N's org-wide
+    scopes, the `sql_v1_` views and the analytics export leave it out. N-1 admits the
+    form as any other name. The migration refuses to run while any namespace of the form
+    is registered or holds live rows in ClickHouse (the registry, memory, documents,
+    conversations, threads, sources and code repositories), naming up to ten as
+    `org/namespace` with their tables and counting the rest. Since N refuses every
+    request naming such a namespace, the operator clears it with N-1: an erasure of what
+    it holds, `code.repo.remove` for a repository and `namespace.delete`. The build that
+    writes mirrors comes after this one, so the build beside it already refuses the
+    form; the one gap is a name an N-1 process registers or writes after the migration
+    ran, and the first migration of the build that writes mirrors runs the same check
+    (`server/core/schema/prechecks.py`) to close it, so no such namespace is ever taken
+    for a mirror. `tests/unit/test_mirror_names_refused.py` checks N's side, and the
+    mixed-version gate does not check this rule.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

@@ -21,12 +21,13 @@ here, once:
   authorized one, so the handler reads and writes where the call was
   authorized. A refused default (a member's namespace, or the registry unread)
   sets none and is kept for the request, so the handler refuses too.
-- `authorize`: the cell's tenancy check (`tenancy.ensure_held`) first, then the
-  refusal of a revoked subject a trusted caller acts for
-  (`authz.check_acted_for`), first-contact provisioning, the role + namespace gate
-  (`authorize_op`, raising PermissionError / IdentityIncompleteError; a scoped
-  token in its own org gets a refused default's own refusal instead), then
-  the restricted-access audit row and the first-write registration.
+- `authorize`: the refusal of `@me` and of a mirror's name first, then the cell's
+  tenancy check (`tenancy.ensure_held`), then the refusal of a revoked subject a
+  trusted caller acts for (`authz.check_acted_for`), first-contact provisioning, the
+  role + namespace gate (`authorize_op`, raising PermissionError /
+  IdentityIncompleteError; a scoped token in its own org gets a refused default's own
+  refusal instead), then the restricted-access audit row and the first-write
+  registration.
 - `policy`: the history policy gate on the authorized identity (raises
   PolicyForbiddenError).
 - `read_scope`: the read scope (token ceiling and pin, narrowed by the
@@ -54,7 +55,7 @@ from server.code.app.common import (
 )
 from server.core import fail_open
 from server.core.errors import IdentityIncompleteError
-from server.core.naming import present
+from server.core.naming import MIRROR_REFUSED, is_mirror_name, present
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -271,14 +272,19 @@ async def authorize(
 ) -> None:
     """The role + namespace gate for an authenticated call, fail closed, then
     what an admitted call leaves (restricted-access audit, first-write
-    registration). No-op without a principal (auth off), but for `@me` and, on a cell,
-    the tenancy check."""
+    registration). No-op without a principal (auth off), but for `@me`, a mirror's name
+    and, on a cell, the tenancy check."""
     from server.auth.sharing import PERSONAL_ALIAS
 
     # HTTP maps `@me` to the end user's personal collection before this gate;
     # anywhere else it names nothing, and is never a namespace of its own.
     if target.named_namespace == PERSONAL_ALIAS:
         raise PermissionError(f"{PERSONAL_ALIAS!r} names an end user's personal collection")
+    # Before the auth-off return: no call names a mirror, whatever the deployment's auth.
+    # The namespace the request names, or the plane default it would register
+    # (`authz_target`); other namespace fields are refused where they are read.
+    if target.register_namespace and is_mirror_name(target.register_namespace):
+        raise PermissionError(MIRROR_REFUSED)
     # A cell serves only the orgs it holds: checked before anything below provisions
     # or writes for the call (docs/architecture/cells.md).
     await tenancy.ensure_held(target.org, auth)

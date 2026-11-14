@@ -5,6 +5,7 @@ CH-free."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -252,3 +253,18 @@ def test_audit_actor_falls_back_to_the_pipeline_actor_when_the_row_has_none() ->
     with pipeline_actor("process:cli:erasure-re-verify"):
         assert saga.audit_actor(_ledger_row()) == "human:admin@o"
         assert saga.audit_actor(_ledger_row(actor="")) == "process:cli:erasure-re-verify"
+
+
+async def test_the_audit_rows_name_no_mirror_of_a_list_scope(recorded: Any) -> None:
+    run, audits, _ = recorded
+    mirror = "acl-0123456789abcdef01234567"
+    await run("namespace_list", json.dumps({"namespaces": ["A", mirror]}))
+    assert [a["event_type"] for a in audits] == ["erasure.started", "erasure.completed"]
+    for row in audits:
+        assert json.loads(row["subject"]["scope_value"])["namespaces"] == ["A"]
+
+
+async def test_the_audit_rows_of_a_mirror_s_erasure_name_no_mirror(recorded: Any) -> None:
+    run, audits, _ = recorded
+    await run("namespace", "acl-0123456789abcdef01234567")
+    assert [(a["namespace"], a["subject"]["scope_value"]) for a in audits] == [("-", "-")] * 2
