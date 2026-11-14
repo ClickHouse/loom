@@ -786,9 +786,9 @@ schema. These rules keep that safe. The operator procedure is in
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
 once with a Keeper and once without) boots the base build on an empty ClickHouse, then
-this build, which applies its migrations, then the base again on the newer schema, and a
-third process of this build with a changed dashboard bundle and one no-op migration more
-(N+1). It checks:
+this build, which applies its migrations, then the base again on the newer schema, and
+a third process of this build with a changed dashboard bundle and one no-op migration
+more (N+1). It checks:
 
 - each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict
