@@ -14,6 +14,12 @@ from server.erasure.app import saga_steps
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.erasure_saga_stub import stub_no_mirrors
+
+
+@pytest.fixture(autouse=True)
+def _no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_no_mirrors(monkeypatch)
 
 
 class _StubCH:

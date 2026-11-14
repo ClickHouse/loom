@@ -642,6 +642,22 @@ def test_a_registry_write_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None
     assert json.loads(row["config_json"]) == config and row["active"] is True
 
 
+def test_a_mirrored_source_is_stored_where_a_build_without_items_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = RecordingCH()
+    ch.install(monkeypatch)
+    config = {"folder_ids": [FOLDER]}
+    src = KnowledgeSource(
+        org=ORG, namespace=NS, name="d", kind="gdrive", source_id=str(uuid.uuid4()),
+        config=config, items=domain.items_from_config("gdrive", config), access="mirrored",
+    )  # fmt: skip
+    asyncio.run(store.insert_source(app._with_credential(src, SECRET)))
+    [row] = ch.inserted("knowledge_sources")
+    assert row["kind"] == "" and row["source_kind"] == "gdrive"
+    assert row["credential_enc"] == "" and row["secret_enc"] and row["access"] == "mirrored"
+
+
 def test_a_sync_state_write_leaves_the_version_to_the_server(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

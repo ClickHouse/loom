@@ -40,6 +40,7 @@ from server.erasure.app.saga_steps import (
     _step_verify_residue,
     authority_steps,
     census_spellings,
+    with_mirrors,
 )
 from server.erasure.domain.scopes import (
     applied_purge,
@@ -719,7 +720,7 @@ async def _saga_namespace(
         )
 
     for name, fn in authority_steps(NAMESPACE_STEPS):
-        await _step(name, fn, org, namespace)
+        await _step(name, with_mirrors(fn), org, namespace)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse

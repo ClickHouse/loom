@@ -847,7 +847,7 @@ ClickHouse, additive migrations:
 | Table                              | Key                                                           | Holds                                                                                                                                                                                                             |
 | ---------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom.knowledge_sources` (columns) | `(org, namespace, name)`                                      | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`                   |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                                            | `mirror`, `deleted` (written once a namespace erasure has erased the mirror), `created_at`                                                                                                                        |
+| `loom.knowledge_mirrors`           | `(org, namespace, mirror)`                                    | `deleted` (written once a namespace erasure has erased the mirror); at most one live                                                                                                                              |
 | `loom.knowledge_mirror_latch`      | one row                                                       | `set_at`: the deployment once had the switch on; the mirror-erase command deletes it last. It stays in ClickHouse and holds no memory content.                                                                    |
 | `loom.documents` (column)          | as today; in a mirror `source_uri` is `<address>#<source id>` | `access_json`: a mirrored document's permission list (`emails`, `owner`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id)`                                 | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                                      |
@@ -884,12 +884,13 @@ statements and census keys against these, and its tests pin each one:
 - A namespace erasure, `namespace.delete`, `collection.delete` and `code.repo.remove`
   retire the namespace's sources first, clearing their credentials, so no turn writes
   back what the erasure took. A `namespace` or `namespace_list` erasure covers each
-  named namespace's mirror in its last step, `knowledge_mirrors.erase`: a purging
-  erasure of the mirror, with its own resume and re-verify, then the registry row
-  written `deleted`, so the name registered again gets a new mirror. A mirror's rows are
-  deleted in either mode: no token reads or restores an `acl-` name. A `user_id` erasure
-  touches no mirror row (the sync writes them as `-`), and its census and export name
-  none.
+  named namespace's mirrors as more names of the same erasure: each step runs over the
+  named namespaces in the erasure's mode, then over their mirrors as a purge, since no
+  token reads or restores an `acl-` name, and the census counts both. The last step,
+  `knowledge_mirrors.forget`, writes the mirrors `deleted`, so the name registered again
+  gets a new mirror; the registry keeps them, so a resume or a replay after a restore
+  still reaches them. A `user_id` erasure touches no mirror row (the sync writes them as
+  `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once

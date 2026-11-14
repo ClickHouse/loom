@@ -71,7 +71,4 @@ def _listed(found: dict[str, list[str]]) -> str:
 
 PRECHECKS: dict[str, Callable[[Client], None]] = {
     "mirror_names_reserved.sql": no_mirror_names,
-    # The first file of the build that writes mirrors: a build before the reservation
-    # may have registered a name of the form since (rolling-upgrade rule 51).
-    "knowledge_mirrors.sql": no_mirror_names,
 }

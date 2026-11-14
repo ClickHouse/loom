@@ -24,13 +24,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 from server.knowledge.domain.sources import (
     SYNC_WORKER_ACTOR,
+    Access,
     KnowledgeSource,
     id_list_config,
     items_from_config,
@@ -51,8 +52,8 @@ REVISIONS_PAGE = 10_000  # not a setting: a bound on one statement
 
 _COLUMNS = (
     "org, namespace, name, source_id, kind, source_kind, config_json, items_json, "
-    "credential_enc, secret_enc, access, credential_mode, created_by, active, pending_delete, "
-    "created_at, updated_at"
+    "credential_enc, secret_enc, access, created_by, active, pending_delete, created_at, "
+    "updated_at"
 )
 
 
@@ -81,8 +82,7 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         items=_items(str(row.get("items_json") or "")) or items_from_config(kind, config),
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
-        access=str(row.get("access") or "namespace"),
-        credential_mode=str(row.get("credential_mode") or "shared"),
+        access=cast(Access, str(row.get("access") or "namespace")),
         created_by=str(row.get("created_by") or ""),
         active=bool(row.get("active")),
         pending_delete=bool(row.get("pending_delete")),
@@ -225,7 +225,6 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
         "credential_enc": src.credential_enc,
         "secret_enc": src.secret_enc,
         "access": src.access,
-        "credential_mode": src.credential_mode,
         "created_by": src.created_by,
         "active": src.active,
         "pending_delete": src.pending_delete,

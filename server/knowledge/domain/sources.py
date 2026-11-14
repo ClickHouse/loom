@@ -18,7 +18,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from server.core.errors import BadConfigError
 from server.tracker.domain.sources import SOURCE_NAME_RE
@@ -100,6 +100,9 @@ SYNC_WORKER_ACTOR = "worker:knowledge-source-sync"
 STATE_KEY_PREFIX = "knowledge_source:"
 
 
+Access = Literal["namespace", "mirrored"]
+
+
 @dataclass(frozen=True)
 class KnowledgeSource:
     """One registry row of `loom.knowledge_sources`; the credential stays sealed."""
@@ -122,9 +125,7 @@ class KnowledgeSource:
     secret_enc: str = ""
     # Who the documents are shown to: `namespace` (every reader of the namespace) or
     # `mirrored` (a reader the store admits, from the namespace's mirror).
-    access: str = "namespace"
-    # Whose credential the source reads with: `shared`, an admin's.
-    credential_mode: str = "shared"
+    access: Access = "namespace"
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -528,8 +529,8 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when it cannot
     express the source: such a source is stored with `kind` empty. A build without
-    items knows only shared sources every reader of the namespace reads."""
-    if src.access != "namespace" or src.credential_mode != "shared":
+    items shows every document to every reader of the namespace."""
+    if src.access != "namespace":
         return None
     if src.kind == "recording":
         return src.config

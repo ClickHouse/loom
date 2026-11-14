@@ -24,7 +24,7 @@ from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of
+from server.erasure.store.mutations import namespaces_of, purge_scope
 from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
@@ -67,7 +67,9 @@ async def _step_verify_residue(
 ) -> int:
     """Verified forgetting: count what is still live in scope across every
     substrate the read paths touch. Fills `holder` for the terminal
-    checkpoint; zero is the only pass."""
+    checkpoint; zero is the only pass. A namespace's mirrors are in its scope."""
+    if scope_type == "namespace" and (mirrors := list(await _mirrors_of(org, scope_value))):
+        scope_value = [*namespaces_of(scope_value), *mirrors]
     spellings = await census_spellings(org, scope_type, scope_value)
     per_table = await erasure_census.residue_census(
         org, scope_type, scope_value, spellings=spellings
@@ -190,24 +192,31 @@ async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
     return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
 
 
-# Who a mirror's own erasure names as its requester.
-MIRROR_ERASURE_REQUESTER = "the erasure of the namespace the mirror belongs to"
-
-
-async def _step_erase_mirrors_by_ns(org: str, namespace: _NS) -> int:
-    """Last: each named namespace's mirror is erased in a purging saga of its own (no
-    token reads or restores an `acl-` name, so its rows leave whatever the mode), then
-    its registry row goes, so the name registered again gets a new mirror. Rerun by a
-    resumed saga, it finds the rows it has not yet written deleted."""
-    from server.erasure.app.handlers import erase_namespace
-
-    # A mirror has no mirror of its own, so a mirror's erasure reads no registry row.
+async def _mirrors_of(org: str, namespace: _NS) -> dict[str, str]:
+    """Every mirror the named namespaces have had; a mirror has none of its own."""
     named = [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]
-    found = await knowledge_mirrors.mirrors_of(org, named)
-    for mirror in found.values():
-        out = await erase_namespace(org, mirror, requester=MIRROR_ERASURE_REQUESTER)
-        if out.status != "completed":
-            raise RuntimeError(f"the mirror's erasure {out.erasure_id} ended {out.status}")
+    return await knowledge_mirrors.mirrors_of(org, named)
+
+
+def with_mirrors(
+    step: Callable[[str, _NS], Awaitable[int]],
+) -> Callable[[str, _NS], Awaitable[int]]:
+    """`step` over the named namespaces in the erasure's mode, then over their mirrors as
+    a purge: no token reads or restores an `acl-` name, so its rows leave the disk."""
+
+    async def run(org: str, namespace: _NS) -> int:
+        n = await step(org, namespace)
+        if mirrors := list(await _mirrors_of(org, namespace)):
+            with purge_scope(True):
+                n += await step(org, mirrors)
+        return n
+
+    return run
+
+
+async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
+    """Last: the mirrors' rows are gone, so the name registered again gets a new mirror."""
+    found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)
 
@@ -399,5 +408,5 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("chunks.supersede", memory_steps.supersede_chunks_by_namespace),
     ("documents.tombstone", _step_tombstone_documents_by_ns),
     *_LATE_STEPS_NS,
-    ("knowledge_mirrors.erase", _step_erase_mirrors_by_ns),
+    ("knowledge_mirrors.forget", _step_forget_mirrors_by_ns),
 )

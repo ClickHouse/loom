@@ -18,6 +18,12 @@ from server.knowledge.app import restore_reconcile as knowledge_reconcile
 from server.memory.store import pg_memory
 from server.settings import settings
 from tests.unit import clickhouse_local
+from tests.unit.erasure_saga_stub import stub_no_mirrors
+
+
+@pytest.fixture(autouse=True)
+def _no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub_no_mirrors(monkeypatch)
 
 
 def _names(steps: Any) -> set[str]:

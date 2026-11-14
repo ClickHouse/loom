@@ -58,7 +58,7 @@ class _TraceCH:
         if sql.startswith("SELECT group_id FROM loom.principal_groups"):
             return [{"group_id": "g"}]
         if "FROM loom.knowledge_mirrors" in sql:
-            return []  # no mirror: its own purging saga is tested in test_knowledge_mirrors
+            return []  # no mirror: test_knowledge_mirrors runs a saga with one
         if sql.startswith(("SELECT DISTINCT", "SELECT namespace,", "SELECT cityHash64")):
             return [_AnyRow()]
         if "blob_path" in sql and "loom.documents" in sql:
@@ -142,3 +142,12 @@ def saga_runner(monkeypatch: pytest.MonkeyPatch) -> Any:
 def ns_list(purge: bool, external: bool) -> str:
     """A namespace_list scope value."""
     return json.dumps({"namespaces": ["a", "b"], "purge": purge, "external": external})
+
+
+def stub_no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The namespaces erased have no mirror, for a saga run without a ClickHouse."""
+
+    async def _none(org: str, namespaces: list[str]) -> dict[str, str]:
+        return {}
+
+    monkeypatch.setattr("server.knowledge.app.mirrors.mirrors_of", _none)

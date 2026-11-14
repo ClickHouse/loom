@@ -4314,7 +4314,7 @@ export interface KnowledgeSourceRemoveInput {
   name: string;
   /** Type the source name to confirm. */
   confirm: string;
-  /** Record a request to retire the source's documents (default keep them). */
+  /** Record a request to retire the source's documents (default keep them). A mirrored source's documents are always retired. */
   delete_documents?: boolean;
 }
 

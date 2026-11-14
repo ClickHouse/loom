@@ -2143,12 +2143,11 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_mirrors
     `namespace` LowCardinality(String),
     `mirror` String,
     `deleted` Bool DEFAULT false,
-    `created_at` DateTime DEFAULT now(),
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
 )
 ENGINE = ReplacingMergeTree(version)
-ORDER BY (org, namespace)
-SETTINGS index_granularity = 8192;
+ORDER BY (org, namespace, mirror)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.knowledge_sources
 CREATE TABLE IF NOT EXISTS loom.knowledge_sources
@@ -2169,8 +2168,7 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `source_kind` LowCardinality(String) DEFAULT '',
     `items_json` String DEFAULT '[]',
     `secret_enc` String DEFAULT '',
-    `access` LowCardinality(String) DEFAULT 'namespace',
-    `credential_mode` LowCardinality(String) DEFAULT 'shared'
+    `access` LowCardinality(String) DEFAULT 'namespace'
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)

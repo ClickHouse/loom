@@ -534,9 +534,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # Deactivates the namespace's sources and clears their credentials: configuration
     # an admin wrote (ids, names, a filter's name fragment), no memory or document content.
     "knowledge_sources.retire": ("loom.knowledge_sources",),
-    # Which `acl-` namespace holds a namespace's mirror: names only, no content; written
-    # deleted once the mirror's own purging erasure has run.
-    "knowledge_mirrors.erase": ("loom.knowledge_mirrors",),
+    # Which `acl-` namespaces hold a namespace's mirrored documents: names only, no
+    # content. Every step also purges the mirrors; this one writes them `deleted`.
+    "knowledge_mirrors.forget": ("loom.knowledge_mirrors",),
     "collections.forget_owner": ("loom.collections", "loom.namespaces"),
     # The org's other cache: its cached query vectors (never their text), deleted
     # org-wide beside the replay bodies at both scopes but not counted, since any
