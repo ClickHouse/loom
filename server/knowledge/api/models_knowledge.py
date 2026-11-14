@@ -615,6 +615,42 @@ class KnowledgeDeleteOutput(BaseModel):
     chunks_tombstoned: int
 
 
+class KnowledgeMoveInput(BaseModel):
+    """Move documents to another namespace of the org: a collection, `@me`, or a namespace.
+
+    Each keeps its chunks and their vectors, its original file, its tables, its title,
+    description and tags, its author and its date, and takes the sharing of the place it
+    goes to. Where it was, it is deleted as `knowledge.delete` leaves it, so
+    `knowledge.restore` there brings it back. Needs writer on both namespaces."""
+
+    org: str
+    # Where the documents are.
+    namespace: str
+    # Where they go.
+    to_namespace: str = Field(min_length=1, max_length=256)
+    # The documents to move, by source; a source named twice moves once.
+    source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=100)
+
+
+class _KnowledgeMoveResult(BaseModel):
+    source_uri: str
+    moved: bool = False
+    # Why it did not move: not_found (no live document there), exists (another document
+    # with this source is live where it goes), synced (a document source keeps it where it
+    # is), busy (another write of it is in progress; call again), erased (an erasure may
+    # reach it or the place it goes).
+    reason: Literal["", "not_found", "exists", "synced", "busy", "erased"] = ""
+
+
+class KnowledgeMoveOutput(BaseModel):
+    # False when the caller cannot write to `to_namespace`: nothing moved.
+    found: bool
+    # Where the documents went (`@me` as the caller's own collection).
+    to_namespace: str = ""
+    # One per source asked for, in the order asked.
+    results: list[_KnowledgeMoveResult] = Field(default_factory=list)
+
+
 class KnowledgeRestoreInput(BaseModel):
     """Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document.
 

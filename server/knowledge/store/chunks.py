@@ -376,6 +376,34 @@ async def count_active_for_doc(
     return int(row["n"]) if row else 0
 
 
+async def rows_of_version(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    doc_version: int,
+    *,
+    ch: _CHClient | None = None,
+) -> list[ChunkInsertRow]:
+    """The live chunks one document version wrote, every column `insert_chunks` takes:
+    what a move copies into another namespace."""
+    ch = ch or _default_client()
+    columns = ", ".join(ChunkInsertRow.__annotations__)
+    rows = await ch.query_all(
+        f"""
+        SELECT {columns}
+        FROM loom.chunks
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND source_uri = {{uri:String}}
+          AND doc_version = {{v:UInt64}}
+          AND {LIVE_CHUNK_SQL}
+        ORDER BY chunk_idx
+        """,
+        params={"org": org, "ns": namespace, "uri": source_uri, "v": doc_version},
+    )
+    return cast(list[ChunkInsertRow], rows)
+
+
 async def count_version(
     org: str, namespace: str, source_uri: str, doc_version: int, *, ch: _CHClient | None = None
 ) -> int:

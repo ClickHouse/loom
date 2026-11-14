@@ -102,7 +102,7 @@ def _fresh_sha(input: KnowledgeAddInput) -> str:
         return ""
 
 
-def _published_anyway(e: BaseException) -> bool:
+def published_anyway(e: BaseException) -> bool:
     """Whether a document write that raised `e` may still serve its row: committed under
     the Postgres authority (the worker publishes it), its row in with only the
     retirement failed, or a commit whose answer was lost. Its chunks then stay."""
@@ -455,7 +455,7 @@ async def handle_knowledge_upsert(
             chunked=True,
         )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
-        if not _published_anyway(e):
+        if not published_anyway(e):
             # Shielded: a cancelled request's cleanup still runs.
             await asyncio.shield(
                 _drop_own_chunks(
@@ -592,7 +592,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
                 chunked=True,
             )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
-        if not _published_anyway(e):
+        if not published_anyway(e):
             # Shielded: a cancelled request's cleanup still runs.
             await asyncio.shield(
                 _drop_own_chunks(
@@ -639,10 +639,11 @@ async def handle_knowledge_delete(
     from server.core.ch import own_write_reads
 
     with own_write_reads():
-        return await _delete(input)
+        return await delete_document(input)
 
 
-async def _delete(input: KnowledgeDeleteInput) -> KnowledgeDeleteOutput:
+async def delete_document(input: KnowledgeDeleteInput) -> KnowledgeDeleteOutput:
+    """The delete, for a caller already reading its own writes (a move's source too)."""
     from server.knowledge.store import chunks as knowledge_repo
     from server.knowledge.store import documents as documents_repo
 
@@ -754,7 +755,7 @@ async def _edit_ingested(
             try:
                 await documents_repo.insert_one(row, over=live.version)
             except BaseException as e:  # re-raised: an edit that did not land forgets them
-                if not _published_anyway(e):
+                if not published_anyway(e):
                     # Shielded: a cancelled request's cleanup still runs.
                     await asyncio.shield(datasets_repo.forget(org, ns, [uri], only=version))
                 raise
@@ -1012,7 +1013,7 @@ async def handle_knowledge_bulk_add(
             chunked=True,
         )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
-        if not _published_anyway(e):
+        if not published_anyway(e):
             own = [(str(r["source_uri"]), int(r["version"])) for r in doc_rows]
             await asyncio.shield(
                 _drop_own_chunks(input.org, input.namespace, own, e, now, embedder.model_name)

@@ -27,7 +27,9 @@ flowchart LR
   top-level) once a purging erasure of it has taken what it holds off disk
   (`namespace.delete` refuses a collection). A
   deleted collection's name is never used again, and no grant reaches it any more. A
-  document lives in one collection and follows its grants from the moment it is written.
+  document lives in one collection and follows its grants from the moment it is written;
+  `knowledge.move` writes it into another, whose grants it follows from then on, and
+  deletes it where it was ([moving documents](../features/knowledge.md#moving-documents)).
 - **Collections in the namespace lists.** `namespace.list_mine` gives a collection
   `kind = 'collection'` from its directory row; a `col-` name with no row takes
   `collection`, or `personal` for `col-me-…`, from its reserved prefix, so it still reads

@@ -55,6 +55,7 @@ AUTHORIZED: dict[tuple[str, str], str] = {
     ("code.verify_citations", "base_namespace"): "server.code.app.citations._readable_namespaces",
     ("knowledge.search", "namespaces"): "server.knowledge.app.readable.readable_namespaces",
     ("knowledge.list", "namespaces"): "server.knowledge.app.readable.readable_namespaces",
+    ("knowledge.move", "to_namespace"): "server.knowledge.app.move.handle_knowledge_move",
     ("memory.for_file", "extra_namespaces"): "server.memory.app.for_file._readable_extras",
     ("memory.cross_promote", "from_namespace"): _PROMOTE,
     ("memory.cross_promote", "to_namespace"): _PROMOTE,
