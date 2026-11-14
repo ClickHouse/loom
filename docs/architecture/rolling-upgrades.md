@@ -778,17 +778,18 @@ schema. These rules keep that safe. The operator procedure is in
     and the row builder carries none forward: every row N builds, a tombstone included,
     has the column empty, so it reads `unread` and admits nobody; an erasure purges a
     mirror's rows outright (rule 52). N-1 never meets a list: N writes none, and the
-    first build that writes one runs beside N, never beside N-1. No op's input or output
-    has the field. `tests/unit/test_access_list.py` and
+    first build that writes one runs beside N, never beside N-1, which matters because
+    N-1 would carry a list through its rewrites (rule 2). No op's input or output has
+    the field. `tests/unit/test_access_list.py` and
     `tests/unit/test_document_row_builder.py` check N's side.
 
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
 once with a Keeper and once without) boots the base build on an empty ClickHouse, then
-this build, which applies its migrations, then the base again on the newer schema, and
-a third process of this build with a changed dashboard bundle and one no-op migration
-more (N+1). It checks:
+this build, which applies its migrations, then the base again on the newer schema, and a
+third process of this build with a changed dashboard bundle and one no-op migration more
+(N+1). It checks:
 
 - each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict

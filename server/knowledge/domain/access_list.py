@@ -86,9 +86,9 @@ def from_json(text: str) -> AccessList:
 
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:
     """The list a `shared` source reads from a Drive file's `permissions`; `unread` when
-    the store gave none. A deleted, link-only or one-view (`view`) permission, and a type
-    or role this module does not know, admit nobody (docs/architecture/document-sources.md,
-    Who may read)."""
+    the file has no `permissions` field. A deleted, link-only or one-view (`view`)
+    permission, and a type or role this module does not know, admit nobody
+    (docs/architecture/document-sources.md, Who may read)."""
     if permissions is None:
         return UNREAD
     emails: list[Any] = []

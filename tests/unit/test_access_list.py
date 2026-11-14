@@ -64,7 +64,7 @@ def test_a_permission_that_cannot_be_trusted_admits_nobody(permission: dict[str,
     assert access_list.from_drive_permissions([permission]) == access_list.AccessList()
 
 
-def test_no_permissions_from_the_store_read_unread() -> None:
+def test_an_absent_permissions_field_reads_unread_and_an_empty_one_admits_nobody() -> None:
     assert access_list.from_drive_permissions(None) == access_list.UNREAD
     assert access_list.from_drive_permissions([]) == access_list.AccessList()  # read, and empty
 

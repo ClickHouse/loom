@@ -83,9 +83,15 @@ def test_builder_refuses_unknown_and_hash_fields() -> None:
 
 
 _STORED = {
-    "org": "o", "namespace": "n", "source_uri": "u", "doc_id": "d", "content": "c",
-    "version": 1, "ingested_at": INGESTED, "access_json": LISTED,
-}  # fmt: skip
+    "org": "o",
+    "namespace": "n",
+    "source_uri": "u",
+    "doc_id": "d",
+    "content": "c",
+    "version": 1,
+    "ingested_at": INGESTED,
+    "access_json": LISTED,
+}
 
 
 def test_a_read_keeps_the_permission_list() -> None:
