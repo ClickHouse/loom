@@ -58,7 +58,7 @@ describe("LoomMemoryStore (Strands adapter)", () => {
     expect(calls[0].body).toMatchObject({
       query: "seat",
       top_k: 1,
-      bodies: "full", // whole bodies whatever the top_k
+      bodies: "full", // the stored clip whatever the top_k
       explain: false,
       tags: ["customer"],
       memory_type: "preference",

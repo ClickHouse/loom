@@ -157,7 +157,7 @@ def test_memory_documents_carry_the_key_and_score() -> None:
         {
             "query": "seating",
             "top_k": 1,
-            "bodies": "full",  # whole bodies whatever the k
+            "bodies": "full",  # the stored clip whatever the k
             "explain": False,
             "tags": ["customer"],
             "memory_type": "preference",
