@@ -194,22 +194,21 @@ async def tombstone_shared_embedding(
     )
 
 
-_LIVE_DEFINITIONS = """
-FROM loom.shared FINAL
-WHERE org = {org:String} AND namespace = {ns:String}
-  AND memory_type = 'definition' AND startsWith(memory_key, 'definition/')
-  AND tombstoned_at IS NULL
-"""
-
-
 async def shared_definitions(
     org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """The live shared definitions' keys and values, at most `limit`, read strongly."""
     ch = ch or _default_client()
     return await ch.query_all(
-        "SELECT memory_key, value"
-        + _LIVE_DEFINITIONS
-        + "ORDER BY memory_key LIMIT {lim:UInt32} SETTINGS select_sequential_consistency = 1",
+        """
+        SELECT memory_key, value
+        FROM loom.shared FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_type = 'definition' AND startsWith(memory_key, 'definition/')
+          AND tombstoned_at IS NULL
+        ORDER BY memory_key
+        LIMIT {lim:UInt32}
+        SETTINGS select_sequential_consistency = 1
+        """,
         params={"org": org, "ns": namespace, "lim": limit},
     )

@@ -734,7 +734,7 @@ HTTP 503, raised as `server.core.pg.PostgresUnavailableError`. 503 — Postgres,
 
 #### `PRECONDITION_FAILED`
 
-HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, an `approved_sha256` a definition promotion's text no longer has, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PROBE_BUSY`
 

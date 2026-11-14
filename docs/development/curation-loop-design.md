@@ -9,10 +9,14 @@ aggregate's count aside. The parts land in this order: knowledge gaps (recording
 and the list), governed definitions (the shared-layer changes and the term leg), then
 `knowledge.gaps.draft` and query history, which queue definition drafts and so need the
 review path the second part builds. Knowledge gaps are built and described in [knowledge
-gaps](../architecture/knowledge-gaps.md); the rest is not built yet, and none of its ops,
-tables or settings are served until the pull request that builds each part lands. That
-pull request moves its part into `docs/architecture/`, written as what Loom does, and
-removes it here.
+gaps](../architecture/knowledge-gaps.md). So are a definition's write-time rules
+([conflicts and refusal](../features/memory/conflicts-and-refusal.md)) and its promotion
+rules with their ceiling setting ([the shared
+layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
+The term leg, `memory.definitions.list` and the review path are not built yet, and none of
+their ops, tables or settings are served until the pull request that builds each part
+lands. That pull request moves its part into `docs/architecture/`, written as what Loom
+does, and removes it here.
 
 ```mermaid
 flowchart LR

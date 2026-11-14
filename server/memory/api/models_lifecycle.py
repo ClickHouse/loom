@@ -42,7 +42,8 @@ class MemoryPromoteInput(BaseModel):
     # resolves via an FK-style lookup. NULL for auto-promote / direct callers.
     promoted_from_candidate_id: str | None = None
     # For a definition, the content hash it approves (the row's `content_sha256` as
-    # memory.get serves it), required and checked; for any other row it is ignored.
+    # memory.get serves it), required and checked; for any other row it is ignored and
+    # named in `ignored_args`.
     approved_sha256: str | None = None
 
 

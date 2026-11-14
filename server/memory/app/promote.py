@@ -165,8 +165,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
                     },
                 )
 
-    # promoted_from_candidate_id is set only on a non-definition learnings.review
-    # promotion; lineage matches the others by time window, except a definition.
+    # Only a non-definition learnings.review promotion records its candidate.
     await shared_repo.insert_shared_row(
         {
             "org": input.org,
@@ -276,19 +275,17 @@ async def _check_definition_promotion(
             "a definition's value is a JSON object with a string term and, optionally, a list "
             "of string aliases"
         )
-    org, namespace = input.org, input.namespace
     ceiling = int(settings.memory_term_leg_max_definitions)
     # At most the ceiling plus one: within the ceiling the read holds every live definition,
     # so it says whether this key holds one already (a revision).
-    rows = await shared_repo.shared_definitions(org, namespace, ceiling + 1)
+    rows = await shared_repo.shared_definitions(input.org, input.namespace, ceiling + 1)
     revision = any(r["memory_key"] == target_key for r in rows)
     if len(rows) > ceiling or (len(rows) == ceiling and not revision):
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "DEFINITION_CEILING",
-                "message": f"the namespace holds at least {len(rows)} shared definitions, at "
-                f"most {ceiling}: demote one to make room",
+                "message": f"the ceiling is {ceiling} shared definitions: demote one to make room",
             },
         )
     taken = sorted(

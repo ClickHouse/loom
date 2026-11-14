@@ -18,7 +18,6 @@ import sys
 import uuid
 from pathlib import Path
 
-import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -250,49 +249,45 @@ async def test_promote_and_demote_emit_audit_rows(detector, ch_client) -> None:
 async def test_a_definition_is_promoted_with_the_hash_get_serves(
     control_plane_url: str, mint_test_token, ch_client
 ) -> None:
-    ns = f"def-{uuid.uuid4().hex[:8]}"
-    tok = mint_test_token(
-        org="clickhouse", namespaces=["*"], roles=["admin", "writer"], subject="definer"
-    )
-    ident = {"org": "clickhouse", "namespace": ns, "agent": "-"}
+    """Through the SDK: the namespace-wide row written as agent '-', refused without a
+    hash, promoted with the `content_sha256` memory.get serves, by the token's actor."""
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
     value = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
-    async with httpx.AsyncClient(
-        base_url=control_plane_url, headers={"Authorization": f"Bearer {tok}"}
-    ) as http:
-
-        async def call(op: str, **body: object) -> httpx.Response:
-            return await http.post(f"/v1/{op}", json={**ident, **body})
-
-        set_ = await call(
-            "memory.set", memory_key="definition/arr", value=value, memory_type="definition"
-        )
-        assert set_.status_code == 200, set_.text
-        got = (await call("memory.get", memory_key="definition/arr")).json()
-        refused = await call("memory.promote", memory_key="definition/arr")  # no approved hash
-        assert refused.status_code == 422
-        assert refused.json()["detail"]["code"] == "VALIDATION_FAILED"
-        shared_rows = (
-            "SELECT count() FROM loom.shared WHERE org = 'clickhouse' AND namespace = {ns:String}"
-        )
-        assert ch_client.query(shared_rows, parameters={"ns": ns}).result_rows == [(0,)]
-        out = await call(
-            "memory.promote",
-            memory_key="definition/arr",
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set("definition/arr", value, "definition", agent_id="-")
+        got = await a.memory.get("definition/arr", agent_id="-")
+        with pytest.raises(ValidationError):  # no approved hash
+            await a.memory.promote("definition/arr", agent_id="-")
+        shared_rows = "SELECT count() FROM loom.shared WHERE org = {org:String}"
+        assert ch_client.query(shared_rows, parameters={"org": org}).result_rows == [(0,)]
+        out = await a.memory.share(
+            "definition/arr",
+            agent_id="-",
             approved_sha256=got["content_sha256"],
             approver="lead",
+            rationale="the finance glossary",
         )
-    assert out.status_code == 200, out.text
-    assert out.json()["ignored_args"] == ["approver"]
+    assert out["shared_memory_key"] == "definition/arr" and out["ignored_args"] == ["approver"]
     rows = ch_client.query(
         """
-        SELECT memory_type, value, promoted_by, promoted_from, promoted_from_candidate_id
+        SELECT memory_type, value, promoted_by, promoted_from, promoted_from_candidate_id,
+               promotion_event, rationale, confidence
         FROM loom.shared FINAL
-        WHERE org = 'clickhouse' AND namespace = {ns:String} AND memory_key = 'definition/arr'
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'definition/arr'
         """,
-        parameters={"ns": ns},
+        parameters={"org": org, "ns": ns},
     ).result_rows
     (row,) = rows
     assert row[0] == "definition" and json.loads(row[1]) == value
     assert row[2] == "process:definer"  # the token's actor, not the body's approver
-    assert row[3] == [f"clickhouse/{ns}/-/-/-/definition/arr"]
-    assert row[4] is None
+    assert row[3] == [f"{org}/{ns}/-/-/-/definition/arr"]
+    assert row[4] is None and str(row[5]) == out["promotion_event"]
+    assert row[6] == "the finance glossary" and row[7] == 1.0

@@ -7,6 +7,7 @@ import json
 from typing import Any, Literal
 
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
 from server.core.pg_lease import PublicationPending
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_learnings import (
@@ -225,15 +226,9 @@ async def handle_learnings_review(
         if row.get("memory_type") == DEFINITION:
             # A definition is promoted only through memory.promote of its namespace-wide row,
             # which checks the approved hash.
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": (
-                        "a definition candidate is not promoted by review: write the definition "
-                        "as the namespace-wide row and promote it with memory.promote"
-                    ),
-                },
+            raise ValidationError(
+                "a definition candidate is not promoted by review: write the definition as "
+                "the namespace-wide row and promote it with memory.promote"
             )
         # A bot rule is promoted with the confidence the reviewer saw: the mean over
         # its supporters, not the filing session's own. Only the promotion reads it;

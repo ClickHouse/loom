@@ -79,9 +79,9 @@ class NotFoundError(LoomServerError):
 
 
 class PreconditionFailedError(LoomServerError):
-    """409 — `if_match_sha256` mismatch, or an erasure that landed while a
-    `namespace.restore` ran. A mismatch returns the live hash so the caller can retry
-    without a separate read."""
+    """409 — `if_match_sha256` mismatch, an `approved_sha256` a definition promotion's
+    text no longer has, or an erasure that landed while a `namespace.restore` ran. A
+    mismatch returns the live hash so the caller can retry without a separate read."""
 
     code = "PRECONDITION_FAILED"
     status_code = 409

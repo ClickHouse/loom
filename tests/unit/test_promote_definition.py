@@ -132,8 +132,9 @@ async def test_an_approved_definition_is_promoted_by_the_tokens_actor(
 
 async def test_a_definition_promotion_needs_its_approved_hash(store: dict[str, Any]) -> None:
     assert await _refusal(store, approved_sha256=None) == "VALIDATION_FAILED"
-    with pytest.raises(PreconditionFailedError):
+    with pytest.raises(PreconditionFailedError) as e:
         await promote.handle_memory_promote(_input(approved_sha256="0" * 64))
+    assert e.value.extra["current_sha256"] == served_content_sha256(VALUE)
     assert store["written"] == []
 
 
@@ -276,9 +277,9 @@ async def test_review_promotes_no_definition_candidate(
     monkeypatch.setattr(learnings_repo, "insert_row", must_not)
     monkeypatch.setattr(learnings, "_do_promote", must_not)
     review = LearningsReviewInput(org="o", namespace="n", candidate_id="c1", decision="promote")
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(LoomServerError) as e:
         await learnings.handle_learnings_review(review)
-    assert e.value.detail["code"] == "VALIDATION_FAILED"
+    assert e.value.code == "VALIDATION_FAILED"
 
 
 async def test_another_rows_promotion_names_an_approved_hash_it_ignores(
