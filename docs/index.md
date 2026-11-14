@@ -116,7 +116,8 @@ client sees one the server no longer reads.
 [Investigation-agent memory](guides/investigation-agent-memory.md) ·
 [Extraction pipelines](guides/extraction-pipeline.md) ·
 [Performance tuning](guides/performance-tuning.md) · [Debugging](guides/debugging.md) ·
-[Query Loom from Postgres](guides/query-from-postgres.md)
+[Query Loom from Postgres](guides/query-from-postgres.md) ·
+[Teaching with Loom](guides/teaching.md)
 
 ## Features
 
