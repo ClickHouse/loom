@@ -191,8 +191,7 @@ export function Documents() {
     };
   }, []);
   // A collection just made: the read starts before the move so the old list never says it is
-  // missing. Nothing moves once this page closed or its org changed. The tree passes its New
-  // collection as `arriveFocus`, so the person goes on there.
+  // missing. Nothing moves once this page closed or its org changed.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
     (name: string, org: string, arriveFocus?: string) => {

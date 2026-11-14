@@ -136,9 +136,8 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
     [org],
   );
   const expected = asked.expect.org === org ? asked.expect.name : "";
-  // The collection shown, once the page's last reload is answered and lists it: a refresh
-  // that leaves it out reads again, up to REFRESH_TRIES times, before it counts as gone.
-  // The read effect captures it when it starts: `shown` changing restarts no read.
+  // The collection shown, once the page's last reload is answered and lists it. The read
+  // effect captures it when it starts: `shown` changing restarts no read.
   const answered = answer?.org === org && answer.reloads === asked.reloads;
   const hold = answered && answer.rows.some((c) => c.namespace === shown) ? shown : "";
   useAbortableEffect(

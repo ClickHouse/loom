@@ -158,7 +158,8 @@ export const LibraryTree = memo(function LibraryTree({
    *  place's name, said on arrival. */
   onPick: (collection: string | null, arriveFocus: string, note: string) => void;
   /** A collection made here, in `org`: read the list again and open it. It can land after
-   *  the tree is gone (a resize, or a move to another org). */
+   *  the tree is gone (a resize, or a move to another org). `arriveFocus`: New collection's
+   *  focus key, so the person goes on there. */
   onCreated: (collection: string, org: string, arriveFocus: string) => void;
 }) {
   // What the person opened, remembered for the next visit.
