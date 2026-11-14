@@ -509,7 +509,8 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
     column resets it for every FINAL reader. The row starts from the schema
     defaults, then takes the columns of `existing` in `_CARRIED` (carry-forward),
     then `fields`. `content_sha256` is not settable: it is recomputed from the
-    row's final title + content, the hash knowledge.add / upsert dedup on.
+    row's final title + content, the hash knowledge.add / upsert dedup on. A tombstone
+    takes no permission list: one passed `access_json` is refused.
     """
     unknown = set(fields) - (set(DOCUMENT_COLUMNS) - {"content_sha256"})
     if unknown:
