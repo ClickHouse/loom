@@ -272,12 +272,12 @@ async with Agent(org="acme", namespace="support") as loom_agent:
     assistant = AssistantAgent("assistant", model_client=model_client, memory=[memory])
 ```
 
-| AutoGen          | Loom                                                                                                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>` of the stripped text; text and JSON content, not bytes or images; `metadata` and `mime_type` are not kept                  |
-| `query`          | `memory.search` of the namespace it writes to; leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key` and `similarity` |
-| `update_context` | before each model call: `query` with the latest user message, the matches added as one system message                                                                                      |
-| `clear`          | raises: Loom deletes a memory when its key is named (`memory.delete`) or through [erasure](../memory/retention-and-erasure.md)                                                             |
+| AutoGen          | Loom                                                                                                                                                                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>` of the stripped text; text and JSON content, not bytes or images; `metadata` and `mime_type` are not kept                                                                            |
+| `query`          | `memory.search` of the namespace it writes to; leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key`, `memory_type`, `similarity`, `source` and `valid_at` when the row has one |
+| `update_context` | before each model call: `query` with the latest user message, the matches added as one system message                                                                                                                                                |
+| `clear`          | raises: Loom deletes a memory when its key is named (`memory.delete`) or through [erasure](../memory/retention-and-erasure.md)                                                                                                                       |
 
 `LoomMemory(agent, user_id=..., tags=[...], top_k=5, honour_abstain=True,
 key_prefix="autogen")`: `tags` are stamped on every `add` and keep a `query` to memories
@@ -405,6 +405,8 @@ client can speak for several agents.
   anyway: a failed save prints only for a `verbose` agent, and a failed recall shows only as
   a `MemoryRetrievalFailedEvent` on CrewAI's event bus, so an unreachable Loom is otherwise
   silent.
+- **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
+  `update_context` before each model call and does not catch its errors.
 - **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
   return Loom's error to the model as the call's result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as

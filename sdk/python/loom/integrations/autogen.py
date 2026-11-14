@@ -16,7 +16,7 @@ match the latest user message as a system message::
         assistant = AssistantAgent("assistant", model_client=model_client, memory=[memory])
 
 Identity and isolation come from the Loom agent. Install with
-``pip install 'clickhouse-loom[autogen]'``.
+``pip install 'clickhouse-loom[autogen]' autogen-agentchat``.
 """
 
 from __future__ import annotations
@@ -146,13 +146,13 @@ class LoomMemory(Memory):
             (
                 m.content
                 for m in reversed(messages)
-                if isinstance(m, UserMessage) and isinstance(m.content, str) and m.content
+                if isinstance(m, UserMessage) and isinstance(m.content, str)
             ),
             "",
         )
-        memories = await self.query(query) if query else MemoryQueryResult(results=[])
+        memories = await self.query(query)
         if memories.results:
-            # query returns text content only
+            # query returns text; MemoryContent.content is typed to allow bytes too.
             lines = "\n".join(f"{i}. {str(m.content)}" for i, m in enumerate(memories.results, 1))
             await model_context.add_message(
                 SystemMessage(content=f"\nRelevant memory content from Loom:\n{lines}\n")
