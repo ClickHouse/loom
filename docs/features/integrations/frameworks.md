@@ -272,18 +272,24 @@ async with Agent(org="acme", namespace="support") as loom_agent:
     assistant = AssistantAgent("assistant", model_client=model_client, memory=[memory])
 ```
 
-| AutoGen          | Loom                                                                                                                                                                                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>` of the stripped text; text and JSON content, not bytes or images; `metadata` and `mime_type` are not kept                                                                            |
-| `query`          | `memory.search` of the namespace it writes to; leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key`, `memory_type`, `similarity`, `source` and `valid_at` when the row has one |
-| `update_context` | once per turn, before the agent's first model call: `query` with the latest user message (its text parts when multimodal), the matches added as one system message                                                                                   |
-| `clear`          | raises: Loom deletes a memory when its key is named (`memory.delete`) or through [erasure](../memory/retention-and-erasure.md)                                                                                                                       |
+| AutoGen          | Loom                                                                                                                                                                                                                                                                        |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>` of the stripped text; text and JSON content, not bytes or images; `metadata` and `mime_type` are not kept                                                                                                   |
+| `query`          | `memory.search` of the namespace it writes to; with `honour_abstain`, leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key`, `memory_type`, `similarity`, `source` and `valid_at` when the row has one |
+| `update_context` | once per turn, before the agent's first model call: `query` with the latest user message (its text parts when multimodal), the matches added as one system message                                                                                                          |
+| `clear`          | raises: Loom deletes a memory when its key is named (`memory.delete`) or through [erasure](../memory/retention-and-erasure.md)                                                                                                                                              |
 
-`LoomMemory(agent, user_id=..., tags=[...], top_k=5, honour_abstain=True,
-key_prefix="autogen")`: `tags` are stamped on every `add` and keep a `query` to memories
-carrying any of them. `user_id` unset, a `query` reads every user's memories in the
-namespace. AutoGen awaits its memory, so the adapter takes a `loom.Agent` and refuses a
-`SyncAgent`.
+| `LoomMemory` argument | Default   | Effect                                                                                    |
+| --------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| `agent`               | required  | the `loom.Agent` the memory calls; AutoGen awaits its memory, so a `SyncAgent` is refused |
+| `user_id`             | none      | the end user the memories belong to; unset, a `query` reads every user's memories         |
+| `tags`                | none      | stamped on every `add`; a `query` keeps memories carrying any of them                     |
+| `top_k`               | 5         | memories per `query`, at least 1 and capped at 500                                        |
+| `honour_abstain`      | `True`    | leave out memories below Loom's floor; nothing when Loom abstains                         |
+| `key_prefix`          | `autogen` | the prefix of `add`'s keys                                                                |
+
+An `AssistantAgent` holding a `LoomMemory` cannot be dumped with `dump_component`: the Loom
+agent and its credential are not component config.
 
 ## LangGraph
 
