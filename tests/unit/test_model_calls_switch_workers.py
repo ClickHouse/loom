@@ -59,8 +59,6 @@ def test_profile_consolidation_selects_no_identity_of_a_switched_off_org(monkeyp
         return True
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
-    # An org-declaring run checks its deployment first; this fake ClickHouse records none.
-    monkeypatch.setattr("server.core.pg_profile.check_configured", AsyncMock(return_value=None))
     monkeypatch.setattr(w, "_consolidate_identity", fold)
     switch_off("acme")
     asyncio.run(w.run_pass(w.ProfileConsolidationConfig(max_identities_per_pass=1)))

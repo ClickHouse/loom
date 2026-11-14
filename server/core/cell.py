@@ -417,8 +417,9 @@ _READ = (
 )
 
 
-# The state rows as plain columns, for `ensure` and `loom doctor`: the state verdict needs
-# no fingerprint, so a `loom.cell_self` value that does not decode fails neither a boot's
+# The state rows as plain columns, for `ensure`, `loom doctor` and an org-declaring CLI with
+# `LOOM_CELL` unset (whose role holds column grants only): the state verdict needs no
+# fingerprint, so a `loom.cell_self` value that does not decode fails neither a boot's
 # trigger pass nor a doctor run.
 _STATE = (
     "SELECT (SELECT is_first FROM loom.cell_first) AS is_first, "
