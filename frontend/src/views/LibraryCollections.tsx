@@ -312,6 +312,8 @@ export function LibraryCollections({
     return namespaceLabel(namespace);
   };
   const lineName = placeName();
+  // "Refresh" while the rows are drawn: the tree keeps the last answer, the select not.
+  const refreshFailed = !!(besideTree ? collections.kept : rows);
   // The collection shown, not My files: it has a path, members and a menu.
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
@@ -427,11 +429,15 @@ export function LibraryCollections({
       {!!error && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
           <span>
-            {/* "Refresh" while the rows are drawn: the tree keeps the last answer, the select not. */}
-            {(besideTree ? collections.kept : rows) ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
+            {refreshFailed ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
             {humanizeError(error, { bare: true, read: true })}
           </span>
-          <Button type="empty" htmlType="button" onClick={() => reload()}>
+          {/* A refresh tries again in place: a reload would blank the rows and the documents. */}
+          <Button
+            type="empty"
+            htmlType="button"
+            onClick={() => (refreshFailed ? invalidateSharedCollections() : reload())}
+          >
             Load collections again
           </Button>
         </p>

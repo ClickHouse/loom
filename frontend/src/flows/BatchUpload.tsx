@@ -308,7 +308,7 @@ export function BatchUpload({
   const leave = () => {
     if (foldersSent.current) {
       const first = madeHere.current[0];
-      invalidateSharedCollections(first ? { name: first, org: identity.org } : undefined);
+      invalidateSharedCollections(first ? { name: first, org } : undefined);
     }
     onClose();
   };

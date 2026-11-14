@@ -321,10 +321,14 @@ describe("useReadableCollections", () => {
     api.listCollections
       .mockResolvedValueOnce({ collections: [entry("col-a")], next_cursor: null })
       .mockResolvedValue({ collections: [entry("col-a"), entry("col-new")], next_cursor: null });
-    await act(async () => probe?.reload("col-new"));
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, REFRESH_WAIT_MS + 200));
-    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await act(async () => probe?.reload("col-new"));
+      // Past the retry's wait.
+      await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+    } finally {
+      vi.useRealTimers();
+    }
     await settle();
     expect(screen.getByTestId("names")).toHaveTextContent("col-a,col-new");
     // The page tells "just created, not listed yet" apart from "not yours".
@@ -1427,6 +1431,30 @@ describe("the Library on a collection", () => {
       expect(screen.getByRole("button", { name: "Load collections again" })).toBeInTheDocument();
       expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
       expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
+    it("a retry after a failed refresh keeps the documents", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      const { container } = render(<Documents />);
+      await settle();
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(screen.getByText(/Couldn't refresh collections/)).toBeInTheDocument();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      const reads = api.listCollections.mock.calls.length;
+      const docReads = api.listKnowledge.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+      // The documents stay drawn while the list is read again, and are not read again.
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      expect(api.listKnowledge.mock.calls.length).toBe(docReads);
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+      expect(screen.queryByText(/Couldn't refresh collections/)).toBeNull();
     });
   });
 
