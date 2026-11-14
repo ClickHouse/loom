@@ -645,12 +645,9 @@ class Router:
         if isinstance(parsed, JSONResponse):
             return parsed
         begin, nonces = parsed
-        try:
-            found = await directory.attach_read(name)
-        except directory.NoSuchCell as e:
-            return _refused(404, e.reason, code="NO_SUCH_CELL")
-        except directory.DirectoryUnavailable as e:
-            return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
+        found = await _read_attaching(name)
+        if isinstance(found, JSONResponse):
+            return found
         if reason := directory.begin_refusal(found, begin):
             return _refused(409, reason)
         if refusal := await self._stores_check(found, nonces):
@@ -710,12 +707,9 @@ class Router:
         if not _nonces_shaped(nonces):
             return _refused(400, _NONCES_REFUSAL)
         name = request.path_params["cell"]
-        try:
-            found = await directory.attach_read(name)
-        except directory.NoSuchCell as e:
-            return _refused(404, e.reason, code="NO_SUCH_CELL")
-        except directory.DirectoryUnavailable as e:
-            return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
+        found = await _read_attaching(name)
+        if isinstance(found, JSONResponse):
+            return found
         if not found.served(deployment_id):
             if reason := directory.attach_refusal(found, deployment_id, enforced=True):
                 return _refused(409, reason)
@@ -872,6 +866,17 @@ def _text(body: dict[str, Any], key: str, *, needed: bool = False) -> str | None
     if not _storable(value) or (needed and not value):
         return None
     return str(value)
+
+
+async def _read_attaching(name: str) -> directory.Attaching | JSONResponse:
+    """The row `begin` and `serving` judge before their probe, or the answer for an unknown
+    cell or an unreachable directory."""
+    try:
+        return await directory.attach_read(name)
+    except directory.NoSuchCell as e:
+        return _refused(404, e.reason, code="NO_SUCH_CELL")
+    except directory.DirectoryUnavailable as e:
+        return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
 
 
 def _nonce(value: Any) -> bool:
