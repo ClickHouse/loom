@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 from datetime import timedelta
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -18,9 +19,16 @@ from server.memory.api.models_lifecycle import (
     MemoryPromoteInput,
     MemoryPromoteOutput,
 )
-from server.memory.domain.memory_types import is_searchable_type
+from server.memory.app.provenance import writer_actor
+from server.memory.domain.definitions import KEY_PREFIX, definition_names
+from server.memory.domain.memory_types import (
+    DEFINITION,
+    is_namespace_definition,
+    is_searchable_type,
+)
 from server.memory.domain.trust import verification_state
 from server.memory.store.rows import next_version
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +95,11 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         )
 
     target_key = input.target_key or input.memory_key
+    definition = src.memory_type == DEFINITION or target_key.startswith(KEY_PREFIX)
+    ignored: list[str] = []
+    if definition:
+        await _check_definition_promotion(input, src, target_key)
+        ignored = [f for f in ("approver", "promoted_from_candidate_id") if getattr(input, f)]
     promotion_event = str(uuid.uuid4())
     now_naive = naive_utc_now()
     reversible_until = now_naive + timedelta(days=input.reversible_for_days)
@@ -95,7 +108,8 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     promoted_from_repr = (
         f"{src.org}/{src.namespace}/{src.agent}/{src.user_id}/{src.session_id}/{src.memory_key}"
     )
-    promoted_by = input.approver or "explicit"
+    # A definition's promoter is the token's actor: the admin who answers for it.
+    promoted_by = writer_actor("explicit") if definition else input.approver or "explicit"
     src_value_json = json.dumps(src.value, default=str)
 
     # Embed once: reused for the conflict check and the shared embedding insert.
@@ -118,9 +132,10 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             )
             embedding = []
 
-        if embedding:
+        if embedding and not definition:
             # A close shared row under a *different* key means promoting this
-            # value would contradict the namespace's agreed knowledge — refuse.
+            # value would contradict the namespace's agreed knowledge — refuse. A
+            # definition's names decide instead (`_check_definition_promotion`).
             from server.memory.app import conflicts
 
             peers = await conflicts.check_against_shared(
@@ -157,7 +172,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             "confidence": src.confidence,
             "promoted_from": [promoted_from_repr],
             "promotion_event": promotion_event,
-            "promoted_from_candidate_id": input.promoted_from_candidate_id,
+            "promoted_from_candidate_id": None if definition else input.promoted_from_candidate_id,
             "promoted_by": promoted_by,
             "rationale": input.rationale,
             "promoted_at": now_naive,
@@ -204,7 +219,90 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         shared_memory_key=target_key,
         promotion_event=promotion_event,
         reversible_until=reversible_until,
+        ignored_args=ignored,
     )
+
+
+def _refused(status: int, code: str, message: str, **extra: Any) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
+
+
+async def _check_definition_promotion(input: MemoryPromoteInput, src: Any, target_key: str) -> None:
+    """Refuse a definition promotion the shared layer cannot govern: a source that is
+    not the namespace-wide `definition` row of a `definition/` key promoted to that key,
+    no approved hash or one the text no longer has, a value that reads `medium` or
+    `high`, a value with no term, a namespace at its ceiling, or a name another shared
+    definition holds."""
+    from server.core.errors import PreconditionFailedError
+    from server.core.hashing import served_content_sha256
+    from server.memory.app.sensitivity_level import decoded_text, resolve_level
+    from server.memory.domain.sensitivity import HIGH, MEDIUM, max_sensitivity
+    from server.memory.store import shared as shared_repo
+
+    if not (
+        src.memory_type == DEFINITION
+        and is_namespace_definition(src)
+        and src.memory_key.startswith(KEY_PREFIX)
+        and target_key == src.memory_key
+    ):
+        raise _refused(
+            422,
+            "DEFINITION_PROMOTION_REFUSED",
+            "a definition is promoted from its namespace-wide row (agent, user and session "
+            "'-') of type definition under a definition/ key, to that same key",
+        )
+    if not input.approved_sha256:
+        raise _refused(
+            422, "VALIDATION_FAILED", "a definition promotion names the hash it approves"
+        )
+    current = served_content_sha256(src.value)
+    if current != input.approved_sha256:
+        raise PreconditionFailedError(
+            "the definition's text changed since it was approved", current_sha256=current
+        )
+    graded = await resolve_level(None, await decoded_text(src.value))
+    if max_sensitivity([str(src.sensitivity or ""), graded]) in (MEDIUM, HIGH):
+        raise _refused(
+            422,
+            "SENSITIVE_DEFINITION_REFUSED",
+            "a definition is served to every reader of the namespace: one that reads as "
+            "medium or high sensitivity is not promoted",
+        )
+    names = definition_names(src.value)
+    if names is None:
+        raise _refused(
+            422,
+            "VALIDATION_FAILED",
+            "a definition's value is a JSON object with a string term and a list of string aliases",
+        )
+    org, namespace = input.org, input.namespace
+    ceiling = int(settings.memory_term_leg_max_definitions)
+    held = await shared_repo.fetch_shared(org, namespace, target_key)
+    revision = held is not None and held.get("tombstoned_at") is None
+    count = await shared_repo.count_shared_definitions(org, namespace)
+    rows = (
+        [] if count > ceiling else await shared_repo.shared_definitions(org, namespace, ceiling + 1)
+    )
+    for n in (count, len(rows)):
+        if n > ceiling or (n >= ceiling and not revision):
+            raise _refused(
+                409,
+                "DEFINITION_CEILING",
+                f"the namespace holds {n} shared definitions, at most {ceiling}: demote one "
+                "to make room",
+            )
+    taken = sorted(
+        str(r["memory_key"])
+        for r in rows
+        if r["memory_key"] != target_key and names & (definition_names(r["value"]) or set())
+    )
+    if taken:
+        raise _refused(
+            409,
+            "DEFINITION_NAME_TAKEN",
+            "another shared definition holds this term or an alias",
+            conflicting_keys=taken,
+        )
 
 
 async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:

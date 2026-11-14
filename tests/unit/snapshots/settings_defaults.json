@@ -887,6 +887,7 @@
  "memory_set_chunk_max_chunks": 48,
  "memory_structured_answer_excerpt_limit": 4096,
  "memory_summary_entity_ttl_s": 60.0,
+ "memory_term_leg_max_definitions": 500,
  "memory_usage_fold_acted_max_rows_per_pass": 5000,
  "memory_usage_fold_max_memories_per_pass": 1000,
  "memory_usage_fold_max_pending_mutations": 20,

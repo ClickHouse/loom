@@ -567,7 +567,7 @@ describe("MemoryInspector lifecycle actions", () => {
   it("shares with every agent and stops sharing, for an admin, each after a confirmation", async () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", LIVE.content_sha256));
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Stop sharing" }));
     await waitFor(() => expect(lc.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
     expect(confirmAction).toHaveBeenCalledTimes(2);

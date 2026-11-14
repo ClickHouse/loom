@@ -991,6 +991,12 @@ The MCP transport: tool listing, lean results, session runs.
 The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers.
 
 
+### Governed definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_TERM_LEG_MAX_DEFINITIONS` | `int` | `500` | live | Most shared definitions a namespace holds: a promotion that adds a key past it is refused, and any definition promotion while the namespace is past it (docs/development/curation-loop-design.md). |
+
 ### Prompt safety and search priors
 
 | Variable | Type | Default | Live | Meaning |

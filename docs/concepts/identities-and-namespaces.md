@@ -337,6 +337,19 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
+A `definition` is promoted from its namespace-wide row (agent, user and session `'-'`)
+under a `definition/` key, to that same key. Its value is a JSON object with a string
+`term` and a list of string `aliases`. The promotion names the hash it approves
+(`approved_sha256`, the row's `content_sha256`) and is refused without it, or with 409
+`PRECONDITION_FAILED` when the text no longer has it. It is also refused when the value
+is labelled or reads as `medium` or `high`, when another live shared definition holds
+its term or an alias (409 `DEFINITION_NAME_TAKEN`, names compared case-folded with
+whitespace collapsed), and when it adds a key past `memory_term_leg_max_definitions`, or
+the namespace is already past it (409 `DEFINITION_CEILING`). The token's actor is its
+`promoted_by`: `approver` and `promoted_from_candidate_id` are ignored and named in
+`ignored_args`, and no close shared row under another key refuses it. `learnings.review`
+promotes no candidate of type `definition`.
+
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an
 owner's decision and an audit trail. Promotion is that decision.

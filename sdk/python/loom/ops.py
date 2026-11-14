@@ -14517,6 +14517,7 @@ class MemoryPromoteInput(TypedDict, total=False):
     approver: NotRequired[Optional[str]]
     reversible_for_days: NotRequired[int]
     promoted_from_candidate_id: NotRequired[Optional[str]]
+    approved_sha256: NotRequired[Optional[str]]
 
 
 class MemoryPromoteBody(TypedDict, total=False):
@@ -14533,12 +14534,14 @@ class MemoryPromoteBody(TypedDict, total=False):
     approver: NotRequired[Optional[str]]
     reversible_for_days: NotRequired[int]
     promoted_from_candidate_id: NotRequired[Optional[str]]
+    approved_sha256: NotRequired[Optional[str]]
 
 
 class MemoryPromoteOutput(TypedDict, total=False):
     shared_memory_key: Required[str]
     promotion_event: Required[str]
     reversible_until: Required[str]  # date-time as ISO-8601 text
+    ignored_args: NotRequired[list[str]]
 
 
 class MemoryProposalDecideInput(TypedDict, total=False):

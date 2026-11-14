@@ -120,7 +120,7 @@ Namespace erasure reaches `loom.shared`: its `shared.tombstone` step takes every
 row of the namespace and its census counts them, beside the user erasure's match by
 provenance.
 
-The shared layer needs nine changes for this, each in the pull request that adds the term
+The shared layer needs these changes for this, each in the pull request that adds the term
 leg except where a change names another, because the term leg serves shared rows to every
 reader:
 
@@ -142,74 +142,13 @@ reader:
   the sensitivity sweep, retires that row's shared embedding, keeping the row:
   `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
   serving the copy, and no sweep removes a durable row its writer did not ask to remove.
-- **A promotion of a definition carries the content hash it approves**, on the review path
-  the canonical-JSON hash of the candidate's drafted value, or one the caller must pass to
-  `memory.promote` (a definition promotion without one is refused), and is refused when
-  the source's text no longer has it, so a writer's change between the write and the
-  promotion is never signed off as the admin's.
-- **`promoted_from_candidate_id`** stays on the wire for other promotions; for a
-  definition the wire op `memory.promote` ignores it and names it in `ignored_args`, and
-  the review path sets it internally, so only a review records a candidate, and
-  `memory.lineage` makes no match by key and time window for a `definition` promoted
-  without one, which could name another promoted draft of the same key, such as an earlier
-  revision's.
-- **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
-  through `memory.promote` or `learnings.review`, and so are the queue row's `decided_by`
-  and the audit subject on such a review, never taken from the body's `approver`, which
-  both ops then name in `ignored_args`.
-- **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
-  so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
-- **`memory.promote` refuses a definition whose value is labelled or graded `medium`**, as
-  it refuses `high` today, grading the value itself (`value_reads_high` and the grader the
-  write path uses) rather than trusting the stored label, which an import or a restore
-  leaves empty. A definition is the organization's vocabulary, served to every reader, so
-  the sensitive-retention window, which would anonymize a `medium` source but not its
-  shared copy, never reaches a governed definition.
-- **`memory.promote` refuses a definition whose term or alias** is already another
-  definition's, governed or lapsed (every live shared row of type `definition`), on every
-  promotion path, so a lapsed definition that returns to its approved state never shares a
-  name with one promoted meanwhile. The check reads every definition row of the namespace
-  (an alias lives inside its definition's value, so no key finds it). It first counts them
-  (`count()`, no values read): a promotion that adds a key is refused once the count
-  reaches the ceiling, and every definition promotion, a revision included, is refused
-  while the count is past it; the admin demotes definitions until the namespace is back
-  within it. The read that follows is limited to the ceiling's rows plus one and applies
-  the same two rules to the rows it finds, so a promotion committed after the count is
-  caught. Within the ceiling a revision of a key that holds a live shared definition
-  replaces its row and is never refused by the ceiling. This is the name check. The review
-  path runs it before its write, so a refused review writes nothing, and `memory.promote`
-  runs it again at the promotion, which catches a term or key that landed in between.
-  Names are compared folded, as above.
-- **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
-  key) whose source is not the namespace-wide row, whose `target_key` differs from the
-  source's key or lies outside `definition/`, so a revision always lands on the governed
-  row's key. The read-time check above is what the term leg relies on; this refusal keeps
-  such rows from being made.
-
-The changes break existing callers of two ops, and the implementing pull request names
-each break.
-
-- `memory.promote` refuses a `definition` promotion without the approved hash. Today no
-  hash is asked for.
-- It refuses one from a row that is not namespace-wide, or whose target key is not the
-  source's key or lies outside `definition/`. Today any row but a `profile` row or one
-  labelled `high` is promoted, under any key.
-- It refuses one whose term or alias another live shared definition already holds. Today
-  only an embedding-close shared row refuses it.
-- It refuses one whose value is labelled or graded `medium`. Today only a `high` label
-  refuses.
-- It refuses one that adds a key past the namespace's `memory_term_leg_max_definitions`,
-  and any definition promotion while the namespace is already past it.
-- It ignores a definition's `promoted_from_candidate_id` and names it in `ignored_args`.
-- `learnings.review` refuses, with `VALIDATION_FAILED`, a `definition` candidate that is
-  not a `knowledge_gap` or `query_history` draft. Today `memory_supporters` and
-  `conversation_seeder` candidates of that type are promoted; callers write both to the
-  queue with any type.
-- On both ops, `approver` no longer names a definition's promoter, reviewer or audit
-  subject, and the response names it in `ignored_args`.
-
-The SDKs, the MCP schema and the dashboard's memory drawer, whose share action promotes a
-row, carry the hash field. The drawer passes the `content_sha256` of the row it shows.
+- **The promotion rules** for a definition are built: the approved hash, the source and
+  key, the `medium` refusal, the name check and its ceiling, `promoted_by` from the token,
+  no candidate id or approver on the wire, no `check_against_shared`, and no
+  `learnings.review` promotion of a `definition` candidate ([the shared
+  layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
+  The pull request that adds the `knowledge_gap` and `query_history` candidate kinds lets
+  the review promote those through the path above.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the

@@ -39,7 +39,12 @@ class MemoryPromoteInput(BaseModel):
     # On learnings.review-driven promotions, written to
     # loom.shared.promoted_from_candidate_id so memory.lineage resolves via an
     # FK-style lookup. NULL for auto-promote / direct callers (time-window fallback).
+    # Ignored for a definition, and named in `ignored_args`.
     promoted_from_candidate_id: str | None = None
+    # A definition's promotion names the content hash it approves (the row's
+    # `content_sha256` as memory.get serves it); refused without it, or when the row's
+    # text no longer has it.
+    approved_sha256: str | None = None
 
 
 class MemoryPromoteOutput(BaseModel):
@@ -48,6 +53,9 @@ class MemoryPromoteOutput(BaseModel):
     promotion_event: str  # UUID, also the audit_log request_id
     # End of the reversal window: now plus `reversible_for_days`.
     reversible_until: datetime
+    # Fields the call sent that this promotion does not use: for a definition,
+    # `approver` (the token's actor promotes it) and `promoted_from_candidate_id`.
+    ignored_args: list[str] = Field(default_factory=list)
 
 
 class MemoryDemoteInput(BaseModel):

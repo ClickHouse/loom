@@ -2489,6 +2489,12 @@ class McpSettings(BaseModel):
 class MemorySettings(BaseModel):
     """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
 
+    # ---- governed definitions ----
+    # Most shared definitions a namespace holds: a promotion that adds a key past it is
+    # refused, and any definition promotion while the namespace is past it
+    # (docs/development/curation-loop-design.md).
+    memory_term_leg_max_definitions: Annotated[int, LIVE] = Field(default=500, ge=1)
+
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
     # they break ties instead of re-ranking. 0.0 = uncapped; a request's

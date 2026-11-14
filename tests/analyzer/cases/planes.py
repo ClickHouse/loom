@@ -794,6 +794,10 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )
+    from server.memory.store import shared as SH
+
+    await SH.count_shared_definitions(ORG, NS, ch=ch)
+    await SH.shared_definitions(ORG, NS, 10, ch=ch)
     await CF.resolve_conflict_floor(ORG, NS, "preference")
     RD.clear_cache()
     await RD.resolve(ORG, NS, ch=ch)

@@ -318,6 +318,7 @@
  "memory_search_top_k_ceiling_writer",
  "memory_search_trust_weight",
  "memory_summary_entity_ttl_s",
+ "memory_term_leg_max_definitions",
  "memory_webhook_ack_timeout_seconds",
  "memory_webhook_backoff_steps_seconds",
  "memory_webhook_cooldown_seconds",

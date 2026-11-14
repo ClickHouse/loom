@@ -192,3 +192,34 @@ async def tombstone_shared_embedding(
     await memory_repo.reemit_shared_embedding_rows(
         org, namespace, memory_key, ch=ch, tombstoned_at=when, version=int(version)
     )
+
+
+_LIVE_DEFINITIONS = """
+FROM loom.shared FINAL
+WHERE org = {org:String} AND namespace = {ns:String}
+  AND memory_type = 'definition' AND startsWith(memory_key, 'definition/')
+  AND tombstoned_at IS NULL
+"""
+
+
+async def count_shared_definitions(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """How many live shared definitions the namespace holds; no value is read."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n" + _LIVE_DEFINITIONS + "SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "ns": namespace},
+    )
+    return int((row or {}).get("n") or 0)
+
+
+async def shared_definitions(
+    org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live shared definitions' keys and values, at most `limit`, read strongly."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        "SELECT memory_key, value"
+        + _LIVE_DEFINITIONS
+        + "ORDER BY memory_key LIMIT {lim:UInt32} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "ns": namespace, "lim": limit},
+    )

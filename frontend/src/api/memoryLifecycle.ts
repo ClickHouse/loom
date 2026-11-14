@@ -25,9 +25,15 @@ export async function rejectMemory(id: Identity, memoryKey: string, reason: stri
   return post("/v1/memory.reject", { ...id, memory_key: memoryKey, rejection_reason: reason });
 }
 
-/** POST /v1/memory.promote (ADMIN): a copy in the namespace's shared layer, read by every agent. */
-export async function shareMemory(id: Identity, memoryKey: string): Promise<{ shared_memory_key: string }> {
-  return post("/v1/memory.promote", { ...id, memory_key: memoryKey });
+/** POST /v1/memory.promote (ADMIN): a copy in the namespace's shared layer, read by every agent.
+ * `approvedSha256` is the hash of the text shown: a definition's promotion is refused
+ * without it, or when the text changed since. */
+export async function shareMemory(
+  id: Identity,
+  memoryKey: string,
+  approvedSha256?: string,
+): Promise<{ shared_memory_key: string }> {
+  return post("/v1/memory.promote", { ...id, memory_key: memoryKey, approved_sha256: approvedSha256 });
 }
 
 /** POST /v1/memory.demote (ADMIN): the shared copy goes; the agent's own row stays. */

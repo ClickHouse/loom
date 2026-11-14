@@ -658,7 +658,7 @@ export function MemoryInspector({
     });
     if (!ok) return;
     try {
-      const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, detail.content_sha256);
       toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {
