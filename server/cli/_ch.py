@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -159,8 +160,6 @@ async def check_org_free(free: OrgFree) -> None:
     cell's stores always finds one there; an absent row, or state tables not migrated
     yet, passes, so a later cell runs these before it is prepared. A failed read refuses,
     but a revocation runs through an outage (docs/architecture/cells.md, "Invariants")."""
-    import sys
-
     from server.core import pg
     from server.settings import settings
 
@@ -187,6 +186,35 @@ async def check_org_free(free: OrgFree) -> None:
             f"refusing: this Postgres's first row names cell {name!r}, not "
             f"LOOM_CELL={settings.cell!r}: the command would change another cell's stores"
         )
+
+
+async def check_setup_stores(free: OrgFree) -> None:
+    """For a command that sets up a cell's ClickHouse on a client of its own before any
+    gated connect (`loom ch-setup`), the gate a gated connect would run, before it writes:
+    its ClickHouse, where it already records a deployment, must record its Postgres's, and
+    the Postgres `first` row must not name another cell. A ClickHouse with no Loom
+    database or record yet (a service set up before the first boot) passes."""
+    from server.core import pg, pg_profile
+    from server.core.ch import get_client
+    from server.core.ch_errors import error_code
+    from server.settings import settings
+
+    if not settings.cell or not pg.enabled():
+        return
+    ch = get_client()
+    try:
+        try:
+            await ch.connect()
+            recorded = await pg_profile.recorded_authority(ch)
+        except Exception as e:
+            if error_code(e) not in (60, 81):  # UNKNOWN_TABLE, UNKNOWN_DATABASE: fresh
+                raise
+            recorded = None
+        if recorded is not None:
+            pg.expect_deployment((str(recorded["deployment_id"]), int(recorded["epoch"])))
+        await check_org_free(free)
+    finally:
+        await disconnect(ch)
 
 
 async def check_orgs(orgs: Iterable[str]) -> None:

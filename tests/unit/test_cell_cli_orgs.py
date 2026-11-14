@@ -280,16 +280,67 @@ def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
 
     from server.cli import ch_setup
 
+    def _connect() -> None:
+        raise AssertionError("connected to set up ClickHouse")
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    async def _recorded(_ch: Any) -> None:
+        return None  # a fresh service: no record yet
+
     _cell_set(monkeypatch, ("enforced", "us-1"))
-    monkeypatch.setattr(
-        ch_setup.preflight, "connect", lambda: (_ for _ in ()).throw(AssertionError("connected"))
-    )
+    monkeypatch.setattr(ch_setup.preflight, "connect", _connect)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
     monkeypatch.setattr(settings, "ch_user", "loom")
     monkeypatch.setattr(settings, "ch_reader_user", "")
     monkeypatch.setenv("LOOM_CH_READER_USER", "")
     args = argparse.Namespace(print_analyst_sql=False, print_sql=False)
     with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1'"):
         ch_setup._cmd_ch_setup(args)
+
+
+def test_ch_setup_is_refused_on_another_deployments_clickhouse_before_it_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ClickHouse that records another deployment than this Postgres is refused before
+    the reader or a grant is written; the deployment check runs on the state session."""
+    import argparse
+
+    from server.cli import ch_setup
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    async def _recorded(_ch: Any) -> dict[str, Any]:
+        return {"deployment_id": "dep-other", "epoch": 1}
+
+    armed: list[Any] = []
+
+    async def _read() -> tuple[str, str]:
+        armed.append(pg._expected)
+        raise pg.AuthorityMismatch("Postgres records deployment dep-eu-1")
+
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(_ch, "_read_state", _read)
+    monkeypatch.setattr(pg, "_expected", None)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
+    monkeypatch.setattr(
+        ch_setup.preflight, "connect", lambda: pytest.fail("connected to set up ClickHouse")
+    )
+    monkeypatch.setattr(settings, "ch_user", "loom")
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    with pytest.raises(pg.AuthorityMismatch):
+        ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False))
+    assert armed == [("dep-other", 1)]
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:
