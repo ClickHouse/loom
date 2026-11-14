@@ -4,8 +4,8 @@ This page lists what Loom does, self-hosted from the Apache-2.0 repository: one 
 area, each row linked to the page that covers it. Several capabilities must be turned on;
 the linked page says how, and the boolean switches that load false are listed in
 [status](../reference/status.md). The embedder is your choice: the bundled local model, a
-hosted provider or an OpenAI-compatible endpoint you run. Extraction and cited answers
-need a real LLM ([models and API keys](models-and-keys.md)).
+hosted provider or an OpenAI-compatible endpoint you run. Extraction, summaries and
+cited answers need a real LLM ([models and API keys](models-and-keys.md)).
 
 ## Memory
 
@@ -21,7 +21,7 @@ need a real LLM ([models and API keys](models-and-keys.md)).
 | Change webhooks             | One signed event per memory change, posted to a URL a namespace admin registers                                                        | [Change webhooks](../features/memory/writing.md#change-webhooks)                 |
 | Working memory and profiles | Small named blocks and profile text an agent is given every time                                                                       | [Working memory and profiles](../features/memory/working-memory-and-profiles.md) |
 | Procedures and learnings    | Steps learned from reported runs, reflections and a review queue of candidate facts                                                    | [Procedures and learnings](../features/memory/procedures-and-learnings.md)       |
-| Memories linked to code     | A memory about code follows the definitions it names as they move or change                                                            | [Memory](../concepts/memory.md#memories-linked-to-code)                          |
+| Memories linked to code     | A memory about code follows the definitions it names as they move or change                                                            | [Memories linked to code](../concepts/memory.md#memories-linked-to-code)         |
 | Entity graph                | Entities and their relations beside the memory rows                                                                                    | [Entity graph](../features/entity-graph.md)                                      |
 
 ## Documents, code and work records
@@ -57,7 +57,7 @@ need a real LLM ([models and API keys](models-and-keys.md)).
 | Replicas and Kubernetes        | Identical replicas behind one URL, and a Helm chart                                                                           | [Running N replicas](../operations/replicas.md) · [Kubernetes](../operations/kubernetes.md)                                                              |
 | Postgres memory authority      | Optional: live memory and document heads in Postgres, chosen at first boot                                                    | [Postgres](../operations/postgres.md)                                                                                                                    |
 | Backup and recovery            | ClickHouse backups, plus the document bucket and Postgres where used                                                          | [Backup and recovery](../operations/backup-and-recovery.md)                                                                                              |
-| Upgrades                       | Upgrades that replace the image and apply the migrations the new build carries                                                | [Upgrades](../operations/upgrades.md)                                                                                                                    |
+| Upgrades                       | The image is replaced and its migrations apply at boot; a fresh install takes the same path                                   | [Upgrades](../operations/upgrades.md)                                                                                                                    |
 | Namespace copy and OKF bundles | A namespace copied to another Loom on a schedule, or exported and imported as an OKF bundle                                   | [Copying a namespace](../operations/okf-sync.md) · [OKF bundles](../features/integrations/okf.md)                                                        |
 | Usage export                   | One UTC day of usage and a snapshot of the namespaces, written to S3 as Parquet for a data warehouse                          | [Analytics export](../operations/analytics-export.md)                                                                                                    |
 
