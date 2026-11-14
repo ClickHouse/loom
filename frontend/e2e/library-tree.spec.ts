@@ -128,6 +128,31 @@ for (const [pointer, touch, side] of [
   });
 }
 
+// A folder upload nests eight deep: past the fourth level rows share its indent, so the
+// deepest title keeps room (139 px measured at 1440 px).
+const DEEP = Array.from({ length: 9 }, (_, i) => ({
+  namespace: `col-d${i}`,
+  parent: i === 0 ? "" : `col-d${i - 1}`,
+  personal: false,
+  role: "admin",
+  description: "",
+  title: `Quarterly planning notes ${i}`,
+}));
+
+test.describe("1440 px, eight deep", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("the deepest row keeps room for its title", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 2, collections: DEEP });
+    await page.goto("/library?collection=col-d8");
+    const link = page
+      .getByRole("navigation", { name: "Library places" })
+      .getByRole("link", { name: "Quarterly planning notes 8" });
+    await expect(link).toBeVisible();
+    expect((await link.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(100);
+  });
+});
+
 test.describe("1440 px under a reload bar", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 

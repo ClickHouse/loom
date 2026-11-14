@@ -15,12 +15,10 @@ function handoffTarget(besideTree: boolean): HTMLElement | null {
   return tree?.querySelector<HTMLElement>('a[aria-current="page"]') ?? tree?.querySelector<HTMLElement>("a") ?? null;
 }
 
-/** When `besideTree` changes (a resize draws or removes the Library's tree) and the last
- *  control focused in <main> went with it, the focus goes on the next frame to `handoffTarget`,
- *  else the view's h1. Focus still on the page, or since moved out of <main>, stays. A title
- *  typed in the tree's New collection form goes with the tree. A click on the page's
- *  background fires no focusin, so the control before it still counts as last and a resize
- *  after it hands the focus on. */
+/** When a resize draws or removes the Library's tree and takes the last control focused in
+ *  <main> with it, `handoffTarget` (else the h1) takes the focus on the next frame; a title
+ *  typed in the tree's form goes with it. A click on the page's background fires no focusin,
+ *  so the control before it still counts as last and a resize after it hands the focus on. */
 export function useTreeFocusHandoff(besideTree: boolean): void {
   const last = useRef<Element | null>(null);
   useEffect(() => {

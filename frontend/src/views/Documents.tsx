@@ -197,10 +197,7 @@ export function Documents() {
     placeVersion.current += 1;
     return placeVersion.current;
   }, []);
-  // A collection just made, from the tree or the dialog, opens only while the person is where
-  // the create started (`version`) and this page is still open; otherwise the refresh its
-  // create sent lists it. The read starts before the move so the old list never says it is
-  // missing.
+  // The read starts before the move so the old list never says it is missing.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
     (name: string, arriveFocus: string | undefined, version: number) => {
