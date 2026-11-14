@@ -25,7 +25,7 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
 
-Lab 1 also needs the Python SDK in a virtual environment, in a terminal on the laptop or
+Lab 1, and the SDK route in Lab 2, need the Python SDK in a virtual environment, in a terminal on the laptop or
 the codespace's terminal. On Debian or Ubuntu, a codespace and WSL included, run
 `sudo apt-get update && sudo apt-get install -y python3-venv` before the commands below.
 The SDK needs Python 3.11 or newer; `python3 --version` says which one is installed. A
@@ -86,9 +86,10 @@ Exercises:
 Index a repository on the stack
 ([index a repository](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)).
 Then ask where a symbol is defined, who calls it, and what a change to it touches
-([what the code index answers](../features/code-index/overview.md#what-it-answers)), over
-HTTP or the SDK. The single-user stack does not fill in `code.*` calls, so each one names
-`org` `"dev"` and the repository's `namespace` (`code-myrepo` in the quickstart's entry).
+([what the code index answers](../features/code-index/overview.md#what-it-answers)) over
+HTTP, with `POST /v1/code.<op>`. The single-user stack does not fill in `code.*` calls, so
+each body names `org` `"dev"` and the repository's `namespace` (`code-myrepo` in the
+quickstart's entry).
 
 A coding agent can ask the same questions once connected
 ([connect a coding agent](../getting-started/connect-a-coding-agent.md)). It runs on its own
