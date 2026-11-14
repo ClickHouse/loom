@@ -1083,6 +1083,18 @@ describe("the Library on a collection", () => {
     ).toBeInTheDocument();
   });
 
+  it("hands focus in the tree to the place picker when a resize takes the tree away", async () => {
+    const narrow = resizable();
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    render(<Documents />);
+    await settle();
+    const tree = screen.getByRole("navigation", { name: "Library places" });
+    within(tree).getAllByRole("link")[0].focus();
+    act(() => narrow());
+    expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("Show the documents of")).toHaveFocus());
+  });
+
   describe("a create answered after the tree is gone", () => {
     it("still opens it when a resize took the tree away", async () => {
       const narrow = resizable();

@@ -529,7 +529,7 @@ export function CollectionChips({
   rows: CollectionEntry[] | null;
   /** Titles two collections share (`repeatedTitles`): those show their address too. */
   repeated: Set<string>;
-  /** The collection shown; null on My files or a namespace, whose list is below the documents. */
+  /** The collection shown; null on My files or a namespace. */
   collection: CollectionEntry | null;
   onPick: (collection: string) => void;
 }) {

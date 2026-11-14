@@ -1,6 +1,16 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
  *  no keys of their own), with New collection at its foot. */
-import { type CSSProperties, type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  memo,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
@@ -9,6 +19,7 @@ import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { IconButton } from "../components/IconButton";
 import { announceCreated } from "../flows/CreateCollectionDialog";
+import { focusViewHeading } from "../lib/place";
 import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
 import {
   collectionPath,
@@ -227,8 +238,26 @@ export const LibraryTree = memo(function LibraryTree({
     );
   };
 
+  // A narrower page takes the tree away: focus in it goes to the place picker drawn instead,
+  // else the view's h1. A title typed in its New collection form is dropped.
+  const nav = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const el = nav.current;
+    return () => {
+      if (!el?.contains(document.activeElement)) return;
+      requestAnimationFrame(() => {
+        // Only focus that fell to the page: a navigation away has placed its own.
+        if (document.activeElement && document.activeElement !== document.body) return;
+        const picker = document.querySelector<HTMLElement>('[aria-label="Show the documents of"]');
+        if (picker) picker.focus();
+        else focusViewHeading();
+      });
+    };
+  }, []);
+
   return (
     <nav
+      ref={nav}
       aria-label="Library places"
       aria-busy={busy || undefined}
       className="library-tree"
@@ -422,8 +451,8 @@ function NewCollectionForm({
   const tooLong = titleTooLong(trimmed);
   const make = async (e: FormEvent) => {
     e.preventDefault();
-    // Create is disabled without a title, or with one too long, and so is the form's submit.
-    if (busy) return;
+    // Create is disabled without a title, with one too long, or while it is sent, and so is the
+    // form's submit.
     setBusy(true);
     let r: CollectionCreated;
     try {
