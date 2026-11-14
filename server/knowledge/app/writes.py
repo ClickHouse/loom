@@ -325,7 +325,7 @@ async def handle_knowledge_upsert(
     input: KnowledgeUpsertInput,
     *,
     read_version: int | None = None,
-    access: access_list.AccessList = access_list.UNREAD,
+    permissions: access_list.AccessList = access_list.UNREAD,
 ) -> KnowledgeUpsertOutput:
     """Insert new chunks for `source_uri`; soft-supersede prior chunks.
 
@@ -344,8 +344,8 @@ async def handle_knowledge_upsert(
     written since refuses it (HeadMoved, 409) and the caller's copy never replaces a
     newer write.
 
-    `access`: a mirrored document's permission list, for the sync's turn to pass; never
-    a field of the op, so no request writes one.
+    `permissions`: a mirrored document's permission list, for the sync's turn to pass;
+    never a field of the op, so no request writes one.
     """
     from server.knowledge.store import chunks as knowledge_repo
 
@@ -445,7 +445,7 @@ async def handle_knowledge_upsert(
         blob_content_type=blob_content_type,
         original_filename=original_filename,
         revision=revision,
-        access_json=access_list.to_json(access),
+        access_json=access_list.to_json(permissions),
     )
     try:
         # Inside the cleanup: a chunk insert that timed out may land later.

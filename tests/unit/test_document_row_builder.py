@@ -1012,7 +1012,7 @@ def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     ("passed", "written"),
-    [({"access": LISTED_ACCESS}, LISTED), ({}, "")],
+    [({"permissions": LISTED_ACCESS}, LISTED), ({}, "")],
 )
 def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
     monkeypatch: pytest.MonkeyPatch, passed: dict[str, Any], written: str

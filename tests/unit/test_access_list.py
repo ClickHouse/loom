@@ -75,7 +75,11 @@ def test_unread_is_stored_empty_as_every_other_writer_stores_it() -> None:
 
 def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
     a = access_list.AccessList(
-        emails=("a@example.com",), owner="user:a", domains=("example.com",), anyone=True
+        emails=("a@example.com",),
+        owner="user:a",
+        groups=("team@example.com",),
+        domains=("example.com",),
+        anyone=True,
     )
     text = access_list.to_json(a)
     assert access_list.from_json(text) == a
