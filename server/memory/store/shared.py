@@ -17,6 +17,8 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
+from server.memory.domain.definitions import KEY_PREFIX
+from server.memory.domain.memory_types import DEFINITION
 
 # The agent of a promoted row's embedding: shared rows are not agent-scoped.
 SHARED_AGENT = "_shared"
@@ -204,11 +206,17 @@ async def shared_definitions(
         SELECT memory_key, value
         FROM loom.shared FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND memory_type = 'definition' AND startsWith(memory_key, 'definition/')
+          AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
           AND tombstoned_at IS NULL
         ORDER BY memory_key
         LIMIT {lim:UInt32}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": org, "ns": namespace, "lim": limit},
+        params={
+            "org": org,
+            "ns": namespace,
+            "lim": limit,
+            "type": DEFINITION,
+            "prefix": KEY_PREFIX,
+        },
     )

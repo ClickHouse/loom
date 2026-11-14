@@ -2490,8 +2490,7 @@ class MemorySettings(BaseModel):
     """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
 
     # ---- governed definitions ----
-    # Most shared definitions a namespace holds: a promotion that adds a key past it is
-    # refused, and any definition promotion while the namespace is past it
+    # Most shared definitions a namespace holds; a promotion past it is refused
     # (docs/concepts/identities-and-namespaces.md).
     memory_term_leg_max_definitions: Annotated[int, LIVE] = Field(default=500, ge=1)
 

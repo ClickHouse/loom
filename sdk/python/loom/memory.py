@@ -1938,7 +1938,9 @@ class MemoryClient:
         intent: *"this learning should propagate"*. Other agents in the
         namespace pick it up automatically through `memory.search(scope="shared")`.
 
-        Reversible within `reversible_for_days` (default 7) via `demote()`.
+        Reversible within `reversible_for_days` (default 7) via `demote()`. A
+        definition is shared from its namespace-wide row (`agent_id="-"`) and
+        names the `content_sha256` it approves in `approved_sha256`.
         """
         return await self.promote(
             memory_key,

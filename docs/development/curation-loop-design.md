@@ -411,10 +411,10 @@ every viewer.
 ## Promotion
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
-runs `memory.promote`'s name check (the count, the ceiling's two refusals, then the term
-and aliases against every other live shared row of type `definition`, from which it also
-takes a revision's key), checks the draft for a credential-shaped value
-(`value_reads_high`), and checks the rollout gate, so a promotion these refuse writes
+runs `memory.promote`'s name check (one strong read of at most the ceiling plus one live
+shared rows of type `definition` under `definition/`, the ceiling's two refusals, then the
+term and aliases against every other such row, from which it also takes a revision's
+key), checks the draft for a value that grades `medium` or `high`, and checks the rollout gate, so a promotion these refuse writes
 nothing. Then it writes the definition through `memory.set` for the whole namespace
 (today's seeder path writes under the approver's `user_id`; the implementing pull request
 writes the namespace-wide row), with no expiry: the write clears any `expires_at` the head
@@ -564,11 +564,10 @@ the op budgets before they ship it.
   full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one read
   of the matched definitions' source rows, and a grading of each matched source's value,
   on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
-- A definition's promotion, through `memory.promote` or `learnings.review`, counts the
-  namespace's definition rows and then reads them, at most
-  `memory_term_leg_max_definitions` plus one (past it the promotion is refused), to check
-  its term and aliases; the review path runs the count and the read twice, once before its
-  write and once at the promotion.
+- A definition's promotion, through `memory.promote` or `learnings.review`, reads the
+  namespace's definition rows once, at most `memory_term_leg_max_definitions` plus one
+  (past it the promotion is refused), to check its term and aliases; the review path runs
+  the read twice, once before its write and once at the promotion.
 - `memory.definitions.list` counts the rows (`count()`), reads the full values of at most
   the ceiling's rows, the ones the term leg reads, to find names held by more than one,
   and marks the rest `capped` from their key, `promoted_at`, `promotion_event` and

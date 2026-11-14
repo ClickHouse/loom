@@ -2929,8 +2929,7 @@ settings:
 
   # --- governed definitions ---
 
-  # Most shared definitions a namespace holds: a promotion that adds a key past it is
-  # refused, and any definition promotion while the namespace is past it
+  # Most shared definitions a namespace holds; a promotion past it is refused
   # (docs/concepts/identities-and-namespaces.md). [live]
   # memory_term_leg_max_definitions: 500
 

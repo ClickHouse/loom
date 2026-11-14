@@ -53,7 +53,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return state["row"]
 
     async def definitions(org: str, namespace: str, limit: int, **_k: Any) -> list[dict]:
-        rows = [{"memory_key": k, "value": v} for k, v in sorted(state["shared"].items())]
+        # As the String column stores them: JSON text.
+        rows = [
+            {"memory_key": k, "value": json.dumps(v)} for k, v in sorted(state["shared"].items())
+        ]
         return rows[:limit]
 
     async def write(row: dict[str, Any]) -> None:
