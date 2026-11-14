@@ -44,7 +44,9 @@ from server.memory.domain.memory_types import (
 )
 from server.memory.domain.sensitivity import HIGH, MEDIUM, max_sensitivity
 from server.memory.domain.trust import verification_state
+from server.memory.store import shared as shared_repo
 from server.memory.store.rows import MemoryRow, next_version
+from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -54,7 +56,6 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     # Lazy imports break the import cycle with memory/app/handlers.py.
     import server.memory.store as memory_repo
     from server.memory.domain.excerpt import build_excerpt
-    from server.memory.store import shared as shared_repo
 
     src = await memory_repo.get_by_key(
         memory_repo.Identity(
@@ -113,8 +114,10 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
 
     target_key = input.target_key or input.memory_key
     is_definition_promotion = is_definition(src) or target_key.startswith(DEFINITION_KEY_PREFIX)
-    names: set[str] = set()
+    # A definition's names, None for any other row.
+    names: set[str] | None
     if is_definition_promotion:
+        note_budget_shape("definition")
         names = await _check_definition_promotion(input, src, target_key)
         sent = {
             "approver": input.approver,
@@ -122,10 +125,13 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         }
         ignored = [f for f, v in sent.items() if v is not None]
         # The token's actor answers for a definition, which records no candidate.
-        promoted_by, candidate_id = writer_actor("explicit"), None
+        promoted_by = writer_actor("explicit")
+        candidate_id = None
     else:
+        names = None
         ignored = ["approved_sha256"] if input.approved_sha256 is not None else []
-        promoted_by, candidate_id = input.approver or "explicit", input.promoted_from_candidate_id
+        promoted_by = input.approver or "explicit"
+        candidate_id = input.promoted_from_candidate_id
     promotion_event = str(uuid.uuid4())
     now_naive = naive_utc_now()
     reversible_until = now_naive + timedelta(days=input.reversible_for_days)
@@ -202,10 +208,10 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         "tombstoned_at": None,
         "version": next_version(),
     }
-    if is_definition_promotion:
-        await _insert_definition(input, names, row)
-    else:
+    if names is None:
         await shared_repo.insert_shared_row(row)
+    else:
+        await _insert_definition(input.org, input.namespace, names, row)
 
     # Make the shared memory searchable via a scope='shared' embedding,
     # reusing the vector above (or a stub the embedding_worker reconciles).
@@ -301,30 +307,27 @@ async def _check_definition_promotion(
 
 
 async def _insert_definition(
-    input: MemoryPromoteInput, names: set[str], row: dict[str, Any]
+    org: str, namespace: str, names: set[str], row: dict[str, Any]
 ) -> None:
     """Write the definition's shared row unless the namespace is at its ceiling or another
     shared definition holds one of its names, under a claim on the namespace so that two
     promotions cannot both pass."""
-    from server.memory.store import shared as shared_repo
-
-    claim = f"definition.promote/{input.org}/{input.namespace}"
+    claim = f"definition.promote/{org}/{namespace}"
     async with leases.holding(claim, ttl_s=30, wait_s=10) as held:
         if not held:
             raise OverloadedError("another definition promotion in this namespace is running")
-        await _check_shared_definitions(input, names, row["memory_key"])
+        await _check_shared_definitions(org, namespace, names, row["memory_key"])
         await shared_repo.insert_shared_row(row)
 
 
 async def _check_shared_definitions(
-    input: MemoryPromoteInput, names: set[str], target_key: str
+    org: str, namespace: str, names: set[str], target_key: str
 ) -> None:
-    from server.memory.store import shared as shared_repo
-
+    """Refuse a definition past the namespace's ceiling or under a name another holds."""
     ceiling = settings.memory_term_leg_max_definitions
     # At most the ceiling plus one: within the ceiling the read holds every live definition,
     # so it says whether this key holds one already (a revision).
-    rows = await shared_repo.shared_definitions(input.org, input.namespace, ceiling + 1)
+    rows = await shared_repo.shared_definitions(org, namespace, ceiling + 1)
     revision = any(r["memory_key"] == target_key for r in rows)
     if len(rows) > ceiling:
         raise DefinitionCeilingError(
@@ -349,8 +352,6 @@ async def _check_shared_definitions(
 
 
 async def handle_memory_demote(input: MemoryDemoteInput) -> MemoryDemoteOutput:
-    from server.memory.store import shared as shared_repo
-
     row = await shared_repo.fetch_shared(
         input.org,
         input.namespace,

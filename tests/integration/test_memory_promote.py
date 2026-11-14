@@ -13,6 +13,7 @@ Covers the explicit promotion path:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import uuid
@@ -330,3 +331,38 @@ async def test_a_name_is_held_until_its_definition_is_demoted(
         await a.memory.demote("definition/arr")
         out = await promote("definition/revenue", revenue)
     assert out["shared_memory_key"] == "definition/revenue"
+
+
+@pytest.mark.asyncio
+async def test_promotions_racing_for_one_name_leave_one_holder(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the server: three definitions sharing a term, promoted at once, leave one
+    shared row; the others are refused by name or by the namespace's claim."""
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-race"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    keys = [f"definition/arr-{i}" for i in range(3)]
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        hashes = {}
+        for key in keys:
+            await a.memory.set(key, {"term": "ARR", "body": key}, "definition", agent_id="-")
+            hashes[key] = (await a.memory.get(key, agent_id="-"))["content_sha256"]
+        results = await asyncio.gather(
+            *(a.memory.promote(k, agent_id="-", approved_sha256=hashes[k]) for k in keys),
+            return_exceptions=True,
+        )
+    refused = [r.code for r in results if isinstance(r, LoomError)]
+    assert len(refused) == 2, results
+    assert set(refused) <= {"DEFINITION_NAME_TAKEN", "OVERLOADED"}
+    count = ch_client.query(
+        "SELECT count() FROM loom.shared FINAL WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": org, "ns": ns},
+    ).result_rows[0][0]
+    assert count == 1

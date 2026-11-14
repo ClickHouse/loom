@@ -6443,6 +6443,9 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
+    # "definition": the namespace's claim around the name check and the insert, three
+    # lease statements (measured p95 98 ms, at most 110 ms, against 77 ms without them).
+    "memory.promote": {"definition": 150},
     "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 220},
     "memory.update_by_id": {"webhook": 180},

@@ -460,9 +460,7 @@ export function MemoryInspector({
   const rejectReason = why("memory.reject");
   const shareReason = why("memory.promote");
   const unshareReason = why("memory.demote");
-  // memory.promote refuses a profile row and a high one. A definition, or any row under a
-  // definition/ key, is shared only as a live namespace-wide definition under that key, not
-  // labelled medium (the server checks expiry).
+  // The server also refuses a definition past its expiry or one whose value reads medium.
   const namespaceWide = [detail?.agent, detail?.user_id, detail?.session_id].every((v) => !v || v === "-");
   const isDefinition = detail?.memory_type === "definition";
   const underDefinitionKey = memoryKey.startsWith("definition/");
