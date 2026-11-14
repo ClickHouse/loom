@@ -204,16 +204,18 @@ export const LibraryTree = memo(function LibraryTree({
     const shown = current ? byName.get(current) : undefined;
     return new Set(shown ? collectionPath(shown, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : []);
   }, [byName, current]);
-  // Opened once per place and path: a move of the place under other parents opens those, and a
-  // refresh with the same path leaves a parent the person closed closed.
-  const revealedFor = useRef<string | null>(null);
+  // What was opened for the place shown, each once: a move of the place under other parents
+  // opens those, and a parent the person closed stays closed whatever the answers say after.
+  const openedFor = useRef<{ place: string | null; keys: Set<string> }>({ place: null, keys: new Set() });
   // Before paint, so a tree drawn by a resize shows the place's row for the focus it is handed.
   useLayoutEffect(() => {
-    if (current && !byName.has(current)) return;
-    const path = [current, ...onPath].join("\n");
-    if (revealedFor.current === path) return;
-    revealedFor.current = path;
-    if (current) setRevealed((prev) => withAll(prev, [...onPath]));
+    if (!current || !byName.has(current)) return;
+    if (openedFor.current.place !== current) openedFor.current = { place: current, keys: new Set() };
+    const opened = openedFor.current.keys;
+    const fresh = [...onPath].filter((key) => !opened.has(key));
+    if (fresh.length === 0) return;
+    for (const key of fresh) opened.add(key);
+    setRevealed((prev) => withAll(prev, fresh));
   }, [byName, current, onPath]);
   const isOpen = (key: string) => open.has(key) || revealed.has(key);
   const toggle = (key: string) => {

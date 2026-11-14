@@ -36,7 +36,6 @@ import {
   type KnowledgeDocument,
   type InlinePreview,
   type CollectionEntry,
-  isAuthDisabled,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
@@ -269,9 +268,9 @@ export function Documents() {
   // the server decides.
   const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
-  // Who the tree remembers folds for, as the getting-started checklist names them. App draws
-  // no page before whoami answers, so this is never a signed-in person's "".
-  const subject = whoami?.subject ?? (isAuthDisabled() ? "local" : "");
+  // Who the tree remembers folds for. App draws no page before whoami answers, so it is ""
+  // only with auth off.
+  const subject = whoami?.subject ?? "";
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);

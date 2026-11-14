@@ -452,6 +452,17 @@ describe("LibraryTree", () => {
     expect(within(legal).getByRole("link", { name: "Runbooks" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("keeps a parent the person closed closed while answers swing between old and new paths", async () => {
+    const moved = ROWS.map((c) => (c.namespace === "col-runbooks" ? { ...c, parent: "col-legal" } : c));
+    const { update } = tree({ namespace: null, current: "col-runbooks" });
+    update({ rows: moved });
+    await userEvent.click(screen.getByRole("button", { name: "Collections in Legal" }));
+    // A lagging replica answers with the old path, then the new one again.
+    update({ rows: [...ROWS] });
+    update({ rows: [...moved] });
+    expect(screen.getByRole("button", { name: "Collections in Legal" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("keeps a fold a later answer from a lagging replica does not list", async () => {
     const { update } = tree();
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
