@@ -18,6 +18,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from server.core import cell as cell_state
 from server.core.paths import ROUTER_MIGRATIONS_DIR
 from server.settings import settings
 
@@ -612,8 +613,6 @@ async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tup
     so a change to it waits for the placement and the quota holds across router
     replicas; a refused placement raises PlacementRefused and writes nothing, and an org
     longer than a cell holds raises OrgTooLong."""
-    from server.core import cell as cell_state
-
     if cell_state.org_too_long(org):
         raise OrgTooLong(cell_state.org_too_long_reason(org))
     async with _reading(), _connection() as conn, conn.transaction():

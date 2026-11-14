@@ -158,12 +158,21 @@ def test_an_org_longer_than_a_cell_holds_answers_400_and_places_nothing(
 ) -> None:
     """The directory's one check refuses it before any statement, for every placing
     route; the route answers 400, which no retry changes."""
+    connected: list[int] = []
+
+    @asynccontextmanager
+    async def _connection(**_kw: Any) -> Any:
+        connected.append(1)
+        raise AssertionError("connected")
+        yield
+
     monkeypatch.setattr(directory, "place", _real_place)
+    monkeypatch.setattr(directory, "_connection", _connection)
     long = "a" * (cell.ORG_MAX_BYTES + 1)
     answer = _place(_client(), long)
     assert answer.status_code == 400
     assert f"longer than the {cell.ORG_MAX_BYTES}" in answer.json()["error"]
-    assert fake.placements == {}
+    assert connected == []
 
 
 def test_the_directory_refuses_a_long_org_before_it_connects(
