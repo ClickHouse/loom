@@ -62,7 +62,7 @@ def test_a_run_calls_recall_in_the_bound_scope() -> None:
     assert "Alice prefers aisle" in result.output
 
 
-def test_a_refused_call_returns_the_error_and_the_run_goes_on() -> None:
+def test_a_refused_call_is_a_failed_tool_result_and_the_run_goes_on() -> None:
     class _Down(_FakeAgent):
         async def call(self, op: str, body: dict[str, Any], **scope: Any) -> dict[str, Any]:
             raise LoomError("memory store unavailable")
@@ -76,7 +76,7 @@ def test_a_refused_call_returns_the_error_and_the_run_goes_on() -> None:
         for part in message.parts
         if isinstance(part, ToolReturnPart)
     ]
-    assert returned.outcome == "failed"  # a failed tool result, not a success
+    assert returned.outcome == "failed"
     assert returned.content == "loom_remember failed: memory store unavailable"
 
 

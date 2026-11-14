@@ -297,7 +297,7 @@ agent and its credential are not component config.
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
 agent verbs as a `FunctionToolset`, the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. Install with
-`pip install 'clickhouse-loom[pydantic-ai]'` (`pydantic-ai-slim` 2.68 or later).
+`pip install 'clickhouse-loom[pydantic-ai]'` (`pydantic-ai-slim` 2.68 or a later 2.x).
 
 ```python
 from pydantic_ai import Agent as PydanticAgent
@@ -444,7 +444,7 @@ client can speak for several agents.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
-- **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
+- **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK tools
   return Loom's error to the model as the call's result; the Pydantic AI tools return it as
   a failed tool result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
