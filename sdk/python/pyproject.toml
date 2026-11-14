@@ -64,6 +64,8 @@ openai-agents = ["openai-agents>=0.24,<0.25"]
 crewai = ["crewai>=1.15,<1.16"]
 # AutoGen is pre-1.0: each minor version may change its memory protocol.
 autogen = ["autogen-core>=0.7,<0.8"]
+# Pydantic AI 2.68 has the ToolFailed result the adapter raises; 3.0 may change its tool API.
+pydantic-ai = ["pydantic-ai-slim>=2.68,<3"]
 
 [project.urls]
 Homepage = "https://clickhouse.github.io/loom/"

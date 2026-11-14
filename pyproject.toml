@@ -258,6 +258,8 @@ module = [
   "crewai.*",
   "autogen_core",
   "autogen_core.*",
+  "pydantic_ai",
+  "pydantic_ai.*",
   "langgraph",
   "langgraph.*",
   "strands",

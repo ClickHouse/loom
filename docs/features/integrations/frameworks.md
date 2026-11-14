@@ -19,6 +19,7 @@ or needs another database, vector store or cache.
 | OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                 |
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`           |
+| Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                      |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
@@ -291,6 +292,36 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 An `AssistantAgent` holding a `LoomMemory` cannot be dumped with `dump_component`: the Loom
 agent and its credential are not component config.
 
+## Pydantic AI
+
+Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
+agent verbs as a `FunctionToolset`, the same `AgentTools` as the
+[OpenAI Agents SDK](#openai-agents-sdk) adapter. Install with
+`pip install 'clickhouse-loom[pydantic-ai]' 'pydantic-ai-slim[anthropic]'` (`pydantic-ai-slim`
+2.68 or a later 2.x, plus the extra for your model's provider).
+
+```python
+from loom import Agent
+from loom.integrations.pydantic_ai import loom_toolset
+from pydantic_ai import Agent as PydanticAgent
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    assistant = PydanticAgent(
+        "anthropic:claude-sonnet-5-5",
+        instructions="Recall what you know about the user before answering.",
+        toolsets=[loom_toolset(loom_agent, user_id="alice")],
+    )
+    result = await assistant.run("Book my usual seat to Lisbon")
+```
+
+`user_id`, `session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a
+subset and `max_result_chars` (8,000 by default) caps what a call returns. A call Loom
+refuses raises Pydantic AI's `ToolFailed` with `<tool> failed: <message>`: the model reads
+it as a failed tool result and the run goes on, where any other exception would fail the
+run. The toolset's tools await the Loom agent's calls, so it takes a `loom.Agent` and
+refuses a `SyncAgent`. Message history stays with the caller, who passes it to each run as
+`message_history`.
+
 ## LangGraph
 
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
@@ -414,8 +445,9 @@ client can speak for several agents.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
-- **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
-  return Loom's error to the model as the call's result.
+- **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK tools
+  return Loom's error to the model as the call's result; the Pydantic AI tools return it as
+  a failed tool result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).
