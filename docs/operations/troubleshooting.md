@@ -317,9 +317,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     COMMIT;
     ```
 
-    Then drop the org triggers, in the same session and as the same role, after the
-    state transaction (so a migrating boot's `ensure` does not create them again); on a
-    lock failure, `ROLLBACK` if psql is still open, then rerun the step:
+    Then drop the org triggers and the `loom.tenancy` guard, in the same session and as
+    the same role, after the state transaction (so a migrating boot's `ensure` does not
+    create them again); on a lock failure, `ROLLBACK` if psql is still open, then rerun
+    the step:
 
     ```sql
     \set ON_ERROR_STOP on
@@ -329,7 +330,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     SELECT format('DROP TRIGGER %I ON loom.%I', t.tgname, c.relname)
     FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'loom' AND t.tgname IN ('tenancy_insert', 'tenancy_update') \gexec
+    WHERE n.nspname = 'loom'
+      AND t.tgname IN ('tenancy_insert', 'tenancy_update', 'tenancy_record') \gexec
     COMMIT;
     ```
 
@@ -387,13 +389,16 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `SELECT` on `loom.cell_first` gets "permission denied for table cell_first".
 - **Cause:** the org triggers are still on its tables: a schema-only restore of a
   prepared cell, or a cleanup that skipped the step that drops them. In `open` they let
-  every row through, but each unmarked write still reads the state.
+  every row through, but each unmarked write still reads the state. The `loom.tenancy`
+  guard, `tenancy_record`, refuses a script's tenancy row with SQLSTATE LT001: the row
+  itself makes the state `partial`.
 - **Check:**
 
   ```sql
   SELECT c.relname, t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'loom' AND t.tgname IN ('tenancy_insert', 'tenancy_update');
+  WHERE n.nspname = 'loom'
+    AND t.tgname IN ('tenancy_insert', 'tenancy_update', 'tenancy_record');
   ```
 
 - **Fix:** run the drop step of

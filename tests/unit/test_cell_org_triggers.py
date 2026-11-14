@@ -544,8 +544,8 @@ def test_missing_keeps_its_other_defects_when_it_cannot_compare_definitions() ->
                 return [{"relname": "memory_current", "relkind": "r", "owned": True}]
             return []
 
-        async def fetchrow(self, _sql: str, *_a: Any) -> dict[str, Any]:
-            body, config = cell_triggers.expected_functions()[-1]
+        async def fetchrow(self, _sql: str, function: str) -> dict[str, Any]:
+            body, config = cell_triggers.expected_functions(function.removesuffix("()"))[-1]
             return {"volatile": "v", "definer": False, "body": body, "config": config}
 
     kinds = {d.kind: d.text for d in asyncio.run(cell_triggers.missing(_NoTemp()))}
@@ -620,6 +620,9 @@ class _Cell:
             "has_own": True,
             "has_tenancy": True,
         }
+
+    async def fetchval(self, _sql: str, *_a: Any) -> bool:
+        return False  # not migrated to 012: no guard function yet
 
     async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
         if "pg_attribute" in sql:
