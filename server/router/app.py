@@ -18,10 +18,11 @@
   and prefix it stores under;
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
 
-Every refusal of a placement writes nothing: it answers 503, so the cell's request
-answers 503 and its retry is safe, except a new org longer than `cell.ORG_MAX_BYTES`,
-which answers 400 `ORG_TOO_LONG` and no retry places; a credential that names no cell,
-or not this one, answers 401.
+Every refusal of a placement writes nothing. A malformed placement body answers 400;
+the directory's refusals answer 503, so the cell's request answers 503 and its retry is
+safe, except a new org longer than `cell.ORG_MAX_BYTES`, which answers 400
+`ORG_TOO_LONG` and no retry places; a credential that names no cell, or not this one,
+answers 401.
 """
 
 from __future__ import annotations

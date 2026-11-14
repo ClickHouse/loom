@@ -12,11 +12,13 @@ for the org a verified call acts in, before anything is written:
   one statement that inserts its row only while the mode is still `recording`, and only
   while the directory answers that this cell is `attaching` (`GET /cells/v1/cells/<cell>`,
   read at most every LOOM_TENANCY_MODE_CACHE_S); while it is unreadable or answers
-  anything else, a new org answers 503 and the orgs the cell holds keep serving;
+  anything else, a new org answers 503 and the orgs the cell holds keep serving; a new
+  org longer than `cell.ORG_MAX_BYTES` answers 422 and is never recorded;
 - in `enforced`, a principal scoped to the org asks the router to place it (insert,
   then read the winner back): placed here, the cell writes its row and serves; placed
   elsewhere, the call answers 409 `WRONG_CELL` and nothing is written. A platform or
-  `*`-org principal never places an org. A failed placement call answers 503.
+  `*`-org principal never places an org. A failed placement call answers 503, and the
+  router's refusal of a new org past the length limit answers 422.
 """
 
 from __future__ import annotations
