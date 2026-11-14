@@ -15,7 +15,7 @@ def _perm(kind: str, **kw: Any) -> dict[str, Any]:
     return {"type": kind, "role": kw.pop("role", "reader"), **kw}
 
 
-def test_every_role_a_reader_and_group_grants_and_discoverable_shares_count() -> None:
+def test_every_drive_role_group_grants_and_discoverable_shares_admit() -> None:
     got = access_list.from_drive_permissions(
         [
             _perm("user", role="owner", emailAddress="Owner@Example.com"),

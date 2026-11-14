@@ -63,7 +63,7 @@ def from_json(text: str) -> AccessList:
     owner = data.get("owner", "")
     anyone = data.get("anyone", False)
     if not (
-        all(_strings(v) for v in (emails, groups, domains))
+        all(_is_str_list(v) for v in (emails, groups, domains))
         and isinstance(owner, str)
         and isinstance(anyone, bool)
     ):
@@ -106,7 +106,7 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
     )
 
 
-def _strings(values: Any) -> bool:
+def _is_str_list(values: Any) -> bool:
     return isinstance(values, list) and all(isinstance(v, str) for v in values)
 
 
