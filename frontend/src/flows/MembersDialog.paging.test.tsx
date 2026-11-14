@@ -33,20 +33,26 @@ function endless() {
 }
 
 describe("MembersDialog paging", () => {
-  it("says only the first 10,000 members are listed when the pages go on", async () => {
-    endless();
+  it("says only the first 10,000 grants were read when the pages go on, pending ones among them", async () => {
+    // Half of every page pending: the note counts grants read, not members.
+    let n = 0;
+    vi.mocked(api.listGrants).mockImplementation(async () => ({
+      rows: [grant(`p${n++}`), { ...grant(`q${n++}`), status: "pending" as const }],
+      next_cursor: "more",
+    }));
     render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
-    expect(await screen.findByText("Only the first 10,000 members are listed here.")).toBeInTheDocument();
+    expect(await screen.findByText("Only the first 10,000 grants were read.")).toBeInTheDocument();
+    expect(screen.getByText("Pending requests (20)")).toBeInTheDocument();
     expect(api.listGrants).toHaveBeenCalledTimes(20);
   });
 
-  it("says readers in a repository's dialog", async () => {
+  it("words a repository's cut read the same way", async () => {
     endless();
     render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="code-x" kind="code" />);
-    expect(await screen.findByText("Only the first 10,000 readers are listed here.")).toBeInTheDocument();
+    expect(await screen.findByText("Only the first 10,000 grants were read.")).toBeInTheDocument();
   });
 
-  it("says a parent's list was cut as its members there", async () => {
+  it("says a parent's list was cut as its grants there", async () => {
     vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("alice")] });
     render(
       <MembersDialog
@@ -58,7 +64,7 @@ describe("MembersDialog paging", () => {
       />,
     );
     const through = await screen.findByRole("region", { name: "Also can see it, through Engineering" });
-    expect(through).toHaveTextContent("Only the first 10,000 members there are listed.");
+    expect(through).toHaveTextContent("Only the first 10,000 grants there were read.");
   });
 
   it("stops reading pages once it closes", async () => {
@@ -230,5 +236,33 @@ describe("MembersDialog paging", () => {
     expect(row).toHaveTextContent("group:eng");
     expect(screen.getByText("Everyone in acme").closest("li")).toHaveTextContent("everyone");
     expect(screen.getByText("Reporter bot").closest("li")).toHaveTextContent("sa:reporter-a1b2c3");
+  });
+
+  it("draws more than 50 pending requests a step at a time, the count saying them all", async () => {
+    const asks = Array.from({ length: 70 }, (_, i) => ({ ...grant(`ask${i}`), status: "pending" as const }));
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: asks });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+    expect(await screen.findByText("Pending requests (70)")).toBeInTheDocument();
+    const list = () => screen.getByText("ask0").closest("ul") as HTMLElement;
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(50);
+    fireEvent.click(screen.getByRole("button", { name: "Show 20 more" }));
+    expect(within(list()).getAllByRole("listitem")).toHaveLength(70);
+    expect(screen.getByText("Pending requests (70)")).toBeInTheDocument();
+  });
+
+  it("marks a parent's grant under one of your other spellings as yours", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "ada", org: "acme", roles: [] } });
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [{ ...grant("ada"), also: ["ada@example.com"] }] });
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-a"
+        inherited={[{ namespace: "col-top", title: "Engineering", rows: [grant("ada@example.com")] }]}
+      />,
+    );
+    const through = await screen.findByRole("region", { name: "Also can see it, through Engineering" });
+    expect(within(through).getByText("ada@example.com").parentElement).toHaveTextContent("(you)");
   });
 });

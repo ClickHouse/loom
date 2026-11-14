@@ -28,16 +28,16 @@ import { oneOf } from "../lib/oneOf";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
-import { namesMe as grantNamesMe, subjectLabel } from "../lib/grantSubject";
+import { namesMe as grantNamesMe, mySpellings, subjectLabel } from "../lib/grantSubject";
 
-/** Whether a grant names the person signed in (`me`), under any spelling, in any case. */
-function namesMe(r: GrantEntry, me: string): boolean {
-  return grantNamesMe(r, [me]);
+/** Whether a grant names the person signed in (`me`: their spellings), in any case. */
+function namesMe(r: GrantEntry, me: readonly string[]): boolean {
+  return grantNamesMe(r, me);
 }
 
 /** A row's name: the subject as a person reads it, with the subject itself beneath when the
  *  two differ. */
-function SubjectName({ r, me, org }: { r: GrantEntry; me: string; org: string }) {
+function SubjectName({ r, me, org }: { r: GrantEntry; me: readonly string[]; org: string }) {
   const label = subjectLabel(r.subject, org);
   return (
     <>
@@ -205,7 +205,8 @@ export function MembersDialog({
     };
   }, [open, org, namespace, reloadSeq]);
 
-  const me = whoami?.subject || "";
+  // The person under every spelling a grant here or on a parent ties to whoami's.
+  const me = mySpellings(whoami?.subject || "", [...(rows ?? []), ...(inherited ?? []).flatMap((p) => p.rows ?? [])]);
   const canManage =
     manage ??
     holdsAdminGrant(
@@ -333,6 +334,7 @@ export function MembersDialog({
   const inheritedSeen = (inherited ?? []).some((p) => p.rows === null || p.rows.some((r) => r.status === "active"));
   // Every page is read, so counts and "(you)" hold; the rows are drawn a step at a time.
   const members = useShowMore(activeRows, MORE_SHOWN, MEMBER_ROWS);
+  const pending = useShowMore(pendingRows, MORE_SHOWN, MEMBER_ROWS);
 
   return (
     <Modal
@@ -369,22 +371,22 @@ export function MembersDialog({
           </div>
         )}
         {cut && (
-          <p className="mb-3 text-xs text-text-muted">
-            {`Only the first ${fmtInt(GRANTS_READ)} ${isCode ? "readers" : "members"} are listed here.`}
-          </p>
+          <p className="mb-3 text-xs text-text-muted">{`Only the first ${fmtInt(GRANTS_READ)} grants were read.`}</p>
         )}
         {pendingRows.length > 0 && (
           <div className="mb-4">
-            <div className="mb-2 text-xs font-medium text-info">Pending requests ({pendingRows.length})</div>
-            <div className="space-y-1">
-              {pendingRows.map((r) => {
+            <div className="mb-2 text-xs font-medium text-info">{`Pending requests (${fmtInt(pendingRows.length)})`}</div>
+            <ul ref={pending.list} className="space-y-1">
+              {pending.shown.map((r) => {
                 const sinceDate = r.pending_since || r.granted_at;
                 const hasBase = !!r.pending_role && r.role !== r.requested_role;
                 const elsewhere = pendingElsewhere?.[r.subject] ?? [];
                 const targets = targetsFor(r.subject).length;
                 return (
-                  <div
+                  <li
                     key={`p-${r.subject}`}
+                    data-subject={r.subject}
+                    tabIndex={-1}
                     className="flex items-center gap-3 rounded-lg border border-info/40 bg-info/10 p-2.5"
                   >
                     <RoleIcon role={r.requested_role} />
@@ -464,10 +466,11 @@ export function MembersDialog({
                         Withdraw
                       </Button>
                     )}
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
+            <MoreButton label={pending.moreLabel} onClick={pending.showMore} />
           </div>
         )}
         {activeRows.length > 0 && (
@@ -623,7 +626,7 @@ function InheritedSection({
   isCode,
 }: {
   access: InheritedAccess;
-  me: string;
+  me: readonly string[];
   org: string;
   isCode: boolean;
 }) {
@@ -671,7 +674,7 @@ function InheritedSection({
         </div>
       )}
       {access.cut && (
-        <p className="text-xs text-text-muted">{`Only the first ${fmtInt(GRANTS_READ)} members there are listed.`}</p>
+        <p className="text-xs text-text-muted">{`Only the first ${fmtInt(GRANTS_READ)} grants there were read.`}</p>
       )}
     </section>
   );

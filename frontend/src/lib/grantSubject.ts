@@ -17,6 +17,15 @@ export function namesMe(r: Pick<GrantEntry, "subject" | "also">, me: Iterable<st
   return grantSpellings(r).some((s) => mine.has(s));
 }
 
+/** The person's spellings: `subject` (whoami's), and every spelling of a grant among `rows`
+ *  that names it, so a grant held under only one of their other spellings is theirs too. */
+export function mySpellings(subject: string, rows: Iterable<Pick<GrantEntry, "subject" | "also">>): string[] {
+  if (!subject) return [];
+  const out = new Set([subject.toLowerCase()]);
+  for (const r of rows) if (namesMe(r, [subject])) for (const s of grantSpellings(r)) out.add(s);
+  return [...out];
+}
+
 /** A subject as a person reads it: a group, an agent (a service account is one), an end
  *  user by their id, the whole org, else the subject itself. */
 export function subjectLabel(subject: string, org = ""): string {

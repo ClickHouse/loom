@@ -7,7 +7,7 @@ import { distinctTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
 import { fmtInt, isServiceSubject } from "../lib/format";
-import { grantSpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { grantSpellings, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 import { allGrants, type GrantsAt } from "../lib/grantPages";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useAbortableEffect } from "../lib/hooks";
@@ -73,11 +73,21 @@ export function whoCanSee({
   // to the collection; the person reading is "".
   const from = new Map<string, string>();
   const keyOf = new Map<string, string>();
+  // The reader under every spelling a grant read here ties to them.
+  const mine = [...me].flatMap((m) =>
+    mySpellings(
+      m,
+      grants.flatMap((g) => g.rows),
+    ),
+  );
   for (const at of grants) {
     for (const r of at.rows) {
       if (r.status !== "active") continue;
       const spellings = grantSpellings(r);
-      const key = namesMe(r, me) ? "" : (spellings.map((s) => keyOf.get(s)).find(Boolean) ?? r.subject);
+      // "" is the reader's key: a spelling already keyed to them stays theirs.
+      const key = namesMe(r, mine)
+        ? ""
+        : (spellings.map((s) => keyOf.get(s)).find((k) => k !== undefined) ?? r.subject);
       for (const s of spellings) keyOf.set(s, key);
       if (!from.has(key)) from.set(key, at.namespace);
     }
@@ -127,7 +137,11 @@ export function whoCanSee({
       onlyYou: false,
     };
   }
-  const who = cut ? `${head.join(", ")} and more` : more > 0 ? `${head.join(", ")} and ${more} more` : joined(head);
+  const who = cut
+    ? `${head.join(", ")} and more`
+    : more > 0
+      ? `${head.join(", ")} and ${fmtInt(more)} more`
+      : joined(head);
   const counts = joined(
     [
       people.length + Number(you) > 0 ? plural(people.length + Number(you), "person", "people") : "",

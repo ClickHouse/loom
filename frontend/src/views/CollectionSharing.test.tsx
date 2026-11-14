@@ -159,6 +159,30 @@ describe("who can see a collection, in words", () => {
     expect(w).toMatchObject({ who: "You and bob", how: "2 people" });
   });
 
+  it("counts the reader once when a parent holds only another of their spellings", () => {
+    const w = words([
+      { namespace: "col-a", rows: [grant("ada", { also: ["ada@example.com"] }), grant("bob")] },
+      { namespace: "col-top", rows: [grant("ada@example.com")] },
+    ]);
+    expect(w).toMatchObject({ who: "You and bob", how: "2 people" });
+    // The parent's row comes first: still the reader.
+    const reversed = whoCanSee({
+      grants: [
+        { namespace: "col-a", rows: [grant("ada@example.com"), grant("bob")] },
+        { namespace: "col-top", rows: [grant("ada", { also: ["ada@example.com"] })] },
+      ],
+      me: ME,
+      org: "acme",
+      titleOf: (ns) => ns,
+    });
+    expect(reversed).toMatchObject({ who: "You and bob", how: "2 people" });
+  });
+
+  it("counts the rest past three with fmtInt", () => {
+    const rows = Array.from({ length: 1203 }, (_, i) => grant(`p${i}`));
+    expect(words([{ namespace: "col-a", rows }]).who).toBe("p0, p1, p2 and 1,200 more");
+  });
+
   it("names the parent when no grant the person reads names anyone", () => {
     expect(words([{ namespace: "col-a", rows: [] }], { above: "Hidden" }).who).toBe("Everyone who can see Hidden");
   });
