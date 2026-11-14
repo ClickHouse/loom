@@ -144,6 +144,13 @@ function linkedCollection(): string | null {
   return isCollectionName(name) ? name : null;
 }
 
+/** A move is a new history entry, so Back steps through the places picked. `arriveFocus` and
+ *  `note` are the arrival's focus and words (a tree pick keeps the person on its row). */
+function moveTo(c: string | null, arriveFocus?: string, note?: string): void {
+  useStore.getState().clearPendingDoc();
+  useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
+}
+
 // Why a restore left the document deleted (`knowledge.restore`'s `reason`).
 const RESTORE_REFUSED: Record<RestoreRefusal, string> = {
   not_found: "the namespace no longer holds it",
@@ -179,12 +186,6 @@ export function Documents() {
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection);
   const { error: listFailed, retry: retryList } = collections;
-  // A move is a new history entry, so Back steps through the places picked. `arriveFocus` and
-  // `note` are the arrival's focus and words (a tree pick keeps the person on its row).
-  const moveTo = (c: string | null, arriveFocus?: string, note?: string) => {
-    useStore.getState().clearPendingDoc();
-    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
-  };
   const goTo = useCallback(
     (c: string | null, arriveFocus?: string, note?: string) => {
       // A collection is opened only once the list names it: a list that failed reads again.
