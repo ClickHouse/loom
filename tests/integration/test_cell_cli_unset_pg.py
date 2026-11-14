@@ -86,7 +86,7 @@ async def test_the_upgrade_steps_grants_read_the_state_and_refuse_an_enforced_ce
         )
         await _ch.check_unset_cell()  # a first cell still recording
         await _admin(dsn, "UPDATE loom.tenancy_mode SET mode = 'enforced'")
-        with pytest.raises(_ch.OrgNotHeld, match=r"enforced state \(cell 'eu-1'\)"):
+        with pytest.raises(_ch.OrgNotHeld, match=r"enforced mode \(cell 'eu-1'\)"):
             await _ch.check_unset_cell()
 
 
@@ -96,7 +96,7 @@ async def test_a_role_missing_a_grant_refuses_rather_than_reading_open(
 ) -> None:
     async with own_database() as dsn, _cli_role(dsn, grants=_GRANTS[:2]) as cli:
         _unset(monkeypatch, cli)
-        with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+        with pytest.raises(_ch.OrgNotHeld, match="could not be read .*permission denied"):
             await _ch.check_unset_cell()
 
 
@@ -167,9 +167,7 @@ async def test_a_full_connection_limit_is_retried_then_refused(
 
 
 @pytest.mark.asyncio
-async def test_a_write_by_a_role_holding_only_the_column_grants_is_a_permission_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_write_by_a_role_holding_only_the_column_grants_is_a_permission_error() -> None:
     """On an enforced cell the org trigger reads `loom.tenancy.org` as the writer: a role
     holding only `SELECT (since)` there is refused with SQLSTATE 42501, not LT001, as
     the upgrade step says."""

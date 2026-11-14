@@ -104,7 +104,7 @@ async def check_unset_cell() -> None:
             f"(see {cell.TROUBLESHOOTING}, and loom doctor)"
         )
     raise OrgNotHeld(
-        f"refusing: this deployment is a cell in enforced state (cell {name!r}) and "
+        f"refusing: this deployment is a cell in enforced mode (cell {name!r}) and "
         f"LOOM_CELL is unset: set LOOM_CELL={name} for a command that writes an org"
     )
 

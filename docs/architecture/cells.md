@@ -449,16 +449,16 @@ cells.
 ## The tenancy check and placement
 
 A process with `LOOM_CELL` unset runs no tenancy check. Under the Postgres authority
-(`LOOM_STORAGE_AUTHORITY=postgres`, the only one a cell runs) a server process still
-reads, in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
+(`LOOM_STORAGE_AUTHORITY=postgres`, the only one a cell runs) a server process still reads,
+in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
 `loom.cell_self` row exists, with the mode cache's rules (below). A CLI command that
 declares an org reads the same on a bounded session of its own: every state table absent
 (judged by `to_regclass`, so a role missing a grant still refuses) reads as `open`, and a
 failed read refuses. An org-free command, such as a token revocation, `loom migrate` or
-`loom doctor`, is not gated by the mode and runs as it does today, Postgres outage
-included. Both rows absent with no tenancy or own row, as on a deployment never prepared, or
-the first cell in `recording`, leave the process serving as a single deployment; every state
-the `first` row's rule (above) counts as `enforced`, or as a `partial` state, gates it as
+`loom doctor`, is not gated by the mode and runs as it does today, Postgres outage included.
+Both rows absent with no tenancy or own row, as on a deployment never prepared, or the first
+cell in `recording`, leave the process serving as a single deployment; every state the
+`first` row's rule (above) counts as `enforced`, or as a `partial` state, gates it as
 `enforced` does. `enforced` (which attach sets on the first cell once every live process has
 `LOOM_CELL` set, and prepare on a later cell, whose processes run with it from their first
 boot) makes a server process unready, run no worker and answer nothing but its health probes
@@ -580,46 +580,45 @@ lists any tenancy row the directory does not place.
   or code trace. A unit test lists every route of the app and fails unless it is marked
   tenancy-checked or org-free.
 - **The CLI declares its orgs.** Every CLI command that connects goes through
-  `run_connected`, `connect_checked` or `connect_declared` (`server/cli/_ch.py`), which
-  take the orgs the command writes, or why it writes for none. A command that declares
-  an org first checks its deployment (`check_configured`), so under the Postgres
-  authority it needs `LOOM_PG_DSN`. On a cell, before checking a declared org, they read
-  the cell's rows and refuse the command unless the `first` row names its cell and its
-  stores (`deployment_id`, `bucket`, `bucket_prefix`) match a value of the cell's own
-  row: a CLI verifies no token and its fingerprint never reaches the router, so it may
-  run where the transports refuse on another fingerprint field. With `LOOM_CELL` unset
-  the command is refused on a cell past `recording` (above). An org the cell does not hold
-  is recorded on the first cell in `recording`, as a request's org is (reading the cell's
-  state with the cell's router credential, `LOOM_CELL_ROUTER_TOKEN`, in the first cell's CLI
-  configuration while its mode is `recording`, and only while the directory answers
-  `attaching`), and refused in `enforced`; it is never placed. A code-index command declares
-  the org it writes: its `--org`, else `LOOM_CODE_ORG`. A pass over every configured
-  repository declares none, since attach, or the `loom cell update` that changes one, places
-  configured orgs, and a read-only command or a dry run declares none, since a read records
-  nothing. A census test fails on a connect that declares neither, on a connect under
-  `server/cli/` outside `_ch.py`, and on a `loom code` command that resolves its org without
-  connecting for it. A holder of the cell's router credential can place orgs for the cell,
-  within the cell's rate and `placements_max`, as the operator credential `loom cell place`
-  uses can for any cell within its `placements_max` (an operator's call is not rate-limited,
-  nor counted toward the cell's rate), and a placement is permanent, so an org name it takes
-  is lost to every other cell: a power over the shared directory that the cell's store
-  credentials lack. So the pods hold it, and a CLI only for the one read that needs it,
-  while the first cell's mode is `recording`: a CLI command that declares an org refuses to
-  run with it set, naming it, unless the cell is the first and its mode reads `recording`,
-  and an org-free command never uses it; a leaked one is stopped by `loom cell limit
---closed`, which needs none of the cell's stores, and replaced by `loom cell credential`
-  (below). `loom cell place --org <org>` (declared org-free: it writes the org's placement
-  and tenancy row, which is how an org comes to be held), with the router's operator
-  credential, places an org for a command that writes a new one (a bot, an import), through
-  the router's placement API and in its order, as attach's placement of configured orgs
-  does: it inserts the placement and reads back the winner, writes the cell's tenancy row
-  only if the winner is this cell (otherwise it refuses and writes nothing), and reports
-  success only once the row is written, so a rerun is idempotent. For an org the directory
-  does not place yet it passes the placement API's gate (below): refused while the directory
-  is unavailable, for a cell the gate does not accept, closed, or when the fingerprint of
-  the CLI's own configuration of the cell (with the deployment id read from the stores it
-  connects to) matches neither value of the cell's row, or past `placements_max`, and
-  counted toward it.
+  `run_connected`, `connect_checked` or `connect_declared` (`server/cli/_ch.py`), which take
+  the orgs the command writes, or why it writes for none. A command that declares an org
+  first checks its deployment (`check_configured`), so under the Postgres authority it needs
+  `LOOM_PG_DSN`. On a cell, before checking a declared org, they read the cell's rows and
+  refuse the command unless the `first` row names its cell and its stores (`deployment_id`,
+  `bucket`, `bucket_prefix`) match a value of the cell's own row: a CLI verifies no token
+  and its fingerprint never reaches the router, so it may run where the transports refuse on
+  another fingerprint field. With `LOOM_CELL` unset the command is refused on a cell past
+  `recording` (above). An org the cell does not hold is recorded on the first cell in
+  `recording`, as a request's org is (reading the cell's state with the cell's router
+  credential, `LOOM_CELL_ROUTER_TOKEN`, in the first cell's CLI configuration while its mode
+  is `recording`, and only while the directory answers `attaching`), and refused in
+  `enforced`; it is never placed. A code-index command declares the org it writes: its
+  `--org`, else `LOOM_CODE_ORG`. A pass over every configured repository declares none,
+  since attach, or the `loom cell update` that changes one, places configured orgs, and a
+  read-only command or a dry run declares none, since a read records nothing. A census test
+  fails on a connect that declares neither, on a connect under `server/cli/` outside
+  `_ch.py`, and on a `loom code` command that resolves its org without connecting for it. A
+  holder of the cell's router credential can place orgs for the cell, within the cell's rate
+  and `placements_max`, as the operator credential `loom cell place` uses can for any cell
+  within its `placements_max` (an operator's call is not rate-limited, nor counted toward
+  the cell's rate), and a placement is permanent, so an org name it takes is lost to every
+  other cell: a power over the shared directory that the cell's store credentials lack. So
+  the pods hold it, and a CLI only for the one read that needs it, while the first cell's
+  mode is `recording`: a CLI command that declares an org refuses to run with it set, naming
+  it, unless the cell is the first and its mode reads `recording`, and an org-free command
+  never uses it; a leaked one is stopped by `loom cell limit --closed`, which needs none of
+  the cell's stores, and replaced by `loom cell credential` (below).
+  `loom cell place --org <org>` (declared org-free: it writes the org's placement and
+  tenancy row, which is how an org comes to be held), with the router's operator credential,
+  places an org for a command that writes a new one (a bot, an import), through the router's
+  placement API and in its order, as attach's placement of configured orgs does: it inserts
+  the placement and reads back the winner, writes the cell's tenancy row only if the winner
+  is this cell (otherwise it refuses and writes nothing), and reports success only once the
+  row is written, so a rerun is idempotent. For an org the directory does not place yet it
+  passes the placement API's gate (below): refused while the directory is unavailable, for a
+  cell the gate does not accept, closed, or when the fingerprint of the CLI's own
+  configuration of the cell (with the deployment id read from the stores it connects to)
+  matches neither value of the cell's row, or past `placements_max`, and counted toward it.
 - **Writers older than the check are refused by the stores they write.** A session that
   ran the tenancy check marks itself with `loom.tenancy_checked = 'on'`: every session of
   a process with `LOOM_CELL` set sends it as a startup parameter (so the pool's

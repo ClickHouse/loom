@@ -218,8 +218,8 @@ def test_unset_cell_lets_an_open_or_recording_deployment_through(
 @pytest.mark.parametrize(
     ("row", "named"),
     [
-        (_rows(mode="enforced"), "enforced state (cell 'eu-1')"),
-        (_rows(mode="recording", first=(False, "eu-2")), "enforced state (cell 'eu-2')"),
+        (_rows(mode="enforced"), "enforced mode (cell 'eu-1')"),
+        (_rows(mode="recording", first=(False, "eu-2")), "enforced mode (cell 'eu-2')"),
         (_rows(mode="", first=(True, "eu-1")), "partial cell state"),
     ],
 )

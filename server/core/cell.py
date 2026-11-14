@@ -5,8 +5,10 @@ and whether `loom.tenancy` holds a row) whether `LOOM_CELL` is set or not, and i
 gated until its first read lands. With `LOOM_CELL` unset the process serves as a
 single deployment while the deployment is no cell (`open`) or a first cell still
 `recording`, and is gated in any other state (`state`); it keeps its verdict through
-failed reads. A process that reads nothing with `LOOM_CELL` unset (a CLI, the workers
-child) and every process under the ClickHouse authority read as `open`. With
+failed reads. A process whose view is never read with `LOOM_CELL` unset (a CLI, the
+workers child) and every process under the ClickHouse authority read as `open`; a CLI
+command that declares an org judges the state on a session of its own instead
+(`server.cli._ch.check_unset_cell`). With
 `LOOM_CELL` set, a process serves only while three rows of its cell's Postgres are
 read and agree with its configuration (docs/architecture/cells.md, "The cell's own
 row"):
