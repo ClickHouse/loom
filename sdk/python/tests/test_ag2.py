@@ -190,6 +190,14 @@ def test_a_sync_agent_and_a_top_k_below_one_are_refused() -> None:
         LoomRecallPolicy(_FakeAgent({}), top_k=0)  # type: ignore[arg-type]
 
 
+def test_the_policy_stays_within_memory_search_s_top_k_bound() -> None:
+    memory = _FakeMemory()
+    policy = LoomRecallPolicy(_FakeAgent({}, memory), top_k=600)  # type: ignore[arg-type]
+    asyncio.run(policy.apply([], _asked("seat"), None))  # type: ignore[arg-type]
+    ((_, kw),) = memory.searches
+    assert kw["top_k"] == 500
+
+
 def test_a_real_agent_posts_the_policy_s_memory_search() -> None:
     posts: list[tuple[str, dict[str, Any]]] = []
 
