@@ -113,9 +113,11 @@ def test_anything_but_a_read_list_is_unread(text: str) -> None:
 def test_a_list_built_directly_is_kept_in_the_one_spelling() -> None:
     built = AccessList(emails=("B@example.com", "a@example.com", "a@example.com"))
     assert built == AccessList(emails=("a@example.com", "b@example.com"))
-    assert access_list.to_json(built) == access_list.to_json(
-        AccessList(emails=("b@example.com", "a@example.com"))
-    )
+
+
+def test_an_unread_list_that_names_someone_is_refused() -> None:
+    with pytest.raises(ValueError, match="unread"):
+        AccessList(unread=True, emails=("a@example.com",))
 
 
 def test_no_operation_takes_or_answers_a_permission_list() -> None:

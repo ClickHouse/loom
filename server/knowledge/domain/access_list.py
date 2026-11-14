@@ -37,17 +37,19 @@ class AccessList:
     unread: bool = False
 
     def __post_init__(self) -> None:
-        # One spelling per list, so equal lists compare and store equal.
         for name in ("emails", "groups", "domains"):
             object.__setattr__(self, name, _names(getattr(self, name)))
+        if self.unread and (
+            self.emails or self.groups or self.domains or self.anyone or self.owner
+        ):
+            raise ValueError("an unread list names nobody")
 
 
 UNREAD = AccessList(unread=True)
 
 
 def to_json(access: AccessList) -> str:
-    """The stored form, one spelling per list, so an unchanged list compares equal:
-    `unread` is empty, as every other writer stores it."""
+    """The stored form; `unread` is stored empty, as every other writer stores it."""
     if access.unread:
         return ""
     return json.dumps(asdict(access), sort_keys=True, separators=(",", ":"))

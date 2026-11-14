@@ -42,7 +42,6 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeBulkEntryResult,
 )
 from server.knowledge.domain import access_list
-from server.knowledge.domain.access_list import UNREAD, AccessList
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
 from server.knowledge.store import datasets as datasets_repo
@@ -326,7 +325,7 @@ async def handle_knowledge_upsert(
     input: KnowledgeUpsertInput,
     *,
     read_version: int | None = None,
-    access: AccessList = UNREAD,
+    access: access_list.AccessList = access_list.UNREAD,
 ) -> KnowledgeUpsertOutput:
     """Insert new chunks for `source_uri`; soft-supersede prior chunks.
 

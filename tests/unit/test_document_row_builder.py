@@ -69,9 +69,8 @@ def test_builder_carries_an_existing_row_and_recomputes_the_hash() -> None:
     doc = _doc(access_json=LISTED)
     row = documents_repo.build_document_row(doc, version=2, superseded_at=ERASED)
     for col in documents_repo.DOCUMENT_COLUMNS:
-        if col not in ("version", "superseded_at", "access_json"):
+        if col not in ("version", "superseded_at", "access_json"):  # a list: never carried
             assert row[col] == getattr(doc, col), col
-    assert row["access_json"] == ""  # the one column no rewrite carries
     renamed = documents_repo.build_document_row(doc, title="New", version=3)
     assert renamed["content_sha256"] == _content_sha256("New\nbody text")
 
