@@ -1894,13 +1894,14 @@ describe("the Library on a collection", () => {
 
   it("beside the tree, shows none of one org's collections after a switch to another", async () => {
     resizable();
+    useStore.setState({ whoami: { authenticated: true, subject: "ann" } as never });
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     history.replaceState(null, "", "/library");
     render(<Documents />);
     const tree = await screen.findByRole("navigation", { name: "Library places" });
     expect(await within(tree).findByRole("link", { name: "col-q3" })).toBeInTheDocument();
     fireEvent.click(within(tree).getByRole("button", { name: "Collections in col-q3" }));
-    expect(localStorage.getItem("loom_library_expanded_acme_v1")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_ann_acme_v1")).toBe('["col-q3"]');
     api.listCollections.mockReturnValue(new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
     await settle();
@@ -1908,8 +1909,26 @@ describe("the Library on a collection", () => {
     expect(within(after).queryByRole("link", { name: "col-q3" })).toBeNull();
     expect(within(after).queryByRole("link", { name: "My files" })).toBeNull();
     // Acme's folds stay acme's; the other org's tree opens nothing.
-    expect(localStorage.getItem("loom_library_expanded_acme_v1")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_ann_acme_v1")).toBe('["col-q3"]');
     expect(within(after).queryByRole("button", { expanded: true })).toBeNull();
+  });
+
+  it("beside the tree, draws another person's own folds after a sign-in as them", async () => {
+    resizable();
+    useStore.setState({ whoami: { authenticated: true, subject: "ann" } as never });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library");
+    render(<Documents />);
+    const tree = await screen.findByRole("navigation", { name: "Library places" });
+    fireEvent.click(await within(tree).findByRole("button", { name: "Collections in col-q3" }));
+    act(() => useStore.setState({ whoami: { authenticated: true, subject: "bob" } as never }));
+    await settle();
+    const bobs = screen.getByRole("navigation", { name: "Library places" });
+    expect(within(bobs).getByRole("button", { name: "Collections in col-q3" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(localStorage.getItem("loom_library_expanded_ann_acme_v1")).toBe('["col-q3"]');
   });
 
   it("on a code namespace reads only a collection picked, and lists no namespace to pick", async () => {

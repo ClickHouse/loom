@@ -36,6 +36,7 @@ import {
   type KnowledgeDocument,
   type InlinePreview,
   type CollectionEntry,
+  isAuthDisabled,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
@@ -268,6 +269,8 @@ export function Documents() {
   // the server decides.
   const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
+  // Who the tree remembers folds for, as the getting-started checklist names them.
+  const subject = whoami?.subject ?? (isAuthDisabled() ? "local" : "");
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
@@ -969,8 +972,9 @@ export function Documents() {
   );
   const placesTree = treeHeight !== null && (
     <LibraryTree
-      // One per org: nothing read or opened in one org shows in, or is saved for, another.
-      key={picked.org}
+      // One per person and org: nothing read or opened in one shows in, or is saved for, another.
+      key={`${subject} ${picked.org}`}
+      subject={subject}
       org={picked.org}
       rows={collections.kept?.rows ?? null}
       repeated={repeated}
@@ -979,7 +983,7 @@ export function Documents() {
       viewHeight={treeHeight}
       failed={!!collections.error}
       busy={collections.refreshing}
-      shelf={ownShelf ? picked.namespace : null}
+      namespace={ownShelf ? picked.namespace : null}
       current={treeCurrent}
       onPick={goTo}
       claimCreateVersion={claimCreateVersion}

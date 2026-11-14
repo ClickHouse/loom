@@ -13,6 +13,7 @@ import {
   forwardRef,
   type MouseEvent,
   type ReactNode,
+  type MutableRefObject,
   useMemo,
   useRef,
   useState,
@@ -411,6 +412,20 @@ function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]>
   });
 }
 
+/** A list of places drawn a step at a time (`useShowMore`). */
+export interface ShowMore {
+  /** The places drawn now. */
+  shown: CollectionEntry[];
+  /** The list's element, where the focus goes after a press. */
+  list: MutableRefObject<HTMLUListElement | null>;
+  /** Show more's label (what a press adds), or null once all are shown. */
+  moreLabel: string | null;
+  showMore: () => void;
+  /** More than the first are shown: Show fewer goes back to them. */
+  fewer: boolean;
+  showFewer: () => void;
+}
+
 /** The first `first` places, each Show more adding MORE_SHOWN; `extra` (one of `items`, on the
  *  way to the place shown) is drawn past them wherever it sits. `moreLabel` is the button's label,
  *  null once all are shown. The last press removes its button: the focus goes to the first
@@ -420,7 +435,7 @@ export function useShowMore(
   first: number,
   extra: CollectionEntry | null = null,
   fallback: () => HTMLElement | null = () => null,
-) {
+): ShowMore {
   const [count, setCount] = useState(first);
   const list = useRef<HTMLUListElement | null>(null);
   const shownAt = (n: number) => {

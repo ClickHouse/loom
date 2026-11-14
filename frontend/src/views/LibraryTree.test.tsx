@@ -49,9 +49,9 @@ function kids(n: number, over: Partial<CollectionEntry> = {}): CollectionEntry[]
   return Array.from({ length: n }, (_, i) => entry(`col-k${pad(i)}`, { title: `Kid ${pad(i)}`, ...over }));
 }
 
-/** The folds saved for acme. */
-function saved(): string[] {
-  return JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]");
+/** The folds saved for ann in acme. */
+function saved(subject = "ann"): string[] {
+  return JSON.parse(localStorage.getItem(`loom_library_expanded_${subject}_acme_v1`) ?? "[]");
 }
 
 /** The places listed, in order. */
@@ -69,10 +69,11 @@ function tree(over: Partial<TreeProps> = {}, options: RenderOptions = {}) {
   let props: Partial<TreeProps> = over;
   const ui = () => {
     const p = {
+      subject: "ann",
       org: "acme",
       rows: ROWS,
       repeated: new Set<string>(),
-      shelf: "bench",
+      namespace: "bench",
       current: null,
       viewHeight: 800,
       claimCreateVersion: () => 7,
@@ -122,7 +123,7 @@ describe("LibraryTree", () => {
 
   it("lists the first fifty top-level collections, Show more adding fifty, and the one shown wherever it sits", async () => {
     const many = kids(120);
-    tree({ rows: many, shelf: null, current: "col-k080" });
+    tree({ rows: many, namespace: null, current: "col-k080" });
     const mine = screen.getByRole("list", { name: "Collections" });
     const names = () =>
       within(mine)
@@ -141,14 +142,14 @@ describe("LibraryTree", () => {
 
   it("counts the one shown past the first fifty as drawn", () => {
     const many = kids(51);
-    tree({ rows: many, shelf: null, current: "col-k050" });
+    tree({ rows: many, namespace: null, current: "col-k050" });
     expect(within(screen.getByRole("list", { name: "Collections" })).getAllByRole("link")).toHaveLength(51);
     expect(screen.queryByRole("button", { name: /^Show \d+ more$/ })).toBeNull();
   });
 
   it("draws an open collection's first fifty children, and the one shown past them", async () => {
     const rows = [entry("col-eng", { title: "Engineering" }), ...kids(60, { parent: "col-eng" })];
-    tree({ rows, shelf: null, current: "col-k055" });
+    tree({ rows, namespace: null, current: "col-k055" });
     const kidLinks = () => screen.getAllByRole("link", { name: /^Kid / });
     expect(kidLinks()).toHaveLength(51);
     expect(kidLinks().at(-1)).toHaveTextContent("Kid 055");
@@ -313,7 +314,7 @@ describe("LibraryTree", () => {
   it("says it is loading only while the list is read, and nothing when the read failed", () => {
     vi.useFakeTimers();
     try {
-      tree({ rows: null, shelf: null });
+      tree({ rows: null, namespace: null });
       act(() => vi.advanceTimersByTime(300));
       expect(screen.getByText("Loading collections")).toBeInTheDocument();
       cleanup();
@@ -323,7 +324,7 @@ describe("LibraryTree", () => {
       expect(places()).toEqual(["Namespace bench"]);
       expect(screen.getByText("Loading collections")).toBeInTheDocument();
       cleanup();
-      tree({ rows: null, shelf: null, failed: true });
+      tree({ rows: null, namespace: null, failed: true });
       act(() => vi.advanceTimersByTime(300));
       expect(screen.queryByText("Loading collections")).toBeNull();
       expect(screen.getByRole("button", { name: "New collection" })).toBeEnabled();
@@ -333,7 +334,7 @@ describe("LibraryTree", () => {
   });
 
   it("makes one at the top level after the list failed to load", async () => {
-    tree({ rows: null, shelf: null, failed: true });
+    tree({ rows: null, namespace: null, failed: true });
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     expect(screen.getByRole("textbox", { name: "New collection at the top level" })).toHaveFocus();
   });
@@ -349,7 +350,7 @@ describe("LibraryTree", () => {
   });
 
   it("keeps the form, its text and the focus when a collection is hidden or the list answers", async () => {
-    const { update } = tree({ shelf: null, current: "col-runbooks" });
+    const { update } = tree({ namespace: null, current: "col-runbooks" });
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     const field = screen.getByRole("textbox", { name: "New collection in Runbooks" });
     await userEvent.type(field, "Plans");
@@ -364,7 +365,7 @@ describe("LibraryTree", () => {
 
   it("keeps the parent it was opened for when the page moves", async () => {
     api.createCollection.mockResolvedValue({ namespace: "col-x", parent: "col-runbooks", created: true, title: "X" });
-    const { update } = tree({ shelf: null, current: "col-runbooks" });
+    const { update } = tree({ namespace: null, current: "col-runbooks" });
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     update({ current: "col-eng" });
     await userEvent.type(screen.getByRole("textbox", { name: "New collection in Runbooks" }), "X");
@@ -378,7 +379,7 @@ describe("LibraryTree", () => {
 
   it("keeps the parent it was opened for when a read no longer lists it, and the server decides", async () => {
     api.createCollection.mockResolvedValue({ namespace: "col-x", parent: "col-runbooks", created: true, title: "X" });
-    const { update } = tree({ shelf: null, current: "col-runbooks" });
+    const { update } = tree({ namespace: null, current: "col-runbooks" });
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     const field = screen.getByRole("textbox", { name: "New collection in Runbooks" });
     await userEvent.type(field, "X");
@@ -395,7 +396,7 @@ describe("LibraryTree", () => {
 
   it("opens the parents of a linked collection once the list names it", () => {
     const { update } = tree({
-      shelf: null,
+      namespace: null,
       current: "col-ingest",
       rows: ROWS.filter((c) => c.namespace !== "col-ingest"),
     });
@@ -410,14 +411,33 @@ describe("LibraryTree", () => {
     expect(saved()).toEqual([]);
   });
 
+  it("keeps one person's folds through another person's visit in the same org", async () => {
+    tree();
+    await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
+    expect(saved()).toEqual(["col-eng"]);
+    cleanup();
+    tree({ subject: "bob" });
+    expect(screen.getByRole("button", { name: "Collections in Engineering" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
+    await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
+    expect(saved("bob")).toEqual([]);
+    cleanup();
+    tree();
+    expect(screen.getByRole("button", { name: "Collections in Engineering" })).toHaveAttribute("aria-expanded", "true");
+    expect(saved()).toEqual(["col-eng"]);
+  });
+
   it("keeps the folds of a collection a cut-off list does not name", () => {
-    localStorage.setItem("loom_library_expanded_acme_v1", JSON.stringify(["col-past-the-cap"]));
+    localStorage.setItem("loom_library_expanded_ann_acme_v1", JSON.stringify(["col-past-the-cap"]));
     tree({ truncated: true });
     expect(saved()).toEqual(["col-past-the-cap"]);
   });
 
   it("keeps a collection the person closed closed when the list is read again", async () => {
-    const { update } = tree({ shelf: null, current: "col-runbooks" });
+    const { update } = tree({ namespace: null, current: "col-runbooks" });
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
     update({ rows: [...ROWS] });
     expect(places()).not.toContain("Runbooks");
@@ -462,7 +482,7 @@ describe("LibraryTree", () => {
 
     it("cut is whole in the link's name and in a tooltip on focus, which a click closes", async () => {
       layOut(300, 180);
-      const { onPick } = tree({ rows: [entry("col-eng", { title: long })], shelf: null });
+      const { onPick } = tree({ rows: [entry("col-eng", { title: long })], namespace: null });
       const link = screen.getByRole("link", { name: long });
       act(() => link.focus());
       expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
@@ -473,7 +493,7 @@ describe("LibraryTree", () => {
 
     it("that fits gets no tooltip", async () => {
       layOut(180, 180);
-      tree({ rows: [entry("col-eng", { title: long })], shelf: null });
+      tree({ rows: [entry("col-eng", { title: long })], namespace: null });
       const link = screen.getByRole("link", { name: long });
       act(() => link.focus());
       await act(async () => {});
@@ -486,7 +506,7 @@ describe("LibraryTree", () => {
 describe("LibraryTree's form", () => {
   it("names its target as the tree tells two collections of one title apart", async () => {
     const rows = [entry("col-a", { title: "Notes" }), entry("col-b", { title: "Notes" })];
-    tree({ rows, repeated: repeatedTitles(rows), shelf: null, current: "col-b" });
+    tree({ rows, repeated: repeatedTitles(rows), namespace: null, current: "col-b" });
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     expect(screen.getByRole("textbox", { name: "New collection in Notes (col-b)" })).toHaveFocus();
   });

@@ -54,23 +54,23 @@ export type MadeCollection = (collection: string, arriveFocus: string, version: 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
 
-/** The collections a person opened in the tree, per org, for this browser. */
-function expandedKey(org: string): string {
-  return `loom_library_expanded_${org}_v1`;
+/** The collections a person opened in the tree, per person and org, for this browser. */
+function expandedKey(subject: string, org: string): string {
+  return `loom_library_expanded_${subject || "-"}_${org}_v1`;
 }
 
-function loadExpanded(org: string): Set<string> {
+function loadExpanded(subject: string, org: string): Set<string> {
   try {
-    const raw: unknown = JSON.parse(localStorage.getItem(expandedKey(org)) || "[]");
+    const raw: unknown = JSON.parse(localStorage.getItem(expandedKey(subject, org)) || "[]");
     return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
   } catch {
     return new Set(); // a private window or a blocked store: nothing remembered
   }
 }
 
-function saveExpanded(org: string, open: Set<string>): void {
+function saveExpanded(subject: string, org: string, open: Set<string>): void {
   try {
-    localStorage.setItem(expandedKey(org), JSON.stringify([...open]));
+    localStorage.setItem(expandedKey(subject, org), JSON.stringify([...open]));
   } catch {
     /* quota or storage disabled: the session keeps what is open */
   }
@@ -137,6 +137,7 @@ export function placeTree(rows: CollectionEntry[]): {
 
 /** Memoised: the page beside it draws again on every keystroke in its search. */
 export const LibraryTree = memo(function LibraryTree({
+  subject,
   org,
   rows,
   repeated,
@@ -145,12 +146,14 @@ export const LibraryTree = memo(function LibraryTree({
   failed = false,
   busy = false,
   viewHeight,
-  shelf,
+  namespace,
   current,
   onPick,
   claimCreateVersion,
   onCreated,
 }: {
+  /** Who is signed in: what one person opened is kept apart from another's. */
+  subject: string;
   org: string;
   /** Every collection the caller can read (the last answer, while it is read again), or
    *  null before the first answer. */
@@ -167,8 +170,9 @@ export const LibraryTree = memo(function LibraryTree({
   busy?: boolean;
   /** The height of <main>'s view (a banner above the page is not taken off). */
   viewHeight: number;
-  /** The header's namespace, when it holds documents; null when it does not. */
-  shelf: string | null;
+  /** The header's namespace, or null when it holds no documents (a code or tracker
+   *  namespace, or none). */
+  namespace: string | null;
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
   onPick: PickPlace;
@@ -177,7 +181,7 @@ export const LibraryTree = memo(function LibraryTree({
   onCreated: MadeCollection;
 }) {
   // What the person opened, remembered for the next visit.
-  const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
+  const [open, setOpen] = useState<Set<string>>(() => loadExpanded(subject, org));
   // What a move opened to show the place reached: for this visit only.
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
   // Pruned once, against the first whole list after mount; later answers, from a lagging
@@ -192,7 +196,7 @@ export const LibraryTree = memo(function LibraryTree({
       return next.size === prev.size ? prev : next;
     });
   }, [rows, truncated]);
-  useEffect(() => saveExpanded(org, open), [org, open]);
+  useEffect(() => saveExpanded(subject, org, open), [subject, org, open]);
   // The place shown and its parents: a move opens them, and each list draws its member of the
   // path even past Show more.
   const onPath = useMemo(() => {
@@ -261,13 +265,13 @@ export const LibraryTree = memo(function LibraryTree({
       className="library-tree"
       style={{ maxHeight: viewHeight }}
     >
-      {(shelf !== null || tree.own) && (
+      {(namespace !== null || tree.own) && (
         <ul>
-          {shelf !== null && (
+          {namespace !== null && (
             <li>
               <PlaceRow
                 collection={null}
-                label={namespaceLabel(shelf)}
+                label={namespaceLabel(namespace)}
                 icon="book"
                 depth={0}
                 here={current === null}
