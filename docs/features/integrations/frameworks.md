@@ -359,7 +359,7 @@ goes on.
 `loomTools(agent, scope)` returns Loom's agent verbs as an AI SDK `ToolSet`, the record
 `generateText`, `streamText` and the SDK's agents take as `tools`: the same `AgentTools` as
 the [OpenAI Agents SDK](#openai-agents-sdk) adapter. `ai` 7.x is an optional peer
-dependency, and needs Node 22 or later.
+dependency, and needs Node 22.12 or later (the package is ESM-only).
 
 ```ts
 import { generateText, stepCountIs } from "ai";

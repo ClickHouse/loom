@@ -250,7 +250,7 @@ const recentAudit = await collect(
 
 `loomTools(agent, scope)` from `@clickhouse/loom/integrations/ai-sdk` returns `AgentTools`
 as an AI SDK `ToolSet`, built with `tool()` and `jsonSchema()` from `ai`, an optional peer
-dependency (`ai` 7.x, which needs Node 22 or later). See
+dependency (`ai` 7.x, which needs Node 22.12 or later). See
 [Frameworks](../features/integrations/frameworks.md#ai-sdk).
 
 ## LangChain.js adapter

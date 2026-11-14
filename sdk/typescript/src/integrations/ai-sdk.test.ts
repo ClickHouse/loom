@@ -20,13 +20,33 @@ const usage = {
 };
 
 describe("loomTools (AI SDK adapter)", () => {
-  it("keys every verb by name with Loom's description and JSON schema", async () => {
-    const tools = loomTools(harness({}).agent);
-    expect(Object.keys(tools)).toEqual(LOOM_TOOL_SPECS.map((s) => s.name));
+  it("sends the model every verb by name with Loom's description and JSON schema", async () => {
+    let sent: Array<{ name: string; description?: string; inputSchema: unknown }> = [];
+    const model = new MockLanguageModelV4({
+      doGenerate: async (options: { tools?: typeof sent }) => {
+        sent = options.tools ?? [];
+        return {
+          content: [{ type: "text", text: "ok" }],
+          finishReason: { unified: "stop", raw: undefined },
+          usage,
+          warnings: [],
+        };
+      },
+    } as never);
+    await generateText({ model, tools: loomTools(harness({}).agent), prompt: "hi" });
+    expect(sent.map((t) => t.name)).toEqual(LOOM_TOOL_SPECS.map((s) => s.name));
     for (const spec of LOOM_TOOL_SPECS) {
-      expect(tools[spec.name].description).toBe(spec.description);
-      expect(await (tools[spec.name].inputSchema as { jsonSchema: unknown }).jsonSchema).toEqual(spec.parameters);
+      const tool = sent.find((t) => t.name === spec.name);
+      expect(tool?.description).toBe(spec.description);
+      expect(tool?.inputSchema).toEqual(spec.parameters);
     }
+  });
+
+  it("leaves the arguments to Loom's own check: a quoted top_k is read as a number", async () => {
+    const { agent, calls } = harness({ results: [] });
+    const { loom_recall } = loomTools(agent, {}, { only: ["loom_recall"] });
+    await loom_recall.execute?.({ query: "seat", top_k: "3" }, { toolCallId: "c1", messages: [] } as never);
+    expect(calls[0].body).toMatchObject({ query: "seat", top_k: 3 });
   });
 
   it("keeps a subset with only", () => {
