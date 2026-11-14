@@ -201,10 +201,8 @@ async def _move(doc: DocumentRow | None, dst: str, started: int, moved: set[str]
                 ) as held_second:
                     if held_second:
                         reason = await _claimed(
-                            doc, there, copying, dst, originals, arrived, started
+                            doc, there, copying, dst, originals, arrived, started, moved
                         )
-                        if reason == "":
-                            moved.add(uri)
     except _BUSY:
         reason = "busy"
     except _ServesMore:
@@ -231,6 +229,7 @@ async def _claimed(
     originals: dict[str, Any],
     arrived: int,
     started: int,
+    moved: set[str],
 ) -> MoveReason:
     """The move under the claims, of `doc` over `there`, both as read before them; with
     `copying` false, `there` is an earlier move's whole copy and only the delete is left."""
@@ -266,7 +265,9 @@ async def _claimed(
             await _taken_back(copy)
         return "erased" if erased else "busy"
     try:
-        await _delete_source(doc)
+        # Run to its end and recorded with it, however the request or the claims end
+        # meanwhile: a tombstone that lands is a move made.
+        await to_its_end(_delete_and_record(doc, moved), name=f"knowledge.move delete {uri}")
     except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
         if copy is not None:
             await _taken_back(copy)
@@ -432,6 +433,11 @@ async def _delete_source(doc: DocumentRow) -> None:
         pass  # committed: the delivery worker publishes it
 
 
+async def _delete_and_record(doc: DocumentRow, moved: set[str]) -> None:
+    await _delete_source(doc)
+    moved.add(doc.source_uri)
+
+
 async def _forget_tables(doc: DocumentRow) -> None:
     """The tables of `doc`, deleted where it was: a failure is logged, as the document is
     deleted and the move made; a later delete of the source settles them."""
@@ -454,14 +460,15 @@ async def _take_back(copy: _Copy) -> None:
     its commit), its chunks and its tables. Its originals stay for the sweep."""
     org, dst, uri, version = copy.doc.org, copy.dst, copy.doc.source_uri, copy.version
     await documents_repo.drop_committed(org, dst, uri, version)
-    await restore_repo.delete_row(org, dst, uri, version)
-    # Retired first: a cancelled copy's INSERT … SELECT runs on in ClickHouse and may land
-    # after the delete; the supersession rows keep what lands from serving.
+    # Its chunks retired before its row goes, so a take-back that stops partway leaves none
+    # serving without a row; and a cancelled copy's INSERT … SELECT that lands after the
+    # chunks' delete does not serve either.
     now = naive_utc_now()
     for model in copy.models:
         await chunks_repo.retire_versions(
             org, dst, [(uri, version)], embedding_model=model, when=now
         )
+    await restore_repo.delete_row(org, dst, uri, version)
     await chunks_repo.delete_versions(org, dst, [(uri, version)])
     await datasets_repo.forget(org, dst, [uri], only=version)
     for t in copy.tables:

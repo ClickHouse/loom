@@ -402,6 +402,11 @@ async def embedding_models(
     return [str(r["m"]) for r in rows]
 
 
+# The live chunks of a source's revision `{rev:UInt64}`, of any version up to
+# `{v:UInt64}`: what a document row at that version serves.
+_SERVED_SQL = f"doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}"
+
+
 async def count_revision(
     org: str,
     namespace: str,
@@ -417,7 +422,7 @@ async def count_revision(
     row = await ch.query_one(
         "SELECT count() AS n FROM loom.chunks WHERE org = {org:String}"
         " AND namespace = {ns:String} AND source_uri = {uri:String}"
-        f" AND doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}",
+        f" AND {_SERVED_SQL}",
         params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision, "v": upto_version},
     )
     return int(row["n"]) if row else 0
@@ -438,7 +443,7 @@ async def first_written_s(
     row = await ch.query_one(
         "SELECT count() AS n, toUnixTimestamp(min(created_at)) AS s FROM loom.chunks"
         " WHERE org = {org:String} AND namespace = {ns:String} AND source_uri = {uri:String}"
-        f" AND doc_version <= {{v:UInt64}} AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}",
+        f" AND {_SERVED_SQL}",
         params={"org": org, "ns": namespace, "uri": source_uri, "rev": revision, "v": upto_version},
     )
     return int(row["s"]) if row and int(row["n"]) else None
@@ -472,10 +477,7 @@ async def copy_revision(
         "to_v": to_version,
         "to_rev": to_revision,
     }
-    picked = (
-        "namespace = {ns:String} AND doc_version <= {v:UInt64}"
-        f" AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}"
-    )
+    picked = f"namespace = {{ns:String}} AND {_SERVED_SQL}"
     # The rows are picked in an inner query: an outer WHERE would read the replaced
     # columns, not the stored ones. `SELECT *` keeps a column a newer build added.
     # `created_at` is when they were written there: what the erasure ledger is read

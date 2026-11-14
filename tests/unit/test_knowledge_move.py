@@ -853,3 +853,60 @@ async def test_me_from_an_end_user_moves_into_their_own_collection(
     assert out.to_namespace == mine
     assert _answers(out) == [(URI, True, "")]
     assert store["audited"][0]["namespace"] == mine
+
+
+async def test_a_cancel_while_the_tombstone_is_in_flight_counts_the_move(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = asyncio.Event()
+
+    async def slow_delete(doc: DocumentRow) -> None:
+        await gate.wait()  # the tombstone insert, still to answer
+        store["deleted"].append(doc.source_uri)
+
+    monkeypatch.setattr(move, "_delete_source", slow_delete)
+    task = asyncio.create_task(_run())
+    for _ in range(100):
+        await asyncio.sleep(0)
+    task.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not task.done()  # the delete is waited for
+    gate.set()  # and lands
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert store["deleted"] == [URI] and store["forgotten"] == [URI]
+    assert store["audited"][0]["subject"]["source_uris"] == [URI]
+
+
+async def test_a_claim_cut_off_while_the_tombstone_is_in_flight_answers_moved(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @asynccontextmanager
+    async def cut_off_claim(org: str, ns: str, uri: str, *, wait_s: float = 10):
+        try:
+            async with asyncio.timeout(0.05):
+                yield True
+        except TimeoutError as e:
+            raise ClaimExpired("cut off") from e
+
+    async def slow_delete(doc: DocumentRow) -> None:
+        await asyncio.sleep(0.2)  # past the claims' cut-off
+        store["deleted"].append(doc.source_uri)
+
+    monkeypatch.setattr(move.ingest_run, "claim_source", cut_off_claim)
+    monkeypatch.setattr(move, "_delete_source", slow_delete)
+    assert _answers(await _run()) == [(URI, True, "")]
+    assert store["forgotten"] == [URI]
+    assert store["audited"][0]["subject"]["source_uris"] == [URI]
+
+
+async def test_a_delete_refused_under_postgres_counts_no_move(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def refused(doc: DocumentRow) -> None:
+        raise DocumentErased()
+
+    monkeypatch.setattr(move, "_delete_source", refused)
+    assert _answers(await _run()) == [(URI, False, "erased")]
+    assert store["taken_back"] == [URI] and store["audited"] == [] and store["forgotten"] == []
