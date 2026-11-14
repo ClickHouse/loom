@@ -666,6 +666,9 @@ async def test_a_cell_not_migrated_to_the_guard_names_it_absent_and_boots() -> N
     absent; the migration then lets the next boot create it."""
     async with _cell("enforced") as (_dsn, conn):
         await conn.execute(f"DROP FUNCTION {cell_triggers.TENANCY_FUNCTION}()")
+        await conn.execute(
+            "DELETE FROM loom.pg_migrations WHERE filename = $1", cell_triggers.TENANCY_MIGRATION
+        )
         await cell_triggers.ensure(conn)
         assert ("tenancy", "tenancy_record", "O") not in await _org_triggers(conn)
         defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
@@ -707,3 +710,19 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
         )
         texts = {d.text for d in await cell_triggers.missing(conn)}
         assert "loom.tenancy_refuse_unmarked() has a body or settings no migration writes" in texts
+
+
+@pytest.mark.asyncio
+async def test_a_guard_function_dropped_after_its_migration_is_a_defect_in_every_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No boot recreates it (the ledger holds 012), so it is never named as normal."""
+    async with _cell("enforced") as (_dsn, conn):
+        await cell_triggers.ensure(conn)
+        await conn.execute(f"DROP FUNCTION {cell_triggers.TENANCY_FUNCTION}() CASCADE")
+        with caplog.at_level("WARNING", logger="server.core.cell_triggers"):
+            await cell_triggers.ensure(conn)
+        assert any("tenancy_refuse_unmarked() is absent" in r.getMessage() for r in caplog.records)
+        defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
+        assert ("function", "loom.tenancy_refuse_unmarked() is absent") in defects
+        assert ("absent", "loom.tenancy: no tenancy_record trigger") in defects

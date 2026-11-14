@@ -517,6 +517,9 @@ def test_missing_names_a_table_this_role_cannot_alter() -> None:
         async def fetchrow(self, _sql: str, *_a: Any) -> None:
             return None  # no function: nothing to compare the triggers with
 
+        async def fetchval(self, _sql: str, *_a: Any) -> bool:
+            return False  # migration 012 not recorded
+
     defects = asyncio.run(cell_triggers.missing(_Catalog()))
     assert ("owner", "loom.memory_current: this role cannot alter it") in {
         (d.kind, d.text) for d in defects

@@ -34,6 +34,7 @@ UPDATE_TRIGGER = "tenancy_update"
 ORG_TRIGGERS = (INSERT_TRIGGER, UPDATE_TRIGGER)
 TENANCY_FUNCTION = "loom.tenancy_refuse_unmarked"
 TENANCY_TRIGGER = "tenancy_record"
+TENANCY_MIGRATION = "012_tenancy_guard.sql"
 CELL_FIRST_TRIGGERS = ("cell_first_immutable", "cell_first_no_truncate")
 # Org-keyed tables outside the guard: the cell's own tenancy rows, and the idempotency
 # rows keyed by the caller's token org (a platform admin's replay row for its home org is
@@ -239,9 +240,12 @@ async def ensure(conn: Any) -> None:
 async def _ensure_tenancy_guard(conn: Any) -> None:
     """Create `tenancy_record` on `loom.tenancy` when it is absent, and enable it when it
     is left otherwise than `O`, as `ensure` does an org trigger (its own path: `_guarded`
-    leaves `loom.tenancy` out). Nothing is done before migration 012 has created its
-    function; `missing` names the trigger absent then."""
+    leaves `loom.tenancy` out). It runs after the pending migrations, so an absent
+    function was dropped by hand: logged, and `missing` names it."""
     if not await conn.fetchval("SELECT to_regprocedure($1) IS NOT NULL", f"{TENANCY_FUNCTION}()"):
+        log.warning(
+            "cell triggers: %s() is absent, so %s is not created", TENANCY_FUNCTION, TENANCY_TRIGGER
+        )
         return
     row = (await _triggers(conn, (TENANCY_TRIGGER,))).get(("tenancy", TENANCY_TRIGGER))
     if row is None:
@@ -306,8 +310,10 @@ async def _holders(conn: Any, table: str) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class Defect:
-    """What `missing` names: `kind` is `absent` for an absent org trigger (normal before a
-    cell's first migrating boot, so doctor names it only on an `enforced` cell)."""
+    """What `missing` names: `kind` is `absent` for an absent org trigger or
+    `tenancy_record`, and for `loom.tenancy_refuse_unmarked()` before migration 012 ran
+    (normal before a cell's first migrating boot, so doctor names it only on an
+    `enforced` cell)."""
 
     kind: str
     text: str
@@ -323,7 +329,6 @@ async def missing(conn: Any) -> list[Defect]:
             found.append(Defect("partitioned", f"loom.{r['relname']} is partitioned: unsupported"))
     present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
     fn = await conn.fetchrow(_FUNCTION, f"{FUNCTION}()")
-    # A cell not migrated to 012 yet lacks the guard's function: absent, as its trigger.
     tenancy_fn = await conn.fetchrow(_FUNCTION, f"{TENANCY_FUNCTION}()")
     # Compared whole, as this server prints them; a trigger whose function is absent has
     # nothing to compare with. A role that may not create a temporary table cannot
@@ -377,7 +382,13 @@ async def missing(conn: Any) -> list[Defect]:
                     Defect("shape", f"loom.{table}: {name} is not AFTER, row-level, on its event")
                 )
     found += _function_defects(FUNCTION, fn, absent="function")
-    found += _function_defects(TENANCY_FUNCTION, tenancy_fn, absent="absent")
+    # Absent before 012 ran, like its trigger; dropped after it, a defect in every state.
+    migrated = tenancy_fn is not None or await conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM loom.pg_migrations WHERE filename = $1)", TENANCY_MIGRATION
+    )
+    found += _function_defects(
+        TENANCY_FUNCTION, tenancy_fn, absent="function" if migrated else "absent"
+    )
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
     for name in CELL_FIRST_TRIGGERS:
         row = first.get(("cell_first", name))
