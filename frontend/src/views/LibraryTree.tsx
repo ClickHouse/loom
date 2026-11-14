@@ -55,7 +55,7 @@ export type MadeCollection = (collection: string, arriveFocus: string, version: 
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
 
 /** The collections a person opened in the tree, per person and org, for this browser. */
-function expandedKey(subject: string, org: string): string {
+export function expandedKey(subject: string, org: string): string {
   // Each part encoded, so no other person and org can spell the same key.
   return `loom_library_expanded_v1:${encodeURIComponent(subject || "-")}:${encodeURIComponent(org)}`;
 }
@@ -204,12 +204,15 @@ export const LibraryTree = memo(function LibraryTree({
     const shown = current ? byName.get(current) : undefined;
     return new Set(shown ? collectionPath(shown, byName).flatMap((p) => ("namespace" in p ? [p.namespace] : [])) : []);
   }, [byName, current]);
-  const shownFor = useRef<string | null>(null);
+  // Opened once per place and path: a move of the place under other parents opens those, and a
+  // refresh with the same path leaves a parent the person closed closed.
+  const revealedFor = useRef<string | null>(null);
   // Before paint, so a tree drawn by a resize shows the place's row for the focus it is handed.
   useLayoutEffect(() => {
-    if (shownFor.current === current) return;
     if (current && !byName.has(current)) return;
-    shownFor.current = current;
+    const path = [current, ...onPath].join("\n");
+    if (revealedFor.current === path) return;
+    revealedFor.current = path;
     if (current) setRevealed((prev) => withAll(prev, [...onPath]));
   }, [byName, current, onPath]);
   const isOpen = (key: string) => open.has(key) || revealed.has(key);

@@ -94,9 +94,9 @@ export interface ReadableCollections {
    *  false once it answers or fails. */
   refreshing: boolean;
   error: unknown;
-  /** Read again; `rows` is null until the new answer lands. `made`: a collection just
+  /** Read again; `rows` is null until the new answer lands. `expect`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
-  reload: (made?: string) => void;
+  reload: (expect?: string) => void;
   /** Read again after a failure, waiting for what the failed read waited for: in the
    *  background while an answer is kept, else as a reload. */
   retry: () => void;
@@ -125,10 +125,10 @@ export function useReadableCollections(org: string, showing: string | null = nul
   // it sets; a later reload or write replaces it, a retry keeps it.
   const [asked, setAsked] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
   const reload = useCallback(
-    (made = "") => {
+    (expect = "") => {
       // An old failure would read as "no collections" before the new answer lands.
       setError(null);
-      setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name: made } }));
+      setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name: expect } }));
     },
     [org],
   );

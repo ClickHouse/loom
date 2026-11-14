@@ -445,6 +445,13 @@ describe("LibraryTree", () => {
     expect(places()).not.toContain("Runbooks");
   });
 
+  it("opens the new parents of the collection shown once it moved under them", () => {
+    const { update } = tree({ namespace: null, current: "col-runbooks" });
+    update({ rows: ROWS.map((c) => (c.namespace === "col-runbooks" ? { ...c, parent: "col-legal" } : c)) });
+    const legal = screen.getByRole("link", { name: "Legal" }).closest("li") as HTMLElement;
+    expect(within(legal).getByRole("link", { name: "Runbooks" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("keeps a fold a later answer from a lagging replica does not list", async () => {
     const { update } = tree();
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));

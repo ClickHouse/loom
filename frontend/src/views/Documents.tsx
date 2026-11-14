@@ -64,7 +64,7 @@ import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { TopLevelPlaces } from "./LibraryHierarchy";
-import { LibraryTree } from "./LibraryTree";
+import { expandedKey, LibraryTree } from "./LibraryTree";
 import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
 import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
@@ -269,7 +269,8 @@ export function Documents() {
   // the server decides.
   const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
-  // Who the tree remembers folds for, as the getting-started checklist names them.
+  // Who the tree remembers folds for, as the getting-started checklist names them. App draws
+  // no page before whoami answers, so this is never a signed-in person's "".
   const subject = whoami?.subject ?? (isAuthDisabled() ? "local" : "");
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
@@ -973,7 +974,7 @@ export function Documents() {
   const placesTree = treeHeight !== null && (
     <LibraryTree
       // One per person and org: nothing read or opened in one shows in, or is saved for, another.
-      key={`${subject} ${picked.org}`}
+      key={expandedKey(subject, picked.org)}
       subject={subject}
       org={picked.org}
       rows={collections.kept?.rows ?? null}
