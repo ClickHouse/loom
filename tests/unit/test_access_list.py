@@ -138,4 +138,5 @@ def test_no_operation_takes_or_answers_a_permission_list() -> None:
     for op in ALL_OPERATIONS:
         for model in (op.input_model, op.output_model):
             schema = json.dumps(model.model_json_schema())
-            assert "access_json" not in schema and "AccessList" not in schema, op.name
+            assert "access_json" not in schema, op.name
+            assert "AccessList" not in schema, op.name

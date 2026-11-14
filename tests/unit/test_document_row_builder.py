@@ -120,7 +120,9 @@ def test_the_repo_reads_select_the_hash_the_erasure_stamp_and_the_permission_lis
     asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
     assert len(seen) == 2, seen
     for sql in seen:
-        assert "content_sha256" in sql and "blob_erased_at" in sql and "access_json" in sql
+        assert "content_sha256" in sql, sql
+        assert "blob_erased_at" in sql, sql
+        assert "access_json" in sql, sql
 
 
 def _capture_inserts(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
@@ -1052,4 +1054,5 @@ def test_a_metadata_edit_that_reindexes_writes_no_permission_list(
         org="o", namespace="n", source_uri="doc-a", title="New", reindex=True
     )
     asyncio.run(kh.handle_knowledge_update_metadata(body))
-    assert rows and all(r["access_json"] == "" for r in rows)
+    assert rows
+    assert [r["access_json"] for r in rows] == [""] * len(rows)
