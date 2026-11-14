@@ -1040,7 +1040,9 @@ export function Documents() {
       fromLabel={shown ? collectionTitle(shown) : `Namespace ${identity.namespace}`}
       sourceUris={moving}
       places={movePlaces}
-      placesReading={collections.kept ? null : collections.error ? "failed" : "loading"}
+      placesReading={
+        collections.kept ? (collections.kept.truncated ? "truncated" : null) : collections.error ? "failed" : "loading"
+      }
       onMoved={(moved) => {
         // Any answer may have changed the list, a failed call's too.
         if (moved.length) movedSome.current = true;

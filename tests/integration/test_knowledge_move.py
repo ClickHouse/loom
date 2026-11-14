@@ -733,3 +733,59 @@ async def test_a_failed_call_audits_its_finished_moves_where_they_went(
             )
         [there] = await eventually(lambda: _moves_audited(a, dst), description="target row")
     assert json.loads(there["subject"]) == {"from_namespace": src, "source_uris": [uri]}
+
+
+@pytest.mark.asyncio
+async def test_an_erased_move_leaves_an_original_a_concurrent_write_of_its_bytes_needs(
+    control_plane_url: str, ch_client: Any, in_process: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loom import Agent
+
+    move = in_process
+    src, dst, uri = _places()
+    data = f"%PDF-{uuid.uuid4().hex}".encode()
+    async with Agent(org=ORG, namespace=src, agent="w", base_url=control_plane_url) as a:
+        await a.transport.post(
+            "/v1/knowledge.add",
+            {
+                "org": ORG,
+                "namespace": src,
+                "source_uri": uri,
+                "content": "An original with its text.",
+                "original_bytes_b64": base64.b64encode(data).decode(),
+                "original_filename": "a.pdf",
+                "blob_content_type": "application/pdf",
+            },
+        )
+    real = move.chunks_repo.copy_revision
+
+    async def concurrent_write_then_erasure(*args: Any, **kwargs: Any) -> bool:
+        landed = await real(*args, **kwargs)
+        # Another write stores the same bytes there; its row is still to land.
+        await move.blobs.put(ORG, dst, data)
+        ch_client.insert(
+            "loom.erasure_requests",
+            [[uuid.uuid4(), ORG, "namespace", dst, "itest", "queued", 1]],
+            column_names=[
+                "id",
+                "org",
+                "scope_type",
+                "scope_value",
+                "requester",
+                "status",
+                "version",
+            ],
+        )
+        return bool(landed)
+
+    monkeypatch.setattr(move.chunks_repo, "copy_revision", concurrent_write_then_erasure)
+    assert await _move_here(move, src, dst, uri) == [
+        {"source_uri": uri, "moved": False, "reason": "erased"}
+    ]
+    stored = ch_client.query(
+        "SELECT hex(data) FROM loom.document_blobs WHERE org = {org:String}"
+        " AND namespace = {ns:String}",
+        parameters={"org": ORG, "ns": dst},
+    ).result_rows
+    assert data.hex().upper() in {r[0] for r in stored}
+    assert _live_rows(ch_client, src, uri) == 1

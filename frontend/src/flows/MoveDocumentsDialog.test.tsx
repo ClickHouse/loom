@@ -30,7 +30,7 @@ afterEach(cleanup);
 function dialog(
   uris = ["doc://a.md", "doc://b.md"],
   places = PLACES,
-  placesReading: "loading" | "failed" | null = null,
+  placesReading: "loading" | "failed" | "truncated" | null = null,
 ) {
   const onMoved = vi.fn();
   const onClose = vi.fn();
@@ -187,13 +187,18 @@ describe("MoveDocumentsDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("says the collections are still being read, or could not be, instead of no place", () => {
+  it("says the collections are still being read, could not be, or are not all listed", () => {
     dialog(["doc://a.md"], [], "loading");
     expect(screen.getByText("Reading the collections…")).toBeInTheDocument();
     expect(screen.queryByText(/no other place/)).not.toBeInTheDocument();
     cleanup();
     dialog(["doc://a.md"], [], "failed");
     expect(screen.getByText("The collections could not be read, so they are not listed here.")).toBeInTheDocument();
+    cleanup();
+    dialog(["doc://a.md"], PLACES, "truncated");
+    expect(
+      screen.getByText("Not every collection is listed: there are more than the Library reads."),
+    ).toBeInTheDocument();
     cleanup();
     dialog(["doc://a.md"], []);
     expect(screen.getByText("There is no other place you can add documents to.")).toBeInTheDocument();

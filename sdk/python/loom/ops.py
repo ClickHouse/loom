@@ -11080,7 +11080,7 @@ class KnowledgeListEntry(TypedDict, total=False):
 
 
 class KnowledgeMoveInput(TypedDict, total=False):
-    "Move documents to another namespace of the org: a collection, `@me`, or a namespace."
+    "Move documents to another namespace of the org: a collection, `@me` (an end user's"
 
     org: Required[str]
     namespace: Required[str]
@@ -11089,7 +11089,7 @@ class KnowledgeMoveInput(TypedDict, total=False):
 
 
 class KnowledgeMoveBody(TypedDict, total=False):
-    "Move documents to another namespace of the org: a collection, `@me`, or a namespace."
+    "Move documents to another namespace of the org: a collection, `@me` (an end user's"
 
     org: NotRequired[str]
     namespace: NotRequired[str]

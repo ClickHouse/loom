@@ -68,8 +68,9 @@ export function MoveDocumentsDialog({
   sourceUris: string[];
   /** Where they can go, in tree order; `from` is left out by the caller. */
   places: MovePlace[];
-  /** The collections are still being read, or their read failed: `places` may lack them. */
-  placesReading?: "loading" | "failed" | null;
+  /** The collections are still being read, their read failed, or there are more than the
+   *  Library reads: `places` may lack some. */
+  placesReading?: "loading" | "failed" | "truncated" | null;
   /** After every call, whatever it answered (a failed one may have moved some): the
    *  sources that moved. */
   onMoved: (moved: string[]) => void;
@@ -148,6 +149,11 @@ export function MoveDocumentsDialog({
           {placesReading === "loading" && <p className="text-sm text-text-muted">Reading the collections…</p>}
           {placesReading === "failed" && (
             <p className="text-sm text-text-muted">The collections could not be read, so they are not listed here.</p>
+          )}
+          {placesReading === "truncated" && (
+            <p className="text-sm text-text-muted">
+              Not every collection is listed: there are more than the Library reads.
+            </p>
           )}
           {places.length === 0 && !placesReading && (
             <p className="text-sm text-text-muted">There is no other place you can add documents to.</p>

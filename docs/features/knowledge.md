@@ -1120,15 +1120,15 @@ recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 ### Moving documents
 
 `knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the
-same org: a collection, `@me` (the caller's own) or a namespace. The caller needs writer on
-both; one it cannot write answers `found: false` and moves nothing, so the answer never says
-whether a collection it cannot reach exists. Each document is written in the new place with
-its chunks and their vectors (nothing is embedded again), its original file and its
-extraction artifact (stored again there: an original belongs to its namespace's sweep and
-erasure), its tables, its title, description, tags, author and date, as the next revision of
-its source there. It then takes the sharing of the place it went to. Where it was, it is
-deleted as `knowledge.delete` leaves it, so `knowledge.restore` there brings it back (beside
-the moved copy).
+same org: a collection, `@me` (an end user's own collection) or a namespace. The caller
+needs writer on both; one it cannot write answers `found: false` and moves nothing, so the
+answer never says whether a collection it cannot reach exists. Each document is written in
+the new place with its chunks and their vectors (nothing is embedded again), its original
+file and its extraction artifact (stored again there: an original belongs to its namespace's
+sweep and erasure), its tables, its title, description, tags, author and date, as the next
+revision of its source there. It then takes the sharing of the place it went to. Where it
+was, it is deleted as `knowledge.delete` leaves it, so `knowledge.restore` there brings it
+back (beside the moved copy).
 
 Each source answers on its own: `moved: true`, or a `reason`:
 
@@ -1145,17 +1145,18 @@ new place first and deletes the old one last, so a move cut off between the two 
 document in both places, never in neither; moving it again finds its copy there (the same
 text, title, description, tags, metadata, author, ingest time and tables) and only deletes
 the old one (after writing the copy again if it lacks chunks or tables), while an edit of
-either since makes the copy another document, which answers `exists`. A source whose own
-move fails (its claim held or cut off, a write of it meanwhile, its original refused by the
-object store) answers `busy`, and the others still move; a failure of the call itself is
-answered once every source has. An erasure registered while a move runs takes the copy back
-before the delete and answers `erased`: an `erased` document is always still where it was.
-The SDKs retry `knowledge.move` after a lost answer with the same Idempotency-Key, and the
-server replays the first answer; a retry without the key, or one the replay cache cannot
-answer under the ClickHouse authority, runs the move again, and a document that moved the
-first time answers `not_found`. Under the Postgres authority each of the two writes is its
-own commit. The ordering and what a cut-off move leaves are in [failure and
-recovery](../architecture/failure-and-recovery.md#knowledge-move).
+either since makes the copy another document, which answers `exists`, as does a copy with
+its tables gone that serves more chunks than the source (writing over it would serve less).
+A source whose own move fails (its claim held or cut off, a write of it meanwhile, its
+original refused by the object store) answers `busy`, and the others still move; a failure
+of the call itself is answered once every source has. An erasure registered while a move
+runs takes the copy back before the delete and answers `erased`: an `erased` document is
+always still where it was. The SDKs retry `knowledge.move` after a lost answer with the same
+Idempotency-Key, and the server replays the first answer; a retry without the key, or one
+the replay cache cannot answer under the ClickHouse authority, runs the move again, and a
+document that moved the first time answers `not_found`. Under the Postgres authority each of
+the two writes is its own commit. The ordering and what a cut-off move leaves are in
+[failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
 
 ## Ingesting files
 

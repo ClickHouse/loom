@@ -571,10 +571,10 @@ can land after its take-back, which leaves the row alone), is written over, as a
 document is, before the source is deleted. One with more is whole: a delete cut off between
 retiring the source's chunks and writing its tombstone (it retires them first) leaves the
 source row live with none, and only the delete is left; a copy is never written over one
-that serves more chunks than the source. Tables there that differ otherwise were changed on
-one side since (an approval, a clarification), which cannot be told from a change on the
-other: that copy, like one whose text or metadata was edited, is another document and
-answers `exists`.
+that serves more chunks than the source: one that also lacks its tables answers `exists`.
+Tables there that differ otherwise were changed on one side since (an approval, a
+clarification), which cannot be told from a change on the other: that copy, like one whose
+text or metadata was edited, is another document and answers `exists`.
 
 Anything that does not land whole, or a write that took either place before the delete,
 takes back what the move wrote where it goes, and that source answers `busy`. The take-back
@@ -603,19 +603,21 @@ document under the claims, just before its delete, for one registered since: one
 passed the copy, this move's or an earlier move's. That one takes back a copy this move
 wrote, leaves an earlier move's copy to the erasure, and answers `erased` without deleting
 the source, so an `erased` document always stays where it was. Under the Postgres authority
-a delete over a document an erasure removed meanwhile answers `erased` too. An `erased`
-answer also deletes the originals the call stored in the new place that no row there needs:
-the erasure's originals step may have run before they were stored. A copy taken back for
-another reason leaves its original, named by no row, to the sweep after
-`document_blob_min_age_seconds`, as any original whose row did not land.
+a delete over a document an erasure removed meanwhile answers `erased` too. The ledger is
+read again just before a document's original is stored in the new place, so an erasure whose
+originals step could miss it must register in the moment between that read and the store;
+the re-read before the delete then answers `erased`, and that original, named by no row, is
+the sweep's after `document_blob_min_age_seconds`, as any original whose row did not land.
+The move deletes no original itself: one is keyed by its bytes, and a concurrent write of
+the same bytes whose row has not landed yet may need it.
 
-Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's
-row and the delete each commit over the version read, so a write that took the source or
-the place first refuses them (409), and the copy is taken back. Under the ClickHouse
-authority the move reads each head again just before its row and after it: a write with a
-later version wins and the copy is taken back, while one that landed in the instant
-between that read and the row, with an earlier version, is replaced, as with two text
-writes of one source.
+Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's row
+and the delete each commit over the version read, so a write that took the source or the
+place first refuses them (409), and the copy is taken back. Under the ClickHouse authority
+the move reads the target's head under the claims before it copies and again after its row:
+a write with a later version wins and the copy is taken back, while one that landed between
+that first read and the row (the whole chunk and table copy), with an earlier version, is
+replaced, as with two text writes of one source.
 
 ## Invariants
 

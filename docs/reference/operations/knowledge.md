@@ -380,7 +380,7 @@ Paginated listing of the documents of one namespace or several, for curation too
 
 ## `knowledge.move`
 
-Move documents to another namespace of the org: a collection, `@me`, or a namespace.
+Move documents to another namespace of the org: a collection, `@me` (an end user's own collection), or a namespace.
 
 `POST /v1/knowledge.move` · MCP `loom_knowledge_move` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -388,13 +388,13 @@ Move documents to another namespace of the org: a collection, `@me`, or a namesp
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | Where the documents are. |
-| `to_namespace` | `str` | required | Where they go: a collection, `@me` (the caller's own files) or a namespace of the same org. |
+| `to_namespace` | `str` | required | Where they go: a collection, `@me` (an end user's own collection) or a namespace of the same org. |
 | `source_uris` | `list[str]` | required | The documents to move, by source, at most 50 a call; a source named twice moves once. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `found` | `bool` | False when the caller cannot write to `to_namespace`: nothing moved. |
-| `to_namespace` | `str` | Where the documents went (`@me` as the caller's own collection). |
+| `to_namespace` | `str` | Where the documents went (`@me` resolved to the end user's own collection). |
 | `results` | `list[_KnowledgeMoveResult]` | One per source asked for, in the order asked. |
 
 ## `knowledge.outline`
