@@ -107,11 +107,20 @@ def _grades(
         out.append(("cell_marker", PASS, "this process's sessions are marked"))
     else:
         if state == "enforced":
-            effect = "Loom's own writes for a stray org are refused"
+            effect = (
+                "Loom's own writes for a stray org, and its tenancy row for each newly "
+                "placed org, are refused"
+            )
         elif state == "partial":
-            effect = "Loom's own writes for a stray org are refused where the org triggers exist"
+            effect = (
+                "Loom's own writes for a stray org, and its tenancy rows, are refused where "
+                "the org triggers and the loom.tenancy guard exist"
+            )
         else:
-            effect = "once the cell is enforced, Loom's own writes for a stray org will be refused"
+            effect = (
+                "once the cell is enforced, Loom's own writes for a stray org, and its "
+                "tenancy row for each newly placed org, will be refused"
+            )
         out.append(
             (
                 "cell_marker",
@@ -128,7 +137,7 @@ def _grades(
                 WARN,
                 "a session that sends no marker is marked, or its session_replication_role is "
                 "replica (a role, database, ALTER SYSTEM or options setting): the org "
-                "triggers pass every writer",
+                "triggers and the loom.tenancy guard pass every writer",
             )
         )
     named = [d.text for d in defects if d.kind != "absent"]

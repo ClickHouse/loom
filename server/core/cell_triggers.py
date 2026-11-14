@@ -169,6 +169,8 @@ def _function_sql(function: str) -> re.Pattern[str]:
 def _create(qualified: str, name: str) -> str:
     """The CREATE TRIGGER for `name` on the table `qualified` names."""
     if name == TENANCY_TRIGGER:
+        # The marker alone: a WHEN on INSERT cannot read OLD, so the function itself
+        # passes an update that keeps the row's org.
         return (
             f"CREATE TRIGGER {name} AFTER INSERT OR UPDATE OF org ON {qualified} FOR EACH ROW "
             f"WHEN {_when('INSERT')} EXECUTE FUNCTION {TENANCY_FUNCTION}()"

@@ -636,11 +636,15 @@ async def test_an_unmarked_session_is_refused_a_tenancy_row_on_an_enforced_cell(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["recording", "later-recording", "partial", "open"])
+@pytest.mark.parametrize(
+    "state", ["recording", "later-recording", "partial", "recording-without-own", "open"]
+)
 async def test_the_guard_passes_only_a_first_cell_still_recording(state: str) -> None:
     import asyncpg
 
-    async with _cell(state, held=()) as (dsn, conn):
+    async with _cell(state.removesuffix("-without-own"), held=()) as (dsn, conn):
+        if state == "recording-without-own":
+            await conn.execute("DELETE FROM loom.cell_self")  # partial: no own row
         await cell_triggers.ensure(conn)
         await conn.execute("DROP TRIGGER IF EXISTS tenancy_record ON loom.tenancy")
         await _create_guard_by_hand(conn)
@@ -685,9 +689,9 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
         }
         await cell_triggers.ensure(conn)  # a boot enables it again
         assert await cell_triggers.missing(conn) == []
-        for event, function in (
-            ("INSERT", cell_triggers.TENANCY_FUNCTION),  # no UPDATE OF org
-            ("INSERT OR UPDATE OF org", cell_triggers.FUNCTION),
+        for event, function, kind in (
+            ("INSERT", cell_triggers.TENANCY_FUNCTION, "shape"),  # no UPDATE OF org
+            ("INSERT OR UPDATE OF org", cell_triggers.FUNCTION, "function"),
         ):
             await conn.execute("DROP TRIGGER tenancy_record ON loom.tenancy")
             await conn.execute(
@@ -696,7 +700,7 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
                 f"EXECUTE FUNCTION {function}()"
             )
             kinds = {d.kind for d in await cell_triggers.missing(conn)}
-            assert kinds & {"shape", "definition", "function"}, event
+            assert {kind, "definition"} <= kinds, event
         await conn.execute(
             f"CREATE OR REPLACE FUNCTION {cell_triggers.TENANCY_FUNCTION}() RETURNS trigger "
             "LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$"
