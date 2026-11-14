@@ -520,9 +520,6 @@ def test_missing_names_a_table_this_role_cannot_alter() -> None:
         async def fetchrow(self, _sql: str, *_a: Any) -> None:
             return None  # no function: nothing to compare the triggers with
 
-        async def fetchval(self, _sql: str, *_a: Any) -> bool:
-            return False  # migration 012 not recorded
-
     defects = {(d.kind, d.text) for d in asyncio.run(cell_triggers.missing(_Catalog()))}
     assert ("owner", "loom.memory_current: this role cannot alter it") in defects
     assert ("owner", "loom.tenancy: this role cannot alter it") in defects
@@ -626,9 +623,6 @@ class _Cell:
             "has_tenancy": True,
         }
 
-    async def fetchval(self, _sql: str, *_a: Any) -> bool:
-        return False  # not migrated to 012: no guard function yet
-
     async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
         if "pg_attribute" in sql:
             return [{"relname": "memory_current", "relkind": "r", "owned": False}]
@@ -710,9 +704,6 @@ def test_ensure_creates_or_enables_the_guard_once_its_function_exists(
     monkeypatch: pytest.MonkeyPatch, found: str | None, ran: str | None
 ) -> None:
     class _Enforced(_Cell):
-        async def fetchval(self, _sql: str, *_a: Any) -> bool:
-            return True
-
         async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
             if "pg_attribute" in sql:
                 return []  # no org table: the guard alone

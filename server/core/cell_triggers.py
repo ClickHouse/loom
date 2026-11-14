@@ -33,7 +33,6 @@ UPDATE_TRIGGER = "tenancy_update"
 ORG_TRIGGERS = (INSERT_TRIGGER, UPDATE_TRIGGER)
 TENANCY_FUNCTION = "loom.tenancy_refuse_unmarked"
 TENANCY_TRIGGER = "tenancy_record"
-TENANCY_MIGRATION = "012_tenancy_guard.sql"
 CELL_FIRST_TRIGGERS = ("cell_first_immutable", "cell_first_no_truncate")
 # Org-keyed tables outside the guard: the cell's own tenancy rows, and the idempotency
 # rows keyed by the caller's token org (a platform admin's replay row for its home org is
@@ -193,18 +192,17 @@ async def _triggers(conn: Any, names: tuple[str, ...]) -> dict[tuple[str, str], 
 
 async def ensure(conn: Any) -> None:
     """Create a fully prepared `enforced` cell's absent org triggers and `loom.tenancy`
-    guard and enable each one left otherwise than `O` (the guard is skipped, logged, while
-    its function is absent); in any state but `open`, set each `loom.cell_first` trigger
-    not at `A` to ENABLE ALWAYS. Never drops a trigger. A table's DDL runs in one
-    transaction that waits LOCK_TIMEOUT for its lock a try, LOCK_ATTEMPTS tries; a table
-    whose lock it cannot take is logged with the holders of its locks, one the role
-    cannot alter is logged as such, and either is skipped (the boot serves). A failed
-    read of the state or the catalog raises. Runs on the migration session, which holds
-    the migration lock."""
+    guard and enable each one left otherwise than `O`; in any state but `open`, set each
+    `loom.cell_first` trigger not at `A` to ENABLE ALWAYS. Never drops a trigger. A table's
+    DDL runs in one transaction that waits LOCK_TIMEOUT for its lock a try, LOCK_ATTEMPTS
+    tries; a table whose lock it cannot take is logged with the holders of its locks, one
+    the role cannot alter is logged as such, and either is skipped (the boot serves). A
+    failed read of the state or the catalog raises. Runs on the migration session, which
+    holds the migration lock."""
     state = await cell.read_state(conn)
     if state == "open":
         return
-    # A table's statements, in one transaction: one lock wait, and both triggers or neither.
+    # A table's statements, in one transaction: one lock wait, and every statement or none.
     statements: dict[str, list[str]] = {}
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
     for name in CELL_FIRST_TRIGGERS:
@@ -223,16 +221,7 @@ async def ensure(conn: Any) -> None:
                     "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
                 )
         pairs = [(r["relname"], n) for r in _guarded(tables) for n in ORG_TRIGGERS]
-        # The guard on loom.tenancy, which `_guarded` leaves out. The pending migrations ran
-        # first, so an absent function was dropped by hand: logged, `missing` names it.
-        if await conn.fetchval("SELECT to_regprocedure($1) IS NOT NULL", f"{TENANCY_FUNCTION}()"):
-            pairs.append(("tenancy", TENANCY_TRIGGER))
-        else:
-            log.warning(
-                "cell triggers: %s() is absent, so %s is not created",
-                TENANCY_FUNCTION,
-                TENANCY_TRIGGER,
-            )
+        pairs.append(("tenancy", TENANCY_TRIGGER))  # the guard, which `_guarded` leaves out
         for table, name in pairs:
             row = present.get((table, name))
             if row is None:
@@ -300,9 +289,8 @@ async def _holders(conn: Any, table: str) -> str:
 @dataclasses.dataclass(frozen=True)
 class Defect:
     """What `missing` names: `kind` is `absent` for an absent org trigger or
-    `tenancy_record`, and for `loom.tenancy_refuse_unmarked()` before migration 012 ran
-    (normal before a cell's first migrating boot, so doctor names it only on an `enforced`
-    cell)."""
+    `tenancy_record` (normal before a cell's first migrating boot, so doctor names it only
+    on an `enforced` cell)."""
 
     kind: str
     text: str
@@ -319,12 +307,6 @@ async def missing(conn: Any) -> list[Defect]:
     present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
     fn = await conn.fetchrow(_FUNCTION, f"{FUNCTION}()")
     tenancy_fn = await conn.fetchrow(_FUNCTION, f"{TENANCY_FUNCTION}()")
-    # The guard and its function are absent before 012 ran, normal there; dropped after it,
-    # no boot creates them again: a defect in every state.
-    migrated = tenancy_fn is not None or await conn.fetchval(
-        "SELECT EXISTS (SELECT 1 FROM loom.pg_migrations WHERE filename = $1)", TENANCY_MIGRATION
-    )
-    dropped = "function" if migrated and tenancy_fn is None else "absent"
     # Compared whole, as this server prints them; a trigger whose function is absent has
     # nothing to compare with. A role that may not create a temporary table cannot compare:
     # named, with every other defect kept.
@@ -349,8 +331,7 @@ async def missing(conn: Any) -> list[Defect]:
         for name in (TENANCY_TRIGGER,) if table == "tenancy" else ORG_TRIGGERS:
             row = present.get((table, name))
             if row is None:
-                kind = dropped if name == TENANCY_TRIGGER else "absent"
-                found.append(Defect(kind, f"loom.{table}: no {name} trigger"))
+                found.append(Defect("absent", f"loom.{table}: no {name} trigger"))
                 continue
             event = _EVENTS[name]
             tgtype = row["tgtype"]
@@ -377,8 +358,8 @@ async def missing(conn: Any) -> list[Defect]:
                 found.append(
                     Defect("shape", f"loom.{table}: {name} is not AFTER, row-level, on its event")
                 )
-    found += _function_defects(FUNCTION, fn, absent="function")
-    found += _function_defects(TENANCY_FUNCTION, tenancy_fn, absent=dropped)
+    found += _function_defects(FUNCTION, fn)
+    found += _function_defects(TENANCY_FUNCTION, tenancy_fn)
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
     for name in CELL_FIRST_TRIGGERS:
         row = first.get(("cell_first", name))
@@ -391,11 +372,11 @@ async def missing(conn: Any) -> list[Defect]:
     return found
 
 
-def _function_defects(function: str, fn: Any, *, absent: str) -> list[Defect]:
+def _function_defects(function: str, fn: Any) -> list[Defect]:
     """What a trigger function lacks: it exists, is VOLATILE, not SECURITY DEFINER, and
     has a body and settings a migration file writes."""
     if fn is None:
-        return [Defect(absent, f"{function}() is absent")]
+        return [Defect("function", f"{function}() is absent")]
     found = []
     if fn["volatile"] != "v":
         found.append(Defect("function", f"{function}() is not VOLATILE"))

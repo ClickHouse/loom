@@ -602,11 +602,6 @@ async def test_ensure_takes_a_lock_freed_between_its_tries() -> None:
             await holder.close()
 
 
-async def _create_guard_by_hand(conn: Any) -> None:
-    """`tenancy_record` where `ensure` would not create it."""
-    await conn.execute(cell_triggers._create("loom.tenancy", cell_triggers.TENANCY_TRIGGER))
-
-
 @pytest.mark.asyncio
 async def test_an_unmarked_session_is_refused_a_tenancy_row_on_an_enforced_cell() -> None:
     import asyncpg
@@ -648,11 +643,12 @@ async def test_the_guard_passes_only_a_first_cell_still_recording(state: str) ->
             await conn.execute("DELETE FROM loom.cell_self")  # partial: no own row
         await cell_triggers.ensure(conn)
         await conn.execute("DROP TRIGGER IF EXISTS tenancy_record ON loom.tenancy")
-        await _create_guard_by_hand(conn)
+        await conn.execute(cell_triggers._create("loom.tenancy", cell_triggers.TENANCY_TRIGGER))
         plain = await _unmarked(dsn)
         try:
             if state == "recording":
                 await plain.execute(_HOLD, "recorded-org")
+                await plain.execute("UPDATE loom.tenancy SET org = 'moved-org'")
             else:  # `open` counts the row: a tenancy row alone reads `partial`
                 with pytest.raises(asyncpg.PostgresError) as caught:
                     await plain.execute(_HOLD, "script-org")
@@ -662,25 +658,26 @@ async def test_the_guard_passes_only_a_first_cell_still_recording(state: str) ->
 
 
 @pytest.mark.asyncio
-async def test_a_cell_not_migrated_to_the_guard_names_it_absent_and_boots() -> None:
-    """Before 012: no function, so `ensure` creates no guard and `missing` names both
-    absent; the migration then lets the next boot create it."""
-    async with _cell("enforced") as (_dsn, conn):
+@pytest.mark.parametrize("state", ["recording", "enforced"])
+async def test_a_dropped_guard_function_is_named_in_every_state_and_fails_the_boot(
+    state: str,
+) -> None:
+    """As a dropped org function: `ensure` cannot create the guard and fails the boot, and
+    rerunning migration 012 lets the next boot create it."""
+    import asyncpg
+
+    async with _cell(state) as (_dsn, conn):
         await conn.execute(f"DROP FUNCTION {cell_triggers.TENANCY_FUNCTION}()")
-        await conn.execute(
-            "DELETE FROM loom.pg_migrations WHERE filename = $1", cell_triggers.TENANCY_MIGRATION
-        )
-        await cell_triggers.ensure(conn)
-        assert ("tenancy", "tenancy_record", "O") not in await _org_triggers(conn)
+        if state == "enforced":
+            with pytest.raises(asyncpg.exceptions.UndefinedFunctionError):
+                await cell_triggers.ensure(conn)
         defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
-        assert defects == {
-            ("absent", "loom.tenancy: no tenancy_record trigger"),
-            ("absent", "loom.tenancy_refuse_unmarked() is absent"),
-        }
+        assert ("function", "loom.tenancy_refuse_unmarked() is absent") in defects
         await conn.execute((pg_migrate.PG_MIGRATIONS_DIR / "012_tenancy_guard.sql").read_text())
         await cell_triggers.ensure(conn)
-        assert ("tenancy", "tenancy_record", "O") in await _org_triggers(conn)
-        assert await cell_triggers.missing(conn) == []
+        if state == "enforced":
+            assert ("tenancy", "tenancy_record", "O") in await _org_triggers(conn)
+            assert await cell_triggers.missing(conn) == []
 
 
 @pytest.mark.asyncio
@@ -711,19 +708,3 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
         )
         texts = {d.text for d in await cell_triggers.missing(conn)}
         assert "loom.tenancy_refuse_unmarked() has a body or settings no migration writes" in texts
-
-
-@pytest.mark.asyncio
-async def test_a_guard_function_dropped_after_its_migration_is_a_defect_in_every_state(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """No boot recreates it (the ledger holds 012), so it is never named as normal."""
-    async with _cell("enforced") as (_dsn, conn):
-        await cell_triggers.ensure(conn)
-        await conn.execute(f"DROP FUNCTION {cell_triggers.TENANCY_FUNCTION}() CASCADE")
-        with caplog.at_level("WARNING", logger="server.core.cell_triggers"):
-            await cell_triggers.ensure(conn)
-        assert any("tenancy_refuse_unmarked() is absent" in r.getMessage() for r in caplog.records)
-        defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
-        assert ("function", "loom.tenancy_refuse_unmarked() is absent") in defects
-        assert ("function", "loom.tenancy: no tenancy_record trigger") in defects

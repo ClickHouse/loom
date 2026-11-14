@@ -1,8 +1,8 @@
 -- The function behind a cell's `loom.tenancy` guard (docs/architecture/cells.md, "Writers
 -- older than the check are refused by the stores they write"). It adds no trigger: a cell's
--- boot creates `tenancy_record` on an `enforced` cell, and attach once it sets `enforced`
--- (`ensure` in server/core/cell_triggers.py); on a deployment that is not a cell no trigger
--- calls it.
+-- boot creates `tenancy_record` on a fully prepared cell in `enforced`
+-- (server/core/cell_triggers.py), and on a deployment that is not a cell no trigger calls
+-- it.
 --
 -- A tenancy row makes an org held. Only a session that ran the tenancy check writes one
 -- (`loom.tenancy_checked = 'on'`, which the trigger's WHEN skips); a row inserted, or moved

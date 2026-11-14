@@ -381,17 +381,18 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `LOOM_BOOT_MIGRATE` on, and repeat until `loom doctor` names no missing or disabled
   trigger.
 
-### A boot logs "loom.tenancy_refuse_unmarked() is absent"
+### A boot fails with "function loom.tenancy_refuse_… does not exist"
 
-- **Symptom:** a boot of an `enforced` cell logs that
-  `loom.tenancy_refuse_unmarked() is absent, so tenancy_record is not created`, and
-  `loom doctor` names the function absent and `loom.tenancy` without its guard.
-- **Cause:** the function was dropped by hand after migration 012 ran (a
-  `DROP FUNCTION … CASCADE` drops the guard with it). The migration ledger already lists
-  012, so no boot creates it again, and a script's tenancy row is not refused.
-- **Fix:** run `schemas/pg_migrations/012_tenancy_guard.sql` with `psql` as the role that
-  owns schema `loom`'s tables, then restart one pod with `LOOM_BOOT_MIGRATE` on: its boot
-  creates the guard.
+- **Symptom:** a migrating boot of an `enforced` cell fails creating a cell trigger with
+  `function loom.tenancy_refuse_unheld() does not exist` (or `…_unmarked()`), and
+  `loom doctor` names the function absent in any state.
+- **Cause:** the function was dropped by hand after its migration ran (011 for the org
+  triggers, 012 for the `loom.tenancy` guard; a `DROP FUNCTION … CASCADE` drops its triggers
+  with it). The migration ledger already lists the file, so no boot creates the function
+  again, and until it is back, unchecked writers are not refused.
+- **Fix:** run the migration file (`schemas/pg_migrations/011_tenancy_triggers.sql` or
+  `012_tenancy_guard.sql`) with `psql` as the role that owns schema `loom`'s tables, then
+  restart one pod with `LOOM_BOOT_MIGRATE` on: its boot creates the triggers.
 
 ### Writes are slow, or a script is refused, on a deployment that is not a cell
 
