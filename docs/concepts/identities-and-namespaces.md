@@ -337,6 +337,33 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
+A `definition` is promoted only:
+
+- From its live namespace-wide row (agent, user and session `'-'`, `active` and not past
+  its `expires_at` or `valid_to`) under a `definition/` key, to that same key; a row of
+  another type is never promoted under a `definition/` key. Else 422
+  `DEFINITION_PROMOTION_REFUSED`.
+- With the hash it approves (`approved_sha256`, the row's `content_sha256`): refused
+  without it (422 `VALIDATION_FAILED`), and with 409 `PRECONDITION_FAILED` when the text
+  no longer has it.
+- With a value that is a JSON object holding a non-empty string `term` and, optionally,
+  a list of string `aliases`; else 422 `VALIDATION_FAILED`.
+- Not labelled `medium` and not reading as `medium` or `high` (422
+  `SENSITIVE_DEFINITION_REFUSED`; a `high` label answers
+  `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row).
+- Within `memory_shared_definitions_max`: a new key at the ceiling, or any promotion
+  while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
+- Under a name no other live shared definition holds as its term or an alias (409
+  `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format
+  characters dropped, NFKC, whitespace collapsed, case-folded, then NFKC again.
+
+One namespace's definition promotions run their ceiling and name checks and the write one
+at a time (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a
+definition gives back its name and its place. The token's actor is its `promoted_by`:
+`approver` and `promoted_from_candidate_id` are ignored and named in `ignored_args`, and
+no close shared row under another key refuses it. `learnings.review` promotes no candidate
+of type `definition` to memory.
+
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an
 owner's decision and an audit trail. Promotion is that decision.

@@ -6369,12 +6369,14 @@ export interface MemoryPromoteInput {
   approver?: string | null;
   reversible_for_days?: number;
   promoted_from_candidate_id?: string | null;
+  approved_sha256?: string | null;
 }
 
 export interface MemoryPromoteOutput {
   shared_memory_key: string;
   promotion_event: string;
   reversible_until: string; // date-time
+  ignored_args?: string[];
 }
 
 export interface MemoryProposalDecideInput {

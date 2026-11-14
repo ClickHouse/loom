@@ -460,8 +460,19 @@ export function MemoryInspector({
   const rejectReason = why("memory.reject");
   const shareReason = why("memory.promote");
   const unshareReason = why("memory.demote");
-  // memory.promote refuses a profile row and a high one.
-  const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
+  // The server also refuses a definition past its expiry or one whose value reads medium.
+  const namespaceWide = [detail?.agent, detail?.user_id, detail?.session_id].every((v) => !v || v === "-");
+  const isDefinition = detail?.memory_type === "definition";
+  const underDefinitionKey = memoryKey.startsWith("definition/");
+  const definitionShareable =
+    isDefinition &&
+    underDefinitionKey &&
+    namespaceWide &&
+    (detail?.status ?? "active") === "active" &&
+    detail?.sensitivity !== "medium";
+  const governed = isDefinition || underDefinitionKey;
+  const shareable =
+    detail?.memory_type !== "profile" && detail?.sensitivity !== "high" && (!governed || definitionShareable);
   const redactReason = why("memory.redact");
   const judgeReason = why("memory.outcome");
   // The value, its tags and its expiry are memory.set; Delete and Verify their own ops. Copy to
@@ -658,7 +669,9 @@ export function MemoryInspector({
     });
     if (!ok) return;
     try {
-      const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
+      // A definition's promotion names the text it approves: the one shown.
+      const approved = detail.memory_type === "definition" ? detail.content_sha256 : undefined;
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, approved);
       toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {

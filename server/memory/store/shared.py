@@ -17,6 +17,8 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
+from server.memory.domain.definitions import DEFINITION_KEY_PREFIX
+from server.memory.domain.memory_types import DEFINITION
 
 # The agent of a promoted row's embedding: shared rows are not agent-scoped.
 SHARED_AGENT = "_shared"
@@ -191,4 +193,37 @@ async def tombstone_shared_embedding(
     ch = ch or _default_client()
     await memory_repo.reemit_shared_embedding_rows(
         org, namespace, memory_key, ch=ch, tombstoned_at=when, version=int(version)
+    )
+
+
+async def shared_definitions(
+    org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live shared definitions' keys with the `term` and `aliases` their values hold, at
+    most `limit`, read strongly; only those two fields leave the store, whatever a value's
+    size.
+
+    A term that is not a string reads as '', aliases that are not an array as [], and an
+    alias that is not a string as its JSON text."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT memory_key,
+               if(JSONType(value, 'term') = 'String', JSONExtractString(value, 'term'), '') AS term,
+               JSONExtract(value, 'aliases', 'Array(String)') AS aliases
+        FROM loom.shared FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
+          AND tombstoned_at IS NULL
+        ORDER BY memory_key
+        LIMIT {lim:UInt32}
+        SETTINGS select_sequential_consistency = 1
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "lim": limit,
+            "type": DEFINITION,
+            "prefix": DEFINITION_KEY_PREFIX,
+        },
     )

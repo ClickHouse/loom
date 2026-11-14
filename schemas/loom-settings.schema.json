@@ -5009,6 +5009,12 @@
           "type": "integer",
           "description": "Max chunks per memory.set value (48 ≈ 34 KB); the tail is recorded in loom.memory_drops as chunk.split/truncated."
         },
+        "memory_shared_definitions_max": {
+          "default": 500,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md)."
+        },
         "memory_structured_answer_excerpt_limit": {
           "default": 4096,
           "type": "integer",

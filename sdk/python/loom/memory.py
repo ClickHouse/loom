@@ -1604,13 +1604,17 @@ class MemoryClient:
         reversible_for_days: int = 7,
         user_id: str | None = None,
         session_id: str | None = None,
+        approved_sha256: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Promote a private memory to this namespace's shared layer.
 
         Reversible within `reversible_for_days` (default 7) via demote.
-        After the window, demote still works but requires admin role.
+        After the window, demote still works but requires admin role. A definition
+        is promoted from its namespace-wide row (`agent_id="-"` and no `user_id` or
+        `session_id`) and names the `content_sha256` it approves in `approved_sha256`.
         """
-        payload: dict[str, Any] = self._identity(user_id, session_id)
+        payload: dict[str, Any] = self._identity(user_id, session_id, agent_id=agent_id)
         payload["memory_key"] = memory_key
         payload["rationale"] = rationale
         payload["reversible_for_days"] = reversible_for_days
@@ -1618,6 +1622,8 @@ class MemoryClient:
             payload["target_key"] = target_key
         if approver is not None:
             payload["approver"] = approver
+        if approved_sha256 is not None:
+            payload["approved_sha256"] = approved_sha256
         return await self._agent.transport.post("/v1/memory.promote", payload)
 
     async def get_by_id(
@@ -1923,6 +1929,8 @@ class MemoryClient:
         approver: str | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
+        approved_sha256: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Share a per-agent memory with every agent in this namespace.
 
@@ -1930,7 +1938,10 @@ class MemoryClient:
         intent: *"this learning should propagate"*. Other agents in the
         namespace pick it up automatically through `memory.search(scope="shared")`.
 
-        Reversible within `reversible_for_days` (default 7) via `demote()`.
+        Reversible within `reversible_for_days` (default 7) via `demote()`. A
+        definition is shared from its namespace-wide row (`agent_id="-"` and no
+        `user_id` or `session_id`) and names the `content_sha256` it approves in
+        `approved_sha256`.
         """
         return await self.promote(
             memory_key,
@@ -1940,6 +1951,8 @@ class MemoryClient:
             approver=approver,
             user_id=user_id,
             session_id=session_id,
+            approved_sha256=approved_sha256,
+            agent_id=agent_id,
         )
 
     async def demote(

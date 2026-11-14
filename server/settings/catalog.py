@@ -2495,6 +2495,11 @@ class McpSettings(BaseModel):
 class MemorySettings(BaseModel):
     """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
 
+    # ---- governed definitions ----
+    # Most shared definitions a namespace holds; a promotion past it is refused
+    # (docs/concepts/identities-and-namespaces.md).
+    memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
+
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
     # they break ties instead of re-ranking. 0.0 = uncapped; a request's
@@ -6429,8 +6434,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
-    # The batched-insert shapes below are the base + the default
-    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
+    # The batched-insert shapes below (audited, webhook, undo, rewrite) are the base +
+    # the default ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
     # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
     # "undo": memory.restore's Undo, + its audit-record wait.
@@ -6444,6 +6449,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
+    # "definition": the namespace's claim around the name check and the insert.
+    "memory.promote": {"definition": 150},
     "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 220},
     "memory.update_by_id": {"webhook": 180},

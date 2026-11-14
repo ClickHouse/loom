@@ -2927,6 +2927,12 @@ settings:
 
   # ===== The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers =====
 
+  # --- governed definitions ---
+
+  # Most shared definitions a namespace holds; a promotion past it is refused
+  # (docs/concepts/identities-and-namespaces.md). [live]
+  # memory_shared_definitions_max: 500
+
   # --- prompt safety and search priors ---
 
   # Cap on memory.search's metadata priors (confidence, soft tag/category) so they break

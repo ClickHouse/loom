@@ -39,6 +39,12 @@ async def resolve_level(requested: str | None, text: str, *, read_before: int = 
     level = caller_level(requested)
     if level is not None:
         return level
+    return await detect_level(text, read_before=read_before)
+
+
+async def detect_level(text: str, *, read_before: int = 0) -> Sensitivity:
+    """`text`'s detected level; past `ON_LOOP_CHARS` it is read in windows with a turn for
+    the loop between them."""
     if read_before + len(text) <= ON_LOOP_CHARS:
         return detect_sensitivity(text)
     if len(text) <= ON_LOOP_CHARS:

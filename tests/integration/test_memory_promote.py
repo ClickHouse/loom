@@ -8,10 +8,13 @@ Covers the explicit promotion path:
   - demote of a non-existent shared key is an idempotent no-op
   - source memory's private layer is unaffected by promote/demote
   - audit_log records both events
+  - a definition is promoted from its namespace-wide row with the hash memory.get serves
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -241,3 +244,162 @@ async def test_promote_and_demote_emit_audit_rows(detector, ch_client) -> None:
     event_types = {r[0] for r in rows}
     assert "memory.promote" in event_types
     assert "memory.demote" in event_types
+
+
+@pytest.mark.asyncio
+async def test_a_definition_is_promoted_with_the_hash_get_serves(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the SDK: the namespace-wide row written as agent '-', refused without a
+    hash, promoted with the `content_sha256` memory.get serves, by the token's actor."""
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    value = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set("definition/arr", value, "definition", agent_id="-")
+        got = await a.memory.get("definition/arr", agent_id="-")
+        with pytest.raises(ValidationError) as e:  # no approved hash
+            await a.memory.promote("definition/arr", agent_id="-")
+        assert e.value.code == "VALIDATION_FAILED"
+        shared_rows = "SELECT count() FROM loom.shared WHERE org = {org:String}"
+        assert ch_client.query(shared_rows, parameters={"org": org}).result_rows == [(0,)]
+        out = await a.memory.share(
+            "definition/arr",
+            agent_id="-",
+            approved_sha256=got["content_sha256"],
+            approver="lead",
+            rationale="the finance glossary",
+        )
+    assert out["shared_memory_key"] == "definition/arr" and out["ignored_args"] == ["approver"]
+    rows = ch_client.query(
+        """
+        SELECT memory_type, value, promoted_by, promoted_from, promoted_from_candidate_id,
+               promotion_event, rationale, confidence
+        FROM loom.shared FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'definition/arr'
+        """,
+        parameters={"org": org, "ns": ns},
+    ).result_rows
+    (
+        (memory_type, stored, promoted_by, promoted_from, candidate, event, rationale, confidence),
+    ) = rows
+    assert memory_type == "definition" and json.loads(stored) == value
+    assert promoted_by == "process:definer"  # the token's actor, not the body's approver
+    assert promoted_from == [f"{org}/{ns}/-/-/-/definition/arr"]
+    assert candidate is None and str(event) == out["promotion_event"]
+    assert rationale == "the finance glossary" and confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_name_is_held_until_its_definition_is_demoted(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through the server: a name another definition holds is refused, the definition's
+    own revision is not, and demoting it gives the name back."""
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-names"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+
+        async def promote(key: str, value: dict) -> dict:
+            await a.memory.set(key, value, "definition", agent_id="-")
+            got = await a.memory.get(key, agent_id="-")
+            return await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+
+        await promote("definition/arr", {"term": "ARR", "body": "Annual recurring revenue."})
+        revenue = {"term": "Revenue", "aliases": ["arr"], "body": "Yearly income."}
+        with pytest.raises(LoomError) as e:
+            await promote("definition/revenue", revenue)
+        assert e.value.code == "DEFINITION_NAME_TAKEN"
+        assert e.value.detail["conflicting_keys"] == ["definition/arr"]
+        assert e.value.detail["names"] == ["arr"]
+        # Its own revision holds the name already.
+        await promote("definition/arr", {"term": "ARR", "body": "Yearly recurring revenue."})
+        await a.memory.demote("definition/arr")
+        out = await promote("definition/revenue", revenue)
+    assert out["shared_memory_key"] == "definition/revenue"
+
+
+@pytest.mark.asyncio
+async def test_promotions_racing_for_one_name_leave_one_holder(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the server: three definitions sharing a term, promoted at once, leave one
+    shared row; the others are refused by name or by the namespace's claim."""
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-race"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    keys = [f"definition/arr-{i}" for i in range(3)]
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        hashes = {}
+        for key in keys:
+            await a.memory.set(key, {"term": "ARR", "body": key}, "definition", agent_id="-")
+            hashes[key] = (await a.memory.get(key, agent_id="-"))["content_sha256"]
+        results = await asyncio.gather(
+            *(a.memory.promote(k, agent_id="-", approved_sha256=hashes[k]) for k in keys),
+            return_exceptions=True,
+        )
+    refused = [r.code for r in results if isinstance(r, LoomError)]
+    assert len(refused) == 2, results
+    assert set(refused) <= {"DEFINITION_NAME_TAKEN", "OVERLOADED"}
+    count = ch_client.query(
+        "SELECT count() FROM loom.shared FINAL WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": org, "ns": ns},
+    ).result_rows[0][0]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_agent_promotes_a_definition_as_its_description_says(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through MCP: memory.get of the namespace-wide row serves the hash, and
+    memory.promote with agent='-' and that hash shares it."""
+    import httpx
+    from loom import Agent
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-mcp"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set(
+            "definition/arr", {"term": "ARR", "body": "x"}, "definition", agent_id="-"
+        )
+
+    async def call(tool: str, arguments: dict) -> dict:
+        rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+        rpc["params"] = {"name": tool, "arguments": {"namespace": ns, **arguments}}
+        headers = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+        async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+            r = await c.post("/mcp", json=rpc, headers=headers)
+        assert r.status_code == 200, r.text[:400]
+        result = r.json()["result"]
+        assert not result.get("isError"), result
+        return result["structuredContent"]
+
+    row = {"memory_key": "definition/arr", "agent": "-"}
+    got = await call("loom_memory_get", row)
+    out = await call("loom_memory_promote", {**row, "approved_sha256": got["content_sha256"]})
+    assert out["shared_memory_key"] == "definition/arr"

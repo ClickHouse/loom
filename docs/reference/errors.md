@@ -456,6 +456,18 @@ Raised in `server/memory/app/dedup.py`.
 
 Raised in `server/code/domain/index/repos.py`.
 
+#### `DEFINITION_CEILING`
+
+HTTP 409, raised as `server.core.errors.DefinitionCeilingError`. 409 — the promotion would leave the namespace past `memory_shared_definitions_max` shared definitions: at the ceiling, demote one to add a new key; past it, demote until at most that many remain. Category `input`, retryable: no.
+
+#### `DEFINITION_NAME_TAKEN`
+
+HTTP 409, raised as `server.core.errors.DefinitionNameTakenError`. 409 — another shared definition holds this term or an alias; `conflicting_keys` names those definitions and `names` the folded names they hold. Category `input`, retryable: no.
+
+#### `DEFINITION_PROMOTION_REFUSED`
+
+HTTP 422, raised as `server.core.errors.DefinitionPromotionRefusedError`. 422 — a definition is promoted only from its live namespace-wide row under a `definition/` key, to that same key, and a row of another type is never promoted under a `definition/` key. Category `input`, retryable: no.
+
 #### `DUPLICATE_FIELD`
 
 Raised in `server/memory/app/records.py`.
@@ -694,7 +706,7 @@ Raised in `server/router/app.py`. Category `input`, retryable: no.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, the… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease or… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 
@@ -726,7 +738,7 @@ HTTP 503, raised as `server.core.pg.PostgresUnavailableError`. 503 — Postgres,
 
 #### `PRECONDITION_FAILED`
 
-HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, an `approved_sha256` that no longer matches the definition's text, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PROBE_BUSY`
 
@@ -831,6 +843,10 @@ Raised in `server/auth/self_signup.py`.
 #### `SELF_SIGNUP_SSO`
 
 Raised in `server/auth/self_signup.py`.
+
+#### `SENSITIVE_DEFINITION_REFUSED`
+
+HTTP 422, raised as `server.core.errors.SensitiveDefinitionRefusedError`. 422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is not promoted: the shared layer serves it to every reader of the namespace. Category `input`, retryable: no.
 
 #### `SHARED_CONFLICT`
 

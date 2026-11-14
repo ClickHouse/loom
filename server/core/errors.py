@@ -79,9 +79,11 @@ class NotFoundError(LoomServerError):
 
 
 class PreconditionFailedError(LoomServerError):
-    """409 — `if_match_sha256` mismatch, or an erasure that landed while a
-    `namespace.restore` ran. A mismatch returns the live hash so the caller can retry
-    without a separate read."""
+    """409 — `if_match_sha256` mismatch, an `approved_sha256` that no longer matches
+    the definition's text, or an erasure that landed while a `namespace.restore` ran. A
+    mismatch returns the live hash so the caller can retry without a separate read; for
+    `approved_sha256`, show the current text again and approve that, never resend the
+    returned hash unseen."""
 
     code = "PRECONDITION_FAILED"
     status_code = 409
@@ -100,6 +102,43 @@ class CollectionNameTakenError(LoomServerError):
 
     def __init__(self, message: str = "", *, deleted: bool = False, suggestion: str = "") -> None:
         super().__init__(message, deleted=deleted, suggestion=suggestion)
+
+
+class DefinitionPromotionRefusedError(LoomServerError):
+    """422 — a definition is promoted only from its live namespace-wide row under a
+    `definition/` key, to that same key, and a row of another type is never promoted under
+    a `definition/` key."""
+
+    code = "DEFINITION_PROMOTION_REFUSED"
+    status_code = 422
+
+
+class SensitiveDefinitionRefusedError(LoomServerError):
+    """422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is
+    not promoted: the shared layer serves it to every reader of the namespace."""
+
+    code = "SENSITIVE_DEFINITION_REFUSED"
+    status_code = 422
+
+
+class DefinitionCeilingError(LoomServerError):
+    """409 — the promotion would leave the namespace past `memory_shared_definitions_max`
+    shared definitions: at the ceiling, demote one to add a new key; past it, demote
+    until at most that many remain."""
+
+    code = "DEFINITION_CEILING"
+    status_code = 409
+
+
+class DefinitionNameTakenError(LoomServerError):
+    """409 — another shared definition holds this term or an alias; `conflicting_keys`
+    names those definitions and `names` the folded names they hold."""
+
+    code = "DEFINITION_NAME_TAKEN"
+    status_code = 409
+
+    def __init__(self, message: str = "", *, conflicting_keys: list[str], names: list[str]) -> None:
+        super().__init__(message, conflicting_keys=conflicting_keys, names=names)
 
 
 class TenancyRefusedError(LoomServerError):
@@ -197,17 +236,18 @@ class GrantBusyError(LoomServerError):
 class OverloadedError(LoomServerError):
     """503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared
     memory, the document bucket's transfers or streams, an override's lock, a
-    namespace's document-source lease, the blacklist's regex matchers, or a conversation
-    delete or compaction stayed contended. The pool: every pooled connection was busy past
-    `ch_pool_wait_ms`; ClickHouse's memory: a statement found the server's or the
-    ClickHouse user's memory, which every query shares, used up; the lock or lease: a
-    sibling held it past its wait; the matchers: the org's share of them stayed busy, and
-    the write is refused rather than stored unchecked; a conversation delete or
-    compaction: writes to the thread's embeddings kept landing; insights.query while its
-    replica's probe has no answer from ClickHouse; a document source a build without
-    items cannot read, while such a build may still serve; a source another write
-    changed during an update's or a rotate's probe. Safe to resend on an idempotent op, or
-    when it came before the handler ran; `retry_after_s` is the wait."""
+    namespace's document-source lease or definition-promotion claim, the blacklist's
+    regex matchers, or a conversation delete or compaction stayed contended. The pool:
+    every pooled connection was busy past `ch_pool_wait_ms`; ClickHouse's memory: a
+    statement found the server's or the ClickHouse user's memory, which every query
+    shares, used up; the lock or lease: a sibling held it past its wait; the matchers:
+    the org's share of them stayed busy, and the write is refused rather than stored
+    unchecked; a conversation delete or compaction: writes to the thread's embeddings
+    kept landing; insights.query while its replica's probe has no answer from
+    ClickHouse; a document source a build without items cannot read, while such a build
+    may still serve; a source another write changed during an update's or a rotate's
+    probe. Safe to resend on an idempotent op, or when it came before the handler ran;
+    `retry_after_s` is the wait."""
 
     code = "OVERLOADED"
     status_code = 503

@@ -699,6 +699,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import projection_failures as PF
     from server.memory.app.curation import fetch_timeline
     from server.memory.store import conflict_candidates as conflict_candidates
+    from server.memory.store import shared as SH
 
     f = c["filters"]
     await PF.list_projection_failures(
@@ -797,6 +798,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )
     await CF.resolve_conflict_floor(ORG, NS, "preference")
+    await SH.shared_definitions(ORG, NS, 10, ch=ch)
     RD.clear_cache()
     await RD.resolve(ORG, NS, ch=ch)
     await CF.prefetch_write_config(ORG, NS, "preference", "k1")

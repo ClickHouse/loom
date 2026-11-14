@@ -7,6 +7,7 @@ import json
 from typing import Any, Literal
 
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
 from server.core.pg_lease import PublicationPending
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_learnings import (
@@ -22,6 +23,7 @@ from server.memory.api.models_learnings import (
 from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.app import blacklist_guard
 from server.memory.domain import assistant_rules
+from server.memory.domain.memory_types import is_definition
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
 
@@ -234,6 +236,13 @@ async def handle_learnings_review(
             )
         wants_memory = destination in ("memory", "both")
         wants_knowledge = destination in ("knowledge", "both")
+        if wants_memory and is_definition(row):
+            # A definition reaches memory only through memory.promote of its namespace-wide
+            # row, which checks the approved hash.
+            raise ValidationError(
+                "a definition candidate is not promoted to memory by review: write the "
+                "definition as the namespace-wide row and promote it with memory.promote"
+            )
         if wants_memory:
             await _do_promote(
                 input.org,
