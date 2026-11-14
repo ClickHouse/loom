@@ -42,6 +42,8 @@ export type MadeCollection = (collection: string, org: string, arriveFocus: stri
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
+/** The tree's landmark name, which the page finds it by to hand it the focus. */
+export const LIBRARY_PLACES_LABEL = "Library places";
 
 /** The collections a person opened in the tree, per org, for this browser. */
 function expandedKey(org: string): string {
@@ -242,7 +244,7 @@ export const LibraryTree = memo(function LibraryTree({
 
   return (
     <nav
-      aria-label="Library places"
+      aria-label={LIBRARY_PLACES_LABEL}
       aria-busy={busy || undefined}
       className="library-tree"
       style={{ maxHeight: viewHeight }}

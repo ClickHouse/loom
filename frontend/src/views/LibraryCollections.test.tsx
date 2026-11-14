@@ -1144,6 +1144,19 @@ describe("the Library on a collection", () => {
       await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
     });
 
+    it("moves nothing once the focus left <main> before the resize", async () => {
+      // A dialog outside <main> took the focus, then closed with nowhere to give it back.
+      const outside = document.body.appendChild(document.createElement("button"));
+      const tree = await widen("/library?collection=col-q3", () => {
+        act(() => screen.getByRole("button", { name: PLACE_PICKER_LABEL }).focus());
+        return outside;
+      });
+      act(() => outside.remove());
+      await settle();
+      expect(tree.contains(document.activeElement)).toBe(false);
+      expect(document.activeElement).toBe(document.body);
+    });
+
     it("moves nothing when the focus is still on the page", async () => {
       const tree = await widen("/library?collection=col-q3", () =>
         screen.getByRole("textbox", { name: "Search library" }),
@@ -1160,6 +1173,8 @@ describe("the Library on a collection", () => {
       const answer = await startCreate();
       act(() => narrow());
       expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
+      // The form went with the tree: its focus goes to the picker.
+      await waitFor(() => expect(screen.getByLabelText(PLACE_PICKER_LABEL)).toHaveFocus());
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
         next_cursor: null,
