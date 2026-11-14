@@ -97,7 +97,7 @@ const BUILDING = new Set(["queued", "cloning", "indexing", "embedding"]);
 const DAY_MS = 24 * 3600_000;
 const short = (sha: string) => sha.slice(0, 12);
 
-/** "N commits behind", or that the count can't be told (the server answers -1). */
+/** "N commits", or "an unknown number of commits" when the server answers -1. */
 const lagWords = (n: number) => (n < 0 ? "an unknown number of commits" : commits(n));
 
 function heads(b: CodeRepoSummary): string {
