@@ -538,11 +538,12 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "parser": "",
         "coverage": "",
         "ingestion_id": "",
+        "access_json": "",
     }
     if existing is not None:
-        row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})
+        carried = (c for c in DOCUMENT_COLUMNS if c not in ("content_sha256", "access_json"))
+        row.update({c: getattr(existing, c) for c in carried})
     row.update(fields)
-    row["access_json"] = fields.get("access_json", "")
     if row["superseded_at"] is not None and row["access_json"]:
         raise ValueError("build_document_row: a tombstone carries no permission list")
     missing = [c for c in _REQUIRED_DOCUMENT_COLUMNS if c not in row]

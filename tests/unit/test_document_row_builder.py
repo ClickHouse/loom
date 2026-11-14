@@ -16,6 +16,7 @@ import pytest
 from server.knowledge.app import ingest_run
 from server.knowledge.app import writes as kh
 from server.knowledge.app.writes import _content_sha256
+from server.knowledge.domain import access_list
 from server.knowledge.store import chunks as knowledge_repo
 from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
@@ -937,7 +938,7 @@ def test_a_delete_left_to_the_delivery_worker_forgets_its_datasets(monkeypatch) 
     assert forgotten == [{"doc-a": doc.version}] * 2
 
 
-LISTED = '{"anyone":false,"domains":[],"emails":["a@example.com"],"groups":[],"unread":false}'
+LISTED = access_list.to_json(access_list.AccessList(emails=("a@example.com",)))
 
 
 def test_a_permission_list_is_written_only_by_the_writer_that_passes_it() -> None:
@@ -1000,9 +1001,12 @@ class _Embedder:
         return [[1.0, 0.0, 0.0] for _ in texts]
 
 
-@pytest.mark.parametrize(("passed", "written"), [({"access_json": LISTED}, LISTED), ({}, "")])
+@pytest.mark.parametrize(
+    ("passed", "written"),
+    [({"access": access_list.AccessList(emails=("a@example.com",))}, LISTED), ({}, "")],
+)
 def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
-    monkeypatch: pytest.MonkeyPatch, passed: dict[str, str], written: str
+    monkeypatch: pytest.MonkeyPatch, passed: dict[str, Any], written: str
 ) -> None:
     from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
 

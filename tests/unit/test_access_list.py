@@ -85,3 +85,10 @@ def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
 )
 def test_anything_but_a_read_list_is_unread(text: str) -> None:
     assert access_list.from_json(text) == UNREAD
+
+
+def test_a_list_built_directly_is_stored_in_the_one_spelling() -> None:
+    built = AccessList(emails=("B@example.com", "a@example.com", "a@example.com"))
+    assert access_list.to_json(built) == access_list.to_json(
+        AccessList(emails=("a@example.com", "b@example.com"))
+    )

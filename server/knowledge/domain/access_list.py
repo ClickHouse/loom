@@ -36,7 +36,13 @@ def to_json(access: AccessList) -> str:
     `unread` is empty, as every other writer stores it."""
     if access.unread:
         return ""
-    return json.dumps(dataclasses.asdict(access), sort_keys=True, separators=(",", ":"))
+    normal = dataclasses.replace(
+        access,
+        emails=_names(list(access.emails)),
+        groups=_names(list(access.groups)),
+        domains=_names(list(access.domains)),
+    )
+    return json.dumps(dataclasses.asdict(normal), sort_keys=True, separators=(",", ":"))
 
 
 def from_json(text: str) -> AccessList:
