@@ -20,7 +20,8 @@ long-term memory in Loom during a run::
 The tools are ``loom.tools.AgentTools`` (the same names, schemas and results
 as ``agent.tools()``), bound to one user, session or run. Identity and
 isolation come from the Loom agent. Install with
-``pip install 'clickhouse-loom[pydantic-ai]'``.
+``pip install 'clickhouse-loom[pydantic-ai]'``, plus the Pydantic AI extra for
+the model's provider (``pydantic-ai-slim[anthropic]`` for the example).
 """
 
 from __future__ import annotations

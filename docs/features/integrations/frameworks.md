@@ -297,7 +297,8 @@ agent and its credential are not component config.
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
 agent verbs as a `FunctionToolset`, the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. Install with
-`pip install 'clickhouse-loom[pydantic-ai]'` (`pydantic-ai-slim` 2.68 or a later 2.x).
+`pip install 'clickhouse-loom[pydantic-ai]' 'pydantic-ai-slim[anthropic]'` (`pydantic-ai-slim`
+2.68 or a later 2.x, plus the extra for your model's provider).
 
 ```python
 from pydantic_ai import Agent as PydanticAgent
