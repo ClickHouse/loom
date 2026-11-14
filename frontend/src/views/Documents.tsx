@@ -952,7 +952,7 @@ export function Documents() {
       besideTree={besideTree}
     />
   );
-  const tree = treeHeight !== null && (
+  const placesTree = treeHeight !== null && (
     <LibraryTree
       // One per org: nothing read or opened in one org shows in, or is saved for, another.
       key={picked.org}
@@ -1002,7 +1002,7 @@ export function Documents() {
   const libraryPage = (page: ReactNode) => (
     <>
       <div className={besideTree ? "library-layout" : undefined}>
-        {tree}
+        {placesTree}
         {page}
       </div>
       {addDialog}

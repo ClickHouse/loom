@@ -517,7 +517,9 @@ export function BatchUpload({
       const folders = new FolderCollections(org, byFolder, root, quietRetry(c.signal), madeHere.current);
       const placed = await placeFolders(start, folders, sourcesOf, wentTo, c.signal);
       madeHere.current.push(...folders.created);
-      invalidateSharedCollections(); // collections were made or titled: other views read again
+      // Collections were made or titled: other views read again, waiting for the first made.
+      const made = folders.created[0];
+      invalidateSharedCollections(made ? { name: made, org } : undefined);
       const cutHere = new Set<string>();
       for (const p of placed) {
         if (!p.placed) continue;

@@ -1,7 +1,7 @@
 import { act, render, screen } from "../test/rtl";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAbortableEffect, useKeyboard, useVisiblePoll } from "./hooks";
+import { useAbortableEffect, useKeyboard, useVisiblePoll, wait } from "./hooks";
 import { must } from "../test/must";
 
 // A read that lands after its view moved on is dropped, and the request itself is
@@ -40,6 +40,39 @@ function Rows({
   );
   return <output>{shown}</output>;
 }
+
+describe("wait", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("resolves once its time is up", async () => {
+    vi.useFakeTimers();
+    let done = false;
+    const waiting = wait(1000, new AbortController().signal).then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await waiting;
+    expect(done).toBe(true);
+  });
+
+  it("rejects with the reason as soon as its signal aborts, and never resolves", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const waiting = wait(1000, controller.signal);
+    const reason = new Error("left");
+    controller.abort(reason);
+    await expect(waiting).rejects.toBe(reason);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects at once on a signal already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("gone"));
+    await expect(wait(1000, controller.signal)).rejects.toThrow("gone");
+  });
+});
 
 describe("useAbortableEffect", () => {
   it("drops a response that lands after the deps changed, and aborts its request", async () => {
