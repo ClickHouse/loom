@@ -56,7 +56,8 @@ export const NEW_COLLECTION_FOCUS = "library-new-collection";
 
 /** The collections a person opened in the tree, per person and org, for this browser. */
 function expandedKey(subject: string, org: string): string {
-  return `loom_library_expanded_${subject || "-"}_${org}_v1`;
+  // Each part encoded, so no other person and org can spell the same key.
+  return `loom_library_expanded_v1:${encodeURIComponent(subject || "-")}:${encodeURIComponent(org)}`;
 }
 
 function loadExpanded(subject: string, org: string): Set<string> {

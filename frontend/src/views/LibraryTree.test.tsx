@@ -51,7 +51,7 @@ function kids(n: number, over: Partial<CollectionEntry> = {}): CollectionEntry[]
 
 /** The folds saved for ann in acme. */
 function saved(subject = "ann"): string[] {
-  return JSON.parse(localStorage.getItem(`loom_library_expanded_${subject}_acme_v1`) ?? "[]");
+  return JSON.parse(localStorage.getItem(`loom_library_expanded_v1:${subject}:acme`) ?? "[]");
 }
 
 /** The places listed, in order. */
@@ -422,6 +422,8 @@ describe("LibraryTree", () => {
       "false",
     );
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
+    expect(saved("bob")).toEqual(["col-eng"]);
+    expect(saved()).toEqual(["col-eng"]);
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
     expect(saved("bob")).toEqual([]);
     cleanup();
@@ -431,7 +433,7 @@ describe("LibraryTree", () => {
   });
 
   it("keeps the folds of a collection a cut-off list does not name", () => {
-    localStorage.setItem("loom_library_expanded_ann_acme_v1", JSON.stringify(["col-past-the-cap"]));
+    localStorage.setItem("loom_library_expanded_v1:ann:acme", JSON.stringify(["col-past-the-cap"]));
     tree({ truncated: true });
     expect(saved()).toEqual(["col-past-the-cap"]);
   });

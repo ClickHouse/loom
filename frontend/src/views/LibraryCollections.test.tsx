@@ -1901,7 +1901,7 @@ describe("the Library on a collection", () => {
     const tree = await screen.findByRole("navigation", { name: "Library places" });
     expect(await within(tree).findByRole("link", { name: "col-q3" })).toBeInTheDocument();
     fireEvent.click(within(tree).getByRole("button", { name: "Collections in col-q3" }));
-    expect(localStorage.getItem("loom_library_expanded_ann_acme_v1")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_v1:ann:acme")).toBe('["col-q3"]');
     api.listCollections.mockReturnValue(new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
     await settle();
@@ -1909,7 +1909,7 @@ describe("the Library on a collection", () => {
     expect(within(after).queryByRole("link", { name: "col-q3" })).toBeNull();
     expect(within(after).queryByRole("link", { name: "My files" })).toBeNull();
     // Acme's folds stay acme's; the other org's tree opens nothing.
-    expect(localStorage.getItem("loom_library_expanded_ann_acme_v1")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_v1:ann:acme")).toBe('["col-q3"]');
     expect(within(after).queryByRole("button", { expanded: true })).toBeNull();
   });
 
@@ -1928,7 +1928,7 @@ describe("the Library on a collection", () => {
       "aria-expanded",
       "false",
     );
-    expect(localStorage.getItem("loom_library_expanded_ann_acme_v1")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_v1:ann:acme")).toBe('["col-q3"]');
   });
 
   it("on a code namespace reads only a collection picked, and lists no namespace to pick", async () => {
