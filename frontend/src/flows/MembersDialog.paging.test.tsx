@@ -345,6 +345,32 @@ describe("MembersDialog paging", () => {
     expect(confirm.mock.calls[1][0].message).toBe("Their grant here is revoked. Everyone in acme can still see it.");
   });
 
+  it("does not count the grant to everyone being removed, and still names a parent's", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
+    const { unmount } = render(
+      <MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Remove everyone" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0].message).toBe("Their grant here is revoked.");
+    unmount();
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-a"
+        label="Runbooks"
+        inherited={[{ namespace: "col-top", title: "Engineering", rows: [grant("everyone")] }]}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Remove everyone" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(confirm.mock.calls[1][0].message).toBe(
+      "Their grant here is revoked. They can still see it through Engineering.",
+    );
+  });
+
   it("names the place in the Withdraw confirm", async () => {
     useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: [] } });
     vi.mocked(api.listGrants).mockResolvedValue({ rows: [{ ...grant("alice"), status: "pending" as const }] });

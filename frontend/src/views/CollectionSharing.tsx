@@ -53,7 +53,7 @@ export function whoCanSee({
   empty = false,
 }: {
   grants: ReadAt[];
-  me: ReadonlySet<string>;
+  me: string;
   org: string;
   titleOf: (namespace: string) => string;
   above?: string | null;
@@ -64,11 +64,9 @@ export function whoCanSee({
   const from = new Map<string, string>();
   const keyOf = new Map<string, string>();
   // The reader under every spelling a grant read here ties to them.
-  const mine = [...me].flatMap((m) =>
-    mySpellings(
-      m,
-      grants.flatMap((g) => g.rows),
-    ),
+  const mine = mySpellings(
+    me,
+    grants.flatMap((g) => g.rows),
   );
   for (const at of grants) {
     for (const r of at.rows) {
@@ -221,8 +219,8 @@ export function useCollectionSharing({
   const [state, setState] = useState<SharingAnswer | null>(null);
   const [reading, setReading] = useState(false);
   // With sign-in off every request is served, so the grants say nothing of who can see it.
-  const open = isAuthDisabled();
-  const personal = !collection || collection.personal || open;
+  const signInOff = isAuthDisabled();
+  const personal = !collection || collection.personal || signInOff;
   useAbortableEffect(
     (signal, live) => {
       if (personal) return;
@@ -259,7 +257,7 @@ export function useCollectionSharing({
   const hiddenWords = above ? hiddenWhat(truncated) : null;
 
   let line: ReactNode = null;
-  if (collection && open) {
+  if (collection && signInOff) {
     line = <Words icon="users" who="Everyone who can reach this server" how="sign-in is off" />;
   } else if (collection?.personal) {
     line = <Words icon="lock" who="Only you" how="Your own files: no one else's grants reach them" />;
@@ -303,7 +301,7 @@ export function useCollectionSharing({
   } else if (collection && read) {
     const words = whoCanSee({
       grants: read,
-      me: new Set(whoami?.subject ? [whoami.subject] : []),
+      me: whoami?.subject ?? "",
       org,
       titleOf,
       above: hiddenWords,
@@ -363,9 +361,9 @@ export function useCollectionSharing({
       manage={shown.role === "admin"}
       // Until the header answers for this collection, who else can see it is still being read;
       // a failed answer names no parent.
-      inherited={open ? [] : answer === null ? null : inherited}
+      inherited={signInOff ? [] : answer === null ? null : inherited}
       notice={
-        open ? "Sign-in is off: everyone who can reach this server can see it, whoever is listed here." : undefined
+        signInOff ? "Sign-in is off: everyone who can reach this server can see it, whoever is listed here." : undefined
       }
     />
   );

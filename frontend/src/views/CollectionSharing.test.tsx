@@ -32,7 +32,7 @@ const entry = (namespace: string, over: Partial<CollectionEntry> = {}): Collecti
   ...over,
 });
 
-const ME = new Set(["ada"]);
+const ME = "ada";
 const words = (grants: ReadAt[], over = {}) =>
   whoCanSee({ grants, me: ME, org: "acme", titleOf: (ns) => ns.replace("col-", ""), ...over });
 

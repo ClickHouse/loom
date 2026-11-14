@@ -36,11 +36,12 @@ function SubjectName({ r, me, org }: { r: GrantEntry; me: readonly string[]; org
   const label = subjectLabel(r.subject, org);
   return (
     <>
-      <div className="truncate text-sm">
+      {/* Wrapped, not cut: a long subject (an email on a request) is read whole. */}
+      <div className="break-all text-sm">
         {label}
         {namesMe(r, me) && <span className="ml-2 text-xs text-text-muted">(you)</span>}
       </div>
-      {label !== r.subject && <div className="truncate font-mono text-xs text-text-muted">{r.subject}</div>}
+      {label !== r.subject && <div className="break-all font-mono text-xs text-text-muted">{r.subject}</div>}
     </>
   );
 }
@@ -273,7 +274,10 @@ export function MembersDialog({
         (x) =>
           x.status === "active" && (x.subject === "everyone" || grantSpellings(x).some((sp) => theirs.includes(sp))),
       );
-    const everyoneHere = !!rows?.some((x) => x.status === "active" && x.subject === "everyone");
+    // Not the grant being removed: removing everyone leaves no grant to everyone here.
+    const everyoneHere = !!rows?.some(
+      (x) => x.status === "active" && x.subject === "everyone" && x.subject !== subject,
+    );
     const through = (inherited ?? []).filter((p) => reaches(p.rows)).map((p) => p.title);
     const still = everyoneHere
       ? ` Everyone in ${org} can still see it.`
