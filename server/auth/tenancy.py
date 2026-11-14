@@ -168,7 +168,7 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     # placement decides. A configured org a call with no principal acts in (JIT,
     # self-signup) is placed by attach, or by `loom cell update` when it changes: retry.
     if auth is None and org in cell.mine()["configured_orgs"]:
-        # Nothing could ever place a configured org past the limit: no retry helps.
+        # No placement of a new org past the limit can succeed: no retry helps.
         if reason := cell.org_name_refusal(org):
             raise ValidationError(reason)
         raise BackendUnavailableError(

@@ -720,13 +720,13 @@ lists any tenancy row the directory does not place.
   yet answers 503 as for a closed cell (an operator's `loom cell place` is exempt from
   the rate, as above); and each cell's placements are reported in
   `/v1/health?include=capacity` and by `loom doctor`, which names a cell with no quota.
-  Every org the first cell's attach places (step 2's snapshot, its configured orgs
-  included, and step 4's) is counted but never refused, since the cell already serves it
-  and refusing it would strand its data; every other placement of an org the directory
-  does not place yet, a later cell's configured orgs at attach and a changed one at
-  `loom cell update` included, passes the gate, a closed cell and `placements_max`
-  included, so a later cell closed or full before attach refuses the attach, naming the
-  org.
+  Every org the first cell's attach places (step 2's snapshot, its configured orgs included,
+  and step 4's) is counted but never refused by quota or a closed cell, since the cell
+  already serves it and refusing it would strand its data (one past `ORG_MAX_BYTES` is the
+  length limit's, below); every other placement of an org the directory does not place yet,
+  a later cell's configured orgs at attach and a changed one at `loom cell update` included,
+  passes the gate, a closed cell and `placements_max` included, so a later cell closed or
+  full before attach refuses the attach, naming the org.
 - **The first cell records until `enforced` as a single deployment does.** In
   `recording`, which lasts until step 3 writes `enforced` to the cell's mode (and again
   whenever step 3 or step 4 returns the cell to it), a verified request for a new org
@@ -743,19 +743,19 @@ lists any tenancy row the directory does not place.
   any request does, and nothing refuses at boot: in the first cell's `recording` they
   record their org while the directory answers `attaching`, and elsewhere a configured
   org the cell does not hold answers 503 until it is placed (422 for one past
-  `ORG_MAX_BYTES`, which nothing places), which `loom doctor` names; every attach, first or
-  later, new or resumed, runs the overlap refusals on and places the configured orgs of both
-  values of `loom.cell_self`, so one an update put in `next` before attach is placed with
-  the rest; once attach has written the cell's directory row, `loom cell update` places a
-  changed one in the directory transaction that writes `next`, through the placement API's
-  gate for an org the directory does not place yet (closed cells and `placements_max`
-  included), refusing, naming it, when another cell holds it, and then writes its tenancy
-  row in the cell; for a later cell still `attaching` after its directory transaction,
-  `loom cell update` refuses a configured-org change until the cell is `serving`. In
-  `enforced`, a worker writes for an org only once the cell holds it (the tenancy check with
-  no principal), so a later cell indexes, imports and sweeps nothing under its configured
-  orgs before attach places them; in `recording`, workers run as before, and step 2's
-  snapshot and step 4's second read find every org they write under.
+  `ORG_MAX_BYTES`, which the directory refuses), which `loom doctor` names; every attach,
+  first or later, new or resumed, runs the overlap refusals on and places the configured
+  orgs of both values of `loom.cell_self`, so one an update put in `next` before attach is
+  placed with the rest; once attach has written the cell's directory row, `loom cell update`
+  places a changed one in the directory transaction that writes `next`, through the
+  placement API's gate for an org the directory does not place yet (closed cells and
+  `placements_max` included), refusing, naming it, when another cell holds it, and then
+  writes its tenancy row in the cell; for a later cell still `attaching` after its directory
+  transaction, `loom cell update` refuses a configured-org change until the cell is
+  `serving`. In `enforced`, a worker writes for an org only once the cell holds it (the
+  tenancy check with no principal), so a later cell indexes, imports and sweeps nothing
+  under its configured orgs before attach places them; in `recording`, workers run as
+  before, and step 2's snapshot and step 4's second read find every org they write under.
 - **Rows are never deleted.** A tenancy row and a placement name an org, not its memory:
   both are classified for erasure as holding no memory content, as a namespace's claim
   is, and stay after any erasure, so an org name never comes free for another cell. A
