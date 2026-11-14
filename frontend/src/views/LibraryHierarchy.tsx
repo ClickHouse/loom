@@ -412,7 +412,7 @@ function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]>
 }
 
 /** The first `first` places, each Show more adding MORE_SHOWN; `extra` (one of `items`, on the
- *  way to the place shown) is drawn past them wherever it sits. `more` is the button's label,
+ *  way to the place shown) is drawn past them wherever it sits. `moreLabel` is the button's label,
  *  null once all are shown. The last press removes its button: the focus goes to the first
  *  place it added, else the last row shown, else `fallback`. */
 export function useShowMore(
@@ -439,7 +439,7 @@ export function useShowMore(
   return {
     shown,
     list,
-    more: adds > 0 ? `Show ${adds} more` : null,
+    moreLabel: adds > 0 ? `Show ${adds} more` : null,
     showMore: () => {
       markShown(shown.map((c) => c.namespace));
       setCount(count + MORE_SHOWN);
@@ -468,7 +468,7 @@ function PlaceList({
   onPick: (collection: string) => void;
   truncated: boolean;
 }) {
-  const { shown, list, more, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, null, () =>
+  const { shown, list, moreLabel, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, null, () =>
     document.getElementById(id),
   );
   if (items.length === 0) return null;
@@ -495,9 +495,9 @@ function PlaceList({
         })}
       </ul>
       <div className="flex gap-3">
-        {more && (
+        {moreLabel && (
           <Button type="empty" htmlType="button" onClick={showMore}>
-            {more}
+            {moreLabel}
           </Button>
         )}
         {fewer && (
@@ -535,7 +535,7 @@ export function CollectionChips({
   onPick: (collection: string) => void;
 }) {
   const inside = useMemo(() => (rows && collection ? childrenOf(rows, collection) : []), [rows, collection]);
-  const { shown, list, more, showMore } = useShowMore(inside, FIRST_SHOWN);
+  const { shown, list, moreLabel, showMore } = useShowMore(inside, FIRST_SHOWN);
   if (!collection || inside.length === 0) return null;
   return (
     <nav aria-label={`Inside ${distinctTitle(collection, repeated)}`} className="library-chips">
@@ -552,10 +552,10 @@ export function CollectionChips({
             />
           </li>
         ))}
-        {more && (
+        {moreLabel && (
           <li>
             <Button type="empty" htmlType="button" onClick={showMore}>
-              {more}
+              {moreLabel}
             </Button>
           </li>
         )}

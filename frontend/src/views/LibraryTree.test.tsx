@@ -43,6 +43,17 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+/** `n` collections named col-k000… and titled Kid 000…, with `over` on each. */
+function kids(n: number, over: Partial<CollectionEntry> = {}): CollectionEntry[] {
+  const pad = (i: number) => String(i).padStart(3, "0");
+  return Array.from({ length: n }, (_, i) => entry(`col-k${pad(i)}`, { title: `Kid ${pad(i)}`, ...over }));
+}
+
+/** The folds saved for acme. */
+function saved(): string[] {
+  return JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]");
+}
+
 /** The places listed, in order. */
 function places(): string[] {
   return screen.queryAllByRole("link").map((a) => a.textContent ?? "");
@@ -110,8 +121,7 @@ describe("LibraryTree", () => {
   });
 
   it("lists the first fifty top-level collections, Show more adding fifty, and the one shown wherever it sits", async () => {
-    const pad = (i: number) => String(i).padStart(3, "0");
-    const many = Array.from({ length: 120 }, (_, i) => entry(`col-k${pad(i)}`, { title: `Kid ${pad(i)}` }));
+    const many = kids(120);
     tree({ rows: many, shelf: null, current: "col-k080" });
     const mine = screen.getByRole("list", { name: "Collections" });
     const names = () =>
@@ -130,19 +140,14 @@ describe("LibraryTree", () => {
   });
 
   it("counts the one shown past the first fifty as drawn", () => {
-    const pad = (i: number) => String(i).padStart(3, "0");
-    const many = Array.from({ length: 51 }, (_, i) => entry(`col-k${pad(i)}`, { title: `Kid ${pad(i)}` }));
+    const many = kids(51);
     tree({ rows: many, shelf: null, current: "col-k050" });
     expect(within(screen.getByRole("list", { name: "Collections" })).getAllByRole("link")).toHaveLength(51);
     expect(screen.queryByRole("button", { name: /^Show \d+ more$/ })).toBeNull();
   });
 
   it("draws an open collection's first fifty children, and the one shown past them", async () => {
-    const pad = (i: number) => String(i).padStart(3, "0");
-    const kids = Array.from({ length: 60 }, (_, i) =>
-      entry(`col-k${pad(i)}`, { parent: "col-eng", title: `Kid ${pad(i)}` }),
-    );
-    const rows = [entry("col-eng", { title: "Engineering" }), ...kids];
+    const rows = [entry("col-eng", { title: "Engineering" }), ...kids(60, { parent: "col-eng" })];
     tree({ rows, shelf: null, current: "col-k055" });
     const kidLinks = () => screen.getAllByRole("link", { name: /^Kid / });
     expect(kidLinks()).toHaveLength(51);
@@ -402,13 +407,13 @@ describe("LibraryTree", () => {
   it("saves only what the person opened, not what a move showed", () => {
     tree({ current: "col-ingest" });
     expect(places()).toContain("Ingest");
-    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual([]);
+    expect(saved()).toEqual([]);
   });
 
   it("keeps the folds of a collection a cut-off list does not name", () => {
     localStorage.setItem("loom_library_expanded_acme_v1", JSON.stringify(["col-past-the-cap"]));
     tree({ truncated: true });
-    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-past-the-cap"]);
+    expect(saved()).toEqual(["col-past-the-cap"]);
   });
 
   it("keeps a collection the person closed closed when the list is read again", async () => {
@@ -423,19 +428,19 @@ describe("LibraryTree", () => {
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
     update({ rows: ROWS.filter((c) => c.namespace !== "col-eng") });
     // Saved as it was: a tab closed now opens it again next time.
-    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-eng"]);
+    expect(saved()).toEqual(["col-eng"]);
     update({ rows: [...ROWS] });
     expect(places()).toContain("Runbooks");
-    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-eng"]);
+    expect(saved()).toEqual(["col-eng"]);
   });
 
   it("forgets a collection opened here once the list no longer holds it", async () => {
     tree();
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
-    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-eng"]);
+    expect(saved()).toEqual(["col-eng"]);
     cleanup();
     tree({ rows: ROWS.filter((c) => c.namespace !== "col-eng") });
-    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual([]);
+    expect(saved()).toEqual([]);
   });
 
   it("has no axe violations, with New collection's form open too", async () => {

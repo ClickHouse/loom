@@ -354,7 +354,7 @@ function PlaceBranches({
   label?: { id: string; text: string };
 }) {
   const extra = items.find((c) => onPath.has(c.namespace)) ?? null;
-  const { shown, list, more, showMore } = useShowMore(items, MORE_SHOWN, extra);
+  const { shown, list, moreLabel, showMore } = useShowMore(items, MORE_SHOWN, extra);
   if (items.length === 0) return null;
   return (
     <>
@@ -365,11 +365,11 @@ function PlaceBranches({
       )}
       <ul ref={list} aria-labelledby={label?.id}>
         {shown.map((c) => branch(c, depth))}
-        {more && (
+        {moreLabel && (
           <li className="library-tree-row library-tree-more" style={{ "--depth": depth } as CSSProperties}>
             <span className="library-tree-twist-space" aria-hidden="true" />
             <Button type="empty" htmlType="button" onClick={showMore}>
-              {more}
+              {moreLabel}
             </Button>
           </li>
         )}
