@@ -203,7 +203,7 @@ async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) 
         return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
 
 
-async def _mirror_scope(
+async def mirror_scope(
     org: str, namespace: _NS, *, ch: _CHClient | None = None
 ) -> list[str] | None:
     """The scope with its namespaces' mirrors, or None when it holds no mirror."""
@@ -211,7 +211,7 @@ async def _mirror_scope(
     mirrors = list(await _mirrors_of(org, names, ch=ch))
     if not mirrors and not any(is_mirror_name(ns) for ns in names):
         return None
-    return [*names, *mirrors]
+    return list(dict.fromkeys([*names, *mirrors]))  # a scope may name a mirror it has
 
 
 def with_mirrors(
@@ -223,7 +223,7 @@ def with_mirrors(
     once."""
 
     async def run(org: str, namespace: _NS) -> int:
-        if (scope := await _mirror_scope(org, namespace)) is None:
+        if (scope := await mirror_scope(org, namespace)) is None:
             return await step(org, namespace)
         with purge_scope(True):
             return await step(org, scope)
@@ -241,7 +241,7 @@ async def _counted_with_mirrors(
 ) -> dict[str, int]:
     """`count` of the scope as `with_mirrors` erased it: with its mirrors, as a purge."""
     if scope_type == "namespace":
-        if (scope := await _mirror_scope(org, scope_value, ch=ch)) is not None:
+        if (scope := await mirror_scope(org, scope_value, ch=ch)) is not None:
             with purge_scope(True):
                 return await count(scope)
     return await count(scope_value)
@@ -255,8 +255,7 @@ async def evidence_with_mirrors(
     spellings: Sequence[str] | None,
     ch: _CHClient | None = None,
 ) -> tuple[dict[str, int], dict[str, Exception]]:
-    """`erasure_census.evidence_census` of the scope and its mirrors, in the caller's
-    purge scope for the named namespaces (see `_counted_with_mirrors`)."""
+    """`erasure_census.evidence_census` of the scope as `_counted_with_mirrors` counts it."""
     unread: dict[str, Exception] = {}
 
     async def count(scope: _NS) -> dict[str, int]:
@@ -271,7 +270,8 @@ async def evidence_with_mirrors(
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
-    """Last: the mirrors' rows are gone, so the name registered again gets a new mirror."""
+    """Last: the mirrors' rows are gone, so the name registered again gets a new mirror.
+    Every mirror the name has had is written again and counted, forgotten ones too."""
     found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)

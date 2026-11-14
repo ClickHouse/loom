@@ -567,10 +567,13 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     been written after it finished. Only the row links an older build's erasure
     did not know, and whose memory has no live row and no row written since the
     census, are counted (and with `resume`, deleted). 1 while any are left, else 0."""
+    from server.erasure.app.saga_steps import mirror_scope
     from server.erasure.store import steps_graph
 
     org = str(row["org"])
     scope_type, scope_value, _purge, _external = _re_verify_scope(row)
+    if scope_type == "namespace":  # the scope's mirrors, as the saga erased them
+        scope_value = await mirror_scope(org, scope_value, ch=ch) or scope_value
     # Memories written since the census are not the saga's, even soft-deleted.
     cut = row["verified_at"]
     print(f"  {row['id']} {org}/{row['scope_type']} completed")

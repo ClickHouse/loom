@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from server.core.ch import sequential_reads_active
 from server.erasure.app import saga_steps
 from server.erasure.store import census as erasure_census
 from server.erasure.store.mutations import purge_mode, purge_scope
@@ -64,6 +65,8 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     calls: list[Any] = []
 
     async def _mirrors_of(org: str, namespaces: list[str], ch: Any = None) -> dict[str, str]:
+        # Read on every replica's writes, or a mirror made on another one is missed.
+        assert sequential_reads_active()
         calls.append(("mirrors_of", namespaces) if ch is None else ("mirrors_of", namespaces, ch))
         return {MIRROR: "team"} if "team" in namespaces else {}
 
@@ -96,10 +99,20 @@ def test_a_scope_with_a_mirror_is_erased_in_one_purging_pass(
     assert seen == [(["team", MIRROR], True)]
 
 
-def test_a_scope_without_a_mirror_keeps_the_erasure_s_mode(registry: list[Any]) -> None:
+@pytest.mark.parametrize("purge", [False, True])
+def test_a_scope_without_a_mirror_keeps_the_erasure_s_mode(
+    registry: list[Any], purge: bool
+) -> None:
     seen, step = _recorded()
-    asyncio.run(saga_steps.with_mirrors(step)(ORG, "other"))
-    assert seen == [("other", False)]
+    with purge_scope(purge):
+        asyncio.run(saga_steps.with_mirrors(step)(ORG, "other"))
+    assert seen == [("other", purge)]
+
+
+def test_a_scope_naming_its_own_mirror_lists_it_once(registry: list[Any]) -> None:
+    seen, step = _recorded()
+    asyncio.run(saga_steps.with_mirrors(step)(ORG, ["team", MIRROR]))
+    assert seen == [(["team", MIRROR], True)]
 
 
 def test_a_list_scope_covers_every_named_namespace_s_mirrors(
@@ -251,3 +264,24 @@ def test_erasure_re_verify_reports_what_a_mirror_still_holds(
     )  # fmt: skip
     asyncio.run(hygiene._re_verify_run(None, args))
     assert 'residue now: 4 {"memory": 4}' in capsys.readouterr().out
+
+
+def test_erasure_re_verify_of_a_completed_saga_reads_its_mirrors_links(
+    registry: list[Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.cli import hygiene
+    from server.erasure.store import steps_graph
+
+    scopes: list[Any] = []
+
+    async def _orphans(org: str, scope_type: str, scope: Any, **_: Any) -> dict[str, int]:
+        scopes.append(scope)
+        return {}
+
+    monkeypatch.setattr(steps_graph, "count_orphan_row_links", _orphans)
+    row = {
+        "id": "e1", "org": ORG, "scope_type": "namespace", "scope_value": "team",
+        "purge": False, "verified_at": None,
+    }  # fmt: skip
+    assert asyncio.run(hygiene._re_verify_completed(None, row, resume=False)) == 0
+    assert scopes == [["team", MIRROR]]

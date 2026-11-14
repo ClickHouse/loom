@@ -432,7 +432,7 @@ def test_a_mirrored_source_is_refused(fake: _Store, call: Any) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     key = (ORG, NS, "design-decks")
     fake.rows[key] = dataclasses.replace(fake.rows[key], access="mirrored")
-    assert _code(call()) == "BAD_KIND"
+    assert _code(call()) == "SOURCE_NOT_SERVED"
 
 
 def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) -> None:

@@ -864,6 +864,10 @@ Raised in `server/tracker/app/sources.py`.
 
 Raised in `server/knowledge/app/sources.py`.
 
+#### `SOURCE_NOT_SERVED`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `SOURCE_QUOTA`
 
 Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.

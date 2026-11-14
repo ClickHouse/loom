@@ -350,7 +350,7 @@ def _require_served(src: KnowledgeSource) -> None:
         raise ValidationError(
             f"source {src.name!r} is mirrored, which this server does not serve; "
             "upgrade Loom to manage it",
-            code="BAD_KIND",
+            code="SOURCE_NOT_SERVED",
         )
 
 
