@@ -246,9 +246,12 @@ def _cmd_reseal(args: argparse.Namespace) -> int:
         print("✓ dry run, nothing written" if dry else "✓ resealed under LOOM_JWT_SECRET")
         return 0
 
-    if args.dry_run or args.check:
-        return run_connected(_go, org_free=reads("counts what a reseal would write"))
-    return run_connected(_go, org_free=writes("reseals this cell's stored credentials"))
+    return run_connected(
+        _go,
+        org_free=reads("counts what a reseal would write")
+        if args.dry_run or args.check
+        else writes("reseals this cell's stored credentials"),
+    )
 
 
 def register_secrets_cli(sub: Any) -> None:

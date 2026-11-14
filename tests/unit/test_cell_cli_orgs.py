@@ -179,13 +179,22 @@ def test_a_revocation_refuses_on_a_missing_grant(monkeypatch: pytest.MonkeyPatch
         asyncio.run(_ch.check_org_free(_ch.revokes("r")))
 
 
-@pytest.mark.parametrize(("free", "checked"), [("w", True), ("x", True), ("r", False)])
+@pytest.mark.parametrize(
+    ("org_free", "cell_name", "checked"),
+    [
+        (_ch.writes("w"), "eu-1", True),
+        (_ch.revokes("x"), "eu-1", True),
+        (_ch.reads("r"), "eu-1", False),
+        (_ch.writes("w"), "", False),
+    ],
+)
 def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postgres(
-    monkeypatch: pytest.MonkeyPatch, free: str, checked: bool
+    monkeypatch: pytest.MonkeyPatch, org_free: _ch.OrgFree, cell_name: str, checked: bool
 ) -> None:
-    """`check_configured` ties ClickHouse's recorded deployment to Postgres's, so a CLI
-    whose ClickHouse is another cell's is refused with its writes; a read is not."""
-    org_free = {"w": _ch.writes("w"), "x": _ch.revokes("x"), "r": _ch.reads("r")}[free]
+    """On a cell, `check_configured` ties ClickHouse's recorded deployment to
+    Postgres's, so a CLI whose ClickHouse is another cell's is refused with its writes;
+    a read, or a write with LOOM_CELL unset, reads nothing new."""
+    monkeypatch.setattr(settings, "cell", cell_name)
     seen: list[int] = []
 
     async def _configured(_c: Any) -> None:
@@ -199,6 +208,35 @@ def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postg
 
     asyncio.run(_ch.connect_declared(_Client(), org_free=org_free))
     assert seen == ([1] if checked else [])
+
+
+# Commands whose dry run, check or listing writes nothing: the flag each one's kind is
+# picked by, so with LOOM_CELL set and Postgres down that mode still runs.
+_MODE_PICKED = {
+    "secrets.py": "dry_run",
+    "restore.py": "dry_run",
+    "ops.py": "dry_run",
+    "hygiene.py": "resume",
+    "code_maintenance.py": "dry_run",
+    "deployment.py": "check",
+    "sso.py": "dry_run",
+    "access.py": "list",
+}
+
+
+@pytest.mark.parametrize(("file", "flag"), sorted(_MODE_PICKED.items()))
+def test_a_mode_that_writes_nothing_picks_a_read(file: str, flag: str) -> None:
+    source = (ROOT / "server" / "cli" / file).read_text()
+    picked = [
+        k.value
+        for call in _calls(ast.parse(source))
+        if _name(call) in _CONNECTS
+        for k in call.keywords
+        if k.arg == "org_free" and isinstance(k.value, ast.IfExp)
+    ]
+    branches = [_name(b) for v in picked for b in (v.body, v.orelse) if isinstance(b, ast.Call)]
+    assert "reads" in branches, f"{file}: a mode that writes nothing should pick reads(...)"
+    assert any(flag in ast.unparse(v.test) for v in picked), f"{file}: picked by --{flag}"
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:

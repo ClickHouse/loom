@@ -249,7 +249,10 @@ async def _compact(args: argparse.Namespace) -> int:
         print(str(e), file=sys.stderr)
         return 2
     await connect_declared(
-        get_client(), org_free=writes("optimizes whole code tables, no org's rows")
+        get_client(),
+        org_free=reads("lists what a compaction would optimize")
+        if args.dry_run
+        else writes("optimizes whole code tables, no org's rows"),
     )
     ch = get_client()
     min_ratio = args.min_ratio if args.min_ratio is not None else settings.code_compact_min_ratio

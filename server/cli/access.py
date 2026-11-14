@@ -538,7 +538,10 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
 
     try:
         return run_connected(
-            _run, org_free=revokes("revokes a token or subject by id: no org's rows")
+            _run,
+            org_free=reads("lists the unexpired revocations")
+            if args.list
+            else revokes("revokes a token or subject by id: no org's rows"),
         )
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal

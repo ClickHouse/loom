@@ -497,7 +497,10 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
 
     # --erase files purges for rows already in this cell, which stay erasable.
     return run_connected(
-        _run, org_free=writes("re-verifies and files erasures of this cell's rows")
+        _run,
+        org_free=writes("re-verifies and files erasures of this cell's rows")
+        if args.resume or args.erase
+        else reads("re-verifies erasures of this cell's rows"),
     )
 
 

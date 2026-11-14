@@ -150,11 +150,7 @@ def _outage(e: BaseException | None) -> bool:
     connection or no answer within the bound, never a missing grant."""
     from server.core import pg
 
-    while e is not None:
-        if isinstance(e, TimeoutError | pg.PostgresUnavailableError) or pg.is_outage(e):
-            return True
-        e = e.__cause__
-    return False
+    return e is not None and (isinstance(e, pg.PostgresUnavailableError) or pg.is_outage(e))
 
 
 async def check_org_free(free: OrgFree) -> None:
@@ -249,14 +245,17 @@ async def connect_declared(
     with `check_authority`, it first refuses a deployment other than its own
     (`check_configured`): an org's rows and its tenancy row land only in this
     deployment's stores, and the cell state is read from this deployment's Postgres."""
+    from server.settings import settings
+
     named = _declared(orgs, org_free)
     # A `loom code` command connects again inside the connect `code_run` made.
     if not ch.connected:
         await ch.connect()
     try:
-        # A write or a revocation also checks its ClickHouse against its Postgres, so a
-        # CLI whose ClickHouse is another cell's is refused with the rest.
-        if check_authority or named or (org_free is not None and org_free.kind != "read"):
+        # On a cell, a write or a revocation also checks its ClickHouse against its
+        # Postgres, so a CLI whose ClickHouse is another cell's is refused with the rest.
+        gated = org_free is not None and org_free.kind != "read" and bool(settings.cell)
+        if check_authority or named or gated:
             from server.core.pg_profile import check_configured
 
             await check_configured(ch)
