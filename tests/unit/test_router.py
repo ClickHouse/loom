@@ -193,6 +193,7 @@ def test_a_new_org_longer_than_a_cell_holds_answers_400_and_writes_nothing(
     long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)
     answer = _place(_client(), long)
     assert answer.status_code == 400
+    assert answer.json()["code"] == "ORG_TOO_LONG"  # what a cell's placement matches on
     assert f"longer than the {cell.ORG_MAX_BYTES} bytes" in answer.json()["error"]
     assert not any("INSERT" in sql or "UPDATE" in sql for sql in conn.statements)
 
