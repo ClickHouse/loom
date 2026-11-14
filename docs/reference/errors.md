@@ -466,7 +466,7 @@ HTTP 409, raised as `server.core.errors.DefinitionNameTakenError`. 409 — anoth
 
 #### `DEFINITION_PROMOTION_REFUSED`
 
-HTTP 422, raised as `server.core.errors.DefinitionPromotionRefusedError`. 422 — a definition is promoted only from its live namespace-wide row under a `definition/` key, to that same key. Category `input`, retryable: no.
+HTTP 422, raised as `server.core.errors.DefinitionPromotionRefusedError`. 422 — a definition is promoted only from its live namespace-wide row under a `definition/` key, to that same key, and a row of another type is never promoted under a `definition/` key. Category `input`, retryable: no.
 
 #### `DUPLICATE_FIELD`
 
@@ -702,7 +702,7 @@ Raised in `server/transport/mcp_auth.py`. Category `auth`, retryable: no.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, the… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease or… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 

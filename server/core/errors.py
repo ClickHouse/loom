@@ -106,7 +106,8 @@ class CollectionNameTakenError(LoomServerError):
 
 class DefinitionPromotionRefusedError(LoomServerError):
     """422 — a definition is promoted only from its live namespace-wide row under a
-    `definition/` key, to that same key."""
+    `definition/` key, to that same key, and a row of another type is never promoted under
+    a `definition/` key."""
 
     code = "DEFINITION_PROMOTION_REFUSED"
     status_code = 422
@@ -235,17 +236,18 @@ class GrantBusyError(LoomServerError):
 class OverloadedError(LoomServerError):
     """503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared
     memory, the document bucket's transfers or streams, an override's lock, a
-    namespace's document-source lease, the blacklist's regex matchers, or a conversation
-    delete or compaction stayed contended. The pool: every pooled connection was busy past
-    `ch_pool_wait_ms`; ClickHouse's memory: a statement found the server's or the
-    ClickHouse user's memory, which every query shares, used up; the lock or lease: a
-    sibling held it past its wait; the matchers: the org's share of them stayed busy, and
-    the write is refused rather than stored unchecked; a conversation delete or
-    compaction: writes to the thread's embeddings kept landing; insights.query while its
-    replica's probe has no answer from ClickHouse; a document source a build without
-    items cannot read, while such a build may still serve; a source another write
-    changed during an update's or a rotate's probe. Safe to resend on an idempotent op, or
-    when it came before the handler ran; `retry_after_s` is the wait."""
+    namespace's document-source lease or definition-promotion claim, the blacklist's
+    regex matchers, or a conversation delete or compaction stayed contended. The pool:
+    every pooled connection was busy past `ch_pool_wait_ms`; ClickHouse's memory: a
+    statement found the server's or the ClickHouse user's memory, which every query
+    shares, used up; the lock or lease: a sibling held it past its wait; the matchers:
+    the org's share of them stayed busy, and the write is refused rather than stored
+    unchecked; a conversation delete or compaction: writes to the thread's embeddings
+    kept landing; insights.query while its replica's probe has no answer from
+    ClickHouse; a document source a build without items cannot read, while such a build
+    may still serve; a source another write changed during an update's or a rotate's
+    probe. Safe to resend on an idempotent op, or when it came before the handler ran;
+    `retry_after_s` is the wait."""
 
     code = "OVERLOADED"
     status_code = 503

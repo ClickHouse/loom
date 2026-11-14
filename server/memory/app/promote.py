@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 from fastapi import HTTPException
@@ -114,11 +116,11 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
 
     target_key = input.target_key or input.memory_key
     is_definition_promotion = is_definition(src) or target_key.startswith(DEFINITION_KEY_PREFIX)
-    # A definition's names, None for any other row.
-    names: set[str] | None
+    insert: Callable[[dict[str, Any]], Awaitable[None]]
     if is_definition_promotion:
         note_budget_shape("definition")
-        names = await _check_definition_promotion(input, src, target_key)
+        names = await _approved_definition_names(input, src, target_key)
+        insert = partial(_insert_definition, input.org, input.namespace, names)
         sent = {
             "approver": input.approver,
             "promoted_from_candidate_id": input.promoted_from_candidate_id,
@@ -128,7 +130,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         promoted_by = writer_actor("explicit")
         candidate_id = None
     else:
-        names = None
+        insert = shared_repo.insert_shared_row
         ignored = ["approved_sha256"] if input.approved_sha256 is not None else []
         promoted_by = input.approver or "explicit"
         candidate_id = input.promoted_from_candidate_id
@@ -165,7 +167,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         if embedding and not is_definition_promotion:
             # A close shared row under a *different* key means promoting this
             # value would contradict the namespace's agreed knowledge — refuse. A
-            # definition's names decide instead (`_check_definition_promotion`).
+            # definition's names decide instead (`_check_shared_definitions`).
             from server.memory.app import conflicts
 
             peers = await conflicts.check_against_shared(
@@ -208,10 +210,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         "tombstoned_at": None,
         "version": next_version(),
     }
-    if names is None:
-        await shared_repo.insert_shared_row(row)
-    else:
-        await _insert_definition(input.org, input.namespace, names, row)
+    await insert(row)
 
     # Make the shared memory searchable via a scope='shared' embedding,
     # reusing the vector above (or a stub the embedding_worker reconciles).
@@ -261,7 +260,7 @@ def _live(row: MemoryRow) -> bool:
     return row.status == "active" and all(to_naive_utc(t) > now for t in ended)
 
 
-async def _check_definition_promotion(
+async def _approved_definition_names(
     input: MemoryPromoteInput, src: MemoryRow, target_key: str
 ) -> set[str]:
     """The names the definition's value holds, refusing a definition the shared layer
@@ -313,6 +312,7 @@ async def _insert_definition(
     shared definition holds one of its names, under a claim on the namespace so that two
     promotions cannot both pass."""
     claim = f"definition.promote/{org}/{namespace}"
+    # One read and one insert run under it; the concepts page quotes the 10 s wait.
     async with leases.holding(claim, ttl_s=30, wait_s=10) as held:
         if not held:
             raise OverloadedError("another definition promotion in this namespace is running")
@@ -340,9 +340,8 @@ async def _check_shared_definitions(
         )
     taken: dict[str, set[str]] = {}
     for r in rows:
-        if r["memory_key"] != target_key:
-            if clash := names & names_of(r["term"], r["aliases"]):
-                taken[r["memory_key"]] = clash
+        if r["memory_key"] != target_key and (clash := names & names_of(r["term"], r["aliases"])):
+            taken[r["memory_key"]] = clash
     if taken:
         raise DefinitionNameTakenError(
             "another shared definition holds this term or an alias",

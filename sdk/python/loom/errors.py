@@ -105,10 +105,11 @@ class RateLimited(BackendUnavailable):
 
 
 class Overloaded(BackendUnavailable):
-    """503 OVERLOADED — every pooled ClickHouse connection of the serving
-    process was busy for longer than its slot wait. Retry
-    after `retry_after_s`; a client that spreads its calls or lowers its
-    concurrency stops seeing it."""
+    """503 OVERLOADED — the server was too busy: every pooled ClickHouse connection of
+    the serving process was busy for longer than its slot wait, or a lock or claim
+    (such as a namespace's definition promotion) stayed held past its wait. Retry after
+    `retry_after_s`; a client that spreads its calls or lowers its concurrency stops
+    seeing it."""
 
     code = "OVERLOADED"
     retry_after_s: float = DEFAULT_RETRY_AFTER_S

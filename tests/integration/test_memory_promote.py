@@ -366,3 +366,40 @@ async def test_promotions_racing_for_one_name_leave_one_holder(
         parameters={"org": org, "ns": ns},
     ).result_rows[0][0]
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_agent_promotes_a_definition_as_its_description_says(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through MCP: memory.get of the namespace-wide row serves the hash, and
+    memory.promote with agent='-' and that hash shares it."""
+    import httpx
+    from loom import Agent
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-mcp"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set(
+            "definition/arr", {"term": "ARR", "body": "x"}, "definition", agent_id="-"
+        )
+
+    async def call(tool: str, arguments: dict) -> dict:
+        rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+        rpc["params"] = {"name": tool, "arguments": {"namespace": ns, **arguments}}
+        headers = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+        async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+            r = await c.post("/mcp", json=rpc, headers=headers)
+        assert r.status_code == 200, r.text[:400]
+        result = r.json()["result"]
+        assert not result.get("isError"), result
+        return result["structuredContent"]
+
+    row = {"memory_key": "definition/arr", "agent": "-"}
+    got = await call("loom_memory_get", row)
+    out = await call("loom_memory_promote", {**row, "approved_sha256": got["content_sha256"]})
+    assert out["shared_memory_key"] == "definition/arr"

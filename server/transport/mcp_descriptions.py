@@ -208,7 +208,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Copy a private memory to scope=shared so other agents in the same "
         "namespace can see it. Call on 'share this with the team' / 'make "
         "this visible to other bots'. A definition: promote its namespace-wide "
-        "row (agent_id='-') with approved_sha256 set to the content_sha256 "
+        "row (agent='-') with approved_sha256 set to the content_sha256 "
         "memory.get served."
     ),
     "memory.demote": (

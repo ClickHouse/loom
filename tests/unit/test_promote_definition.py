@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from server.core.errors import LoomServerError, PreconditionFailedError
 from server.core.hashing import served_content_sha256
+from server.core.leases import LeaseUnavailable
 from server.memory import store as memory_repo
 from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.app import promote
@@ -51,7 +52,8 @@ def _row(**over: Any) -> MemoryRow:
 @pytest.fixture
 def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The source row, the live shared definitions (key -> value), what was written, and
-    whether the namespace's claim is free (the claims taken are kept)."""
+    whether the namespace's claim is free (None: the lease store does not answer; the
+    claims taken are kept)."""
     state: dict[str, Any] = {
         "row": _row(),
         "shared": {},
@@ -77,6 +79,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     @asynccontextmanager
     async def holding(name: str, **_k: Any) -> AsyncIterator[bool]:
         state["claims"].append(name)
+        if state["free"] is None:
+            raise LeaseUnavailable("the lease store did not answer", operation=name)
         state["held"] = state["free"]
         try:
             yield state["free"]
@@ -344,6 +348,10 @@ async def test_a_definition_is_checked_and_written_under_the_namespaces_claim(
     store["written"].clear()
     store["free"] = False
     assert await _refusal(store) == "OVERLOADED"
+    store["free"] = None
+    with pytest.raises(LeaseUnavailable):
+        await promote.handle_memory_promote(_input())
+    assert store["written"] == []
 
 
 async def test_another_row_takes_no_claim(store: dict[str, Any]) -> None:
