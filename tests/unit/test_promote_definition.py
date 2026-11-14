@@ -51,9 +51,10 @@ def _row(**over: Any) -> MemoryRow:
 
 @pytest.fixture
 def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """The source row, the live shared definitions (key -> value), what was written, and
-    whether the namespace's claim is free (None: the lease store does not answer; the
-    claims taken are kept)."""
+    """The source row, the live shared definitions (key -> value) and what was written,
+    with the claim: `free` (False: another holds it; None: the lease store does not
+    answer), `claims` (the names taken), `held` (inside it), `expire` (it runs out on
+    exit)."""
     state: dict[str, Any] = {
         "row": _row(),
         "shared": {},
@@ -61,6 +62,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "free": True,
         "claims": [],
         "held": False,
+        "expire": False,
     }
 
     async def get_by_key(*_a: Any, **_k: Any) -> MemoryRow:
@@ -86,7 +88,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             yield state["free"]
         finally:
             state["held"] = False
-        if state.get("expire"):
+        if state["expire"]:
             raise ClaimExpired(f"the work under claim {name} did not finish in time")
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
@@ -156,6 +158,7 @@ def test_a_name_folds_step_by_step(name: str, folded: str) -> None:
         ({"term": "ARR", "aliases": "x"}, None),
         ({"term": "ARR", "aliases": ""}, None),
         ({"term": "ARR", "aliases": [1]}, None),
+        ({"term": "ARR", "aliases": None}, {"arr"}),  # null reads as no aliases
     ],
 )
 def test_a_definitions_names(value: Any, names: set[str] | None) -> None:
@@ -191,6 +194,7 @@ async def test_a_definition_promotion_needs_its_approved_hash(store: dict[str, A
     "over",
     [
         {"agent": "bot"},  # a writer's own row
+        {"user_id": "u1"},
         {"session_id": "s1"},
         {"memory_key": "arr_note"},  # not under definition/
     ],

@@ -24,10 +24,12 @@ def fold_name(name: str) -> str:
 def definition_names(value: Any) -> set[str] | None:
     """The folded term and aliases of a decoded definition value, or None when it is not
     one: no object, no non-empty string `term`, or `aliases` present and not a list of
-    strings (it may be left out)."""
+    strings (it may be left out or null)."""
     if not isinstance(value, dict) or not isinstance(value.get("term"), str):
         return None
-    aliases = value.get("aliases", [])
+    aliases = value.get("aliases")
+    if aliases is None:
+        aliases = []
     if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
         return None
     return names_of(value["term"], aliases) or None
