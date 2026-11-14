@@ -9,7 +9,7 @@ import sys
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, run_connected, writes
+from server.cli._ch import dry_run_orgs, revokes, run_connected
 
 _ADOPT_HELP = (
     "Let SSO sign-ins reach the password accounts whose email is at --domain: "
@@ -180,7 +180,7 @@ def _cmd_unlink(args: argparse.Namespace) -> int:
         )
         return 0
 
-    return run_connected(_run, org_free=writes("unlinks an email's accounts in this cell"))
+    return run_connected(_run, org_free=revokes("unlinks an email's accounts in this cell"))
 
 
 def _cmd_password_link(args: argparse.Namespace) -> int:

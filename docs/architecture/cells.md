@@ -597,37 +597,39 @@ lists any tenancy row the directory does not place.
   since attach, or the `loom cell update` that changes one, places configured orgs, and a
   read-only command or a dry run declares none, since a read records nothing. An org-free
   command says what it does to the stores: it reads, writes (`loom ch-setup`, `secrets`, a
-  settings change, prepare and the rest) or revokes (`loom revoke-token`, a SQL user's
-  revocation, `loom signing-key retire`), per subcommand where one connect serves several.
-  With `LOOM_CELL` set, a write or a revocation reads the `first` row on a bounded session
-  of its own and refuses when it names another cell, which a CLI pointed at another cell's
-  stores always finds, or when the read fails; an absent row, or state tables not migrated
-  yet, passes, so a later cell runs these before it is prepared. A revocation runs through
-  an outage (the fourth exception under Invariants); a write refuses during one; a read is
-  not gated. A census test fails on a connect that declares neither, on an org-free one that
-  does not say which kind it is, on a connect under `server/cli/` outside `_ch.py`, and on a
-  `loom code` command that resolves its org without connecting for it. A
-  holder of the cell's router credential can place orgs for the cell, within the cell's rate
-  and `placements_max`, as the operator credential `loom cell place` uses can for any cell
-  within its `placements_max` (an operator's call is not rate-limited, nor counted toward
-  the cell's rate), and a placement is permanent, so an org name it takes is lost to every
-  other cell: a power over the shared directory that the cell's store credentials lack. So
-  the pods hold it, and a CLI only for the one read that needs it, while the first cell's
-  mode is `recording`: a CLI command that declares an org refuses to run with it set, naming
-  it, unless the cell is the first and its mode reads `recording`, and an org-free command
-  never uses it; a leaked one is stopped by `loom cell limit --closed`, which needs none of
-  the cell's stores, and replaced by `loom cell credential` (below).
-  `loom cell place --org <org>` (declared org-free: it writes the org's placement and
-  tenancy row, which is how an org comes to be held), with the router's operator credential,
-  places an org for a command that writes a new one (a bot, an import), through the router's
-  placement API and in its order, as attach's placement of configured orgs does: it inserts
-  the placement and reads back the winner, writes the cell's tenancy row only if the winner
-  is this cell (otherwise it refuses and writes nothing), and reports success only once the
-  row is written, so a rerun is idempotent. For an org the directory does not place yet it
-  passes the placement API's gate (below): refused while the directory is unavailable, for a
-  cell the gate does not accept, closed, or when the fingerprint of the CLI's own
-  configuration of the cell (with the deployment id read from the stores it connects to)
-  matches neither value of the cell's row, or past `placements_max`, and counted toward it.
+  settings change, prepare and the rest; a dry run reads) or revokes (`loom revoke-token`, a
+  SQL user's revocation, `loom signing-key retire`, `loom bot disable`, `loom sso unlink`),
+  per subcommand where one connect serves several. With `LOOM_CELL` set, a write or a
+  revocation checks its ClickHouse against its Postgres (`check_configured`), reads the
+  `first` row on a bounded session of its own and refuses when it names another cell, which
+  a CLI pointed at another cell's stores always finds, or when the read fails; an absent
+  row, or state tables not migrated yet, passes, so a later cell runs these before it is
+  prepared. A revocation runs through an outage (the fourth exception under Invariants); a
+  write refuses during one; a read is not gated. A census test fails on a connect that
+  declares neither, on an org-free one that does not say which kind it is, on a connect
+  under `server/cli/` outside `_ch.py`, and on a `loom code` command that resolves its org
+  without connecting for it. A holder of the cell's router credential can place orgs for the
+  cell, within the cell's rate and `placements_max`, as the operator credential
+  `loom cell place` uses can for any cell within its `placements_max` (an operator's call is
+  not rate-limited, nor counted toward the cell's rate), and a placement is permanent, so an
+  org name it takes is lost to every other cell: a power over the shared directory that the
+  cell's store credentials lack. So the pods hold it, and a CLI only for the one read that
+  needs it, while the first cell's mode is `recording`: a CLI command that declares an org
+  refuses to run with it set, naming it, unless the cell is the first and its mode reads
+  `recording`, and an org-free command never uses it; a leaked one is stopped by
+  `loom cell limit --closed`, which needs none of the cell's stores, and replaced by
+  `loom cell credential` (below). `loom cell place --org <org>` (declared org-free: it
+  writes the org's placement and tenancy row, which is how an org comes to be held), with
+  the router's operator credential, places an org for a command that writes a new one (a
+  bot, an import), through the router's placement API and in its order, as attach's
+  placement of configured orgs does: it inserts the placement and reads back the winner,
+  writes the cell's tenancy row only if the winner is this cell (otherwise it refuses and
+  writes nothing), and reports success only once the row is written, so a rerun is
+  idempotent. For an org the directory does not place yet it passes the placement API's gate
+  (below): refused while the directory is unavailable, for a cell the gate does not accept,
+  closed, or when the fingerprint of the CLI's own configuration of the cell (with the
+  deployment id read from the stores it connects to) matches neither value of the cell's
+  row, or past `placements_max`, and counted toward it.
 - **Writers older than the check are refused by the stores they write.** A session that
   ran the tenancy check marks itself with `loom.tenancy_checked = 'on'`: every session of
   a process with `LOOM_CELL` set sends it as a startup parameter (so the pool's
@@ -1115,10 +1117,11 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   leaving that table unguarded until a later boot succeeds: the triggers are a backstop
   only against writers that send no marker, refusing the boot would take a cell down for a
   backstop, and attach refuses a missing trigger. Fourth, an org-free revocation command
-  (`loom revoke-token`, a SQL user's revocation, `loom signing-key retire`) with
-  `LOOM_CELL` set whose read of the cell's `first` row fails for a Postgres that does not
-  answer runs and prints that the cell was not checked, since a revocation must work
-  through an outage; any other failed read, a missing grant among them, refuses.
+  (`loom revoke-token`, a SQL user's revocation, `loom signing-key retire`,
+  `loom bot disable`, `loom sso unlink`) with `LOOM_CELL` set whose read of the cell's
+  `first` row fails for a Postgres that does not answer runs and prints that the cell was
+  not checked, since a revocation must work through an outage; any other failed read, a
+  missing grant among them, refuses.
 
 ## Source entry points
 

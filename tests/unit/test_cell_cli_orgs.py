@@ -167,6 +167,7 @@ def test_a_revocation_runs_through_an_outage_and_says_so(
     assert "state was not checked" in capsys.readouterr().err
     _cell_set(monkeypatch, TimeoutError())
     asyncio.run(_ch.check_org_free(_ch.revokes("r")))
+    assert "state was not checked" in capsys.readouterr().err
 
 
 def test_a_revocation_refuses_on_a_missing_grant(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,6 +179,42 @@ def test_a_revocation_refuses_on_a_missing_grant(monkeypatch: pytest.MonkeyPatch
         asyncio.run(_ch.check_org_free(_ch.revokes("r")))
 
 
+@pytest.mark.parametrize(("free", "checked"), [("w", True), ("x", True), ("r", False)])
+def test_an_org_free_write_or_revocation_checks_its_clickhouse_against_its_postgres(
+    monkeypatch: pytest.MonkeyPatch, free: str, checked: bool
+) -> None:
+    """`check_configured` ties ClickHouse's recorded deployment to Postgres's, so a CLI
+    whose ClickHouse is another cell's is refused with its writes; a read is not."""
+    org_free = {"w": _ch.writes("w"), "x": _ch.revokes("x"), "r": _ch.reads("r")}[free]
+    seen: list[int] = []
+
+    async def _configured(_c: Any) -> None:
+        seen.append(1)
+
+    monkeypatch.setattr(pg_profile, "check_configured", _configured)
+    monkeypatch.setattr(_ch, "check_org_free", AsyncMock(return_value=None))
+
+    class _Client:
+        connected = True
+
+    asyncio.run(_ch.connect_declared(_Client(), org_free=org_free))
+    assert seen == ([1] if checked else [])
+
+
+def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:
+    """The reconnect that drains buffered writes runs after every `loom code`
+    subcommand, reads included; the subcommand's own connect gated its writes, so the
+    drain must not gate again (an outage would turn a read's exit 0 into a refusal)."""
+    drained = [
+        k.value
+        for call in _calls(ast.parse((ROOT / "server/cli/code_run.py").read_text()))
+        if _name(call) == "connect_declared"
+        for k in call.keywords
+        if k.arg == "org_free"
+    ]
+    assert drained and all(isinstance(v, ast.Call) and _name(v) == "reads" for v in drained)
+
+
 def test_an_org_free_connect_runs_its_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str] = []
 
@@ -185,6 +222,7 @@ def test_an_org_free_connect_runs_its_gate(monkeypatch: pytest.MonkeyPatch) -> N
         seen.append(free.kind)
 
     monkeypatch.setattr(_ch, "check_org_free", _gate)
+    monkeypatch.setattr(pg_profile, "check_configured", AsyncMock(return_value=None))
     monkeypatch.setattr(settings, "cell", "")
 
     class _Client:
@@ -393,7 +431,7 @@ def test_unset_cell_refuses_a_read_that_does_not_answer(monkeypatch: pytest.Monk
             return 0
 
     _unset_on(monkeypatch, _Hung(4))
-    monkeypatch.setattr(_ch, "_UNSET_READ_S", 0.05)
+    monkeypatch.setattr(_ch, "_STATE_READ_S", 0.05)
     with pytest.raises(_ch.OrgNotHeld, match="TimeoutError: no answer within 0.05 s"):
         asyncio.run(_ch.check_orgs(["acme"]))
 

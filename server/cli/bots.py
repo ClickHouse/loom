@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from server.cli._ch import reads, run_connected, writes
+from server.cli._ch import reads, revokes, run_connected
 
 
 def register_bot_cli(sub: Any) -> None:
@@ -202,4 +202,6 @@ def _cmd_disable(args: argparse.Namespace) -> int:
         print(f"bot {args.name} disabled; its tokens are revoked")
         return 0
 
-    return run_connected(_run, org_free=writes("a bot of this cell, by name"))
+    return run_connected(
+        _run, org_free=revokes("disables a bot of this cell and revokes its tokens")
+    )
