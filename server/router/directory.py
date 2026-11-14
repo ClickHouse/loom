@@ -28,6 +28,7 @@ from typing import Any
 
 from server.core import cell as cell_state
 from server.core.paths import ROUTER_MIGRATIONS_DIR
+from server.router.limits import MAX_BODY_BYTES
 from server.settings import settings
 
 # The directory's own migration lock: never the memory authority's.
@@ -69,15 +70,14 @@ REGISTER_STATEMENTS, REFUSAL_READ_STATEMENTS = 13, 6
 REGISTER_MAX_S = _bound_s(REGISTER_STATEMENTS)
 REFUSAL_READ_MAX_S = _bound_s(REFUSAL_READ_STATEMENTS)
 # The attach calls' statements, which tests/unit/test_router_attach.py counts against the
-# code: the operator's read of a cell's row (the row, then any other row); `begin`,
-# `enforced` and `serving` (begin, lock, row, other row, update, audit, read-back, commit);
-# a batch (begin, lock, row, other row, insert, placements elsewhere, count, audit, commit);
-# and the removal of an unattached cell (begin, lock, row, hosts, row, audit, commit).
-ATTACH_READ_STATEMENTS, ATTACH_CHANGE_STATEMENTS, ATTACH_PLACE_STATEMENTS = 2, 8, 9
-REMOVE_STATEMENTS = 7
-ATTACH_READ_MAX_S = _bound_s(ATTACH_READ_STATEMENTS)  # not a setting: derived
-ATTACH_CHANGE_MAX_S = _bound_s(ATTACH_CHANGE_STATEMENTS)  # not a setting: derived
-ATTACH_PLACE_MAX_S = _bound_s(ATTACH_PLACE_STATEMENTS)  # not a setting: derived
+# code: the operator's read of a cell's row (the row, any other row, audit); the read before
+# `begin`'s and `serving`'s probe (the row, any other row); `begin`, `enforced` and
+# `serving` (begin, lock, row, other row, update, audit, read-back, commit); a batch (begin,
+# lock, row, other row, insert, placements elsewhere, count, audit, commit); and the removal
+# of an unattached cell (begin, lock, row, hosts, row, audit, commit).
+OPERATOR_READ_STATEMENTS, ATTACH_READ_STATEMENTS = 3, 2
+ATTACH_CHANGE_STATEMENTS, ATTACH_PLACE_STATEMENTS, REMOVE_STATEMENTS = 8, 9, 7
+OPERATOR_READ_MAX_S = _bound_s(OPERATOR_READ_STATEMENTS)  # not a setting: derived
 REMOVE_MAX_S = _bound_s(REMOVE_STATEMENTS)  # not a setting: derived
 # Every directory connection commits through the synchronous standby and reads what
 # committed before each statement, whatever the database's defaults: a placement the
@@ -698,10 +698,10 @@ def _refuse_long(orgs: Iterable[str]) -> None:
             raise OrgTooLong(reason)
 
 
-# The first cell's attach (`loom cell attach`; docs/architecture/cells.md, "Attaching a
-# cell"). Every call runs under the directory lock, then the cell's row lock, the order
-# `register`, `_operator_change` and `remove` take, and refuses while another row exists: a
-# later cell registered before the first attach could share the first cell's stores.
+# The first cell's attach (docs/architecture/cells.md, "The router"). Every change runs
+# under the directory lock, then the cell's row lock, the order `register`,
+# `_operator_change` and `remove` take, and refuses while another row exists: a later cell
+# registered before the first attach could share the first cell's stores.
 
 # The columns attach reads beside a Cell's.
 _ATTACH_EXTRA = ("bucket", "bucket_prefix", "probe_url", "upstream_url", "attach_started_at")
@@ -796,21 +796,62 @@ def _fingerprint_refusal(found: Attaching, name: str, value: dict[str, Any]) -> 
     return ""
 
 
+# An org as a placement body carries it at most: ORG_MAX_BYTES bytes, each escaped in JSON
+# to at most six (`\u00XX`).
+_PLACEMENT_ORG_MAX = 6 * cell_state.ORG_MAX_BYTES  # not a setting: derived
+
+
+def _placement_refusal(cell: str, name: str, value: dict[str, Any]) -> str:
+    """Why a fingerprint is too large for the cell's live placements ('' when it is not): a
+    placement body (`{org, cell, fingerprint}`, the org at its longest) past the router's
+    MAX_BODY_BYTES would refuse every new org; the largest fields are named."""
+    # The default encoding is the longest: spaces after separators, non-ASCII escaped.
+    size = len(json.dumps({"org": "", "cell": cell, "fingerprint": value})) + _PLACEMENT_ORG_MAX
+    if size <= MAX_BODY_BYTES:
+        return ""
+    fields = value.get("fields")
+    sizes = sorted(
+        ((len(json.dumps(v)), k) for k, v in fields.items()) if isinstance(fields, dict) else (),
+        reverse=True,
+    )
+    largest = ", ".join(k for _, k in sizes[:3])
+    return (
+        f"{name} makes a placement body of up to {size} bytes, past the router's "
+        f"{MAX_BODY_BYTES}: its largest fields are {largest}"
+    )
+
+
 def begin_refusal(found: Attaching, begin: Begin) -> str:
     """Why `attach/begin` is refused on this row ('' when it is not), before the probe and
     again under the lock."""
     if reason := attach_refusal(found, begin.deployment_id, begun=False):
         return reason
-    for name, value in (("current_fp", begin.current_fp), ("next_fp", begin.next_fp)):
-        if value is not None and (reason := _fingerprint_refusal(found, name, value)):
-            return reason
     row = found.row
+    for name, value in (("current_fp", begin.current_fp), ("next_fp", begin.next_fp)):
+        if value is None:
+            continue
+        if reason := _fingerprint_refusal(found, name, value) or _placement_refusal(
+            row.cell, name, value
+        ):
+            return reason
     if row.current_fp is not None and (row.current_fp, row.next_fp) != (
         begin.current_fp,
         begin.next_fp,
     ):
         return f"cell {row.cell!r} records other fingerprints: change them with `loom cell update`"
     return ""
+
+
+async def operator_read(cell_name: str) -> Attaching:
+    """`GET /cells/v1/operator/cells/<cell>`: the cell's row as attach reads it, and any
+    other row's name, audited; NoSuchCell without one."""
+    async with _reading(), _connection() as conn:
+        found = await conn.fetchrow(f"{_CELL_ATTACH} WHERE cell = $1", cell_name)
+        other = await conn.fetchval(_OTHER, cell_name)
+        await _audit(conn, "cell_read", {"cell": cell_name, "found": found is not None})
+    if found is None:
+        raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
+    return _attaching(found, other)
 
 
 async def attach_read(cell_name: str) -> Attaching:
@@ -965,6 +1006,7 @@ async def attach_serving(cell_name: str, deployment_id: str) -> Attaching:
     async with _attach_change(cell_name) as (conn, found):
         row = found.row
         if row.is_first and row.state == "serving" and row.deployment_id == deployment_id:
+            await _audit(conn, "attach_serving", {"cell": cell_name, "serving_already": True})
             return found
         if reason := attach_refusal(found, deployment_id):
             raise OperatorRefused(reason)

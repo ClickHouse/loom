@@ -1,8 +1,7 @@
 """Per-key call limits for the router's rate-limited answers: a cell's placement calls and a
 client's lookups. Each router replica counts on its own, so a deployment of N replicas
 admits up to N times the limit; the directory's quota (`placements_max`) is the bound that
-holds across them. Also the bounds on what a call may send, which the callers check before
-they send."""
+holds across them. Also the bounds on what a call may send."""
 
 from __future__ import annotations
 

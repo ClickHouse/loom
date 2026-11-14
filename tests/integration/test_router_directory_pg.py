@@ -637,6 +637,8 @@ async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) 
         assert (await directory.attach_serving(name, dep)).row.state == "serving"  # done
         with pytest.raises(directory.OperatorRefused, match="serving already"):
             await directory.attach_enforced(name, dep)
+        read = await directory.operator_read(name)
+        assert (read.row.state, read.other) == ("serving", None)
         audit = await conn.fetch(
             "SELECT actor, action, detail FROM loom_router.audit "
             "WHERE detail->>'cell' = $1 ORDER BY id",
@@ -653,7 +655,11 @@ async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) 
             "place",
             "place",
             "attach_serving",
+            "attach_serving",
+            "cell_read",
         ]
+        assert steps[-2][2] == {"cell": name, "serving_already": True}
+        assert steps[-1][2] == {"cell": name, "found": True}
         assert steps[1][2] == {
             "cell": name,
             "deployment_id": dep,

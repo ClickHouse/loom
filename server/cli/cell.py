@@ -21,6 +21,7 @@ stores, a first cell's Postgres; the others run while a cell is down. `loom cell
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import secrets
@@ -30,11 +31,10 @@ from typing import Any
 import httpx
 
 from server.auth.public_url import is_loopback_host
-from server.cli._ch import reads
 from server.core.cell import NAME, PLACEMENTS_MAX, SHA256, TROUBLESHOOTING
 from server.router.directory import (
-    ATTACH_READ_MAX_S,
     OPERATOR_CHANGE_MAX_S,
+    OPERATOR_READ_MAX_S,
     REMOVE_MAX_S,
     STATEMENT_TIMEOUT_S,
 )
@@ -44,7 +44,7 @@ from server.settings import settings
 # A lookup makes up to two directory reads (the org, then the first cell), each a
 # slot-and-connection wait and a statement. A connect fails fast.
 _OPERATOR_TIMEOUT = httpx.Timeout(  # not a setting: derived
-    max(OPERATOR_CHANGE_MAX_S, ATTACH_READ_MAX_S, REMOVE_MAX_S) + 10.0, connect=5.0
+    max(OPERATOR_CHANGE_MAX_S, OPERATOR_READ_MAX_S, REMOVE_MAX_S) + 10.0, connect=5.0
 )
 _LOOKUP_TIMEOUT = httpx.Timeout(  # not a setting: derived
     2 * (2 * STATEMENT_TIMEOUT_S + 1) + 10.0, connect=5.0
@@ -305,24 +305,38 @@ def _read_row(router: httpx.URL, cell: str) -> dict[str, Any] | str:
     return answer
 
 
+# The first cell's check: one Postgres session, its statements and the whole read bounded.
+_CHECK_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
+_CHECK_S = 10.0  # not a setting: a bound on one CLI read, not on serving
+
+
+async def _read_first_cell() -> tuple[str, str]:
+    """The cell state and the deployment id the cell's Postgres records ('' when none), on
+    one session of its own: no ClickHouse and no pool."""
+    from server.core import cell, pg
+
+    async with pg.dedicated(statement_timeout_ms=_CHECK_STATEMENT_MS) as conn:
+        state, _first = await cell.read_state_if_present(conn)
+        recorded = await conn.fetchval("SELECT deployment_id FROM loom.authority")
+    return state, str(recorded or "")
+
+
 async def _first_cell_refusal(deployment_id: str) -> str:
     """Why the first cell's row may not be removed yet ('' when it may): its Postgres still
-    holds a cell state, or is another deployment's."""
-    from server.core import cell, pg, pg_profile
+    holds a cell state, or is another deployment's. It reads `LOOM_PG_DSN` alone."""
+    from server.core import pg
 
-    if not pg.enabled():
+    if not pg.enabled() or not settings.pg_dsn:
         return (
             "the first cell keeps its state in Postgres: set LOOM_STORAGE_AUTHORITY=postgres "
             "and LOOM_PG_DSN to the cell's"
         )
-    async with pg.dedicated(statement_timeout_ms=5000) as conn:
-        state, _first = await cell.read_state_if_present(conn)
+    state, recorded = await asyncio.wait_for(_read_first_cell(), timeout=_CHECK_S)
     if state != "open":
         return (
             f"the first cell's Postgres reads `{state}`: unset LOOM_CELL on every process, run "
             f"the full-state cleanup ({TROUBLESHOOTING}), then remove the row"
         )
-    recorded = await pg_profile.deployment_id()
     if recorded != deployment_id:
         return (
             f"this Postgres records deployment id {recorded!r}, and the directory's row "
@@ -340,17 +354,11 @@ def _cmd_remove(args: argparse.Namespace) -> int:
         print(f"loom cell remove: {row}", file=sys.stderr)
         return 1
     if row.get("is_first") is True:
-        from server.cli._ch import run_connected
-
-        async def _check(_ch: Any) -> str:
-            return await _first_cell_refusal(str(row.get("deployment_id", "")))
-
         try:
-            refusal = run_connected(
-                _check, org_free=reads("reads the first cell's state before its row goes")
-            )
+            refusal = asyncio.run(_first_cell_refusal(str(row.get("deployment_id", ""))))
         except Exception as e:  # noqa: BLE001 — an unread state refuses the removal
-            refusal = f"the first cell's Postgres could not be read ({type(e).__name__}: {e})"
+            reason = str(e) or f"no answer within {_CHECK_S:g} s"
+            refusal = f"the first cell's Postgres could not be read ({type(e).__name__}: {reason})"
         if refusal:
             print(f"loom cell remove: refusing: {refusal}", file=sys.stderr)
             return 1

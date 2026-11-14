@@ -275,8 +275,9 @@ def _enforced(client: TestClient) -> None:
 # The operator's read.
 
 
-def test_the_operator_reads_the_cells_row(client: TestClient) -> None:
+def test_the_operator_reads_the_cells_row(client: TestClient, store: _Store) -> None:
     r = _call(client, "GET")
+    assert store.audit == [("operator", "cell_read", {"cell": "eu-1", "found": True})]
     assert r.status_code == 200
     assert r.json() == {
         "cell": "eu-1",
@@ -513,7 +514,7 @@ def test_begins_body_has_its_own_bound(client: TestClient, store: _Store) -> Non
 
 
 def test_begin_refuses_a_fingerprint_whose_placement_body_would_pass_the_routers_bound(
-    client: TestClient, store: _Store
+    client: TestClient, store: _Store, listener: _Listener
 ) -> None:
     grown = cell.as_value({**FIELDS, "configured_orgs": [f"org-{i:05d}" for i in range(4500)]})
     body = json.dumps({"org": "", "cell": "eu-1", "fingerprint": grown})
@@ -521,7 +522,18 @@ def test_begin_refuses_a_fingerprint_whose_placement_body_would_pass_the_routers
     r = _call(client, "POST", "attach/begin", _begin(current_fp=grown))
     assert r.status_code == 409
     assert "configured_orgs" in r.json()["error"] and str(MAX_BODY_BYTES) in r.json()["error"]
-    assert store.statements == 0
+    assert store.statements == directory.ATTACH_READ_STATEMENTS and listener.asked == []
+    # Judged on the row: an unknown cell is named as such first.
+    url = "/cells/v1/operator/cells/eu-9/attach/begin"
+    unknown = client.post(
+        url, json=_begin(current_fp=grown), headers={"Authorization": f"Bearer {OPERATOR}"}
+    )
+    assert (unknown.status_code, unknown.json()["code"]) == (404, "NO_SUCH_CELL")
+    # And again under the lock.
+    big = directory.Begin("dep-1", grown, None, "keys", {})
+    with pytest.raises(directory.OperatorRefused, match="configured_orgs"):
+        asyncio.run(directory.attach_begin("eu-1", big))
+    assert store.cells["eu-1"]["attach_started_at"] is None and store.audit == []
     # One that fits, with the longest org escaped, is taken.
     fits = cell.as_value({**FIELDS, "configured_orgs": [f"org-{i:05d}" for i in range(100)]})
     assert _call(client, "POST", "attach/begin", _begin(current_fp=fits)).status_code == 200
@@ -638,6 +650,11 @@ def test_serving_needs_enforced_then_sets_the_issuers_and_is_done(
     )
     done = _call(client, "POST", "attach/serving", serving)
     assert done.status_code == 200 and len(listener.asked) == asked + 2
+    assert store.audit[-1] == (
+        "operator",
+        "attach_serving",
+        {"cell": "eu-1", "serving_already": True},
+    )
     for path, body in (
         ("attach/begin", _begin()),
         ("attach/place", {"deployment_id": "dep-1", "orgs": ["a"]}),
@@ -668,6 +685,47 @@ def test_an_issuer_list_is_read_from_both_fingerprints() -> None:
         }
     )
     assert directory.issuers(row) == ["a", "b", "c"]
+
+
+def test_every_issuer_a_serving_cell_accepts_routes_its_tokens_to_it(
+    client: TestClient, store: _Store
+) -> None:
+    """The issuers `attach/serving` writes are the fingerprints' `bearer_issuers`, what the
+    cell's verifiers accept: a token from each one routes to the cell."""
+    import base64
+
+    from server.router import routing
+
+    def _jwt(iss: str) -> str:
+        claims = base64.urlsafe_b64encode(json.dumps({"iss": iss}).encode()).decode()
+        return f"e30.{claims.rstrip('=')}.sig"
+
+    accepted = ["https://loom.example", "https://ci.example", "https://idp.example/end-users"]
+    _begun(client)
+    store.cells["eu-1"]["next_fp"] = cell.as_value({**FIELDS, "bearer_issuers": accepted[1:]})
+    _call(client, "POST", "attach/enforced", {"deployment_id": "dep-1"})
+    r = _call(client, "POST", "attach/serving", {"deployment_id": "dep-1", "nonces": NONCES})
+    assert r.status_code == 200
+    row = store.cells["eu-1"]
+    assert sorted(row["issuers"]) == sorted(accepted)
+    table = routing.build(
+        [{k: row[k] for k in ("cell", "host", "state", "is_first", "issuers", "upstream_url")}],
+        [],
+        shared_host="loom.example",
+        passthrough="",
+    )
+    for iss in accepted:
+        d = routing.decide(
+            table, host="loom.example", path="/v1/memory.set", authorization=f"Bearer {_jwt(iss)}"
+        )
+        assert d.upstream == "http://upstream.internal:7777", iss
+    other = routing.decide(
+        table,
+        host="loom.example",
+        path="/v1/memory.set",
+        authorization=f"Bearer {_jwt('https://elsewhere.example')}",
+    )
+    assert other.status == 401
 
 
 # The removal of an unattached cell.
@@ -741,6 +799,7 @@ def test_each_attach_calls_bound_counts_the_statements_it_sends(store: _Store) -
         return store.statements - before
 
     begin = directory.Begin("dep-1", CURRENT, None, "keys", {})
+    assert sent(directory.operator_read("eu-1")) == directory.OPERATOR_READ_STATEMENTS
     assert sent(directory.attach_read("eu-1")) == directory.ATTACH_READ_STATEMENTS
     assert sent(directory.attach_begin("eu-1", begin)) == directory.ATTACH_CHANGE_STATEMENTS
     assert sent(directory.attach_enforced("eu-1", "dep-1")) == directory.ATTACH_CHANGE_STATEMENTS
@@ -842,18 +901,17 @@ def cli_router(monkeypatch: pytest.MonkeyPatch) -> _Router:
 
 
 def _stores(monkeypatch: pytest.MonkeyPatch, refusal: Any) -> list[str]:
-    """`run_connected` with the first-cell check's answer (a refusal, or an exception)."""
-    from server.cli import _ch
-
+    """The first-cell check with its answer (a refusal, or an exception); the deployment ids
+    it was asked about."""
     checked: list[str] = []
 
-    def _run(run: Any, *, org_free: Any = None, **_kw: Any) -> str:
-        checked.append(org_free.kind)
+    async def _check(deployment_id: str) -> str:
+        checked.append(deployment_id)
         if isinstance(refusal, Exception):
             raise refusal
         return refusal
 
-    monkeypatch.setattr(_ch, "run_connected", _run)
+    monkeypatch.setattr(cell_cli, "_first_cell_refusal", _check)
     return checked
 
 
@@ -862,7 +920,7 @@ def test_remove_checks_a_first_cells_postgres_then_deletes_its_row(
 ) -> None:
     checked = _stores(monkeypatch, "")
     assert cell_cli._cmd_remove(_remove_args()) == 0
-    assert checked == ["read"]
+    assert checked == ["dep-1"]
     assert [m for m, _url in cli_router.calls] == ["GET", "DELETE"]
     assert cli_router.calls[1][1] == "https://router.test/cells/v1/operator/cells/eu-1"
     assert json.loads(capsys.readouterr().out) == {"cell": "eu-1", "removed": True}
@@ -916,23 +974,57 @@ def test_remove_tells_an_older_router_from_an_unknown_cell(
 def test_the_first_cell_check_needs_an_open_postgres_of_the_rows_deployment(
     monkeypatch: pytest.MonkeyPatch, state: str, recorded: str, why: str
 ) -> None:
-    from server.core import pg, pg_profile
+    """One Postgres session of its own reads both: no pool, and no ClickHouse."""
+    from server.core import pg
+
+    sessions: list[dict[str, Any]] = []
+
+    class _Session:
+        async def fetchval(self, sql: str) -> str:
+            assert sql == "SELECT deployment_id FROM loom.authority"
+            return recorded
 
     @contextlib.asynccontextmanager
-    async def _dedicated(**_kw: Any) -> Any:
-        yield object()
+    async def _dedicated(**kw: Any) -> Any:
+        sessions.append(kw)
+        yield _Session()
 
-    async def _state(_conn: Any) -> tuple[str, str]:
+    async def _state(conn: Any) -> tuple[str, str]:
+        assert isinstance(conn, _Session)
         return state, ""
 
-    async def _deployment() -> str:
-        return recorded
+    def _no_pool(*_a: Any, **_kw: Any) -> None:
+        raise AssertionError("the check reads no pool")
 
-    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
     monkeypatch.setattr(pg, "dedicated", _dedicated)
+    monkeypatch.setattr(pg, "fetchrow", _no_pool)
+    monkeypatch.setattr(pg, "fetchval", _no_pool)
     monkeypatch.setattr(cell, "read_state_if_present", _state)
-    monkeypatch.setattr(pg_profile, "deployment_id", _deployment)
     refusal = asyncio.run(cell_cli._first_cell_refusal("dep-1"))
     assert (why in refusal) if why else refusal == ""
-    monkeypatch.setattr(pg, "enabled", lambda: False)
+    assert sessions == [{"statement_timeout_ms": cell_cli._CHECK_STATEMENT_MS}]
+    monkeypatch.setattr(settings, "pg_dsn", "")
     assert "LOOM_PG_DSN" in asyncio.run(cell_cli._first_cell_refusal("dep-1"))
+    monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    assert "LOOM_PG_DSN" in asyncio.run(cell_cli._first_cell_refusal("dep-1"))
+
+
+def test_remove_never_connects_clickhouse(
+    cli_router: _Router, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.cli import _ch
+
+    def _never(*_a: Any, **_kw: Any) -> None:
+        raise AssertionError("loom cell remove connects no ClickHouse")
+
+    async def _read() -> tuple[str, str]:
+        return "open", "dep-1"
+
+    monkeypatch.setattr(_ch, "run_connected", _never)
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
+    monkeypatch.setattr(cell_cli, "_read_first_cell", _read)
+    assert cell_cli._cmd_remove(_remove_args()) == 0

@@ -628,7 +628,7 @@ class Router:
         if refusal := _malformed_cell_refusal(request):
             return refusal
         return await _answered(
-            lambda: directory.attach_read(request.path_params["cell"]), _attach_answer
+            lambda: directory.operator_read(request.path_params["cell"]), _attach_answer
         )
 
     async def attach_begin(self, request: Request) -> JSONResponse:
@@ -640,7 +640,7 @@ class Router:
         if isinstance(body, JSONResponse):
             return body
         name = request.path_params["cell"]
-        parsed = _begin(name, body)
+        parsed = _begin(body)
         if isinstance(parsed, JSONResponse):
             return parsed
         begin, nonces = parsed
@@ -855,20 +855,23 @@ PROBE_ANSWER_MAX = 6 * (3 * _TEXT_MAX + 3 * _NONCE_MAX) + 4096  # not a setting:
 _NONCES = ("postgres", "clickhouse", "bucket")
 
 
+def _storable(value: Any) -> bool:
+    """Text of at most _TEXT_MAX characters that Postgres can store (no NUL, no lone
+    surrogate): malformed otherwise, never a directory outage."""
+    if not isinstance(value, str) or len(value) > _TEXT_MAX or "\x00" in value:
+        return False
+    try:
+        value.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _text(body: dict[str, Any], key: str, *, needed: bool = False) -> str | None:
     value = body.get(key, "")
-    if not isinstance(value, str) or len(value) > _TEXT_MAX or "\x00" in value:
+    if not _storable(value) or (needed and not value):
         return None
-    try:
-        value.encode()  # a lone surrogate: malformed, never a directory outage
-    except UnicodeEncodeError:
-        return None
-    return value if value or not needed else None
-
-
-def _text_item(value: Any) -> bool:
-    """A list item `_text` would take as a needed field."""
-    return _text({"item": value}, "item", needed=True) is not None
+    return str(value)
 
 
 def _nonce(value: Any) -> bool:
@@ -900,38 +903,13 @@ _ALLOW_LISTS = (
     "ch_allow_replicas",
     "pg_allow_roles",
 )
-# An org as a placement body carries it at most: ORG_MAX_BYTES bytes, each escaped in JSON
-# to at most six (`\u00XX`).
-_PLACEMENT_ORG_MAX = 6 * cell_state.ORG_MAX_BYTES  # not a setting: derived
-
-
-def _placement_refusal(cell: str, name: str, value: dict[str, Any]) -> str:
-    """Why a fingerprint is too large for the cell's live placements ('' when it is not): a
-    placement body (`{org, cell, fingerprint}`, the org at its longest) past the router's
-    MAX_BODY_BYTES would refuse every new org; the largest fields are named."""
-    # The default encoding is the longest: spaces after separators, non-ASCII escaped.
-    size = len(json.dumps({"org": "", "cell": cell, "fingerprint": value})) + _PLACEMENT_ORG_MAX
-    if size <= MAX_BODY_BYTES:
-        return ""
-    fields = value.get("fields")
-    sizes = sorted(
-        ((len(json.dumps(v)), k) for k, v in fields.items()) if isinstance(fields, dict) else (),
-        reverse=True,
-    )
-    largest = ", ".join(k for _, k in sizes[:3])
-    return (
-        f"{name} makes a placement body of up to {size} bytes, past the router's "
-        f"{MAX_BODY_BYTES}: its largest fields are {largest}"
-    )
 
 
 def _fingerprint_shaped(value: Any) -> bool:
     return isinstance(value, dict) and isinstance(value.get("fields"), dict)
 
 
-def _begin(
-    cell: str, body: dict[str, Any]
-) -> tuple[directory.Begin, dict[str, str | None]] | JSONResponse:
+def _begin(body: dict[str, Any]) -> tuple[directory.Begin, dict[str, str | None]] | JSONResponse:
     known = {"deployment_id", "current_fp", "next_fp", "keys_fp", "nonces", *_ALLOW_LISTS}
     if set(body) != known:
         return _refused(400, "attach/begin is a JSON object of " + ", ".join(sorted(known)))
@@ -947,14 +925,11 @@ def _begin(
     allowed: dict[str, list[str]] = {}
     for key in _ALLOW_LISTS:
         listed = body[key]
-        if not isinstance(listed, list) or not all(_text_item(i) for i in listed):
+        if not isinstance(listed, list) or not all(_storable(i) and i for i in listed):
             return _refused(400, f"{key} is a list of text of 1 to {_TEXT_MAX} characters")
         allowed[key] = list(listed)
     if not _nonces_shaped(body["nonces"]):
         return _refused(400, _NONCES_REFUSAL)
-    for name, value in (("current_fp", current), ("next_fp", nxt)):
-        if value is not None and (reason := _placement_refusal(cell, name, value)):
-            return _refused(409, reason)
     begin = directory.Begin(
         deployment_id=deployment_id,
         current_fp=current,

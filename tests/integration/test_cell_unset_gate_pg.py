@@ -237,3 +237,31 @@ async def test_the_pages_transaction_waits_for_no_running_attach_and_names_its_h
             assert await _gate(monkeypatch, conn) == ""
         finally:
             await holder.close()
+
+
+@pytest.mark.asyncio
+async def test_loom_cell_removes_check_reads_the_first_cells_postgres_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`loom cell remove`'s check of a first cell: one session from LOOM_PG_DSN, open and
+    recording the row's deployment id, or it refuses."""
+    import asyncpg
+
+    from server.cli import cell as cell_cli
+
+    async with own_database() as dsn:
+        monkeypatch.setattr(settings, "storage_authority", "postgres")
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(pg, "_expected", None)
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute(
+                "INSERT INTO loom.authority (authority, epoch, deployment_id) "
+                "VALUES ('postgres', 1, 'dep-1')"
+            )
+            assert await cell_cli._first_cell_refusal("dep-1") == ""
+            assert "records deployment id 'dep-1'" in await cell_cli._first_cell_refusal("dep-2")
+            await _write_state(conn, {"tenancy"})
+            assert "reads `partial`" in await cell_cli._first_cell_refusal("dep-1")
+        finally:
+            await conn.close()

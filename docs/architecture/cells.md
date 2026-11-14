@@ -163,13 +163,17 @@ The operator's routes, each with the router's operator credential, are under
 itself (`GET`, which attach reads for its refusals, its done check and its resume), the
 first cell's attach (`attach/begin`, `attach/place`, `attach/enforced` and `attach/serving`,
 in that order), and `DELETE`. Each answers a cell the directory does not hold 404 with the
-code `NO_SUCH_CELL`, so a 404 without it is a router replica of an earlier build. Every
-change takes the directory lock and then the cell's row lock (the order registration, the
-operator changes and the removal take), is written to the audit log, and has a time bound
-derived from its statement count. Each attach call refuses unless the row is the first
-cell's, `attaching`, and records the deployment id the call names, and while any other row
-exists (registration refuses a later cell until the first is `serving`, and a router replica
-of an earlier build could still register one):
+code `NO_SUCH_CELL`, so a 404 without it is a router replica of an earlier build. Every call
+that succeeds, the read included, is written to the audit log and has a time bound derived
+from its statement count, and every change takes the directory lock and then the cell's row
+lock (the order registration, the operator changes and the removal take). Every router
+replica runs a build with these routes before a first cell's attach starts: an earlier
+build's placement collides with an attach batch's as a transient 503, and its registration
+can add a later cell mid-attach, which every attach call then refuses until it is removed.
+Each attach call refuses unless the row is the first cell's, `attaching`, and records the
+deployment id the call names, and while any other row exists (registration refuses a later
+cell until the first is `serving`, and a router replica of an earlier build could still
+register one):
 
 - `attach/begin` carries the cell's fingerprints exactly as `loom.cell_self` stores them,
   its root-secret fingerprint, the allow lists attach judged the stores by, and fresh
@@ -195,8 +199,8 @@ of an earlier build could still register one):
   new orgs live; it is idempotent.
 - `attach/serving` runs the probe and the upstream check again, then, under the locks,
   computes the row's issuers from its fingerprints (`bearer_issuers` of `current` and
-  `next`) and marks the cell `serving`; on a `serving` cell it answers at once. `begin`,
-  `place` and `enforced` on a `serving` cell answer 409.
+  `next`) and marks the cell `serving`; on a `serving` cell it answers at once, audited.
+  `begin`, `place` and `enforced` on a `serving` cell answer 409.
 
 `DELETE` removes the row of a cell that is `attaching` with no placement, whatever its
 directory mode, with its host rows, audited: a first cell is backed out until its first
@@ -1046,9 +1050,10 @@ the directory row.
   clears it).
 - `loom cell remove --cell <cell>` removes the directory row of a cell that is `attaching`
   with no placement (`--cell` is the cell's `LOOM_CELL`, unset by then). For the first cell
-  it refuses unless the cell's Postgres reads `open` and records the row's deployment id,
-  which enforces the back-out order: unset `LOOM_CELL` on every process (each serves as in
-  `recording`), then the full-state cleanup, then the removal
+  it reads the cell's Postgres alone, on one session from `LOOM_PG_DSN` with no ClickHouse,
+  and refuses unless it reads `open` and records the row's deployment id, which enforces the
+  back-out order: unset `LOOM_CELL` on every process (each serves as in `recording`), then
+  the full-state cleanup, then the removal
   ([troubleshooting](../operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated)).
   Removing the row first answers every new org 503; clearing the state first gates every
   process with `LOOM_CELL` set. A first cell with a placement goes forward, never back. A
