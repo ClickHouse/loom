@@ -249,6 +249,8 @@ def test_memory_block_reads_with_the_latest_user_message() -> None:
             "query": "Lisbon, and pick my usual seat",
             "top_k": 1,
             "namespace_scope": "this",
+            "bodies": "full",  # whole bodies whatever the top_k
+            "explain": False,
             "tags": ["customer"],
             "user_id": "alice",
         }

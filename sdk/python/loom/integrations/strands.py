@@ -118,6 +118,9 @@ class LoomMemoryStore:
             top_k=top_k,
             tags=self._tags or None,
             memory_type=self._memory_type,
+            # Above top_k 15 an unpinned search serves 200-character excerpts.
+            bodies="full",
+            explain=False,
         )
         hits = list(result)
         if self._honour_abstain:

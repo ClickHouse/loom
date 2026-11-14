@@ -161,7 +161,8 @@ class LoomMemoryRetriever(_LoomRetriever):
     """Leave out memories below Loom's floor; no documents when Loom abstains."""
 
     def _call_kwargs(self) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"top_k": self.k}
+        # Above top_k 15 an unpinned search serves 200-character excerpts.
+        kwargs: dict[str, Any] = {"top_k": self.k, "bodies": "full", "explain": False}
         if self.search_tags:
             kwargs["tags"] = list(self.search_tags)
         for field in ("memory_type", "user_id", "session_id", "run_id", "agent_id"):
