@@ -55,9 +55,7 @@ class _TakenBack(Exception):
 # A source whose move raised one of these answers busy; the others still move. An original
 # the object store did not take is one of them.
 _BUSY = (LeaseUnavailable, HeadMoved, ObjectStoreError, _TakenBack)
-# A move's claims are not waited for: a held source answers busy at once, so another
-# writer never holds up the call.
-_CLAIM_WAIT_S = 0.0  # not a setting: the call's budget has no room for waits
+_CLAIM_WAIT_S = 0.0  # not a setting: a held source answers busy at once, never waited for
 
 
 _AT_ONCE = 4  # not a setting: the sources one call moves at once
