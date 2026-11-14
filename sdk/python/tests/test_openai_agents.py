@@ -63,7 +63,7 @@ def test_recall_runs_memory_search_in_the_bound_scope() -> None:
     assert agent.calls == [
         (
             "memory.search",
-            {"query": "seat preference", "top_k": 3},
+            {"query": "seat preference", "bodies": "full", "explain": False, "top_k": 3},
             {"user_id": "alice", "session_id": "s-1", "run_id": None},
         )
     ]

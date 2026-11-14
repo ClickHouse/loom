@@ -98,7 +98,7 @@ describe("AgentTools.execute", () => {
     expect(JSON.parse(await tools.execute("loom_recall", '{"query":"seat","top_k":3}'))).toEqual({
       memories: [{ memory_key: "seat", content: "Prefers an aisle seat", similarity: 0.512 }],
     });
-    expect(calls[1].body).toMatchObject({ query: "seat", top_k: 3 });
+    expect(calls[1].body).toMatchObject({ query: "seat", top_k: 3, bodies: "full", explain: false });
 
     expect(JSON.parse(await tools.execute("loom_ask", { query: "which seat?" }))).toEqual({
       answer: "An aisle seat.",

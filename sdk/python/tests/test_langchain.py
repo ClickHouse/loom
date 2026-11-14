@@ -279,10 +279,22 @@ def test_the_memory_retriever_posts_memory_search_through_the_sdk() -> None:
     ((path, body),) = wire.posts
     assert path == "/v1/memory.search"
     assert {
-        k: body[k] for k in ("query", "top_k", "tags", "memory_type", "user_id", "session_id")
+        k: body[k]
+        for k in (
+            "query",
+            "top_k",
+            "bodies",
+            "explain",
+            "tags",
+            "memory_type",
+            "user_id",
+            "session_id",
+        )
     } == {
         "query": "seat",
         "top_k": 2,
+        "bodies": "full",
+        "explain": False,
         "tags": ["customer"],
         "memory_type": "preference",
         "user_id": "alice",

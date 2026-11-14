@@ -294,7 +294,10 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
         and calls[0][1]["user_id"] == "u1"
         and calls[0][1]["session_id"] == "s1"
     )
-    assert json.loads(await tools.execute("loom_recall", '{"query":"seat","top_k":3}')) == {
+    recalled = json.loads(await tools.execute("loom_recall", '{"query":"seat","top_k":3}'))
+    (sent,) = [b for op, b in calls if op == "memory.search"]
+    assert (sent["bodies"], sent["explain"]) == ("full", False)  # whole bodies at any top_k
+    assert recalled == {
         "memories": [
             {"memory_key": "seat", "content": "Prefers an aisle seat", "similarity": 0.512}
         ]
