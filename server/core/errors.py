@@ -81,7 +81,9 @@ class NotFoundError(LoomServerError):
 class PreconditionFailedError(LoomServerError):
     """409 — `if_match_sha256` mismatch, an `approved_sha256` a definition promotion's
     text no longer has, or an erasure that landed while a `namespace.restore` ran. A
-    mismatch returns the live hash so the caller can retry without a separate read."""
+    mismatch returns the live hash so the caller can retry without a separate read; for
+    `approved_sha256`, show the current text again and approve that, never resend the
+    returned hash unseen."""
 
     code = "PRECONDITION_FAILED"
     status_code = 409
@@ -120,7 +122,8 @@ class SensitiveDefinitionRefusedError(LoomServerError):
 
 class DefinitionCeilingError(LoomServerError):
     """409 — the promotion would leave the namespace past `memory_term_leg_max_definitions`
-    shared definitions; demote definitions until it is within it."""
+    shared definitions: at the ceiling, demote one to add a new key; past it, demote
+    until at most that many remain."""
 
     code = "DEFINITION_CEILING"
     status_code = 409
@@ -128,13 +131,13 @@ class DefinitionCeilingError(LoomServerError):
 
 class DefinitionNameTakenError(LoomServerError):
     """409 — another shared definition holds this term or an alias; `conflicting_keys`
-    names them."""
+    names those definitions and `names` the folded names they hold."""
 
     code = "DEFINITION_NAME_TAKEN"
     status_code = 409
 
-    def __init__(self, message: str = "", *, conflicting_keys: list[str]) -> None:
-        super().__init__(message, conflicting_keys=conflicting_keys)
+    def __init__(self, message: str = "", *, conflicting_keys: list[str], names: list[str]) -> None:
+        super().__init__(message, conflicting_keys=conflicting_keys, names=names)
 
 
 class TenancyRefusedError(LoomServerError):

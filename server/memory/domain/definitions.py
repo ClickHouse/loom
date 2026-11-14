@@ -34,7 +34,7 @@ def definition_names(value: Any) -> set[str] | None:
 
 
 def names_of(term: str, aliases: list[str]) -> set[str]:
-    """The folded term and aliases, none when the term folds to nothing."""
+    """The folded term and aliases, an empty set when the term folds to nothing."""
     folded = fold_name(term)
     if not folded:
         return set()

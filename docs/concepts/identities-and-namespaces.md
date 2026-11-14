@@ -337,7 +337,7 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
-A `definition` is promoted only as an admin approved it:
+A `definition` is promoted only:
 
 - From its live namespace-wide row (agent, user and session `'-'`, `active` and not past
   its `expires_at` or `valid_to`) under a `definition/` key, to that same key; a row of
@@ -351,14 +351,14 @@ A `definition` is promoted only as an admin approved it:
 - Not labelled `medium` and not reading as `medium` or `high` (422
   `SENSITIVE_DEFINITION_REFUSED`; a `high` label answers
   `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row).
-- A new key at `memory_term_leg_max_definitions` is refused, and any definition
-  promotion while the namespace is past it (409 `DEFINITION_CEILING`).
+- Within `memory_term_leg_max_definitions`: a new key at the ceiling, or any promotion
+  while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
 - Under a name no other live shared definition holds as its term or an alias (409
-  `DEFINITION_NAME_TAKEN`), names compared folded: format characters dropped, NFKC,
+  `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format characters dropped, NFKC,
   whitespace collapsed, case-folded.
 
-The ceiling and the name check read the shared layer before the write, so two
-promotions at the same moment can both pass. Demoting a definition gives back its name
+One namespace's definition promotions run their ceiling and name checks and the write one
+at a time (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a definition gives back its name
 and its place. The token's actor is its `promoted_by`: `approver` and
 `promoted_from_candidate_id` are ignored and named in `ignored_args`, and no close shared
 row under another key refuses it. `learnings.review` promotes no candidate of type

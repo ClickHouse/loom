@@ -5,7 +5,9 @@ at its ceiling or a name another shared definition holds; promoted by the token'
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -22,6 +24,7 @@ from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 KEY = "definition/arr"
+NOW = datetime(2026, 10, 1)
 VALUE = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
 
 
@@ -47,8 +50,9 @@ def _row(**over: Any) -> MemoryRow:
 
 @pytest.fixture
 def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """The source row, the live shared definitions (key -> value), what was written."""
-    state: dict[str, Any] = {"row": _row(), "shared": {}, "written": []}
+    """The source row, the live shared definitions (key -> value), what was written, and
+    whether the namespace's claim is free (the claims taken are kept)."""
+    state: dict[str, Any] = {"row": _row(), "shared": {}, "written": [], "free": True, "claims": []}
 
     async def get_by_key(*_a: Any, **_k: Any) -> MemoryRow:
         return state["row"]
@@ -61,9 +65,16 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def write(row: dict[str, Any]) -> None:
         state["written"].append(row)
 
+    @asynccontextmanager
+    async def holding(name: str, **_k: Any) -> AsyncIterator[bool]:
+        state["claims"].append(name)
+        yield state["free"]
+
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
     monkeypatch.setattr(promote, "writer_actor", lambda fallback="": "user:admin")
+    monkeypatch.setattr(promote, "naive_utc_now", lambda: NOW)
+    monkeypatch.setattr(promote.leases, "holding", holding)
     monkeypatch.setattr(shared, "shared_definitions", definitions)
     monkeypatch.setattr(shared, "insert_shared_row", write)
     return state
@@ -179,8 +190,8 @@ async def test_a_definition_comes_from_its_namespace_wide_row_only(
     [
         {"status": "rejected"},
         {"status": "conflicted"},
-        {"expires_at": datetime(2020, 1, 1, tzinfo=UTC)},
-        {"valid_to": datetime(2020, 1, 1, tzinfo=UTC)},
+        {"expires_at": NOW.replace(tzinfo=UTC) - timedelta(seconds=1)},
+        {"valid_to": NOW.replace(tzinfo=UTC) - timedelta(seconds=1)},
     ],
 )
 async def test_a_source_the_term_leg_would_not_serve_is_not_promoted(
@@ -192,7 +203,7 @@ async def test_a_source_the_term_leg_would_not_serve_is_not_promoted(
 
 @pytest.mark.parametrize("field", ["expires_at", "valid_to"])
 async def test_a_source_that_ends_later_is_promoted(store: dict[str, Any], field: str) -> None:
-    store["row"] = _row(**{field: datetime(2999, 1, 1, tzinfo=UTC)})
+    store["row"] = _row(**{field: NOW.replace(tzinfo=UTC) + timedelta(seconds=1)})
     await promote.handle_memory_promote(_input())
     assert len(store["written"]) == 1
 
@@ -281,7 +292,13 @@ async def test_the_value_is_graded_with_autodetect_off(
 
 async def test_a_name_another_shared_definition_holds_is_refused(store: dict[str, Any]) -> None:
     store["shared"] = {"definition/revenue": {"term": "Annual Recurring Revenue"}}
-    assert await _refusal(store) == "DEFINITION_NAME_TAKEN"
+    with pytest.raises(LoomServerError) as e:
+        await promote.handle_memory_promote(_input())
+    assert e.value.code == "DEFINITION_NAME_TAKEN" and store["written"] == []
+    assert e.value.extra == {
+        "conflicting_keys": ["definition/revenue"],
+        "names": ["annual recurring revenue"],
+    }
     # Its own shared row (a revision) holds the names already.
     store["shared"] = {KEY: VALUE}
     await promote.handle_memory_promote(_input())
@@ -293,14 +310,33 @@ async def test_the_ceiling_refuses_a_new_key_but_not_a_revision(
 ) -> None:
     monkeypatch.setattr(settings, "memory_term_leg_max_definitions", 1)
     store["shared"] = {"definition/mrr": {"term": "MRR"}}
-    assert await _refusal(store) == "DEFINITION_CEILING"
+    with pytest.raises(LoomServerError, match="demote one to add a new key"):
+        await promote.handle_memory_promote(_input())
     store["shared"] = {KEY: VALUE}
     await promote.handle_memory_promote(_input())
     assert [r["memory_key"] for r in store["written"]] == [KEY]
     # Past the ceiling, even a revision waits for a demotion.
     store["written"].clear()
     store["shared"] = {KEY: VALUE, "definition/mrr": {"term": "MRR"}}
-    assert await _refusal(store) == "DEFINITION_CEILING"
+    with pytest.raises(LoomServerError, match="demote until at most 1 remain"):
+        await promote.handle_memory_promote(_input())
+    assert store["written"] == []
+
+
+async def test_a_definition_is_checked_and_written_under_the_namespaces_claim(
+    store: dict[str, Any],
+) -> None:
+    await promote.handle_memory_promote(_input())
+    assert store["claims"] == ["definition.promote/o/n"] and len(store["written"]) == 1
+    store["written"].clear()
+    store["free"] = False
+    assert await _refusal(store) == "OVERLOADED"
+
+
+async def test_another_row_takes_no_claim(store: dict[str, Any]) -> None:
+    store["row"] = _row(memory_type="semantic", memory_key="arr_note", agent="bot")
+    await promote.handle_memory_promote(_input(memory_key="arr_note", agent="bot"))
+    assert store["claims"] == [] and len(store["written"]) == 1
 
 
 async def test_a_definition_skips_the_close_shared_row_check(
@@ -336,6 +372,18 @@ async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) 
     assert row["promoted_by"] == "lead" and out.ignored_args == []
 
 
+_DEFINITION_CANDIDATE = {
+    "candidate_id": "c1",
+    "memory_key": KEY,
+    "memory_type": "definition",
+    "proposed_value": json.dumps(VALUE),
+    "supporters": [f"o/n/-/-/-/{KEY}"],
+    "source_kind": "memory_supporters",
+    "status": "pending",
+    "rationale": "",
+}
+
+
 @pytest.mark.parametrize("destination", ["memory", "both"])
 async def test_review_promotes_no_definition_candidate_to_memory(
     monkeypatch: pytest.MonkeyPatch, destination: str
@@ -345,15 +393,7 @@ async def test_review_promotes_no_definition_candidate_to_memory(
     from server.memory.store import learnings as learnings_repo
 
     async def find(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return {
-            "candidate_id": "c1",
-            "memory_key": KEY,
-            "memory_type": "definition",
-            "proposed_value": json.dumps(VALUE),
-            "supporters": [f"o/n/-/-/-/{KEY}"],
-            "source_kind": "memory_supporters",
-            "status": "pending",
-        }
+        return _DEFINITION_CANDIDATE
 
     async def must_not(*_a: Any, **_k: Any) -> None:
         raise AssertionError("a refused review writes nothing")
@@ -367,6 +407,35 @@ async def test_review_promotes_no_definition_candidate_to_memory(
     with pytest.raises(LoomServerError) as e:
         await learnings.handle_learnings_review(review)
     assert e.value.code == "VALIDATION_FAILED"
+
+
+async def test_review_still_promotes_a_definition_candidate_to_knowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_learnings import LearningsReviewInput
+    from server.memory.app import learnings
+    from server.memory.store import learnings as learnings_repo
+
+    async def find(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return _DEFINITION_CANDIDATE
+
+    published: list[str] = []
+
+    async def to_knowledge(_org: str, _ns: str, row: dict[str, Any], *_a: Any) -> str:
+        published.append(row["memory_key"])
+        return "loom://k/1"
+
+    async def nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(learnings_repo, "find_candidate", find)
+    monkeypatch.setattr(learnings_repo, "insert_row", nothing)
+    monkeypatch.setattr(learnings, "_do_promote_to_knowledge", to_knowledge)
+    review = LearningsReviewInput(
+        org="o", namespace="n", candidate_id="c1", decision="promote", destination="knowledge"
+    )
+    await learnings.handle_learnings_review(review)
+    assert published == [KEY]
 
 
 async def test_another_rows_promotion_names_an_approved_hash_it_ignores(

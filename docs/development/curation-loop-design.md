@@ -150,12 +150,10 @@ reader:
   pull request that adds those kinds: the approved hash is the canonical-JSON hash of the
   drafted value; `decided_by` and the audit subject come from the token, never the body's
   `approver`; the review sets `promoted_from_candidate_id` itself; and the name check runs
-  before the review's write, so a refused review writes nothing. The rules `memory.promote`
-  applies to a definition are built ([the shared
-  layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
+  before the review's write, so a refused review writes nothing.
 
-Should two shared rows match one name despite the name check (two promotions racing, or one
-promoted through a build without the check), the term leg serves, among the rows the
+Should two shared rows match one name despite the name check (one promoted through a build
+without the check, or one whose claim on the namespace ran out), the term leg serves, among the rows the
 read-time check passes, the one with the latest `promoted_at`, a tie within its second
 settled by `promotion_event` (the same order picks the rows the term leg reads past the
 ceiling): one fixed winner, not necessarily the later of the two. A rewrite of a shared

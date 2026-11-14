@@ -324,6 +324,7 @@ async def test_a_name_is_held_until_its_definition_is_demoted(
             await promote("definition/revenue", revenue)
         assert e.value.code == "DEFINITION_NAME_TAKEN"
         assert e.value.detail["conflicting_keys"] == ["definition/arr"]
+        assert e.value.detail["names"] == ["arr"]
         # Its own revision holds the name already.
         await promote("definition/arr", {"term": "ARR", "body": "Yearly recurring revenue."})
         await a.memory.demote("definition/arr")

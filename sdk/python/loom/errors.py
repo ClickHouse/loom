@@ -221,7 +221,9 @@ class PreconditionFailed(LoomError):
     (retry the restore; no hash).
 
     A mismatch carries the server's current hash in `.current_sha256` so a caller
-    can re-read and retry without an extra get round-trip. Any 409 the SDK has no
+    can re-read and retry without an extra get round-trip. For a definition's
+    `approved_sha256`, show the current text again and approve that: never resend
+    `.current_sha256` unseen. Any 409 the SDK has no
     class for (such as `DEFINITION_NAME_TAKEN`) arrives as this class, with no
     hash: check `.code`.
     """
