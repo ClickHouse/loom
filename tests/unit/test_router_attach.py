@@ -868,7 +868,8 @@ def test_the_attach_lock_is_a_positive_bigint_the_troubleshooting_page_prints() 
         Path(cell.__file__).resolve().parents[2] / "docs/operations/troubleshooting.md"
     ).read_text()
     section = page[page.index("### A process with LOOM_CELL unset is gated") :]
-    state_step = section.index(f"SELECT pg_advisory_xact_lock({key});  -- the attach lock")
+    state_step = section.index(f"SELECT pg_advisory_xact_lock({key});")
+    assert "-- the attach lock: held by a running attach, prepare or update" in section
     assert state_step < section.index(f"SELECT pg_advisory_xact_lock({pg_migrate._LOCK_KEY})")
     # The holder query splits the key into its two halves.
     assert f"classid = ({key} >> 32)::oid" in section

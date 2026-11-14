@@ -306,7 +306,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     \set ON_ERROR_STOP on
     BEGIN;
     SET LOCAL lock_timeout = '100ms';
-    SELECT pg_advisory_xact_lock(7813586394088235880);  -- the attach lock: held by a running attach, prepare or update
+    -- the attach lock: held by a running attach, prepare or update
+    SELECT pg_advisory_xact_lock(7813586394088235880);
     SELECT pg_advisory_xact_lock(7813586394288842610);  -- the migration lock
     ALTER TABLE loom.cell_first DISABLE TRIGGER cell_first_immutable;
     DELETE FROM loom.cell_first;

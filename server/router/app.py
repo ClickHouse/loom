@@ -728,8 +728,10 @@ class Router:
         response = await _answered(
             lambda: directory.attach_serving(name, deployment_id), _attach_answer
         )
-        if response.status_code in (200, 503):  # a 503's change may have committed
-            self._table_at = None  # this replica reads the cell's issuers on its next request
+        # A 503's change may have committed: this replica reads the cell's issuers on its
+        # next request either way.
+        if response.status_code in (200, 503):
+            self._table_at = None
         return response
 
     async def remove(self, request: Request) -> JSONResponse:
@@ -755,12 +757,10 @@ class Router:
         self, found: directory.Attaching, nonces: dict[str, str | None]
     ) -> JSONResponse | None:
         """The registration probe at the row's `probe_url` and the upstream check at its
-        `upstream_url`, outside any directory transaction: the stores attach read are the
+        `upstream_url`, outside any directory transaction: the stores attach reads are the
         ones the live cell serves from, and routing reaches that deployment."""
         if refusal := await _probe(found, nonces, self._probe_transport, writer="attach"):
             return refusal
-        if not found.upstream_url:
-            return _refused(409, f"cell {found.row.cell!r} records no upstream address")
         return await _upstream_check(found, self._probe_transport, names=_ATTACHING)
 
     async def livez(self, _request: Request) -> JSONResponse:
