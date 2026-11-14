@@ -902,9 +902,12 @@ _ALLOW_LISTS = (
 
 
 def _fingerprint_shaped(value: Any) -> bool:
-    """An object with a `fields` object, every value of which Postgres's jsonb stores: no
-    NaN or infinity, no lone surrogate, no NUL (malformed, never a directory outage)."""
+    """A fingerprint of this version (`v`) with a `fields` object, every value of which
+    Postgres's jsonb stores: no NaN or infinity, no lone surrogate, no NUL (malformed, never
+    a directory outage)."""
     if not (isinstance(value, dict) and isinstance(value.get("fields"), dict)):
+        return False
+    if type(value.get("v")) is not int or value["v"] != cell_state.FINGERPRINT_VERSION:
         return False
     try:
         encoded = json.dumps(value, allow_nan=False, ensure_ascii=False).encode()

@@ -784,11 +784,7 @@ def attach_refusal(
 def _fingerprint_refusal(found: Attaching, name: str, value: dict[str, Any]) -> str:
     """Why a posted fingerprint is not this row's cell ('' when it is): its stores and
     hosts, the servers' own values, equal the row's."""
-    fields = value.get("fields")
-    if type(value.get("v")) is not int or value["v"] != cell_state.FINGERPRINT_VERSION:
-        return f"{name} is no fingerprint of version {cell_state.FINGERPRINT_VERSION}"
-    if not isinstance(fields, dict):
-        return f"{name} holds no fields"
+    fields = value["fields"]
     row = found.row
     expected = {
         "deployment_id": row.deployment_id,
@@ -960,8 +956,8 @@ async def attach_place(cell_name: str, deployment_id: str, orgs: list[str]) -> t
             cell_name,
             len(new),
         )
-        # One row per org placed, and one for the call, so a batch that places nothing
-        # (a rerun) is audited too.
+        # One row per org placed, and one for the call, so a batch that places nothing (a
+        # rerun) is audited too.
         await conn.execute(
             "INSERT INTO loom_router.audit (actor, action, detail) "
             "SELECT 'operator', 'place', jsonb_build_object('org', o, 'cell', $2::text) "

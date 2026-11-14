@@ -434,9 +434,9 @@ def test_begin_refuses_an_issuer_host_other_than_the_cells(
     missing = cell.as_value({k: v for k, v in FIELDS.items() if k != "public_host"})
     r = _call(client, "POST", "attach/begin", _begin(current_fp=missing))
     assert r.status_code == 409 and "public_host differ" in r.json()["error"]  # at its default
-    newer = {"v": cell.FINGERPRINT_VERSION + 1, "fields": FIELDS}
-    r = _call(client, "POST", "attach/begin", _begin(current_fp=newer))
-    assert r.status_code == 409 and "no fingerprint of version" in r.json()["error"]
+    for v in (cell.FINGERPRINT_VERSION + 1, str(cell.FINGERPRINT_VERSION), None):
+        r = _call(client, "POST", "attach/begin", _begin(current_fp={"v": v, "fields": FIELDS}))
+        assert r.status_code == 400, v  # malformed: answered before the directory is read
 
 
 @pytest.mark.parametrize(
