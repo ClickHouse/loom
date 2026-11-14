@@ -148,7 +148,7 @@ test-integration:
 # may pin one package incompatibly. SDK_ADAPTERS_RESOLUTION=lowest-direct installs
 # every direct requirement (the SDK's own, the extra's, pytest) at its lower bound.
 # mypy is the [dev] pin. `make test-sdk-adapter-crewai` runs one.
-SDK_ADAPTER_EXTRAS := langchain llamaindex openai-agents crewai autogen pydantic-ai
+SDK_ADAPTER_EXTRAS := langchain llamaindex openai-agents crewai autogen pydantic-ai ag2
 SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
 SDK_ADAPTERS_PYTHON ?= 3.12
 SDK_ADAPTERS_RESOLUTION ?= highest

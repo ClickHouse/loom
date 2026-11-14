@@ -19,6 +19,7 @@ or needs another database, vector store or cache.
 | OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                 |
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`           |
+| AG2                            | `LoomRecallPolicy`, `loom_tools`                | Python, `loom.integrations.ag2`                           | an assembly policy, `tool()`           |
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                      |
 | Mastra                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool` from `@mastra/core`       |
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                     |
@@ -295,6 +296,48 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 An `AssistantAgent` holding a `LoomMemory` cannot be dumped with `dump_component`: the Loom
 agent and its credential are not component config.
 
+## AG2
+
+AG2 1.3 gives an agent context through assembly policies, which run before each model call,
+and acts through tools. `LoomRecallPolicy` is a policy that adds the Loom memories matching
+the latest user message to the prompt, and `loom_tools` returns Loom's agent verbs as AG2
+tools, the same `AgentTools` as the [OpenAI Agents SDK](#openai-agents-sdk) adapter, so the
+model writes memories with `loom_remember`. Install with
+`pip install 'clickhouse-loom[ag2]'` (`ag2` 1.3).
+
+```python
+from ag2 import Agent as AG2Agent, Middleware
+from ag2.assembly import AssemblerMiddleware
+from loom import Agent
+from loom.integrations.ag2 import LoomRecallPolicy, loom_tools
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    recall = LoomRecallPolicy(loom_agent, user_id="alice")
+    assistant = AG2Agent(
+        "assistant",
+        config=config,
+        tools=loom_tools(loom_agent, user_id="alice"),
+        middleware=[Middleware(AssemblerMiddleware, policies=[recall])],
+    )
+    reply = await assistant.ask("Book my usual seat to Lisbon")
+```
+
+| `LoomRecallPolicy` argument | Default  | Effect                                                                                               |
+| --------------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `agent`                     | required | the `loom.Agent` the policy searches with; the policy awaits its search, so a `SyncAgent` is refused |
+| `user_id`                   | none     | the end user whose memories to read; unset, every user's memories in the namespace                   |
+| `tags`                      | none     | keep memories carrying any of them                                                                   |
+| `top_k`                     | 5        | memories per model call, at least 1 and capped at 500                                                |
+| `honour_abstain`            | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                    |
+
+The policy runs `memory.search` of the namespace it is bound to before each model call of a
+turn, with the text of the latest request a user sent (a framework inbox message is not
+one), and adds the matches as one prompt block, or nothing. It only reads; the model writes
+through `loom_remember`. `loom_tools` binds `user_id`, `session_id` and `run_id` to every
+call and takes `only=[...]` and `max_result_chars` (8,000 by default; `loom_recall` leaves
+out its lowest-ranked memories whole to fit, counted in `omitted`). A call Loom refuses
+raises its `LoomError`, which AG2 hands the model as a tool error, and the run goes on.
+
 ## Pydantic AI
 
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
@@ -501,6 +544,8 @@ client can speak for several agents.
   anyway: a failed save prints only for a `verbose` agent, and a failed recall shows only as
   a `MemoryRetrievalFailedEvent` on CrewAI's event bus, so an unreachable Loom is otherwise
   silent.
+- **An AG2 call fails when Loom is unreachable.** `LoomRecallPolicy` runs inside the
+  agent's assembly step, which does not catch a policy's error.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.

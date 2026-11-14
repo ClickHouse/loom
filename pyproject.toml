@@ -260,6 +260,8 @@ module = [
   "autogen_core.*",
   "pydantic_ai",
   "pydantic_ai.*",
+  "ag2",
+  "ag2.*",
   "langgraph",
   "langgraph.*",
   "strands",
