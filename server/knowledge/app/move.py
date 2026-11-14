@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC
-from typing import Any, Literal
+from typing import Any, Literal, TypeGuard
 
 from server.auth.context import current_auth
 from server.auth.gateway import personal_namespace
@@ -60,8 +60,7 @@ _BUSY = (LeaseUnavailable, HeadMoved, ObjectStoreError, _TakenBack)
 _CLAIM_WAIT_S = 0.0  # not a setting: the call's budget has no room for waits
 
 
-# The sources one call moves at once.
-_AT_ONCE = 4  # not a setting: bounds one request's concurrent statements
+_AT_ONCE = 4  # not a setting: the sources one call moves at once
 
 
 @dataclass(frozen=True)
@@ -142,16 +141,15 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
 
 
 async def _move(
-    read: DocumentRow | None, dst: str, ledger: list[dict[str, Any]], started: int
+    doc: DocumentRow | None, dst: str, ledger: list[dict[str, Any]], started: int
 ) -> MoveReason:
     """One document: its reason, "" once moved. Its originals are stored first, outside
     the claims, once no copy is found where it goes; the checks, its chunks, tables and
     row, and its delete where it was run under the source's claim in both namespaces,
     taken in one order so two moves between the same places do not each hold one and
     give up on the other."""
-    if read is None:
+    if doc is None:
         return "not_found"
-    doc = read
     org, src, uri = doc.org, doc.namespace, doc.source_uri
     try:
         # A source sync owns it: its next pass would write it back where it was.
@@ -164,7 +162,7 @@ async def _move(
         # incomplete (a cut-off row insert can land after its take-back, with no chunks
         # and no tables).
         copying = True
-        if there is not None and _live(there):
+        if _live(there):
             state = await _earlier_copy(doc, there)
             if state == "other":
                 return "exists"
@@ -172,22 +170,26 @@ async def _move(
         # An original no row names yet is the sweep's, as any upload whose row did not land.
         originals = await _store_originals(doc, dst) if copying else {}
         first, second = sorted((src, dst))
+        reason: MoveReason = "busy"
         async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as held_first:
-            if not held_first:
-                return "busy"
-            async with ingest_run.claim_source(
-                org, second, uri, wait_s=_CLAIM_WAIT_S
-            ) as held_second:
-                if not held_second:
-                    return "busy"
-                return await _claimed(doc, there, copying, dst, originals, started)
+            if held_first:
+                async with ingest_run.claim_source(
+                    org, second, uri, wait_s=_CLAIM_WAIT_S
+                ) as held_second:
+                    if held_second:
+                        reason = await _claimed(doc, there, copying, dst, originals, started)
+        if reason == "":
+            # Its tombstone is in: the move is made. Outside the claims, as a delete's:
+            # nothing cuts this off, and a failure is only logged.
+            await _forget_tables(doc)
+        return reason
     except _BUSY:
         return "busy"
     except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
         return "erased"
 
 
-def _live(doc: DocumentRow | None) -> bool:
+def _live(doc: DocumentRow | None) -> TypeGuard[DocumentRow]:
     return doc is not None and doc.superseded_at is None
 
 
@@ -219,10 +221,9 @@ async def _claimed(
             return "busy"
     copy = await _copy(doc, dst, there, originals) if copying else None
     try:
-        # An erasure registered while it copied may have passed the copy already.
-        erased = copy is not None and _erasing(
-            await _ledger(org, [doc], started), doc, dst, started
-        )
+        # An erasure registered since the call's first read may have passed the copy, this
+        # one or an earlier move's, already: read again before the source goes.
+        erased = _erasing(await _ledger(org, [doc], started), doc, dst, started)
         unchanged = not erased and await _head_is(doc)
     except BaseException:  # a cancel too: a copy whose source stays live goes
         if copy is not None:
@@ -376,10 +377,8 @@ async def _head_is(doc: DocumentRow) -> bool:
 
 async def _delete_source(doc: DocumentRow) -> None:
     """Delete `doc` where it was, as `knowledge.delete` does, over its own version (under
-    the Postgres authority, HeadMoved when a write took the source since). Once its
-    tombstone is in, the move is made: a failure to delete its tables then is logged,
-    and a delete of the source settles them."""
-    org, ns, uri = doc.org, doc.namespace, doc.source_uri
+    the Postgres authority, HeadMoved when a write took the source since); its tables go
+    after the claims (`_forget_tables`)."""
     try:
         await documents_repo.insert_one(
             documents_repo.build_document_row(
@@ -390,10 +389,17 @@ async def _delete_source(doc: DocumentRow) -> None:
         )
     except PublicationPending:
         pass  # committed: the delivery worker publishes it
+
+
+async def _forget_tables(doc: DocumentRow) -> None:
+    """The tables of `doc`, deleted where it was: a failure is logged, as the document is
+    deleted and the move made; a later delete of the source settles them."""
     try:
-        await datasets_repo.forget_published(org, ns, {uri: doc.version})
+        await datasets_repo.forget_published(doc.org, doc.namespace, {doc.source_uri: doc.version})
     except Exception as e:  # the document is deleted: the move is made, whatever this says
-        log.warning("knowledge.move: the tables of a moved %s stay where it was", uri, exc_info=e)
+        log.warning(
+            "knowledge.move: the tables of a moved %s stay where it was", doc.source_uri, exc_info=e
+        )
 
 
 async def _taken_back(copy: _Copy) -> None:

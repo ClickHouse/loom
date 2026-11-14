@@ -1132,13 +1132,13 @@ the moved copy).
 
 Each source answers on its own: `moved: true`, or a `reason`:
 
-| `reason`    | Meaning                                                                                                                                                                                                                                      |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `not_found` | No live document has this source in `namespace` (one already moved answers this on a retry).                                                                                                                                                 |
-| `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.                                                                                                                                                         |
-| `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.                                                                                                                                                      |
-| `busy`      | Another write of the source or the place holds it, a publication or an ingest of it is still to land, its copy did not finish and was taken back, or its delete was cut off (it may already be where it goes); call again, which settles it. |
-| `erased`    | An erasure that has not finished may reach the document or the place it goes; the document stays where it was.                                                                                                                               |
+| `reason`    | Meaning                                                                                                                                                                                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_found` | No live document has this source in `namespace` (one already moved answers this on a retry).                                                                                                                                      |
+| `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.                                                                                                                                              |
+| `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.                                                                                                                                           |
+| `busy`      | Another write of the source or the place holds it, a publication or an ingest of it is still to land, its copy did not finish and was taken back, or its delete was cut off (it may already be where it goes); try again shortly. |
+| `erased`    | An erasure that has not finished may reach the document or the place it goes; the document stays where it was.                                                                                                                    |
 
 A move takes the source's claim in both namespaces, as a restore does in one. It writes the
 new place first and deletes the old one last, so a move cut off between the two leaves the
