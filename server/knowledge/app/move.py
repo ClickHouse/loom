@@ -155,7 +155,8 @@ async def _move(
         # A source sync owns it: its next pass would write it back where it was.
         if doc.actor == SYNC_WORKER_ACTOR:
             return "synced"
-        if _erasing(ledger, doc, dst, started):
+        arrived = await _arrived_s(doc)
+        if _erasing(ledger, doc, arrived, dst, started):
             return "erased"
         there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
         # A copy is written over a deleted document, none, or a copy an earlier move left
@@ -177,7 +178,9 @@ async def _move(
                     org, second, uri, wait_s=_CLAIM_WAIT_S
                 ) as held_second:
                     if held_second:
-                        reason = await _claimed(doc, there, copying, dst, originals, started)
+                        reason = await _claimed(
+                            doc, there, copying, dst, originals, arrived, started
+                        )
         if reason == "":
             # Its tombstone is in: the move is made. Outside the claims, as a delete's:
             # nothing cuts this off, and a failure is only logged.
@@ -199,6 +202,7 @@ async def _claimed(
     copying: bool,
     dst: str,
     originals: dict[str, Any],
+    arrived: int,
     started: int,
 ) -> MoveReason:
     """The move under the claims, of `doc` over `there`, both as read before them; with
@@ -223,7 +227,7 @@ async def _claimed(
     try:
         # An erasure registered since the call's first read may have passed the copy, this
         # one or an earlier move's, already: read again before the source goes.
-        erased = _erasing(await _ledger(org, [doc], started), doc, dst, started)
+        erased = _erasing(await _ledger(org, [doc], started), doc, arrived, dst, started)
         unchanged = not erased and await _head_is(doc)
     except BaseException:  # a cancel too: a copy whose source stays live goes
         if copy is not None:
@@ -254,8 +258,9 @@ async def _earlier_copy(
 
     A take-back removes every chunk and every table of a copy, so a copy with fewer live
     chunks, or with no tables where the document has some, is incomplete: it is written
-    over. Tables there that differ from the document's otherwise were changed on one
-    side since (an approval, a clarification), which cannot be told apart from the other
+    over. One with more is whole: the source's own were retired by a cut-off delete.
+    Tables there that differ from the document's otherwise were changed on one side
+    since (an approval, a clarification), which cannot be told apart from the other
     side's: another document."""
     fields = ("content_sha256", "title", "description", "tags", "metadata", "user_id")
     if any(getattr(there, f) != getattr(doc, f) for f in fields):
@@ -270,17 +275,17 @@ async def _earlier_copy(
     )
     if copied and copied != mine:
         return "other"
-    chunks_there = await chunks_repo.count_revision(
-        there.org,
-        there.namespace,
-        there.source_uri,
-        revision=there.revision,
-        upto_version=there.version,
-    )
-    chunks_here = await chunks_repo.count_revision(
+    chunks_there, chunks_here = await _serves(there), await _serves(doc)
+    # More there than here: a cut-off delete retired the source's chunks before its
+    # tombstone (it retires them first), so only the delete is left.
+    return "whole" if copied == mine and chunks_there >= chunks_here else "incomplete"
+
+
+async def _serves(doc: DocumentRow) -> int:
+    """The live chunks of the document's revision that its row serves."""
+    return await chunks_repo.count_revision(
         doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
     )
-    return "whole" if copied == mine and chunks_there == chunks_here else "incomplete"
 
 
 def _table_shapes(catalogs: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
@@ -298,6 +303,8 @@ async def _copy(
     move's incomplete copy, or none): its chunks and table rows copied inside ClickHouse,
     then its catalog rows and its document row built and inserted. Anything that does not
     land whole is taken back before the error answers."""
+    if _live(there) and await _serves(there) > await _serves(doc):
+        raise _TakenBack  # a copy written over it would serve less than it does
     over = documents_repo.version_of(there)
     version = documents_repo.version_past(max(doc.version, over))
     revision = writes.next_revision(there)
@@ -459,6 +466,17 @@ def _written_s(doc: DocumentRow) -> int:
     return int(doc.ingested_at.replace(tzinfo=UTC).timestamp())
 
 
+async def _arrived_s(doc: DocumentRow) -> int:
+    """When the document's text was written where it is: its first live chunk's
+    `created_at`, which a move sets to when it copied them (a moved row keeps its
+    ingest time) and a metadata edit leaves alone; its ingest time when it has no
+    chunks."""
+    first = await chunks_repo.first_written_s(
+        doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
+    )
+    return _written_s(doc) if first is None else first
+
+
 async def _ledger(org: str, docs: Iterable[DocumentRow], started: int) -> list[dict[str, Any]]:
     """The org's erasures unfinished since the oldest of `docs` was written or since the
     move `started`, whichever is earlier: the rows `_erasing` judges each document by."""
@@ -466,11 +484,14 @@ async def _ledger(org: str, docs: Iterable[DocumentRow], started: int) -> list[d
     return await ledger_reads.unfinished_since(org, since, ledger_reads.LEDGER_CLOCK_MARGIN_S)
 
 
-def _erasing(ledger: list[dict[str, Any]], doc: DocumentRow, dst: str, started: int) -> bool:
+def _erasing(
+    ledger: list[dict[str, Any]], doc: DocumentRow, arrived: int, dst: str, started: int
+) -> bool:
     """Whether an erasure of `ledger` may reach the document where it is (unfinished when
-    it was written) or the place it goes (unfinished when the move started)."""
+    its text was written there, `arrived`) or the place it goes (unfinished when the move
+    started)."""
     return any(
         reaches(r, ns, doc.user_id, since - ledger_reads.LEDGER_CLOCK_MARGIN_S)
         for r in ledger
-        for ns, since in ((doc.namespace, _written_s(doc)), (dst, started))
+        for ns, since in ((doc.namespace, arrived), (dst, started))
     )

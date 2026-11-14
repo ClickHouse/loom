@@ -626,7 +626,8 @@ class KnowledgeMoveInput(BaseModel):
     org: str
     # Where the documents are.
     namespace: str
-    # Where they go.
+    # Where they go: a collection, `@me` (the caller's own files) or a namespace of the
+    # same org.
     to_namespace: str = Field(min_length=1, max_length=256)
     # The documents to move, by source, at most 50 a call; a source named twice moves once.
     source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=50)

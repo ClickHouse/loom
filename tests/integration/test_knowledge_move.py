@@ -3,6 +3,7 @@ metadata), is deleted where it was, and comes back there with knowledge.restore.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import sys
 import uuid
@@ -450,6 +451,7 @@ async def test_a_moved_row_is_the_documents_but_for_its_place_and_its_mover(
     await _written(control_plane_url, src, uri)
     before = _row(ch_client, src, uri)
     vectors = _vectors(ch_client, src, uri, int(before["version"]))
+    await asyncio.sleep(1.1)  # the copy's chunks are stamped a second after the source's
     mover = pipeline_actor_var.set("service:mover")
     try:
         assert await _move_here(move, src, dst, uri) == [
@@ -466,6 +468,13 @@ async def test_a_moved_row_is_the_documents_but_for_its_place_and_its_mover(
     assert after["doc_id"] != before["doc_id"] and after["version"] > before["version"]
     # The vectors are the ones stored: nothing is embedded again.
     assert _vectors(ch_client, dst, uri, int(after["version"])) == vectors
+    # Each chunk is stamped when it was written there, as a later move reads it.
+    [[copied_at]] = ch_client.query(
+        "SELECT min(created_at) FROM loom.chunks WHERE org = {org:String}"
+        " AND namespace = {ns:String} AND source_uri = {uri:String}",
+        parameters={"org": ORG, "ns": dst, "uri": uri},
+    ).result_rows
+    assert copied_at > before["ingested_at"]
 
 
 @pytest.mark.asyncio
