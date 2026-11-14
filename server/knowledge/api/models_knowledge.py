@@ -628,8 +628,12 @@ class KnowledgeMoveInput(BaseModel):
     namespace: str
     # Where they go.
     to_namespace: str = Field(min_length=1, max_length=256)
-    # The documents to move, by source; a source named twice moves once.
-    source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=100)
+    # The documents to move, by source, at most 50 a call; a source named twice moves once.
+    source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=50)
+
+
+# Why a document did not move; "" once it moved.
+MoveReason = Literal["", "not_found", "exists", "synced", "busy", "erased"]
 
 
 class _KnowledgeMoveResult(BaseModel):
@@ -637,9 +641,10 @@ class _KnowledgeMoveResult(BaseModel):
     moved: bool = False
     # Why it did not move: not_found (no live document there), exists (another document
     # with this source is live where it goes), synced (a document source keeps it where it
-    # is), busy (another write of it is in progress; call again), erased (an erasure may
-    # reach it or the place it goes).
-    reason: Literal["", "not_found", "exists", "synced", "busy", "erased"] = ""
+    # is), busy (another write of it, or of the place it goes, is in progress, or its copy
+    # did not finish and was taken back; call again), erased (an erasure may reach it or
+    # the place it goes; one registered while it moved leaves it deleted where it was).
+    reason: MoveReason = ""
 
 
 class KnowledgeMoveOutput(BaseModel):

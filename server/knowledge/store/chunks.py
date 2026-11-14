@@ -25,7 +25,11 @@ from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk, embedding_text
 from server.knowledge.domain.extract.structural import StructuralChunk
-from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL, SUPERSESSIONS_TABLE
+from server.knowledge.domain.live_chunks import (
+    LIVE_CHUNK_SQL,
+    OF_REVISION_SQL,
+    SUPERSESSIONS_TABLE,
+)
 from server.knowledge.domain.section_value import is_noise
 
 
@@ -376,32 +380,67 @@ async def count_active_for_doc(
     return int(row["n"]) if row else 0
 
 
-async def rows_of_version(
+# `chunk_metadata` with its `revision` set to `{to_rev:UInt64}`, its other keys kept, in
+# the sorted key order `build_chunk_rows` writes.
+_WITH_REVISION_SQL = (
+    "concat('{', arrayStringConcat(arrayMap(kv -> concat(toJSONString(kv.1), ': ', kv.2),"
+    " arraySort(kv -> kv.1, arrayPushBack("
+    "arrayFilter(kv -> kv.1 != 'revision', JSONExtractKeysAndValuesRaw(chunk_metadata)),"
+    " ('revision', toString({to_rev:UInt64}))))), ', '), '}')"
+)
+
+
+async def copy_revision(
     org: str,
     namespace: str,
     source_uri: str,
-    doc_version: int,
     *,
+    revision: int,
+    upto_version: int,
+    to_namespace: str,
+    to_version: int,
+    to_revision: int,
     ch: _CHClient | None = None,
-) -> list[ChunkInsertRow]:
-    """The live chunks one document version wrote, every column `insert_chunks` takes:
-    what a move copies into another namespace."""
+) -> bool:
+    """Copy the live chunks of the source's `revision`, of any version up to
+    `upto_version` (a metadata edit writes a new row version and leaves the chunks at
+    theirs), into `to_namespace` at `to_version` and `to_revision`, every column and
+    vector with them, inside ClickHouse: a moved document's chunks. Whether every one
+    landed."""
     ch = ch or _default_client()
-    columns = ", ".join(ChunkInsertRow.__annotations__)
-    rows = await ch.query_all(
-        f"""
-        SELECT {columns}
-        FROM loom.chunks
-        WHERE org = {{org:String}}
-          AND namespace = {{ns:String}}
-          AND source_uri = {{uri:String}}
-          AND doc_version = {{v:UInt64}}
-          AND {LIVE_CHUNK_SQL}
-        ORDER BY chunk_idx
-        """,
-        params={"org": org, "ns": namespace, "uri": source_uri, "v": doc_version},
+    params = {
+        "org": org,
+        "ns": namespace,
+        "uri": source_uri,
+        "rev": revision,
+        "v": upto_version,
+        "to_ns": to_namespace,
+        "to_v": to_version,
+        "to_rev": to_revision,
+    }
+    picked = (
+        "namespace = {ns:String} AND doc_version <= {v:UInt64}"
+        f" AND {OF_REVISION_SQL} AND {LIVE_CHUNK_SQL}"
     )
-    return cast(list[ChunkInsertRow], rows)
+    # The rows are picked in an inner query: an outer WHERE would read the replaced
+    # columns, not the stored ones. `SELECT *` keeps a column a newer build added.
+    await ch.execute(
+        "INSERT INTO loom.chunks SELECT * REPLACE ({to_ns:String} AS namespace,"
+        f" {{to_v:UInt64}} AS doc_version, {_WITH_REVISION_SQL} AS chunk_metadata)"
+        " FROM (SELECT * FROM loom.chunks WHERE org = {org:String}"
+        f" AND source_uri = {{uri:String}} AND {picked})",
+        params=params,
+        settings={"async_insert": 0},
+    )
+    row = await ch.query_one(
+        "SELECT countIf(namespace = {ns:String}) AS here,"
+        " countIf(namespace = {to_ns:String}) AS there FROM loom.chunks"
+        " WHERE org = {org:String} AND namespace IN ({ns:String}, {to_ns:String})"
+        f" AND source_uri = {{uri:String}} AND (({picked})"
+        " OR (namespace = {to_ns:String} AND doc_version = {to_v:UInt64}))",
+        params=params,
+    )
+    return row is not None and int(row["here"]) == int(row["there"])
 
 
 async def count_version(

@@ -544,6 +544,43 @@ keeps its chunks. It retires and counts only the chunks up to the tombstone; a n
 write's chunks, still to commit, stay, and a delete that finds only those answers that
 nothing was deleted.
 
+## Knowledge move
+
+`knowledge.move` ([moving documents](../features/knowledge.md#moving-documents)) writes each document into
+the namespace it goes to, then deletes it where it was, so a cut-off move leaves the
+document in both places and never in neither. Per document, it stores the original and
+the extraction artifact in the new namespace first, outside any claim (an original no row
+names yet is the sweep's, as any upload whose row did not land). Then, under the source's
+claim in both namespaces, taken in sorted order, it reads the document again and refuses
+(`busy`) when it changed since the call read it, when a publication of either place may
+still land, or while an ingest job of the source is open (its publish would write the
+document back where it was). It copies the chunks of the document's revision, with their
+vectors, inside ClickHouse (`INSERT … SELECT`, every version the row serves: a metadata
+edit leaves the chunks at their own version), then the tables, then the row, and deletes
+the source over the version it read. A document left by an earlier move that stopped
+before its delete (the same text, author and ingest time where it goes) is only deleted
+where it was.
+
+Anything that does not land whole, or a write that took either place meanwhile, takes
+back what the move wrote where it goes (its row, under the Postgres authority its commit,
+its chunks and its tables), shielded from a cancel, and that source answers `busy`; the
+other sources of the call still move. The claims cut a document's work off well inside
+their TTL, which a copy inside ClickHouse fits for documents of any size.
+
+The erasure ledger is read twice per call: before the first copy, for an erasure that may
+reach a document where it is (unfinished when it was written) or the place it goes
+(unfinished when the move started), and after the last, for one registered meanwhile. The
+second takes the copy back and answers `erased`; the document then stays deleted where it
+was, and `knowledge.restore` there brings it back unless the erasure reaches it there too.
+
+Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's
+row and the delete each commit over the version read, so a write that took the source or
+the place first refuses them (409), and the copy is taken back. Under the ClickHouse
+authority the move reads each head again just before its row and after it: a write with a
+later version wins and the copy is taken back, while one that landed in the instant
+between that read and the row, with an earlier version, is replaced, as with two text
+writes of one source.
+
 ## Invariants
 
 - A successful write has committed its primary rows; a failure of either fails the request.

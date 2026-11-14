@@ -150,6 +150,9 @@ async def revision_by_ingestion(
 # such a row's original forward, and the sweep keeps every original one names.
 LIVE_ORIGINAL_SQL = "blob_path != '' AND superseded_at IS NULL AND blob_erased_at IS NULL"
 
+# The columns of a row whose original the sweep took: a restore or a move writes them.
+NO_ORIGINAL = {"blob_path": "", "blob_size": 0, "blob_content_type": "", "original_filename": ""}
+
 
 def serves_original(row: DocumentRow | None) -> bool:
     """`LIVE_ORIGINAL_SQL` for a row already read."""

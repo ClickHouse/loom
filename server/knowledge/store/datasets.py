@@ -403,18 +403,13 @@ async def copy_snapshot(
     namespace: str,
     snapshot_id: int,
     doc_version: int,
+    actor: str,
     ch: _CHClient | None = None,
 ) -> bool:
     """Copy the rows of `catalog`'s snapshot into `namespace` as `snapshot_id`, at
-    `doc_version`: a moved document's table. Whether every row landed."""
+    `doc_version`, written by `actor`: a moved document's table. Whether every row
+    landed."""
     ch = ch or _default_client()
-    moved = {
-        "namespace": "{to_ns:String}",
-        "snapshot_id": "{to_snap:UInt64}",
-        "doc_version": "{v:UInt64}",
-    }
-    columns = ", ".join(ROW_COLUMNS)
-    picked = ", ".join(moved.get(c, c) for c in ROW_COLUMNS)
     params = {
         "org": catalog["org"],
         "ns": catalog["namespace"],
@@ -423,12 +418,14 @@ async def copy_snapshot(
         "to_ns": namespace,
         "to_snap": snapshot_id,
         "v": doc_version,
+        "actor": actor,
     }
     # The source rows are picked in an inner query: an outer WHERE would read the
-    # replaced columns (`namespace`, `snapshot_id`), not the stored ones.
+    # replaced columns, not the stored ones. `SELECT *` keeps a column a newer build added.
     await ch.execute(
-        f"INSERT INTO {ROWS} ({columns}) SELECT {picked} FROM ("
-        f"SELECT * FROM {ROWS} WHERE org = {{org:String}} AND namespace = {{ns:String}}"
+        f"INSERT INTO {ROWS} SELECT * REPLACE ({{to_ns:String}} AS namespace,"
+        " {to_snap:UInt64} AS snapshot_id, {v:UInt64} AS doc_version, {actor:String} AS actor)"
+        f" FROM (SELECT * FROM {ROWS} WHERE org = {{org:String}} AND namespace = {{ns:String}}"
         " AND dataset_id = {ds:String} AND snapshot_id = {snap:UInt64})",
         params=params,
         settings={"async_insert": 0},

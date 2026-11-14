@@ -2,6 +2,7 @@
 // and hear how many went and why the rest stayed.
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { cleanup, render, screen, waitFor } from "../test/rtl";
 import { MoveDocumentsDialog, moveSummary, type MovePlace } from "./MoveDocumentsDialog";
@@ -124,6 +125,34 @@ describe("MoveDocumentsDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Move" })).toBeEnabled();
+  });
+
+  it("goes on as after a move when the move committed with only lists behind", async () => {
+    api.moveKnowledge.mockRejectedValue(
+      new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { category: "dependency", retryable: false } }),
+    );
+    const { onMoved, onClose } = dialog();
+    await pick("Engineering");
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onMoved).toHaveBeenCalledWith(["doc://a.md", "doc://b.md"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("says what moved before the place closed partway through", async () => {
+    api.moveKnowledge.mockResolvedValue({
+      found: false,
+      to_namespace: "col-eng",
+      results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
+    });
+    const { onMoved, onClose } = dialog();
+    await pick("Engineering");
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "You can no longer add documents to Engineering. 1 document moved before that.",
+    );
+    expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("has no axe violations", async () => {

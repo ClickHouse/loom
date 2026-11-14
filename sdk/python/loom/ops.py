@@ -2475,7 +2475,7 @@ OPS: dict[str, OpSpec] = {
         True,
         "writer",
         "experimental",
-        2000,
+        8000,
         True,
         False,
     ),

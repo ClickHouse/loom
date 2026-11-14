@@ -5,6 +5,8 @@ import {
   ingestKnowledge,
   knowledgeFormats,
   listKnowledge,
+  MOVE_MAX,
+  moveKnowledge,
   PREVIEW_TEXT_BYTES,
   previewKind,
   searchKnowledge,
@@ -279,5 +281,38 @@ describe("searchKnowledge", () => {
       top_k: 20,
       namespace_scope: "this",
     });
+  });
+});
+
+describe("moveKnowledge", () => {
+  function moves(found: (sent: string[]) => boolean) {
+    const sent: string[][] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const uris = JSON.parse(String(init?.body)).source_uris as string[];
+        sent.push(uris);
+        const results = uris.map((u) => ({ source_uri: u, moved: true, reason: "" }));
+        return new Response(JSON.stringify({ found: found(uris), to_namespace: "col-b", results }), { status: 200 });
+      }),
+    );
+    return sent;
+  }
+  const uris = Array.from({ length: MOVE_MAX * 2 + 1 }, (_, i) => `doc://${i}`);
+
+  it("sends a selection past the op's maximum in calls it takes, and merges the answers", async () => {
+    const sent = moves(() => true);
+    const r = await moveKnowledge(id, "col-b", uris);
+    expect(sent.map((s) => s.length)).toEqual([MOVE_MAX, MOVE_MAX, 1]);
+    expect(r.found).toBe(true);
+    expect(r.results.map((x) => x.source_uri)).toEqual(uris);
+  });
+
+  it("stops at a call that finds the place closed, with the answers before it", async () => {
+    const sent = moves((batch) => batch[0] !== uris[MOVE_MAX]);
+    const r = await moveKnowledge(id, "col-b", uris);
+    expect(sent).toHaveLength(2);
+    expect(r.found).toBe(false);
+    expect(r.results).toHaveLength(MOVE_MAX);
   });
 });
