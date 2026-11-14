@@ -59,12 +59,16 @@ const button = (page: Page, name: string) => page.getByRole("main").getByRole("b
 test("Share opens the members dialog in place, and closing it leaves the person in the Library", async ({ page }) => {
   await open(page, "col-runbooks");
   await expect(header(page)).toHaveText(
-    "You, group eng, sam@example.com and 1 more · 2 people and 1 group · Inherited from Engineering",
+    "You, group eng, sam@example.com and 1 more · 3 people and 1 group · Inherited from Engineering",
   );
   expect(await violations(page)).toEqual([]);
   await button(page, "Share").click();
   const dialog = page.getByRole("dialog", { name: "Members of Runbooks" });
   await expect(dialog.getByText("sam@example.com")).toBeVisible();
+  // Who else can see it, through the collection it sits in: read-only, from the header's read.
+  const through = dialog.getByRole("region", { name: "Also can see it, through Engineering" });
+  await expect(through.getByText("group:eng")).toBeVisible();
+  await expect(through.getByLabel(/^Role for /)).toHaveCount(0);
   expect(await violations(page)).toEqual([]);
   await dialog.getByRole("button", { name: "Close" }).click();
   await expect(dialog).toHaveCount(0);

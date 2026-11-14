@@ -62,7 +62,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
-import { CollectionSharingLine, ShareButton, useShareDialog } from "./CollectionSharing";
+import { useCollectionSharing } from "./CollectionSharing";
 import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
 import { TopLevelPlaces } from "./LibraryHierarchy";
 import { expandedKey, LibraryTree } from "./LibraryTree";
@@ -231,7 +231,6 @@ export function Documents() {
   // The collection whose sharing the header shows: the last answer's while the list is read
   // again, so the line is not read afresh on every refresh.
   const sharing = shown ?? (collection ? (byName.get(collection) ?? null) : null);
-  const share = useShareDialog(picked.org, sharing, collection ?? picked.namespace);
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
@@ -476,6 +475,15 @@ export function Documents() {
 
   // The library is empty only when nothing narrowed the read and the read worked.
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
+  const share = useCollectionSharing({
+    org: picked.org,
+    collection: sharing,
+    byName,
+    truncated: collections.kept?.truncated ?? false,
+    empty: emptyLibrary,
+    place: collection ?? picked.namespace,
+    onOpenPlace: goTo,
+  });
   const readTags = JSON.parse(serverTags) as string[];
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
@@ -1191,7 +1199,7 @@ export function Documents() {
                 />
               </Suspense>
             )}
-            {sharing && !sharing.personal && <ShareButton collection={sharing} onOpen={share.open} />}
+            {share.button}
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && !resolving && (
               <Unavailable reason={writeReason}>
@@ -1217,16 +1225,7 @@ export function Documents() {
       <div
         className={`mb-4 min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted tabular ${sharing ? "flex" : "hidden sm:flex"}`}
       >
-        {sharing && (
-          <CollectionSharingLine
-            org={picked.org}
-            collection={sharing}
-            byName={byName}
-            truncated={collections.kept?.truncated ?? false}
-            version={share.version}
-            empty={emptyLibrary}
-          />
-        )}
+        {share.line}
         <span className={`min-w-0 items-center gap-1 ${sharing ? "hidden shrink-0 sm:flex" : "flex"}`}>
           <span className="min-w-0 truncate">
             {docCount && aggregateStats && rows && rows.length > 0

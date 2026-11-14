@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { IconButton as ClickIconButton } from "@clickhouse/click-ui/IconButton";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
-  listGrants,
   createGrant,
   revokeGrant,
   approveGrant,
@@ -25,6 +25,21 @@ import { fieldError, ListTime, Loading, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
+import { allGrants, GRANTS_PAGE, GRANTS_PAGES } from "../lib/grantPages";
+
+/** Who else can see a collection through one of the collections it sits in: read-only. */
+export interface InheritedAccess {
+  /** The parent's title, or the words for one the person cannot open (`hidden`). */
+  title: string;
+  /** Its grants; null when they could not be read, or the parent cannot be opened. */
+  rows: GrantEntry[] | null;
+  /** More grants followed than were read. */
+  cut?: boolean;
+  /** The parent is one the person cannot open: who can see it is not shown. */
+  hidden?: boolean;
+  /** Shows the parent in the Library. */
+  onOpen?: () => void;
+}
 
 interface Props {
   open: boolean;
@@ -49,6 +64,9 @@ interface Props {
   /** The caller is known to be an admin here though no grant row names them: a
    *  collection's role reaches through its parents and the caller's groups. */
   admin?: boolean;
+  /** A collection's parents, nearest first, and who can see it through each: listed under
+   *  its own members, read-only, since they are changed on the parent. */
+  inherited?: InheritedAccess[];
 }
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
@@ -67,6 +85,7 @@ export function MembersDialog({
   pendingElsewhere,
   onChanged,
   admin = false,
+  inherited = [],
 }: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
@@ -81,6 +100,8 @@ export function MembersDialog({
     : ROLES;
   const roleValues = roles.map((r) => r.value);
   const [rows, setRows] = useState<GrantEntry[] | null>(null);
+  // More members followed than the pages read.
+  const [cut, setCut] = useState(false);
   const [adding, setAdding] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   // A code index has no writer role, so its default must be one the select offers.
@@ -104,6 +125,7 @@ export function MembersDialog({
   if (rowsFor !== rowsKey) {
     setRowsFor(rowsKey);
     setRows(null);
+    setCut(false);
     setLoadError(null);
   }
 
@@ -112,9 +134,11 @@ export function MembersDialog({
     let live = true;
     setRefreshing(true);
     setLoadError(null);
-    listGrants({ org, namespace })
+    allGrants({ org, namespace })
       .then((r) => {
-        if (live) setRows(r.rows || []);
+        if (!live) return;
+        setRows(r.rows);
+        setCut(!!r.cut);
       })
       .catch((e) => {
         if (live) setLoadError(e);
@@ -276,9 +300,17 @@ export function MembersDialog({
           </div>
         )}
         {rows !== null && rows.length === 0 && (
-          <div className="py-8 text-center text-sm text-text-muted">
-            No members yet.{canManage && ` Click ${addLabel} below to invite the first one.`}
+          <div className={`text-center text-sm text-text-muted ${inherited.length > 0 ? "py-3" : "py-8"}`}>
+            {inherited.length > 0
+              ? "No one is named here; who can see it comes from the collections it sits in."
+              : "No members yet."}
+            {canManage && ` Click ${addLabel} below to invite the first one.`}
           </div>
+        )}
+        {cut && (
+          <p className="mb-3 text-xs text-text-muted" role="status">
+            {`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} members are listed here.`}
+          </p>
         )}
         {pendingRows.length > 0 && (
           <div className="mb-4">
@@ -432,6 +464,9 @@ export function MembersDialog({
             ))}
           </div>
         )}
+        {inherited.map((p) => (
+          <InheritedSection key={p.title} access={p} me={me} />
+        ))}
       </div>
 
       {canManage && adding && (
@@ -507,6 +542,49 @@ export function MembersDialog({
         </ModalFooter>
       )}
     </Modal>
+  );
+}
+
+/** "Also can see it, through <parent>": the parent's active members, read-only, and its link. */
+function InheritedSection({ access, me }: { access: InheritedAccess; me: string }) {
+  const active = (access.rows ?? []).filter((r) => r.status === "active");
+  const heading = `Also can see it, through ${access.title}`;
+  return (
+    <section aria-label={heading} className="mt-4 border-t border-border pt-3">
+      <div className="mb-1 text-xs font-medium text-text-muted">
+        {"Also can see it, through "}
+        {access.onOpen ? (
+          <Link component="button" type="button" size="sm" onClick={access.onOpen}>
+            {access.title}
+          </Link>
+        ) : (
+          access.title
+        )}
+      </div>
+      {access.rows === null ? (
+        <p className="py-1 text-sm text-text-muted">
+          {access.hidden ? "Who can see that collection isn't shown to you." : "Its members couldn't be read."}
+        </p>
+      ) : active.length === 0 ? (
+        <p className="py-1 text-sm text-text-muted">No one is named there.</p>
+      ) : (
+        <div className="space-y-1">
+          {active.map((r) => (
+            <div key={r.subject} className="flex items-center gap-3 rounded-lg p-2.5">
+              <RoleIcon role={r.role} />
+              <div className="min-w-0 flex-1 truncate font-mono text-sm">
+                {r.subject}
+                {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
+              </div>
+              <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {access.cut && (
+        <p className="text-xs text-text-muted">{`Only the first ${(GRANTS_PAGE * GRANTS_PAGES).toLocaleString()} are listed.`}</p>
+      )}
+    </section>
   );
 }
 

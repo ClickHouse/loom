@@ -1,48 +1,29 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
-import { listGrants, type CollectionEntry, type GrantEntry } from "../api";
+import type { CollectionEntry } from "../api";
 import { collectionTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
 import { displaySubject, isServiceSubject } from "../lib/format";
+import { allGrants, type GrantsAt } from "../lib/grantPages";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
 import { IconButton } from "../components/IconButton";
 import { LoadingSkeleton } from "../components/ui";
-import { MembersDialog } from "../flows/MembersDialog";
-import { hiddenWhat } from "./LibraryHierarchy";
+import { focusInMain } from "../components/ui/ListState";
+import { type InheritedAccess, MembersDialog } from "../flows/MembersDialog";
+import { collectionPath, type HiddenPart, hiddenWhat } from "./LibraryHierarchy";
 
 /** How far up the tree a collection's grants reach it (docs/architecture/sharing.md). */
 const INHERIT_DEPTH = 8;
 
-/** Grants read per page, and the pages read on one collection before the words say "or more". */
-const GRANTS_PAGE = 500;
-const GRANTS_PAGES = 20;
-
 /** The grants read on one collection of the way up: the one shown first, then its parents.
- *  `cut`: more pages followed than were read. */
-export interface GrantsAt {
-  namespace: string;
-  rows: GrantEntry[];
-  cut?: boolean;
-}
-
-/** Every grant on `namespace`, page by page, up to `GRANTS_PAGES` pages. */
-async function grantsOn(org: string, namespace: string, signal: AbortSignal): Promise<GrantsAt> {
-  const rows: GrantEntry[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < GRANTS_PAGES; page++) {
-    const r = await listGrants({ org, namespace }, { limit: GRANTS_PAGE, cursor, signal });
-    rows.push(...(r.rows ?? []));
-    cursor = r.next_cursor ?? null;
-    if (!cursor) return { namespace, rows };
-  }
-  return { namespace, rows, cut: true };
-}
+ *  `failed`: a parent's grants could not be read. */
+export type ReadAt = GrantsAt & { failed?: boolean };
 
 /** What the header says about who can see a collection: one line naming them, and one
  *  saying how many and where their access comes from. */
@@ -77,9 +58,10 @@ function joined(parts: string[]): string {
 }
 
 /** Who can see a collection, in words, from the active grants on it and on the parents the
- *  person can read. `me`: the person's spellings. `above`: a parent missing from the list, in
- *  words, whose grants reach it unseen. `empty`: it holds no documents yet. A read cut short
- *  counts "or more" and concludes neither "Only you" nor no one else. */
+ *  person can read. `me`: the person's spellings, counted among the people. `above`: a parent
+ *  missing from the list, in words, whose grants reach it unseen. `empty`: it holds no
+ *  documents yet. A read cut short counts "or more", and a parent whose grants could not be
+ *  read is named as one; neither concludes "Only you" nor no one else. */
 export function whoCanSee({
   grants,
   me,
@@ -88,7 +70,7 @@ export function whoCanSee({
   above = null,
   empty = false,
 }: {
-  grants: GrantsAt[];
+  grants: ReadAt[];
   me: ReadonlySet<string>;
   org: string;
   titleOf: (namespace: string) => string;
@@ -98,26 +80,28 @@ export function whoCanSee({
   // Each subject once, by where its access is given nearest to the collection.
   const from = new Map<string, string>();
   for (const at of grants) {
-    for (const r of at.rows) {
+    for (const r of at.failed ? [] : at.rows) {
       if (r.status !== "active") continue;
       const key = [r.subject, ...(r.also ?? [])].some((s) => me.has(s)) ? "" : r.subject;
       if (!from.has(key)) from.set(key, at.namespace);
     }
   }
   const cut = grants.some((g) => g.cut);
+  const unread = grants.filter((g) => g.failed).map((g) => titleOf(g.namespace));
   const shown = grants[0]?.namespace ?? "";
   const inherited = [...new Set([...from.values()].filter((ns) => ns !== shown))].map(titleOf);
   const subjects = [...from.keys()];
   const others = subjects.filter((s) => s !== "");
   const tail = [
     inherited.length > 0 ? `Inherited from ${joined(inherited)}` : "",
+    ...unread.map((t) => `Also everyone who can see ${t}, whose members couldn't be read`),
     above ? `Also everyone who can see ${above}` : "",
   ];
   const shared = empty ? "Anything added here is shared with them" : "";
   if (others.includes("everyone")) {
     return { who: `Everyone in ${org}`, how: [...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
   }
-  if (others.length === 0 && !above && !cut) {
+  if (others.length === 0 && !above && !cut && unread.length === 0) {
     return {
       who: subjects.length > 0 ? "Only you" : "No one is named on it",
       how: "Shared with no one else",
@@ -127,21 +111,25 @@ export function whoCanSee({
   const groups = others.filter((s) => s.startsWith("group:"));
   const agents = others.filter(isAgentSubject);
   const people = others.filter((s) => !groups.includes(s) && !agents.includes(s));
+  const you = subjects.includes("") ? 1 : 0;
   const names = [...(subjects.includes("") ? ["You"] : []), ...[...groups, ...people, ...agents].map(subjectLabel)];
   const head = names.slice(0, 3);
   const more = names.length - head.length;
-  // Named by no grant the person can read: the parent above says who.
+  // Named by no grant the person can read: the parents above say who.
   if (names.length === 0) {
+    const through = unread[0] ?? above;
     return {
-      who: above ? `Everyone who can see ${above}` : "More people than are shown here",
-      how: shared,
+      who: through ? `Everyone who can see ${through}` : "More people than are shown here",
+      how: [...tail.filter((t) => !t.startsWith(`Also everyone who can see ${through}`)), shared]
+        .filter(Boolean)
+        .join(" · "),
       onlyYou: false,
     };
   }
   const who = cut ? `${head.join(", ")} and more` : more > 0 ? `${head.join(", ")} and ${more} more` : joined(head);
   const counts = joined(
     [
-      people.length > 0 ? plural(people.length, "person", "people") : "",
+      people.length + you > 0 ? plural(people.length + you, "person", "people") : "",
       groups.length > 0 ? plural(groups.length, "group", "groups") : "",
       agents.length > 0 ? plural(agents.length, "agent", "agents") : "",
     ].filter(Boolean),
@@ -150,60 +138,84 @@ export function whoCanSee({
   return { who, how: [counted, ...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
 }
 
-/** The collection and the parents above it the person can read, nearest first, and the first
- *  parent they cannot read, if any. */
+/** The collection and the parents above it the person can read, nearest first, at most as
+ *  far as the gate walks, and the first parent they cannot read, if any. */
 function wayUp(collection: CollectionEntry, byName: Map<string, CollectionEntry>) {
-  const chain = [collection.namespace];
-  let parent = collection.parent;
-  while (parent && chain.length < INHERIT_DEPTH + 1 && !chain.includes(parent)) {
-    if (!byName.has(parent)) return { chain, above: parent };
-    chain.push(parent);
-    parent = byName.get(parent)?.parent ?? "";
-  }
-  return { chain, above: null };
+  const path = collectionPath(collection, byName)
+    .reverse()
+    .slice(0, INHERIT_DEPTH + 1);
+  const chain = path.filter((p): p is CollectionEntry => "namespace" in p);
+  const hidden = path.find((p): p is HiddenPart => !("namespace" in p));
+  return { chain, above: hidden ? hidden.hidden : null };
 }
 
+type SharingAnswer = { key: string; grants: ReadAt[] } | { key: string; error: unknown };
+
 /**
- * Who can see the collection shown, in one line of the Library's header: the people, groups
- * and agents its grants and its parents' grants name, in words, and where their access
- * comes from. The person's own collection takes no grant, so it says it is theirs alone and
- * reads nothing.
+ * A collection's sharing in the Library's header, read once for both places that show it:
+ * `line`, who can see it in words (the people, groups and agents its grants and its parents'
+ * grants name, and where their access comes from); `button`, **Share** or **See who**; and
+ * `dialog`, the members dialog that opens in place, with the collection's own members and,
+ * read-only, who else can see it through each parent. The person's own collection takes no
+ * grant, so it says it is theirs alone, reads nothing and offers no button.
+ *
+ * The dialog belongs to the place it opened in: a move elsewhere closes it, so a grant never
+ * lands on another collection, and coming back does not reopen it. The grants are read again
+ * as it closes.
  */
-export function CollectionSharingLine({
+export function useCollectionSharing({
   org,
   collection,
   byName,
   truncated = false,
-  version,
   empty = false,
+  place,
+  onOpenPlace,
 }: {
   org: string;
-  collection: CollectionEntry;
+  /** The collection shown, or null for a namespace. */
+  collection: CollectionEntry | null;
   /** Every collection the person can read, by name: the parents whose grants reach it. */
   byName: Map<string, CollectionEntry>;
   /** The list of collections was cut short: a parent missing from it may be past its end. */
   truncated?: boolean;
-  /** Bumped as the members dialog closes: the grants are read again. */
-  version: number;
   /** It holds no documents yet. */
   empty?: boolean;
+  /** Where the page is: a move elsewhere closes the dialog. */
+  place: string;
+  /** Show a parent in the Library, from the dialog. */
+  onOpenPlace: (collection: string) => void;
 }) {
   const whoami = useStore((s) => s.whoami);
-  const { chain, above } = wayUp(collection, byName);
-  const chainKey = chain.join("/");
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
+  useEffect(() => setOpenFor(null), [place]);
+  const { chain, above } = useMemo(
+    () => (collection ? wayUp(collection, byName) : { chain: [], above: null }),
+    [collection, byName],
+  );
+  // The places read, by name: the list of collections is read again (and `chain` rebuilt)
+  // on every write elsewhere, which must not read the grants again.
+  const chainKey = chain.map((c) => c.namespace).join("/");
   const key = `${org} ${chainKey}`;
   // The last answer, by the places it was read for: one for another collection reads as
   // loading, so its words never show under this one; a read again of these places keeps it.
-  const [state, setState] = useState<{ key: string; grants: GrantsAt[] } | { key: string; error: unknown } | null>(
-    null,
-  );
+  const [state, setState] = useState<SharingAnswer | null>(null);
   const [reading, setReading] = useState(false);
   const [retries, setRetries] = useState(0);
+  const personal = !collection || collection.personal;
   useAbortableEffect(
     (signal, live) => {
-      if (collection.personal) return;
+      if (personal) return;
       setReading(true);
-      Promise.all(chainKey.split("/").map((namespace) => grantsOn(org, namespace, signal)))
+      // The collection's own grants decide the line; a parent's failure is named, not fatal.
+      const [own, ...parents] = chain.map((c) => c.namespace);
+      Promise.all([
+        allGrants({ org, namespace: own }, signal),
+        ...parents.map((namespace) =>
+          allGrants({ org, namespace }, signal).catch((): ReadAt => ({ namespace, rows: [], failed: true })),
+        ),
+      ])
         .then((grants) => {
           if (live()) setState({ key, grants });
         })
@@ -214,25 +226,33 @@ export function CollectionSharingLine({
           if (live()) setReading(false);
         });
     },
-    [org, chainKey, key, collection.personal, version, retries],
+    // `chainKey` stands in for `chain`, rebuilt on every read of the list, and `key` is
+    // `org` with it.
+    [org, chainKey, personal, version, retries],
   );
 
-  if (collection.personal) {
-    return <Words icon="lock" who="Only you" how="Your own files: no one else's grants reach them" />;
-  }
+  const titleOf = (ns: string) => {
+    const c = byName.get(ns);
+    return c ? collectionTitle(c) : ns;
+  };
   const answer = state?.key === key ? state : null;
-  if (answer === null) {
-    return (
+  const read = answer && "grants" in answer ? answer.grants : null;
+  const hiddenWords = above ? hiddenWhat(truncated) : null;
+
+  let line: ReactNode = null;
+  if (collection?.personal) {
+    line = <Words icon="lock" who="Only you" how="Your own files: no one else's grants reach them" />;
+  } else if (collection && answer === null) {
+    line = (
       <Line>
         <LoadingSkeleton label="Loading who can see it">
           <Skeleton className="h-3.5 w-72 max-w-full" />
         </LoadingSkeleton>
       </Line>
     );
-  }
-  if ("error" in answer) {
+  } else if (collection && answer && "error" in answer) {
     const refused = answer.error instanceof ApiError && answer.error.status === 403;
-    return (
+    line = (
       <Line busy={reading}>
         <Icon name="warning" size="sm" aria-hidden="true" className="shrink-0" />
         <span role="alert" className="min-w-0 break-words">
@@ -241,26 +261,69 @@ export function CollectionSharingLine({
             : `Couldn't read who can see it: ${errorLine(answer.error, { read: true })}`}
         </span>
         {!refused && (
-          <Link component="button" type="button" size="sm" onClick={() => setRetries((n) => n + 1)}>
+          <Link
+            component="button"
+            type="button"
+            size="sm"
+            // Retry leaves with this line: focus goes to the page's heading, as a list's does.
+            onClick={() => {
+              focusInMain(null);
+              setRetries((n) => n + 1);
+            }}
+          >
             Retry
           </Link>
         )}
       </Line>
     );
+  } else if (collection && read) {
+    const words = whoCanSee({
+      grants: read,
+      me: new Set(whoami?.subject ? [whoami.subject] : []),
+      org,
+      titleOf,
+      above: hiddenWords,
+      empty,
+    });
+    line = <Words icon={words.onlyYou ? "lock" : "users"} who={words.who} how={words.how} busy={reading} />;
   }
-  const titleOf = (ns: string) => {
-    const c = byName.get(ns);
-    return c ? collectionTitle(c) : ns;
-  };
-  const words = whoCanSee({
-    grants: answer.grants,
-    me: new Set(whoami?.subject ? [whoami.subject] : []),
-    org,
-    titleOf,
-    above: above ? hiddenWhat(truncated) : null,
-    empty,
-  });
-  return <Words icon={words.onlyYou ? "lock" : "users"} who={words.who} how={words.how} busy={reading} />;
+
+  const button =
+    collection && !collection.personal ? (
+      <ShareButton collection={collection} onOpen={() => setOpenFor(collection.namespace)} />
+    ) : null;
+
+  // Who else can see it, nearest parent first, from the grants the line read.
+  const inherited: InheritedAccess[] = [];
+  if (read) {
+    for (const at of read.slice(1)) {
+      inherited.push({
+        title: titleOf(at.namespace),
+        rows: at.failed ? null : at.rows,
+        cut: at.cut,
+        onOpen: () => onOpenPlace(at.namespace),
+      });
+    }
+    if (hiddenWords) inherited.push({ title: hiddenWords, rows: null, hidden: true });
+  }
+  const shown = collection && !collection.personal && openFor === collection.namespace ? collection : null;
+  const dialog = shown && (
+    <MembersDialog
+      open
+      onOpenChange={(v) => {
+        if (v) return;
+        setOpenFor(null);
+        setVersion((n) => n + 1);
+      }}
+      org={org}
+      namespace={shown.namespace}
+      // A title, with the address beneath it; an untitled collection is named by its address once.
+      label={shown.title?.trim() || undefined}
+      admin={shown.role === "admin"}
+      inherited={inherited}
+    />
+  );
+  return { line, button, dialog };
 }
 
 function Line({ children, busy = false }: { children: ReactNode; busy?: boolean }) {
@@ -301,31 +364,4 @@ export function ShareButton({ collection, onOpen }: { collection: CollectionEntr
       {label}
     </Button>
   );
-}
-
-/** The members dialog of the collection shown, opened by Share in place. It belongs to the
- *  place it opened in: a move elsewhere closes it, so a grant never lands on another
- *  collection, and coming back does not reopen it. `version` is bumped as it closes, so the
- *  header reads the grants it may have changed. */
-export function useShareDialog(org: string, current: CollectionEntry | null, place: string) {
-  const [openFor, setOpenFor] = useState<string | null>(null);
-  const [version, setVersion] = useState(0);
-  useEffect(() => setOpenFor(null), [place]);
-  const shown = current && !current.personal && openFor === current.namespace ? current : null;
-  const dialog = shown && (
-    <MembersDialog
-      open
-      onOpenChange={(v) => {
-        if (v) return;
-        setOpenFor(null);
-        setVersion((n) => n + 1);
-      }}
-      org={org}
-      namespace={shown.namespace}
-      // A title, with the address beneath it; an untitled collection is named by its address once.
-      label={shown.title?.trim() || undefined}
-      admin={shown.role === "admin"}
-    />
-  );
-  return { open: () => setOpenFor(current?.namespace ?? null), version, dialog };
 }

@@ -150,7 +150,7 @@ function FilteredState({ things, filter, among, onClear }: ListFilteredProps) {
 }
 
 /** Focus `el`, else the page's heading (made focusable for it). */
-function focusInMain(el: HTMLElement | null): void {
+export function focusInMain(el: HTMLElement | null): void {
   const target = el ?? document.querySelector<HTMLElement>("main h1");
   if (!target) return;
   if (!el && !target.hasAttribute("tabindex")) target.tabIndex = -1;

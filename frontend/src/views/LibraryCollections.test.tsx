@@ -211,8 +211,9 @@ describe("LibraryCollections", () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
     expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
     await settle();
-    // What the place is, and the role, behind the info button beside the select: a press
-    // (a tap on a phone) opens it.
+    // What the place is, and the role, behind the info button beside the select: a click (a
+    // tap on a phone) opens it. fireEvent, not userEvent: userEvent's click here, with no
+    // menu open first, left this file's later create tests reading the list three times.
     fireEvent.click(screen.getByRole("button", { name: "About this place" }));
     expect(await screen.findByText(/^Viewer of a collection: .*everyone who reaches col-q3/)).toBeInTheDocument();
   });

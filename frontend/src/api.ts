@@ -866,7 +866,6 @@ export interface GrantEntry {
 export interface GrantsPage {
   rows: GrantEntry[];
   next_cursor?: string | null;
-  truncated?: boolean;
 }
 
 export async function listGrants(
