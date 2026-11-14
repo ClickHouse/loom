@@ -421,6 +421,8 @@ async def test_the_refusal_reaches_callers_as_tenancy_refused(
             with pytest.raises(TenancyRefusedError):
                 async with pg.dedicated() as d:
                     await d.execute(_INSERT, "unheld-org", "dedicated")
+            with pytest.raises(TenancyRefusedError):  # the guard, through the pool
+                await pg.execute(_HOLD, "script-org")
         finally:
             await pg.close_pool()
             settings.pg_dsn, settings.cell = saved

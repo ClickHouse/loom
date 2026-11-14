@@ -124,8 +124,8 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     `WrongCellError` (409) for another cell's org, `ValidationError` (422) for a new org
     longer than `cell.ORG_MAX_BYTES`, `BackendUnavailableError` (503) when the cell
     cannot tell, `TenancyRefusedError` (503, not retried) when the `loom.tenancy` guard
-    refuses its row because this process's sessions lost the marker. Nothing is written
-    for an org refused."""
+    refuses its row because this process's sessions lost the marker. Nothing is written for
+    an org refused."""
     if not settings.cell or org is None or org in ORG_FREE:
         return
     # A principal that may not act in the org is refused first, as the gate would, so
@@ -162,13 +162,9 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
                 f"directory answers that it is attaching ({why})",
                 operation="tenancy",
             )
-        try:
-            # Recorded now, or by another process a moment ago (the insert then conflicts).
-            if await pg.fetchval(_RECORD, org) or await pg.fetchval(_HOLDS, org):
-                _held.add(org)
-                return
-        except Exception as e:  # re-raised as 503: an unread tenancy refuses, never serves
-            raise _unread(org, e) from e
+        if await _record(org):
+            _held.add(org)
+            return
     # Not held, and either `enforced` or the mode moved on since the cached read:
     # placement decides. A configured org a call with no principal acts in (JIT,
     # self-signup) is placed by attach, or by `loom cell update` when it changes: retry.
@@ -210,9 +206,20 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     _held.add(org)
 
 
-def _unread(org: str, e: Exception) -> BackendUnavailableError | TenancyRefusedError:
-    if isinstance(e, TenancyRefusedError):
-        return e  # the `loom.tenancy` guard: this process's sessions lost the marker
+async def _record(org: str) -> bool:
+    """Record `org` on a recording cell: true when recorded now, or by another process a
+    moment ago (the insert then conflicts)."""
+    from server.core import pg
+
+    try:
+        return bool(await pg.fetchval(_RECORD, org) or await pg.fetchval(_HOLDS, org))
+    except TenancyRefusedError:
+        raise  # the `loom.tenancy` guard: this process's sessions lost the marker
+    except Exception as e:  # re-raised as 503: an unread tenancy refuses, never serves
+        raise _unread(org, e) from e
+
+
+def _unread(org: str, e: Exception) -> BackendUnavailableError:
     log.warning("tenancy: %s unread: %s", org, e)
     return BackendUnavailableError(
         f"this cell cannot tell whether it holds org {org!r}: {caller_text(e)}",
