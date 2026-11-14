@@ -437,15 +437,12 @@ def _write_analyst() -> None:
     deployment whose server user cannot (one with access management writes it
     at boot)."""
     from server.cli._ch import run_connected
-    from server.core.pg import AuthorityMismatch
     from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
 
     try:
         run_connected(
             lambda _ch: rewrite(), org_free=writes("ClickHouse users and grants, no tenant rows")
         )
-    except AuthorityMismatch:
-        raise  # another deployment's stores: never a skipped optional step
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
         if isinstance(e, SetupRefused):
@@ -509,15 +506,15 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         for stmt in admin_sql(user, reader):
             print(stmt if stmt.startswith("--") else f"{stmt};")
         return 0
-    # On a cell, refused before any user or grant is written when these stores are
-    # another cell's or another deployment's.
-    asyncio.run(check_setup_stores(writes("ClickHouse users and grants, no tenant rows")))
     try:
         ch = preflight.connect()
     except preflight.PreflightError as e:
         print(f"✗ {e}", file=sys.stderr)
         return 1
     try:
+        # On a cell, refused before any user or grant is written when these stores are
+        # another cell's or another deployment's (a fresh service passes).
+        asyncio.run(check_setup_stores(writes("ClickHouse users and grants, no tenant rows")))
         return _set_up(ch, user, reader)
     finally:
         ch.close()

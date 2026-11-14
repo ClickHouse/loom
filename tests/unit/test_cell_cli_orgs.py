@@ -280,8 +280,9 @@ def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
 
     from server.cli import ch_setup
 
-    def _connect() -> None:
-        raise AssertionError("connected to set up ClickHouse")
+    class _Admin:
+        def close(self) -> None:
+            return None
 
     class _Client:
         async def connect(self) -> None:
@@ -291,7 +292,8 @@ def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
         return None  # a fresh service: no record yet
 
     _cell_set(monkeypatch, ("enforced", "us-1"))
-    monkeypatch.setattr(ch_setup.preflight, "connect", _connect)
+    monkeypatch.setattr(ch_setup.preflight, "connect", lambda: _Admin())
+    monkeypatch.setattr(ch_setup, "_set_up", lambda *_a: pytest.fail("set ClickHouse up"))
     monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
     monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
     monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
@@ -332,15 +334,58 @@ def test_ch_setup_is_refused_on_another_deployments_clickhouse_before_it_writes(
     monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
     monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
     monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
-    monkeypatch.setattr(
-        ch_setup.preflight, "connect", lambda: pytest.fail("connected to set up ClickHouse")
-    )
+
+    class _Admin:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(ch_setup.preflight, "connect", lambda: _Admin())
+    monkeypatch.setattr(ch_setup, "_set_up", lambda *_a: pytest.fail("set ClickHouse up"))
     monkeypatch.setattr(settings, "ch_user", "loom")
     monkeypatch.setenv("LOOM_CH_READER_USER", "")
     monkeypatch.setattr(settings, "ch_reader_user", "")
     with pytest.raises(pg.AuthorityMismatch):
         ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False))
     assert armed == [("dep-other", 1)]
+
+
+@pytest.mark.parametrize("code", [60, 81])
+def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
+    monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """A service with no Loom database or record yet is set up: the gate reads only the
+    Postgres `first` row there."""
+    import argparse
+
+    from server.cli import ch_setup
+
+    class _NoLoom(Exception):
+        pass
+
+    class _Client:
+        async def connect(self) -> None:
+            return None
+
+    async def _recorded(_ch: Any) -> None:
+        raise _NoLoom(f"Code: {code}")
+
+    class _Admin:
+        def close(self) -> None:
+            return None
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch_errors.error_code", lambda e: code)
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    monkeypatch.setattr(pg_profile, "recorded_authority", _recorded)
+    monkeypatch.setattr(ch_setup.preflight, "connect", lambda: _Admin())
+    set_up: list[int] = []
+    monkeypatch.setattr(ch_setup, "_set_up", lambda *_a: set_up.append(1) or 0)
+    monkeypatch.setattr(settings, "ch_user", "loom")
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False)) == 0
+    assert set_up == [1]
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:

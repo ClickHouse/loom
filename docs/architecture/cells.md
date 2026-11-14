@@ -599,23 +599,24 @@ lists any tenancy row the directory does not place.
   command says what it does to the stores: it reads, writes (`loom ch-setup`, `secrets`, a
   settings change, prepare and the rest; a dry run reads) or revokes (`loom revoke-token`, a
   SQL user's revocation, `loom signing-key retire`, `loom bot disable`, `loom sso unlink`),
-  per subcommand where one connect serves several (`loom ch-setup`, which sets ClickHouse up
+  per subcommand where one connect serves several (`loom signing-key`: `list` reads,
+  `retire` revokes, `rotate` and `record-root` write). With `LOOM_CELL` set, a write or a
+  revocation checks its ClickHouse against its Postgres (`check_configured`), reads the
+  `first` row on a bounded session of its own and refuses when it names another cell, which
+  a CLI pointed at another cell's stores always finds, or when the read fails; an absent
+  row, or state tables not migrated yet, passes, so a later cell runs these before it is
+  prepared. A revocation runs through an outage (the fourth exception under Invariants); a
+  write refuses during one; a read is not gated. `loom ch-setup`, which sets ClickHouse up
   on a client of its own, runs the same gate before it writes, a ClickHouse with no record
   yet passing; `loom migrate` and `loom provider-lock clear` write through the schema
-  runner's own client and are not gated). With `LOOM_CELL` set, a write or a revocation
-  checks its ClickHouse against its Postgres (`check_configured`), reads the `first` row on
-  a bounded session of its own and refuses when it names another cell, which a CLI pointed
-  at another cell's stores always finds, or when the read fails; an absent row, or state
-  tables not migrated yet, passes, so a later cell runs these before it is prepared. A
-  revocation runs through an outage (the fourth exception under Invariants); a write refuses
-  during one; a read is not gated. A census test fails on a connect that declares neither,
-  on an org-free one that does not say which kind it is, on a connect under `server/cli/`
-  outside `_ch.py`, and on a `loom code` command that resolves its org without connecting
-  for it. A holder of the cell's router credential can place orgs for the cell, within the
-  cell's rate and `placements_max`, as the operator credential `loom cell place` uses can
-  for any cell within its `placements_max` (an operator's call is not rate-limited, nor
-  counted toward the cell's rate), and a placement is permanent, so an org name it takes is
-  lost to every other cell: a power over the shared directory that the cell's store
+  runner's own client and are not gated. A census test fails on a connect that declares
+  neither, on an org-free one that does not say which kind it is, on a connect under
+  `server/cli/` outside `_ch.py`, and on a `loom code` command that resolves its org without
+  connecting for it. A holder of the cell's router credential can place orgs for the cell,
+  within the cell's rate and `placements_max`, as the operator credential `loom cell place`
+  uses can for any cell within its `placements_max` (an operator's call is not rate-limited,
+  nor counted toward the cell's rate), and a placement is permanent, so an org name it takes
+  is lost to every other cell: a power over the shared directory that the cell's store
   credentials lack. So the pods hold it, and a CLI only for the one read that needs it,
   while the first cell's mode is `recording`: a CLI command that declares an org refuses to
   run with it set, naming it, unless the cell is the first and its mode reads `recording`,
