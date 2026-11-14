@@ -1,15 +1,15 @@
 -- The function behind a cell's `loom.tenancy` guard (docs/architecture/cells.md, "Writers
--- older than the check are refused by the stores they write"). It adds no trigger: a
--- cell's boot creates `tenancy_record` on an `enforced` cell, and attach once it sets
--- `enforced` (`ensure` in server/core/cell_triggers.py); on a deployment that is not a
--- cell no trigger calls it.
+-- older than the check are refused by the stores they write"). It adds no trigger: a cell's
+-- boot creates `tenancy_record` on an `enforced` cell, and attach once it sets `enforced`
+-- (`ensure` in server/core/cell_triggers.py); on a deployment that is not a cell no trigger
+-- calls it.
 --
 -- A tenancy row makes an org held. Only a session that ran the tenancy check writes one
--- (`loom.tenancy_checked = 'on'`, which the trigger's WHEN skips); a row inserted, or
--- moved to another org, by any other session is refused, SQLSTATE LT001, in every state
--- but a first cell still recording. `open` is refused too: the row itself would make the
--- state `partial`. Without it, a script could make an org held in a cell with no
--- placement in the router's directory, where a later cell could place it too.
+-- (`loom.tenancy_checked = 'on'`, which the trigger's WHEN skips); a row inserted, or moved
+-- to another org, by any other session is refused, SQLSTATE LT001, in every state but a
+-- first cell still recording. `open` is refused too: the row itself would make the state
+-- `partial`. Without it, a script could make an org held in a cell with no placement in the
+-- router's directory, where a later cell could place it too.
 CREATE OR REPLACE FUNCTION loom.tenancy_refuse_unmarked() RETURNS trigger
     LANGUAGE plpgsql
     VOLATILE

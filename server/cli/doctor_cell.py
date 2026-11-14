@@ -1,6 +1,7 @@
 """`loom doctor`'s cell checks, run only with LOOM_CELL set (docs/architecture/cells.md):
 the deployment check, a partial cell state, the tenancy marker on this process's
-sessions and on every session, and the org triggers' defects (`cell_triggers.missing`).
+sessions and on every session, and the defects of the org triggers and the `loom.tenancy`
+guard (`cell_triggers.missing`).
 
 A refusal (ClickHouse access denied, no LOOM_PG_DSN, another recorded authority or a
 Postgres of another deployment) fails the doctor's exit and reads no cell state;

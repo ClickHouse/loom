@@ -1,7 +1,8 @@
-"""A cell's org triggers against a real Postgres (server/core/cell_triggers.py, migration
-011): `ensure` creates them only on a fully prepared cell in `enforced`, an unmarked
-session's row for an org the cell does not hold is refused there, a marked session's
-passes, and `missing` names what the triggers lack. Each test runs in a database of its
+"""A cell's org triggers and its `loom.tenancy` guard against a real Postgres
+(server/core/cell_triggers.py, migrations 011 and 012): `ensure` creates them only on a
+fully prepared cell in `enforced`, an unmarked session's row for an org the cell does not
+hold, and its tenancy row, are refused there, a marked session's pass, and `missing` names
+what the triggers lack. Each test runs in a database of its
 own (`_pg_database`): `ensure` never drops a trigger."""
 
 from __future__ import annotations

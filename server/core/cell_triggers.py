@@ -6,10 +6,10 @@ they write").
 A session that ran the check marks itself with `loom.tenancy_checked = 'on'`: every
 session of a process with LOOM_CELL set (a startup parameter of the pool and of
 `pg.dedicated()`) and the migration session (`pg_migrate`). The triggers' WHEN skips a
-marked session; `loom.tenancy_refuse_unheld()` (migration 011) judges the rest. The
-guard on `loom.tenancy` itself, `tenancy_record` with `loom.tenancy_refuse_unmarked()`
-(migration 012), refuses an unmarked session's tenancy row in every state but a first
-cell still recording: a tenancy row makes an org held.
+marked session; `loom.tenancy_refuse_unheld()` (migration 011) judges the rest. The guard
+on `loom.tenancy` itself, `tenancy_record` with `loom.tenancy_refuse_unmarked()`
+(migration 012), refuses an unmarked session's tenancy row in every state but a first cell
+still recording: a tenancy row makes an org held.
 
 `ensure` creates the triggers on a fully prepared cell in `enforced` at a migrating
 boot, the guard with them, and `missing` names what a cell's triggers lack for
@@ -170,8 +170,8 @@ def _function_sql(function: str) -> re.Pattern[str]:
 def _create(qualified: str, name: str) -> str:
     """The CREATE TRIGGER for `name` on the table `qualified` names."""
     if name == TENANCY_TRIGGER:
-        # The marker alone: a WHEN on INSERT cannot read OLD, so the function itself
-        # passes an update that keeps the row's org.
+        # The marker alone: a WHEN on INSERT cannot read OLD, so the function itself passes
+        # an update that keeps the row's org.
         return (
             f"CREATE TRIGGER {name} AFTER INSERT OR UPDATE OF org ON {qualified} FOR EACH ROW "
             f"WHEN {_when('INSERT')} EXECUTE FUNCTION {TENANCY_FUNCTION}()"
@@ -214,7 +214,7 @@ async def ensure(conn: Any) -> None:
                 f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
             )
     if state == "enforced":
-        present = await _triggers(conn, ORG_TRIGGERS)
+        present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
         tables = await conn.fetch(_ORG_TABLES)
         for r in tables:
             if r["relkind"] == "p":
@@ -222,38 +222,27 @@ async def ensure(conn: Any) -> None:
                 log.warning(
                     "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
                 )
-        for table in [r["relname"] for r in _guarded(tables)]:
-            for name in ORG_TRIGGERS:
-                row = present.get((table, name))
-                if row is None:
-                    statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
-                elif row["enabled"] != "O":
-                    statements.setdefault(table, []).append(
-                        f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
-                    )
+        pairs = [(r["relname"], n) for r in _guarded(tables) for n in ORG_TRIGGERS]
+        # The guard on loom.tenancy, which `_guarded` leaves out. The pending migrations ran
+        # first, so an absent function was dropped by hand: logged, `missing` names it.
+        if await conn.fetchval("SELECT to_regprocedure($1) IS NOT NULL", f"{TENANCY_FUNCTION}()"):
+            pairs.append(("tenancy", TENANCY_TRIGGER))
+        else:
+            log.warning(
+                "cell triggers: %s() is absent, so %s is not created",
+                TENANCY_FUNCTION,
+                TENANCY_TRIGGER,
+            )
+        for table, name in pairs:
+            row = present.get((table, name))
+            if row is None:
+                statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
+            elif row["enabled"] != "O":
+                statements.setdefault(table, []).append(
+                    f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
+                )
     for table, sqls in statements.items():
         await _run_ddl(conn, table, sqls)
-    if state == "enforced":
-        await _ensure_tenancy_guard(conn)
-
-
-async def _ensure_tenancy_guard(conn: Any) -> None:
-    """Create `tenancy_record` on `loom.tenancy` when it is absent, and enable it when it
-    is left otherwise than `O`, as `ensure` does an org trigger (its own path: `_guarded`
-    leaves `loom.tenancy` out). It runs after the pending migrations, so an absent
-    function was dropped by hand: logged, and `missing` names it."""
-    if not await conn.fetchval("SELECT to_regprocedure($1) IS NOT NULL", f"{TENANCY_FUNCTION}()"):
-        log.warning(
-            "cell triggers: %s() is absent, so %s is not created", TENANCY_FUNCTION, TENANCY_TRIGGER
-        )
-        return
-    row = (await _triggers(conn, (TENANCY_TRIGGER,))).get(("tenancy", TENANCY_TRIGGER))
-    if row is None:
-        await _run_ddl(conn, "tenancy", [_create("loom.tenancy", TENANCY_TRIGGER)])
-    elif row["enabled"] != "O":
-        await _run_ddl(
-            conn, "tenancy", [f"ALTER TABLE loom.tenancy ENABLE TRIGGER {TENANCY_TRIGGER}"]
-        )
 
 
 async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
@@ -312,15 +301,15 @@ async def _holders(conn: Any, table: str) -> str:
 class Defect:
     """What `missing` names: `kind` is `absent` for an absent org trigger or
     `tenancy_record`, and for `loom.tenancy_refuse_unmarked()` before migration 012 ran
-    (normal before a cell's first migrating boot, so doctor names it only on an
-    `enforced` cell)."""
+    (normal before a cell's first migrating boot, so doctor names it only on an `enforced`
+    cell)."""
 
     kind: str
     text: str
 
 
 async def missing(conn: Any) -> list[Defect]:
-    """What this cell's triggers and function lack, read with the migrating role."""
+    """What this cell's triggers and functions lack, read with the migrating role."""
     found: list[Defect] = []
     tables = await conn.fetch(_ORG_TABLES)
     guarded = _guarded(tables)
@@ -331,8 +320,8 @@ async def missing(conn: Any) -> list[Defect]:
     fn = await conn.fetchrow(_FUNCTION, f"{FUNCTION}()")
     tenancy_fn = await conn.fetchrow(_FUNCTION, f"{TENANCY_FUNCTION}()")
     # Compared whole, as this server prints them; a trigger whose function is absent has
-    # nothing to compare with. A role that may not create a temporary table cannot
-    # compare: named, with every other defect kept.
+    # nothing to compare with. A role that may not create a temporary table cannot compare:
+    # named, with every other defect kept.
     comparable: tuple[str, ...] = ()
     if fn is not None:
         comparable += ORG_TRIGGERS

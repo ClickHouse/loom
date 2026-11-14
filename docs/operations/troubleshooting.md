@@ -317,10 +317,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     COMMIT;
     ```
 
-    Then drop the org triggers and the `loom.tenancy` guard, in the same session and as
-    the same role, after the state transaction (so a migrating boot's `ensure` does not
-    create them again); on a lock failure, `ROLLBACK` if psql is still open, then rerun
-    the step:
+    Then drop the org triggers and the `loom.tenancy` guard, in the same session and as the
+    same role, after the state transaction (so a migrating boot's `ensure` does not create
+    them again); on a lock failure, `ROLLBACK` if psql is still open, then rerun the step:
 
     ```sql
     \set ON_ERROR_STOP on
