@@ -62,9 +62,12 @@ describe("communitiesCopy", () => {
 
   it("with none, is the full sentence", () => {
     expect(communitiesCopy(null)).toEqual({ kind: "none", line: NO_COMMUNITIES_COPY });
-    expect(communitiesCopy({ communities: [], communities_computed_at: "" }).line).toContain("computed every 6 hours");
-    expect(NO_COMMUNITIES_COPY).toContain("last 14 days");
-    expect(NO_COMMUNITIES_COPY).toContain("this walk counts");
+    expect(communitiesCopy({ communities: [], communities_computed_at: "" }).line).toBe(NO_COMMUNITIES_COPY);
+    // The same facts as the Facets hint: only when an operator turned them on, every 6 hours,
+    // for namespaces explored in the last 14 days.
+    expect(NO_COMMUNITIES_COPY).toBe(
+      "No communities yet. When an operator of this deployment has turned them on, they are computed every 6 hours for namespaces explored in the last 14 days; exploring this one counts.",
+    );
   });
 
   it("with some, counts them and says when they were computed, relative and absolute", () => {

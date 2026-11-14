@@ -111,6 +111,12 @@ On Namespaces in your org, a search for the exact name of a namespace the list d
 show offers **Request access**, which is how a private namespace is asked for by name; a
 repository's or collection's name points to Repositories or the Library instead.
 
+The dashboard's text follows the
+[copy rules](../development/dashboard-design.md#rules-a-change-is-checked-against): its
+sentences name what you see, never an operation or an API path; an operation's name shows
+only where you copy it (a details panel, a code field, a tooltip); and an instruction only an
+operator can carry out says so.
+
 A page with nothing to list says what will appear there and offers the action that fills it.
 Memories are filled by an agent or by hand; runs, conversations and connected clients only
 by an agent. Where an agent fills it, **Connect an agent** opens the token form in a dialog

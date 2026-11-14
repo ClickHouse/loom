@@ -461,7 +461,7 @@ describe("RepoDocsList", () => {
       default_format: "text",
     });
     const { dialog } = await addFile("deck.pptx");
-    expect(await screen.findByText(/No extractor on this deployment reads pptx/)).toBeInTheDocument();
+    expect(await screen.findByText(/This deployment cannot read pptx files/)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Add document" })).toBeDisabled();
     expect(uploadKnowledgeFile).not.toHaveBeenCalled();
   });

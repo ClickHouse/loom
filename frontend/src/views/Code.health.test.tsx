@@ -34,6 +34,7 @@ const codeIndexErrors = vi.fn();
 const codeRecentCommits = vi.fn(async () => ({ rows: [] }));
 const listMine = vi.fn(async (..._a: unknown[]): Promise<MyNamespaceEntry[]> => []);
 const codeRefresh = vi.fn(async (..._a: unknown[]) => ({ already_running: false }));
+const listCostRollup = vi.fn(async (..._a: unknown[]) => ({ rows: [] as { ops: number; cost_usd: number }[] }));
 const sharedIndexStatus = vi.fn(async (): Promise<typeof ST> => ST);
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -42,7 +43,7 @@ vi.mock("../api", async (importOriginal) => {
     codeCoverage: (...a: unknown[]) => codeCoverage(...a),
     codeIndexErrors: (...a: unknown[]) => codeIndexErrors(...a),
     codeRecentCommits: (...a: unknown[]) => codeRecentCommits(...(a as [])),
-    listCostRollup: async () => ({ rows: [] }),
+    listCostRollup: (...a: unknown[]) => listCostRollup(...a),
     listMine: (...a: unknown[]) => listMine(...a),
     codeRefresh: (...a: unknown[]) => codeRefresh(...a),
   };
@@ -68,6 +69,22 @@ describe("HealthTab: failed reads", () => {
     expect(screen.getByText("Couldn't load the index errors: boom")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load the recent commits: boom")).toBeInTheDocument();
     expect(screen.queryByText("No commits recorded yet.")).toBeNull();
+  });
+});
+
+describe("HealthTab: spend", () => {
+  it("counts every operation the rollup recorded, priced or not", async () => {
+    listCostRollup.mockResolvedValueOnce({
+      rows: [
+        { ops: 1200, cost_usd: 0.5 },
+        { ops: 34, cost_usd: 0 },
+      ],
+    });
+    // Only the spend matters here; the other reads fail, which the tab states and moves past.
+    codeCoverage.mockRejectedValue(new Error("boom"));
+    codeIndexErrors.mockRejectedValue(new Error("boom"));
+    render(<HealthTab id={{ org: "dev", namespace: "code-app" }} repo={REPO} />);
+    expect(await screen.findByText("1,234 operations recorded in the last 7 days")).toBeInTheDocument();
   });
 });
 

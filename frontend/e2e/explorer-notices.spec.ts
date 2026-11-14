@@ -240,7 +240,7 @@ test("with no communities, the Colour facet says what computes them, unclipped",
   const facets = page.getByRole("complementary", { name: "Facets" });
   const none = facets.locator("[data-testid=communities-none]");
   await expect(none).toHaveText(
-    "No communities yet. They are computed every 6 hours for namespaces walked in the last 14 days; this walk counts.",
+    "No communities yet. When an operator of this deployment has turned them on, they are computed every 6 hours for namespaces explored in the last 14 days; exploring this one counts.",
   );
   const box = await none.evaluate((el) => ({
     clippedX: el.scrollWidth > el.clientWidth + 1,

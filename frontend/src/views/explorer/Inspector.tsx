@@ -496,8 +496,8 @@ export function Inspector({
             onOpenMemory={onOpenMemory}
             emptyText={
               typed
-                ? "No typed triple joins these two; the edge is a co-mention."
-                : "No typed triple joins these two in either direction; the edge is a co-mention. Tick “typed edges only” to walk the triples."
+                ? "No typed fact joins these two; the edge is a co-mention."
+                : "No typed fact joins these two in either direction; the edge is a co-mention. Tick “typed edges only” to walk the typed facts."
             }
           />
         </div>
@@ -537,7 +537,7 @@ export function Inspector({
             walks from it
           </li>
           <li>
-            a triple with no active row left is marked <span className="text-warn">stale</span>
+            a typed fact with no active row left is marked <span className="text-warn">stale</span>
           </li>
           <li>the outline under the picture reads the same tree by keyboard</li>
         </ul>
@@ -718,7 +718,7 @@ export function Inspector({
           label="Typed facts"
           count={facts ? facts.length : undefined}
           caption={provenance.size ? [...provenance].join(", ") : undefined}
-          hint={`Typed triples with ${n.entity} as subject or object (facts.list), with provenance tier, last seen and the source rows behind each.`}
+          hint={`Typed facts with ${n.entity} as subject or object, with how each was found (extracted, inferred or from a facet), when it was last seen and the source rows behind it.`}
         />
         <FactList
           key={`n:${n.entity}`}
@@ -730,8 +730,8 @@ export function Inspector({
           onOpenMemory={onOpenMemory}
           emptyText={
             provenance.size
-              ? "No typed triple of the chosen provenance names this entity."
-              : "No typed triple names this entity; the walk is co-mention only."
+              ? "No typed fact with the chosen provenance names this entity."
+              : "No typed fact names this entity; the walk is co-mention only."
           }
         />
       </div>
@@ -743,8 +743,8 @@ export function Inspector({
           caption={memoryTypes.size || tags.size ? "filtered" : undefined}
           hint={
             isSeed
-              ? "Memories naming the seed (memory.search with an entity boost); click one to open it."
-              : "Memories naming the seed or this entity (memory.search with an entity boost — an OR, so a row may name only one of them); click one to open it."
+              ? "Memories that best match the seed, ranked higher when they name it; click one to open it."
+              : "Memories that best match the seed and this entity, ranked higher when they name either; click one to open it."
           }
         />
         {hitsError !== null && <ListState kind="error" things="the memories" error={hitsError} onRetry={retry} />}

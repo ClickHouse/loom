@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { isAuthDisabled, isProxyMode, storedToken, type MyNamespaceEntry, type WhoAmI } from "../api";
 import { OP_MIN_ROLE, type RepoRow, canCall, canCallCodeRepos, canCallOn } from "./canCall";
 import { must } from "../test/must";
+import { generatedOpsText } from "../test/opNames";
 
 // The dashboard never issues a request the token cannot make; when the role is unknown it
 // does not poll.
@@ -195,17 +196,9 @@ describe("OP_MIN_ROLE mirrors the registry", () => {
 
   // scripts/codegen/sdk_ts_gen.py writes every op's `required_role` into the TS
   // SDK's generated table from the same registry the transport gates on.
-  const generated = new URL("../../../sdk/typescript/src/generated/ops.ts", import.meta.url).pathname;
-
   it("every namespace-gated entry matches sdk/typescript/src/generated/ops.ts", async () => {
-    // vitest runs on node; the frontend tsconfig carries no node types, so
-    // the module is reached through a computed specifier. A computed-specifier
-    // dynamic import is untyped (Promise<any>), so the cast names the two fs
-    // calls this test uses.
-    type Fs = { existsSync(p: string): boolean; readFileSync(p: string, enc: "utf8"): string };
-    const fs = (await import(/* @vite-ignore */ "node:" + "fs")) as Fs;
-    if (!fs.existsSync(generated)) return; // a frontend-only checkout has no SDK tree
-    const text = fs.readFileSync(generated, "utf8");
+    const text = await generatedOpsText();
+    if (text === null) return; // a frontend-only checkout has no SDK tree
     for (const [op, gate] of Object.entries(OP_MIN_ROLE)) {
       if (gate.by !== "namespace") continue; // /v1/admin/* handlers are not registry ops
       const m = new RegExp(`\\{ name: "${op.replace(".", "\\.")}",[^\\n]*? role: "([a-z_]+)"`).exec(text);

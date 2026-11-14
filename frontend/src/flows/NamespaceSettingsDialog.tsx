@@ -23,6 +23,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
 import { Loading, Unavailable } from "../components/ui";
+import { COST_CAP_EFFECT } from "../lib/costCap";
 
 const REPO_JOIN_RULES = [
   ["open", "Open", "Anyone in the org joins instantly as a reader."],
@@ -163,7 +164,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
       !(await confirmAction({
         title: `Delete namespace "${namespace}"?`,
         message:
-          "The namespace is deactivated. Existing memories and grants stay queryable for forensics. To permanently erase data, run an erasure.request separately.",
+          "The namespace is deactivated. Existing memories and grants stay queryable for forensics. To erase its data, switch to it and use Erase data on Audit log → Erasures before you delete it.",
         confirmLabel: "Delete namespace",
         danger: true,
       }))
@@ -274,7 +275,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     <div className="w-32">
                       <NumberField
                         id="ns-cost-cap"
-                        label="Daily LLM budget (USD)"
+                        label="Daily cost cap (USD)"
                         step="0.01"
                         min="0"
                         value={capDraft ?? String(ns.daily_cost_cap_usd ?? 0)}
@@ -291,10 +292,8 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     </span>
                   </div>
                   <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
-                    Once this namespace's upstream LLM spend over the last 24h reaches the cap, background entity
-                    extraction, code summaries and code-ingest descriptions skip, code.search skips query expansion, and
-                    memory.ask, code.ask and knowledge.synthesize answer without synthesis until spend drops. Writes are
-                    still accepted. 0 inherits the global default.
+                    The cap is on this namespace's upstream model and embedding spend over the last 24h.{" "}
+                    {COST_CAP_EFFECT} 0 inherits the global default.
                   </p>
                 </div>
               </>
@@ -368,10 +367,11 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                   <p id="ns-capture-hint" className="mt-0.5 ml-6 text-xs text-text-muted">
                     Off unless you tick it, so none of your text is kept. Tick this and loom records your{" "}
                     <em>search wording</em> plus the memory text and conversation turns it sends to the model while
-                    answering &mdash; which is what makes a bad recall diagnosable afterwards. With knowledge gaps on,
-                    questions several people asked that nothing answered are also shown to this namespace's admins.
-                    Counts, cost, latency, recall and quality scores are kept either way; those carry no text. Applies
-                    to this namespace only; takes effect within a minute.
+                    answering &mdash; which is what makes a bad recall diagnosable afterwards. When an operator of this
+                    deployment turns on unanswered questions, questions several people asked that nothing answered are
+                    listed in the Library for this namespace's admins. Counts, cost, latency, recall and quality scores
+                    are kept either way; those carry no text. Applies to this namespace only; takes effect within a
+                    minute.
                   </p>
                 </div>
               </>
@@ -381,8 +381,8 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
               <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
               <div className="flex items-start justify-between gap-3">
                 <p className="text-xs text-text-muted">
-                  Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
-                  erasure.request separately.
+                  Delete deactivates the namespace. Existing data stays queryable for forensics. To erase its data,
+                  switch to it and use Erase data on Audit log → Erasures before you delete it.
                 </p>
                 <Unavailable reason={canDelete ? null : lockedReason}>
                   <Button

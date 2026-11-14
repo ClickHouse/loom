@@ -64,7 +64,7 @@ describe("syncCounts", () => {
 
   it("explains the unconverted reasons, most first, keeping unknown ones as written", () => {
     expect(unconvertedDetail({ too_large: 1, no_extractor: 2, http_404: 1 })).toBe(
-      "no extractor for the format: 2; http_404: 1; over the size limit: 1",
+      "file type not readable: 2; http_404: 1; over the size limit: 1",
     );
   });
 });

@@ -913,7 +913,7 @@ describe("ReviewQueue", () => {
     expect(screen.getAllByText(/Promote publishes this rule to the namespace's knowledge/)).toHaveLength(2);
     expect(
       screen.getByText(
-        "Promote publishes this rule to the namespace's knowledge for support-bot, for every user; reads under agent * and knowledge.search also find it.",
+        "Promote publishes this rule to the namespace's knowledge for support-bot, for every user; reads across every agent and knowledge searches also find it.",
       ),
     ).toBeTruthy();
     expect(screen.getByText(/knowledge for every agent and every user\./)).toBeTruthy();

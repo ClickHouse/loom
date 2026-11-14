@@ -188,7 +188,13 @@ describe("branchHealth: one vocabulary for an index's health", () => {
       state: "warning",
     });
     expect(branchHealth(branch({ fast_tier_lag: 1 })).text).toBe("Behind 1 commit");
-    expect(branchHealth(branch({ scip_lag: 7 })).text).toBe("Behind 7 commits");
+    expect(branchHealth(branch({ fast_tier_lag: 1, scip_producer: "go" })).detail).toContain(
+      "search 1 commit behind, exact cross-file calls 0 commits behind",
+    );
+    expect(branchHealth(branch({ fast_tier_lag: -1 }))).toMatchObject({ text: "Freshness unknown", state: "neutral" });
+    expect(branchHealth(branch({ fast_tier_lag: -1, scip_lag: 7 })).text).toBe("Freshness unknown");
+    expect(branchHealth(branch({ scip_producer: "", scip_lag: -1 })).detail).not.toContain("cross-file");
+    expect(branchHealth(branch({ scip_lag: 7 })).text).toBe("Calls catching up");
     expect(branchHealth(branch({ indexed_at: hoursAgo(30), clone_head: "ffff00001111" }))).toMatchObject({
       text: "Stale",
       state: "warning",
@@ -217,7 +223,7 @@ describe("branchHealth: one vocabulary for an index's health", () => {
       "worst branch",
     );
     expect(worst.text).toBe("Behind 412 commits");
-    expect(worst.detail).toMatch(/^25\.8: 412 merged commits not yet indexed/);
+    expect(worst.detail).toMatch(/^25\.8: 412 commits merged but not yet indexed/);
     expect(worst.detail).toContain("abc123def456");
     expect(worstHealth([])).toBeNull();
   });

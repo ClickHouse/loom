@@ -353,8 +353,8 @@ export function WorkersPanel() {
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<unknown>(null);
   // workers.status is a /v1/admin/* handler: the JWT claim alone opens it. Without the
-  // claim there is no request — the panel reads "not reachable from here" (the dashboard
-  // never issues a request the token cannot make).
+  // claim there is no request — the panel's empty state says the page could not read the
+  // workers' status (the dashboard never issues a request the token cannot make).
   const whoami = useStore((s) => s.whoami);
   const canReadWorkers = canCall("admin/workers.status", null, whoami);
   // Refresh keeps the workers on screen, marked busy, until the read answers.
@@ -465,9 +465,7 @@ export function WorkersPanel() {
           icon="settings"
           title={rows.length === 0 ? "No workers reporting" : "Nothing to show"}
           description={
-            rows.length === 0
-              ? "Neither this process nor loom.worker_status has a worker pass on record. Either no workers colour is running, or this page cannot reach the workers' status."
-              : "All workers are disabled in config."
+            rows.length === 0 ? "No worker status came back for this page." : "All workers are disabled in config."
           }
           action={rows.length > 0 ? { label: "Show all", onClick: () => setShowAll(true) } : undefined}
         />
@@ -480,9 +478,8 @@ export function WorkersPanel() {
           size="small"
           text={
             <>
-              <strong>No worker has reported a pass yet.</strong> This process runs no workers
-              (LOOM_BACKGROUND_WORKERS=off under blue/green); the workers colour writes each finished pass to
-              loom.worker_status and nothing has landed there in the last 7 days.
+              <strong>No pass reported yet.</strong> This page found no finished pass in this process or in
+              loom.worker_status for the last 7 days.
             </>
           }
         />
@@ -628,13 +625,13 @@ export function WorkersPanel() {
 // revises more; an append-only bank or a polling read load shows up here before it shows
 // up as stale answers.
 const CLASS_INFO: Record<string, { label: string; blurb: string }> = {
-  create: { label: "Create", blurb: "New rows: set, set_from_messages, bulk_set, record.write" },
-  read: { label: "Read", blurb: "get, search, ask, list, context.pack, facts.*" },
-  update: { label: "Update", blurb: "Revisions of an existing key: update, update_by_id, apply" },
-  annotate: { label: "Annotate", blurb: "Edges and marks on existing rows: link, evidence, verify, pin" },
-  delete: { label: "Delete", blurb: "delete, clear, demote, redact" },
-  scratchpad: { label: "Scratchpad", blurb: "working_memory.* — the run's own notes" },
-  maintain: { label: "Maintain", blurb: "consolidate, dedup, reindex, sweep" },
+  create: { label: "Create", blurb: "New memories, one at a time, from messages or in bulk, and new records" },
+  read: { label: "Read", blurb: "Gets, searches, questions, lists, session context and facts" },
+  update: { label: "Update", blurb: "Revisions of an existing memory" },
+  annotate: { label: "Annotate", blurb: "Links, evidence, verification and pins on existing memories" },
+  delete: { label: "Delete", blurb: "Deletes, clears, demotions and redactions" },
+  scratchpad: { label: "Scratchpad", blurb: "A run's working notes" },
+  maintain: { label: "Maintain", blurb: "Consolidation, deduplication, reindexing and sweeps" },
   other: { label: "Other", blurb: "Anything not classified above" },
 };
 
@@ -714,7 +711,7 @@ export function OpMixPanel() {
           const check = r.checks.find((c) => c.name === "op_mix");
           // Every answer carries the op_mix check: one without it is a failed read.
           if (check) setOp({ check, data: parseOpMix(check.data), scope: asked });
-          else setError(new Error("ops.health answered without its op_mix check"));
+          else setError(new Error("The health check answered without the operation mix"));
         })
         .catch((e) => {
           if (!live()) return;
@@ -774,7 +771,7 @@ export function OpMixPanel() {
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
-        description="ops.health needs an org-admin token."
+        description="Only an org admin can see the operation mix."
       />,
     );
   }

@@ -67,7 +67,7 @@ export function PickedFile({ file, verdict }: { file: File; verdict: FileVerdict
             verdict.available === false
               ? `${verdict.format}: not read here`
               : verdict.available === null
-                ? `${verdict.format}: extractor not answering`
+                ? `${verdict.format}: can't check now`
                 : verdict.format
           }
         />

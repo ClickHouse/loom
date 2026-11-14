@@ -53,7 +53,7 @@ describe("fileVerdict", () => {
     expect(fileVerdict(file("blank.md", "", 0), FORMATS).refusal).toBe("blank.md is empty.");
     const deck = fileVerdict(file("deck.pptx"), FORMATS);
     expect([deck.format, deck.available]).toEqual(["pptx", false]);
-    expect(deck.refusal).toMatch(/No extractor on this deployment reads pptx/);
+    expect(deck.refusal).toMatch(/This deployment cannot read pptx files/);
   });
 
   it("refuses nothing whose extractor the server could not ask just now", () => {

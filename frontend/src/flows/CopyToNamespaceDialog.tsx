@@ -104,7 +104,8 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
           <p className="text-sm text-text-muted leading-relaxed">
             Copies <span className="font-mono text-text">{memoryKey}</span> from{" "}
             <span className="font-mono text-text">{source.namespace}</span> into another namespace. The original stays
-            where it is; the copy is re-embedded under the target's own embedder and keeps a link back to its source.
+            where it is; the copy becomes searchable in the target namespace once it is indexed there, and keeps a link
+            back to its source.
           </p>
           <Select
             id="copy-target-namespace"

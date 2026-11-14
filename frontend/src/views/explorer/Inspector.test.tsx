@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "../../test/rtl";
+import { act, render, screen, waitFor } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
@@ -183,6 +183,17 @@ describe("Inspector lists", () => {
   });
 });
 
+describe("Inspector hints", () => {
+  it("says how each typed fact was found, in the words its badge uses", async () => {
+    mount();
+    const about = await screen.findByRole("button", { name: "About Typed facts" }, { timeout: 2000 });
+    act(() => about.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "with how each was found (extracted, inferred or from a facet), when it was last seen and the source rows behind it.",
+    );
+  });
+});
+
 describe("Inspector failed reads", () => {
   it("says the facts and the memories failed to load, never that there are none, and Retry reads again", async () => {
     vi.mocked(listFacts).mockRejectedValueOnce(new Error("down"));
@@ -190,7 +201,7 @@ describe("Inspector failed reads", () => {
     mount();
     expect(await screen.findByText("Couldn't load the facts", {}, { timeout: 2000 })).toBeInTheDocument();
     expect(screen.getByText("Couldn't load the memories")).toBeInTheDocument();
-    expect(screen.queryByText(/No typed triple names this entity/)).toBeNull();
+    expect(screen.queryByText(/No typed fact names this entity/)).toBeNull();
     const before = vi.mocked(listFacts).mock.calls.length;
     screen.getAllByRole("button", { name: "Retry" })[0].click();
     await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
@@ -203,11 +214,11 @@ describe("Inspector failed reads", () => {
     // This mount's own read, settled, before the switch.
     await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(before), { timeout: 2000 });
     expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "bench" });
-    expect(await screen.findByText(/No typed triple names this entity/)).toBeInTheDocument();
+    expect(await screen.findByText(/No typed fact names this entity/)).toBeInTheDocument();
     const read = vi.mocked(listFacts).mock.calls.length;
     view.rerender(inspector({ identity: { ...identity, namespace: "other" } }));
     // The last namespace's answer goes; the panel reads the new one.
-    await waitFor(() => expect(screen.queryByText(/No typed triple names this entity/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/No typed fact names this entity/)).toBeNull());
     await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBeGreaterThan(read), { timeout: 2000 });
     expect(vi.mocked(listFacts).mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "other" });
   });
@@ -223,7 +234,7 @@ describe("Inspector failed reads", () => {
     const view = mount();
     await waitFor(() => expect(vi.mocked(listFacts).mock.calls.length).toBe(before + 1), { timeout: 2000 });
     view.rerender(inspector({ model: { ...model, nodes: new Map(model.nodes) } }));
-    expect(await screen.findByText(/No typed triple names this entity/, {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(await screen.findByText(/No typed fact names this entity/, {}, { timeout: 2000 })).toBeInTheDocument();
     expect(screen.queryByText("Loading facts")).toBeNull();
   });
 

@@ -444,7 +444,7 @@ describe("StructureTab", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add category" }));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        "Added Legal, but category search cannot find it: the embedder failed",
+        "Added Legal, but category search cannot find it: it could not be indexed",
         "info",
       ),
     );

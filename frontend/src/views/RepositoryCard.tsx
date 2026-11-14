@@ -31,7 +31,7 @@ import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
 import { stageLabel } from "../lib/codeStage";
-import { freshness, type FreshTone } from "../lib/codeFreshness";
+import { commits, freshness, type FreshTone } from "../lib/codeFreshness";
 import { failingTiers, failureSummary, kindWord, tierName, unavailableTiers } from "../lib/tierHealth";
 import {
   bindableRecords,
@@ -97,9 +97,14 @@ const BUILDING = new Set(["queued", "cloning", "indexing", "embedding"]);
 const DAY_MS = 24 * 3600_000;
 const short = (sha: string) => sha.slice(0, 12);
 
+/** "N commits", or "an unknown number of commits" when the server answers -1. */
+const lagWords = (n: number) => (n < 0 ? "an unknown number of commits" : commits(n));
+
 function heads(b: CodeRepoSummary): string {
   const fetched = b.clone_head && b.clone_head !== b.git_head ? `, fetched ${short(b.clone_head)}` : "";
-  return `Indexed ${short(b.git_head)}${fetched}; fast tier ${b.fast_tier_lag} behind, compiler tier ${b.scip_lag} behind.`;
+  // No compiler tier (no producer): the repository has no exact cross-file calls to lag.
+  const calls = b.scip_producer ? `, exact cross-file calls ${lagWords(b.scip_lag)} behind` : "";
+  return `Indexed ${short(b.git_head)}${fetched}; search ${lagWords(b.fast_tier_lag)} behind${calls}.`;
 }
 
 /** A branch's index health, worst cause first. */
@@ -130,14 +135,24 @@ export function branchHealth(b: CodeRepoSummary): Health {
     return { text: "Not indexed", state: "neutral", rank: 3, detail: "Nothing is indexed on this branch yet." };
   if (b.searchable === false)
     return { text: "Not searchable", state: "neutral", rank: 2, detail: building?.title ?? "Not searchable yet." };
-  const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
-  if (behind > 0)
+  // The server answers -1 when it can't read the clone: say so rather than up to date or behind.
+  if (b.fast_tier_lag < 0)
     return {
-      text: `Behind ${fmtInt(behind)} commit${behind === 1 ? "" : "s"}`,
+      text: "Freshness unknown",
+      state: "neutral",
+      rank: 2,
+      detail: `${freshness(b).detail}. ${heads(b)}`,
+    };
+  if (b.fast_tier_lag > 0)
+    return {
+      text: `Behind ${lagWords(b.fast_tier_lag)}`,
       state: "warning",
       rank: 5,
       detail: `${freshness(b).detail}. ${heads(b)}`,
     };
+  // Search is current and only the exact cross-file calls lag: the header's words too.
+  if (b.scip_lag > 0)
+    return { text: "Calls catching up", state: "warning", rank: 5, detail: `${freshness(b).detail}. ${heads(b)}` };
   const at = parseChTime(b.indexed_at);
   if (at && Date.now() - at.getTime() > DAY_MS && b.clone_head && b.clone_head !== b.git_head)
     return {
@@ -150,7 +165,7 @@ export function branchHealth(b: CodeRepoSummary): Health {
     text: "Up to date",
     state: "success",
     rank: 0,
-    detail: `The index matches the fetched branch tip. ${heads(b)}`,
+    detail: `The index matches the last commit Loom fetched from the branch. ${heads(b)}`,
   };
 }
 
@@ -419,7 +434,9 @@ function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Ro
 }
 
 function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): TableRowType {
-  const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
+  // The column counts search's lag only; a calls-only lag is the badge's "Calls catching up",
+  // and a lag the server can't tell (-1) shows no count.
+  const behind = Math.max(0, b.fast_tier_lag);
   const counts = b.counts?.code_files ? b.counts : null;
   const items = branchMenu(b, actions, busy);
   return {

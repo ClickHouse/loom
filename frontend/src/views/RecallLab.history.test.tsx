@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SearchTraceLogRow } from "../api";
@@ -87,10 +87,20 @@ describe("Recall history rows", () => {
     expect(screen.getByText("0.450")).toBeInTheDocument();
   });
 
-  it("names the operation that ran the search", async () => {
+  it("says in plain words how the search was asked", async () => {
     listSearchTraceLog.mockResolvedValue({ rows: [row({ operation: "context.pack" })] });
     await openHistory();
-    expect(await screen.findByText("via context.pack")).toBeInTheDocument();
+    expect(await screen.findByText("via session context")).toBeInTheDocument();
+  });
+
+  it("calls an operation it has no words for another call, and names it in the tooltip", async () => {
+    listSearchTraceLog.mockResolvedValue({ rows: [row({ operation: "facts.search" })] });
+    await openHistory();
+    const badge = await screen.findByText("via another call");
+    const target = badge.closest<HTMLElement>('[role="note"]');
+    if (!target) throw new Error("the badge has no tooltip target");
+    act(() => target.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("(facts.search)");
   });
 
   it("omits the operation chip on a row written before the column existed", async () => {

@@ -126,7 +126,7 @@ function StatusBadge({ status, inferred }: { status: RunStatus; inferred?: boole
   return (
     <TipBadge
       text="Idle-closed"
-      tip="Loom inferred this run from a connection; closed on idle, not by run.complete — not a reported outcome"
+      tip="Loom inferred this run from a connection and closed it when the connection went idle; the agent reported no outcome"
     />
   );
 }
@@ -183,18 +183,18 @@ export function hasNoMemoryActivity(r: RunRow): boolean {
  * person who can fix the caller, so every empty says who fills it and how, instead of a
  * dash. */
 export const EMPTY_WHY = {
-  used: "none reported — only the agent can say which memories it relied on; it names them in run.complete(memories_used)",
-  written: "none — a write counts here when memory.set, memory.update or memory.link carried this run_id",
-  recalledOff: "n/a — per-query recall telemetry (LOOM_SEARCH_TRACE_LOG_ENABLED) is off on this deployment",
+  used: "none reported — only the agent can say which memories it relied on; it lists them when it completes the run",
+  written: "none — a memory write counts here when the agent tags it with the run",
+  recalledOff: "n/a — this deployment does not record searches; an operator can turn that on",
   recalledZero:
-    "the trace log is on and no memory.search carried this run — a read labels its run with the X-Loom-Run-Id header (the SDK's run scope and the plugin do), or the caller lists what it recalled in run.complete(recalled_keys)",
-  observations: "observe.record rows tagged with this run_id (the plugin's capture hook writes them)",
+    "no search was recorded under this run: a search counts here when the agent tags it with the run, as the coding-agent plugins and the SDK's run scope do, or lists what it recalled when it completes the run",
+  observations: "observations tagged with this run (the coding-agent plugins tag what they capture)",
   noSession:
-    "run.begin carried no top-level session_id, so model turns and cost cannot be joined (a session_id inside metadata is not read)",
+    "the run was started without a session (a session given only in the run's metadata is not read), so model turns and cost cannot be matched to it",
   sessionCost:
-    "the turns the run's session made while the run was open, from the usage the Stop hook posts (cost.record_turns)",
-  budget: "set by run.begin(budget_usd, budget_seconds); a signal for the agent, never a stop",
-  unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward budget_usd",
+    "the model turns the run's session made while the run was open, from the usage reported after each prompt (the Claude Code plugin reports it; an agent can post its own)",
+  budget: "the budget the agent set when it started the run; a signal for the agent, never a stop",
+  unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward the budget",
 } as const;
 
 /** Dollars to the 6 places cost and budgets are kept to, so a spend just past its budget
@@ -401,7 +401,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
               {inferred && (
                 <TipBadge
                   text="Auto"
-                  tip="Loom inferred this run from a connection; the agent did not declare it with run.begin"
+                  tip="Loom inferred this run from a connection; the agent did not start it itself"
                 />
               )}
             </div>
@@ -965,7 +965,7 @@ export function Runs() {
             : {
                 title: "No runs yet",
                 description: writes
-                  ? "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when a connected agent starts one; the Claude Code plugin starts one on a session's first prompt."
+                  ? "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when a connected agent starts one; the coding-agent plugins start one on a session's first prompt."
                   : "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when someone with writer access connects an agent that starts one.",
                 ...(writes ? { connect: "primary" as const } : {}),
               })}
@@ -1071,7 +1071,7 @@ export function Runs() {
               state="neutral"
               size="small"
               text={
-                'This run was inferred from a connection (implicit MCP session) that did no memory work — it recalled and wrote nothing, and closed on idle rather than by run.complete. Its "completed" status is not a reported outcome.'
+                'This run was inferred from a connection that did no memory work — it recalled and wrote nothing, and closed on idle rather than being completed by the agent. Its "completed" status is not a reported outcome.'
               }
             />
           )}
@@ -1079,9 +1079,9 @@ export function Runs() {
             <Alert
               state="neutral"
               size="small"
-              text={`This run reported no memory activity: the caller opened it with run.begin and closed it with run.complete${
+              text={`This run reported no memory activity: the agent started it and completed it${
                 open.duration_ms > 0 ? ` ${fmtDuration(open.duration_ms)} later` : ""
-              }, naming nothing it relied on, and no write carried its run_id. The fields below say what each one would have needed.`}
+              }, naming nothing it relied on, and no write was tagged with this run. The fields below say what each one would have needed.`}
             />
           )}
           {replayed?.user_request && (

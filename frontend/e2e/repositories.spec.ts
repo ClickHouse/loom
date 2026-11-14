@@ -210,7 +210,7 @@ test.describe("desktop 1360", () => {
     await expect(page.getByRole("heading", { name: "Index your first repository" })).toBeVisible();
     await expect(page.getByText("Add a Git remote and a branch")).toBeVisible();
     await expect(page.getByText("Loom indexes it in the background")).toBeVisible();
-    await expect(page.getByText("Agents search it with code.search")).toBeVisible();
+    await expect(page.getByText("Agents search it", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Add repository" })).toHaveCount(1);
   });
 

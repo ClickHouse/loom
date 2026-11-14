@@ -28,7 +28,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
 import { PopoverTrigger } from "../components/ui/Menu";
-import { fieldError, ListRow, LoadingSkeleton, PageHeader, Unavailable } from "../components/ui";
+import { fieldError, ListRow, LoadingSkeleton, PageHeader, TipTarget, Unavailable } from "../components/ui";
 import { GatedIconButton } from "../components/ui/GatedIconButton";
 import { useOpReason } from "../lib/useOpReason";
 import { callReason } from "../lib/callReason";
@@ -463,7 +463,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
           icon="information"
           size="xs"
           label="What counts as a read"
-          tooltip="Counts every way a client reads the profile: a plugin session start, an MCP connect, a typed “use loom”, or the SDK. Nothing in the last 7 days."
+          tooltip="Counts every way a client reads the profile: the session context a plugin loads, an MCP connect, a typed “use loom”, a chat bot's structured profile, or the SDK. Nothing in the last 7 days."
         />
       </span>
     );
@@ -495,9 +495,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
           <div key={e.agent} className="flex items-center justify-between gap-3 px-2 py-1">
             <span className="min-w-0">
               <span className="font-mono text-xs">{e.agent}</span>
-              {e.operations.length > 0 && (
-                <span className="block text-xs text-text-muted">via {e.operations.map(readPathLabel).join(", ")}</span>
-              )}
+              {e.operations.length > 0 && <ReadPaths ops={e.operations} />}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
               {e.event_count}× · <ListTime time={e.last_activated_at} quiet={false} />
@@ -509,20 +507,45 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   );
 }
 
-/** How a client read the profile, in the words the page uses for that path. An op this
- * build does not know shows under its own name. */
-export function readPathLabel(op: string): string {
+/** "via …" for a client's read paths: the known ones in the page's words, the rest as
+ *  "another call" with the operations in its tooltip. */
+function ReadPaths({ ops }: { ops: string[] }) {
+  const known: string[] = [];
+  const unknown: string[] = [];
+  for (const op of ops) {
+    const label = readPathLabel(op);
+    if (label === null) unknown.push(op);
+    else known.push(label);
+  }
+  return (
+    <span className="block text-xs text-text-muted">
+      via {known.join(", ")}
+      {unknown.length > 0 && (
+        <>
+          {known.length > 0 && ", "}
+          <TipTarget tip={unknown.join(", ")}>{unknown.length === 1 ? "another call" : "other calls"}</TipTarget>
+        </>
+      )}
+    </span>
+  );
+}
+
+/** How a client read the profile, in the words the page uses for that path; null for an op
+ *  this build does not know, which the list shows as "another call" with the op in a tooltip. */
+export function readPathLabel(op: string): string | null {
   switch (op) {
     case "context.pack":
-      return "plugin session start";
+      return "session context";
     case "mcp.initialize":
       return "MCP connect";
     case "loom_activate":
       return "“use loom”";
     case "profile.render":
       return "SDK";
+    case "profile.structured":
+      return "structured profile";
     default:
-      return op;
+      return null;
   }
 }
 

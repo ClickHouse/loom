@@ -70,7 +70,7 @@ describe("Policies mode badge", () => {
     vi.mocked(api.listPolicies).mockResolvedValueOnce({ rules: [], mode: "enforce" });
     render(<Policies />);
     expect(await screen.findByText("mode: enforce")).toBeTruthy();
-    expect(screen.getByText(/A deny blocks the call with 403 POLICY_FORBIDDEN/)).toBeTruthy();
+    expect(screen.getByText(/A deny blocks the call, and the caller is told a policy refused it/)).toBeTruthy();
   });
 });
 

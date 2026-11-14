@@ -28,7 +28,7 @@ const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) =
 const RepoDocViewer = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocViewer })));
 
 export const REPO_DOCS_HINT =
-  "Agents working in this repository's checkout find these through loom_search, and its orientation context pack lists them.";
+  "Your agents working in this repository's checkout find these with Loom search, and the orientation they get for the repository lists them.";
 const FIELDS = ["source_uri", "title", "description", "ingested_at", "has_blob", "original_filename"];
 const LIMIT = 20;
 const READS_DAYS = 7;

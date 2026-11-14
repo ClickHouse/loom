@@ -145,8 +145,12 @@ describe("WorkersPanel", () => {
     await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
     expect(screen.getByText("No workers reporting")).toBeInTheDocument();
     expect(screen.queryByText("All systems running")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/loom\.worker_status/);
-    expect(screen.getByText(/No pass reported yet/)).toBeInTheDocument();
+    // Configured on, no pass yet: the line says what was read, and names no cause.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No pass reported yet. This page found no finished pass in this process or in loom.worker_status for the last 7 days.",
+    );
+    // The row says it in the same words.
+    expect(screen.getAllByText(/No pass reported yet/)).toHaveLength(2);
   });
 
   it("keeps the workers on screen, marked busy, while Refresh reads again", async () => {
@@ -263,14 +267,14 @@ describe("WorkersPanel", () => {
     respond({ workers: {}, store: { rows: 0, reporters: [] } });
     render(<WorkersPanel />);
     await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
-    expect(screen.getByText(/Neither this process nor loom\.worker_status/)).toBeInTheDocument();
+    expect(screen.getByText("No worker status came back for this page.")).toBeInTheDocument();
   });
 
   it("renders a malformed body as no rows instead of throwing", async () => {
     respond({ workers: { x: 5, y: null, z: "up" }, store: "loom.worker_status" });
     render(<WorkersPanel />);
     await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
-    expect(screen.getByText(/Neither this process nor loom\.worker_status/)).toBeInTheDocument();
+    expect(screen.getByText("No worker status came back for this page.")).toBeInTheDocument();
     cleanup();
 
     // A list whose entries are not named objects, then a body that is not an object at all.

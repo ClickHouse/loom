@@ -135,7 +135,7 @@ only MCP session runs are closed for idleness. Complete or cancel it with
 `run.complete` if it matters.
 
 A cost budget (`budget_usd`) needs a `session_id`, because a run's spend is the
-turns its session made while the run was open. A sandboxed agent has no Claude
-Code or Codex plugin recording those turns: to use a cost budget, it must post
-its own with `cost.record_turns` under that session. See
+turns its session made while the run was open. The Claude Code plugin records
+those turns; a sandboxed agent has no plugin recording them, so to use a cost
+budget it posts its own with `cost.record_turns` under that session. See
 [runs](../../docs/features/runs.md#budgets).

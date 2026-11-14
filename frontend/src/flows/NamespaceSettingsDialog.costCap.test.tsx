@@ -36,7 +36,7 @@ async function openDialog(onOpenChange: (v: boolean) => void = () => undefined) 
   vi.mocked(api.getNamespace).mockResolvedValue(row("ns", 5));
   const view = render(<NamespaceSettingsDialog open onOpenChange={onOpenChange} org="dev" namespace="ns" />);
   await act(async () => undefined);
-  const input = screen.getByLabelText("Daily LLM budget (USD)");
+  const input = screen.getByLabelText("Daily cost cap (USD)");
   if (!(input instanceof HTMLInputElement)) throw new Error("cost-cap field is not an input");
   input.focus();
   return { input, ...view };
@@ -94,7 +94,7 @@ describe("NamespaceSettingsDialog cost cap", () => {
     vi.mocked(api.getNamespace).mockResolvedValue(row("other", 3));
     rerender(<NamespaceSettingsDialog open onOpenChange={() => undefined} org="dev" namespace="other" />);
     await act(async () => undefined);
-    expect(screen.getByLabelText("Daily LLM budget (USD)")).toHaveValue(3);
+    expect(screen.getByLabelText("Daily cost cap (USD)")).toHaveValue(3);
   });
 
   it("a draft abandoned by closing is gone on reopen and never sent", async () => {
@@ -104,7 +104,7 @@ describe("NamespaceSettingsDialog cost cap", () => {
     await act(async () => undefined);
     rerender(<NamespaceSettingsDialog open onOpenChange={() => undefined} org="dev" namespace="ns" />);
     await act(async () => undefined);
-    const reopened = screen.getByLabelText("Daily LLM budget (USD)");
+    const reopened = screen.getByLabelText("Daily cost cap (USD)");
     expect(reopened).toHaveValue(5);
     reopened.focus();
     await act(async () => fireEvent.blur(reopened));

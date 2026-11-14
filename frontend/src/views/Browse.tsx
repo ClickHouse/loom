@@ -324,7 +324,8 @@ export function Browse() {
         </span>
       </PageHeader>
       <p className="text-sm text-text-muted mb-3">
-        Join public namespaces in your org, or invite people into the ones you manage.
+        A namespace is a project's or an agent's memory. Join public namespaces in your org, or invite people into the
+        ones you manage.
       </p>
       {/* The Repositories hint: under the description, or inside the folded code section when there is one. */}
       {managedCode.length === 0 && repoHint && <div className="mb-3">{repoHint}</div>}

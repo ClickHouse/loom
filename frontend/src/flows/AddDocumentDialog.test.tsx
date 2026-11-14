@@ -160,7 +160,7 @@ describe("AddDocumentDialog", () => {
     const { dialog } = mount();
     await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
     await pick("deck.pptx");
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("No extractor on this deployment reads pptx");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This deployment cannot read pptx files");
     expect(within(dialog).getByText("pptx: not read here")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Upload" })).toBeDisabled();
     expect(uploadKnowledgeFile).not.toHaveBeenCalled();
