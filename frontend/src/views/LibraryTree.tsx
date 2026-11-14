@@ -463,9 +463,7 @@ function NewCollectionForm({
   const [busy, setBusy] = useState(false);
   const form = useRef<HTMLFormElement | null>(null);
   const field = useRef<HTMLInputElement | null>(null);
-  // The focus is still the form's: in it, or dropped to the page. Elsewhere, the person moved
-  // on while the create was sent: the focus stays where they put it, and what was made is only
-  // listed and announced, not opened.
+  // The focus is still the form's: in it, or dropped to the page.
   const focusIsOurs = () => {
     const active = document.activeElement;
     return !active || active === document.body || !!form.current?.contains(active);
@@ -488,7 +486,8 @@ function NewCollectionForm({
       return;
     }
     announceCreated(r, trimmed, org);
-    // A form a resize took away moved no one on: the page decides, as for any create.
+    // Focus moved elsewhere: the person moved on, and what was made is only listed and announced.
+    // A form already gone (a resize, an org switch, leaving the Library): the page decides.
     const stayed = form.current === null || focusIsOurs();
     onClose(stayed);
     if (stayed) onCreated(r.namespace, version, NEW_COLLECTION_FOCUS);

@@ -1394,73 +1394,6 @@ describe("the Library on a collection", () => {
       expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
     });
 
-    it("lists, and does not open, what was made once the person picked another place", async () => {
-      resizable();
-      const answer = await createInTree();
-      const tree = screen.getByRole("navigation", { name: "Library places" });
-      const mine = within(tree).getByRole("link", { name: "My files" });
-      fireEvent.click(mine);
-      await settle();
-      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
-      // The arrival App makes on a move focuses the row picked.
-      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
-      await waitFor(() => expect(mine).toHaveFocus());
-      api.listCollections.mockResolvedValue({
-        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
-        next_cursor: null,
-      });
-      await answer(q4);
-      await settle();
-      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
-      // Listed inside col-q3, which the earlier visit left open.
-      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
-      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
-      expect(mine).toHaveFocus();
-    });
-
-    it("lists, and does not open, what the tree made once the person went to the search field", async () => {
-      resizable();
-      const answer = await createInTree();
-      const search = screen.getByRole("textbox", { name: "Search library" });
-      act(() => search.focus());
-      const at = location.search;
-      api.listCollections.mockResolvedValue({
-        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
-        next_cursor: null,
-      });
-      await answer(q4);
-      await settle();
-      expect(location.search).toBe(at);
-      expect(search).toHaveFocus();
-      const tree = screen.getByRole("navigation", { name: "Library places" });
-      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
-      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
-    });
-
-    it("leaves the focus on the row picked when the tree's create fails after the pick", async () => {
-      resizable();
-      let fail: (e: Error) => void = () => {};
-      api.createCollection.mockReturnValue(new Promise((_, reject) => (fail = reject)));
-      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
-      history.replaceState(null, "", "/library?collection=col-q3");
-      render(<Documents />, { container: inMain() });
-      const tree = await screen.findByRole("navigation", { name: "Library places" });
-      await within(tree).findByRole("link", { name: "col-q3" });
-      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
-      fireEvent.change(screen.getByRole("textbox", { name: /^New collection in/ }), { target: { value: "Q4" } });
-      fireEvent.click(screen.getByRole("button", { name: "Create" }));
-      const mine = within(tree).getByRole("link", { name: "My files" });
-      fireEvent.click(mine);
-      await settle();
-      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
-      await waitFor(() => expect(mine).toHaveFocus());
-      await act(async () => fail(new Error("refused")));
-      await settle();
-      expect(mine).toHaveFocus();
-      // The form keeps what was typed, for another try.
-      expect(screen.getByRole("textbox", { name: /^New collection in/ })).toHaveValue("Q4");
-    });
-
     it("reads the list once for a tree create that opens what it made", async () => {
       resizable();
       const answer = await createInTree();
@@ -1670,6 +1603,76 @@ describe("the Library on a collection", () => {
       // Nothing opens; the other org's list reads again, as after any write.
       expect(location.search).toBe(at);
       expect(api.listCollections).toHaveBeenLastCalledWith("other", expect.anything());
+    });
+  });
+
+  describe("a create answered after the person moved on", () => {
+    it("lists, and does not open, what was made once the person picked another place", async () => {
+      resizable();
+      const answer = await createInTree();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      const mine = within(tree).getByRole("link", { name: "My files" });
+      fireEvent.click(mine);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      // The arrival App makes on a move focuses the row picked.
+      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
+      await waitFor(() => expect(mine).toHaveFocus());
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      // Listed inside col-q3, which the earlier visit left open.
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+      expect(mine).toHaveFocus();
+    });
+
+    it("lists, and does not open, what the tree made once the person went to the search field", async () => {
+      resizable();
+      const answer = await createInTree();
+      const search = screen.getByRole("textbox", { name: "Search library" });
+      act(() => search.focus());
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      expect(search).toHaveFocus();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("button", { name: "New collection" })).not.toHaveFocus();
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
+    it("leaves the focus on the row picked when the tree's create fails after the pick", async () => {
+      resizable();
+      let fail: (e: Error) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection in/ }), { target: { value: "Q4" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      const mine = within(tree).getByRole("link", { name: "My files" });
+      fireEvent.click(mine);
+      await settle();
+      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
+      await waitFor(() => expect(mine).toHaveFocus());
+      await act(async () => fail(new Error("refused")));
+      await settle();
+      expect(mine).toHaveFocus();
+      // The form keeps what was typed, for another try.
+      expect(screen.getByRole("textbox", { name: /^New collection in/ })).toHaveValue("Q4");
     });
   });
 
