@@ -340,18 +340,20 @@ copies a row into another namespace, with provenance, for a caller who is admin 
 A `definition` is promoted from its live namespace-wide row (agent, user and session
 `'-'`, `active` and not past its `expires_at` or `valid_to`) under a `definition/` key, to
 that same key; else 422 `DEFINITION_PROMOTION_REFUSED`. Its value is a JSON object with a
-string `term` and, optionally, a list of string `aliases`; else 422 `VALIDATION_FAILED`.
-The promotion names the hash it approves (`approved_sha256`, the row's `content_sha256`),
-refused without it (422 `VALIDATION_FAILED`) and with 409 `PRECONDITION_FAILED` when the
-text no longer has it. It is refused when the value is labelled or reads as `medium` or
-`high` (422 `SENSITIVE_DEFINITION_REFUSED`), when another live shared definition holds its
-term or an alias (409 `DEFINITION_NAME_TAKEN`, names compared folded: format characters
-dropped, NFKC, whitespace collapsed, case-folded), and when it adds a key past
-`memory_term_leg_max_definitions`, or the namespace is already past it (409
-`DEFINITION_CEILING`); demoting a definition gives back its name and its place. The
-token's actor is its `promoted_by`: `approver` and `promoted_from_candidate_id` are
-ignored and named in `ignored_args`, and no close shared row under another key refuses it.
-`learnings.review` promotes no candidate of type `definition`.
+non-empty string `term` and, optionally, a list of string `aliases`; else 422
+`VALIDATION_FAILED`. The promotion names the hash it approves (`approved_sha256`, the
+row's `content_sha256`), refused without it (422 `VALIDATION_FAILED`) and with 409
+`PRECONDITION_FAILED` when the text no longer has it. It is refused when the value is
+labelled `medium`, or reads as `medium` or `high` (422 `SENSITIVE_DEFINITION_REFUSED`; a
+`high` label answers `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row), when
+another live shared definition holds its term or an alias (409 `DEFINITION_NAME_TAKEN`,
+names compared folded: format characters dropped, NFKC, whitespace collapsed,
+case-folded), and when it adds a key past `memory_term_leg_max_definitions`, or the
+namespace is already past it (409 `DEFINITION_CEILING`); demoting a definition gives back
+its name and its place. The token's actor is its `promoted_by`: `approver` and
+`promoted_from_candidate_id` are ignored and named in `ignored_args`, and no close shared
+row under another key refuses it. `learnings.review` promotes no candidate of type
+`definition`.
 
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an

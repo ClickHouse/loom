@@ -99,10 +99,10 @@ const person: WhoAmI = {
 const identity = { org: "dev", namespace: "team", agent: "loom-ui" };
 const row = { ...identity, agent: "claude-desktop", user_id: "alice", session_id: "sess-7" };
 
-async function open(role: MyNamespaceEntry["role"], detail: MemoryDetail = LIVE) {
+async function open(role: MyNamespaceEntry["role"], detail: MemoryDetail = LIVE, memoryKey = "coffee_pref") {
   vi.mocked(api.getMemory).mockResolvedValue(detail);
   useStore.setState({ authed: true, whoami: person, myNamespaces: [grant(role)], identity });
-  render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+  render(<MemoryInspector identity={identity} memoryKey={memoryKey} onClose={() => {}} onChanged={() => {}} />);
   await screen.findByText("oat milk, no sugar");
 }
 
@@ -564,19 +564,29 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
   });
 
-  it("offers no share for a definition that is not the namespace-wide row", async () => {
-    await open("admin", { ...LIVE, memory_type: "definition", agent: "bot", session_id: "s1" });
+  it.each([
+    ["is not the namespace-wide row", { agent: "bot", session_id: "s1" }],
+    ["is labelled medium", { agent: "-", user_id: "-", session_id: "-", sensitivity: "medium" }],
+    ["is not active", { agent: "-", user_id: "-", session_id: "-", status: "rejected" }],
+  ])("offers no share for a definition that %s", async (_why, over) => {
+    await open("admin", { ...LIVE, ...over, memory_type: "definition" }, "definition/arr");
+    expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
+  });
+
+  it("offers no share for a definition outside a definition/ key", async () => {
+    const shared = { agent: "-", user_id: "-", session_id: "-" };
+    await open("admin", { ...LIVE, ...shared, memory_type: "definition" }, "arr_note");
     expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
   });
 
   it("shares a definition with the hash of the text it shows", async () => {
     const shared = { agent: "-", user_id: "-", session_id: "-" };
-    await open("admin", { ...LIVE, ...shared, memory_type: "definition", content_sha256: "abc123" });
+    await open("admin", { ...LIVE, ...shared, memory_type: "definition", content_sha256: "abc123" }, "definition/arr");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
     await waitFor(() =>
       expect(lc.shareMemory).toHaveBeenCalledWith(
         expect.objectContaining({ agent: "-", user_id: "-", session_id: "-" }),
-        "coffee_pref",
+        "definition/arr",
         "abc123",
       ),
     );

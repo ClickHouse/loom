@@ -12,7 +12,6 @@ let the two go out of sync.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any
 
@@ -200,12 +199,16 @@ async def tombstone_shared_embedding(
 async def shared_definitions(
     org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The live shared definitions' keys and decoded values (None for text that is not
-    JSON), at most `limit`, read strongly."""
+    """The live shared definitions' keys with the `term` and `aliases` their values hold
+    (a term that is not a string reads as '', aliases that are not strings as []), at most
+    `limit`, read strongly. Only those two fields leave the store, whatever a value's
+    size."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
+    return await ch.query_all(
         """
-        SELECT memory_key, value
+        SELECT memory_key,
+               if(JSONType(value, 'term') = 'String', JSONExtractString(value, 'term'), '') AS term,
+               JSONExtract(value, 'aliases', 'Array(String)') AS aliases
         FROM loom.shared FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
@@ -222,11 +225,3 @@ async def shared_definitions(
             "prefix": DEFINITION_KEY_PREFIX,
         },
     )
-    return [{**r, "value": _decoded(r["value"])} for r in rows]
-
-
-def _decoded(text: str) -> Any:
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None

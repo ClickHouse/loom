@@ -300,8 +300,8 @@ async def test_a_definition_is_promoted_with_the_hash_get_serves(
 async def test_a_name_is_held_until_its_definition_is_demoted(
     control_plane_url: str, mint_test_token
 ) -> None:
-    """Against loom.shared FINAL: a name another definition holds is refused, the
-    definition's own revision is not, and demoting it gives the name back."""
+    """Through the server: a name another definition holds is refused, the definition's
+    own revision is not, and demoting it gives the name back."""
     from loom import Agent
     from loom.errors import LoomError
 

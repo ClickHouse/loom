@@ -19,6 +19,7 @@ from server.memory.app import promote
 from server.memory.domain.definitions import definition_names, fold_name
 from server.memory.store import MemoryRow, shared
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 KEY = "definition/arr"
 VALUE = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
@@ -53,8 +54,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return state["row"]
 
     async def definitions(org: str, namespace: str, limit: int, **_k: Any) -> list[dict]:
-        # Decoded, as the store answers them.
-        rows = [{"memory_key": k, "value": v} for k, v in sorted(state["shared"].items())]
+        # The two fields the store extracts, as its statement reads them.
+        rows = [{"memory_key": k, **_extracted(v)} for k, v in sorted(state["shared"].items())]
         return rows[:limit]
 
     async def write(row: dict[str, Any]) -> None:
@@ -66,6 +67,16 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(shared, "shared_definitions", definitions)
     monkeypatch.setattr(shared, "insert_shared_row", write)
     return state
+
+
+def _extracted(value: Any) -> dict[str, Any]:
+    """`term` and `aliases` as `shared_definitions` extracts them from a stored value."""
+    if not isinstance(value, dict):
+        return {"term": "", "aliases": []}
+    term = value.get("term") if isinstance(value.get("term"), str) else ""
+    aliases = value.get("aliases", [])
+    ok = isinstance(aliases, list) and all(isinstance(a, str) for a in aliases)
+    return {"term": term, "aliases": aliases if ok else []}
 
 
 def _input(**over: Any) -> MemoryPromoteInput:
@@ -187,16 +198,30 @@ async def test_a_shared_row_with_no_names_holds_none(store: dict[str, Any]) -> N
     assert len(store["written"]) == 1
 
 
-async def test_the_store_decodes_the_shared_values() -> None:
-    class _CH:
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-            return [
-                {"memory_key": KEY, "value": json.dumps(VALUE)},
-                {"memory_key": "x", "value": "{"},
-            ]
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_the_store_reads_only_the_term_and_aliases() -> None:
+    def row(key: str, value: str, memory_type: str = "definition") -> str:
+        quoted = value.replace("'", "\\'")
+        return (
+            "INSERT INTO loom.shared (org, namespace, memory_key, value, memory_type, "
+            "promotion_event, version) VALUES "
+            f"('o', 'n', '{key}', '{quoted}', '{memory_type}', generateUUIDv4(), 1)"
+        )
 
-    rows = await shared.shared_definitions("o", "n", 10, ch=_CH())
-    assert [r["value"] for r in rows] == [VALUE, None]
+    ch = LocalCH(
+        ddl("shared"),
+        row(KEY, json.dumps({**VALUE, "rests_on": "x" * 1000})),
+        row("definition/text", "not json"),
+        row("definition/odd", json.dumps({"term": 7, "aliases": "x"})),
+        row("definition/fact", json.dumps(VALUE), memory_type="semantic"),
+        row("arr_note", json.dumps(VALUE)),
+    )
+    rows = await shared.shared_definitions("o", "n", 10, ch=ch)
+    assert {r["memory_key"]: (r["term"], list(r["aliases"])) for r in rows} == {
+        KEY: ("ARR", ["annual recurring revenue"]),
+        "definition/odd": ("", []),
+        "definition/text": ("", []),
+    }
 
 
 async def test_a_definition_lands_on_its_own_key_and_a_definition_key_needs_one(

@@ -29,7 +29,11 @@ from server.memory.api.models_lifecycle import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.app.sensitivity_level import decoded_text, detect_level
-from server.memory.domain.definitions import DEFINITION_KEY_PREFIX, definition_names
+from server.memory.domain.definitions import (
+    DEFINITION_KEY_PREFIX,
+    definition_names,
+    names_of,
+)
 from server.memory.domain.memory_types import (
     is_definition,
     is_namespace_definition,
@@ -253,15 +257,17 @@ async def _check_definition_promotion(
     (docs/concepts/identities-and-namespaces.md)."""
     from server.memory.store import shared as shared_repo
 
-    if not (
-        is_namespace_definition(src)
-        and src.memory_key.startswith(DEFINITION_KEY_PREFIX)
-        and target_key == src.memory_key
-        and _live(src)
-    ):
+    if not is_namespace_definition(src):
         raise DefinitionPromotionRefusedError(
-            "a definition is promoted from its live namespace-wide row (agent, "
-            "user and session '-') of type definition under a definition/ key, to that key"
+            "a definition is promoted from its namespace-wide row: agent, user and session '-'"
+        )
+    if not src.memory_key.startswith(DEFINITION_KEY_PREFIX) or target_key != src.memory_key:
+        raise DefinitionPromotionRefusedError(
+            "a definition is promoted under its own definition/ key (no other target_key)"
+        )
+    if not _live(src):
+        raise DefinitionPromotionRefusedError(
+            "the definition's row is not live (not active, or past its expires_at or valid_to)"
         )
     if not input.approved_sha256:
         raise ValidationError("a definition promotion names the hash it approves (approved_sha256)")
@@ -296,7 +302,7 @@ async def _check_definition_promotion(
     taken = sorted(
         r["memory_key"]
         for r in rows
-        if r["memory_key"] != target_key and names & (definition_names(r["value"]) or set())
+        if r["memory_key"] != target_key and names & (names_of(r["term"], r["aliases"]) or set())
     )
     if taken:
         raise DefinitionNameTakenError(
