@@ -18,9 +18,14 @@ offline, and no write verdict calls an LLM. Extraction, summaries and generated 
 ([models and API keys](../getting-started/models-and-keys.md)); the exercises below use
 writes, reads and search only.
 
-The commands below run inside the stack's containers, in its install directory: `~/.loom`
-on a laptop and `/workspaces/.loom` in a codespace (`<dir>` below). Lab 1 also needs the
-Python SDK (`pip install clickhouse-loom`, in a virtual environment).
+The commands below run in the stack's containers and name its install directory as
+`<dir>`: `~/.loom` on a laptop and `/workspaces/.loom` in a codespace. Lab 1 also needs the
+Python SDK in a virtual environment (in a codespace, run
+`sudo apt-get update && sudo apt-get install -y python3-venv` first):
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
+```
 
 ## Lab 1: an agent that remembers
 
@@ -41,15 +46,16 @@ Exercises:
 Ingest a few documents with `loom demo`, which also prints the top search hits for a
 question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
 The path is inside the container, which holds these docs under `/app/docs/`; a file of
-your own is copied in first:
+your own (`notes.md` in the current directory) is copied in first:
 
 ```bash
-docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md
+docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md --question "How do I get a token?"
 docker compose --project-directory <dir> cp notes.md loom:/tmp/notes.md
-docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.md
+docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.md --question "<a question the notes answer>"
 ```
 
-Then search the namespace's documents with `knowledge.search` over HTTP or the SDK
+Then search the namespace's documents with `knowledge.search` over HTTP (with no
+`Authorization` header on the single-user stack) or the SDK
 ([knowledge documents](../features/knowledge.md)).
 
 Exercises:
@@ -57,9 +63,9 @@ Exercises:
 - For ten questions, label the document and passage that answers each, and measure
   recall@k on `knowledge.search` ([evaluate your workload](../getting-started/evaluate.md#memory-and-rag)).
 - Add questions the documents do not answer. `knowledge.search` still returns hits for
-  them, so compare the top hit's `similarity` (1 minus the cosine distance) on answerable
-  and unanswerable questions and pick a cutoff that separates them. A hit's `score` is a
-  fused rank in the default hybrid mode and does not separate them.
+  them, so compare the highest `similarity` among the hits (1 minus the cosine distance)
+  on answerable and unanswerable questions and pick a cutoff that separates them. A hit's
+  `score` is a fused rank in the default hybrid mode and does not separate them.
 
 ## Lab 3: a code index
 
