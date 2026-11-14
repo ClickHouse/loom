@@ -428,6 +428,35 @@ describe("the collection header", () => {
     expect(within(dialog).queryByText(/^No members yet/)).not.toBeInTheDocument();
   });
 
+  it("names the parents as unread in the dialog when the header's read failed", async () => {
+    const { mid, byName } = family();
+    api.listGrants.mockImplementation(async ({ namespace }: { namespace: string }) => {
+      // The header's first read of the collection fails; the dialog's own read answers.
+      if (namespace === "col-a" && api.listGrants.mock.calls.length === 1)
+        throw new ApiError({ status: 503, code: "UNAVAILABLE", message: "down" });
+      return { rows: [] };
+    });
+    render(<Header collection={{ ...mid, role: "writer" }} byName={byName} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Couldn't read who can see it/);
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    const unread = await within(dialog).findByRole("region", {
+      name: "Also can see it, through the collections it sits in",
+    });
+    expect(unread).toHaveTextContent("Who else can see it couldn't be read.");
+    expect(within(dialog).queryByText(/^No members yet/)).not.toBeInTheDocument();
+  });
+
+  it("reads the shown collection and at most eight parents above it", async () => {
+    const chain = Array.from({ length: 10 }, (_, i) =>
+      entry(`col-${i}`, { title: `Level ${i}`, parent: i < 9 ? `col-${i + 1}` : "" }),
+    );
+    api.listGrants.mockResolvedValue({ rows: [grant("ada")] });
+    render(<Header collection={chain[0]} byName={new Map(chain.map((c) => [c.namespace, c]))} />);
+    expect(await screen.findByText("Only you")).toBeInTheDocument();
+    expect(api.listGrants.mock.calls.map((c) => c[0].namespace)).toEqual(chain.slice(0, 9).map((c) => c.namespace));
+  });
+
   it("reads the grants again when the members dialog closes, keeping the words busy meanwhile", async () => {
     api.listGrants.mockResolvedValue({ rows: [grant("ada", { role: "admin" })] });
     render(<Header collection={entry("col-a")} />);

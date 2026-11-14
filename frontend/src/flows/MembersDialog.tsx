@@ -67,6 +67,8 @@ export interface InheritedAccess {
   cut?: boolean;
   /** The parent is one the person cannot open: who can see it is not shown. */
   hidden?: boolean;
+  /** Said in place of the rows, when there are none to show. */
+  note?: string;
   /** Shows the parent in the Library. */
   onOpen?: () => void;
 }
@@ -190,7 +192,7 @@ export function MembersDialog({
     admin ||
     holdsAdminGrant(
       whoami,
-      rows?.find((r) => r.subject === me),
+      rows?.find((r) => namesMe(r, me)),
     );
   // A repository is named by its label.
   const name = isCode ? (label ?? namespace) : namespace;
@@ -200,7 +202,7 @@ export function MembersDialog({
       ? null
       : scopedUnseen(
             whoami,
-            rows.some((r) => r.subject === me),
+            rows.some((r) => namesMe(r, me)),
           )
         ? serverDecides(name)
         : isCode
@@ -384,7 +386,7 @@ export function MembersDialog({
                         )}
                       </div>
                     </div>
-                    {r.subject !== me || canManage ? (
+                    {!namesMe(r, me) || canManage ? (
                       <>
                         <Unavailable
                           reason={manageReason}
@@ -447,7 +449,7 @@ export function MembersDialog({
         )}
         {activeRows.length > 0 && (
           <div className="space-y-1">
-            {(pendingRows.length > 0 || activeRows.length > members.shown.length) && (
+            {(pendingRows.length > 0 || activeRows.length > MORE_SHOWN) && (
               <div className="mb-1 text-xs font-medium text-text-muted">
                 {`${isCode ? "Readers" : "Members"} (${fmtInt(activeRows.length)})`}
               </div>
@@ -470,7 +472,7 @@ export function MembersDialog({
                       Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
                     </div>
                   </div>
-                  {canManage && r.subject !== me ? (
+                  {canManage && !namesMe(r, me) ? (
                     <>
                       <div className="w-36 shrink-0">
                         <Select
@@ -497,7 +499,7 @@ export function MembersDialog({
                   ) : (
                     <>
                       <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
-                      {manageReason && r.subject !== me && (
+                      {manageReason && !namesMe(r, me) && (
                         <Unavailable reason={manageReason}>
                           <ClickIconButton type="danger" size="sm" icon="trash" aria-label={`Remove ${r.subject}`} />
                         </Unavailable>
@@ -612,13 +614,14 @@ function InheritedSection({ access, me }: { access: InheritedAccess; me: string 
       </div>
       {access.rows === null ? (
         <p className="py-1 text-sm text-text-muted">
-          {access.hidden ? "Who can see that collection isn't shown to you." : "Its members couldn't be read."}
+          {access.note ??
+            (access.hidden ? "Who can see that collection isn't shown to you." : "Its members couldn't be read.")}
         </p>
       ) : active.length === 0 ? (
         <p className="py-1 text-sm text-text-muted">No one is named there.</p>
       ) : (
         <div className="space-y-1">
-          {active.length > rows.shown.length && (
+          {active.length > MORE_SHOWN && (
             <div className="text-xs text-text-muted">{`${fmtInt(active.length)} there`}</div>
           )}
           <ul ref={rows.list} className="space-y-1">

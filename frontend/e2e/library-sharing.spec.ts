@@ -44,7 +44,7 @@ async function open(
   await page.route("**/v1/grants.list", async (route) => {
     const ns = String((route.request().postDataJSON() as { namespace?: string }).namespace ?? "");
     const rows = grants(ns);
-    if (rows === "refuse") {
+    if (rows === "unavailable") {
       await route.fulfill({ status: 503, json: { detail: { code: "UNAVAILABLE", message: "down" } } });
       return;
     }
@@ -97,7 +97,7 @@ test("a failed read says so, and Retry reads again", async ({ page }) => {
   await open(page, "col-eng", (ns) => {
     if (failed) return GRANTS[ns] ?? [];
     failed = true;
-    return "refuse";
+    return "unavailable";
   });
   await expect(header(page).getByRole("alert")).toContainText("Couldn't read who can see it");
   await header(page).getByRole("button", { name: "Retry" }).click();

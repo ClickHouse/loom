@@ -2,7 +2,7 @@
  *  when it stops at its page limit (for members, readers and a parent's members), and stops
  *  reading when it closes. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "../test/rtl";
+import { fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { MembersDialog } from "./MembersDialog";
 import { useStore } from "../lib/state";
 import * as api from "../api";
@@ -129,5 +129,48 @@ describe("MembersDialog paging", () => {
     );
     expect(await screen.findByText(/No one is named here; who can see it comes from/)).toBeInTheDocument();
     expect(screen.queryByText(/^No members yet/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the count after the last Show more, and hands focus to the first row it added", async () => {
+    const rows = Array.from({ length: 80 }, (_, i) => grant(`m${i}@example.com`));
+    vi.mocked(api.listGrants).mockResolvedValue({ rows });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+    expect(await screen.findByText("Members (80)")).toBeInTheDocument();
+    const more = screen.getByRole("button", { name: "Show 30 more" });
+    more.focus();
+    fireEvent.click(more);
+    expect(screen.queryByRole("button", { name: /^Show \d+ more$/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Members (80)")).toBeInTheDocument();
+    const added = screen.getByText("m50@example.com").closest("li") as HTMLElement;
+    await waitFor(() => expect(added.contains(document.activeElement)).toBe(true));
+  });
+
+  it("keeps a parent's count after its last Show more", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("alice")] });
+    const theirs = Array.from({ length: 60 }, (_, i) => grant(`p${i}`));
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-a"
+        inherited={[{ namespace: "col-top", title: "Engineering", rows: theirs }]}
+      />,
+    );
+    const through = await screen.findByRole("region", { name: "Also can see it, through Engineering" });
+    fireEvent.click(within(through).getByRole("button", { name: "Show 10 more" }));
+    expect(within(through).getByText("60 there")).toBeInTheDocument();
+  });
+
+  it("treats a row under another of your spellings as yours: (you), and no role or Remove", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({
+      rows: [{ ...grant("alice@example.com"), role: "admin", also: ["alice"] }, grant("bob")],
+    });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+    const mine = (await screen.findByText("alice@example.com")).closest("li") as HTMLElement;
+    expect(mine).toHaveTextContent("(you)");
+    expect(screen.queryByRole("button", { name: "Remove alice@example.com" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Role for alice@example.com")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove bob" })).toBeInTheDocument();
   });
 });

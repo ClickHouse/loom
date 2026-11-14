@@ -496,6 +496,14 @@ describe("the Library on a collection", () => {
     // A viewer of the other gets See who, not Share.
     expect(screen.getByRole("button", { name: "See who" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+    // Back to the first does not open it again by itself.
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Collection path" })).getByRole("link", { name: "col-q3" }),
+    );
+    await settle();
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+    expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("says My files are the person's alone, with no Share", async () => {

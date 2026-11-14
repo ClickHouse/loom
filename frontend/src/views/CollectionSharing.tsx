@@ -211,7 +211,6 @@ export function useCollectionSharing({
   // loading, so its words never show under this one; a read again of these places keeps it.
   const [state, setState] = useState<SharingAnswer | null>(null);
   const [reading, setReading] = useState(false);
-  const [retries, setRetries] = useState(0);
   const personal = !collection || collection.personal;
   useAbortableEffect(
     (signal, live) => {
@@ -237,7 +236,7 @@ export function useCollectionSharing({
     },
     // `chainKey` stands in for `chain`, rebuilt on every read of the list, and `key` is
     // `org` with it.
-    [org, chainKey, personal, version, retries],
+    [org, chainKey, personal, version],
   );
 
   const titleOf = (ns: string) => {
@@ -280,7 +279,7 @@ export function useCollectionSharing({
             onClick={() => {
               focusInMain(null);
               setState(null);
-              setRetries((n) => n + 1);
+              setVersion((n) => n + 1);
             }}
           >
             Retry
@@ -318,6 +317,14 @@ export function useCollectionSharing({
       });
     }
     if (hiddenWords) inherited.push({ namespace: "", title: hiddenWords, rows: null, hidden: true });
+  } else if (answer && (chain.length > 1 || hiddenWords)) {
+    // The header's read failed: the parents are there, but who they let in is unknown.
+    inherited.push({
+      namespace: "",
+      title: "the collections it sits in",
+      rows: null,
+      note: "Who else can see it couldn't be read.",
+    });
   }
   const shown = collection && !collection.personal && openFor === collection.namespace ? collection : null;
   const dialog = shown && (
