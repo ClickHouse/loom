@@ -451,17 +451,20 @@ def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) 
         assert not row.active and row.access == domain.MIRRORED_ACCESS
 
 
-def test_a_removed_mirrored_source_s_delete_request_outlasts_an_add_of_its_name(
-    fake: _Store,
+@pytest.mark.parametrize("pending_delete", [True, False])
+def test_a_removed_mirrored_source_keeps_its_name_from_an_add(
+    fake: _Store, pending_delete: bool
 ) -> None:
+    # Its documents and any delete request for them stay with the build that writes
+    # mirrors.
     asyncio.run(app.handle_knowledge_source_add(_add()))
     key = (ORG, NS, "design-decks")
     fake.rows[key] = dataclasses.replace(
-        fake.rows[key], access=domain.MIRRORED_ACCESS, active=False, pending_delete=True
+        fake.rows[key], access=domain.MIRRORED_ACCESS, active=False, pending_delete=pending_delete
     )
     assert _code(app.handle_knowledge_source_add(_add())) == "SOURCE_NOT_SERVED"
     row = fake.rows[key]
-    assert row.access == domain.MIRRORED_ACCESS and row.pending_delete
+    assert row.access == domain.MIRRORED_ACCESS and row.pending_delete is pending_delete
 
 
 def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:

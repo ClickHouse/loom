@@ -207,7 +207,7 @@ async def erased_scope(
     """The scope a namespace step erases and a census counts: when it holds a mirror,
     every named namespace and every mirror they have had, as a purge."""
     names = namespaces_of(scope_value) if scope_type == "namespace" else []
-    mirrors = list(await _mirrors_of(org, names, ch=ch)) if names else []
+    mirrors = list(await _mirrors_of(org, names, ch=ch))
     if not mirrors and not any(is_mirror_name(ns) for ns in names):
         yield scope_value
         return

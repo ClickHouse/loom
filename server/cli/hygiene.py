@@ -649,13 +649,13 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
                 census, unread = await erasure_census.evidence_census(
                     str(row["org"]), scope_type, scope, ch=ch, spellings=spellings
                 )
-                counted_purge = erasure_mutations.purge_mode()
-                counted = len(erasure_mutations.namespaces_of(scope))
+                scope_purge = erasure_mutations.purge_mode()
+                scope_names = len(erasure_mutations.namespaces_of(scope))
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])
         print(
             f"  {row['id']} {row['org']}/{row['scope_type']} attempts={row['attempts']} "
-            f"steps_done={len(done)} scope={counted} name(s) purge={counted_purge}"
+            f"steps_done={len(done)} scope={scope_names} name(s) purge={scope_purge}"
         )
         print(f"    last: {str(row.get('failure_reason') or '')[:160]}")
         print(f"    residue now: {sum(residue.values())} {json.dumps(residue, sort_keys=True)}")

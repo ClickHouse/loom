@@ -536,8 +536,9 @@ def served(src: KnowledgeSource) -> bool:
 
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when it cannot
-    express the source: such a source is stored with `kind` empty. A build without
-    items shows every document to every reader of the namespace."""
+    express the source: such a source is stored with `kind` empty. A source that is not
+    served never is: a build without items would show its documents to every reader of
+    the namespace."""
     if not served(src):
         return None
     if src.kind == "recording":
