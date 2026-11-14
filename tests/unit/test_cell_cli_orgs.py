@@ -68,7 +68,7 @@ def test_every_connect_declares_the_orgs_it_writes() -> None:
 # What an `org_free=` may be: a typed value (`reads`, `writes`, `revokes`), one a helper
 # picks per subcommand, a conditional between those and None, or a parameter passed on.
 _KINDS = {"reads", "writes", "revokes"}
-_PICKERS = {"_org_free"}
+_PICKERS = {"_org_free", "_revoke_kind"}
 
 
 def _typed(node: ast.expr) -> bool:
@@ -221,7 +221,6 @@ _MODE_PICKED = {
     "code_maintenance.py": ({"dry_run"}, 1),
     "deployment.py": ({"check"}, 1),
     "sso.py": ({"dry_run"}, 1),
-    "access.py": ({"list", "scim", "expires_at", "issued_before"}, 1),
 }
 
 
@@ -242,26 +241,55 @@ def test_a_command_whose_kind_depends_on_its_flags_picks_it_from_them(file: str)
     )
     assert all(f in tests for f in flags), f"{file}: the pick reads {sorted(flags)}"
     kinds = {_name(n) for v in picked for n in ast.walk(v) if isinstance(n, ast.Call)}
-    assert "reads" in kinds or file == "access.py"
+    assert "reads" in kinds
 
 
-def test_a_revocation_that_can_give_access_back_is_gated_as_a_write() -> None:
+@pytest.mark.parametrize(
+    ("flags", "kind"),
+    [
+        ({"list": True}, "read"),
+        ({"jti": "j1"}, "revocation"),
+        ({"subject": "s1"}, "revocation"),
+        ({"subject": "s1", "scim": True, "issued_before": "t"}, "write"),
+        ({"jti": "j1", "expires_at": "t"}, "write"),
+        ({"subject": "s1", "issued_before": "t"}, "write"),
+    ],
+)
+def test_a_revocation_that_can_give_access_back_is_gated_as_a_write(
+    flags: dict[str, Any], kind: str
+) -> None:
     """Narrowing SCIM's revocation, or one that lapses or covers older tokens only, is
     not run through an outage: only a plain revocation is."""
-    source = (ROOT / "server" / "cli" / "access.py").read_text()
-    picks = [
-        ast.unparse(k.value)
-        for call in _calls(ast.parse(source))
-        if _name(call) in _CONNECTS
-        for k in call.keywords
-        if k.arg == "org_free" and isinstance(k.value, ast.IfExp)
-    ]
-    (pick,) = picks
-    assert (
-        "writes(" in pick
-        and "args.scim" in pick
-        and pick.rindex("revokes(") > pick.index("writes(")
+    import argparse
+
+    from server.cli import access
+
+    args = argparse.Namespace(**{"list": False, "scim": False, "jti": None, **flags})
+    picked = access._revoke_kind(
+        args, expires_at=flags.get("expires_at"), issued_before=flags.get("issued_before")
     )
+    assert picked.kind == kind
+
+
+def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On another cell's stores, `loom ch-setup` refuses before it connects to set up
+    ClickHouse, not after the reader and grants are written."""
+    import argparse
+
+    from server.cli import ch_setup
+
+    _cell_set(monkeypatch, ("enforced", "us-1"))
+    monkeypatch.setattr(
+        ch_setup.preflight, "connect", lambda: (_ for _ in ()).throw(AssertionError("connected"))
+    )
+    monkeypatch.setattr(settings, "ch_user", "loom")
+    monkeypatch.setattr(settings, "ch_reader_user", "")
+    monkeypatch.setenv("LOOM_CH_READER_USER", "")
+    args = argparse.Namespace(print_analyst_sql=False, print_sql=False)
+    with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1'"):
+        ch_setup._cmd_ch_setup(args)
 
 
 def test_the_loom_code_drain_after_a_subcommand_is_a_read() -> None:

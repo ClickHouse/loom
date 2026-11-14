@@ -19,12 +19,13 @@ else of that name is left alone.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import re
 import sys
 from typing import Any, Literal, NamedTuple
 
-from server.cli._ch import writes
+from server.cli._ch import check_org_free, writes
 from server.core.ch_errors import error_code, error_line
 from server.core.ch_names import DEFAULT_READER, database, quote, telemetry_database
 from server.core.schema import preflight
@@ -505,6 +506,9 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
         for stmt in admin_sql(user, reader):
             print(stmt if stmt.startswith("--") else f"{stmt};")
         return 0
+    # On a cell, refused before any user or grant is written when these stores are
+    # another cell's (the analyst step's own connect checks again, after the rest).
+    asyncio.run(check_org_free(writes("ClickHouse users and grants, no tenant rows")))
     try:
         ch = preflight.connect()
     except preflight.PreflightError as e:
