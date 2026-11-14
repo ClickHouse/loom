@@ -26,7 +26,7 @@ from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of, purge_scope
+from server.erasure.store.mutations import namespaces_of, purge_mode, purge_scope
 from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
@@ -241,7 +241,10 @@ async def _counted_with_mirrors(
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
     """`count` of the scope as `with_mirrors` erased it: with its mirrors, as a purge."""
-    if scope_type == "namespace" and (scope := await mirror_scope(org, scope_value, ch=ch)):
+    if (
+        scope_type == "namespace"
+        and (scope := await mirror_scope(org, scope_value, ch=ch)) is not None
+    ):
         with purge_scope(True):
             return await count(scope)
     return await count(scope_value)
@@ -254,11 +257,15 @@ async def evidence_with_mirrors(
     *,
     spellings: Sequence[str] | None,
     ch: _CHClient | None = None,
-) -> tuple[dict[str, int], dict[str, Exception]]:
-    """`erasure_census.evidence_census` of the scope as `_counted_with_mirrors` counts it."""
+) -> tuple[dict[str, int], dict[str, Exception], bool]:
+    """`erasure_census.evidence_census` of the scope as `_counted_with_mirrors` counts it,
+    the stores it could not read, and whether it counted as a purge."""
     unread: dict[str, Exception] = {}
+    purged = False
 
     async def count(scope: _NS) -> dict[str, int]:
+        nonlocal purged
+        purged = purge_mode()
         found, errors = await erasure_census.evidence_census(
             org, scope_type, scope, ch=ch, spellings=spellings
         )
@@ -266,14 +273,12 @@ async def evidence_with_mirrors(
         return found
 
     per_table = await _counted_with_mirrors(org, scope_type, scope_value, count, ch=ch)
-    return per_table, unread
+    return per_table, unread, purged
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
-    """Last: the mirrors' rows are gone, so the name registered again gets a new mirror.
-    Every mirror the name has had is written again and counted, forgotten ones too. It
-    runs under `with_mirrors` like every namespace step; the purge mode does not change
-    an insert. A scope of only mirrors forgets none."""
+    """Last: writes every mirror the named namespaces have had `deleted`, so the name
+    registered again gets a new one; a scope of only mirrors forgets none."""
     found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)

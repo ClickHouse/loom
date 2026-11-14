@@ -224,10 +224,10 @@ def test_the_evidence_census_counts_the_mirror_too(
 ) -> None:
     _counted(monkeypatch, left_in_mirror=2)
     conn = object()
-    found, unread = asyncio.run(
+    found, unread, purged = asyncio.run(
         saga_steps.evidence_with_mirrors(ORG, "namespace", "team", spellings=None, ch=conn)  # type: ignore[arg-type]
     )
-    assert found == {"loom.memory": 2} and unread == {}
+    assert found == {"loom.memory": 2} and unread == {} and purged
     # The registry is read on the caller's connection, as the census is.
     assert ("mirrors_of", ["team"], conn) in registry
 
@@ -271,7 +271,8 @@ def test_erasure_re_verify_reports_what_a_mirror_still_holds(
         resume=False,
     )  # fmt: skip
     asyncio.run(hygiene._re_verify_run(None, args))
-    assert 'residue now: 4 {"memory": 4}' in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert 'residue now: 4 {"memory": 4}' in out and "purge=True" in out
 
 
 def test_erasure_re_verify_of_a_completed_saga_reads_its_mirrors_links(

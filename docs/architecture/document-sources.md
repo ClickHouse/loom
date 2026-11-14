@@ -406,9 +406,10 @@ listing or usage view; a deleted name keeps its mirror and counts as in use
 holds) until a namespace erasure, or the mirror-erase command, writes its
 `loom.knowledge_mirrors` row `deleted`. A namespace erasure does that last, after the
 mirror's rows (the row holds names only), so an erased name can be registered again and
-gets a new mirror. The migration that enables the refusal first looks for namespaces of
-the reserved form, registered or holding rows, and refuses to run, naming them, if it
-finds any.
+gets a new mirror. A name that has ever had a mirror is always erased as a purge, a new
+owner's erasure included, since the registry keeps every mirror it had. The migration
+that enables the refusal first looks for namespaces of the reserved form, registered or
+holding rows, and refuses to run, naming them, if it finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below, while the namespace's source list holds an active mirrored source (a fact

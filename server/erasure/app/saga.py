@@ -126,7 +126,8 @@ def request_row_template(
         "requester": input.requester,
         "actor": actor,
         "urgency": input.urgency,
-        # The purge the saga applies: a single namespace's never purges, whatever was asked.
+        # The scope's mode (a single namespace's: tombstone, whatever was asked); a scope
+        # that holds a mirror is purged anyway (`saga_steps.with_mirrors`).
         "purge": applied_purge(input.scope_type, input.scope_value, bool(input.purge)),
         "attempts": attempts,
         "requested_at": requested_at,
@@ -547,7 +548,7 @@ async def _census_tail(
     try:
         spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            per_table, unread = await evidence_with_mirrors(
+            per_table, unread, _purged = await evidence_with_mirrors(
                 org, scope_type, scope_value, spellings=spellings
             )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
