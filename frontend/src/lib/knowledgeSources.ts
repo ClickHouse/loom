@@ -21,15 +21,21 @@ export interface KnowledgeSourceSync {
   unconverted_reasons: Record<string, number>;
   /** Documents not written because another writer's document holds their address. */
   skipped: number;
-  /** Why the turn failed, or why a turn that did not fail is incomplete; "" when neither. */
+  /** Why the turn failed, or what a turn that did not fail noted; "" when neither. */
   error: string;
 }
 
 export interface KnowledgeSource {
   name: string;
   kind: string;
-  /** The ids and filters the source reads; never a credential. */
+  /** The ids and filters the source reads, in the form that names ids per kind; {} when
+   *  an item has no place in it. Never a credential. */
   config: Record<string, unknown>;
+  /** What the source reads, one object per item with its `type`; absent from an older
+   *  server. */
+  items?: Record<string, unknown>[];
+  /** The file kinds a gdrive source reads; absent from an older server. */
+  include?: string[];
   created_by: string;
   created_at: string;
   sync: KnowledgeSourceSync;
@@ -131,20 +137,27 @@ export interface SyncBadge {
   tip: string;
 }
 
-/** The last sync as one badge. A turn that ended `ok` with an `error` was cut short (the
- *  pass bound, an incomplete listing): it reads "Incomplete", and the next pass goes on. */
+/** A note that says the turn stopped short: the server puts these marks first, and only
+ *  they start with `listing:` on a turn that did not fail. */
+const CUT_SHORT = ["pass bound reached", "listing:"];
+
+/** The last sync as one badge. A turn that ended `ok` with an `error` left a note: cut
+ *  short (the pass bound, an incomplete listing) it reads "Incomplete"; any other note (an
+ *  item or a file it could not read) reads "Synced with a note". The next pass goes on. */
 export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
   switch (sync.status) {
     case "":
       return { text: "Never synced", tone: "muted", tip: "Loom has not synced this source yet." };
     case "ok":
-      return sync.error
-        ? {
-            text: "Incomplete",
-            tone: "warn",
-            tip: `The last sync stopped early (${sync.error}); the next one goes on.`,
-          }
-        : { text: "Synced", tone: "ok", tip: "The last sync read every changed document." };
+      if (!sync.error) return { text: "Synced", tone: "ok", tip: "The last sync read every changed document." };
+      if (CUT_SHORT.some((marker) => sync.error.startsWith(marker))) {
+        return {
+          text: "Incomplete",
+          tone: "warn",
+          tip: `The last sync stopped early (${sync.error}); the next one goes on.`,
+        };
+      }
+      return { text: "Synced with a note", tone: "warn", tip: `The last sync noted: ${sync.error}.` };
     case "rate_limited":
       return { text: "Rate limited", tone: "warn", tip: "The source limited the last sync; the next one retries." };
     case "credential_invalid":

@@ -1485,6 +1485,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.source.list", body, **options),
         )
 
+    async def source_parse_links(
+        self, body: _ops.KnowledgeSourceParseLinksBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceParseLinksOutput:
+        """`knowledge.source.parse_links`."""
+        return cast(
+            "_ops.KnowledgeSourceParseLinksOutput",
+            await self._agent.call("knowledge.source.parse_links", body, **options),
+        )
+
     async def source_remove(
         self, body: _ops.KnowledgeSourceRemoveBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeSourceRemoveOutput:
@@ -1510,6 +1519,15 @@ class KnowledgeOps:
         return cast(
             "_ops.KnowledgeSourceSyncNowOutput",
             await self._agent.call("knowledge.source.sync_now", body, **options),
+        )
+
+    async def source_update(
+        self, body: _ops.KnowledgeSourceUpdateBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceUpdateOutput:
+        """`knowledge.source.update`."""
+        return cast(
+            "_ops.KnowledgeSourceUpdateOutput",
+            await self._agent.call("knowledge.source.update", body, **options),
         )
 
     async def synthesize(

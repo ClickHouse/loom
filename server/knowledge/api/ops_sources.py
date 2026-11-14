@@ -1,7 +1,7 @@
 """The `knowledge.source.*` operation declarations; their wire models are in
 `models_sources`. Each op is addressed by the namespace the source's documents
-live in, so the transport's namespace gate decides: readers list and inspect, the
-namespace's admins do the rest."""
+live in, so the transport's namespace gate decides: readers list, inspect and
+parse links, the namespace's admins do the rest."""
 
 from __future__ import annotations
 
@@ -14,23 +14,30 @@ from server.knowledge.api.models_sources import (
     KnowledgeSourceInspectOutput,
     KnowledgeSourceListInput,
     KnowledgeSourceListOutput,
+    KnowledgeSourceParseLinksInput,
+    KnowledgeSourceParseLinksOutput,
     KnowledgeSourceRemoveInput,
     KnowledgeSourceRemoveOutput,
     KnowledgeSourceRotateInput,
     KnowledgeSourceRotateOutput,
     KnowledgeSourceSyncNowInput,
     KnowledgeSourceSyncNowOutput,
+    KnowledgeSourceUpdateInput,
+    KnowledgeSourceUpdateOutput,
 )
 from server.knowledge.app.sources import (
     handle_knowledge_source_add,
     handle_knowledge_source_check,
     handle_knowledge_source_inspect,
     handle_knowledge_source_list,
+    handle_knowledge_source_parse_links,
     handle_knowledge_source_remove,
     handle_knowledge_source_rotate,
     handle_knowledge_source_sync_now,
+    handle_knowledge_source_update,
     source_add_audit_subject,
     source_rotate_audit_subject,
+    source_update_audit_subject,
 )
 from server.operations.base import Operation, Role
 
@@ -62,6 +69,27 @@ knowledge_source_add = Operation(
     required_role=Role.ADMIN,
     audit=True,
     audit_subject=source_add_audit_subject,
+)
+knowledge_source_update = Operation(
+    name="knowledge.source.update",
+    maturity="experimental",
+    input_model=KnowledgeSourceUpdateInput,
+    output_model=KnowledgeSourceUpdateOutput,
+    handler=handle_knowledge_source_update,
+    idempotent=False,
+    required_role=Role.ADMIN,
+    audit=True,
+    audit_subject=source_update_audit_subject,
+)
+# No store request and nothing written: a reader may preview what links name.
+knowledge_source_parse_links = Operation(
+    name="knowledge.source.parse_links",
+    maturity="experimental",
+    input_model=KnowledgeSourceParseLinksInput,
+    output_model=KnowledgeSourceParseLinksOutput,
+    handler=handle_knowledge_source_parse_links,
+    idempotent=True,
+    required_role=Role.VIEWER,
 )
 # ADMIN although it writes nothing: the probe spends the source's rate limit
 # with the stored credential.
@@ -110,6 +138,8 @@ OPERATIONS: list[Operation] = [
     knowledge_source_list,
     knowledge_source_inspect,
     knowledge_source_add,
+    knowledge_source_update,
+    knowledge_source_parse_links,
     knowledge_source_check,
     knowledge_source_rotate,
     knowledge_source_remove,

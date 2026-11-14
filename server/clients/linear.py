@@ -32,7 +32,7 @@ from server.clients._http import get_client
 from server.clients._vendor import read_capped
 
 _GRAPHQL_URL = "https://api.linear.app/graphql"
-# Documents per listing page: the API's own default page size.
+# Nodes per page (documents, or projects by short id): the API's own default page size.
 PAGE_SIZE = 50  # not a setting: the API's page size, the same on every deployment
 # Seconds between listing pages, so a long list stays under the API's hourly
 # request limit per key.
@@ -52,6 +52,15 @@ query ProjectDocuments($id: String!, $first: Int!, $after: String) {
       nodes { id title updatedAt url }
       pageInfo { hasNextPage endCursor }
     }
+  }
+}
+"""
+
+# Projects by the short id their links carry, a page of them at a time.
+_PROJECTS_BY_SLUG = """
+query ProjectsBySlug($slugs: [String!]!, $first: Int!) {
+  projects(filter: { slugId: { in: $slugs } }, first: $first) {
+    nodes { id slugId }
   }
 }
 """
@@ -237,6 +246,34 @@ async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any
         await _sleep(PAGE_PACE_S)
 
 
+async def project_ids(api_key: str, slug_ids: list[str]) -> dict[str, str]:
+    """{short id: project UUID} of the projects the key sees among `slug_ids`, the
+    short ids a project's link carries; one the tracker does not answer for is
+    left out. One page answers them: the ops bound a call well under it."""
+    if len(slug_ids) > PAGE_SIZE:
+        raise ValueError(f"at most {PAGE_SIZE} short ids in one lookup")
+    data = await _query(
+        api_key,
+        _PROJECTS_BY_SLUG,
+        {"slugs": slug_ids, "first": PAGE_SIZE},
+        "projects",
+        max_bytes=_PAGE_MAX_BYTES,
+    )
+    projects = data.get("projects")
+    nodes = projects.get("nodes") if isinstance(projects, dict) else None
+    if not isinstance(nodes, list):
+        # An answer without the list says nothing about which projects exist.
+        raise LinearError("projects", "no_projects")
+    found: dict[str, str] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        slug, project_id = str(node.get("slugId") or ""), str(node.get("id") or "")
+        if slug in slug_ids and valid_id(project_id):
+            found[slug] = project_id
+    return found
+
+
 def _checked(document_id: str) -> str:
     if not valid_id(document_id):
         raise ValueError("not a document id")
@@ -287,6 +324,7 @@ __all__ = [
     "document_state",
     "documents_page",
     "project_documents",
+    "project_ids",
     "valid_id",
     "valid_key",
 ]

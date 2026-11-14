@@ -47,8 +47,17 @@ describe("syncBadge", () => {
     expect(syncBadge(sync({ status: "failed", error: "http_403" })).tip).toContain("http_403");
   });
 
-  it("reads an ok turn with an error as incomplete, and an unknown status as itself", () => {
-    expect(syncBadge(sync({ status: "ok", error: "pass bound" }))).toMatchObject({ text: "Incomplete", tone: "warn" });
+  it("reads an ok turn cut short as incomplete, one with another note as synced with a note", () => {
+    const cut = "pass bound reached";
+    expect(syncBadge(sync({ status: "ok", error: cut }))).toMatchObject({ text: "Incomplete", tone: "warn" });
+    expect(syncBadge(sync({ status: "ok", error: "listing: incomplete search" })).text).toBe("Incomplete");
+    expect(syncBadge(sync({ status: "ok", error: "listing: an item listed nothing; item 1: http_404" })).text).toBe(
+      "Incomplete",
+    );
+    expect(syncBadge(sync({ status: "ok", error: "item 2: http_404" }))).toMatchObject({
+      text: "Synced with a note",
+      tone: "warn",
+    });
     expect(syncBadge(sync({ status: "no_transcript" }))).toMatchObject({ text: "no_transcript", tone: "warn" });
   });
 });

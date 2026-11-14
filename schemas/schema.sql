@@ -2151,7 +2151,10 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `pending_delete` Bool DEFAULT false,
     `created_at` DateTime DEFAULT now(),
     `updated_at` DateTime DEFAULT now(),
-    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    `source_kind` LowCardinality(String) DEFAULT '',
+    `items_json` String DEFAULT '[]',
+    `secret_enc` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)

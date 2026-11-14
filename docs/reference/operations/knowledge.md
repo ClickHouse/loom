@@ -509,7 +509,7 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 
 ## `knowledge.source.add`
 
-Register a document source on a namespace: a kind, the ids it reads and a read-only credential.
+Register a document source on a namespace: a kind, what it reads (items and links, or a config) and a read-only credential.
 
 `POST /v1/knowledge.source.add` · MCP `loom_knowledge_source_add` · role `admin` · write · audited · not listed under the MCP `all` toolset
 
@@ -518,8 +518,11 @@ Register a document source on a namespace: a kind, the ids it reads and a read-o
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The namespace or collection the documents live in; a person's own (personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at sign-up) is refused. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
-| `kind` | `str` | required | The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a meeting store's transcripts). |
-| `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...]… |
+| `kind` | `str` | required | The source kind: `gdrive` (a shared-folder store), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a meeting store's transcripts). |
+| `items` | `list[dict[str, Any]] \| None` | `None` | The things the source reads, each an object with a `type`: 1-300 for gdrive, 1-20 for linear and 1-20 for notion; gdrive: {type: folder, id, recursive (default false; subfolders to a depth of 8, at most 500 subfolders per source)}, {type… |
+| `links` | `list[str] \| None` | `None` | Links to folders, files, documents, slides, pages, databases or projects, read as items (`knowledge.source.parse_links`); an unreadable link refuses the call (BAD_LINK). |
+| `config` | `dict[str, Any] \| None` | `None` | What the source reads in the form that names ids per kind, instead of items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids… |
+| `include` | `list[str] \| None` | `None` | gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). |
 | `credential` | `str` | required | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; notion: an integration token with read content… |
 | `dry_run` | `bool` | `False` | Probe and write nothing. |
 
@@ -528,13 +531,15 @@ Register a document source on a namespace: a kind, the ids it reads and a read-o
 | `name` | `str` | The registered source's name, normalised. |
 | `kind` | `str` | The source kind, normalised. |
 | `namespace` | `str` | The namespace the source was registered on. |
-| `config` | `dict[str, Any]` | The config as stored. |
+| `items` | `list[dict[str, Any]]` | The items as stored; [] for a recording source. |
+| `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
+| `config` | `dict[str, Any]` | The config in the form that names ids per kind, or {} when an item has no place in it. |
 | `probe` | `KnowledgeSourceProbe` | What the probe with the credential found. |
 | `dry_run` | `bool` | True when the call only probed. |
 
 ## `knowledge.source.check`
 
-Probe a registered document source with its stored credential now (a check and a listing of each folder or project), nothing written.
+Probe a registered document source with its stored credential now (a check of every item, or of the 20 added last, and a listing), nothing written.
 
 `POST /v1/knowledge.source.check` · MCP `loom_knowledge_source_check` · role `admin` · idempotent · not listed under the MCP `all` toolset
 
@@ -548,15 +553,17 @@ Probe a registered document source with its stored credential now (a check and a
 | --- | --- | --- |
 | `name` | `str` | The source checked. |
 | `reachable` | `bool` | False when the probe failed; `summary` says why. |
-| `documents` | `int` | Documents the source lists now: at most 1000 (gdrive, recording), each project's first page (linear), the listed pages and the first 100 pages of each of up to three databases (notion). |
+| `documents` | `int` | Documents the source lists now: the first page, 1000 at most, of the folders, of each shared drive and of each filter, and each file item (gdrive); at most 1000 (recording); each project's first page (linear); the listed pages and the… |
 | `more` | `bool` | True when more documents match than were listed, so `documents` is a lower bound. |
 | `sample` | `list[str]` | Up to five document titles, most recently changed first. |
+| `checked` | `int` | Items the probe checked: every item while there are at most 20, else the 20 added last. |
+| `sampled` | `bool` | True when the source holds more items than were checked. |
 | `summary` | `str` | One line: what was found, or why it failed. |
 | `checked_at` | `str` | When the probe ran, ISO UTC. |
 
 ## `knowledge.source.inspect`
 
-One registered document source: its config, its sync state and the documents it wrote (the 200 most recently ingested).
+One registered document source: its items, its sync state and the documents it wrote (the 200 most recently ingested).
 
 `POST /v1/knowledge.source.inspect` · MCP `loom_knowledge_source_inspect` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -570,7 +577,9 @@ One registered document source: its config, its sync state and the documents it 
 | --- | --- | --- |
 | `name` | `str` | The source's name. |
 | `kind` | `str` | The source's kind. |
-| `config` | `dict[str, Any]` | The ids and filters the source reads; never a credential. |
+| `items` | `list[dict[str, Any]]` | The things the source reads; [] for a recording source. |
+| `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
+| `config` | `dict[str, Any]` | The source's config in the form that names ids per kind, or {} when an item has no place in it; never a credential. |
 | `created_by` | `str` | Token subject of the admin who added it; '' with auth off. |
 | `created_at` | `str` | When it was added, ISO UTC. |
 | `sync` | `KnowledgeSourceSync` | The source's sync state: a waiting request and the last pass. |
@@ -592,6 +601,22 @@ The document sources registered on a namespace, with each one's sync state.
 | `sources` | `list[KnowledgeSourceEntry]` | The namespace's active sources, by name. |
 | `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
 | `accepts_sources` | `bool` | False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE). |
+
+## `knowledge.source.parse_links`
+
+Read pasted links as a source's items, with no request to any store and nothing written: each link answers its kind and item, or why it is unreadable.
+
+`POST /v1/knowledge.source.parse_links` · MCP `loom_knowledge_source_parse_links` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The namespace the source would live in. |
+| `links` | `list[str]` | required | 1-300 links. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `links` | `list[KnowledgeSourceParsedLink]` | Each link, in the order given. |
 
 ## `knowledge.source.remove`
 
@@ -648,6 +673,33 @@ Record a request to sync one document source in its sync state: the sync worker 
 | --- | --- | --- |
 | `name` | `str` | The source the request was recorded for. |
 | `enabled` | `bool` | Whether this deployment runs the sync worker; false: the request waits until it does. |
+
+## `knowledge.source.update`
+
+Add items to a registered document source or remove them, or change a gdrive source's file kinds.
+
+`POST /v1/knowledge.source.update` · MCP `loom_knowledge_source_update` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The namespace the source's documents live in. |
+| `name` | `str` | required | The source name. |
+| `add_items` | `list[dict[str, Any]]` | *(computed)* | Items to add, of the forms add takes; one of the same type and id replaces the stored one, and a folder of the id of a shared drive the source keeps or is given adds nothing. |
+| `add_links` | `list[str]` | *(computed)* | Links to add, read as items; a link to something the source holds names it as held (a recursive folder, a drive at its root), and an add_items entry for the same thing wins. |
+| `remove_items` | `list[dict[str, Any]]` | *(computed)* | Items to remove, matched by type and id (a filter by its fields); a folder entry also removes a shared drive of the same id the source holds. |
+| `remove_links` | `list[str]` | *(computed)* | Links to remove, read as items; a folder link also removes a shared drive of the same id the source holds. |
+| `include` | `list[str] \| None` | `None` | gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; default unchanged. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` | The source updated. |
+| `items` | `list[dict[str, Any]]` | The source's items as now stored. |
+| `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
+| `config` | `dict[str, Any]` | The config in the form that names ids per kind, or {} when an item has no place in it. |
+| `added` | `list[dict[str, Any]]` | The items this call added. |
+| `removed` | `list[dict[str, Any]]` | The items this call removed, as the source held them. |
+| `probe` | `KnowledgeSourceProbe` | What the probe of the added items found, or with none added, of the kept file items a changed `include` probes; nothing checked when neither ran. |
 
 ## `knowledge.synthesize`
 

@@ -52,25 +52,26 @@ collection in view; the repository card keeps its own.
 
 A source's items are its things to read, of mixed types:
 
-| Kind     | Item `type`        | Fields                                                                                                            | Reads                                                                                                                                               |
-| -------- | ------------------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gdrive` | `folder`           | `id`, `recursive` (default `false`)                                                                               | the folder's files; with `recursive`, every subfolder's too, to a depth of 8 and at most 500 folders per item (both not settings)                   |
-| `gdrive` | `file`             | `id`                                                                                                              | one file of a kind `include` names                                                                                                                  |
-| `gdrive` | `shared_drive`     | `id`                                                                                                              | every file of a shared drive                                                                                                                        |
-| `gdrive` | `filter`           | any of `name_contains`, `kinds`, `owner` (an email), `modified_after` (a date), and optionally `in` (a folder id) | the files that match, as a query the server builds                                                                                                  |
-| `gdrive` | `meet_recordings`  | none                                                                                                              | the meeting store's recordings folder of each account a `connected` or `crawl` source reads ([meetings](#meetings-through-the-shared-folder-store)) |
-| `notion` | `page`, `database` | `id`                                                                                                              | as today's `page_ids` and `database_ids`                                                                                                            |
-| `linear` | `project`          | `id`                                                                                                              | the project's documents, as today's `project_ids`                                                                                                   |
+| Kind     | Item `type`        | Fields                                                                                        | Reads                                                                                                                                               |
+| -------- | ------------------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gdrive` | `folder`           | `id`, `recursive` (default `false`)                                                           | the folder's files; with `recursive`, every subfolder's too, to a depth of 8 and at most 500 subfolders per source (both not settings)              |
+| `gdrive` | `file`             | `id`                                                                                          | one file of a kind `include` names                                                                                                                  |
+| `gdrive` | `shared_drive`     | `id`                                                                                          | every file of a shared drive                                                                                                                        |
+| `gdrive` | `filter`           | any of `name_contains`, `kinds`, `modified_after` (a date), and optionally `in` (a folder id) | the files that match, as a query the server builds                                                                                                  |
+| `gdrive` | `meet_recordings`  | none                                                                                          | the meeting store's recordings folder of each account a `connected` or `crawl` source reads ([meetings](#meetings-through-the-shared-folder-store)) |
+| `notion` | `page`, `database` | `id`                                                                                          | as today's `page_ids` and `database_ids`                                                                                                            |
+| `linear` | `project`          | `id` or `slug_id`                                                                             | the project's documents, as today's `project_ids`                                                                                                   |
 
 Every id keeps today's alphabet check, since an id goes into a store query or a request
 path. A `filter` never takes a raw query string: each field has a pattern (a name
-fragment of printable characters, an email, an ISO date, `kinds` from the `include`
-table), quotes and backslashes are escaped, and `server/clients/gdrive.py` builds the
-query, so a caller cannot widen a listing past what the fields say. `include` stays the
-source-wide file-kind filter. `meet_recordings` is refused on a `shared` source, whose
-service account has no recordings folder of its own.
+fragment of printable characters, an ISO date, `kinds` from the `include` table), quotes
+and backslashes are escaped, and `server/clients/gdrive.py` builds the query, so a
+caller cannot widen a listing past what the fields say. `include` stays the source-wide
+file-kind filter. `meet_recordings` is refused on a `shared` source, whose service
+account has no recordings folder of its own.
 
-A source holds at most 300 items (a wire contract, not a setting), and at most
+A source holds at most 300 items (a wire contract, not a setting; a `linear` or `notion`
+source keeps its 20 until its turn bounds what it lists), and at most
 `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents (default 50,000: today's bound on the
 read of a source's stored copies, made a setting). The bound counts the source's stored
 documents plus the new files a listing finds. A turn over it (a listing grown past it,
@@ -80,10 +81,20 @@ retires, and lands its listing row, so its copies drain back under the bound and
 goes stale; `inspect` and `loom doctor` show `too_many_documents` meanwhile, with the
 count, for a `namespace` source; for a mirrored source, its connected owner sees the
 code without the count, and a platform admin sees both (exception 4). The read of a
-source's stored copies goes in pages by `source_uri`, so it never cuts one off. A
-listing asks the store about at most 50 parent folders per query (not a setting), so a
-source of many folders lists in several queries; a recursive folder's subfolders are
-walked on every full listing, and a file in a new subfolder arrives with the next one.
+source's stored copies goes in pages by `source_uri`, so it never cuts one off. Not
+built yet: the setting and the paged read. Until then the bound is the constant
+`REVISIONS_LIMIT` (50,000), the read takes one row past it, and a source that holds more
+fails every turn (`too_many_documents: more than 50000`) and retires nothing, so only
+`remove` with `delete_documents` brings it back; under the bound a turn holds back new
+files as described. A listing asks the store about at most 50 parent folders per query
+(not a setting), so a source of many folders lists in several queries; a recursive
+folder's subfolders are walked on every listing, so a new file in a new subfolder
+arrives with the next turn, and files moved in with it (a move keeps a file's change
+time) with the next full listing; a walk the pass deadline cuts leaves the listing
+incomplete, so the turn keeps its stamp. A walk cut at its depth or folder bound still
+lets a full turn retire a file the store reports deleted or trashed, or one of a kind
+`include` no longer names, but never one the listing merely lacks, since it may sit
+below the cut.
 
 A probe checks a bounded sample: every item while there are at most 20, otherwise the 20
 items added last, and the answer says `sampled: true` with the number checked, which is
@@ -114,46 +125,50 @@ can read:
 `server/knowledge/domain/source_links.py` turns a pasted link into an item, with no
 request to the store:
 
-| Link                                                                                  | Item                                    |
-| ------------------------------------------------------------------------------------- | --------------------------------------- |
-| `https://drive.google.com/drive/folders/<id>`, with or without `u/<n>/`               | `gdrive` `folder`                       |
-| `https://drive.google.com/file/d/<id>/…`, `…/open?id=<id>`                            | `gdrive` `file`                         |
-| `https://docs.google.com/document/d/<id>/…`, `…/presentation/d/<id>/…`                | `gdrive` `file`                         |
-| `https://www.notion.so/<slug>-<32 hex>`, `https://www.notion.so/<workspace>/<32 hex>` | `notion` `page` (`database` with `?v=`) |
-| `https://linear.app/<workspace>/project/<slug>-<id>`                                  | `linear` `project`                      |
+| Link                                                                                                                                     | Item                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `https://drive.google.com/drive/folders/<id>`, with or without `u/<n>/` or `mobile/`                                                     | `gdrive` `folder`                                                 |
+| `https://drive.google.com/file/d/<id>/…`                                                                                                 | `gdrive` `file`                                                   |
+| `https://docs.google.com/document/d/<id>/…`, `…/presentation/d/<id>/…`                                                                   | `gdrive` `file`                                                   |
+| `https://www.notion.so/<slug>-<32 hex>`, `https://www.notion.so/<workspace>/<32 hex>`, `https://<workspace>.notion.site/<slug>-<32 hex>` | `notion` `page` (`database` with `?v=`, unless `p=` names a page) |
+| `https://linear.app/<workspace>/project/<slug>-<id>`                                                                                     | `linear` `project`                                                |
 
-A shared drive's own link has the folder form; the probe reads the id and turns a
-`folder` item that names a shared drive into a `shared_drive` one. A link of another
-host, with no id, or to something the sync does not read (a spreadsheet, a single issue)
-answers `unreadable` with the reason. The parser takes a list and answers each link, so
-a paste of fifty links shows which three it could not read. It is
-`knowledge.source.parse_links` (viewer; no store request, nothing written), used by the
-dashboard's preview and by agents. A page link that turns out to be a database is
-reported by the probe. A project link carries the project's short id, which the probe
-resolves to the UUID the store's API takes.
+A shared drive's own link has the folder form: a folder link names a folder, read
+without its subfolders, even when it is a shared drive's root; a recursive folder at a
+drive's root is turned into a `shared_drive` item by the probe. A link of another host,
+with no id, or to something the sync does not read (a spreadsheet, a single issue)
+answers `unreadable` with the reason, as does an `open?id=` link, which names a folder
+or a file alike. The parser takes a list and answers each link, so a paste of fifty
+links shows which three it could not read. It is `knowledge.source.parse_links` (viewer;
+no store request, nothing written), which agents use to preview pasted links; `add` and
+`update` take links directly. A page link that turns out to be a database is reported by
+the probe. A project link carries the project's short id, which `add` and `update`
+resolve to the UUID the store's API takes, in one lookup before the probe.
 
 ### Wire shape
 
 `knowledge.source.add` takes `items`, or `links` it parses (an unreadable link refuses
-the call with each reason, `BAD_LINK`), and still takes `config`, which it turns into
-items (`folder_ids` into `folder` items, and so on), so an N-1 client keeps working.
-`list` and `inspect` answer `items`, and `config` in today's form when the items can be
-written in it, else `{}`; a mirrored source answers `config` `{}` to everyone, and its
-audit rows carry every field of its items, a filter's `owner` included, and a crawl's
-`subjects`, as keyed hashes only (below).
+the call naming the first 10 with their reasons and counting the rest, `BAD_LINK`), and
+still takes `config`, which it turns into items (`folder_ids` into `folder` items, and
+so on), so an N-1 client keeps working. `list` and `inspect` answer `items`, and
+`config` in today's form when the items can be written in it, else `{}`; a mirrored
+source answers `config` `{}` to everyone, and its audit rows carry every field of its
+items and a crawl's `subjects` as keyed hashes only (below). A filter has no owner field:
+it would keep a person's address in the registry, which outlives their erasure. Its
+`name_contains` is an admin's text and, like the source's name, stays in the registry
+and the audit log after an erasure.
 
 `knowledge.source.update` takes `add_items`, `remove_items` (each also as links) and a
 new `include`, probes what it adds with the stored credential (the same sample rule),
 and writes the source at its next version under the namespace's source lease. Its audit
 row, and `add`'s, names the namespace, the name and the items added and removed, with a
-`filter`'s `owner` email, a crawl's `subjects` and every field of a mirrored source's
-items as keyed hashes (below). Removing every item is refused (`BAD_CONFIG`); `remove`
-ends a source. Changing `access` is a new source. For a `crawl`, `update` also takes
-`subjects` (the new list, probed like added items) and `directory_subject`. Every
-`update` and `rotate` of a crawl needs the same roles as `add`, since its credential
-reads every listed person's drive: a namespace admin without an org-wide role cannot
-change whose drives it reads, what it reads of them (items, `include`) or the key it
-reads with.
+crawl's `subjects` and every field of a mirrored source's items as keyed hashes (below).
+Removing every item is refused (`BAD_CONFIG`); `remove` ends a source. Changing `access`
+is a new source. For a `crawl`, `update` also takes `subjects` (the new list, probed
+like added items) and `directory_subject`. Every `update` and `rotate` of a crawl needs
+the same roles as `add`, since its credential reads every listed person's drive: a
+namespace admin without an org-wide role cannot change whose drives it reads, what it
+reads of them (items, `include`) or the key it reads with.
 
 ### One document, one owner
 

@@ -43,6 +43,14 @@ class ValidationError(LoomServerError):
     status_code = 422
 
 
+class BadConfigError(ValidationError):
+    """422 — a document source's config or items it cannot use, or a change it cannot
+    make; the message, Loom's own, names what to fix."""
+
+    code = "BAD_CONFIG"
+    status_code = 422
+
+
 class AuthInsufficientError(LoomServerError, PermissionError):
     """A public 403 that remains catchable as ``PermissionError`` internally.
 
@@ -134,7 +142,8 @@ class WrongCellError(LoomServerError):
 
 class SourceReplacedError(LoomServerError):
     """409 — the document source was removed and added again as another source
-    during the call (a rotate's probe, a sync request); act on the current one."""
+    during the call (an update's or a rotate's probe, a sync request); act on the
+    current one."""
 
     code = "SOURCE_REPLACED"
     status_code = 409
@@ -142,8 +151,8 @@ class SourceReplacedError(LoomServerError):
 
 class ErasureRunningError(LoomServerError):
     """409 — an erasure that will still run covers the namespace: a document source added
-    now would outlast it, since its first step may already have read the namespace's
-    sources. Retry once the erasure finishes (`erasure.status`)."""
+    or updated now would outlast it, since its first step may already have read the
+    namespace's sources. Retry once the erasure finishes (`erasure.status`)."""
 
     code = "ERASURE_RUNNING"
     status_code = 409
@@ -195,7 +204,9 @@ class OverloadedError(LoomServerError):
     sibling held it past its wait; the matchers: the org's share of them stayed busy, and
     the write is refused rather than stored unchecked; a conversation delete or
     compaction: writes to the thread's embeddings kept landing; insights.query while its
-    replica's probe has no answer from ClickHouse. Safe to resend on an idempotent op, or
+    replica's probe has no answer from ClickHouse; a document source a build without
+    items cannot read, while such a build may still serve; a source another write
+    changed during an update's or a rotate's probe. Safe to resend on an idempotent op, or
     when it came before the handler ran; `retry_after_s` is the wait."""
 
     code = "OVERLOADED"

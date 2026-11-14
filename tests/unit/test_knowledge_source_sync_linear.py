@@ -17,7 +17,7 @@ import pytest
 from server.clients import linear
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_sync
-from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
+from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, items_from_config
 from server.settings import settings
 from tests.unit.test_knowledge_source_sync import _detail, _source, _World
 from tests.unit.test_knowledge_source_sync import world as world  # the fixture
@@ -122,9 +122,11 @@ def _graphql_error(status: int, code: str, message: str = "x") -> httpx.Response
 
 def _linear_source(**kw: Any) -> Any:
     """The harness's source, of this kind."""
+    config = kw.pop("config", {"project_ids": [PROJECT, OTHER]})
     fields = {
         "kind": "linear",
-        "config": {"project_ids": [PROJECT, OTHER]},
+        "config": config,
+        "items": items_from_config("linear", config),
         "credential_enc": seal("knowledge_sources.credential", KEY),
         **kw,
     }

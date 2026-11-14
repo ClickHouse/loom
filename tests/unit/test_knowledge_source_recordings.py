@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from server.clients import recording
+from server.core.errors import BadConfigError
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_probes, source_sync, source_sync_recording
 from server.knowledge.domain import sources as domain
@@ -225,7 +226,7 @@ def test_a_recording_config_keeps_ids_and_refuses_the_rest() -> None:
         {"provider": "meet", "ids": [f"s{i}" for i in range(21)]},
         {"provider": "meet", "ids": ["x"], "host": "h"},
     ):
-        with pytest.raises(domain.SourceConfigError):
+        with pytest.raises(BadConfigError):
             domain.parse_config("recording", bad)
 
 
@@ -583,21 +584,23 @@ def test_the_probe_counts_recordings_and_refuses_an_unseen_id_or_a_wide_scope(
         _meet_record("r2", "2026-01-03T10:00:00Z", "2026-01-03T10:30:00Z"),
     ]
     config = {"provider": "meet", "ids": [SPACE]}
-    found = asyncio.run(source_probes.probe("recording", config, MEET_KEY))
+    found = asyncio.run(source_probes.probe("recording", config, MEET_KEY, items=[]))
     assert (found.documents, found.sample) == (
         2,
         ["Meeting 2026-01-03 10:00 UTC", "Meeting 2026-01-02 10:00 UTC"],
     )
     stores.lost_spaces = {SPACE}
     with pytest.raises(source_probes.SourceUnreachable):
-        asyncio.run(source_probes.probe("recording", config, MEET_KEY))
+        asyncio.run(source_probes.probe("recording", config, MEET_KEY, items=[]))
     with pytest.raises(source_probes.CredentialRefused):
-        asyncio.run(source_probes.probe("recording", {"provider": "zoom", "ids": [MEETING]}, "{}"))
+        asyncio.run(
+            source_probes.probe("recording", {"provider": "zoom", "ids": [MEETING]}, "{}", items=[])
+        )
     stores.scopes["oauth2.googleapis.com"] = (
         "https://www.googleapis.com/auth/meetings.space.created"
     )
     with pytest.raises(source_probes.CredentialRefused):
-        asyncio.run(source_probes.probe("recording", config, MEET_KEY))
+        asyncio.run(source_probes.probe("recording", config, MEET_KEY, items=[]))
 
 
 def test_a_session_never_shows_its_token() -> None:
@@ -654,7 +657,7 @@ def test_a_space_the_account_may_not_read_is_lost_not_a_refused_credential(
     assert world.audits == []
     config = {"provider": "meet", "ids": ["closedSpace", SPACE]}
     with pytest.raises(source_probes.SourceUnreachable, match="space closedSpace: http_403"):
-        asyncio.run(source_probes.probe("recording", config, MEET_KEY))
+        asyncio.run(source_probes.probe("recording", config, MEET_KEY, items=[]))
 
 
 def test_a_401_on_a_space_after_the_token_exchange_is_the_turn_s_credential(

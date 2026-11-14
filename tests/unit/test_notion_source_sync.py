@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,7 +23,12 @@ from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_probes, source_sync, source_sync_notion, writes
 from server.knowledge.domain import convert
-from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, KnowledgeSource, parse_config
+from server.knowledge.domain.sources import (
+    SYNC_WORKER_ACTOR,
+    KnowledgeSource,
+    items_from_config,
+    parse_config,
+)
 from server.knowledge.store import documents
 from server.memory.domain.provenance import pipeline_actor_var
 from server.observability import audit
@@ -181,7 +186,8 @@ def _source(**kw: Any) -> KnowledgeSource:
         name="wiki",
         kind="notion",
         source_id="id-wiki",
-        config=kw.pop("config", {"page_ids": [PAGE], "database_ids": [DB]}),
+        config=(config := kw.pop("config", {"page_ids": [PAGE], "database_ids": [DB]})),
+        items=kw.pop("items", None) or items_from_config("notion", config),
         credential_enc=seal("knowledge_sources.credential", TOKEN),
         **kw,
     )
@@ -279,6 +285,10 @@ def _paths(world: _Store) -> list[str]:
 
 def _uri(world: _Store, page_id: str) -> str:
     return str(world.pages[page_id]["url"])
+
+
+def _probe(config: dict[str, Any], token: str) -> Awaitable[source_probes.Probe]:
+    return source_probes.probe("notion", config, token, items=items_from_config("notion", config))
 
 
 def test_a_first_turn_writes_every_listed_page_and_database_page(world: _Store) -> None:
@@ -557,7 +567,7 @@ def test_the_probe_reads_every_listed_id_and_samples_the_newest(
 ) -> None:
     seen = _probe_world(monkeypatch, _probe_store)
     config = {"page_ids": [PAGE], "database_ids": [DB]}
-    found = asyncio.run(source_probes.probe("notion", config, TOKEN))
+    found = asyncio.run(_probe(config, TOKEN))
     assert (found.documents, found.sample, found.more) == (2, ["Newest", "Old"], True)
     assert [r.url.path for r in seen] == [
         f"/v1/pages/{PAGE}",
@@ -581,7 +591,7 @@ def test_probe_failures_are_told_apart_and_carry_no_body(
 ) -> None:
     _probe_world(monkeypatch, lambda r: httpx.Response(status, text="secret page title"))
     with pytest.raises(error) as raised:
-        asyncio.run(source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": []}, TOKEN))
+        asyncio.run(_probe({"page_ids": [PAGE], "database_ids": []}, TOKEN))
     assert "secret page title" not in str(raised.value)
 
 
@@ -591,9 +601,7 @@ def test_a_credential_that_is_no_token_is_refused_without_a_call(
     seen = _probe_world(monkeypatch, _probe_store)
     for bad in ("", "two words here", "short"):
         with pytest.raises(source_probes.CredentialRefused):
-            asyncio.run(
-                source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": []}, bad)
-            )
+            asyncio.run(_probe({"page_ids": [PAGE], "database_ids": []}, bad))
     assert seen == []
 
 
@@ -777,9 +785,7 @@ def test_the_probe_refuses_a_trashed_page_or_database(
 
     _probe_world(monkeypatch, handler)
     with pytest.raises(source_probes.SourceUnreachable, match="in the trash"):
-        asyncio.run(
-            source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": [DB]}, TOKEN)
-        )
+        asyncio.run(_probe({"page_ids": [PAGE], "database_ids": [DB]}, TOKEN))
 
 
 def _under_block(block_id: str) -> dict[str, Any]:
@@ -858,9 +864,7 @@ def test_a_probe_of_twenty_databases_fits_its_time_bound_at_the_store_s_pace(
     # Another integration's queue is long; this probe does not wait on it.
     monkeypatch.setattr(notion, "_next_request_at", {"0" * 16: clock.t + 600.0})
     seen = _probe_world(monkeypatch, handler)
-    found = asyncio.run(
-        source_probes.probe("notion", {"page_ids": [], "database_ids": databases}, TOKEN)
-    )
+    found = asyncio.run(_probe({"page_ids": [], "database_ids": databases}, TOKEN))
     # Every database is read; only three first data sources are queried.
     assert len(seen) == 23 and found.more
     # Each request after the first waits one pace: 7.7 s in all, well inside the bound.
@@ -963,7 +967,7 @@ def test_another_integration_s_busy_pacer_does_not_slow_a_probe(
     # Another integration has a long queue of requests ahead.
     monkeypatch.setattr(notion, "_next_request_at", {"0" * 16: clock.t + 600.0})
     _probe_world(monkeypatch, _probe_store)
-    asyncio.run(source_probes.probe("notion", {"page_ids": [PAGE], "database_ids": [DB]}, TOKEN))
+    asyncio.run(_probe({"page_ids": [PAGE], "database_ids": [DB]}, TOKEN))
     # Three requests: the first goes at once, each later one a pace after the last.
     assert clock.sleeps == pytest.approx([0.35, 0.35])
 
@@ -1431,3 +1435,15 @@ def test_a_page_whose_address_is_taken_during_the_fetch_is_counted_skipped(
     assert world.upserts == 2  # the two database pages
     assert world.docs[uri]["actor"] == "human:ann"
     assert (out.skipped, out.changed) == (1, 2)
+
+
+def test_two_incomplete_data_sources_mark_the_turn_once(world: _Store) -> None:
+    _run()
+    other = "e" * 32
+    world.database = {**world.database, "data_sources": [{"id": DS}, {"id": other}]}
+    world.answers[f"/data_sources/{other}/query"] = httpx.Response(
+        200, json={"results": [], "has_more": False, "request_status": {"type": "incomplete"}}
+    )
+    world.incomplete = True
+    _run(full=True)
+    assert _detail(world)["error"] == "listing: incomplete result"

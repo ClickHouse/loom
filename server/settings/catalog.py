@@ -2293,8 +2293,9 @@ class KnowledgeSettings(BaseModel):
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
-    # Seconds a document source's probe (add, check, rotate) may take in all; past it
-    # add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false.
+    # Seconds a document source's probe (add, update, check, rotate) or tracker short-id
+    # lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE
+    # and check answers reachable: false.
     knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
     # The knowledge_source_sync worker: pulls each registered document source's changed
     # files into its namespace's documents. Off by default: it needs each source's
@@ -6080,16 +6081,21 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.query": 1500,
     "knowledge.reads": 500,
     "knowledge.search": 250,
-    # add and rotate: a probe bounded by knowledge_source_probe_timeout_s, up to 5 s
-    # waiting for the namespace's lease, a few reads and inserts; check: the probe
-    # alone, writing nothing.
-    "knowledge.source.add": 30000,
+    # add: a short-id resolve and a probe, each under knowledge_source_probe_timeout_s;
+    # update: at most two such bounds (the added items and, on an `include` change, the
+    # kept file items, or a short-id resolve and a probe); rotate: one probe; each op
+    # then waits up to 5 s once for the namespace's lease and makes a few reads and
+    # inserts; check: the probe alone, writing nothing. parse_links reads no store,
+    # only the links it is sent.
+    "knowledge.source.add": 60000,
     "knowledge.source.check": 30000,
     "knowledge.source.inspect": 400,
     "knowledge.source.list": 300,
+    "knowledge.source.parse_links": 50,
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,
     "knowledge.source.sync_now": 300,
+    "knowledge.source.update": 60000,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
     # A read and an insert; an ingested document's edit also takes the source's claim

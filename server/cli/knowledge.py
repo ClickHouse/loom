@@ -2,7 +2,8 @@
 sources and the decisions mined from them, in-process with no token (operator only), the pass the
 knowledge_source_sync worker runs (server/knowledge/app/source_sync.py). `loom knowledge
 migrate-originals`: the originals held in ClickHouse moved to the document bucket
-(server/knowledge/app/originals.py)."""
+(server/knowledge/app/originals.py). `loom knowledge source`: the sources over a running
+server (server/cli/knowledge_source.py)."""
 
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from server.cli._ch import dry_run_orgs, run_connected
+from server.cli.knowledge_source import register_knowledge_source_cli
 
 if TYPE_CHECKING:
     from server.knowledge.app.originals import Migrated
@@ -42,6 +44,7 @@ def register_knowledge_cli(sub: Any) -> None:
         "while that request is unfinished goes on with it",
     )
     p_sync.set_defaults(func=_cmd_sync)
+    register_knowledge_source_cli(ksub)
     p_move = ksub.add_parser(
         "migrate-originals",
         help="Move the document originals still held in ClickHouse, that a document, upload "

@@ -37,10 +37,10 @@ from typing import Any
 from server.clients import notion
 from server.core.errors import ValidationError
 from server.core.hashing import sha256_text
-from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
+from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import convert
-from server.knowledge.domain.sources import KnowledgeSource, json_object
+from server.knowledge.domain.sources import KnowledgeSource, item_ids, json_object
 from server.knowledge.store import sources as store
 from server.settings import settings
 
@@ -113,7 +113,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     result = sync.TurnResult()
     result.full = bool(detail.get("full")) or not sync.valid_stamp(stamp) or sync.full_due(detail)
     sync.start_waits(result, detail)
-    token = unseal("knowledge_sources.credential", src.credential_enc)
+    token = source_ops.credential_of(src)
     if not token:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
@@ -253,8 +253,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
     `edited_after` when it is set) and the known child pages. A page in the trash or
     a child the store no longer has is left out, so a full listing's lookup retires
     its document."""
-    config = t.src.config
-    for page_id in config.get("page_ids") or []:
+    for page_id in item_ids(t.src.items, "page"):
         try:
             page = await notion.page(t.token, page_id)
         except notion.VendorError as e:
@@ -262,7 +261,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
             continue
         if not page.get("in_trash"):
             t.add(page)
-    for database_id in config.get("database_ids") or []:
+    for database_id in item_ids(t.src.items, "database"):
         try:
             db = await notion.database(t.token, database_id)
         except notion.VendorError as e:
@@ -285,8 +284,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
                     t.add(page)
             if not whole:
                 # Write what it listed, but keep the stamp and retire nothing.
-                t.result.complete = False
-                t.result.note = "listing: incomplete result"
+                t.result.mark(sync.TurnMark.INCOMPLETE_RESULT)
     for child_id in list(t.known):
         try:
             page = await notion.page(t.token, child_id)
@@ -362,8 +360,8 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     if page.get("in_trash"):
         return True
     item = _item(page)
-    if page_id in (t.src.config.get("page_ids") or []) or item["parent_database"] in (
-        t.src.config.get("database_ids") or []
+    if page_id in item_ids(t.src.items, "page") or item["parent_database"] in item_ids(
+        t.src.items, "database"
     ):
         return False
     holder = _holder(t, item)
@@ -531,7 +529,7 @@ def _record_children(
     for child, held_by in list(t.known.items()):
         if whole and held_by == parent and child not in children:
             t.known.pop(child)
-    listed_pages = set(t.src.config.get("page_ids") or [])
+    listed_pages = set(item_ids(t.src.items, "page"))
     over = 0
     for child in children:
         if child in listed_pages or not notion.valid_id(child):
