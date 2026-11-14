@@ -1213,14 +1213,32 @@ describe("the Library on a collection", () => {
     });
 
     it("keeps the place drawn when a create answers with the collection already shown", async () => {
-      resizable();
+      // col-q3 is a top-level collection titled Q3, shown below the tree's width.
+      const rows = ROWS.map((c) => (c.namespace === "col-q3" ? { ...c, title: "Q3" } : c));
+      api.listCollections.mockResolvedValue({ collections: rows, next_cursor: null });
       api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
-      const answer = await createInTree();
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
       await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      // A new top-level collection titled as col-q3 is: the server answers with col-q3 itself.
+      const inside = within(dialog).getByRole("button", { name: "Inside" });
+      fireEvent.pointerDown(inside, { button: 0, ctrlKey: false });
+      fireEvent.click(inside);
+      fireEvent.click(screen.getByText("Top level, in the org"));
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q3" } });
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      expect(api.createCollection).toHaveBeenCalledWith(
+        "acme",
+        expect.any(String),
+        expect.objectContaining({ parent: "", title: "Q3" }),
+      );
       const at = location.search;
       const docs = api.listKnowledge.mock.calls.length;
-      // The title already names the collection shown: the server answers with it.
-      await answer({ namespace: "col-q3", parent: "", created: false, title: "col-q3" });
+      await act(async () => answer({ namespace: "col-q3", parent: "", created: false, title: "Q3" }));
       expect(document.querySelector("[data-doc-row]")).not.toBeNull();
       expect(screen.getByRole("navigation", { name: "Collection path" })).toBeInTheDocument();
       await settle();

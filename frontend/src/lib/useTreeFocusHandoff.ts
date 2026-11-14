@@ -36,7 +36,7 @@ export function useTreeFocusHandoff(besideTree: boolean): void {
     const frame = requestAnimationFrame(() => {
       const active = document.activeElement;
       if ((active && active !== document.body) || !last.current || last.current.isConnected) return;
-      const to = handoffTarget(seen.current);
+      const to = handoffTarget(besideTree);
       if (to) to.focus();
       else focusViewHeading();
     });

@@ -287,9 +287,7 @@ export function Documents() {
   // not measured yet, the select stands in.
   const treeHeight = useTreeHeight();
   const besideTree = treeHeight !== null;
-  // A resize that draws or removes the tree removes the controls only one layout has (the tree,
-  // the picker, the places below the documents): their focus goes to the tree's row for the
-  // place shown, else to the picker. A title typed in the tree's New collection form is dropped.
+  // A title typed in the tree's New collection form is dropped.
   useTreeFocusHandoff(besideTree);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);

@@ -1,6 +1,7 @@
 /**
  * What a collection is called on screen, the name a title derives, the order collections are
- * listed in, and how many the Library reads.
+ * listed in, how many the Library reads, what a new one may sit in, and the Library's landmark
+ * names the page's focus handoff looks up.
  *
  * A collection's name (`col-…`) is its address: grants, search scope and audit key on it,
  * and it is never used again once deleted. People see its title, which may repeat; the
@@ -140,7 +141,7 @@ export function canHold(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "viewer";
 }
 
-/** The Library tree's landmark name, which the page finds it by to hand it the focus. */
+/** The Library tree's landmark name, which the focus handoff finds it by. */
 export const LIBRARY_PLACES_LABEL = "Library places";
 
 /** The place picker's name, shown where no tree is: the page hands it the focus when the tree goes. */
