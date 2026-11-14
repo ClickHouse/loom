@@ -94,7 +94,7 @@ export function CreateCollectionDialog({
   const [error, setError] = useState<{ text: string; suggestion: string } | null>(null);
   // False once this open's dialog is gone: a late answer then leaves the page, and any dialog
   // opened since, alone.
-  const live = useMounted();
+  const mounted = useMounted();
 
   const reset = () => {
     setTitle("");
@@ -138,7 +138,7 @@ export function CreateCollectionDialog({
             deriveName: true,
           });
       announceCreated(r, trimmedTitle, org);
-      if (!live.current) return;
+      if (!mounted.current) return;
       onCreated(r.namespace, version);
       reset();
       onOpenChange(false);

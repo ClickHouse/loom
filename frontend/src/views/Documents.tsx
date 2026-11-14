@@ -175,16 +175,24 @@ export function Documents() {
     useStore.getState().clearPendingDoc();
     setPicks((n) => n + 1);
   }, []);
-  // A pick is a new history entry, so Back steps through the places picked. `arriveFocus` and
-  // `note` are the arrival's focus and words (a tree pick keeps the person on its row).
-  const goTo = useCallback((c: string | null, arriveFocus?: string, note?: string) => {
-    if (c === linkedCollection()) return; // the place already shown: nothing moves
-    useStore.getState().clearPendingDoc();
-    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
-  }, []);
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection);
+  // A pick is a new history entry, so Back steps through the places picked. `arriveFocus` and
+  // `note` are the arrival's focus and words (a tree pick keeps the person on its row).
+  const { error: listFailed, retry: retryList } = collections;
+  const goTo = useCallback(
+    (c: string | null, arriveFocus?: string, note?: string) => {
+      if (c === linkedCollection()) {
+        // The place the URL names: nothing moves, but a list that failed to confirm it reads again.
+        if (c && listFailed) retryList();
+        return;
+      }
+      useStore.getState().clearPendingDoc();
+      useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
+    },
+    [listFailed, retryList],
+  );
   const mounted = useMounted();
   // Bumped whenever the place shown changes (a pick, Back, a correction, another namespace or
   // org), and by each create sent (tree or dialog), so only the latest opens what it made; a

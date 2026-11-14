@@ -1413,6 +1413,60 @@ describe("the Library on a collection", () => {
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
+    it("reads the list once for a tree create that opens what it made", async () => {
+      resizable();
+      const answer = await createInTree();
+      // The create's refresh and the page's read for the move are one read.
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+    });
+
+    it("reads the list once for a dialog create that opens what it made", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await act(async () => answer(q4));
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+    });
+
+    it("reads again when the place the URL names is picked in the tree after its read failed", async () => {
+      resizable();
+      const answer = await createInTree();
+      // The title names col-plans, already listed: the page moves there, and its read fails.
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer({ namespace: "col-plans", parent: "col-q3", created: false, title: "col-plans" });
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-plans");
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "col-plans" })).not.toHaveAttribute("aria-current");
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.click(within(tree).getByRole("link", { name: "col-plans" }));
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(within(tree).getByRole("link", { name: "col-plans" })).toHaveAttribute("aria-current", "page");
+    });
+
     it("opens a second collection made in the tree after the first one's read failed", async () => {
       resizable();
       const answer = await createInTree();
