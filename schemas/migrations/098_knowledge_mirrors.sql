@@ -1,9 +1,9 @@
 -- loom.knowledge_mirrors: the mirrors of each namespace, a namespace named `acl-` and 24
 -- hex digits where its mirrored sources' documents live, each shown only to a reader the
--- store's permission list admits (docs/architecture/document-sources.md). At most one is
--- live; a namespace erasure purges every one and writes each `deleted`, so the name
--- registered again gets a new mirror. Kept by mirror, so a later erasure and a replay
--- still reach one written `deleted`. Names only, no memory content.
+-- store's permission list admits (docs/architecture/document-sources.md). A namespace
+-- erasure purges every one and writes each `deleted`, so the name registered again gets
+-- a new mirror. A forgotten mirror's row stays, written `deleted`, so a later erasure or
+-- a replay still reaches it. Names only, no memory content.
 CREATE TABLE IF NOT EXISTS loom.knowledge_mirrors
 (
     `org` LowCardinality(String),

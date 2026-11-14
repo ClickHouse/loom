@@ -124,6 +124,7 @@ from server.knowledge.domain.sources import (
     KnowledgeSource,
     include_in,
     json_object,
+    served,
     source_key,
     source_tag,
     turn_lease_name,
@@ -380,7 +381,7 @@ async def run_sync(
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
     """The sources a pass syncs: those whose namespace is active, of the sources this
     build serves (a mirrored one is a later build's)."""
-    found = [s for s in found if s.access == "namespace"]
+    found = [s for s in found if served(s)]
     inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in found}))
     return [s for s in found if (s.org, s.namespace) not in inactive]
 
@@ -1235,7 +1236,7 @@ async def _retire_removed_sources(
             continue
         if only and src.name != only:
             continue
-        if src.access != "namespace":
+        if not served(src):
             continue  # its documents are in a mirror, which a later build retires
         if run.spent():
             result.cut = True

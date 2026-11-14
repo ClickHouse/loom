@@ -188,8 +188,8 @@ def test_a_registry_write_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def _counted(monkeypatch: pytest.MonkeyPatch, left_in_mirror: int) -> list[Any]:
-    """The census answers `left_in_mirror` rows of loom.memory in the mirror, and only
-    when it counts as a purge does (every row, tombstoned or not)."""
+    """The census answers `left_in_mirror` rows of loom.memory for the scope with its
+    mirror, and only when it counts as a purge (every row, tombstoned or not)."""
     counted: list[Any] = []
 
     async def _count(org: str, scope_type: str, scope: Any, **_: Any) -> dict[str, int]:

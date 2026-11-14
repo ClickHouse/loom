@@ -583,7 +583,6 @@ async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
-    from server.identity.store import namespace_census
     from server.knowledge.store import chunks as K
     from server.knowledge.store import documents as D
     from server.knowledge.store import mirrors as M
@@ -596,7 +595,6 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
     await M.mirrors_of(ORG, [NS], ch=ch)
-    await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
     await K.find_doc_by_content_sha256(
         ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
     )
@@ -938,8 +936,11 @@ async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
     member count `namespace.inventory` takes over a collection's lineage; `grants.list`
     reads through its handler."""
     from server.identity.store import grants as grants_repo
+    from server.identity.store import namespace_census
 
     await grants_repo.list_active(ORG, NS, ch=ch)
+    # Whether a name is held: by a grant, a source, a mirror or any census row.
+    await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
     await grants_repo.member_count(ORG, ["col-a", "col-b"], ch=ch)
 
 

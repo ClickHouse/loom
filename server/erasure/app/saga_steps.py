@@ -7,8 +7,8 @@ each."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -71,16 +71,12 @@ async def _step_verify_residue(
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
     spellings = await census_spellings(org, scope_type, scope_value)
-
-    async def count(scope: _NS) -> dict[str, int]:
+    async with counted_scope(org, scope_type, scope_value) as scope:
         per_table = await erasure_census.residue_census(org, scope_type, scope, spellings=spellings)
         if scope_type == "namespace":  # and the scope's objects left in the document bucket
             per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
                 org, scope
             )
-        return per_table
-
-    per_table = await _counted_with_mirrors(org, scope_type, scope_value, count)
     holder["per_table"] = per_table
     holder["count"] = sum(per_table.values())
     holder["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
@@ -232,22 +228,26 @@ def with_mirrors(
     return run
 
 
-async def _counted_with_mirrors(
-    org: str,
-    scope_type: str,
-    scope_value: _NS,
-    count: Callable[[_NS], Awaitable[dict[str, int]]],
-    *,
-    ch: _CHClient | None = None,
-) -> dict[str, int]:
-    """`count` of the scope as `with_mirrors` erased it: with its mirrors, as a purge."""
-    if (
-        scope_type == "namespace"
-        and (scope := await mirror_scope(org, scope_value, ch=ch)) is not None
-    ):
-        with purge_scope(True):
-            return await count(scope)
-    return await count(scope_value)
+def mirrored(
+    name: str, step: Callable[[str, _NS], Awaitable[int]]
+) -> Callable[[str, _NS], Awaitable[int]]:
+    """Namespace step `name` as a saga runs it: under `with_mirrors`, but for the forget
+    step, which reads the registry itself."""
+    return step if name == "knowledge_mirrors.forget" else with_mirrors(step)
+
+
+@asynccontextmanager
+async def counted_scope(
+    org: str, scope_type: str, scope_value: _NS, *, ch: _CHClient | None = None
+) -> AsyncIterator[_NS]:
+    """The scope a census counts as `with_mirrors` erased it: with its mirrors, as a
+    purge, when it holds one."""
+    scope = await mirror_scope(org, scope_value, ch=ch) if scope_type == "namespace" else None
+    if scope is None:
+        yield scope_value
+        return
+    with purge_scope(True):
+        yield scope
 
 
 async def evidence_with_mirrors(
@@ -258,22 +258,13 @@ async def evidence_with_mirrors(
     spellings: Sequence[str] | None,
     ch: _CHClient | None = None,
 ) -> tuple[dict[str, int], dict[str, Exception], bool]:
-    """`erasure_census.evidence_census` of the scope as `_counted_with_mirrors` counts it,
-    the stores it could not read, and whether it counted as a purge."""
-    unread: dict[str, Exception] = {}
-    purged = False
-
-    async def count(scope: _NS) -> dict[str, int]:
-        nonlocal purged
-        purged = purge_mode()
-        found, errors = await erasure_census.evidence_census(
+    """`erasure_census.evidence_census` of the `counted_scope`, the stores it could not
+    read, and whether it counted as a purge."""
+    async with counted_scope(org, scope_type, scope_value, ch=ch) as scope:
+        per_table, unread = await erasure_census.evidence_census(
             org, scope_type, scope, ch=ch, spellings=spellings
         )
-        unread.update(errors)
-        return found
-
-    per_table = await _counted_with_mirrors(org, scope_type, scope_value, count, ch=ch)
-    return per_table, unread, purged
+        return per_table, unread, purge_mode()
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:

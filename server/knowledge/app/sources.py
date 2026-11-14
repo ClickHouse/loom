@@ -346,7 +346,7 @@ async def _source_or_404(org: str, namespace: str, name: str) -> KnowledgeSource
 def _require_served(src: KnowledgeSource) -> None:
     """This build syncs only sources shown to every reader of the namespace: a mirrored
     one, which a later build writes, is that build's to read."""
-    if src.access != "namespace":
+    if not domain.served(src):
         raise ValidationError(
             f"source {src.name!r} is mirrored, which this server does not serve; "
             "upgrade Loom to manage it",

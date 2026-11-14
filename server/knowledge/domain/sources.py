@@ -526,11 +526,17 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
     return {"include": include_in(config)} if kind == "gdrive" else {}
 
 
+def served(src: KnowledgeSource) -> bool:
+    """Whether this build serves `src`: one shown to every reader of its namespace. A
+    mirrored one, or any `access` a later build writes, is that build's."""
+    return src.access == "namespace"
+
+
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when it cannot
     express the source: such a source is stored with `kind` empty. A build without
     items shows every document to every reader of the namespace."""
-    if src.access != "namespace":
+    if not served(src):
         return None
     if src.kind == "recording":
         return src.config
