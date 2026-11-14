@@ -99,16 +99,18 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
         # finished are audited.
         slots = asyncio.Semaphore(_AT_ONCE)
 
-        async def one(uri: str) -> tuple[MoveReason, Exception | None]:
+        reasons: dict[str, MoveReason] = {}
+        failures: list[Exception] = []
+
+        async def one(uri: str) -> None:
             async with slots:
                 try:
-                    return await _move(docs.get(uri), to, ledger, started), None
+                    reasons[uri] = await _move(docs.get(uri), to, ledger, started)
                 except Exception as e:  # noqa: BLE001 — raised below, after the others
-                    return "busy", e
+                    failures.append(e)
 
-        answers = dict(zip(uris, await asyncio.gather(*(one(u) for u in uris)), strict=True))
-    reasons: dict[str, MoveReason] = {u: reason for u, (reason, _) in answers.items()}
-    moved = [u for u in uris if not reasons[u]]
+        await asyncio.gather(*(one(u) for u in uris))
+    moved = [u for u in uris if reasons.get(u) == ""]
     if moved:
         from server.observability import audit
 
@@ -121,9 +123,8 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
             subject={"from_namespace": input.namespace, "source_uris": moved},
             request_id=request_id_var.get() or "",
         )
-    failed = next((e for _, e in answers.values() if e is not None), None)
-    if failed is not None:
-        raise failed
+    if failures:
+        raise failures[0]
     return KnowledgeMoveOutput(
         found=True,
         to_namespace=to,
@@ -137,80 +138,121 @@ async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutpu
 async def _move(
     read: DocumentRow | None, dst: str, ledger: list[dict[str, Any]], started: int
 ) -> MoveReason:
-    """One document: its reason, "" once moved. Its
-    originals are stored first, outside the claims; the checks, its chunks, tables and
+    """One document: its reason, "" once moved. Its originals are stored first, outside
+    the claims, once no copy is found where it goes; the checks, its chunks, tables and
     row, and its delete where it was run under the source's claim in both namespaces,
     taken in one order so two moves between the same places do not each hold one and
     give up on the other."""
     if read is None:
         return "not_found"
-    # A source sync owns it: its next pass would write it back where it was.
-    if read.actor == SYNC_WORKER_ACTOR:
-        return "synced"
-    if _erasing(ledger, read, dst, started):
-        return "erased"
-    org, uri = read.org, read.source_uri
+    org, src, uri = read.org, read.namespace, read.source_uri
     try:
+        doc = await documents_repo.get_one(org, src, uri)
+        if doc is None:
+            return "not_found"
+        # A source sync owns it: its next pass would write it back where it was.
+        if doc.actor == SYNC_WORKER_ACTOR:
+            return "synced"
+        if _erasing(ledger, doc, dst, started):
+            return "erased"
+        there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
+        if there is not None and _live(there) and not await _earlier_move(doc, there):
+            return "exists"
         # An original no row names yet is the sweep's, as any upload whose row did not land.
-        originals = await _store_originals(read, dst)
-        first, second = sorted((read.namespace, dst))
-        async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as one:
-            if not one:
+        originals = {} if _live(there) else await _store_originals(doc, dst)
+        first, second = sorted((src, dst))
+        async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as held_first:
+            if not held_first:
                 return "busy"
-            async with ingest_run.claim_source(org, second, uri, wait_s=_CLAIM_WAIT_S) as two:
-                if not two:
+            async with ingest_run.claim_source(
+                org, second, uri, wait_s=_CLAIM_WAIT_S
+            ) as held_second:
+                if not held_second:
                     return "busy"
-                return await _claimed(read, dst, originals, started)
+                return await _claimed(doc, there, dst, originals, started)
     except _BUSY:
         return "busy"
     except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
         return "erased"
 
 
+def _live(doc: DocumentRow | None) -> bool:
+    return doc is not None and doc.superseded_at is None
+
+
 async def _claimed(
-    read: DocumentRow, dst: str, originals: dict[str, Any], started: int
+    doc: DocumentRow,
+    there: DocumentRow | None,
+    dst: str,
+    originals: dict[str, Any],
+    started: int,
 ) -> MoveReason:
-    org, src, uri = read.org, read.namespace, read.source_uri
-    doc = await documents_repo.get_one(org, src, uri)
-    if doc is None:
+    """The move under the claims, of `doc` over `there`, both as read before them."""
+    org, src, uri = doc.org, doc.namespace, doc.source_uri
+    # Written since they were read: the originals or the copy found may be others.
+    now_doc = await documents_repo.get_one(org, src, uri)
+    if now_doc is None:
         return "not_found"
-    if doc.version != read.version:  # written since: its originals may be others
+    now_there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
+    if now_doc.version != doc.version or documents_repo.version_of(
+        now_there
+    ) != documents_repo.version_of(there):
         return "busy"
     for ns in (src, dst):
         if await documents_repo.publication_may_land(org, ns, uri):
             return "busy"
-    # An ingest of the source still to publish would write it back where it was.
-    if await ingest_jobs.open_for_source(org, src, uri):
-        return "busy"
-    there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
-    copy: _Copy | None = None
-    if there is None or there.superseded_at is not None:
-        copy = await _copy(doc, dst, there, originals)
-    elif not _earlier_move(doc, there):
-        return "exists"
+        # An ingest still to publish would write it back where it was, or over the copy.
+        if await ingest_jobs.open_for_source(org, ns, uri):
+            return "busy"
+    copy = None if _live(there) else await _copy(doc, dst, there, originals)
     try:
-        # An erasure registered while it copied may have passed the copy already: it is
-        # taken back before the delete, so the document stays where it was.
-        if copy is not None and _erasing(await _ledger(org, [doc], started), doc, dst, started):
-            await asyncio.shield(_take_back(copy))
-            return "erased"
-        if not await _delete_source(doc):
-            raise _TakenBack
-    except BaseException as e:  # a cancel too: a copy whose source stays live goes
-        if copy is not None and not writes.published_anyway(e):
+        # An erasure registered while it copied may have passed the copy already.
+        erased = copy is not None and _erasing(
+            await _ledger(org, [doc], started), doc, dst, started
+        )
+        unchanged = not erased and await _head_is(doc)
+    except BaseException:  # a cancel too: a copy whose source stays live goes
+        if copy is not None:
             await asyncio.shield(_take_back(copy))
         raise
+    if erased or not unchanged:
+        # Taken back before the delete: the document stays where it was.
+        if copy is not None:
+            await asyncio.shield(_take_back(copy))
+        return "erased" if erased else "busy"
+    try:
+        await _delete_source(doc)
+    except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
+        if copy is not None:
+            await asyncio.shield(_take_back(copy))
+        raise
+    # Any other failure of the delete may follow its tombstone: the document is left in
+    # both places, and a retry finds the copy and only deletes the source.
     return ""
 
 
-def _earlier_move(doc: DocumentRow, there: DocumentRow) -> bool:
+async def _earlier_move(doc: DocumentRow, there: DocumentRow) -> bool:
     """Whether the live row where it goes is this document's copy, left by a move that
-    stopped before its delete: a copy keeps the text, title, author and ingest time."""
-    return (there.content_sha256, there.user_id, there.ingested_at) == (
-        doc.content_sha256,
-        doc.user_id,
-        doc.ingested_at,
+    stopped before its delete: the same text, title, description, tags, metadata, author
+    and ingest time, and the same tables. An edit of either since makes it another."""
+    fields = ("content_sha256", "title", "description", "tags", "metadata", "user_id")
+    if any(getattr(there, f) != getattr(doc, f) for f in fields):
+        return False
+    if there.ingested_at != doc.ingested_at:
+        return False
+    return _table_shapes(
+        await datasets_repo.at_version(doc.org, doc.namespace, doc.source_uri, doc.version)
+    ) == _table_shapes(
+        await datasets_repo.at_version(there.org, there.namespace, there.source_uri, there.version)
     )
+
+
+def _table_shapes(catalogs: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    """What a copy keeps of each table: an approval or a clarification changes it."""
+    return [
+        (c["dataset_id"], c["schema"], c["schema_state"], c["clarifications"], c["row_count"])
+        for c in catalogs
+    ]
 
 
 async def _copy(
@@ -287,15 +329,19 @@ def _tables_of(catalogs: list[dict[str, Any]], dst: str, version: int) -> list[d
     ]
 
 
-async def _delete_source(doc: DocumentRow) -> bool:
-    """Delete `doc` where it was, as `knowledge.delete` does, over its own version: False
-    when a write took the source since it was read (under the Postgres authority,
-    HeadMoved)."""
+async def _head_is(doc: DocumentRow) -> bool:
+    """Whether the source's head is still `doc`: a text write takes no claim, and `over`
+    is not checked under the ClickHouse authority."""
+    head = await documents_repo.get_one(
+        doc.org, doc.namespace, doc.source_uri, include_superseded=True
+    )
+    return documents_repo.version_of(head) == doc.version
+
+
+async def _delete_source(doc: DocumentRow) -> None:
+    """Delete `doc` where it was, as `knowledge.delete` does, over its own version (under
+    the Postgres authority, HeadMoved when a write took the source since)."""
     org, ns, uri = doc.org, doc.namespace, doc.source_uri
-    # A text write takes no claim, and `over` is not checked under the ClickHouse authority.
-    head = await documents_repo.get_one(org, ns, uri, include_superseded=True)
-    if documents_repo.version_of(head) != doc.version:
-        return False
     try:
         await documents_repo.insert_one(
             documents_repo.build_document_row(
@@ -307,7 +353,6 @@ async def _delete_source(doc: DocumentRow) -> bool:
     except PublicationPending:
         pass  # committed: the delivery worker publishes it
     await datasets_repo.forget_published(org, ns, {uri: doc.version})
-    return True
 
 
 async def _take_back(copy: _Copy) -> None:
@@ -345,7 +390,10 @@ async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
                 doc.org, doc.namespace, sha, dst, size=held.size, uploader=doc.user_id
             ):
                 continue
-            held = None  # its row went after it was located: the sweep took it
+            # Its row went after it was located: moved to the bucket, or swept.
+            held = await blobs.locate(doc.org, doc.namespace, sha)
+            if held is not None and not held.location:
+                held = None
         data = await blobs.read(doc.org, doc.namespace, sha, stored=held) if held else None
         if data is None:
             cleared.update(documents_repo.NO_ORIGINAL if column == "blob_path" else {column: ""})

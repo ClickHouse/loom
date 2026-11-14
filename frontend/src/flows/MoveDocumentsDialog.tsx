@@ -1,4 +1,4 @@
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { moveKnowledge, type KnowledgeMoveResult, type MoveRefusal } from "../api";
@@ -59,6 +59,7 @@ export function MoveDocumentsDialog({
   placesReading = null,
   onMoved,
   onClose,
+  onCloseAutoFocus,
 }: {
   org: string;
   /** The namespace the documents are in, and what it is called on screen. */
@@ -73,35 +74,59 @@ export function MoveDocumentsDialog({
    *  sources that moved. */
   onMoved: (moved: string[]) => void;
   onClose: () => void;
+  /** Where focus goes once it closes, as the Modal's. */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What is still to move: a second Move after a stop sends only these.
+  const [left, setLeft] = useState(sourceUris);
+  // Closing it stops the calls still to send; the one in flight runs to its answer.
+  const stop = useRef<AbortController | null>(null);
+  useEffect(() => () => stop.current?.abort(), []);
   const target = places.find((p) => p.namespace === to) ?? null;
-  const what = documents(sourceUris.length);
+  const what = documents(left.length);
 
   const submit = async () => {
     if (!target) return;
     setBusy(true);
     setError(null);
-    const r = await moveKnowledge({ org, namespace: from }, target.namespace, sourceUris);
+    const controller = new AbortController();
+    stop.current = controller;
+    const r = await moveKnowledge({ org, namespace: from }, target.namespace, left, controller.signal);
     const moved = r.results.filter((x) => x.moved).map((x) => x.source_uri);
     onMoved(moved);
+    if (controller.signal.aborted) return; // closed meanwhile: the list is read again
     if (r.found && r.error === undefined) {
       const summary = moveSummary(r.results, target.label);
       toast(summary.text, summary.ok ? "ok" : "info");
       onClose();
       return;
     }
+    const gone = new Set(moved);
+    setLeft(left.filter((u) => !gone.has(u)));
     // A selection sent in several calls may have moved some before the stop.
     const before = moved.length ? ` ${documents(moved.length)} moved before that.` : "";
-    const why = r.found ? humanizeError(r.error) : `You can no longer add documents to ${target.label}.`;
-    setError(`${why}${before}`);
+    if (!r.found) {
+      setError(`You can no longer add documents to ${target.label}.${before}`);
+    } else {
+      // The failed call may have moved some of its own before it failed.
+      setError(
+        `${humanizeError(r.error)}${before} Some documents of the last call may have moved too; the list shows where each one is now.`,
+      );
+    }
     setBusy(false);
   };
 
   return (
-    <Modal open onOpenChange={(v) => !v && onClose()} title={`Move ${what}`} className="w-full max-w-[480px]">
+    <Modal
+      open
+      onOpenChange={(v) => !v && onClose()}
+      onCloseAutoFocus={onCloseAutoFocus}
+      title={`Move ${what}`}
+      className="w-full max-w-[480px]"
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();

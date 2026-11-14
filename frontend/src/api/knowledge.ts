@@ -139,15 +139,16 @@ export const MOVE_MAX = 50;
 /** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were;
  *  sent in calls of at most `MOVE_MAX`, their answers merged. A call that finds the place no
  *  longer writable, or that fails, stops the rest: `found` is false, or `error` is set, with
- *  the answers before it. It never throws. */
+ *  the answers before it. An aborted `signal` sends no further call. It never throws. */
 export async function moveKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   to: string,
   sourceUris: string[],
+  signal?: AbortSignal,
 ): Promise<KnowledgeMoved> {
   const results: KnowledgeMoveResult[] = [];
   let toNamespace = to;
-  for (let i = 0; i < sourceUris.length; i += MOVE_MAX) {
+  for (let i = 0; i < sourceUris.length && !signal?.aborted; i += MOVE_MAX) {
     let r: KnowledgeMoved;
     try {
       r = await post<KnowledgeMoved>("/v1/knowledge.move", {

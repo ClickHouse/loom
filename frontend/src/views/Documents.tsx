@@ -332,8 +332,12 @@ export function Documents() {
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   // The documents Move to… was opened for; another place shown closes it.
   const [moving, setMoving] = useState<string[] | null>(null);
-  // Whether the open Move to… dialog moved any document.
+  // Whether the open Move to… dialog moved any document: focus then goes to the search.
   const movedSome = useRef(false);
+  const openMove = useCallback((uris: string[]) => {
+    movedSome.current = false;
+    setMoving(uris);
+  }, []);
   useEffect(() => setMoving(null), [identity.org, identity.namespace]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
   // A reason that appears while Edit details is open closes it. Add and Replace stay: they
@@ -527,8 +531,8 @@ export function Documents() {
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
   }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
-  // After a row's delete, or a move once its dialog closes, the read that drops the rows
-  // hands focus to the search field.
+  // After a row's delete, the read that drops the row hands focus to the search field (a
+  // move's dialog hands it there itself as it closes).
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
     focusSearchOnRead.current = false;
@@ -942,7 +946,7 @@ export function Documents() {
       replace: setReplaceEntry,
       edit: setEditEntry,
       remove: (uri) => void handlers.current.onDelete(uri),
-      move: (uri) => setMoving([uri]),
+      move: (uri) => openMove([uri]),
       writeReason,
       ...(readOnly ? {} : { toggle: toggleRow }),
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
@@ -1042,14 +1046,12 @@ export function Documents() {
         if (moved.length) movedSome.current = true;
         reload();
       }}
-      onClose={() => {
-        setMoving(null);
+      onClose={() => setMoving(null)}
+      onCloseAutoFocus={(e) => {
         if (!movedSome.current) return;
-        movedSome.current = false;
-        // The rows, the menu or the selection bar that opened it may have left: the read
-        // after the dialog closes hands focus to the search.
-        focusSearchOnRead.current = true;
-        reload();
+        // The rows, the menu or the selection bar that opened it may have left.
+        e.preventDefault();
+        searchRef.current?.focus();
       }}
     />
   );
@@ -1239,7 +1241,7 @@ export function Documents() {
                 onClear: clearSelection,
                 all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
                 actions: [
-                  { label: "Move to…", icon: "arrow-right", onClick: () => setMoving(Array.from(selected)) },
+                  { label: "Move to…", icon: "arrow-right", onClick: () => openMove(Array.from(selected)) },
                   { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
                 ],
               }

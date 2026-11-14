@@ -308,6 +308,18 @@ describe("moveKnowledge", () => {
     expect(r.results.map((x) => x.source_uri)).toEqual(uris);
   });
 
+  it("sends no further call once its signal is aborted", async () => {
+    const controller = new AbortController();
+    const sent = moves(() => {
+      controller.abort();
+      return true;
+    });
+    const r = await moveKnowledge(id, "col-b", uris, controller.signal);
+    expect(sent).toHaveLength(1);
+    expect(r.results).toHaveLength(MOVE_MAX);
+    expect(r.error).toBeUndefined();
+  });
+
   it("stops at a call that fails, with the answers before it and the error", async () => {
     let calls = 0;
     vi.stubGlobal(
