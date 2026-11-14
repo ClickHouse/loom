@@ -48,7 +48,8 @@ async def test_remember_in_one_run_and_the_policy_recalls_in_the_next(agent) -> 
             middleware=[Middleware(AssemblerMiddleware, policies=[recall])],
         )
         await reader.ask("Which seat does Alice like on long flights?")
-        return "aisle" in config.calls[0].prompt[-1]
+        # No memory yet: the policy adds no block, and the agent has no prompt of its own.
+        return any("aisle" in part for part in config.calls[0].prompt)
 
     # The write is searchable once its embedding lands.
     await eventually(recalled, description="the aisle memory in the prompt")

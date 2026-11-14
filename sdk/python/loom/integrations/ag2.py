@@ -33,10 +33,15 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 try:
-    from ag2.events import BaseEvent, ModelRequest, ToolCallEvent, ToolErrorEvent
-    from ag2.events.input_events import TextInput
-    from ag2.events.tool_events import ToolResult
-    from ag2.middleware.base import ToolExecution, ToolResultType
+    from ag2.events import (
+        BaseEvent,
+        ModelRequest,
+        TextInput,
+        ToolCallEvent,
+        ToolErrorEvent,
+        ToolResult,
+    )
+    from ag2.middleware import ToolExecution, ToolResultType
     from ag2.tools import tool
     from ag2.tools.final.function_tool import FunctionTool
 except ImportError as e:  # the framework is an optional extra

@@ -14,7 +14,7 @@ import pytest
 from ag2 import Agent as AG2Agent
 from ag2 import Middleware
 from ag2.assembly import AssemblerMiddleware
-from ag2.events import ToolCallEvent, ToolErrorEvent, ToolResultEvent
+from ag2.events import ModelRequest, TextInput, ToolCallEvent, ToolErrorEvent, ToolResultEvent
 from ag2.testing import TestConfig, TrackingConfig
 from ag2.tools.final.function_tool import FunctionTool
 from loom import Agent, SyncAgent
@@ -104,7 +104,9 @@ def test_a_refused_call_reaches_the_model_as_a_tool_error_and_the_run_goes_on() 
     assistant = AG2Agent("assistant", config=config, tools=loom_tools(fake, only=["loom_recall"]))  # type: ignore[arg-type]
     reply = asyncio.run(assistant.ask("Which seat?"))
     assert asyncio.run(reply.content()) == "Sorry."
+    (call,) = [m for m in config.calls[-1].messages if isinstance(m, ToolCallEvent)]
     (error,) = [m for m in config.calls[-1].messages if isinstance(m, ToolErrorEvent)]
+    assert error.parent_id == call.id  # still the result of that call
     # What the model reads: Loom's message, not a traceback.
     assert [part.content for part in error.result.parts] == [
         "loom_recall failed: memory store unavailable"
@@ -162,9 +164,6 @@ def test_the_policy_leaves_out_rows_below_the_floor_then_caps_at_top_k() -> None
 
 
 def test_the_policy_reads_the_user_s_request_and_skips_an_inbox_message() -> None:
-    from ag2.events import ModelRequest
-    from ag2.events.input_events import TextInput
-
     memory = _FakeMemory([_hit("k1", "aisle seats")])
     policy = LoomRecallPolicy(_FakeAgent({}, memory))  # type: ignore[arg-type]
     inbox = ModelRequest([TextInput("deploy finished")], origin="service")
@@ -223,7 +222,4 @@ def test_without_ag2_the_import_names_the_extra(monkeypatch: pytest.MonkeyPatch)
 
 
 def _asked(text: str) -> list[Any]:
-    from ag2.events import ModelRequest
-    from ag2.events.input_events import TextInput
-
     return [ModelRequest([TextInput(text)])]
