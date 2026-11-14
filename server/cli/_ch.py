@@ -188,7 +188,7 @@ async def check_org_free(free: OrgFree) -> None:
         )
 
 
-async def check_setup_stores(free: OrgFree) -> None:
+async def check_setup_stores() -> None:
     """For a command that sets up a cell's ClickHouse on a client of its own before any
     gated connect (`loom ch-setup`), the gate a gated connect would run, before it writes:
     its ClickHouse, where it already records a deployment, must record its Postgres's, and
@@ -212,7 +212,7 @@ async def check_setup_stores(free: OrgFree) -> None:
             recorded = None
         if recorded is not None:
             pg.expect_deployment((str(recorded["deployment_id"]), int(recorded["epoch"])))
-        await check_org_free(free)
+        await check_org_free(writes("ClickHouse users and grants, no tenant rows"))
     finally:
         await disconnect(ch)
 

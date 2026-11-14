@@ -274,8 +274,8 @@ def test_a_revocation_that_can_give_access_back_is_gated_as_a_write(
 def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On another cell's stores, `loom ch-setup` refuses before it connects to set up
-    ClickHouse, not after the reader and grants are written."""
+    """On another cell's stores, `loom ch-setup` refuses after its preflight connect and
+    before `_set_up` writes the reader or a grant."""
     import argparse
 
     from server.cli import ch_setup

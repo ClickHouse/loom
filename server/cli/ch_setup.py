@@ -514,7 +514,7 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     try:
         # On a cell, refused before any user or grant is written when these stores are
         # another cell's or another deployment's (a fresh service passes).
-        asyncio.run(check_setup_stores(writes("ClickHouse users and grants, no tenant rows")))
+        asyncio.run(check_setup_stores())
         return _set_up(ch, user, reader)
     finally:
         ch.close()
