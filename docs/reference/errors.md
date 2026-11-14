@@ -690,7 +690,7 @@ Raised in `server/transport/mcp_auth.py`. Category `auth`, retryable: no.
 
 #### `ORG_TOO_LONG`
 
-Raised in `server/router/app.py`.
+Raised in `server/router/app.py`. Category `input`, retryable: no.
 
 #### `OVERLOADED`
 

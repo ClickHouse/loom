@@ -179,6 +179,20 @@ def test_a_long_org_placed_in_another_cell_before_the_limit_answers_wrong_cell(
     assert "us-1" in refused.value.message and cell_pg.writes == []
 
 
+def test_a_configured_org_past_the_limit_answers_422_not_a_503_retry(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing could ever place it, so a principal-less call (JIT, self-signup) is told
+    so rather than asked to retry."""
+    from server.core.errors import ValidationError
+
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    monkeypatch.setattr(settings, "oidc_jit_org", long)
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES} bytes"):
+        asyncio.run(tenancy.ensure_held(long, None))
+    assert cell_pg.writes == []
+
+
 def test_an_org_longer_than_the_limit_held_before_it_keeps_serving(cell_pg: _PG) -> None:
     long = "x" * (cell.ORG_MAX_BYTES + 1)
     cell_pg.held.add(long)

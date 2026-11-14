@@ -508,8 +508,9 @@ async def _resolve_tool(
 async def _another_cells_org(
     req_id: Any, op: Operation, arguments: dict[str, Any], auth: Any
 ) -> dict[str, Any] | None:
-    """A call in the token's own org on a cell that does not hold it answers WRONG_CELL
-    as a tool error before the caller's defaults are read: they live in that org, so
+    """A call in the token's own org on a cell that does not hold it answers WRONG_CELL,
+    or the refusal of a new org's name past `cell.ORG_MAX_BYTES`, as a tool error before
+    the caller's defaults are read: they live in that org, so
     reading them would only find none and refuse the call as a validation failure. A
     call naming another org is the op gate's to check."""
     from server.settings import settings
@@ -524,14 +525,12 @@ async def _another_cells_org(
     try:
         await tenancy.ensure_held(auth.org, auth)
     except (WrongCellError, core_errors.ValidationError) as e:
-        # Another cell's org, or a new one longer than a cell holds: the caller's to fix.
-        # The identity is not bound yet: the row names the token's org, which the
-        # ledger then blanks with the rest of the tuple (`events.for_this_cell`).
+        # The caller's to fix. The identity is not bound yet: the row names the token's
+        # org, which the ledger blanks with the rest of the tuple (`events.for_this_cell`).
         emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org)
         return _ok(req_id, refusal_result(e))
     except LoomServerError as e:
-        # Anything else, the cell could not tell (a 503): counted against the server,
-        # then raised.
+        # The cell could not tell (a 503): counted against the server, then raised.
         emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org, server_fault=True)
         raise
     return None

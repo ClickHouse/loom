@@ -36,6 +36,8 @@ from server.core.errors import (
 from server.settings import settings
 
 if TYPE_CHECKING:
+    import httpx
+
     from server.auth.jwt import AuthInfo
 
 log = logging.getLogger(__name__)
@@ -144,9 +146,7 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
         _held.add(org)
         return
     if cell.mode() == "recording":
-        # A new org past the limit is never recorded, so every org a cell records can be
-        # placed; one already held keeps serving. Placement leaves the length to the
-        # router, which still answers the cell of one placed before the limit.
+        # A new org past the limit is never recorded: every recorded org can be placed.
         if reason := cell.org_name_refusal(org):
             raise ValidationError(reason)
         # A restore to before attach's step 3 whose `loom cell restore` was skipped reads
@@ -170,6 +170,9 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     # placement decides. A configured org a call with no principal acts in (JIT,
     # self-signup) is placed by attach, or by `loom cell update` when it changes: retry.
     if auth is None and org in cell.mine()["configured_orgs"]:
+        # Nothing could ever place a configured org past the limit: no retry helps.
+        if reason := cell.org_name_refusal(org):
+            raise ValidationError(reason)
         raise BackendUnavailableError(
             f"org {org!r} is configured for this cell and not placed yet (attach places it, "
             "or `loom cell update` once the cell serves)",
@@ -200,15 +203,6 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
             operation="tenancy",
         ) from e
     _held.add(org)
-
-
-def _code(r: Any) -> str:
-    """The `code` of a router refusal's JSON body ('' when it has none)."""
-    try:
-        body = r.json()
-    except ValueError:
-        return ""
-    return str(body.get("code", "")) if isinstance(body, dict) else ""
 
 
 def _unread(org: str, e: Exception) -> BackendUnavailableError:
@@ -293,6 +287,15 @@ def _placed(org: str, task: asyncio.Task[tuple[str, str]]) -> None:
         task.exception()  # retrieved: every waiter may have gone
 
 
+def _refusal(r: httpx.Response) -> dict[str, Any]:
+    """A router refusal's JSON body ({} when it is not a JSON object)."""
+    try:
+        body = r.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 async def _place(org: str) -> tuple[str, str]:
     """Ask the router to place `org` in this cell; the (cell, deployment id) that holds
     it. The router inserts the placement if absent and reads the winner back, so a
@@ -322,9 +325,9 @@ async def _place(org: str) -> tuple[str, str]:
         raise BackendUnavailableError(
             f"the router did not answer the placement of org {org!r}", operation="placement"
         ) from e
-    if r.status_code == 400 and _code(r) == "ORG_TOO_LONG":
-        # A new org longer than a cell holds: the caller's to fix, never retried.
-        raise ValidationError(cell.org_name_refusal(org))
+    if r.status_code == 400 and (refusal := _refusal(r)).get("code") == "ORG_TOO_LONG":
+        # A new org longer than the router places: the caller's to fix, never retried.
+        raise ValidationError(str(refusal.get("error") or cell.org_name_refusal(org)))
     if r.status_code != 200:
         log.warning("placement of %s: router answered %s", org, r.status_code)
         raise BackendUnavailableError(
