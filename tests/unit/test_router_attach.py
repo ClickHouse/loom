@@ -570,7 +570,8 @@ def test_a_bucketed_cell_posting_no_bucket_nonce_answers_400(
 def test_a_fingerprint_jsonb_cannot_store_answers_400_and_reads_nothing(
     client: TestClient, store: _Store, value: Any
 ) -> None:
-    """A NUL, a lone surrogate or a non-finite number: malformed, never a directory outage."""
+    """A NUL, a lone surrogate or a non-finite number: malformed, never a directory
+    outage."""
     fingerprint = {**CURRENT, "fields": {**CURRENT["fields"], "public_host": value}}
     raw = json.dumps(_begin(current_fp=fingerprint))  # escapes them, as a client could
     r = client.post(
@@ -893,7 +894,7 @@ def test_each_attach_calls_bound_counts_the_statements_it_sends(store: _Store) -
     assert sent(directory.attach_serving("eu-1", "dep-1")) == directory.ATTACH_CHANGE_STATEMENTS
     store.cells["eu-2"] = _cell_row(cell="eu-2", is_first=False, host="eu-2.example")
     assert sent(directory.remove("eu-2")) == directory.REMOVE_STATEMENTS
-    assert directory.REMOVE_MAX_S == directory.STATEMENT_TIMEOUT_S + 8 * 11
+    assert directory.REMOVE_MAX_S == directory._bound_s(directory.REMOVE_STATEMENTS)
 
 
 def test_a_live_placement_reads_the_winner_again_under_the_row_lock(store: _Store) -> None:
@@ -971,6 +972,7 @@ class _Router:
 
     def __init__(self, row: dict[str, Any], status: int = 200) -> None:
         self.row, self.status = row, status
+        self.deleted: tuple[int, dict[str, Any]] = (200, {"cell": "eu-1", "removed": True})
         self.calls: list[tuple[str, str]] = []
 
     def get(self, url: str, **_kw: Any) -> httpx.Response:
@@ -979,7 +981,8 @@ class _Router:
 
     def delete(self, url: str, **_kw: Any) -> httpx.Response:
         self.calls.append(("DELETE", url))
-        return httpx.Response(200, json={"cell": "eu-1", "removed": True})
+        status, body = self.deleted
+        return httpx.Response(status, json=body, request=httpx.Request("DELETE", url))
 
 
 @pytest.fixture
@@ -1085,6 +1088,17 @@ def test_remove_tells_an_older_router_from_an_unknown_cell(
     assert cell_cli._cmd_remove(_remove_args()) == 1
     assert "is not in the directory" in capsys.readouterr().err
     assert [m for m, _url in cli_router.calls] == ["GET", "GET"]
+
+
+def test_remove_tells_an_older_router_from_an_unknown_cell_on_the_delete(
+    cli_router: _Router, capsys: Any
+) -> None:
+    """A replica of an earlier build behind the same URL answers the DELETE alone."""
+    cli_router.row = {**cli_router.row, "is_first": False}  # no Postgres read
+    cli_router.deleted = (404, {"error": "the router answers no such path"})
+    assert cell_cli._cmd_remove(_remove_args()) == 1
+    assert "not upgraded" in capsys.readouterr().err
+    assert [m for m, _url in cli_router.calls] == ["GET", "DELETE"]
 
 
 @pytest.mark.parametrize(
