@@ -12,6 +12,7 @@ Covers the explicit promotion path:
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -241,3 +242,50 @@ async def test_promote_and_demote_emit_audit_rows(detector, ch_client) -> None:
     event_types = {r[0] for r in rows}
     assert "memory.promote" in event_types
     assert "memory.demote" in event_types
+
+
+@pytest.mark.asyncio
+async def test_a_definition_is_promoted_with_the_hash_get_serves(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    import httpx
+
+    ns = f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org="clickhouse", namespaces=["*"], roles=["admin", "writer"])
+    ident = {"org": "clickhouse", "namespace": ns, "agent": "-"}
+    value = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
+    async with httpx.AsyncClient(
+        base_url=control_plane_url, headers={"Authorization": f"Bearer {tok}"}
+    ) as http:
+
+        async def call(op: str, **body: object) -> httpx.Response:
+            return await http.post(f"/v1/{op}", json={**ident, **body})
+
+        set_ = await call(
+            "memory.set", memory_key="definition/arr", value=value, memory_type="definition"
+        )
+        assert set_.status_code == 200, set_.text
+        got = (await call("memory.get", memory_key="definition/arr")).json()
+        refused = await call("memory.promote", memory_key="definition/arr")
+        assert refused.json()["detail"]["code"] == "VALIDATION_FAILED"  # no approved hash
+        out = await call(
+            "memory.promote",
+            memory_key="definition/arr",
+            approved_sha256=got["content_sha256"],
+            approver="lead",
+        )
+    assert out.status_code == 200, out.text
+    assert out.json()["ignored_args"] == ["approver"]
+    rows = ch_client.query(
+        """
+        SELECT memory_type, value, promoted_by, promoted_from, promoted_from_candidate_id
+        FROM loom.shared FINAL
+        WHERE org = 'clickhouse' AND namespace = {ns:String} AND memory_key = 'definition/arr'
+        """,
+        parameters={"ns": ns},
+    ).result_rows
+    (row,) = rows
+    assert row[0] == "definition" and json.loads(row[1]) == value
+    assert row[2] not in ("lead", "explicit", "")  # the token's actor
+    assert row[3] == [f"clickhouse/{ns}/-/-/-/definition/arr"]
+    assert row[4] is None

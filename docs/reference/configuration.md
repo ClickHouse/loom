@@ -995,7 +995,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_TERM_LEG_MAX_DEFINITIONS` | `int` | `500` | live | Most shared definitions a namespace holds: a promotion that adds a key past it is refused, and any definition promotion while the namespace is past it (docs/development/curation-loop-design.md). |
+| `LOOM_MEMORY_TERM_LEG_MAX_DEFINITIONS` | `int` | `500` | live | Most shared definitions a namespace holds: a promotion that adds a key past it is refused, and any definition promotion while the namespace is past it (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 

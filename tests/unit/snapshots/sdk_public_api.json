@@ -2920,7 +2920,8 @@
           "approver",
           "reversible_for_days",
           "user_id",
-          "session_id"
+          "session_id",
+          "approved_sha256"
         ],
         "provenance": [
           "memory_key"

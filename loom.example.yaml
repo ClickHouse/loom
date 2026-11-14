@@ -2931,7 +2931,7 @@ settings:
 
   # Most shared definitions a namespace holds: a promotion that adds a key past it is
   # refused, and any definition promotion while the namespace is past it
-  # (docs/development/curation-loop-design.md). [live]
+  # (docs/concepts/identities-and-namespaces.md). [live]
   # memory_term_leg_max_definitions: 500
 
   # --- prompt safety and search priors ---

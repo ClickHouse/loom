@@ -11,6 +11,8 @@ from typing import Any
 from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now
+from server.core.errors import PreconditionFailedError
+from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
@@ -20,14 +22,22 @@ from server.memory.api.models_lifecycle import (
     MemoryPromoteOutput,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.app.sensitivity_level import decoded_text
 from server.memory.domain.definitions import KEY_PREFIX, definition_names
 from server.memory.domain.memory_types import (
     DEFINITION,
     is_namespace_definition,
     is_searchable_type,
 )
+from server.memory.domain.sensitivity import (
+    HIGH,
+    MEDIUM,
+    detect_sensitivity,
+    max_sensitivity,
+    value_reads_high,
+)
 from server.memory.domain.trust import verification_state
-from server.memory.store.rows import next_version
+from server.memory.store.rows import MemoryRow, next_version
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -100,6 +110,8 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     if definition:
         await _check_definition_promotion(input, src, target_key)
         ignored = [f for f in ("approver", "promoted_from_candidate_id") if getattr(input, f)]
+    elif input.approved_sha256:
+        ignored = ["approved_sha256"]
     promotion_event = str(uuid.uuid4())
     now_naive = naive_utc_now()
     reversible_until = now_naive + timedelta(days=input.reversible_for_days)
@@ -223,73 +235,88 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     )
 
 
-def _refused(status: int, code: str, message: str, **extra: Any) -> HTTPException:
-    return HTTPException(status_code=status, detail={"code": code, "message": message, **extra})
+def _refused(status: int, detail: dict[str, Any]) -> HTTPException:
+    return HTTPException(status_code=status, detail=detail)
 
 
-async def _check_definition_promotion(input: MemoryPromoteInput, src: Any, target_key: str) -> None:
+async def _check_definition_promotion(
+    input: MemoryPromoteInput, src: MemoryRow, target_key: str
+) -> None:
     """Refuse a definition promotion the shared layer cannot govern: a source that is
     not the namespace-wide `definition` row of a `definition/` key promoted to that key,
     no approved hash or one the text no longer has, a value that reads `medium` or
     `high`, a value with no term, a namespace at its ceiling, or a name another shared
     definition holds."""
-    from server.core.errors import PreconditionFailedError
-    from server.core.hashing import served_content_sha256
-    from server.memory.app.sensitivity_level import decoded_text, resolve_level
-    from server.memory.domain.sensitivity import HIGH, MEDIUM, max_sensitivity
     from server.memory.store import shared as shared_repo
 
     if not (
-        src.memory_type == DEFINITION
-        and is_namespace_definition(src)
+        is_namespace_definition(src)
         and src.memory_key.startswith(KEY_PREFIX)
         and target_key == src.memory_key
     ):
         raise _refused(
             422,
-            "DEFINITION_PROMOTION_REFUSED",
-            "a definition is promoted from its namespace-wide row (agent, user and session "
-            "'-') of type definition under a definition/ key, to that same key",
+            {
+                "code": "DEFINITION_PROMOTION_REFUSED",
+                "message": "a definition is promoted from its namespace-wide row (agent, user "
+                "and session '-') of type definition under a definition/ key, to that key",
+            },
         )
     if not input.approved_sha256:
         raise _refused(
-            422, "VALIDATION_FAILED", "a definition promotion names the hash it approves"
+            422,
+            {
+                "code": "VALIDATION_FAILED",
+                "message": "a definition promotion names the hash it approves (approved_sha256)",
+            },
         )
     current = served_content_sha256(src.value)
     if current != input.approved_sha256:
         raise PreconditionFailedError(
             "the definition's text changed since it was approved", current_sha256=current
         )
-    graded = await resolve_level(None, await decoded_text(src.value))
-    if max_sensitivity([str(src.sensitivity or ""), graded]) in (MEDIUM, HIGH):
+    # The value itself is graded, whatever its label or the autodetect setting: an import or
+    # a restore leaves the label empty.
+    graded = detect_sensitivity(await decoded_text(src.value))
+    level = max_sensitivity([str(src.sensitivity or ""), graded])
+    if level in (MEDIUM, HIGH) or value_reads_high(src.value):
         raise _refused(
             422,
-            "SENSITIVE_DEFINITION_REFUSED",
-            "a definition is served to every reader of the namespace: one that reads as "
-            "medium or high sensitivity is not promoted",
+            {
+                "code": "SENSITIVE_DEFINITION_REFUSED",
+                "message": "a definition is served to every reader of the namespace: one that "
+                "reads as medium or high sensitivity is not promoted",
+            },
         )
     names = definition_names(src.value)
     if names is None:
         raise _refused(
             422,
-            "VALIDATION_FAILED",
-            "a definition's value is a JSON object with a string term and a list of string aliases",
+            {
+                "code": "VALIDATION_FAILED",
+                "message": "a definition's value is a JSON object with a string term and a "
+                "list of string aliases",
+            },
         )
     org, namespace = input.org, input.namespace
     ceiling = int(settings.memory_term_leg_max_definitions)
-    held = await shared_repo.fetch_shared(org, namespace, target_key)
-    revision = held is not None and held.get("tombstoned_at") is None
     count = await shared_repo.count_shared_definitions(org, namespace)
     rows = (
         [] if count > ceiling else await shared_repo.shared_definitions(org, namespace, ceiling + 1)
     )
+    # Within the ceiling the read holds every live definition, so it says whether this
+    # key holds one already (a revision); a promotion that landed since the count is
+    # caught by the read's own length.
+    revision = any(r["memory_key"] == target_key for r in rows)
     for n in (count, len(rows)):
         if n > ceiling or (n >= ceiling and not revision):
             raise _refused(
                 409,
-                "DEFINITION_CEILING",
-                f"the namespace holds {n} shared definitions, at most {ceiling}: demote one "
-                "to make room",
+                {
+                    "code": "DEFINITION_CEILING",
+                    "message": f"the namespace holds {n} shared definitions, at most {ceiling}: "
+                    "demote one to make room",
+                },
             )
     taken = sorted(
         str(r["memory_key"])
@@ -299,9 +326,11 @@ async def _check_definition_promotion(input: MemoryPromoteInput, src: Any, targe
     if taken:
         raise _refused(
             409,
-            "DEFINITION_NAME_TAKEN",
-            "another shared definition holds this term or an alias",
-            conflicting_keys=taken,
+            {
+                "code": "DEFINITION_NAME_TAKEN",
+                "message": "another shared definition holds this term or an alias",
+                "conflicting_keys": taken,
+            },
         )
 
 

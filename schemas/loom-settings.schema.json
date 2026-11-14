@@ -5024,7 +5024,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Most shared definitions a namespace holds: a promotion that adds a key past it is refused, and any definition promotion while the namespace is past it (docs/development/curation-loop-design.md)."
+          "description": "Most shared definitions a namespace holds: a promotion that adds a key past it is refused, and any definition promotion while the namespace is past it (docs/concepts/identities-and-namespaces.md)."
         },
         "memory_usage_fold_acted_max_rows_per_pass": {
           "default": 5000,

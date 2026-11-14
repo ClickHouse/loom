@@ -35,6 +35,7 @@ def definition_names(value: Any) -> set[str] | None:
     aliases = value.get("aliases") or []
     if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
         return None
-    names = {fold_name(n) for n in (value["term"], *aliases)}
-    names.discard("")
-    return names if fold_name(value["term"]) else None
+    term = fold_name(value["term"])
+    if not term:
+        return None
+    return ({term} | {fold_name(a) for a in aliases}) - {""}

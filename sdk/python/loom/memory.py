@@ -1604,11 +1604,13 @@ class MemoryClient:
         reversible_for_days: int = 7,
         user_id: str | None = None,
         session_id: str | None = None,
+        approved_sha256: str | None = None,
     ) -> dict[str, Any]:
         """Promote a private memory to this namespace's shared layer.
 
         Reversible within `reversible_for_days` (default 7) via demote.
-        After the window, demote still works but requires admin role.
+        After the window, demote still works but requires admin role. A
+        definition names the `content_sha256` it approves in `approved_sha256`.
         """
         payload: dict[str, Any] = self._identity(user_id, session_id)
         payload["memory_key"] = memory_key
@@ -1618,6 +1620,8 @@ class MemoryClient:
             payload["target_key"] = target_key
         if approver is not None:
             payload["approver"] = approver
+        if approved_sha256 is not None:
+            payload["approved_sha256"] = approved_sha256
         return await self._agent.transport.post("/v1/memory.promote", payload)
 
     async def get_by_id(

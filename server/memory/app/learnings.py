@@ -222,8 +222,8 @@ async def handle_learnings_review(
     promoted_to_knowledge = False
     knowledge_source_uri = ""
     if input.decision == "promote" and row.get("memory_type") == DEFINITION:
-        # A definition is governed through memory.promote of its namespace-wide row, which
-        # checks the hash an admin approves; a draft from these kinds carries none.
+        # A definition is promoted only through memory.promote of its namespace-wide row,
+        # which checks the approved hash.
         raise HTTPException(
             status_code=422,
             detail={

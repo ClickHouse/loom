@@ -456,6 +456,18 @@ Raised in `server/memory/app/dedup.py`.
 
 Raised in `server/code/domain/index/repos.py`.
 
+#### `DEFINITION_CEILING`
+
+Raised in `server/memory/app/promote.py`.
+
+#### `DEFINITION_NAME_TAKEN`
+
+Raised in `server/memory/app/promote.py`.
+
+#### `DEFINITION_PROMOTION_REFUSED`
+
+Raised in `server/memory/app/promote.py`.
+
 #### `DUPLICATE_FIELD`
 
 Raised in `server/memory/app/records.py`.
@@ -827,6 +839,10 @@ Raised in `server/auth/self_signup.py`.
 #### `SELF_SIGNUP_SSO`
 
 Raised in `server/auth/self_signup.py`.
+
+#### `SENSITIVE_DEFINITION_REFUSED`
+
+Raised in `server/memory/app/promote.py`.
 
 #### `SHARED_CONFLICT`
 

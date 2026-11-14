@@ -42,6 +42,7 @@ from server.memory.api.models_graph import (
 )
 from server.memory.app import webhooks
 from server.memory.domain import assistant_rules
+from server.memory.domain.memory_types import DEFINITION
 from server.memory.store.rows import MemoryRow
 
 
@@ -220,7 +221,9 @@ async def handle_memory_lineage(input: MemoryLineageInput) -> MemoryLineageOutpu
                         seeded_from_thread_id=(cand_row.get("seeded_from_thread_id") or ""),
                         seeded_from_msg_id=(cand_row.get("seeded_from_msg_id") or ""),
                     )
-            elif promoted_at is not None:
+            elif promoted_at is not None and target.get("memory_type") != DEFINITION:
+                # A definition's promotion records no candidate: a match by key and time
+                # could name another draft of the same key.
                 cand_row = await shared_repo.find_candidate_for_promotion(
                     input.org,
                     input.namespace,

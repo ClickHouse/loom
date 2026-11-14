@@ -2492,7 +2492,7 @@ class MemorySettings(BaseModel):
     # ---- governed definitions ----
     # Most shared definitions a namespace holds: a promotion that adds a key past it is
     # refused, and any definition promotion while the namespace is past it
-    # (docs/development/curation-loop-design.md).
+    # (docs/concepts/identities-and-namespaces.md).
     memory_term_leg_max_definitions: Annotated[int, LIVE] = Field(default=500, ge=1)
 
     # ---- prompt safety and search priors ----
