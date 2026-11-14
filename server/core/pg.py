@@ -305,9 +305,9 @@ def _raise_if_tenancy_refused(e: BaseException) -> None:
     if getattr(e, "sqlstate", None) == TENANCY_REFUSED_SQLSTATE:
         from server.core.errors import TenancyRefusedError
 
-        # The function's text names the refused row's org (for the `loom.tenancy` guard,
-        # the org the call acts in) and nothing else a row carries: logged with its table,
-        # never answered.
+        # The function's text names the refused row's org (for the `loom.tenancy` guard, the
+        # org the call acts in) and nothing else a row carries: logged with its table, never
+        # answered.
         log.warning(
             "Postgres refused a row of loom.%s from an unmarked session: %s",
             getattr(e, "table_name", None) or "?",

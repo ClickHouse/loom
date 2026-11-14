@@ -661,11 +661,12 @@ async def test_the_guard_passes_only_a_first_cell_still_recording(state: str) ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["recording", "enforced"])
-async def test_a_dropped_guard_function_is_named_recording_or_not_and_fails_the_boot(
+async def test_a_dropped_guard_function_is_named_in_any_state_and_fails_an_enforced_boot(
     state: str,
 ) -> None:
-    """As a dropped org function: `ensure` cannot create the guard and fails the boot, and
-    rerunning migration 012 lets the next boot create it."""
+    """As a dropped org function: `missing` names it in any state, `ensure` on an
+    `enforced` cell cannot create the guard and fails the boot, and rerunning migration 012
+    lets the next boot create it."""
     import asyncpg
 
     async with _cell(state) as (_dsn, conn):
