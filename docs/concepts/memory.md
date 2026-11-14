@@ -455,12 +455,12 @@ The links are read where the code is:
   (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
   root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
   row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `changed_since` (the
-  commit that put its code in a changed, unresolved or missing state, as `code.symbol`'s
-  lessons name it) when one is known, and `supersedes_key` when it replaces an older row; a row another row read for the answer supersedes is not
-  served. `lessons_left_out` counts the rows the cap, a cut or that rule left out. A decision
-  or constraint is served whole or left out. The read runs after the answer, never enters the
-  search memo, and is skipped for `include_lessons: false`, with `code_result_lessons` off, or
-  for a token narrowed to its own user or session.
+  commit that put its code in a changed, unresolved or missing state) when one is known, and
+  `supersedes_key` when it replaces an older row; a row another row read for the answer
+  supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
+  out. A decision or constraint is served whole or left out. The read runs after the answer,
+  never enters the search memo, and is skipped for `include_lessons: false`, with
+  `code_result_lessons` off, or for a token narrowed to its own user or session.
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it. A line whose code changed, was not found again or went says so and
   names the first indexed commit at which it read so; `context.pack` decision lines
