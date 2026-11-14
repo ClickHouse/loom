@@ -886,11 +886,12 @@ statements and census keys against these, and its tests pin each one:
   back what the erasure took. A `namespace` or `namespace_list` erasure covers each
   named namespace's mirrors as more names of the same erasure: each step runs over the
   named namespaces in the erasure's mode, then over their mirrors as a purge (a purging
-  erasure runs once over both), since no token reads or restores an `acl-` name, and the
-  census counts both. The last step, `knowledge_mirrors.forget`, writes the mirrors
-  `deleted`, so the name registered again gets a new mirror; the registry keeps them, so
-  a resume or a replay after a restore still reaches them. A `user_id` erasure touches
-  no mirror row (the sync writes them as `-`), and its census and export name none.
+  erasure, a Postgres step and an org-wide step run once over both), since no token
+  reads or restores an `acl-` name, and the census counts both. The last step,
+  `knowledge_mirrors.forget`, writes the mirrors `deleted`, so the name registered again
+  gets a new mirror; the registry keeps them, so a resume or a replay after a restore
+  still reaches them. A `user_id` erasure touches no mirror row (the sync writes them as
+  `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once

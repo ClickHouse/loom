@@ -740,8 +740,8 @@ schema. These rules keep that safe. The operator procedure is in
     writes mirrors comes after this one, so the build beside it already refuses the
     form; the one gap is a name an N-1 process registers or writes after the migration
     ran. This build writes no mirror, so no namespace of the form is taken for one; the
-    code that first writes a mirror runs the same check
-    (`server/core/schema/prechecks.py`) before its first write.
+    build that first writes a mirror must run the same check
+    (`server/core/schema/prechecks.py`) before that write.
     `tests/unit/test_mirror_names_refused.py` checks N's side, and the mixed-version
     gate does not check this rule.
 52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
@@ -751,15 +751,18 @@ schema. These rules keep that safe. The operator procedure is in
     credential for it, and N itself serves none: its sync pass skips one, its retire
     pass leaves its delete request alone, and `check`, `rotate`, `update` and `sync_now`
     refuse one (`BAD_KIND`), so beside the build that writes mirrors it never syncs a
-    mirrored source into the named namespace. On N, each namespace erasure step runs
-    over the named namespaces and then over every mirror they have had, as a purge (a
-    purging erasure, and a Postgres step, run once over both, so a Postgres step's one
-    commit mark covers both), and the census counts every row a mirror still holds, so a
-    step a resume or replay runs again covers the mirrors too; the last step,
-    `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a live one keeps the
-    name in use. N-1 runs no mirror pass and counts no registry row; this build writes
-    no mirror, so N-1 meets an empty registry. `tests/unit/test_knowledge_mirrors.py`
-    and the mirrored cases in `tests/unit/test_knowledge_sources.py` and
+    mirrored source into the named namespace.
+
+    On N, each namespace erasure step reads the registry, which keeps every mirror the
+    named namespaces have had, so every run of the step, a resume's or a replay's
+    included, covers them: it runs over the named namespaces in the erasure's mode,
+    then over the mirrors as a purge, or once over both under a purge and for a
+    Postgres or org-wide step. The census counts every row a mirror still holds. The
+    last step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a live one
+    keeps the name in use. N-1 runs no mirror pass and counts no registry row; this
+    build writes no mirror, so N-1 meets an empty registry.
+    `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
+    `tests/unit/test_knowledge_sources.py` and
     `tests/unit/test_knowledge_source_sync.py` check N's side.
 
 ## What checks them

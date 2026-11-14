@@ -204,15 +204,15 @@ def with_mirrors(
     name: str, step: Callable[[str, _NS], Awaitable[int]]
 ) -> Callable[[str, _NS], Awaitable[int]]:
     """Step `name` over the named namespaces and their mirrors, whose rows always leave
-    the disk: no token reads or restores an `acl-` name. A purge, or a Postgres step
-    (which deletes in either mode and marks its one commit for a replay), runs once over
-    both; a tombstoning step runs again over the mirrors as a purge."""
+    the disk: no token reads or restores an `acl-` name. Under a purge, and for a step
+    in `_ONE_PASS_STEPS`, it runs once over both; a tombstoning step runs again over the
+    mirrors as a purge."""
 
     async def run(org: str, namespace: _NS) -> int:
         mirrors = list(await _mirrors_of(org, namespace))
         if not mirrors:
             return await step(org, namespace)
-        if purge_mode() or name in PG_ONLY_STEPS:
+        if purge_mode() or name in _ONE_PASS_STEPS:
             return await step(org, [*namespaces_of(namespace), *mirrors])
         n = await step(org, namespace)
         with purge_scope(True):
@@ -234,7 +234,10 @@ async def _counted_with_mirrors(
     per_table = await count(scope_value)
     if scope_type == "namespace" and (mirrors := list(await _mirrors_of(org, scope_value, ch=ch))):
         with purge_scope(True):
-            for table, n in (await count(mirrors)).items():
+            found = await count(mirrors)
+        for table, n in found.items():
+            # An org-wide table's rows were all counted in the named pass.
+            if table.removeprefix("pg:") not in erasure_census.ORG_WIDE_TABLES:
                 per_table[table] = per_table.get(table, 0) + n
     return per_table
 
@@ -348,6 +351,11 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
 
 # Steps a ClickHouse-authority saga never runs.
 PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
+
+# Steps that run once over a namespace and its mirrors, whatever the mode: a Postgres
+# step deletes in either mode and marks its one commit for a replay, an org-wide step
+# would erase the same rows again, and the forget step reads the registry itself.
+_ONE_PASS_STEPS = PG_ONLY_STEPS | erasure_census.ORG_WIDE_STEPS | {"knowledge_mirrors.forget"}
 
 
 def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[StepT]:

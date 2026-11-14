@@ -112,8 +112,9 @@ def test_a_list_scope_covers_every_named_namespace_s_mirrors(
     assert seen == [(["a", "b", "c"], False), ([MIRROR, OLD_MIRROR], True)]
 
 
-def test_a_postgres_step_runs_once_over_the_namespace_and_its_mirrors(
-    registry: list[Any],
+@pytest.mark.parametrize("name", ["pg_memory.delete", "idempotency.delete"])
+def test_a_postgres_or_org_wide_step_runs_once_over_the_namespace_and_its_mirrors(
+    registry: list[Any], name: str
 ) -> None:
     seen: list[Any] = []
 
@@ -121,8 +122,9 @@ def test_a_postgres_step_runs_once_over_the_namespace_and_its_mirrors(
         seen.append(namespace)
         return 1
 
-    # One transaction, so the one mark it commits covers the mirror for a replay.
-    asyncio.run(saga_steps.with_mirrors("pg_memory.delete", step)(ORG, "team"))
+    # One transaction, so a Postgres step's one mark covers the mirror for a replay; an
+    # org-wide step's rows are the same whatever the names.
+    asyncio.run(saga_steps.with_mirrors(name, step)(ORG, "team"))
     assert seen == [["team", MIRROR]]
 
 
@@ -226,6 +228,27 @@ def test_the_evidence_census_counts_the_mirror_too(
     assert found == {"loom.memory": 2} and unread == {}
     # The registry is read on the caller's connection, as the census is.
     assert ("mirrors_of", ["team"], conn) in registry
+
+
+def test_the_mirror_pass_does_not_count_an_org_wide_table_again(
+    registry: list[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _count(org: str, scope_type: str, scope: Any, **_: Any) -> dict[str, int]:
+        return {"loom.idempotency": 3, "pg:loom.idempotency": 2, "loom.memory": 1}
+
+    async def _objects(org: str, scope: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(erasure_census, "residue_census", _count)
+    monkeypatch.setattr(erasure_census, "object_residue", _objects)
+    holder: dict[str, Any] = {}
+    with pytest.raises(saga_steps.ErasureResidueError):
+        asyncio.run(saga_steps._step_verify_residue(ORG, "namespace", "team", holder))
+    assert erasure_census.ORG_WIDE_TABLES == {"loom.idempotency"}
+    assert holder["per_table"] == {
+        "loom.idempotency": 3, "pg:loom.idempotency": 2, "loom.memory": 2,
+        erasure_census.OBJECT_RESIDUE: 0,
+    }  # fmt: skip
 
 
 def test_a_failed_saga_s_census_counts_the_mirror(
