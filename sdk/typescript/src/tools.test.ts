@@ -173,4 +173,13 @@ describe("AgentTools argument checks", () => {
     expect(out.memories.map((m: { memory_key: string }) => m.memory_key)).toEqual(["m0", "m1"]);
     expect(out.omitted).toBe(3);
   });
+
+  it("keeps the best recalled memory when it alone is over the cap, and cuts it", async () => {
+    const results = [0, 1].map((i) => ({ memory_key: `m${i}`, content_excerpt: "x".repeat(900), similarity: 0.9 }));
+    const { bot } = harness({ "memory.search": { results } });
+    const tools = bot.tools({}, { only: ["loom_recall"], maxResultChars: 500 });
+    const out = await tools.execute("loom_recall", { query: "seat" });
+    expect(out.endsWith("…[truncated]")).toBe(true);
+    expect(out).not.toContain('"m1"');
+  });
 });

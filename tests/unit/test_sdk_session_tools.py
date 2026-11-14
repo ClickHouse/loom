@@ -402,6 +402,9 @@ async def test_recall_refuses_a_top_k_outside_the_schema() -> None:
     tools = a.tools(only=["loom_recall"])
     with pytest.raises(LoomError, match="top_k must be within 1..20, got 500"):
         await tools.execute("loom_recall", {"query": "seat", "top_k": 500})
+    fetch = a.tools(only=["loom_fetch"])
+    with pytest.raises(LoomError, match="offset must be within 0.., got -3"):
+        await fetch.execute("loom_fetch", {"blob_key": "b", "offset": -3})
     assert calls == []
     await a.close()
 

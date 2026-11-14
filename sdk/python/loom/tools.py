@@ -335,7 +335,7 @@ def _parse_args(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _bounded(tool: str, a: Mapping[str, Any], key: str) -> int:
-    """``_int`` within the schema's minimum and maximum, as the TypeScript check."""
+    """``_int`` within the schema's minimum and maximum, as the TypeScript SDK checks it."""
     n = _int(a, key)
     (spec,) = [s for s in LOOM_TOOL_SPECS if s["name"] == tool]
     prop = spec["parameters"]["properties"][key]
