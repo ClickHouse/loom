@@ -774,12 +774,12 @@ schema. These rules keep that safe. The operator procedure is in
 53. **A document's permission list** (migration `099_document_access_lists.sql`): N adds
     `loom.documents.access_json`, the permission list of a mirrored document ([document
     sources](document-sources.md#the-permission-list)); under the Postgres authority it
-    rides in the head's `row`, with no Postgres migration. Only a mirrored source's turn
-    passes a list to the row builder, which carries none forward: every other row N
-    builds, a tombstone included, has the column empty, and the erasure's document
-    tombstone clears it, so it reads `unread` and admits nobody. N-1 never meets a list:
-    N writes none, and the first build that writes one runs beside N, never beside N-1.
-    No op's input or output has the field. `tests/unit/test_access_list.py`,
+    rides in the head's `row`, with no Postgres migration. No writer in N passes a list,
+    and the row builder carries none forward: every row N builds, a tombstone
+    included, has the column empty, and the erasure's document tombstone clears it, so
+    it reads `unread` and admits nobody. N-1 never meets a list: N writes none, and the
+    first build that writes one runs beside N, never beside N-1. No op's input or output
+    has the field. `tests/unit/test_access_list.py`,
     `tests/unit/test_document_row_builder.py` and `tests/unit/test_erasure_documents.py`
     check N's side.
 

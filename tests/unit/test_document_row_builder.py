@@ -989,7 +989,8 @@ def test_no_operation_takes_or_answers_a_permission_list() -> None:
 
     for op in ALL_OPERATIONS:
         for model in (op.input_model, op.output_model):
-            assert "access_json" not in json.dumps(model.model_json_schema()), op.name
+            schema = json.dumps(model.model_json_schema())
+            assert "access_json" not in schema and "AccessList" not in schema, op.name
 
 
 def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
