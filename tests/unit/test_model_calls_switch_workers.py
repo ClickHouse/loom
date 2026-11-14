@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -627,6 +628,8 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     monkeypatch.setattr(
         "server.core.ch.get_client", lambda: SimpleNamespace(connected=False, connect=connect)
     )
+    # An org-declaring run checks its deployment first; this fake ClickHouse records none.
+    monkeypatch.setattr("server.core.pg_profile.check_configured", AsyncMock(return_value=None))
     from server.code.store import index as code_index
 
     class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers
