@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -194,8 +195,6 @@ async def check_setup_stores() -> None:
     its ClickHouse, where it already records a deployment, must record its Postgres's, and
     the Postgres `first` row must not name another cell. A ClickHouse with no Loom
     database or record yet (a service set up before the first boot) passes."""
-    import logging
-
     from server.core import pg, pg_profile
     from server.core.ch import get_client
     from server.core.ch_errors import error_code, error_line

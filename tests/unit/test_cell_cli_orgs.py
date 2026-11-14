@@ -388,6 +388,22 @@ def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
     assert set_up == [1]
 
 
+def test_a_setup_check_on_a_service_with_no_loom_database_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The driver refuses a database that does not exist yet at connect (code 81): a
+    service set up before the first boot, which passes to the Postgres check."""
+
+    class _Client:
+        async def connect(self) -> None:
+            raise RuntimeError("Code: 81. DB::Exception: Database loom does not exist")
+
+    _cell_set(monkeypatch, ("open", ""))
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _Client())
+    monkeypatch.setattr(_ch, "disconnect", AsyncMock(return_value=None))
+    asyncio.run(_ch.check_setup_stores())
+
+
 def test_a_setup_check_that_cannot_read_clickhouse_refuses_in_one_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

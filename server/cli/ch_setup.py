@@ -25,7 +25,7 @@ import re
 import sys
 from typing import Any, Literal, NamedTuple
 
-from server.cli._ch import check_setup_stores, writes
+from server.cli._ch import check_setup_stores, run_connected, writes
 from server.core.ch_errors import error_code, error_line
 from server.core.ch_names import DEFAULT_READER, database, quote, telemetry_database
 from server.core.schema import preflight
@@ -422,7 +422,6 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
 def _analyst_sql() -> list[str]:
     """The analyst user's SQL with this deployment's key and password, which
     the first call makes and stores (sealed) when there are none yet."""
-    from server.cli._ch import run_connected
     from server.insights.app import analysis
 
     async def _go(_ch: Any) -> list[str]:
@@ -436,7 +435,6 @@ def _write_analyst() -> None:
     """Write insights.query's analyst user under this deployment's key, for a
     deployment whose server user cannot (one with access management writes it
     at boot)."""
-    from server.cli._ch import run_connected
     from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
 
     try:
