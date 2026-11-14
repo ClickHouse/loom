@@ -64,6 +64,7 @@ function tree(over: Partial<TreeProps> = {}, options: RenderOptions = {}) {
       shelf: "bench",
       current: null,
       viewHeight: 800,
+      placeVersion: () => 7,
       ...props,
     };
     const byName = new Map((p.rows ?? []).map((c) => [c.namespace, c]));
@@ -199,7 +200,7 @@ describe("LibraryTree", () => {
     await userEvent.type(field, "Q4");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(api.createCollection).toHaveBeenCalledWith("acme", "", { parent: "col-eng", title: "Q4", deriveName: true });
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", "acme", NEW_COLLECTION_FOCUS, "col-eng"));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", NEW_COLLECTION_FOCUS, 7));
     expect(toast.toast).toHaveBeenCalledWith("Created Q4", "ok");
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByRole("button", { name: "New collection" })).toHaveFocus();
@@ -485,7 +486,7 @@ describe("LibraryTree's form", () => {
     expect(screen.getByRole("textbox", { name: "New collection in Notes (col-b)" })).toHaveFocus();
   });
 
-  it("hands the page an answer that lands after the tree is gone, with the org it was made in", async () => {
+  it("hands the page an answer that lands after the tree is gone, with the place version it started at", async () => {
     let answer: (v: unknown) => void = () => {};
     api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
     const { onCreated } = tree({ current: "col-eng" });
@@ -494,8 +495,8 @@ describe("LibraryTree's form", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     cleanup();
     await act(async () => answer({ namespace: "col-q4", parent: "col-eng", created: true, title: "Q4" }));
-    // The page decides: a resize still opens it, a move to another org does not.
-    expect(onCreated).toHaveBeenCalledWith("col-q4", "acme", NEW_COLLECTION_FOCUS, "col-eng");
+    // The page decides: a resize still opens it, a move to another place does not.
+    expect(onCreated).toHaveBeenCalledWith("col-q4", NEW_COLLECTION_FOCUS, 7);
     expect(toast.toast).toHaveBeenCalledWith("Created Q4", "ok");
   });
 
@@ -505,7 +506,7 @@ describe("LibraryTree's form", () => {
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     await userEvent.type(screen.getByRole("textbox", { name: "New collection in Engineering" }), "Q4");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", "acme", NEW_COLLECTION_FOCUS, "col-eng"));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", NEW_COLLECTION_FOCUS, 7));
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 });

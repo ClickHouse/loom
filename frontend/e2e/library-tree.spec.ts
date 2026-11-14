@@ -250,7 +250,9 @@ test.describe("1100 px", () => {
     await expect(picker).toContainText("Runbooks");
     // The list open, its search field (portalled outside <main>) holding the focus.
     await picker.click();
-    await expect(page.locator("[data-radix-popper-content-wrapper] input")).toBeFocused();
+    await expect(
+      page.getByRole("dialog", { name: "Options" }).getByRole("textbox", { name: "Filter options" }),
+    ).toBeFocused();
     await page.setViewportSize({ width: 1440, height: 900 });
     const tree = page.getByRole("navigation", { name: "Library places" });
     await expect(tree.getByRole("link", { name: "Runbooks" })).toBeFocused();

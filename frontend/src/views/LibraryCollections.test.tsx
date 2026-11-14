@@ -1325,6 +1325,46 @@ describe("the Library on a collection", () => {
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
+    it("does not open what an earlier dialog made once the person moved and opened it again", async () => {
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      act(() => useStore.getState().navigate("knowledge", { query: {} }));
+      await settle();
+      // The move closed the dialog; a second open, on the place moved to, is its own.
+      expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      await act(async () => answer(q4));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+    });
+
+    it("does not open what the tree made at the namespace once the header picked another", async () => {
+      resizable();
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+      fireEvent.change(screen.getByRole("textbox", { name: /^New collection/ }), { target: { value: "Q4" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      act(() => useStore.setState({ identity: { org: "acme", namespace: "elsewhere", agent: "loom-ui" } }));
+      await settle();
+      await act(async () => answer({ namespace: "col-q4", parent: "", created: true, title: "Q4" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
     it("moves nothing once the page shows another org", async () => {
       resizable();
       const answer = await startCreate();

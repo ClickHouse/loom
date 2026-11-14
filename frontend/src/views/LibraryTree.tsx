@@ -46,10 +46,9 @@ export const placeFocusKey = (collection: string | null) => `library-tree-place-
  *  stays in the tree; `note`: the place's name, said on arrival. */
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
-/** Read the list again and open a collection made in the tree, in `org`. `arriveFocus`: New
- *  collection's focus key, so the person goes on there; `from`: the place shown when Create
- *  was pressed. */
-export type MadeCollection = (collection: string, org: string, arriveFocus: string, from: string | null) => void;
+/** Open a collection made in the tree. `arriveFocus`: New collection's focus key, so the
+ *  person goes on there; `version`: the page's place version when Create was pressed. */
+export type MadeCollection = (collection: string, arriveFocus: string, version: number) => void;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
@@ -150,6 +149,7 @@ export const LibraryTree = memo(function LibraryTree({
   shelf,
   current,
   onPick,
+  placeVersion,
   onCreated,
 }: {
   org: string;
@@ -173,6 +173,8 @@ export const LibraryTree = memo(function LibraryTree({
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
   onPick: PickPlace;
+  /** The page's place version now, which a create carries to its answer. */
+  placeVersion: () => number;
   /** It can land after the tree is gone (a resize, or a move to another org). */
   onCreated: MadeCollection;
 }) {
@@ -312,7 +314,7 @@ export const LibraryTree = memo(function LibraryTree({
             org={org}
             parent={into?.namespace ?? ""}
             label={into ? `New collection in ${distinctTitle(into, repeated)}` : "New collection at the top level"}
-            from={current}
+            placeVersion={placeVersion}
             onClose={stopMaking}
             onCreated={onCreated}
           />
@@ -435,16 +437,14 @@ function NewCollectionForm({
   org,
   parent,
   label,
-  from,
+  placeVersion,
   onClose,
   onCreated,
 }: {
   org: string;
   parent: string;
   label: string;
-  /** The place shown when Create is pressed: the page opens the new collection only while it
-   *  still is. */
-  from: string | null;
+  placeVersion: () => number;
   onClose: () => void;
   onCreated: MadeCollection;
 }) {
@@ -458,6 +458,7 @@ function NewCollectionForm({
     // Create is disabled without a title, with one too long, or while it is sent, and so is the
     // form's submit.
     setBusy(true);
+    const version = placeVersion();
     let r: CollectionCreated;
     try {
       r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });
@@ -469,7 +470,7 @@ function NewCollectionForm({
     }
     announceCreated(r, trimmed, org);
     onClose();
-    onCreated(r.namespace, org, NEW_COLLECTION_FOCUS, from);
+    onCreated(r.namespace, NEW_COLLECTION_FOCUS, version);
   };
   return (
     <form className="library-tree-form" onSubmit={(e) => void make(e)}>

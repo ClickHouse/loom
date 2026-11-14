@@ -236,7 +236,8 @@ export function LibraryCollections({
   /** The New collection dialog's open state: the page's, whose empty state opens it too. */
   creating: boolean;
   onCreatingChange: (open: boolean) => void;
-  /** A collection the dialog made (or found by its title): read the list again and open it. */
+  /** A collection the dialog made (or found by its title): the page opens it while the person
+   *  is still where the dialog opened. */
   onCreated: (collection: string) => void;
   /** The tree beside the page lists the places and makes new ones: the select and its New
    *  collection button step aside, and the path names where the page is. */

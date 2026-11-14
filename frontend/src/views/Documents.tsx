@@ -191,16 +191,21 @@ export function Documents() {
       mounted.current = false;
     };
   }, []);
-  // The place the tree shows as current, for a create's answer to compare against.
-  const placeShown = useRef<string | null>(null);
-  // A collection just made: the read starts before the move so the old list never says it is
-  // missing. Nothing moves once this page closed or its org changed, nor once the person left
-  // `from`, the place Create was pressed in: the list's refresh lists it there.
+  // Bumped whenever the person moves to another place (a pick, Back, another namespace or
+  // org), not by a read that fails.
+  const placeVersion = useRef(0);
+  useLayoutEffect(() => {
+    placeVersion.current += 1;
+  }, [picked.org, picked.namespace, collection]);
+  const currentVersion = useCallback(() => placeVersion.current, []);
+  // A collection just made, from the tree or the dialog, opens only while the person is where
+  // the create started (`version`) and this page is still open; otherwise the refresh its
+  // create sent lists it. The read starts before the move so the old list never says it is
+  // missing.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
-    (name: string, org: string, arriveFocus: string | undefined, from: string | null) => {
-      if (!mounted.current || org !== useStore.getState().identity?.org) return;
-      if (from !== placeShown.current) return;
+    (name: string, arriveFocus: string | undefined, version: number) => {
+      if (!mounted.current || version !== placeVersion.current) return;
       flushSync(() => reloadCollections(name));
       goTo(name, arriveFocus);
     },
@@ -216,9 +221,6 @@ export function Documents() {
   );
   const resolving = !!collection && collections.rows === null && !collections.error;
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
-  useLayoutEffect(() => {
-    placeShown.current = treeCurrent;
-  }, [treeCurrent]);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
   const mine = useStore((s) => s.myNamespaces);
@@ -297,13 +299,12 @@ export function Documents() {
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   // New collection: the picker's dialog, which the empty Library opens too.
-  const [creatingCollection, setCreatingCollection] = useState(false);
-  // The place the dialog opened on: its create opens what it made only while that is shown.
-  const dialogFrom = useRef<string | null>(null);
-  const setCreating = useCallback((open: boolean) => {
-    if (open) dialogFrom.current = placeShown.current;
-    setCreatingCollection(open);
-  }, []);
+  // Each open carries the place version it opened at, for what its create made.
+  const [creatingCollection, setCreatingCollection] = useState<{ version: number } | null>(null);
+  const setCreating = useCallback(
+    (open: boolean) => setCreatingCollection(open ? { version: placeVersion.current } : null),
+    [],
+  );
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
@@ -970,9 +971,9 @@ export function Documents() {
       place={collection ?? picked.namespace}
       onPick={goTo}
       onLeave={pickCollection}
-      creating={creatingCollection}
+      creating={creatingCollection !== null}
       onCreatingChange={setCreating}
-      onCreated={(name) => openCreated(name, picked.org, undefined, dialogFrom.current)}
+      onCreated={(name) => creatingCollection && openCreated(name, undefined, creatingCollection.version)}
       besideTree={besideTree}
     />
   );
@@ -991,6 +992,7 @@ export function Documents() {
       shelf={ownShelf ? picked.namespace : null}
       current={treeCurrent}
       onPick={goTo}
+      placeVersion={currentVersion}
       onCreated={openCreated}
     />
   );
