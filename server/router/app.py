@@ -283,7 +283,7 @@ class Router:
         try:
             winner, deployment_id = await directory.place(org, name, refusal)
         except directory.OrgTooLong as e:
-            return _refused(400, str(e))
+            return _refused(400, str(e), code="ORG_TOO_LONG")
         except (directory.PlacementRefused, directory.DirectoryUnavailable) as e:
             if replaced:
                 # The cached hash is older than the row: read the directory again on

@@ -68,7 +68,7 @@ def org_name_refusal(org: str) -> str:
     size = len(org.encode())
     if size <= ORG_MAX_BYTES:
         return ""
-    return f"org name is {size} bytes, longer than the {ORG_MAX_BYTES} bytes a cell holds"
+    return f"org name is {size} bytes, longer than the {ORG_MAX_BYTES} bytes an org name may have"
 
 
 FINGERPRINT_VERSION = 1

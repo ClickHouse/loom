@@ -138,23 +138,45 @@ def test_a_held_org_passes_and_is_remembered(cell_pg: _PG) -> None:
     assert cell_pg.writes == []
 
 
-@pytest.mark.parametrize("mode", ["recording", "enforced"])
-def test_a_new_org_longer_than_a_cell_holds_is_neither_recorded_nor_placed(
-    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch, mode: str
+def test_a_recording_cell_records_no_new_org_longer_than_the_limit(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The router could not index its placement, so the cell never records it: 422,
-    nothing written, the router never asked."""
+    """422, nothing written, the router never asked; one exactly at the limit is
+    recorded."""
     from server.core.errors import ValidationError
 
-    cell_pg.mode = mode
+    cell_pg.mode = "recording"
     calls = _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
     long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)  # 2 bytes a character: just past the limit
-    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES}"):
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES} bytes"):
         asyncio.run(tenancy.ensure_held(long, _auth(long)))
     assert cell_pg.writes == [] and calls == []
     exact = "a" * cell.ORG_MAX_BYTES
     asyncio.run(tenancy.ensure_held(exact, _auth(exact)))
     assert cell_pg.writes == [exact]
+
+
+def test_an_enforced_cell_turns_the_routers_length_refusal_into_a_422(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.errors import ValidationError
+
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    refusal = {"error": cell.org_name_refusal(long), "code": "ORG_TOO_LONG"}
+    calls = _router(monkeypatch, refusal, status=400)
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES} bytes"):
+        asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert len(calls) == 1 and cell_pg.writes == []
+
+
+def test_a_long_org_placed_in_another_cell_before_the_limit_answers_wrong_cell(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    _router(monkeypatch, {"cell": "us-1", "deployment_id": "dep-us-1"})
+    with pytest.raises(errors.WrongCellError) as refused:
+        asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert "us-1" in refused.value.message and cell_pg.writes == []
 
 
 def test_an_org_longer_than_the_limit_held_before_it_keeps_serving(cell_pg: _PG) -> None:

@@ -909,7 +909,7 @@ def test_a_cli_declaring_an_org_longer_than_a_cell_holds_refuses_without_a_trace
     monkeypatch.setattr(tenancy, "_held", set())
     monkeypatch.setattr(tenancy, "_elsewhere", {})
     monkeypatch.setattr(pg, "fetchval", AsyncMock(return_value=None))
-    monkeypatch.setattr(cell, "mode", lambda: "enforced")
+    monkeypatch.setattr(cell, "mode", lambda: "recording")
     long = "a" * (cell.ORG_MAX_BYTES + 1)
     with pytest.raises(_ch.OrgNotHeld, match=f"longer than the {cell.ORG_MAX_BYTES}"):
         asyncio.run(_ch.check_orgs([long]))

@@ -25,7 +25,7 @@ import asyncio
 import functools
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.core.errors import (
     BackendUnavailableError,
@@ -143,11 +143,12 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     if held:
         _held.add(org)
         return
-    # A new org past the limit is never recorded or placed, so every org a cell records
-    # can be placed; one already held keeps serving.
-    if reason := cell.org_name_refusal(org):
-        raise ValidationError(reason)
     if cell.mode() == "recording":
+        # A new org past the limit is never recorded, so every org a cell records can be
+        # placed; one already held keeps serving. Placement leaves the length to the
+        # router, which still answers the cell of one placed before the limit.
+        if reason := cell.org_name_refusal(org):
+            raise ValidationError(reason)
         # A restore to before attach's step 3 whose `loom cell restore` was skipped reads
         # `recording` too: the directory, which says `serving` then, tells the two apart.
         if not await directory_says_attaching():
@@ -199,6 +200,15 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
             operation="tenancy",
         ) from e
     _held.add(org)
+
+
+def _code(r: Any) -> str:
+    """The `code` of a router refusal's JSON body ('' when it has none)."""
+    try:
+        body = r.json()
+    except ValueError:
+        return ""
+    return str(body.get("code", "")) if isinstance(body, dict) else ""
 
 
 def _unread(org: str, e: Exception) -> BackendUnavailableError:
@@ -312,6 +322,9 @@ async def _place(org: str) -> tuple[str, str]:
         raise BackendUnavailableError(
             f"the router did not answer the placement of org {org!r}", operation="placement"
         ) from e
+    if r.status_code == 400 and _code(r) == "ORG_TOO_LONG":
+        # A new org longer than a cell holds: the caller's to fix, never retried.
+        raise ValidationError(cell.org_name_refusal(org))
     if r.status_code != 200:
         log.warning("placement of %s: router answered %s", org, r.status_code)
         raise BackendUnavailableError(
