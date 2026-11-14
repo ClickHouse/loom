@@ -597,7 +597,11 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
-    from server.erasure.app.saga_steps import census_spellings, evidence_with_mirrors
+    from server.erasure.app.saga_steps import (
+        census_spellings,
+        evidence_with_mirrors,
+        mirror_scope,
+    )
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
@@ -650,6 +654,9 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             )
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])
+        # The mode the census counted in: a scope that holds a mirror is purged.
+        if scope_type == "namespace" and not purge:
+            purge = await mirror_scope(str(row["org"]), scope_value, ch=ch) is not None
         print(
             f"  {row['id']} {row['org']}/{row['scope_type']} attempts={row['attempts']} "
             f"steps_done={len(done)} scope={len(names)} name(s) purge={purge}"

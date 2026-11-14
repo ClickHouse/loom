@@ -198,7 +198,8 @@ async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
 async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) -> dict[str, str]:
     """Every mirror the named namespaces have had, read from every replica's writes; a
     mirror has none of its own."""
-    named = [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]
+    if not (named := [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]):
+        return {}
     with sequential_reads():
         return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
 
@@ -271,8 +272,8 @@ async def evidence_with_mirrors(
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
     """Last: the mirrors' rows are gone, so the name registered again gets a new mirror.
     Every mirror the name has had is written again and counted, forgotten ones too. It
-    runs under `with_mirrors` like every namespace step, which reads the registry once
-    more and leaves the insert as it is; a scope of only mirrors forgets none."""
+    runs under `with_mirrors` like every namespace step; the purge mode does not change
+    an insert. A scope of only mirrors forgets none."""
     found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)

@@ -133,7 +133,7 @@ def test_a_mirror_named_in_the_scope_is_purged_and_has_no_mirror_looked_up(
     seen, step = _recorded()
     asyncio.run(saga_steps.with_mirrors(step)(ORG, OLD_MIRROR))
     assert seen == [([OLD_MIRROR], True)]
-    assert registry == [("mirrors_of", [], None)]
+    assert registry == []
 
 
 def test_the_last_step_forgets_the_mirrors(registry: list[Any]) -> None:
@@ -164,6 +164,8 @@ def test_a_namespace_erasure_with_a_mirror_purges_both_and_counts_both(
     assert ("UPDATE", "loom.memory") not in trace["memory.tombstone"]
     assert censused == [(["team", MIRROR], True)]
     assert ("forget", {MIRROR: "team"}) in registry
+    # The receipt keeps the requested mode.
+    assert run.last["out"].purge is False
 
 
 def test_a_replay_runs_each_step_over_the_mirrors_too(registry: list[Any]) -> None:

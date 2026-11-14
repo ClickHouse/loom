@@ -1270,7 +1270,10 @@ names the resuming process); the body's `requester` goes in their subject.
 `erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
 are steps too and fail the saga closed. A namespace erasure tombstones the namespace's
 promoted rows in `loom.shared` (`shared.tombstone`); a user erasure matches them by
-provenance.
+provenance. A namespace scope that holds a document mirror is erased as a purge, in one
+pass over the named namespaces and their mirrors, whatever the request asked, and its
+last step, `knowledge_mirrors.forget`, writes the mirrors `deleted` ([document
+sources](document-sources.md#the-mirror)).
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces
