@@ -352,9 +352,14 @@ def _cmd_remove(args: argparse.Namespace) -> int:
     # Judged before any store is read: a live or placed cell is never told to clear its
     # state. The router judges the row again under its lock.
     state, placed = row.get("state"), row.get("placed_orgs")
-    if not isinstance(state, str) or type(placed) is not int:
+    if (
+        not isinstance(state, str)
+        or type(placed) is not int
+        or type(row.get("is_first")) is not bool
+    ):
         print(
-            "loom cell remove: the router's answer names no state or placement count",
+            "loom cell remove: the router's answer names no state, placement count or "
+            "first-cell flag",
             file=sys.stderr,
         )
         return 1

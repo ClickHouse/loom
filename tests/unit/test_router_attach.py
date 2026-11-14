@@ -116,6 +116,9 @@ class _Conn:
             cells[a[0]]["placed"] += 1
         elif sql.startswith("INSERT INTO loom_router.audit") and "SELECT 'operator'" in sql:
             self.s.audit += [("operator", "place", {"org": o, "cell": a[1]}) for o in a[0]]
+            self.s.audit.append(
+                ("operator", "attach_place", {"cell": a[1], "named": a[2], "placed": a[3]})
+            )
         elif sql.startswith("INSERT INTO loom_router.audit") and "('operator'" in sql:
             self.s.audit.append(("operator", a[0], a[1]))
         elif sql.startswith("INSERT INTO loom_router.audit"):
@@ -570,6 +573,11 @@ def test_a_batch_places_each_org_once_with_an_audit_row_each(
     assert store.placements == {"a": "eu-1", "b": "eu-1", "c": "eu-1"}
     placed = [d["org"] for _actor, action, d in store.audit if action == "place"]
     assert placed == ["a", "b", "c"]
+    # A rerun that places nothing is audited too.
+    none = _call(client, "POST", "attach/place", {"deployment_id": "dep-1", "orgs": ["a"]})
+    assert none.json() == {"cell": "eu-1", "placed": 0, "placed_orgs": 3}
+    calls = [d for _actor, action, d in store.audit if action == "attach_place"]
+    assert calls[-1] == {"cell": "eu-1", "named": 1, "placed": 0} and len(calls) == 3
 
 
 def test_a_batch_places_past_a_closed_mark_and_a_quota(client: TestClient, store: _Store) -> None:
@@ -971,7 +979,8 @@ def test_remove_reads_no_store_for_a_later_cell(
     [
         ({"state": "serving"}, "is serving: a cell stays attached"),
         ({"placed_orgs": 1}, "holds 1 placement(s): its attach goes forward, never back"),
-        ({"placed_orgs": None}, "names no state or placement count"),
+        ({"placed_orgs": None}, "names no state, placement count or first-cell flag"),
+        ({"is_first": None}, "names no state, placement count or first-cell flag"),
     ],
 )
 def test_remove_refuses_a_live_or_placed_cell_before_reading_its_postgres(

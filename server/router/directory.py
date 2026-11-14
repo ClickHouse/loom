@@ -794,7 +794,8 @@ def _fingerprint_refusal(found: Attaching, name: str, value: dict[str, Any]) -> 
     differ = [k for k, want in expected.items() if fields.get(k, cell_state.DEFAULTS[k]) != want]
     if differ:
         return f"{name}'s {', '.join(differ)} differ from cell {row.cell!r}'s registration"
-    if fields.get("oauth_issuer_host", "") != row.host:
+    issuer_host = fields.get("oauth_issuer_host", cell_state.DEFAULTS["oauth_issuer_host"])
+    if issuer_host != row.host:
         return (
             f"{name}'s oauth_issuer_host is not cell {row.cell!r}'s host {row.host!r}: the "
             "router attaches no issuer host other than the cell's own"
@@ -815,11 +816,7 @@ def _placement_refusal(cell: str, name: str, value: dict[str, Any]) -> str:
     size = len(json.dumps({"org": "", "cell": cell, "fingerprint": value})) + _PLACEMENT_ORG_MAX
     if size <= MAX_BODY_BYTES:
         return ""
-    fields = value.get("fields")
-    sizes = sorted(
-        ((len(json.dumps(v)), k) for k, v in fields.items()) if isinstance(fields, dict) else (),
-        reverse=True,
-    )
+    sizes = sorted(((len(json.dumps(v)), k) for k, v in value["fields"].items()), reverse=True)
     largest = ", ".join(k for _, k in sizes[:3])
     return (
         f"{name} makes a placement body of up to {size} bytes, past the router's "
@@ -962,12 +959,17 @@ async def attach_place(cell_name: str, deployment_id: str, orgs: list[str]) -> t
             cell_name,
             len(new),
         )
+        # One row per org placed, and one for the call, so a batch that places nothing
+        # (a rerun) is audited too.
         await conn.execute(
             "INSERT INTO loom_router.audit (actor, action, detail) "
             "SELECT 'operator', 'place', jsonb_build_object('org', o, 'cell', $2::text) "
-            "FROM unnest($1::text[]) AS o",
+            "FROM unnest($1::text[]) AS o UNION ALL SELECT 'operator', 'attach_place', "
+            "jsonb_build_object('cell', $2::text, 'named', $3::int, 'placed', $4::int)",
             [str(r["org"]) for r in new],
             cell_name,
+            len(batch),
+            len(new),
         )
     return len(new), int(placed)
 

@@ -654,10 +654,16 @@ async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) 
             "attach_enforced",
             "place",
             "place",
+            "attach_place",
             "place",
+            "attach_place",
             "attach_serving",
             "attach_serving",
             "cell_read",
+        ]
+        assert [d for _a, a, d in steps if a == "attach_place"] == [
+            {"cell": name, "named": 2, "placed": 2},
+            {"cell": name, "named": 2, "placed": 1},
         ]
         assert steps[-2][2] == {"cell": name, "serving_already": True}
         assert steps[-1][2] == {"cell": name, "found": True}
