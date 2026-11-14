@@ -62,6 +62,8 @@ llamaindex = ["llama-index-core>=0.14,<0.15"]
 openai-agents = ["openai-agents>=0.24,<0.25"]
 # CrewAI moves its memory API between minor versions.
 crewai = ["crewai>=1.15,<1.16"]
+# AutoGen is pre-1.0: each minor version may change its memory protocol.
+autogen = ["autogen-core>=0.7,<0.8"]
 
 [project.urls]
 Homepage = "https://clickhouse.github.io/loom/"

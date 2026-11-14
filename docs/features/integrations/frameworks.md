@@ -18,6 +18,7 @@ or needs another database, vector store or cache.
 | OpenAI Agents SDK              | `loom_tools`                                    | Python, `loom.integrations.openai_agents`                 | `FunctionTool`                         |
 | OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                 |
+| AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`           |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
@@ -250,6 +251,46 @@ restores that, with a local store.
 | `defer`          | `True`   | queue the extraction on the server instead of waiting                                           |
 | `key_prefix`     | `crewai` | key prefix of `remember`'s saves                                                                |
 
+## AutoGen
+
+`LoomMemory` implements AutoGen's `Memory` protocol (`autogen_core.memory`), which an
+`AssistantAgent` takes as `memory=[...]`. Install with
+`pip install 'clickhouse-loom[autogen]' autogen-agentchat` (`autogen-core` 0.7;
+`AssistantAgent` comes from `autogen-agentchat`, which the extra does not install).
+
+```python
+from autogen_agentchat.agents import AssistantAgent
+from autogen_core.memory import MemoryContent, MemoryMimeType
+from loom import Agent
+from loom.integrations.autogen import LoomMemory
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    memory = LoomMemory(loom_agent, user_id="alice")
+    await memory.add(
+        MemoryContent(content="Alice prefers aisle seats", mime_type=MemoryMimeType.TEXT)
+    )
+    assistant = AssistantAgent("assistant", model_client=model_client, memory=[memory])
+```
+
+| AutoGen          | Loom                                                                                                                                                                                                                                                                        |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>` of the stripped text; text and JSON content, not bytes or images; `metadata` and `mime_type` are not kept                                                                                                   |
+| `query`          | `memory.search` of the namespace it writes to; with `honour_abstain`, leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key`, `memory_type`, `similarity`, `source` and `valid_at` when the row has one |
+| `update_context` | once per turn, before the agent's first model call: `query` with the latest user message (its text parts when multimodal), the matches added as one system message                                                                                                          |
+| `clear`          | raises: Loom deletes a memory when its key is named (`memory.delete`) or through [erasure](../memory/retention-and-erasure.md)                                                                                                                                              |
+
+| `LoomMemory` argument | Default   | Effect                                                                                    |
+| --------------------- | --------- | ----------------------------------------------------------------------------------------- |
+| `agent`               | required  | the `loom.Agent` the memory calls; AutoGen awaits its memory, so a `SyncAgent` is refused |
+| `user_id`             | none      | the end user the memories belong to; unset, a `query` reads every user's memories         |
+| `tags`                | none      | stamped on every `add`; a `query` keeps memories carrying any of them                     |
+| `top_k`               | 5         | memories per `query`, at least 1 and capped at 500                                        |
+| `honour_abstain`      | `True`    | leave out memories below Loom's floor; nothing when Loom abstains                         |
+| `key_prefix`          | `autogen` | the prefix of `add`'s keys                                                                |
+
+An `AssistantAgent` holding a `LoomMemory` cannot be dumped with `dump_component`: the Loom
+agent and its credential are not component config.
+
 ## LangGraph
 
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
@@ -370,6 +411,9 @@ client can speak for several agents.
   anyway: a failed save prints only for a `verbose` agent, and a failed recall shows only as
   a `MemoryRetrievalFailedEvent` on CrewAI's event bus, so an unreachable Loom is otherwise
   silent.
+- **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
+  `update_context` once per turn, before its first model call, and does not catch its
+  errors.
 - **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
   return Loom's error to the model as the call's result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
