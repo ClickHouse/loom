@@ -27,7 +27,7 @@ import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
-import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
+import { type CreatedCollection, invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -96,6 +96,8 @@ export interface ReadableCollections {
   /** Read again; `rows` is null until the new answer lands. `made`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
   reload: (made?: string) => void;
+  /** Read again in the background, keeping `rows`; `made` as for `reload`. */
+  refresh: (made?: string) => void;
   /** The collection the last reload or refresh waited for, or "". */
   expected: string;
 }
@@ -128,19 +130,19 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     },
     [org],
   );
-  // Any write to a collection, from a dialog since closed too: read again in the background.
-  useEffect(
-    () =>
-      // A collection made in another org is not waited for here.
-      onCollectionsChanged((made) =>
-        setAsked((r) => ({
-          ...r,
-          refreshes: r.refreshes + 1,
-          expect: { org: made?.org ?? org, name: made?.name ?? "" },
-        })),
-      ),
+  // A read in the background; a collection made in another org is not waited for here.
+  const refreshFor = useCallback(
+    (made?: CreatedCollection) =>
+      setAsked((r) => ({
+        ...r,
+        refreshes: r.refreshes + 1,
+        expect: { org: made?.org ?? org, name: made?.name ?? "" },
+      })),
     [org],
   );
+  const refresh = useCallback((made = "") => refreshFor(made ? { name: made, org } : undefined), [refreshFor, org]);
+  // Any write to a collection, from a dialog since closed too.
+  useEffect(() => onCollectionsChanged(refreshFor), [refreshFor]);
   const expected = asked.expect.org === org ? asked.expect.name : "";
   // The collection shown, once the page's last reload is answered and lists it. The read
   // effect captures it when it starts: `showing` changing restarts no read.
@@ -184,6 +186,7 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     refreshing: !!kept && !error && (!current || current.refreshes !== asked.refreshes),
     error,
     reload,
+    refresh,
     expected,
   };
 }
@@ -432,11 +435,12 @@ export function LibraryCollections({
             {refreshFailed ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
             {humanizeError(error, { bare: true, read: true })}
           </span>
-          {/* A refresh tries again in place: a reload would blank the rows and the documents. */}
+          {/* A refresh tries again in place: a reload would blank the rows and the documents.
+              Either still waits for a collection just made. */}
           <Button
             type="empty"
             htmlType="button"
-            onClick={() => (refreshFailed ? invalidateSharedCollections() : reload())}
+            onClick={() => (refreshFailed ? collections.refresh(collections.expected) : reload(collections.expected))}
           >
             Load collections again
           </Button>

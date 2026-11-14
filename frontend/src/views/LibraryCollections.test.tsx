@@ -72,6 +72,7 @@ const read = (rows: CollectionEntry[] | null, over: Partial<ReadableCollections>
   refreshing: false,
   error: null,
   reload: vi.fn(),
+  refresh: vi.fn(),
   expected: "",
   ...over,
 });
@@ -1431,6 +1432,56 @@ describe("the Library on a collection", () => {
       expect(screen.getByRole("button", { name: "Load collections again" })).toBeInTheDocument();
       expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
       expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
+    it("beside the tree, a retry after a failed refresh keeps the rows drawn while it reads", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(screen.getByText(/Couldn't refresh collections/)).toBeInTheDocument();
+      let answer: (v: unknown) => void = () => {};
+      api.listCollections.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+      await settle();
+      expect(tree).toHaveAttribute("aria-busy", "true");
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+      await act(async () => answer({ collections: ROWS, next_cursor: null }));
+      await settle();
+      expect(tree).not.toHaveAttribute("aria-busy");
+      expect(screen.queryByText(/Couldn't (refresh|load) collections/)).toBeNull();
+    });
+
+    it("beside the tree, a retry after a failed read for a collection just made still waits for it", async () => {
+      resizable();
+      const answer = await startCreate();
+      // The read the create asks for fails.
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer(q4);
+      await settle();
+      expect(screen.getByText(/Couldn't (refresh|load) collections/)).toBeInTheDocument();
+      // The retry's first answer is from a replica that has not listed it yet.
+      api.listCollections.mockResolvedValueOnce({ collections: ROWS, next_cursor: null }).mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+      }
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toHaveAttribute("aria-current", "page");
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
     });
 
     it("a retry after a failed refresh keeps the documents", async () => {
