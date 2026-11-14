@@ -355,7 +355,7 @@ A `definition` is promoted only:
   while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
 - Under a name no other live shared definition holds as its term or an alias (409
   `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format
-  characters dropped, NFKC, whitespace collapsed, case-folded.
+  characters dropped, NFKC, whitespace collapsed, case-folded, then NFKC again.
 
 One namespace's definition promotions run their ceiling and name checks and the write one
 at a time (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a
