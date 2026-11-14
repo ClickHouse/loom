@@ -1013,6 +1013,7 @@ that scope, and `memory_findings` is skipped, since the audit reads every user's
 | Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                      |
 | Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                     |
 | Bring a deleted document back          | `knowledge.restore`                                     | The deleted version and its chunks are live again ([below](#restoring-a-deleted-document)).           |
+| Move documents to another collection   | `knowledge.move`                                        | Each is written in the new place whole and deleted where it was ([below](#moving-documents)).         |
 | Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.    |
 
 Under the ClickHouse authority `knowledge.add` does not retire an earlier version at
@@ -1115,6 +1116,36 @@ again brings both back. A document a source sync retired is retired again by the
 sync if the source no longer lists it. How restore orders its reads and writes against
 erasures, other writes and the sweep, and the cases it cannot take back: [failure and
 recovery](../architecture/failure-and-recovery.md#knowledge-restore).
+
+### Moving documents
+
+`knowledge.move` moves up to 100 documents from `namespace` to `to_namespace` in the same
+org: a collection, `@me` (the caller's own) or a namespace. The caller needs writer on both;
+one it cannot write answers `found: false` and moves nothing, so the answer never says
+whether a collection it cannot reach exists. Each document is written in the new place with
+its chunks and their vectors (nothing is embedded again), its original file and its
+extraction artifact (stored again there: an original belongs to its namespace's sweep and
+erasure), its tables, its title, description, tags, author and date, as the next revision of
+its source there. It then takes the sharing of the place it went to. Where it was, it is
+deleted as `knowledge.delete` leaves it, so `knowledge.restore` there brings it back (beside
+the moved copy).
+
+Each source answers on its own: `moved: true`, or a `reason`:
+
+| `reason`    | Meaning                                                                                      |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| `not_found` | No live document has this source in `namespace` (one already moved answers this on a retry). |
+| `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.         |
+| `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.      |
+| `busy`      | Another write of the source holds it, or a publication of it may still land; call again.     |
+| `erased`    | An erasure that has not finished may reach the document or the place it goes.                |
+
+A move takes the source's claim in both namespaces, as a restore does in one. It writes the
+new place first and deletes the old one last, so a move cut off between the two leaves the
+document in both places, never in neither; moving it again finds the same text already
+there and only deletes the old one. An erasure registered while a move runs takes the copy
+back before the old one is deleted. Under the Postgres authority each of the two writes is
+its own commit.
 
 ## Ingesting files
 
@@ -1300,8 +1331,7 @@ read, and not while it holds too many to list.
   an empty folder. Sibling folders whose names differ only in case or spacing become one
   collection; a file whose path then repeats is skipped and listed.
 
-A document stays in the collection it was added to: to move one, add it again where it
-belongs and delete the old one, which leaves its earlier revisions behind.
+[Moving documents](#moving-documents) puts one in another collection later.
 
 ## Datasets
 

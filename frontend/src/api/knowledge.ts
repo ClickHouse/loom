@@ -115,6 +115,37 @@ export async function restoreKnowledge(
   return post("/v1/knowledge.restore", { org: id.org, namespace: id.namespace, source_uri: sourceUri });
 }
 
+/** Why a document did not move (`knowledge.move`'s `reason`). */
+export type MoveRefusal = "not_found" | "exists" | "synced" | "busy" | "erased";
+
+export interface KnowledgeMoveResult {
+  source_uri: string;
+  moved: boolean;
+  reason: "" | MoveRefusal;
+}
+
+export interface KnowledgeMoved {
+  /** False when the caller cannot add to the place: nothing moved. */
+  found: boolean;
+  to_namespace: string;
+  results: KnowledgeMoveResult[];
+}
+
+/** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were. */
+export async function moveKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  to: string,
+  sourceUris: string[],
+): Promise<KnowledgeMoved> {
+  const r = await post<KnowledgeMoved>("/v1/knowledge.move", {
+    org: id.org,
+    namespace: id.namespace,
+    to_namespace: to,
+    source_uris: sourceUris,
+  });
+  return { found: r.found, to_namespace: r.to_namespace ?? to, results: r.results ?? [] };
+}
+
 export interface KnowledgeBulkDeleteResult {
   source_uri: string;
   tombstoned: boolean;

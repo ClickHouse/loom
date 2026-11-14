@@ -378,6 +378,25 @@ Paginated listing of the documents of one namespace or several, for curation too
 | `rows` | `list[_KnowledgeListEntry]` | Documents, newest `ingested_at` first. |
 | `next_cursor` | `str \| None` | Pass as `cursor` for the next page; None when this is the last page. |
 
+## `knowledge.move`
+
+Move documents to another namespace of the org: a collection, `@me`, or a namespace.
+
+`POST /v1/knowledge.move` · MCP `loom_knowledge_move` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | Where the documents are. |
+| `to_namespace` | `str` | required | Where they go. |
+| `source_uris` | `list[str]` | required | The documents to move, by source; a source named twice moves once. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `found` | `bool` | False when the caller cannot write to `to_namespace`: nothing moved. |
+| `to_namespace` | `str` | Where the documents went (`@me` as the caller's own collection). |
+| `results` | `list[_KnowledgeMoveResult]` | One per source asked for, in the order asked. |
+
 ## `knowledge.outline`
 
 A document's table of contents, as recorded on its chunks at ingest, and optionally one section's assembled text.

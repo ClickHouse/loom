@@ -1,0 +1,136 @@
+import { type CSSProperties, useState } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
+import { Select } from "@clickhouse/click-ui/Select";
+import { moveKnowledge, type KnowledgeMoveResult, type MoveRefusal } from "../api";
+import { toast } from "../components/Toast";
+import { Alert } from "../components/ui";
+import { Modal, ModalFooter } from "../components/ui/Modal";
+import { humanizeError } from "../lib/errorWords";
+import { fmtInt } from "../lib/format";
+
+/** A place documents can go to: a collection the person writes, their own files, or the
+ *  header's namespace. */
+export interface MovePlace {
+  namespace: string;
+  label: string;
+  /** Its depth in the collection tree, for the indent. */
+  depth: number;
+  kind: "collection" | "personal" | "namespace";
+}
+
+// Why a document stayed, by `knowledge.move`'s reason.
+const STAYED: Record<MoveRefusal, string> = {
+  not_found: "no longer here",
+  exists: "a document with the same source is already there",
+  synced: "kept here by a document source",
+  busy: "being written right now; try again",
+  erased: "an erasure is under way",
+};
+
+function documents(n: number): string {
+  return `${fmtInt(n)} document${n === 1 ? "" : "s"}`;
+}
+
+/** The toast after a move: how many went, and why the rest stayed. */
+export function moveSummary(results: KnowledgeMoveResult[], to: string): { text: string; ok: boolean } {
+  const moved = results.filter((r) => r.moved).length;
+  const stayed = new Map<MoveRefusal, number>();
+  for (const r of results) if (!r.moved && r.reason) stayed.set(r.reason, (stayed.get(r.reason) ?? 0) + 1);
+  const why = [...stayed].map(([reason, n]) => `${documents(n)} stayed (${STAYED[reason]})`).join("; ");
+  if (!why) return { text: `Moved ${documents(moved)} to ${to}`, ok: true };
+  return { text: moved ? `Moved ${documents(moved)} to ${to}; ${why}` : `Nothing moved: ${why}`, ok: false };
+}
+
+/** Who reads the documents once they are in `place`. */
+function sharing(place: MovePlace): string {
+  if (place.kind === "personal") return "Only you read them there.";
+  if (place.kind === "namespace") return `Whoever reads the namespace ${place.namespace} reads them there.`;
+  return `They take ${place.label}'s sharing: whoever reads it reads them.`;
+}
+
+/** Move documents to another place (`knowledge.move`): each is written there whole and
+ *  deleted here. */
+export function MoveDocumentsDialog({
+  org,
+  from,
+  fromLabel,
+  sourceUris,
+  places,
+  onMoved,
+  onClose,
+}: {
+  org: string;
+  /** The namespace the documents are in, and what it is called on screen. */
+  from: string;
+  fromLabel: string;
+  sourceUris: string[];
+  /** Where they can go, in tree order; `from` is left out by the caller. */
+  places: MovePlace[];
+  /** After the call answered: the sources that moved. */
+  onMoved: (moved: string[]) => void;
+  onClose: () => void;
+}) {
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const target = places.find((p) => p.namespace === to) ?? null;
+  const what = sourceUris.length === 1 ? "1 document" : documents(sourceUris.length);
+
+  const submit = async () => {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await moveKnowledge({ org, namespace: from }, target.namespace, sourceUris);
+      if (!r.found) {
+        setError(`You can no longer add documents to ${target.label}.`);
+        setBusy(false);
+        return;
+      }
+      const summary = moveSummary(r.results, target.label);
+      toast(summary.text, summary.ok ? "ok" : "info");
+      onMoved(r.results.filter((x) => x.moved).map((x) => x.source_uri));
+      onClose();
+    } catch (e) {
+      setError(humanizeError(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onOpenChange={(v) => !v && onClose()} title={`Move ${what}`} className="w-full max-w-[480px]">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text-muted">{`From ${fromLabel}`}</p>
+          <Select id="move-documents-to" label="To" value={to} placeholder="Pick a place" onSelect={setTo} showSearch>
+            {places.map((p) => (
+              <Select.Item key={p.namespace} value={p.namespace}>
+                <span className="collection-depth" style={{ "--depth": p.depth } as CSSProperties}>
+                  {p.label}
+                </span>
+              </Select.Item>
+            ))}
+          </Select>
+          {target && <p className="text-sm text-text-muted">{sharing(target)}</p>}
+          {places.length === 0 && (
+            <p className="text-sm text-text-muted">There is no other place you can add documents to.</p>
+          )}
+          {error && <Alert role="alert" state="danger" text={error} />}
+        </div>
+        <ModalFooter>
+          <Button type="secondary" htmlType="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="primary" htmlType="submit" disabled={busy || !target} loading={busy}>
+            Move
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
+  );
+}

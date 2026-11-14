@@ -902,6 +902,10 @@
               "body",
               "options"
             ],
+            "move": [
+              "body",
+              "options"
+            ],
             "outline": [
               "body",
               "options"
