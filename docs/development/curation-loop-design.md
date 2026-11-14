@@ -509,9 +509,8 @@ from text drawn from a conversation, which no approved-hash check covers.
   redact, namespace erasure, history, audit. A user erasure tombstones a shared row whose
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
-  and `promoted_by` on the shared row, which today holds the body's `approver` and this
-  design stamps from the token, names that admin and is kept through a user erasure, as
-  the audit log keeps its actor.
+  and `promoted_by` on the shared row, the promoting admin's token actor, names that admin
+  and is kept through a user erasure, as the audit log keeps its actor.
 - A redact of a past version of a definition reaches that version, the shared row holding
   its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
   text or named by its `candidate-id:` tag (the change above), not the gap it came from,

@@ -30,12 +30,12 @@ def definition_names(value: Any) -> set[str] | None:
     aliases = value.get("aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
         return None
-    return names_of(value["term"], aliases)
+    return names_of(value["term"], aliases) or None
 
 
-def names_of(term: str, aliases: list[str]) -> set[str] | None:
-    """The folded term and aliases, or None when the term folds to nothing."""
+def names_of(term: str, aliases: list[str]) -> set[str]:
+    """The folded term and aliases, none when the term folds to nothing."""
     folded = fold_name(term)
     if not folded:
-        return None
+        return set()
     return ({folded} | {fold_name(a) for a in aliases}) - {""}

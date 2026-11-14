@@ -75,8 +75,9 @@ def _extracted(value: Any) -> dict[str, Any]:
         return {"term": "", "aliases": []}
     term = value.get("term") if isinstance(value.get("term"), str) else ""
     aliases = value.get("aliases", [])
-    ok = isinstance(aliases, list) and all(isinstance(a, str) for a in aliases)
-    return {"term": term, "aliases": aliases if ok else []}
+    if not isinstance(aliases, list):
+        return {"term": term, "aliases": []}
+    return {"term": term, "aliases": [a if isinstance(a, str) else json.dumps(a) for a in aliases]}
 
 
 def _input(**over: Any) -> MemoryPromoteInput:
@@ -141,6 +142,11 @@ async def test_an_approved_definition_is_promoted_by_the_tokens_actor(
     assert (row["memory_key"], row["promoted_by"]) == (KEY, "user:admin")
     assert row["promoted_from_candidate_id"] is None
     assert sorted(out.ignored_args) == ["approver", "promoted_from_candidate_id"]
+
+
+async def test_an_empty_approver_sent_is_named_ignored(store: dict[str, Any]) -> None:
+    out = await promote.handle_memory_promote(_input(approver=""))
+    assert out.ignored_args == ["approver"]
 
 
 async def test_a_definition_promotion_needs_its_approved_hash(store: dict[str, Any]) -> None:
@@ -213,12 +219,14 @@ async def test_the_store_reads_only_the_term_and_aliases() -> None:
         row(KEY, json.dumps({**VALUE, "rests_on": "x" * 1000})),
         row("definition/text", "not json"),
         row("definition/odd", json.dumps({"term": 7, "aliases": "x"})),
+        row("definition/mixed", json.dumps({"term": "MRR", "aliases": ["mrr", 1]})),
         row("definition/fact", json.dumps(VALUE), memory_type="semantic"),
         row("arr_note", json.dumps(VALUE)),
     )
     rows = await shared.shared_definitions("o", "n", 10, ch=ch)
     assert {r["memory_key"]: (r["term"], list(r["aliases"])) for r in rows} == {
         KEY: ("ARR", ["annual recurring revenue"]),
+        "definition/mixed": ("MRR", ["mrr", "1"]),
         "definition/odd": ("", []),
         "definition/text": ("", []),
     }
@@ -229,8 +237,9 @@ async def test_a_definition_lands_on_its_own_key_and_a_definition_key_needs_one(
 ) -> None:
     assert await _refusal(store, target_key="definition/other") == "DEFINITION_PROMOTION_REFUSED"
     store["row"] = _row(memory_type="semantic", memory_key="arr_note")
-    refused = await _refusal(store, memory_key="arr_note", target_key=KEY)
-    assert refused == "DEFINITION_PROMOTION_REFUSED"
+    with pytest.raises(LoomServerError, match="only a row of type definition") as e:
+        await promote.handle_memory_promote(_input(memory_key="arr_note", target_key=KEY))
+    assert e.value.code == "DEFINITION_PROMOTION_REFUSED" and store["written"] == []
 
 
 @pytest.mark.parametrize(
@@ -320,7 +329,10 @@ async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) 
     assert row["promoted_by"] == "lead" and out.ignored_args == []
 
 
-async def test_review_promotes_no_definition_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("destination", ["memory", "both"])
+async def test_review_promotes_no_definition_candidate_to_memory(
+    monkeypatch: pytest.MonkeyPatch, destination: str
+) -> None:
     from server.memory.api.models_learnings import LearningsReviewInput
     from server.memory.app import learnings
     from server.memory.store import learnings as learnings_repo
@@ -342,7 +354,9 @@ async def test_review_promotes_no_definition_candidate(monkeypatch: pytest.Monke
     monkeypatch.setattr(learnings_repo, "find_candidate", find)
     monkeypatch.setattr(learnings_repo, "insert_row", must_not)
     monkeypatch.setattr(learnings, "_do_promote", must_not)
-    review = LearningsReviewInput(org="o", namespace="n", candidate_id="c1", decision="promote")
+    review = LearningsReviewInput(
+        org="o", namespace="n", candidate_id="c1", decision="promote", destination=destination
+    )
     with pytest.raises(LoomServerError) as e:
         await learnings.handle_learnings_review(review)
     assert e.value.code == "VALIDATION_FAILED"

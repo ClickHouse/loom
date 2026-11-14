@@ -113,8 +113,9 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     ignored: list[str] = []
     if is_definition_promotion:
         await _check_definition_promotion(input, src, target_key)
-        ignored = [f for f in ("approver", "promoted_from_candidate_id") if getattr(input, f)]
-    elif input.approved_sha256:
+        unused = ("approver", "promoted_from_candidate_id")
+        ignored = [f for f in unused if getattr(input, f) is not None]
+    elif input.approved_sha256 is not None:
         ignored = ["approved_sha256"]
     promotion_event = str(uuid.uuid4())
     now_naive = naive_utc_now()
@@ -128,6 +129,8 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     promoted_by = (
         writer_actor("explicit") if is_definition_promotion else (input.approver or "explicit")
     )
+    # Only a non-definition learnings.review promotion records its candidate.
+    candidate_id = None if is_definition_promotion else input.promoted_from_candidate_id
     src_value_json = json.dumps(src.value, default=str)
 
     # Embed once: reused for the conflict check and the shared embedding insert.
@@ -178,7 +181,6 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
                     },
                 )
 
-    # Only a non-definition learnings.review promotion records its candidate.
     await shared_repo.insert_shared_row(
         {
             "org": input.org,
@@ -189,9 +191,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             "confidence": src.confidence,
             "promoted_from": [promoted_from_repr],
             "promotion_event": promotion_event,
-            "promoted_from_candidate_id": None
-            if is_definition_promotion
-            else input.promoted_from_candidate_id,
+            "promoted_from_candidate_id": candidate_id,
             "promoted_by": promoted_by,
             "rationale": input.rationale,
             "promoted_at": now_naive,
@@ -257,6 +257,10 @@ async def _check_definition_promotion(
     (docs/concepts/identities-and-namespaces.md)."""
     from server.memory.store import shared as shared_repo
 
+    if not is_definition(src):
+        raise DefinitionPromotionRefusedError(
+            "only a row of type definition is promoted under a definition/ key"
+        )
     if not is_namespace_definition(src):
         raise DefinitionPromotionRefusedError(
             "a definition is promoted from its namespace-wide row: agent, user and session '-'"
@@ -302,7 +306,7 @@ async def _check_definition_promotion(
     taken = sorted(
         r["memory_key"]
         for r in rows
-        if r["memory_key"] != target_key and names & (names_of(r["term"], r["aliases"]) or set())
+        if r["memory_key"] != target_key and names & names_of(r["term"], r["aliases"])
     )
     if taken:
         raise DefinitionNameTakenError(

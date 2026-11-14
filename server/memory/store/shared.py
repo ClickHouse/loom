@@ -200,7 +200,8 @@ async def shared_definitions(
     org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """The live shared definitions' keys with the `term` and `aliases` their values hold
-    (a term that is not a string reads as '', aliases that are not strings as []), at most
+    (a term that is not a string reads as '', aliases that are not an array as [], an alias
+    that is not a string as its JSON text), at most
     `limit`, read strongly. Only those two fields leave the store, whatever a value's
     size."""
     ch = ch or _default_client()

@@ -460,18 +460,22 @@ export function MemoryInspector({
   const rejectReason = why("memory.reject");
   const shareReason = why("memory.promote");
   const unshareReason = why("memory.demote");
-  // memory.promote refuses a profile row and a high one; a definition only from its live
-  // namespace-wide row under a definition/ key, not labelled medium (the server checks expiry).
+  // memory.promote refuses a profile row and a high one. A definition, or any row under a
+  // definition/ key, is shared only as a live namespace-wide definition under that key, not
+  // labelled medium (the server checks expiry).
   const namespaceWide = [detail?.agent, detail?.user_id, detail?.session_id].every((v) => !v || v === "-");
+  const isDefinition = detail?.memory_type === "definition";
+  const underDefinitionKey = memoryKey.startsWith("definition/");
   const definitionShareable =
+    isDefinition &&
+    underDefinitionKey &&
     namespaceWide &&
-    memoryKey.startsWith("definition/") &&
     (detail?.status ?? "active") === "active" &&
     detail?.sensitivity !== "medium";
   const shareable =
     detail?.memory_type !== "profile" &&
     detail?.sensitivity !== "high" &&
-    (detail?.memory_type !== "definition" || definitionShareable);
+    (!(isDefinition || underDefinitionKey) || definitionShareable);
   const redactReason = why("memory.redact");
   const judgeReason = why("memory.outcome");
   // The value, its tags and its expiry are memory.set; Delete and Verify their own ops. Copy to

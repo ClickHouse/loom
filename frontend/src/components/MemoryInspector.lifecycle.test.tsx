@@ -579,6 +579,12 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
   });
 
+  it("offers no share for another type under a definition/ key", async () => {
+    const shared = { agent: "-", user_id: "-", session_id: "-" };
+    await open("admin", { ...LIVE, ...shared, memory_type: "semantic" }, "definition/arr");
+    expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
+  });
+
   it("shares a definition with the hash of the text it shows", async () => {
     const shared = { agent: "-", user_id: "-", session_id: "-" };
     await open("admin", { ...LIVE, ...shared, memory_type: "definition", content_sha256: "abc123" }, "definition/arr");

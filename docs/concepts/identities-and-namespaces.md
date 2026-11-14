@@ -337,23 +337,31 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
-A `definition` is promoted from its live namespace-wide row (agent, user and session
-`'-'`, `active` and not past its `expires_at` or `valid_to`) under a `definition/` key, to
-that same key; else 422 `DEFINITION_PROMOTION_REFUSED`. Its value is a JSON object with a
-non-empty string `term` and, optionally, a list of string `aliases`; else 422
-`VALIDATION_FAILED`. The promotion names the hash it approves (`approved_sha256`, the
-row's `content_sha256`), refused without it (422 `VALIDATION_FAILED`) and with 409
-`PRECONDITION_FAILED` when the text no longer has it. It is refused when the value is
-labelled `medium`, or reads as `medium` or `high` (422 `SENSITIVE_DEFINITION_REFUSED`; a
-`high` label answers `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row), when
-another live shared definition holds its term or an alias (409 `DEFINITION_NAME_TAKEN`,
-names compared folded: format characters dropped, NFKC, whitespace collapsed,
-case-folded), and when it adds a key past `memory_term_leg_max_definitions`, or the
-namespace is already past it (409 `DEFINITION_CEILING`); demoting a definition gives back
-its name and its place. The token's actor is its `promoted_by`: `approver` and
+A `definition` is promoted only as an admin approved it:
+
+- From its live namespace-wide row (agent, user and session `'-'`, `active` and not past
+  its `expires_at` or `valid_to`) under a `definition/` key, to that same key; a row of
+  another type is never promoted under a `definition/` key. Else 422
+  `DEFINITION_PROMOTION_REFUSED`.
+- With the hash it approves (`approved_sha256`, the row's `content_sha256`): refused
+  without it (422 `VALIDATION_FAILED`), and with 409 `PRECONDITION_FAILED` when the text
+  no longer has it.
+- With a value that is a JSON object holding a non-empty string `term` and, optionally,
+  a list of string `aliases`; else 422 `VALIDATION_FAILED`.
+- Not labelled `medium` and not reading as `medium` or `high` (422
+  `SENSITIVE_DEFINITION_REFUSED`; a `high` label answers
+  `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row).
+- Not past `memory_term_leg_max_definitions` with a new key (409 `DEFINITION_CEILING`).
+- Under a name no other live shared definition holds as its term or an alias (409
+  `DEFINITION_NAME_TAKEN`), names compared folded: format characters dropped, NFKC,
+  whitespace collapsed, case-folded.
+
+The ceiling and the name check read the shared layer before the write, so two
+promotions at the same moment can both pass. Demoting a definition gives back its name
+and its place. The token's actor is its `promoted_by`: `approver` and
 `promoted_from_candidate_id` are ignored and named in `ignored_args`, and no close shared
 row under another key refuses it. `learnings.review` promotes no candidate of type
-`definition`.
+`definition` to memory.
 
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an
