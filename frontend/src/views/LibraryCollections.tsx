@@ -89,8 +89,8 @@ export interface ReadableCollections {
   /** The last answer for this org, kept while it is read again: what stays on screen. Null
    *  before the first answer. */
   kept: { rows: CollectionEntry[]; truncated: boolean } | null;
-  /** A read is in flight, of either kind, while the last answer is kept on screen; false
-   *  once it answers or fails. */
+  /** A read is in flight, of either kind, while an answer for this org is kept (`kept`);
+   *  false once it answers or fails. */
   refreshing: boolean;
   error: unknown;
   /** Read again; `rows` is null until the new answer lands. `made`: a collection just
@@ -179,7 +179,6 @@ export function useReadableCollections(org: string, showing = ""): ReadableColle
     [org, asked],
   );
   const kept = answer && answer.org === org ? answer : null;
-  // `expect` is left alone, so the retry waits for what the failed read waited for.
   const retry = useCallback(() => {
     setError(null);
     setAsked((r) => (kept ? { ...r, refreshes: r.refreshes + 1 } : { ...r, reloads: r.reloads + 1 }));
