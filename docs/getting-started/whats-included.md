@@ -1,7 +1,8 @@
 # What's included
 
-This page lists what Loom does, self-hosted from the Apache-2.0 repository: one section per
-area, each row linked to the page that covers it. Several capabilities must be turned on;
+This page lists Loom's main capabilities, self-hosted from the Apache-2.0 repository: one
+section per area, each row linked to the page that covers it. The [docs index](../index.md)
+lists every page. Several capabilities must be turned on;
 the linked page says how, and the boolean switches that load false are listed in
 [status](../reference/status.md). The embedder is your choice: the bundled local model, a
 hosted provider or an OpenAI-compatible endpoint you run. Extraction, summaries and
