@@ -33,7 +33,7 @@ class CodeClient:
     edges; unset follows the deployment default.
 
     `search`, `outline`, `callers`, `callees` and `impact` answer with `lessons`: the
-    team's memories about the answer's top files, and `lessons_left_out`, how many
+    memories about the answer's top files, and `lessons_left_out`, how many
     more rows about those files `memory.for_file` holds (left out by the cap, a cut, or
     because a newer row read for the answer supersedes them). `include_lessons=False`
     skips that read."""
