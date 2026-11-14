@@ -381,9 +381,9 @@ async def run_sync(
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
     """The sources a pass syncs: those whose namespace is active, of the sources this
     build serves (a mirrored one is a later build's)."""
-    found = [s for s in found if served(s)]
-    inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in found}))
-    return [s for s in found if (s.org, s.namespace) not in inactive]
+    syncable = [s for s in found if served(s)]
+    inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in syncable}))
+    return [s for s in syncable if (s.org, s.namespace) not in inactive]
 
 
 async def _states(found: list[KnowledgeSource]) -> dict[str, dict[str, str]]:

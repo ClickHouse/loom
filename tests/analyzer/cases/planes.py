@@ -931,15 +931,21 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         )
 
 
-async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The grants `collection.create` reads to find another holder of the name, the
-    member count `namespace.inventory` takes over a collection's lineage, and the check a
-    name registration makes (`in_use`); `grants.list` reads through its handler."""
-    from server.identity.store import grants as grants_repo
+async def _namespace_in_use(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The check a name registration makes: a grant, a source, a mirror or any census
+    row of the name."""
     from server.identity.store import namespace_census
 
-    await grants_repo.list_active(ORG, NS, ch=ch)
     await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
+
+
+async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The grants `collection.create` reads to find another holder of the name, and the
+    member count `namespace.inventory` takes over a collection's lineage; `grants.list`
+    reads through its handler."""
+    from server.identity.store import grants as grants_repo
+
+    await grants_repo.list_active(ORG, NS, ch=ch)
     await grants_repo.member_count(ORG, ["col-a", "col-b"], ch=ch)
 
 
@@ -1097,6 +1103,9 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case("namespace_in_use", "server.identity.store.namespace_census", _namespace_in_use, {})
+    )
     out.append(
         Case(
             "namespace_tune",

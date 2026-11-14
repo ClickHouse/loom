@@ -572,11 +572,12 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
 
     org = str(row["org"])
     scope_type, named, _purge, _external = _re_verify_scope(row)
-    # The scope's mirrors, as the saga erased them; its purge mode leaves the link steps alone.
+    # Memories written since the census are not the saga's, even soft-deleted.
+    cut = row["verified_at"]
+    print(f"  {row['id']} {org}/{row['scope_type']} completed")
+    # With the scope's mirrors, as the saga erased them; the orphan-link reads ignore the
+    # purge mode.
     async with counted_scope(org, scope_type, named, ch=ch) as scope_value:
-        # Memories written since the census are not the saga's, even soft-deleted.
-        cut = row["verified_at"]
-        print(f"  {row['id']} {org}/{row['scope_type']} completed")
         orphans = await steps_graph.count_orphan_row_links(
             org, scope_type, scope_value, verified_at=cut, ch=ch
         )
@@ -592,8 +593,8 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
         left = await steps_graph.count_orphan_row_links(
             org, scope_type, scope_value, verified_at=cut, ch=ch
         )
-        print(f"    deleted {deleted}; left {sum(left.values())}")
-        return 1 if any(left.values()) else 0
+    print(f"    deleted {deleted}; left {sum(left.values())}")
+    return 1 if any(left.values()) else 0
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
