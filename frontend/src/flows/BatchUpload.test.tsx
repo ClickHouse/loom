@@ -1529,6 +1529,7 @@ describe("BatchUpload", () => {
       const told = vi.mocked(invalidateSharedCollections).mock.calls.length;
       await user.click(done);
       expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
+      expect(invalidateSharedCollections).toHaveBeenLastCalledWith(undefined);
     });
 
     it("sends a file once when two folders go to one untitled collection both their names spell", async () => {

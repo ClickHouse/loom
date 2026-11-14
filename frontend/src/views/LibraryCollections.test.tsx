@@ -1369,7 +1369,7 @@ describe("the Library on a collection", () => {
       expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/col-q4/), "info");
     });
 
-    it("has the page opened again wait for a collection made before it, while a replica lags", async () => {
+    it("has the page opened again wait for a collection whose create was sent before it, while a replica lags", async () => {
       resizable();
       const answer = await createInTree();
       cleanup();
