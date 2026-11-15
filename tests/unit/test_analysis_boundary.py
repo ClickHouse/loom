@@ -191,12 +191,8 @@ def test_the_foreign_policy_check_looks_on_every_table_the_others_policy_widens(
 ) -> None:
     monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
     sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS)
-    widened = {
-        m.group(1)
-        for s in sql
-        if (m := re.match(rf"CREATE ROW POLICY OR REPLACE `{boundary.OTHERS_POLICY_NAME}` "
-                          r"ON `loom`\.(\w+) ", s))
-    }  # fmt: skip
+    head = rf"CREATE ROW POLICY OR REPLACE `{boundary.OTHERS_POLICY_NAME}` ON `loom`\.(\w+) "
+    widened = {m.group(1) for s in sql if (m := re.match(head, s))}
     assert widened == set(boundary.others_policy_tables())
     assert {"old_table", boundary.CANARY_TABLE} <= widened
     check = store.foreign_policies_sql("'loom'")
