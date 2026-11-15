@@ -155,7 +155,14 @@ class _World:
         self.sources = [s for s in self.sources if s.name != src.name] + [src]
 
     async def source_revisions(
-        self, org: str, ns: str, tag: str, *, searchable_only: bool = True, pictures: bool = False
+        self,
+        org: str,
+        ns: str,
+        tag: str,
+        *,
+        searchable_only: bool = True,
+        flag_searchable: bool = False,
+        pictures: bool = False,
     ) -> list[dict[str, str]]:
         return [
             {
@@ -168,9 +175,11 @@ class _World:
                 if pictures and "]: <data:" in d.get("content", "")
                 else "",
                 "access_json": d.get("access_json", ""),
+                "searchable": "1" if d.get("chunks", True) else "",
             }
             for uri, d in self.docs.items()
             if d["actor"] == SYNC_WORKER_ACTOR
+            and d.get("namespace", ns) == ns
             and tag in d["tags"]
             and (d.get("chunks", True) or not searchable_only)
         ]
@@ -265,7 +274,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         d = w.docs.get(uri)
         return (
             None
-            if d is None
+            if d is None or d.get("namespace", ns) != ns
             else documents.DocumentRow(
                 org=org,
                 namespace=ns,

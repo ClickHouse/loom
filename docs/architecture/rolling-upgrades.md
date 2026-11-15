@@ -746,7 +746,7 @@ schema. These rules keep that safe. The operator procedure is in
     writes mirrors comes after this one, so the build beside it already refuses the
     form; the one gap is a name an N-1 process registers or writes after the migration
     ran. The mirror writer draws a new name again while the one it drew is in use
-    (`knowledge.app.mirrors.ensure_mirror`, rule 54), so no such namespace is ever taken
+    (`server/knowledge/app/mirrors.py`, rule 54), so no such namespace is ever taken
     for a mirror. `tests/unit/test_mirror_names_refused.py` checks N's side, and the
     mixed-version gate does not check this rule.
 52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
@@ -786,16 +786,18 @@ schema. These rules keep that safe. The operator procedure is in
     (`SOURCE_NOT_SERVED`, rule 52). Each turn lists every file with its permissions,
     reading `permissions.list` for a file the listing leaves them out of, and writes
     into the namespace's mirror (made under the namespace's sources lease when it has
-    none) at `<address>#<source id>`, tagged `source-id:<id>`: each stored copy's list
-    when it changed, a new or changed file with its list, and `unread` over a copy the
-    listing no longer has before it is retired. The listing's start goes to
-    `loom.knowledge_source_listings` once every list it read is written. No request can
-    add a mirrored source yet, so N meets none it did not write. N-1 serves no mirrored
-    source (rule 52) and reads no listing row. N counts a document as searchable when
-    its chunks are those of its version or of its revision, which a row-only rewrite (a
-    new list, a metadata edit) keeps, so such a rewrite stays until the file changes;
-    N-1 checks the version alone, so after a metadata edit it fetches and writes the
-    file again, as it does today. `tests/unit/test_knowledge_source_sync_mirror.py` and
+    none) at `<address>#<source id>`, tagged `source-id:<id>`. It first brings every
+    stored copy's list to the store's, or to `unread` for a copy the listing does not
+    have at its address, bounded by the pass's deadline only; then it fetches and writes
+    each new or changed file with its list, and retires a copy whose file is gone. The
+    listing's start goes to `loom.knowledge_source_listings` once every stored copy's
+    list is written. No request can add a mirrored source yet, so N meets none it did
+    not write. N-1 serves no mirrored source (rule 52) and reads no listing row. N
+    counts a document as searchable when its chunks are those of its version or of its
+    revision, which a row-only rewrite (a new list, a metadata edit) keeps, so such a
+    rewrite stays until the file changes; N-1 checks the version alone, so after a
+    metadata edit it fetches and writes the file again, as it does today.
+    `tests/unit/test_knowledge_source_sync_mirror.py` and
     `tests/unit/test_knowledge_source_revisions_sql.py` check N's side.
 
 ## What checks them

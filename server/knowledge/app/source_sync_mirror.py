@@ -3,13 +3,14 @@ written into the namespace's mirror with the permission list the store gives it
 (docs/architecture/document-sources.md, The mirror; Every complete listing reads the
 lists again).
 
-A file's list is read with the listing, or one file at a time when the listing leaves
-it out. A stored copy at the file's address takes the list the store gives it now,
-written as a new row over the stored one that keeps its chunks, so nothing is embedded
-again; the same list writes nothing. A file at a new revision is then fetched and
-written with its list. A stored copy the complete listing no longer has at its address
-is written `unread` first and then retired on the store's word, as a folder turn
-retires. The listing row lands last, once every list the listing read is written."""
+The turn first brings every stored copy's list to what the store says now: the list of
+the file listed at its address, or `unread` for a copy the listing does not have there.
+A changed list is written as a new row over the stored one that keeps its chunks, so
+nothing is embedded again, and the same list writes nothing. These writes are bounded
+by the pass's deadline only, never by its document bound. Then each new or changed file
+is fetched and written with its list, as a folder turn writes, and a copy whose file
+is gone is retired on the store's word. The listing row lands once every stored copy's
+list was brought up to date by a listing that searched everything."""
 
 from __future__ import annotations
 
@@ -42,6 +43,8 @@ from server.workers import pass_context
 # Seconds between two files' permission reads: ten a second stay well under the store's
 # per-user rate limit.
 PERMISSIONS_PACE_S = 0.1  # not a setting: the store's limit, the same on every deployment
+# List rewrites read and written in one round trip each.
+_REWRITE_BATCH = 100  # not a setting: a bound on one statement's size
 
 
 async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> sync.TurnResult:
@@ -68,7 +71,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
             out_of_time=run.budget.exhausted,
         )
     except gdrive.VendorError as e:
-        _fail(result, e)
+        sync.vendor_failure(result, e)
         return result
     sync.note_listing(result, listing)
     if listing.ran_out:
@@ -77,33 +80,33 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         return result
     files = [f for f in listing.files if gdrive.valid_file_id(str(f.get("id") or ""))]
     result.documents_seen = len(files)
-    trusted = result.complete and not listing.walk_cut
-    if trusted:
-        result.waits = {k: v for k, v in result.waits.items() if k in {str(f["id"]) for f in files}}
-    stored = await sync.stored_copies_with_room(src, result)
-    addresses = {str(f["id"]): mirror_uri(sync.source_uri_of(f), src.source_id) for f in files}
-    for f in files:
+    if result.complete and not listing.walk_cut:
+        listed_ids = {str(f["id"]) for f in files}
+        result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
+    addressed = [(mirror_uri(sync.source_uri_of(f), src.source_id), f) for f in files]
+    listed = {uri: f for uri, f in addressed if uri.startswith("https://")}
+    copies = await store.source_revisions(
+        src.org, *home(src), searchable_only=False, flag_searchable=True
+    )
+    lists_current = await _keep_lists(src, token, copies, listed, run, result)
+    stored = sync.with_room(result, [c for c in copies if c["searchable"]])
+    for uri, f in addressed:
         if run.budget.exhausted():
             result.mark(sync.TurnMark.PASS_BOUND)
             break
-        if not await _read_permissions(token, f, result):
-            break
-        uri = addresses[str(f["id"])]
+        ready = functools.partial(_read_permissions, token, f, result)
         prior = stored.get(str(f["id"]))
-        if prior is not None and prior["source_uri"] == uri:
-            # Even a file whose new revision is not written (too large, given up)
-            # keeps the list the store gives it now.
-            await _relist(src, uri, f, prior)
-            if prior["source_revision"] == str(f.get("modifiedTime") or ""):
-                continue
-        if not await sync.sync_file(src, token, f, uri, prior, run, result):
+        if not await sync.sync_file(src, token, f, uri, prior, run, result, ready=ready):
             break
-    if result.complete and not listing.walk_cut:
-        await _unread_absent(src, addresses, run, result)
+        if result.status in ("rate_limited", "credential_invalid"):
+            break  # a permission read the store refused
+    if result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
-        listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
-        await sync.retire_absent(src, listed, gone, run, result)
-    if result.complete and not listing.walk_cut and result.status == "ok":
+        ids = {str(f["id"]): uri for uri, f in listed.items()}
+        await sync.retire_absent(src, ids, gone, run, result, docs=copies)
+    # A listing that searched everything and reached every item vouches for the lists;
+    # a walk cut at its bounds still does, since every copy it did not reach is `unread`.
+    if lists_current and listing.whole and not listing.lost_item and result.status == "ok":
         namespace, _ = home(src)
         await mirrors.record_listing(src.org, namespace, src.source_id, src.name, started)
     return result
@@ -118,71 +121,92 @@ async def _mirror(src: KnowledgeSource) -> str:
         return await mirrors.ensure_mirror(src.org, src.namespace)
 
 
-def _fail(result: sync.TurnResult, e: gdrive.VendorError) -> None:
-    if isinstance(e, gdrive.RateLimited):
-        result.fail("rate_limited", "rate_limited")
-    elif isinstance(e, gdrive.CredentialRefused):
-        result.fail("credential_invalid", sync.client_error(e))
-    else:
-        result.fail("failed", sync.client_error(e))
+async def _keep_lists(
+    src: KnowledgeSource,
+    token: str,
+    copies: list[dict[str, str]],
+    listed: dict[str, dict[str, Any]],
+    run: sync.Pass,
+    result: sync.TurnResult,
+) -> bool:
+    """Bring every stored copy's list to what the store says now: the list of the file
+    `listed` at its address, or `unread`. True when every copy now has a list read this
+    turn, or `unread`."""
+    changed: dict[str, access_list.AccessList] = {}
+    read_all = True
+    for copy in copies:
+        if run.budget.exhausted():
+            result.mark(sync.TurnMark.PASS_BOUND)
+            read_all = False
+            break
+        f = listed.get(copy["source_uri"])
+        if f is None:
+            access = access_list.UNREAD
+        elif await _read_permissions(token, f, result):
+            access = access_list.from_drive_permissions(f.get("permissions"))
+        else:
+            read_all = False
+            break
+        if access_list.from_json(copy["access_json"]) != access:
+            changed[copy["source_uri"]] = access
+    return await _rewrite_lists(src, changed, run, result) and read_all
 
 
 async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResult) -> bool:
     """Read the file's permissions when the listing left them out (a shared drive's
-    files, or one the account may not share); a file the store will not say for reads
-    `unread`. False when the store refused and the turn stops."""
+    files, or one the account may not share). A file the store will not say for, or
+    whose read failed, reads `unread`. False when the store refused the account and the
+    turn stops."""
     if "permissions" in f:
         return True
     pass_context.check_stop()
     try:
         f["permissions"] = await gdrive.file_permissions(token, str(f["id"]))
-    except gdrive.VendorError as e:
-        _fail(result, e)
+    except (gdrive.RateLimited, gdrive.CredentialRefused) as e:
+        sync.vendor_failure(result, e)
         return False
+    except gdrive.VendorError:
+        f["permissions"] = None  # read again next turn
+        result.mark(sync.TurnMark.LIST_UNREAD)
     await asyncio.sleep(PERMISSIONS_PACE_S)
     return True
 
 
-async def _relist(src: KnowledgeSource, uri: str, f: dict[str, Any], prior: dict[str, str]) -> None:
-    """Write the file's list over its stored copy when it changed; the same list writes
-    nothing."""
-    access = access_list.from_drive_permissions(f.get("permissions"))
-    if access_list.from_json(prior["access_json"]) != access:
-        await _rewrite_list(src, uri, access)
-
-
-async def _unread_absent(
-    src: KnowledgeSource, addresses: dict[str, str], run: sync.Pass, result: sync.TurnResult
-) -> None:
-    """Write `unread` over each stored copy the listing no longer has at its address,
-    before it is retired, so a copy the store cannot yet say is gone admits nobody
-    meanwhile."""
-    for doc in await store.source_revisions(src.org, *home(src), searchable_only=False):
-        if addresses.get(doc["file_id"]) == doc["source_uri"] or not doc["access_json"]:
-            continue
+async def _rewrite_lists(
+    src: KnowledgeSource,
+    lists: dict[str, access_list.AccessList],
+    run: sync.Pass,
+    result: sync.TurnResult,
+) -> bool:
+    """Write each stored document's new list as a new row with everything else as it
+    was: its chunks are kept, so nothing is embedded again. False when the pass ran out
+    first."""
+    namespace, _ = home(src)
+    uris = list(lists)
+    for start in range(0, len(uris), _REWRITE_BATCH):
         if run.budget.exhausted():
             result.mark(sync.TurnMark.PASS_BOUND)
-            return
-        await _rewrite_list(src, doc["source_uri"], access_list.UNREAD)
-
-
-async def _rewrite_list(src: KnowledgeSource, uri: str, access: access_list.AccessList) -> None:
-    """A new row of the stored document with `access` and everything else as it was: its
-    chunks are kept, so nothing is embedded again."""
-    namespace, _ = home(src)
-    pass_context.check_stop()
-    with sequential_reads():  # a replica behind the last write would carry old content
-        doc = await documents.get_one(src.org, namespace, uri, include_superseded=False)
-    if doc is None or not sync.ours(src, doc):
-        return
-    await sync.require_current(src)
-    row = documents.build_document_row(
-        doc,
-        version=documents.version_past(doc.version),
-        access_json=access_list.to_json(access),
-    )
-    with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
-        await documents.insert_one(row, over=doc.version)
+            return False
+        pass_context.check_stop()
+        with sequential_reads():  # a replica behind the last write would carry old content
+            docs = await documents.get_many_by_uris(
+                src.org, namespace, uris[start : start + _REWRITE_BATCH]
+            )
+        docs = [d for d in docs if sync.ours(src, d)]
+        if not docs:
+            continue
+        await sync.require_current(src)
+        rows = [
+            documents.build_document_row(
+                d,
+                version=documents.version_past(d.version),
+                access_json=access_list.to_json(lists[d.source_uri]),
+            )
+            for d in docs
+        ]
+        with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
+            await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
+    return True
 
 
 __all__ = ["PERMISSIONS_PACE_S", "turn"]

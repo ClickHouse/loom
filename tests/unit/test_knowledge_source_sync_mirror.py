@@ -18,11 +18,12 @@ from server.clients import gdrive
 from server.code.app.index.pass_budget import PassBudget
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import mirrors, source_sync, source_sync_mirror
+from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import MIRRORED_ACCESS, mirror_uri
 from server.knowledge.store import documents
 from server.settings import settings
-from tests.unit.test_knowledge_source_sync import DOCS, KEY, PDF, _detail, _file, _source
+from tests.unit.test_knowledge_source_sync import DOCS, FOLDER, KEY, PDF, _detail, _file, _source
 from tests.unit.test_knowledge_source_sync import world as world  # the fixture
 
 MIRROR = "acl-" + "a" * 24
@@ -45,9 +46,15 @@ def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _listing(org: str, namespace: str, source_id: str, name: str, started: Any) -> None:
         seen["listings"].append((namespace, source_id, name))
 
-    async def _insert_one(row: Any, *, over: int, **kw: Any) -> None:
-        seen["rewrites"].append(row)
-        world.docs[row["source_uri"]]["access_json"] = row["access_json"]
+    async def _get_many(org: str, namespace: str, uris: list[str], **kw: Any) -> list[Any]:
+        found = [await documents.get_one(org, namespace, uri) for uri in uris]
+        return [d for d in found if d is not None]
+
+    async def _insert_many(rows: list[Any], *, over: Any, **kw: Any) -> int:
+        for row in rows:
+            seen["rewrites"].append(row)
+            world.docs[row["source_uri"]]["access_json"] = row["access_json"]
+        return len(rows)
 
     async def _permissions(token: str, file_id: str, **kw: Any) -> Any:
         seen["permission_reads"].append(file_id)
@@ -56,7 +63,8 @@ def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(mirrors, "live_mirror", _live)
     monkeypatch.setattr(source_sync_mirror, "PERMISSIONS_PACE_S", 0)
     monkeypatch.setattr(mirrors, "record_listing", _listing)
-    monkeypatch.setattr(documents, "insert_one", _insert_one)
+    monkeypatch.setattr(documents, "get_many_by_uris", _get_many)
+    monkeypatch.setattr(documents, "insert_many", _insert_many)
     monkeypatch.setattr(gdrive, "file_permissions", _permissions)
     return seen
 
@@ -187,7 +195,9 @@ def test_a_new_revision_left_unwritten_still_takes_the_store_s_list(
     assert access_list.from_json(row["access_json"]) == access_list.AccessList()
 
 
-def test_a_given_up_file_is_tried_again_once_per_full_interval(world: Any, mirror: Any) -> None:
+def test_a_given_up_file_is_tried_again_once_per_full_interval(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     world.file_answers["bad1"] = httpx.Response(503)
     for _ in range(8):
@@ -196,14 +206,23 @@ def test_a_given_up_file_is_tried_again_once_per_full_interval(world: Any, mirro
     # One fetch a pass until it is given up, then none until the full interval.
     assert len(fetches) == source_sync._WAIT_PASSES
     assert list(_detail(world)["file_waits"]) == ["bad1"]
+    monkeypatch.setattr(settings, "knowledge_source_sync_full_interval_seconds", 0)
+    _turn(world, _mirrored())
+    fetches = [r for r in world.requests if r.url.path.endswith("/bad1/export")]
+    assert len(fetches) == source_sync._WAIT_PASSES + 1  # one more try at the interval
     world.files = []
     _turn(world, _mirrored())
     assert "bad1" not in _detail(world)["file_waits"]
 
 
-def test_the_pass_running_out_while_permissions_are_read_writes_no_listing_row(
+def test_the_pass_running_out_while_lists_are_read_writes_no_listing_row(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
     out = {"of_time": False}
 
     async def _permissions(token: str, file_id: str, **kw: Any) -> Any:
@@ -212,12 +231,90 @@ def test_the_pass_running_out_while_permissions_are_read_writes_no_listing_row(
 
     monkeypatch.setattr(gdrive, "file_permissions", _permissions)
     monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["of_time"])
+    for f in world.files:
+        del f["permissions"]  # a shared drive's files: read one at a time
+    result = _turn(world, _mirrored())
+    assert result.cut and len(world.upserts) == 2 and len(mirror["listings"]) == 1
+
+
+def test_a_failed_permission_read_reads_unread_and_the_turn_goes_on(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _failing(token: str, file_id: str, **kw: Any) -> Any:
+        if file_id == "doc1":
+            raise gdrive.VendorError("permissions of doc1: http 500", status=500)
+        return READERS
+
+    monkeypatch.setattr(gdrive, "file_permissions", _failing)
     world.files = [
         _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
         _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
     ]
+    _turn(world, _mirrored())
+    lists = {
+        u.source_uri.split("/")[-2]: world.docs[u.source_uri]["access_json"]
+        for u, _ in world.upserts
+    }
+    assert lists["doc1"] == ""
+    assert access_list.from_json(lists["doc2"]).emails == ("ann@example.com",)
+    # `unread` admits nobody, so the listing still vouches; nothing is retired this turn.
+    assert len(mirror["listings"]) == 1 and _detail(world)["status"] == "ok"
+
+
+def test_a_copy_without_live_chunks_still_takes_the_store_s_list(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 100)
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="10", permissions=READERS)]
+    _turn(world, _mirrored())
+    [uri] = world.docs
+    world.docs[uri]["chunks"] = False  # a write cut before its chunks
+    world.files = [_file("pdf1", PDF, "2026-01-02T00:00:00.000Z", size="101", permissions=[])]
+    _turn(world, _mirrored())
+    assert access_list.from_json(world.docs[uri]["access_json"]) == access_list.AccessList()
+    assert len(mirror["listings"]) == 2
+
+
+def test_list_rewrites_go_on_past_the_pass_s_document_bound(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
+    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    for f in world.files:  # both changed: the bound fetches one and defers the other
+        f["modifiedTime"] = f["modifiedTime"].replace("2026-01-0", "2026-02-0")
+        f["permissions"] = []
     result = _turn(world, _mirrored())
-    assert result.cut and len(world.upserts) <= 1 and mirror["listings"] == []
+    assert result.cut and len(world.upserts) == 3
+    assert all(
+        d["access_json"] == access_list.to_json(access_list.AccessList())
+        for d in world.docs.values()
+    )
+    assert len(mirror["listings"]) == 2
+
+
+def test_a_walk_cut_at_its_bounds_reads_unread_where_it_did_not_reach(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    [uri] = world.docs
+    real = gdrive_items.list_items
+
+    async def _cut(*a: Any, **kw: Any) -> Any:
+        listing = await real(*a, **kw)
+        return dataclasses.replace(listing, files=[], walk_cut="walk: depth bound reached")
+
+    monkeypatch.setattr(gdrive_items, "list_items", _cut)
+    world.file_answers["doc1"] = httpx.Response(
+        200, json={"id": "doc1", "mimeType": DOCS, "parents": [FOLDER], "trashed": False}
+    )
+    _turn(world, _mirrored())
+    assert world.docs[uri]["access_json"] == ""  # kept, since the store says it is there
+    assert len(mirror["listings"]) == 2
 
 
 def test_a_rate_limit_on_a_permission_read_stops_the_turn(
@@ -250,23 +347,28 @@ def test_a_moved_file_keeps_its_list_at_its_new_address_and_none_at_its_old(
 
 
 def test_a_mirror_is_made_under_the_sources_lease_only_when_there_is_none(
-    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.core import leases
 
+    leased: list[str] = []
+
     @contextlib.asynccontextmanager
-    async def _busy(name: str, **kw: Any) -> AsyncIterator[bool]:
-        yield False
+    async def _holding(name: str, **kw: Any) -> AsyncIterator[bool]:
+        leased.append(name)
+        yield True
 
-    monkeypatch.setattr(leases, "holding", _busy)
-    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
-    _turn(world, _mirrored())  # the namespace has its mirror: no lease is taken
-    assert len(world.upserts) == 1
+    async def _live(org: str, namespace: str) -> str:
+        return live
 
-    async def _none(org: str, namespace: str) -> str:
-        return ""
+    async def _made(org: str, namespace: str) -> str:
+        return "acl-" + "b" * 24
 
-    monkeypatch.setattr(mirrors, "live_mirror", _none)
-    world.files[0]["modifiedTime"] = "2026-01-02T00:00:00.000Z"
-    result = _turn(world, _mirrored())
-    assert len(world.upserts) == 1 and result.errors
+    monkeypatch.setattr(leases, "holding", _holding)
+    monkeypatch.setattr(mirrors, "live_mirror", _live)
+    monkeypatch.setattr(mirrors, "ensure_mirror", _made)
+    live = MIRROR
+    assert asyncio.run(source_sync_mirror._mirror(_mirrored())) == MIRROR and leased == []
+    live = ""
+    assert asyncio.run(source_sync_mirror._mirror(_mirrored())) == "acl-" + "b" * 24
+    assert len(leased) == 1

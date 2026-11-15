@@ -126,6 +126,7 @@ from server.knowledge.domain.sources import (
     home,
     include_in,
     json_object,
+    mirror_synced,
     served,
     source_key,
     source_tag,
@@ -195,6 +196,7 @@ class TurnMark(StrEnum):
     INCOMPLETE_SEARCH = "listing: incomplete search"
     ITEM_LOST = "listing: an item listed nothing"
     INCOMPLETE_RESULT = "listing: incomplete result"
+    LIST_UNREAD = "listing: a file's permissions could not be read"
 
 
 @dataclass
@@ -459,10 +461,12 @@ def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
     mirrored folder source writes into its namespace's mirror."""
     kind = src.kind
     # Imported here: a kind's module builds on this one's helpers.
-    if not served(src):
+    if mirror_synced(src):
         from server.knowledge.app import source_sync_mirror
 
         return source_sync_mirror.turn
+    if not served(src):
+        raise ValueError(f"this build does not sync {src.access!r} sources")
     if kind == "linear":
         from server.knowledge.app import source_sync_linear
 
@@ -515,14 +519,8 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
             modified_after="" if turn.full else stamp,
             out_of_time=run.budget.exhausted,
         )
-    except gdrive.RateLimited:
-        turn.fail("rate_limited", "rate_limited")
-        return turn
-    except gdrive.CredentialRefused as e:
-        turn.fail("credential_invalid", client_error(e))
-        return turn
     except gdrive.VendorError as e:
-        turn.fail("failed", client_error(e))
+        vendor_failure(turn, e)
         return turn
     note_listing(turn, listing)
     if listing.ran_out:
@@ -566,6 +564,16 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     return turn
 
 
+def vendor_failure(turn: TurnResult, e: gdrive.VendorError) -> None:
+    """The turn's status for a failed call to the folder store."""
+    if isinstance(e, gdrive.RateLimited):
+        turn.fail("rate_limited", "rate_limited")
+    elif isinstance(e, gdrive.CredentialRefused):
+        turn.fail("credential_invalid", client_error(e))
+    else:
+        turn.fail("failed", client_error(e))
+
+
 def note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
     """The listing's notes on the turn. An incomplete listing (the store could not search
     everything, or an item listed nothing) has its files written, but the turn keeps its
@@ -586,7 +594,12 @@ async def stored_copies_with_room(
     """The source's searchable stored copies by file id (`store.source_revisions`), and
     the turn's room for new documents: LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS less what it
     holds, so past the bound a turn still updates and retires but writes no new file."""
-    revisions = await store.source_revisions(src.org, *home(src), pictures=pictures)
+    return with_room(turn, await store.source_revisions(src.org, *home(src), pictures=pictures))
+
+
+def with_room(turn: TurnResult, revisions: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    """The searchable stored copies `revisions` by file id, and the turn's room for new
+    documents (`stored_copies_with_room`)."""
     stored = {d["file_id"]: d for d in revisions}
     turn.bound = settings.knowledge_source_max_documents
     turn.room = max(0, turn.bound - len(stored))
@@ -694,14 +707,18 @@ async def retire_absent(
     gone: Callable[[str], Awaitable[bool | None]],
     run: Pass,
     turn: TurnResult,
+    *,
+    docs: list[dict[str, str]] | None = None,
 ) -> None:
-    """Retire the source's documents whose item a complete listing lacks, or that
-    sit at an address that is no longer their item's. `listed` maps each listed
-    item's id to its address. An item missing from the listing is looked up first
-    with `gone(id)`: a listing paged while items changed can miss one, so only an
-    item the store reports gone counts. `gone` answers False when the lookup fails
-    (nothing is retired) and None when the turn must stop (it records why)."""
-    docs = await store.source_revisions(src.org, *home(src), searchable_only=False)
+    """Retire the source's documents (`docs`, read here when not given) whose item a
+    complete listing lacks, or that sit at an address that is no longer their item's.
+    `listed` maps each listed item's id to its address. An item missing from the
+    listing is looked up first with `gone(id)`: a listing paged while items changed can
+    miss one, so only an item the store reports gone counts. `gone` answers False when
+    the lookup fails (nothing is retired) and None when the turn must stop (it records
+    why)."""
+    if docs is None:
+        docs = await store.source_revisions(src.org, *home(src), searchable_only=False)
     for doc in docs:
         address = listed.get(doc["file_id"])
         if address == doc["source_uri"]:
@@ -855,8 +872,11 @@ async def sync_file(
     prior: dict[str, str] | None,
     run: Pass,
     turn: TurnResult,
+    *,
+    ready: Callable[[], Awaitable[bool]] | None = None,
 ) -> bool:
-    """Handle one listed file at address `uri`; False when the turn must stop listing. A
+    """Handle one listed file at address `uri`; False when the turn must stop listing.
+    `ready` runs just before a fetch, and False from it skips the file. A
     native document whose stored text still holds its pictures' bytes (an earlier
     conversion's) is fetched and converted again at its same revision when a full
     listing lists it."""
@@ -878,7 +898,10 @@ async def sync_file(
         return True
     # The stored content's hash, from the full listing's read.
     stored_content_sha256 = prior["stored_content_sha256"] if reconvert and prior else ""
-    before_fetch = functools.partial(_fetchable, f, run, turn)
+
+    async def before_fetch() -> bool:
+        return await _fetchable(f, run, turn) and (ready is None or await ready())
+
     fetch_and_write = functools.partial(
         _fetch_and_write, src, token, f, uri, turn, stored_content_sha256=stored_content_sha256
     )
@@ -1136,7 +1159,9 @@ async def write_document(
     `unread`. False, writing nothing, when another writer took the address while the
     item was fetched: the check before the fetch is seconds old by now."""
     namespace, tag = home(src)
-    tags = list(dict.fromkeys(["source-kind:design_doc", source_tag(src.name), tag]))
+    tags = ["source-kind:design_doc", source_tag(src.name)]
+    if tag != source_tag(src.name):
+        tags.append(tag)  # a mirrored source's `source-id:<id>`
     if repo := _repo_tag(src):
         tags.insert(1, repo)
     metadata: dict[str, Any] = {

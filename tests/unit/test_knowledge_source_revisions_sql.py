@@ -158,3 +158,23 @@ async def test_a_row_only_rewrite_stays_searchable_and_a_cut_write_does_not() ->
     )
     rows = await store.source_revisions("o", "ns", source_tag("drive"), ch=ch)
     assert sorted(r["file_id"] for r in rows) == ["old", "relisted"]
+
+
+@pytest.mark.asyncio
+async def test_every_copy_can_come_back_flagged_searchable_or_not() -> None:
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        _version("relisted", 1, 1),
+        _chunk_of("relisted", 1, 1),
+        _version("relisted", 2, 1),
+        _version("cut", 1, 1),
+        _chunk_of("cut", 1, 1),
+        _version("cut", 2, 2),
+    )
+    rows = await store.source_revisions(
+        "o", "ns", source_tag("drive"), searchable_only=False, flag_searchable=True, ch=ch
+    )
+    assert {r["file_id"]: r["searchable"] for r in rows} == {"cut": "", "relisted": "1"}

@@ -314,6 +314,7 @@ async def source_revisions(
     tag: str,
     *,
     searchable_only: bool = True,
+    flag_searchable: bool = False,
     pictures: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
@@ -334,7 +335,8 @@ async def source_revisions(
     its revision must not let the next turn skip the file. Its chunks are those of its
     version or of its revision, since a rewrite of the row alone (a new list, a
     metadata edit) keeps the revision and its chunks. Without it every live document
-    counts, which is what removal needs."""
+    counts, which is what removal needs; with `flag_searchable` as well, `searchable`
+    ("1" or "") says which of them would count."""
     # One set of (address, kind, value) serves both tests, so ClickHouse reads the
     # chunks once; a chunk written before chunks recorded their revision has none.
     live = (
@@ -344,12 +346,12 @@ async def source_revisions(
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}"
     )
-    chunks = (
-        f"AND ((source_uri, ('version', version)) IN ({live}) "
-        f"OR (source_uri, ('revision', revision)) IN ({live})) "
-        if searchable_only
-        else ""
+    searchable = (
+        f"((source_uri, ('version', version)) IN ({live}) "
+        f"OR (source_uri, ('revision', revision)) IN ({live}))"
     )
+    chunks = f"AND {searchable} " if searchable_only else ""
+    flag = f"{searchable} AS searchable, " if flag_searchable else ""
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
         "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
@@ -361,7 +363,7 @@ async def source_revisions(
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
         "JSONExtractString(metadata, 'read_at') AS read_at, "
         "JSONExtractString(metadata, 'text_sha256') AS text_sha256, access_json, "
-        f"{checks} "
+        f"{flag}{checks} "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
@@ -394,6 +396,7 @@ async def source_revisions(
             "inline_pictures": "1" if r.get("inline_pictures") else "",
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
             "access_json": str(r.get("access_json") or ""),
+            "searchable": "1" if searchable_only or r.get("searchable") else "",
         }
         for r in rows
     ]

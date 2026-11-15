@@ -565,7 +565,13 @@ def synced(src: KnowledgeSource) -> bool:
     """Whether this build's sync worker runs `src`: every source it serves, and a
     mirrored folder-store source, which it writes into the namespace's mirror. Its
     ops still refuse a mirrored one (`served`)."""
-    return served(src) or (src.access == MIRRORED_ACCESS and src.kind == "gdrive")
+    return served(src) or mirror_synced(src)
+
+
+def mirror_synced(src: KnowledgeSource) -> bool:
+    """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
+    folder-store source."""
+    return src.access == MIRRORED_ACCESS and src.kind == "gdrive"
 
 
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
@@ -657,6 +663,7 @@ __all__ = [
     "items_from_config",
     "json_object",
     "max_items",
+    "mirror_synced",
     "mirror_uri",
     "normalize_name",
     "options_in",
