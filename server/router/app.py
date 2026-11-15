@@ -745,7 +745,9 @@ class Router:
         # on its next request either way.
         if response.status_code in (200, 503):
             self._table_at = None
-            self._states.pop(name, None)
+            # Under the lock: a state read in flight stores its row first, then loses it.
+            async with self._states_lock:
+                self._states.pop(name, None)
         return response
 
     async def remove(self, request: Request) -> JSONResponse:

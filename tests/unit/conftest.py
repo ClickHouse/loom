@@ -886,7 +886,7 @@ def _identity_caches_left_cold() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _cell_router_fresh() -> Any:
+def _cell_router_fresh() -> Iterator[None]:
     """`server.core.cell_router` keeps the directory's answer, a sticky `serving` and whether
     a background reader runs for the process's life: every test starts with none read."""
     from server.core import cell_router

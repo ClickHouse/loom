@@ -422,8 +422,11 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   connections without `loom.tenancy_checked`. Once a cell has its org triggers, they refuse
   every write of such a session for an org the cell does not hold, Loom's own included.
 - **Fix:** have the pooler forward the startup parameter `loom.tenancy_checked`, or point
-  `LOOM_PG_DSN` at Postgres directly or at a session pooler. The check reads again on each
-  cell refresh (`LOOM_TENANCY_MODE_CACHE_S`); no restart is needed.
+  `LOOM_PG_DSN` at Postgres directly or at a session pooler, then restart the processes: a
+  `LOOM_PG_DSN` change takes a restart, and a process keeps its pooled connections, which
+  sent their startup parameters when they opened, until a restart or their recycling. The
+  check reads again on each cell refresh (`LOOM_TENANCY_MODE_CACHE_S`) and clears on the
+  first refresh that runs on a connection the pooler forwards the parameter for.
 
 ### A boot fails with "function loom.tenancy_refuse_… does not exist"
 
