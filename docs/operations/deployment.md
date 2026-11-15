@@ -1067,7 +1067,9 @@ install](./upgrades.md#downgrading-an-installer-install).
 
 Each file on a GitHub Release has a keyless signature from the release workflow, in a Sigstore
 bundle beside it named `<file>.sigstore.json` (a release published before the workflow signed its
-files has none). Download a file with its bundle and check it with cosign 3 or later:
+files has none). While the workflow publishes a release again, a replaced file verifies once its
+new bundle is attached, a few minutes later. Download a file with its bundle and check it with
+cosign 3 or later:
 
 ```bash
 url=https://github.com/ClickHouse/loom/releases/download/vX.Y.Z

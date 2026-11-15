@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # Signs each file the release serves, downloaded into SERVED, as the release
-# workflow's run on vVERSION, into SERVED/<file name>.sigstore.json. A file is
+# workflow's run on vVERSION, into OUT/<file name>.sigstore.json. A file is
 # signed only when it is byte-identical to this run's build in BUILT. The stack
 # bundle and checksum are the exception: github-release keeps the ones the
 # release carries, so those keep their Sigstore bundles when they verify for
 # this workflow and tag. Every file is checked before any is signed, so a
 # refusal signs nothing.
 #
-#   sign_release_files.sh VERSION SERVED BUILT
+#   sign_release_files.sh VERSION SERVED BUILT OUT
 set -euo pipefail
 
-[ "$#" -eq 3 ] || {
-  echo "usage: sign_release_files.sh VERSION SERVED BUILT" >&2
+[ "$#" -eq 4 ] || {
+  echo "usage: sign_release_files.sh VERSION SERVED BUILT OUT" >&2
   exit 2
 }
 version=$1
 served=$2
 built=$3
+out=$4
 identity="https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v$version"
 recovery="see docs/development/release-process.md#a-failed-tag-or-signature"
 sign=()
@@ -41,8 +42,9 @@ for file in "$served"/*; do
     exit 1
   fi
 done
+mkdir -p "$out"
 for file in "${sign[@]}"; do
-  cosign sign-blob --yes --bundle "$file.sigstore.json" "$file" || {
+  cosign sign-blob --yes --bundle "$out/$(basename "$file").sigstore.json" "$file" || {
     echo "::error::could not sign $(basename "$file") (cosign's error above); $recovery"
     exit 1
   }

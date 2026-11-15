@@ -117,7 +117,7 @@ def _calls(tmp_path: Path, tool: str) -> list[str]:
 
 
 def _sign_blob(file: str) -> str:
-    return f"sign-blob --yes --bundle {file}.sigstore.json {file}"
+    return f"sign-blob --yes --bundle signed/{Path(file).name}.sigstore.json {file}"
 
 
 def _verify_blob(file: str) -> str:
@@ -167,18 +167,7 @@ def test_sign_files_signs_and_verifies_each_file_this_run_built(tmp_path: Path) 
         *(_verify_blob(f) for f in files),
     ]
     assert (tmp_path / "work/files/install.sh.sigstore.json").read_text() == _bundle("a")
-
-
-def test_a_kept_stack_bundle_keeps_its_sigstore_bundle(tmp_path: Path) -> None:
-    """The release kept an earlier run's stack bundle, which this run did not build."""
-    served = {
-        "loom-stack.tar.gz": "tag run",
-        "loom-stack.tar.gz.sigstore.json": _bundle("tag run"),
-    }
-    result = _sign(tmp_path, served, {"loom-stack.tar.gz": "rebuilt"})
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "loom-stack.tar.gz: kept, its Sigstore bundle verifies" in result.stdout
-    assert _calls(tmp_path, "cosign") == [_verify_blob("files/loom-stack.tar.gz")] * 2
+    assert (tmp_path / "work/signed/install.sh.sigstore.json").read_text() == _bundle("a")
 
 
 def test_a_dispatch_signs_what_it_rebuilt_and_keeps_the_signed_stack_pair(tmp_path: Path) -> None:
@@ -201,16 +190,12 @@ def test_a_dispatch_signs_what_it_rebuilt_and_keeps_the_signed_stack_pair(tmp_pa
     result = _sign(tmp_path, served, built)
     assert result.returncode == 0, result.stdout + result.stderr
     assert _signed(tmp_path) == [_sign_blob("files/install.sh"), _sign_blob("files/x.whl")]
-    files = sorted((tmp_path / "work/files").glob("*.sigstore.json"))
-    assert [f.name for f in files] == [
-        "install.sh.sigstore.json",
-        "loom-stack.tar.gz.sha256.sigstore.json",
-        "loom-stack.tar.gz.sigstore.json",
-        "x.whl.sigstore.json",
-    ]
-    assert (tmp_path / "work/files/x.whl.sigstore.json").read_text() == _bundle("rebuilt")
-    kept = tmp_path / "work/files/loom-stack.tar.gz.sha256.sigstore.json"
-    assert kept.read_text() == _bundle("tag run sum")
+    assert "loom-stack.tar.gz: kept, its Sigstore bundle verifies" in result.stdout
+    assert "loom-stack.tar.gz.sha256: kept, its Sigstore bundle verifies" in result.stdout
+    # Only the new bundles are uploaded; the kept ones stay on the release untouched.
+    uploaded = sorted(f.name for f in (tmp_path / "work/signed").iterdir())
+    assert uploaded == ["install.sh.sigstore.json", "x.whl.sigstore.json"]
+    assert (tmp_path / "work/signed/x.whl.sigstore.json").read_text() == _bundle("rebuilt")
 
 
 NOT_BUILT = "is not this run's build: delete it from the release if the workflow does not make it"
@@ -229,6 +214,7 @@ INCIDENT = "kept from an earlier run, has a Sigstore bundle that does not verify
             {"loom-stack.tar.gz": "swapped", "loom-stack.tar.gz.sigstore.json": _bundle("x")},
             INCIDENT,
         ),
+        ({"loom-stack.tar.gz.sha256": "never signed"}, NO_BUNDLE),
     ],
     ids=[
         "replaced",
@@ -236,6 +222,7 @@ INCIDENT = "kept from an earlier run, has a Sigstore bundle that does not verify
         "not built by the run",
         "kept unsigned",
         "kept, bundle does not verify",
+        "kept checksum unsigned",
     ],
 )
 def test_a_file_that_is_not_this_runs_build_fails_before_anything_is_signed(
@@ -279,7 +266,7 @@ def test_sign_files_compares_with_the_files_the_build_job_made() -> None:
     (built,) = [s for s in steps if "download-artifact" in s.get("uses", "")]
     (made,) = [s for s in RELEASE["build"]["steps"] if "upload-artifact" in s.get("uses", "")]
     assert built["with"] == {"name": made["with"]["name"], "path": "built"}
-    assert 'sign_release_files.sh "$VERSION" files built' in SIGN["run"]
+    assert 'sign_release_files.sh "$VERSION" files built signed' in SIGN["run"]
 
 
 def test_attach_signatures_uploads_the_bundles_sign_files_made() -> None:
@@ -289,7 +276,7 @@ def test_attach_signatures_uploads_the_bundles_sign_files_made() -> None:
         s for s in RELEASE["attach-signatures"]["steps"] if "download-artifact" in s.get("uses", "")
     ]
     assert upload["with"]["name"] == download["with"]["name"]
-    assert upload["with"]["path"] == "files/*.sigstore.json"
+    assert upload["with"]["path"] == "signed/*.sigstore.json"
     assert upload["with"]["overwrite"] is True  # a re-run of sign-files uploads it again
     attach = _step(RELEASE["attach-signatures"], "Upload the Sigstore bundles")
     assert f"{download['with']['path']}/*.sigstore.json --clobber" in attach["run"]
@@ -375,7 +362,7 @@ def test_a_directory_without_files_fails(tmp_path: Path) -> None:
     [
         ("verify_release_files.sh", ["1.2.0"]),
         ("download_release_files.sh", ["1.2.0"]),
-        ("sign_release_files.sh", ["1.2.0", "files"]),
+        ("sign_release_files.sh", ["1.2.0", "files", "built"]),
     ],
 )
 def test_a_missing_argument_is_a_usage_error(script: str, args: list[str]) -> None:

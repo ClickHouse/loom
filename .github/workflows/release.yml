@@ -884,12 +884,13 @@ jobs:
           GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
         run: |
           bash scripts/release/download_release_files.sh "$VERSION" files
-          bash scripts/release/sign_release_files.sh "$VERSION" files built
+          bash scripts/release/sign_release_files.sh "$VERSION" files built signed
+          cp signed/*.sigstore.json files/
           bash scripts/release/verify_release_files.sh "$VERSION" files
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-signatures
-          path: files/*.sigstore.json
+          path: signed/*.sigstore.json # only the new ones: a kept bundle is left in place
           if-no-files-found: error
           overwrite: true # a re-run of this job replaces the earlier attempt's
           retention-days: 30 # as long as the run can be re-run
