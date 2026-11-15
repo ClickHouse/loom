@@ -15,13 +15,12 @@ hooks: no code shunt and no capture of tool calls, runs or working memory; the
 
 `.cursor-plugin/` at the repository root makes it a Cursor plugin marketplace with one
 plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The plugin is
-not yet listed in Cursor's marketplace and has not been installed in a Cursor build. On
-a Teams or Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs →
-Add Marketplace → Import from Repo** with `https://github.com/ClickHouse/loom`, and
-members install it from **Customize**.
+not listed in Cursor's marketplace and has not been tested in Cursor. On a Teams or
+Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs → Add
+Marketplace → Import from Repo** with `https://github.com/ClickHouse/loom`.
 
-The plugin has one variable, **Loom MCP URL**, whose value is set in Cursor's dashboard
-under **Plugins**; for a team marketplace the team admin sets it for every member.
+The plugin has one variable, **Loom MCP URL**. A team admin sets it in Cursor's
+dashboard under **Plugins**, for every member.
 
 | Server                                     | Loom MCP URL                                             | Sign-in             |
 | ------------------------------------------ | -------------------------------------------------------- | ------------------- |

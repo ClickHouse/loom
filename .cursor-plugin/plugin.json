@@ -25,7 +25,7 @@
       "LOOM_MCP_URL": {
         "type": "string",
         "title": "Loom MCP URL",
-        "description": "Your Loom server's MCP endpoint on the coding toolset: http://localhost:7777/mcp?toolset=coding for a single-user server on this machine, or https://<your server>/mcp for a team server with browser sign-in",
+        "description": "Your Loom server's MCP endpoint: http://localhost:7777/mcp?toolset=coding when each member runs a single-user server, or https://<your server>/mcp for a team server with browser sign-in",
         "default": "http://localhost:7777/mcp?toolset=coding"
       }
     },

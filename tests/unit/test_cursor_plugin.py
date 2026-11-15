@@ -10,7 +10,7 @@ from pathlib import Path
 
 from server.cli._client import DEFAULT_BASE_URL
 from server.cli.install import _install_mcp_url
-from server.identity.app.token_clients import CODING_TOOLSET
+from server.identity.app.token_clients import CODING_CLIENTS, CODING_TOOLSET
 from tests.unit.test_loom_code_skill import ROOT_SKILLS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +47,7 @@ def test_the_default_url_is_the_one_loom_install_writes_for_cursor() -> None:
     entry = json.loads((ROOT / MANIFEST["mcpServers"]).read_text())["mcpServers"]["loom"]
     assert entry == {"url": "${LOOM_MCP_URL}"}
     default = MANIFEST["variables"]["properties"]["LOOM_MCP_URL"]["default"]
+    assert "cursor" in CODING_CLIENTS
     assert default == _install_mcp_url(DEFAULT_BASE_URL, CODING_TOOLSET)
 
 
