@@ -769,3 +769,50 @@ async def test_a_sync_cut_by_the_budget_refuses_as_the_budget() -> None:
     ch = FakeCH().on("SYSTEM", spend_whole)
     with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
         await cell_scan.scan(ch, tables, ONE, budget)
+
+
+async def test_a_detached_table_refuses_on_any_host() -> None:
+    rows = [
+        {"h": "os-1", "database": "loom", "table": "memory", "is_permanently": 0},
+        {"h": "os-0", "database": "loom_telemetry", "table": "sli_minute", "is_permanently": 1},
+    ]
+    ch = FakeCH().on("system.detached_tables", rows)
+    refusals = await cell_scan.detached_tables(ch, TWO, NAMES, ["loom", "loom_telemetry"])
+    assert [str(r) for r in refusals] == [
+        "clickhouse loom_telemetry.sli_minute: a permanently detached table on host ch-0: "
+        "attach or drop it before the scan",
+        "clickhouse loom.memory: a detached table on host ch-1: attach or drop it before the scan",
+    ]
+    (sql,) = ch.sql("query_all")
+    assert "clusterAllReplicas({c:String}, system.detached_tables)" in sql
+    one = FakeCH().on("system.detached_tables", [{"h": "x", **rows[0]}])
+    assert [r.reason for r in await cell_scan.detached_tables(one, ONE, {}, ["loom"])] == [
+        "a detached table: attach or drop it before the scan"
+    ]
+
+
+class _PgCatalog:
+    """The listing's reads of a Postgres catalogue: `listed` tables with an `org` column,
+    `hidden` ones the listing leaves out though `pg_attribute` shows one."""
+
+    def __init__(self, listed: list[str], hidden: set[str]) -> None:
+        self.listed, self.hidden = listed, hidden
+
+    async def fetch(self, sql: str) -> list[dict[str, str]]:
+        return [{"relname": n.removeprefix("loom."), "relkind": "r"} for n in self.listed]
+
+    async def fetchval(self, sql: str, name: str) -> bool:
+        return name in self.hidden
+
+
+async def test_a_classified_postgres_table_the_listing_missed_refuses() -> None:
+    from server.erasure.store.steps_pg import PG_NO_MEMORY_CONTENT
+
+    assert "loom.tenancy" in PG_NO_MEMORY_CONTENT  # no memory content, and every org
+    names, refusals = await cell_scan.list_postgres(
+        _PgCatalog(["loom.memory_current"], {"loom.tenancy"})
+    )
+    assert names == ["loom.memory_current"]
+    assert [str(r) for r in refusals] == [
+        "postgres loom.tenancy: has an org column the table listing did not return"
+    ]

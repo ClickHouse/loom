@@ -534,3 +534,22 @@ async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pai
     assert counted["n"] == 1
     assert refusals == [], refusals
     assert own != other
+
+
+async def test_a_detached_table_refuses_the_listing(
+    ch: Any, scratch: tuple[str, str], own_pg: Any
+) -> None:
+    """A detached table is in no listing and a `DESCRIBE` of it answers that it does not
+    exist, yet a restart brings its rows back: the listing refuses it by name."""
+    schema, _ = scratch
+    await ch.execute(_mergetree(f"{schema}.memory"))
+    await ch.execute(f"DETACH TABLE {schema}.memory")
+    try:
+        topology = await cell_ch.read_topology(ch)
+        listed = await cell_scan.list_tables(ch, own_pg, topology, {})
+        assert [str(r) for r in listed.refusals] == [
+            "clickhouse loom.memory: a detached table: attach or drop it before the scan"
+        ]
+        assert listed.clickhouse == []
+    finally:
+        await ch.execute(f"ATTACH TABLE {schema}.memory")

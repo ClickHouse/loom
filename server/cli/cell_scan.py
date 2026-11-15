@@ -284,10 +284,39 @@ def pg_classified() -> set[str]:
     return {t.removeprefix("pg:") for t in PG_CENSUS} | set(PG_NO_MEMORY_CONTENT)
 
 
+async def detached_tables(
+    ch: Any, topology: Topology, names: Mapping[str, str], dbs: list[str]
+) -> list[Refusal]:
+    """A detached table of `dbs`, on any host, refuses: it is in no listing, a `DESCRIBE` of
+    it answers that it does not exist, and the next restart (or an `ATTACH`) brings its rows
+    back with orgs no scan read. No allow list passes one: attaching it or dropping it first
+    is always possible, while a scan cannot read it as it is."""
+    rows = await per_host(
+        ch,
+        topology,
+        names,
+        "SELECT hostName() AS h, database, table, is_permanently FROM {source:detached_tables} "
+        "WHERE database IN {dbs:Array(String)}",
+        {"dbs": dbs},
+    )
+    out = []
+    for host, found in sorted(rows.items()):
+        for r in sorted(found, key=lambda r: (str(r["database"]), str(r["table"]))):
+            kind = "permanently detached" if r.get("is_permanently") else "detached"
+            on = f" on host {host}" if host else ""
+            out.append(
+                Refusal(
+                    f"clickhouse {ch_names.logical(str(r['database']))}.{r['table']}",
+                    f"a {kind} table{on}: attach or drop it before the scan",
+                )
+            )
+    return out
+
+
 async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
     """Every table of schema `loom` with an `org` column (`cell_triggers.ORG_TABLES`), and
-    the refusals: one erasure does not classify, and a census table the listing leaves out
-    (a partition, or a relation of another kind) whose `pg_attribute` shows an `org`
+    the refusals: one erasure does not classify, and a classified table the listing leaves
+    out (a partition, or a relation of another kind) whose `pg_attribute` shows an `org`
     column."""
     names = [f"loom.{r['relname']}" for r in await conn.fetch(ORG_TABLES)]
     known = pg_classified()
@@ -296,7 +325,7 @@ async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
         for n in names
         if n not in known
     ]
-    for name in sorted({t.removeprefix("pg:") for t in PG_CENSUS} - set(names)):
+    for name in sorted(known - set(names)):
         has_org = await conn.fetchval(
             "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) "
             "AND attname = 'org' AND attnum > 0 AND NOT attisdropped)",
@@ -331,6 +360,9 @@ async def _list_tables(
         return TableList(refusals=lacking)
     classified = set(classified_tables())
     out = TableList()
+    if detached := await detached_tables(ch, topology, names, databases()):
+        out.refusals += detached
+        return out
     tables, problems = await list_clickhouse(ch, topology, names, databases())
     if problems:
         out.refusals += problems
