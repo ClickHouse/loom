@@ -46,6 +46,7 @@ from server.memory.domain.memory_types import (
     is_searchable_type,
 )
 from server.memory.domain.promotion_source import promotion_source
+from server.memory.domain.search_types import SHARED_AGENT
 from server.memory.domain.trust import verification_state
 from server.memory.store import shared as shared_repo
 from server.memory.store.rows import MemoryRow, next_version, version_over
@@ -299,7 +300,7 @@ def _shared_vector_row(
     return {
         "org": src.org,
         "namespace": src.namespace,
-        "agent": shared_repo.SHARED_AGENT,
+        "agent": SHARED_AGENT,
         "user_id": "-",
         "session_id": "-",
         "memory_key": target_key,

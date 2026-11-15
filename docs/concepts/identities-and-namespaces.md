@@ -371,16 +371,23 @@ not past its `expires_at` or `valid_to`, neither labelled nor graded `medium` or
 and holds the text the shared copy holds (the served hash of both, so a store that orders
 an object's keys differently is no change). An edit, a relabel to `medium` or `high` or a
 tombstone of the source ends it; reverting the edit to the approved text makes it governed
-again with no new promotion. `memory.definitions.list` (admin) lists the namespace's live
-shared definitions, the most recently promoted first and at most twice
-`memory_shared_definitions_max`, with `count` of them all. Each entry carries its key and
-`promoted_at`; one within the ceiling also carries its term and aliases, its `verdict`
-(`governed` or `lapsed`), the `lapse_reason` (`not_namespace_wide`, `no_term`, `gone`,
-`superseded`, `conflicted`, `duplicate`, `not_active` for any other status, `expired`,
-`ended` past its `valid_to`, `changed` or `sensitive`) and, for a governed one, `lost`:
-each name it loses to another governed definition that holds it, as `name` and the
-`winner`'s key (the latest promotion wins, a tie settled by its promotion event). One past
-the ceiling is `capped`, and its source is not read.
+again with no new promotion. `memory.search` leaves out a shared definition whose
+namespace-wide source is gone (deleted, or tombstoned by the expiry sweep) or labelled
+`medium` or `high`, since the shared layer has no label of its own. When a source cannot
+be read, it leaves out every shared definition. A copy promoted from a row other than the
+namespace-wide one is judged by the namespace-wide row under its key: withheld when there
+is none, served on that row's label otherwise. The copy itself stays: a relabel back, or
+the source written again, serves it again, and `memory.demote` retires it.
+`memory.definitions.list` (admin) lists the namespace's live shared definitions, the most
+recently promoted first and at most twice `memory_shared_definitions_max`, with `count` of
+them all. Each entry carries its key and `promoted_at`; one within the ceiling also
+carries its term and aliases, its `verdict` (`governed` or `lapsed`), the `lapse_reason`
+(`not_namespace_wide`, `no_term`, `gone`, `superseded`, `conflicted`, `duplicate`,
+`not_active` for any other status, `expired`, `ended` past its `valid_to`, `changed` or
+`sensitive`) and, for a governed one, `lost`: each name it loses to another governed
+definition that holds it, as `name` and the `winner`'s key (the latest promotion wins, a
+tie settled by its promotion event). One past the ceiling is `capped`, and its source is
+not read.
 
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an

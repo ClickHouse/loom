@@ -19,10 +19,8 @@ from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 from server.memory.domain.definitions import DEFINITION_KEY_PREFIX
 from server.memory.domain.memory_types import DEFINITION
+from server.memory.domain.search_types import SHARED_AGENT
 from server.memory.store.sql import _SEQUENTIAL
-
-# The agent of a promoted row's embedding: shared rows are not agent-scoped.
-SHARED_AGENT = "_shared"
 
 # Every persisted column of loom.shared, in DDL order. `ch.insert` takes its
 # column list from the row, and FINAL serves the DDL default of a column the

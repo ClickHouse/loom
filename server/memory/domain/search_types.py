@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
 
+# The agent of a promoted row's embedding: shared rows are not agent-scoped.
+SHARED_AGENT = "_shared"
+
 # the score components of the rows a search's anchor and recent tiers place
 TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
 
@@ -353,6 +356,12 @@ def _identity(hit: Any) -> RowIdentity | None:
     # `identity` on a SearchHit, the private `_row_identity` on a wire hit
     who = getattr(hit, "_row_identity", None)
     return who if who is not None else getattr(hit, "identity", None)
+
+
+def is_shared_row(hit: Any) -> bool:
+    """Whether a hit is a promoted row of `loom.shared` (its vector carries `SHARED_AGENT`)."""
+    identity = _identity(hit)
+    return identity is not None and identity[0] == SHARED_AGENT
 
 
 def names_row(hit: Any) -> bool:

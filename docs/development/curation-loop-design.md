@@ -73,23 +73,23 @@ state of its own. An edit, a relabel to `medium` or `high` or a tombstone of the
 by any writer or worker on any build, ends governance while the source differs from what
 the admin approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a
 source that returns to the approved state (a restore, an edit reverted byte for byte) is
-governed again with no new promotion. A relabel back from `medium` or `high` does not
-bring back the shared embedding it retired: the term leg serves the definition again, and
-an admin promotes it again to restore the copy's search row. `memory.demote` ends
-governance; the demoted source stays a plain namespace-wide row, which ordinary search
-still serves until the admin deletes it, and a later draft of its term is a new term under
-a new key. Only `memory.promote` promotes into `loom.shared` (the op and
-`learnings.review`'s path through it; demote, erasure, a redact and a relabel to `medium`
-or `high` only retire or scrub there, as the changes below say); no worker promotes on its
-own. `memory.definitions.list` shows each definition's verdict; a definition that loses a
-name to another is still served for the names it keeps, and one past the ceiling is not
-read. A changed text is promoted again. On N no automatic verdict retires or marks a
-definition's source (the exemptions below, and the negative-outcome quarantine of
-`memory.outcome`, which skips a definition's namespace-wide row as it skips a locked one;
-`memory.outcome_run` records harm events and quarantines nothing), so a source that is no
-longer `active` was rejected by a writer, or left that way by N-1 or before this design.
-The sensitivity sweep can still relabel a source, which lapses it as a relabel does. The
-admin brings it back by the way it lapsed:
+governed again with no new promotion. Search withholds a copy whose source is gone or
+labelled `medium` or `high` ([the shared
+layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer));
+a relabel back serves it again. `memory.demote` ends governance; the demoted source stays
+a plain namespace-wide row, which ordinary search still serves until the admin deletes it,
+and a later draft of its term is a new term under a new key. Only `memory.promote`
+promotes into `loom.shared` (the op and `learnings.review`'s path through it; demote,
+erasure and a redact only retire or scrub there, as the changes below say), and no worker
+promotes on its own. `memory.definitions.list` shows each definition's verdict; a
+definition that loses a name to another is still served for the names it keeps, and one
+past the ceiling is not read. A changed text is promoted again. On N no automatic verdict
+retires or marks a definition's source (the exemptions below, and the negative-outcome
+quarantine of `memory.outcome`, which skips a definition's namespace-wide row as it skips
+a locked one; `memory.outcome_run` records harm events and quarantines nothing), so a
+source that is no longer `active` was rejected by a writer, or left that way by N-1 or
+before this design. The sensitivity sweep can still relabel a source, which lapses it as a
+relabel does. The admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -127,10 +127,6 @@ reader:
   - nothing else: no other draft of the term, and neither the shared copy nor the drafts
     when the live head still holds the redacted text (an edit reverted byte for byte), as
     `memory.redact` leaves a live copy of a text it scrubs from history.
-- **A relabel to `medium` or `high`** of a promoted definition's source, by a writer or
-  the sensitivity sweep, retires that row's shared embedding, keeping the row:
-  `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
-  serving the copy, and no sweep removes a durable row its writer did not ask to remove.
 - **The review path's promotion** of a `knowledge_gap` or `query_history` draft, in the
   pull request that adds those kinds: the approved hash is the canonical-JSON hash of the
   drafted value; `decided_by` and the audit subject come from the token, never the body's
@@ -613,15 +609,14 @@ promoted again:
 - a source its `memory.consolidate` tombstoned: `memory.restore` within 14 days; past
   them, the definition is written again from its shared copy's text.
 
-An N-1 relabel of a definition's source to `medium` or `high`, or an N-1 promotion of a
-`medium` source, which N-1 does not refuse, leaves its shared copy's embedding served by
-the ordinary legs: once N serves, the operator runs the retirement N's relabel performs
-(the shared embedding retired, the row kept) over every definition the admin read lists as
-lapsed for `medium` or `high`, an operator step the implementing pull request's rollout
-section names, so a relabel back governs it again as on N. N-1's redact does not reach the
-shared row's text, as today: one run during the rollout or after a rollback is run again
-once N serves. A namespace erasure an older build without the shared step ran is cleared
-as the rolling-upgrades rule "A namespace's promoted rows" says ([rolling
+An N-1 relabel of a definition's namespace-wide source to `medium` or `high` leaves its
+shared copy served by N-1's search; N's search leaves it out by that row's label. A copy
+N-1 promoted from another row, which it does not refuse (a `medium` one included), is
+judged by the namespace-wide row under its key, not by the row it came from: the
+re-promotion step above replaces it with one promoted from that row. N-1's redact does not
+reach the shared row's text, as today: one run during the rollout or after a rollback is
+run again once N serves. A namespace erasure an older build without the shared step ran is
+cleared as the rolling-upgrades rule "A namespace's promoted rows" says ([rolling
 upgrades](../architecture/rolling-upgrades.md)).
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns

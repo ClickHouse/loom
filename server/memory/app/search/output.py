@@ -4,6 +4,7 @@ serving a parked page."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
@@ -26,6 +27,7 @@ from server.memory.app.search.payload import (
 from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.scope import _SearchRun
 from server.memory.app.search.scoring import _score_explanation
+from server.memory.app.search.shared_definitions import withheld_definition_flags
 from server.memory.app.search.telemetry import (
     _actual_work_payload,
     _disclose_and_expose,
@@ -91,7 +93,8 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     # count is over the whole parked list, the same on every page while the
     # caller's readable namespaces do not change.
     withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
-    # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`.
+    # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`;
+    # a shared definition withheld since the first page stays in it too, counted nowhere.
     total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
@@ -103,6 +106,7 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         embedding_model=embedder_name,
         candidates_total=total,
         stale_dropped=stale_dropped,
+        degraded=_degradations.current(),
         namespaces_searched=[
             ns for ns in payload.get("namespaces_searched") or [input.namespace] if ns in readable
         ],
@@ -150,13 +154,22 @@ def _page_verdict(hits: list[_MemorySearchHit], nxt: int, offset: int) -> _PageV
 _REFILL_PER_MISSING_HIT = 4
 
 
+async def _stale_flags(
+    input: MemorySearchInput, payload: dict[str, Any], hits: list[_MemorySearchHit]
+) -> list[bool]:
+    if payload.get("replay"):
+        return [False] * len(hits)
+    return await pg_validation.stale_flags(input.org, input.namespace, hits)
+
+
 async def _parked_slice(
     input: MemorySearchInput, payload: dict[str, Any], offset: int, readable: set[str]
 ) -> tuple[list[_MemorySearchHit], int, int]:
     """Up to `top_k` readable, still-served hits from `offset`; the next offset (-1 at the
     end) and how many were stale. Checked in two windows at most: `top_k` readable rows,
     then, when the page is still short, `_REFILL_PER_MISSING_HIT` for each hit missing.
-    A replay page is not checked."""
+    A replay page skips the authority's check; the shared-definition check runs on every
+    page."""
     from server.memory.app import search_pages as _pages
 
     rows = list(payload.get("hits") or [])
@@ -174,18 +187,21 @@ async def _parked_slice(
             if hit is not None:
                 window.append((j, hit))
             j += 1
-        stale = [False] * len(window)
-        if not payload.get("replay"):
-            stale = await pg_validation.stale_flags(
-                input.org, input.namespace, [h for _, h in window]
-            )
-        for (at, hit), is_stale in zip(window, stale, strict=True):
+        window_hits = [h for _, h in window]
+        # A source relabelled or gone since page one withholds its definition here too.
+        stale, definitions_withheld = await asyncio.gather(
+            _stale_flags(input, payload, window_hits),
+            withheld_definition_flags(input.org, input.namespace, window_hits),
+        )
+        for (at, hit), is_stale, is_withheld in zip(
+            window, stale, definitions_withheld, strict=True
+        ):
             if len(hits) == top_k:
                 j = at  # the first row of the next page
                 break
             if is_stale:
                 dropped += 1
-            else:
+            elif not is_withheld:
                 hits.append(hit)
     return hits, (j if j < len(rows) else -1), dropped
 

@@ -55,6 +55,7 @@ from server.memory.app.search.scope import (
     _resolve_entity_scope,
     _SearchRun,
 )
+from server.memory.app.search.shared_definitions import without_withheld_definitions
 from server.memory.app.search.side_legs import (
     _launch_entity_boost,
     _launch_entity_summary_leg,
@@ -78,12 +79,11 @@ async def _run_retrieval_stages(
     _observation_task: asyncio.Task[Any] | None,
     _entity_summary_task: asyncio.Task[Any] | None,
 ) -> None:
-    """Phase 16: the retrieval pipeline over ctx, in order — vector legs,
-    sub-queries, set expansion, anchor and key-match pools, global fusion,
-    mention boost, chronological sort, rerank, chunk dedup, the assembler
-    (which joins the side legs launched in phase 15), the iterative retry
-    (recall credit is the orchestrator's, after the re-read decision). Leaves the served
-    block in ctx.final_hits."""
+    """Phase 16: the retrieval pipeline over ctx, in order — vector legs, sub-queries, set
+    expansion, anchor and key-match pools, the shared-definition check, global fusion,
+    mention boost, chronological sort, rerank, chunk dedup, the assembler (which joins the
+    side legs launched in phase 15), the iterative retry (recall credit is the
+    orchestrator's, after the re-read decision). Leaves the served block in ctx.final_hits."""
     input = ctx.input
     actual_work = ctx.actual_work
     _clock = ctx.clock
@@ -125,6 +125,14 @@ async def _run_retrieval_stages(
         active=bool(key_match_enabled(input) and _not_fast),
     )
     _clock.mark("key_match")
+
+    # After the last pool that can add a shared row, before fusion and the reranker read it.
+    # Digest descent and the observation leg find none: a shared vector has session '-' and
+    # no entities.
+    pooled = len(ctx.all_hits)
+    ctx.all_hits = await without_withheld_definitions(input.org, input.namespace, ctx.all_hits)
+    actual_work["shared_definitions_withheld"] = pooled - len(ctx.all_hits)
+    _clock.mark("shared_definitions")
 
     # Single global fusion pass over the COMPLETE pool (main + sub-query +
     # anchor arms). Runs unconditionally so the main pool is always fused on

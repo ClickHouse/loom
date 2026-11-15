@@ -546,3 +546,56 @@ async def test_a_promotion_and_a_demotion_move_the_memory_write_mark(
         await asyncio.sleep(1.5)
         await a.memory.demote("note")
         await mark_reaches(shared("tombstoned_at"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])
+async def test_a_definition_is_searched_only_while_its_source_exists_and_is_not_sensitive(
+    control_plane_url: str, mint_test_token, op: str
+) -> None:
+    """Through the server: a promoted definition is found under scope='shared' by
+    memory.search and memory.search_trace until its source is written again with its text
+    under a `medium` label, again once it is `low`, and no longer once it is deleted."""
+    from loom import Agent
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-relabel"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="lead")
+    key, value = "definition/arr", {"term": "ARR", "body": "Annual recurring revenue."}
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+
+        async def found() -> tuple[bool, bool]:
+            shared = await a.memory.search("annual recurring revenue", scope="shared", top_k=5)
+            trace = await a.call(
+                "memory.search_trace",
+                {"namespace": ns, "query": "annual recurring revenue", "scope": "shared"},
+            )
+            # A withheld definition is not one the authority stopped serving.
+            assert trace["stale_dropped"] == 0
+            return (
+                key in {h.memory_key for h in shared},
+                key in {h["memory_key"] for h in trace["results"]},
+            )
+
+        async def relabel(level: str) -> None:
+            entry = {"memory_key": key, "value": value, "memory_type": "definition"}
+            if op == "memory.set":
+                body = {"namespace": ns, "agent": "-", "sensitivity": level, **entry}
+            else:
+                body = {"namespace": ns, "agent": "-", "entries": [{**entry, "sensitivity": level}]}
+            await a.call(op, body)
+
+        await a.memory.set(key, value, "definition", agent_id="-")
+        got = await a.memory.get(key, agent_id="-")
+        await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+        assert await found() == (True, True)
+        await relabel("medium")
+        assert await found() == (False, False)
+        await relabel("low")
+        assert await found() == (True, True)
+        # Its source deleted, no label says the copy may be served.
+        await a.call("memory.delete", {"namespace": ns, "agent": "-", "memory_key": key})
+        assert await found() == (False, False)
