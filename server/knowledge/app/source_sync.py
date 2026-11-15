@@ -1,18 +1,11 @@
-"""The sync of registered document sources into their namespaces' documents, or
-for a mirrored folder source into the namespace's mirror: one pass over every
-active source, run by the `knowledge_source_sync` worker and by `loom knowledge
-sync`. The shared-folder turn, over its items (`source_gdrive_items`), is below;
-each other kind, and a mirrored folder source, has its own turn module
-(`source_sync_linear`, `source_sync_notion`, `source_sync_recording`,
-`source_sync_mirror`), chosen by `_turn_of`, which builds on the public helpers
-here: `Pass` and `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and
-`valid_stamp` for a turn's start and stamp, `open_listing` and `vendor_failure` for
-a folder listing, `stored_copies_with_room` and `stored_with_room` for the stored
-copies and the turn's room under the document bound, `sync_item` and `sync_file`
-for one listed item, with `give_up`, `wait` and `require_current` for its fetch,
-`write_document` and `counted` for its write, `ours`, `file_gone`,
-`retire_absent` and `retire`, and `client_error`. A kind's own bookkeeping goes in
-`TurnResult.kind_state`, which the sync state keeps.
+"""The sync of registered document sources into their namespaces' documents, or for a
+mirrored folder source into the namespace's mirror: one pass over every active source,
+run by the `knowledge_source_sync` worker and by `loom knowledge sync`. The
+shared-folder turn, over its items (`source_gdrive_items`), is below; each other kind,
+and a mirrored folder source, has its own turn module (`source_sync_linear`,
+`source_sync_notion`, `source_sync_recording`, `source_sync_mirror`), chosen by
+`_turn_of`, which builds on the public helpers here (`__all__`). A kind's own
+bookkeeping goes in `TurnResult.kind_state`, which the sync state keeps.
 
 A pass reads the active sources and drops those whose namespace is inactive.
 Sources a namespace's admin asked to sync (`sync_now`) go first, the rest from
@@ -899,11 +892,11 @@ async def sync_file(
     run: Pass,
     turn: TurnResult,
     *,
-    access: Callable[[], Awaitable[access_list.AccessList]] | None = None,
+    read_access: Callable[[], Awaitable[access_list.AccessList]] | None = None,
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
-    `access` runs just before a fetch and gives the permission list the write carries
-    (`unread` without it). A native document whose stored text still holds its
+    `read_access` runs at the start of the fetch and gives the permission list the
+    write carries (`unread` without it). A native document whose stored text still holds its
     pictures' bytes (an earlier conversion's) is fetched and converted again at its
     same revision when a full listing lists it."""
     revision = str(f.get("modifiedTime") or "")
@@ -929,7 +922,7 @@ async def sync_file(
 
     async def fetch_and_write() -> str:
         # Read last, once the pass bound let the fetch go ahead.
-        permissions = await access() if access is not None else access_list.UNREAD
+        permissions = await read_access() if read_access else access_list.UNREAD
         return await _fetch_and_write(
             src,
             token,
@@ -1241,8 +1234,8 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
     have written for `knowledge.delete`; False when it is no longer the source's."""
     namespace, _ = home(src)
     with sequential_reads():  # a replica behind a person's write would say still ours
-        ours = await _may_write(src, uri)
-    if not ours:
+        still_ours = await _may_write(src, uri)
+    if not still_ours:
         return False
     pass_context.check_stop()
     try:

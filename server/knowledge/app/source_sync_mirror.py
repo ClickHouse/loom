@@ -82,9 +82,11 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     stored = sync.stored_with_room(result, [c for c in copies if c["searchable"]])
     try:
         for uri, f in addressed:
-            access = functools.partial(_listed_access, token, f, result)
+            read_access = functools.partial(_file_access, token, f, result)
             prior = stored.get(str(f["id"]))
-            if not await sync.sync_file(src, token, f, uri, prior, run, result, access=access):
+            if not await sync.sync_file(
+                src, token, f, uri, prior, run, result, read_access=read_access
+            ):
                 break
     except _Refused:
         pass  # every stored list is written: the listing row may still land
@@ -143,21 +145,19 @@ async def _refresh_lists(
                 if f is None and not whole:
                     continue  # an incomplete search may have missed it: it keeps its list
                 if f is not None and "permissions" not in f and run.budget.exhausted():
-                    result.mark(sync.TurnMark.PASS_BOUND)  # only a read costs time
-                    break
-                access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
+                    # Past the deadline no list is read, but every one that needs no
+                    # read is still compared; this one keeps its list for now.
+                    result.mark(sync.TurnMark.PASS_BOUND)
+                    continue
+                access = access_list.UNREAD if f is None else await _file_access(token, f, result)
                 if access_list.from_json(held[uri]) != access:
                     changed[uri] = access
-        except _Refused:
-            await _write_lists(src, changed)  # what was read is written all the same
-            raise
-        await _write_lists(src, changed)
-        if result.cut:  # the deadline stopped this batch
-            return False
-    return True
+        finally:
+            await _write_lists(src, changed)  # what was read is written, whatever stopped it
+    return not result.cut
 
 
-async def _listed_access(
+async def _file_access(
     token: str, f: dict[str, Any], result: sync.TurnResult
 ) -> access_list.AccessList:
     """The file's permission list. The listing leaves it out for a shared drive's files

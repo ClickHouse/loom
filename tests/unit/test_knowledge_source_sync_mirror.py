@@ -614,12 +614,6 @@ def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
         for n in (1, 2, 3)
     ]
     _turn(world, _mirrored())
-    reads: list[list[str]] = []
-
-    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, str]:
-        reads.append(uris)
-        return {}
-
     out = {"reads": 0}
 
     async def _permissions(token: str, file_id: str, **kw: Any) -> Any:
@@ -627,14 +621,43 @@ def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
         return []
 
     monkeypatch.setattr(source_sync_mirror, "_REWRITE_BATCH", 1)
-    monkeypatch.setattr(documents, "committed_lists", _heads)
     monkeypatch.setattr(gdrive, "file_permissions", _permissions)
     monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["reads"] >= 2)
     for f in world.files:
         del f["permissions"]
+    listings = len(mirror["listings"])
     result = _turn(world, _mirrored())
-    assert result.cut and len(mirror["rewrites"]) == 2  # batches one and two
-    assert reads == [[u] for u in sorted(world.docs)]  # each batch reads its own heads
+    narrowed = sorted(r["source_uri"] for r in mirror["rewrites"])
+    assert result.cut and narrowed == sorted(world.docs)[:2]  # batches one and two
+    assert len(mirror["listings"]) == listings
+
+
+def test_past_the_deadline_a_list_the_listing_carried_is_still_written(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
+    out = {"read": False}
+    real = source_sync_mirror.store.every_copy
+
+    async def _then_out_of_time(*a: Any, **kw: Any) -> Any:
+        copies = await real(*a, **kw)
+        out["read"] = True
+        return copies
+
+    monkeypatch.setattr(source_sync_mirror.store, "every_copy", _then_out_of_time)
+    monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["read"])
+    del world.files[0]["permissions"]  # doc1's list needs a read, which the deadline stops
+    world.files[1]["permissions"] = []  # doc2's, narrowed, came with the listing
+    listings = len(mirror["listings"])
+    result = _turn(world, _mirrored())
+    [row] = mirror["rewrites"]
+    assert row["source_uri"].split("/")[-2] == "doc2"
+    assert access_list.from_json(row["access_json"]) == access_list.AccessList()
+    assert result.cut and len(mirror["listings"]) == listings
 
 
 def test_a_mirrored_source_without_a_mirror_turn_is_refused_a_turn() -> None:
