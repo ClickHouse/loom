@@ -13,8 +13,8 @@ from server.core import ch_names
 from server.core.ch import query_tag
 from server.settings import settings
 
-# system.query_log's log_comment of the scan's statements and the reads both modules share
-# (the host names, attach's own grants), and of the writer check's own.
+# system.query_log's log_comment: the scan's, and the writer check's. Attach's own grant
+# reads carry the tag of the check that runs them; the host names always carry the scan's.
 TAG = "cell.scan"
 WRITERS_TAG = "cell.writers"
 
