@@ -461,7 +461,7 @@ describe("the Library on a collection", () => {
     history.replaceState(null, "", "/library?collection=col-q3");
     render(<Documents />, { container: inMain() });
     await settle();
-    const line = screen.getByRole("region", { name: "Who can see it" });
+    const line = screen.getByRole("group", { name: "Who can see it" });
     expect(line).toHaveTextContent("bob · 1 person");
     const reads = api.listGrants.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
@@ -523,7 +523,7 @@ describe("the Library on a collection", () => {
     history.replaceState(null, "", "/library?collection=col-me-1a2b");
     render(<Documents />, { container: inMain() });
     await settle();
-    expect(screen.getByRole("region", { name: "Who can see it" })).toHaveTextContent(/^Only you/);
+    expect(screen.getByRole("group", { name: "Who can see it" })).toHaveTextContent(/^Only you/);
     expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "See who" })).not.toBeInTheDocument();
   });

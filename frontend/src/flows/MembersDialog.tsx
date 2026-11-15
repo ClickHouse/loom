@@ -296,7 +296,7 @@ export function MembersDialog({
     setErr(null);
     try {
       await createGrant({ org, namespace }, subj, newRole);
-      toast(`Added ${subj} as ${newRole}`, "ok");
+      toast(`Added ${subjectLabel(subj, org)} as ${newRole}`, "ok");
       setNewSubject("");
       setNewRole(defaultRole);
       setAdding(false);
@@ -335,10 +335,7 @@ export function MembersDialog({
         (x) =>
           x.status === "active" && (x.subject === "everyone" || grantSpellings(x).some((sp) => theirs.includes(sp))),
       );
-    // Not the grant being removed: removing everyone leaves no grant to everyone here.
-    const everyoneHere = !!rows?.some(
-      (x) => x.status === "active" && x.subject === "everyone" && x.subject !== subject,
-    );
+    const everyoneHere = !!rows?.some((x) => x.status === "active" && x.subject === "everyone");
     const through = (inherited ?? []).filter((p) => reaches(p.rows)).map((p) => p.title);
     // Parents still being read (null), or one whose grants were not all read (unread,
     // hidden, or cut), may let anyone in.

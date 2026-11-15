@@ -53,7 +53,7 @@ async function open(
   await page.goto(`/library?collection=${collection}`);
 }
 
-const header = (page: Page) => page.getByRole("region", { name: "Who can see it" });
+const header = (page: Page) => page.getByRole("group", { name: "Who can see it" });
 const button = (page: Page, name: string) => page.getByRole("main").getByRole("button", { name, exact: true });
 
 test("Share opens the members dialog in place, and closing it leaves the person in the Library", async ({ page }) => {
@@ -86,6 +86,12 @@ test("a parent's link in the members dialog opens it, with the focus on the page
   await expect(dialog).toHaveCount(0);
   // The arrival focuses the page's heading, not the body the dialog left behind.
   await expect(page.locator("main h1").first()).toBeFocused();
+  // A later ordinary close hands the focus back to Share, as before the move.
+  await button(page, "Share").click();
+  const again = page.getByRole("dialog", { name: "Members of Engineering" });
+  await again.getByRole("button", { name: "Close" }).click();
+  await expect(again).toHaveCount(0);
+  await expect(button(page, "Share")).toBeFocused();
 });
 
 test("a viewer sees who can see it, and See who in place of Share", async ({ page }) => {

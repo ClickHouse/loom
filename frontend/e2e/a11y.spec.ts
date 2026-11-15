@@ -414,7 +414,7 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
     await page.getByText("col-handbook · Team handbook").last().click();
     await expect(page).toHaveURL(/collection=col-handbook/);
-    await expect(page.getByRole("region", { name: "Who can see it" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "Who can see it" })).toBeVisible();
     await page.getByRole("main").getByRole("button", { name: "Share", exact: true }).click();
     await expect(page.getByRole("dialog", { name: /^Members of / })).toBeVisible();
     expect(await violations(page)).toEqual([]);

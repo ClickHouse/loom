@@ -13,9 +13,20 @@ vi.mock("../components/ConfirmDialog", async (importOriginal) => ({
   confirmAction: confirm,
 }));
 
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("../components/Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/Toast")>()),
+  toast,
+}));
+
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, listGrants: vi.fn(), isAuthDisabled: vi.fn(() => false) };
+  return {
+    ...actual,
+    listGrants: vi.fn(),
+    createGrant: vi.fn(async () => ({})),
+    isAuthDisabled: vi.fn(() => false),
+  };
 });
 
 const at = "2026-09-17T14:50:28Z";
@@ -495,5 +506,14 @@ describe("MembersDialog paging", () => {
     } finally {
       vi.mocked(api.isAuthDisabled).mockReturnValue(false);
     }
+  });
+
+  it("names an added group by its label in the toast", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [] });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add member" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "group:eng" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Added group eng as writer", "ok"));
   });
 });

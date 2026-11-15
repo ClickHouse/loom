@@ -282,7 +282,7 @@ describe("the collection header", () => {
     vi.clearAllMocks();
   });
 
-  const line = () => screen.getByRole("region", { name: "Who can see it" });
+  const line = () => screen.getByRole("group", { name: "Who can see it" });
 
   it("names who can see it and how many, and passes axe", async () => {
     api.listGrants.mockResolvedValue({ rows: [grant("ada", { role: "admin" }), grant("group:eng")] });

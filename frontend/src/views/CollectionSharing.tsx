@@ -416,13 +416,15 @@ function Line({ children, busy = false }: { children: ReactNode; busy?: boolean 
   return (
     // Its words wrap in its own column, so the figures beside it keep their line. A read
     // again keeps them, marked busy.
-    <section
+    // biome-ignore lint/a11y/useSemanticElements: a named group of words, not form controls, so not a fieldset
+    <div
+      role="group"
       aria-label="Who can see it"
       aria-busy={busy || undefined}
       className="flex min-w-0 flex-1 basis-64 items-center gap-1.5"
     >
       {children}
-    </section>
+    </div>
   );
 }
 
