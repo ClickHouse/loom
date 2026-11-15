@@ -15,7 +15,6 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listKnowledgeSources } from "../api/knowledgeSources";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import {
   kindLabel,
@@ -32,6 +31,7 @@ import { Skeleton } from "../components/Skeleton";
 import { IconButton } from "../components/IconButton";
 import { toast } from "../components/Toast";
 import { ListTime, LoadingSkeleton, TipTarget } from "../components/ui";
+import { ListState } from "../components/ui/ListState";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 
 const AddSourceDialog = lazy(() =>
@@ -58,7 +58,7 @@ type State =
   | { kind: "ready"; sources: KnowledgeSource[]; enabled: boolean; accepts: boolean }
   | { kind: "absent" }
   | { kind: "refused" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; error: unknown };
 
 type Verb = "check" | "sync" | "rotate" | "retire";
 
@@ -166,7 +166,7 @@ export function SourcesList({
         if (!live()) return;
         if (isOpAbsent(e)) setState({ kind: "absent" });
         else if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
-        else setState({ kind: "error", message: humanizeError(e, { read: true }) });
+        else setState({ kind: "error", error: e });
       }
     },
     [org, namespace, nonce],
@@ -210,9 +210,7 @@ export function SourcesList({
         <p className="text-xs text-text-muted">Join the {place.noun} to see where its documents come from.</p>
       )}
       {state.kind === "error" && (
-        <p className="text-xs text-text-muted" role="status">
-          Couldn't list the document sources — {state.message}
-        </p>
+        <ListState kind="error" things="document sources" error={state.error} onRetry={reload} />
       )}
       {state.kind === "ready" && !state.enabled && <p className="text-xs text-text-muted">{SYNC_OFF}</p>}
       {state.kind === "ready" && !state.accepts && (

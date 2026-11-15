@@ -183,7 +183,7 @@ describe("Library sources", () => {
     sources.listKnowledgeSources.mockRejectedValue(new Error("boom"));
     show("admin");
     await openSources();
-    expect(await screen.findByText(/Couldn't list the document sources/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load document sources")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sources" })).toBeInTheDocument();
   });
 

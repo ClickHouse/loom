@@ -870,7 +870,8 @@ describe("RepositoryCard — sources", () => {
     cleanup();
     vi.mocked(listKnowledgeSources).mockRejectedValueOnce(new ApiError({ status: 500, message: "boom" }));
     reader();
-    expect(await within(group()).findByText(/Couldn't list the document sources/)).toHaveAttribute("role", "status");
+    expect(await within(group()).findByRole("alert")).toHaveTextContent(/Couldn't load document sources/);
+    expect(within(group()).getByRole("button", { name: "Retry" })).toBeInTheDocument();
     cleanup();
     const failed = { ...SOURCES[0], sync: { ...SOURCES[0].sync, status: "failed", error: "http_403" } };
     vi.mocked(listKnowledgeSources).mockResolvedValueOnce({ sources: [failed], enabled: true });
