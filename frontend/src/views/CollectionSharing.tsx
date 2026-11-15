@@ -96,17 +96,17 @@ export function whoCanSee({
       })),
     ...(above ? [{ who: above, text: `Also everyone who can see ${above}` }] : []),
   ];
-  const shown = grants[0]?.namespace ?? "";
-  const inherited = [...new Set([...from.values()].filter((ns) => ns !== shown))].map(titleOf);
+  const ownNs = grants[0]?.namespace ?? "";
+  const fromTitles = [...new Set([...from.values()].filter((ns) => ns !== ownNs))].map(titleOf);
   const subjects = [...from.keys()];
   const others = subjects.filter((s) => s !== "");
-  const inheritedFrom = inherited.length > 0 ? `Inherited from ${joined(inherited)}` : "";
+  const inheritedFrom = fromTitles.length > 0 ? `Inherited from ${joined(fromTitles)}` : "";
   const tail = [inheritedFrom, ...unseen.map((u) => u.text)];
   const shared = empty ? "Anything added here is shared with them" : "";
   if (others.includes("everyone")) {
     // Only where the grant to everyone comes from: nothing when it is on the collection itself.
     const at = from.get("everyone");
-    const via = at && at !== shown ? `Inherited from ${titleOf(at)}` : "";
+    const via = at && at !== ownNs ? `Inherited from ${titleOf(at)}` : "";
     return { who: `Everyone in ${org}`, how: [via, shared].filter(Boolean).join(" · "), onlyYou: false };
   }
   if (others.length === 0 && unseen.length === 0 && !cut) {
@@ -398,9 +398,7 @@ export function useCollectionSharing({
       label={shown.title?.trim() || undefined}
       // The collection's role decides, not a token claim: none reaches a collection.
       manage={shown.role === "admin"}
-      // Until the header answers for this collection, who else can see it is still being read;
-      // a failed answer lists the parents as unread.
-      // No parents to read (a top-level collection): nothing to wait for.
+      // [] with sign-in off or no parents; null until the header answers; else what it read.
       inherited={signInOff || (chain.length === 1 && !hiddenWords) ? [] : answer === null ? null : inherited}
       onCloseAutoFocus={(e) => {
         if (!leftFor.current) return;

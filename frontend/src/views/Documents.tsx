@@ -228,7 +228,8 @@ export function Documents() {
     [collections.kept],
   );
   const resolving = !!collection && collections.rows === null && !listFailed;
-  const sharing = collection ? (byName.get(collection) ?? null) : null;
+  // Taken from the kept list, so the header holds steady while the list is read again.
+  const headerCollection = collection ? (byName.get(collection) ?? null) : null;
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
@@ -475,7 +476,7 @@ export function Documents() {
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
   const share = useCollectionSharing({
     org: picked.org,
-    collection: sharing,
+    collection: headerCollection,
     byName,
     repeated,
     truncated: collections.kept?.truncated ?? false,
@@ -1222,10 +1223,10 @@ export function Documents() {
           what the library is behind the tip. A phone, with the place picker above the list, has
           room for who can see it only: the bar's count says how many are shown. */}
       <div
-        className={`mb-4 min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted tabular ${sharing ? "flex" : "hidden sm:flex"}`}
+        className={`mb-4 min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted tabular ${headerCollection ? "flex" : "hidden sm:flex"}`}
       >
         {share.line}
-        <span className={`min-w-0 items-center gap-1 ${sharing ? "hidden shrink-0 sm:flex" : "flex"}`}>
+        <span className={`min-w-0 items-center gap-1 ${headerCollection ? "hidden shrink-0 sm:flex" : "flex"}`}>
           <span className="min-w-0 truncate">
             {docCount && aggregateStats && rows && rows.length > 0
               ? [
