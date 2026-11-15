@@ -1068,7 +1068,8 @@ install](./upgrades.md#downgrading-an-installer-install).
 Each file on a GitHub Release has a keyless signature from the release workflow, in a Sigstore
 bundle beside it named `<file>.sigstore.json` (a release published before the workflow signed its
 files has none). While the workflow publishes a release again, a replaced file verifies once its
-new bundle is attached, a few minutes later. Download a file with its bundle and check it with
+new bundle is attached; one that still does not verify after the release run finished is reported
+as [SECURITY.md](../../SECURITY.md) describes. Download a file with its bundle and check it with
 cosign 3 or later:
 
 ```bash

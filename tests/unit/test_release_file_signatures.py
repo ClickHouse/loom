@@ -228,7 +228,14 @@ INCIDENT = "kept from an earlier run, has a Sigstore bundle that does not verify
 def test_a_file_that_is_not_this_runs_build_fails_before_anything_is_signed(
     tmp_path: Path, served: dict[str, str], error: str
 ) -> None:
-    result = _sign(tmp_path, served, {"install.sh": "a", "loom-stack.tar.gz": "rebuilt"})
+    """agent-setup.txt is this run's build and sorts first: it must not be signed either."""
+    built = {
+        "agent-setup.txt": "ok",
+        "install.sh": "a",
+        "loom-stack.tar.gz": "rebuilt",
+        "loom-stack.tar.gz.sha256": "rebuilt sum",
+    }
+    result = _sign(tmp_path, {"agent-setup.txt": "ok", **served}, built)
     assert result.returncode == 1
     assert error in result.stdout
     assert "#a-failed-tag-or-signature" in result.stdout
@@ -348,6 +355,15 @@ def test_a_file_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -> 
     assert "could not verify release.yml's signature on a" in result.stdout
     assert "#a-failed-tag-or-signature" in result.stdout
     assert len(_calls(tmp_path, "cosign")) == 1  # stops at the first
+
+
+def test_a_sigstore_bundle_without_its_file_fails(tmp_path: Path) -> None:
+    result = _verify(tmp_path, {"a": "a", "a.sigstore.json": _bundle("a"), "zz.sigstore.json": "x"})
+    assert result.returncode == 1
+    assert (
+        "zz.sigstore.json signs no file on the release: delete it from the release" in result.stdout
+    )
+    assert "#a-failed-tag-or-signature" in result.stdout
 
 
 def test_a_directory_without_files_fails(tmp_path: Path) -> None:

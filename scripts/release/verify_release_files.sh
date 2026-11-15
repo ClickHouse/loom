@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks that each file in DIR carries the keyless signature the release
 # workflow's run on vVERSION made, in DIR/<file name>.sigstore.json, as a user
-# checks it with cosign 3. A file without its Sigstore bundle fails.
+# checks it with cosign 3. A file without its Sigstore bundle fails, and so does
+# a Sigstore bundle without its file.
 #
 #   verify_release_files.sh VERSION DIR
 set -euo pipefail
@@ -16,7 +17,15 @@ identity="https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/
 recovery="see docs/development/release-process.md#a-failed-tag-or-signature"
 checked=0
 for file in "$dir"/*; do
-  case $file in *.sigstore.json) continue ;; esac
+  case $file in
+    *.sigstore.json)
+      [ -f "${file%.sigstore.json}" ] || {
+        echo "::error::$(basename "$file") signs no file on the release: delete it from the release; $recovery"
+        exit 1
+      }
+      continue
+      ;;
+  esac
   [ -f "$file" ] || continue
   name=$(basename "$file")
   [ -f "$file.sigstore.json" ] || {

@@ -266,9 +266,9 @@ there costs a candidate number, not a final version.
    ([a failed tag or signature](#a-failed-tag-or-signature)). It then verifies each file as
    users do (`scripts/release/verify_release_files.sh`). It holds the run's OIDC token in a job of
    its own, with read-only contents; `attach-signatures` then uploads the Sigstore bundles it made
-   (a kept one stays as it is, since replacing an asset deletes it first). A dispatch builds the files again, and `github-release` replaces them, so until its
-   own `sign-files` and `attach-signatures` finish, the tag run's Sigstore bundles do not verify
-   the replaced files;
+   (a kept one stays as it is, since replacing an asset deletes it first). A dispatch builds the
+   files again, and `github-release` replaces them, so until its own `sign-files` and
+   `attach-signatures` finish, the tag run's Sigstore bundles do not verify the replaced files;
 10. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
     was just published, signed in to nothing: the one-liner from github.com in the same clean
     containers, pulling both images anonymously, and verifies the signatures of both images and
@@ -354,10 +354,10 @@ the `digest=` line, then the `docker buildx imagetools create` command without t
 
 A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, say) leaves files on
 the release without a Sigstore bundle that verifies them. Any later run signs them again while the
-stack bundle and checksum on the release carry Sigstore bundles that verify: "Re-run failed jobs"
-on the run that failed. When they carry none, because the tag run's own signing failed, only "Re-run failed
-jobs" on the tag run signs them, while its artifacts are kept (30 days, unless the repository's
-artifact retention limit is shorter) and before any dispatch: a dispatch, "Re-run all
+stack bundle and checksum on the release carry Sigstore bundles that verify: "Re-run failed jobs" on
+the run that failed. When they carry none, because the tag run's own signing failed, only "Re-run
+failed jobs" on the tag run signs them, while its artifacts are kept (30 days, unless the
+repository's artifact retention limit is shorter) and before any dispatch: a dispatch, "Re-run all
 jobs" or a second push of the tag rebuilds the stack bundle and checksum but keeps the ones the
 release carries, which then no run can sign. Past that, release a new version.
 
