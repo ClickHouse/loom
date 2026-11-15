@@ -480,7 +480,7 @@ async def test_a_read_held_only_through_a_non_default_role_refuses(
 
 
 async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pair(
-    ch: Any, scratch: tuple[str, str], users: dict[str, str]
+    ch: Any, scratch: tuple[str, str], users: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Once a table has a row policy, a user no permissive policy covers reads none of its
     rows: attach's scan would find no org there. Loom's own pair is written under the
@@ -514,7 +514,9 @@ async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pai
         }, listed.refusals
         await ch.execute(f"DROP ROW POLICY {theirs} ON {schema}.memory")
         created.remove(theirs)
-        # Loom's own pair: the analyst's scope, and every other user reading every row.
+        # Loom's own pair: the analyst's scope, and every other user reading every row, with
+        # a scratch user standing in for the analyst.
+        monkeypatch.setattr(cell_writers, "ANALYST_USER", other)
         for name, using, to in (
             (POLICY_NAME, "org = ''", other),
             (OTHERS_POLICY_NAME, "1", f"ALL EXCEPT {other}"),
