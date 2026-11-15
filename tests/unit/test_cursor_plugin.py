@@ -26,7 +26,7 @@ def test_the_marketplace_lists_the_root_plugin_by_its_name() -> None:
 
 
 def test_manifest_paths_are_relative_and_exist() -> None:
-    # Cursor's review refuses an absolute path or one that leaves the plugin.
+    # Cursor's template validator refuses an absolute path or one that leaves the plugin.
     for field in ("logo", "skills", "mcpServers"):
         path = MANIFEST[field]
         assert not path.startswith("/") and not posixpath.normpath(path).startswith(".."), path
@@ -40,12 +40,13 @@ def test_every_variable_the_mcp_entry_uses_is_declared_and_required() -> None:
     assert used and used == set(variables["properties"]) == set(variables["required"])
 
 
-def test_the_default_url_is_the_one_loom_install_writes_for_cursor() -> None:
-    # The entry has no Authorization header: a single-user server on the machine takes the
-    # call without one, and a server with OAuth on answers 401 with the metadata pointer
-    # Cursor follows to its browser sign-in.
+def test_the_entry_sends_no_authorization_header() -> None:
+    # A local server takes the call without one; an OAuth server answers 401 for sign-in.
     entry = json.loads((ROOT / MANIFEST["mcpServers"]).read_text())["mcpServers"]["loom"]
     assert entry == {"url": "${LOOM_MCP_URL}"}
+
+
+def test_the_default_url_is_the_one_loom_install_writes_for_cursor() -> None:
     default = MANIFEST["variables"]["properties"]["LOOM_MCP_URL"]["default"]
     assert "cursor" in CODING_CLIENTS
     assert default == _install_mcp_url(DEFAULT_BASE_URL, CODING_TOOLSET)
