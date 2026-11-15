@@ -443,4 +443,27 @@ describe("MembersDialog paging", () => {
       unmount();
     }
   });
+
+  it("says a collection it sits in may still let others in while its parents are still being read", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
+    render(
+      <MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" inherited={null} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Stop sharing with everyone in acme" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0].message).toBe(
+      "The grant here is revoked. A collection it sits in may still let others in.",
+    );
+  });
+
+  it("claims no narrowing on stopping sharing with sign-in off", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" signInOff />);
+    expect(
+      await screen.findByText(/^Sign-in is off: everyone who can reach this server can see it/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing with everyone in acme" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0].message).toBe("The grant here is revoked.");
+  });
 });

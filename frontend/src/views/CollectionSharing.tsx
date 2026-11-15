@@ -399,7 +399,7 @@ export function useCollectionSharing({
       // The collection's role decides, not a token claim: none reaches a collection.
       manage={shown.role === "admin"}
       // Until the header answers for this collection, who else can see it is still being read;
-      // a failed answer names no parent.
+      // a failed answer lists the parents as unread.
       inherited={signInOff ? [] : answer === null ? null : inherited}
       onCloseAutoFocus={(e) => {
         if (!leftFor.current) return;
@@ -407,9 +407,7 @@ export function useCollectionSharing({
         e.preventDefault();
         focusViewHeading();
       }}
-      notice={
-        signInOff ? "Sign-in is off: everyone who can reach this server can see it, whoever is listed here." : undefined
-      }
+      signInOff={signInOff}
     />
   );
   return { line, button, dialog };

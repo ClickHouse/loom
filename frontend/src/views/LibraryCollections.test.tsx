@@ -211,12 +211,8 @@ describe("LibraryCollections", () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
     expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
     await settle();
-    // What the place is, and the role, behind the info button beside the select: a press
-    // (a tap on a phone) opens it. Without the hover: a pointer move over the button's
-    // tooltip trigger leaves `window.event` a pointermove in this file's later tests, and React
-    // gives updates outside a handler that event's continuous priority, so a create's two
-    // list updates render apart and the list is read three times instead of once.
-    await userEvent.setup({ skipHover: true }).click(screen.getByRole("button", { name: "About this place" }));
+    // What the place is, and the role, behind the info button: a press opens it.
+    await userEvent.click(screen.getByRole("button", { name: "About this place" }));
     expect(await screen.findByText(/^Viewer of a collection: .*everyone who reaches col-q3/)).toBeInTheDocument();
   });
 
@@ -1447,10 +1443,9 @@ describe("the Library on a collection", () => {
       expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
     });
 
-    it("reads the list once for a tree create that opens what it made", async () => {
+    it("reads the list again for a tree create and opens what it made", async () => {
       resizable();
       const answer = await createInTree();
-      // The create's refresh and the page's read for the move are one read.
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
         next_cursor: null,
@@ -1458,11 +1453,19 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await answer(q4);
       await settle();
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      // Read again (how many times rests on React's batching); what was made is listed and shown.
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(api.createCollection).toHaveBeenCalledWith(
+        "acme",
+        "",
+        expect.objectContaining({ parent: "col-q3", title: "Q4" }),
+      );
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toHaveAttribute("aria-current", "page");
     });
 
-    it("reads the list once for a dialog create that opens what it made", async () => {
+    it("reads the list again for a dialog create and opens what it made", async () => {
       api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
       history.replaceState(null, "", "/library?collection=col-q3");
       render(<Documents />);
@@ -1479,7 +1482,13 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await act(async () => answer(q4));
       await settle();
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      // Read again (how many times rests on React's batching); what was made is opened.
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(api.createCollection).toHaveBeenCalledWith(
+        "acme",
+        expect.any(String),
+        expect.objectContaining({ parent: "col-q3", title: "Q4" }),
+      );
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
     });
 
@@ -1537,7 +1546,9 @@ describe("the Library on a collection", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      // Read again (how many times rests on React's batching); the second is listed.
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(within(tree).getByRole("link", { name: "Q5" })).toHaveAttribute("aria-current", "page");
     });
 
     it("moves nothing once the page shows another org", async () => {

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import type { CollectionEntry, GrantEntry } from "../api";
+import userEvent from "@testing-library/user-event";
 import { ApiError } from "../lib/errors";
 import { repeatedTitles } from "../lib/collections";
 import { useStore } from "../lib/state";
@@ -15,9 +16,15 @@ import { type ReadAt, ShareButton, useCollectionSharing, whoCanSee } from "./Col
 const api = vi.hoisted(() => ({
   listGrants: vi.fn(),
   createGrant: vi.fn(async () => ({})),
+  revokeGrant: vi.fn(async () => ({})),
+  approveGrant: vi.fn(async () => ({})),
   isAuthDisabled: vi.fn(() => false),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
+vi.mock("../components/ConfirmDialog", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/ConfirmDialog")>()),
+  confirmAction: async () => true,
+}));
 
 const at = "2026-09-17T14:50:28Z";
 const grant = (subject: string, over: Partial<GrantEntry> = {}): GrantEntry => ({
@@ -612,6 +619,63 @@ describe("the collection header", () => {
     expect(screen.getByText("Only you")).toBeInTheDocument();
     answer({ rows: [grant("ada"), grant("bob")] });
     expect(await screen.findByText("You and bob")).toBeInTheDocument();
+  });
+
+  it("reads the grants again after a role change, a removal, an approval or a rejection", async () => {
+    const user = userEvent.setup();
+    const rows = [
+      grant("ada", { role: "admin" }),
+      grant("bob", { role: "writer" }),
+      grant("carol", { status: "pending" }),
+    ];
+    const steps: Array<[string, (dialog: HTMLElement) => Promise<void>]> = [
+      [
+        "role change",
+        async (dialog) => {
+          await user.click(within(dialog).getByRole("button", { name: "Role for bob" }));
+          // Click UI's Select items carry no option role; they are addressed by value.
+          const viewer = () => document.querySelector<HTMLElement>('[cui-select-item][data-value="viewer"]');
+          await waitFor(() => expect(viewer()).not.toBeNull());
+          await user.click(viewer() as HTMLElement);
+          await waitFor(() => expect(api.createGrant).toHaveBeenCalled());
+        },
+      ],
+      [
+        "removal",
+        async (dialog) => {
+          fireEvent.click(within(dialog).getByRole("button", { name: "Remove bob" }));
+          await waitFor(() => expect(api.revokeGrant).toHaveBeenCalled());
+        },
+      ],
+      [
+        "approval",
+        async (dialog) => {
+          fireEvent.click(within(dialog).getByRole("button", { name: /^Approve as/ }));
+          await waitFor(() => expect(api.approveGrant).toHaveBeenCalledWith(expect.anything(), "carol", "approve"));
+        },
+      ],
+      [
+        "rejection",
+        async (dialog) => {
+          fireEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+          await waitFor(() => expect(api.approveGrant).toHaveBeenCalledWith(expect.anything(), "carol", "reject"));
+        },
+      ],
+    ];
+    for (const [what, act] of steps) {
+      vi.clearAllMocks();
+      api.listGrants.mockResolvedValue({ rows });
+      const { unmount } = render(<Header collection={entry("col-a")} />);
+      await screen.findByText("You and bob");
+      fireEvent.click(screen.getByRole("button", { name: "Share" }));
+      const dialog = await screen.findByRole("dialog");
+      await within(dialog).findByText("bob");
+      await act(dialog);
+      const reads = api.listGrants.mock.calls.length;
+      fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(api.listGrants.mock.calls.length, what).toBeGreaterThan(reads));
+      unmount();
+    }
   });
 
   it("forgets a change once a parent's link leaves the place, so the parent's unchanged close reads nothing", async () => {
