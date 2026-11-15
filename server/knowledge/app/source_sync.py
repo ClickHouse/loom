@@ -116,7 +116,6 @@ from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
-    MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     home,
@@ -615,12 +614,10 @@ async def stored_copies_with_room(
     the turn's room for new documents: LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS less what it
     holds, so past the bound a turn still updates and retires but writes no new file."""
     revisions = await store.source_revisions(src.org, *home(src), pictures=pictures)
-    return stored_with_room(turn, revisions)
+    return index_with_room(turn, revisions)
 
 
-def stored_with_room(
-    turn: TurnResult, revisions: list[dict[str, str]]
-) -> dict[str, dict[str, str]]:
+def index_with_room(turn: TurnResult, revisions: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     """The stored copies `revisions` by file id, and the turn's room for new documents
     (`stored_copies_with_room`)."""
     stored = {d["file_id"]: d for d in revisions}
@@ -1146,11 +1143,6 @@ async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     return doc is None or ours(src, doc)
 
 
-def _in_mirror(src: KnowledgeSource) -> bool:
-    """Whether the source's rows live in its namespace's mirror (`home`)."""
-    return src.access == MIRRORED_ACCESS
-
-
 def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
     """Whether `doc` is one this source's sync wrote."""
     _, tag = home(src)
@@ -1197,7 +1189,7 @@ async def write_document(
     fetch is seconds old by now."""
     namespace, tag = home(src)
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if _in_mirror(src):
+    if not served(src):
         tags.append(tag)  # its `source-id:<id>`, and no repository tag
     elif repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -1251,7 +1243,7 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
     except PublicationPending:  # the delete is committed; the worker publishes it
         deleted = True
     # The audit log outlives an erasure, so a mirror's addresses never go in it.
-    if deleted and not _in_mirror(src):
+    if deleted and served(src):
         await audit.emit(
             "knowledge.delete",
             org=src.org,
@@ -1788,6 +1780,7 @@ __all__ = [
     "file_gone",
     "full_due",
     "give_up",
+    "index_with_room",
     "open_listing",
     "ours",
     "require_current",
@@ -1798,7 +1791,6 @@ __all__ = [
     "stamp_of",
     "start_waits",
     "stored_copies_with_room",
-    "stored_with_room",
     "sync_file",
     "sync_item",
     "valid_stamp",

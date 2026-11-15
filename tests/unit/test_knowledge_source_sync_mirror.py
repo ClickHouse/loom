@@ -900,3 +900,17 @@ def test_a_parked_publication_is_shown_beside_a_failed_fetch(
     _turn(world, _mirrored())
     error = _detail(world)["error"]
     assert error.startswith("publication: a written list is parked") and "503" in error
+
+
+def test_a_parked_publication_is_logged_with_its_source(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def _parked(org: str, namespace: str, uri_suffix: str) -> str:
+        return "parked"
+
+    monkeypatch.setattr(documents, "publications_owed", _parked)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    with caplog.at_level("WARNING", logger="loom.knowledge.source_sync"):
+        _turn(world, _mirrored())
+    # No reader sees a mirror's sync state yet, so the operator learns it from the log.
+    assert any("decks" in r.getMessage() and "parked" in r.getMessage() for r in caplog.records)

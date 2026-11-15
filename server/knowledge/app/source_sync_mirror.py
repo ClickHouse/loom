@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import dataclasses
 import functools
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,6 +43,8 @@ from server.knowledge.store import documents
 from server.knowledge.store import mirrors as mirror_store
 from server.knowledge.store import sources as store
 from server.workers import pass_context
+
+log = logging.getLogger("loom.knowledge.source_sync")
 
 # Seconds between two files' permission reads: ten a second stay well under the store's
 # per-user rate limit.
@@ -88,7 +91,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
     except _Refused:
         return result  # the store refused the account: nothing more is read or written
-    stored = sync.stored_with_room(result, [c for c in copies if c["searchable"]])
+    stored = sync.index_with_room(result, [c for c in copies if c["searchable"]])
     try:
         for f in files:
             read_access = functools.partial(_file_access, token, f, result)
@@ -114,6 +117,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         held_back = await documents.publications_owed(src.org, src.mirror, suffix) or owed
         if held_back:
             note = _HELD_BACK[held_back]
+            if held_back == "parked":  # no reader sees a mirror's state yet: say it here
+                log.warning(
+                    "knowledge_source_sync: %s/%s/%s: %s", src.org, src.namespace, src.name, note
+                )
             if result.error:  # the state shows the error alone: the note goes with it
                 result.error = f"{note}; {result.error}"
             else:

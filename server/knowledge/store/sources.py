@@ -28,7 +28,7 @@ from typing import Any, Literal, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.knowledge.domain.live_chunks import has_live_chunks_sql
 from server.knowledge.domain.sources import (
     NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
@@ -312,8 +312,8 @@ async def every_copy(
     org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, str]]:
     """Every live document the sync wrote under `tag`, as `source_revisions` reads
-    them, each with `searchable` ("1" or "") saying whether its chunks are live; one
-    read where a mirrored turn needs both."""
+    them, each with `searchable` ("1" or "") saying whether its chunks are live and its
+    permission list (`access_json`); one read where a mirrored turn needs both."""
     return await _revisions(org, namespace, tag, searchable="flag", pictures=False, ch=ch)
 
 
@@ -327,10 +327,9 @@ async def source_revisions(
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
     """Each live document the sync wrote under `tag` (`domain.home`): its address, the
-    store's file id it came from, the revision stamp of the ingested copy, its
-    permission list (`access_json`, "" outside a mirror), and for a kind that keeps them
-    (else "") when the copy was read (`read_at`) and the exact hash of what was
-    written (`text_sha256`). With `pictures`, also whether the stored text still
+    store's file id it came from, the revision stamp of the ingested copy, and for a
+    kind that keeps them (else "") when the copy was read (`read_at`) and the exact hash
+    of what was written (`text_sha256`). With `pictures`, also whether the stored text still
     holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
     ""), as a native document stored by an earlier conversion does, and the SHA-256
     of the stored text (`stored_content_sha256`): that reads every document's text,
@@ -359,21 +358,13 @@ async def _revisions(
 ) -> list[dict[str, str]]:
     """`source_revisions` and `every_copy`: the copies whose chunks are live
     (`only`), every copy flagged `searchable` (`flag`), or every copy (`ignore`)."""
-    # One set of (address, kind, value) serves both tests, so ClickHouse reads the
-    # chunks once; a chunk written before chunks recorded their revision has none.
-    live = (
-        "SELECT source_uri, arrayJoin(if(JSONHas(chunk_metadata, 'revision'), "
-        "[('version', doc_version), ('revision', JSONExtractUInt(chunk_metadata, 'revision'))], "
-        "[('version', doc_version)])) FROM loom.chunks "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
-        f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}"
-    )
-    has_live_chunks = (
-        f"((source_uri, ('version', version)) IN ({live}) "
-        f"OR (source_uri, ('revision', revision)) IN ({live}))"
+    has_live_chunks = has_live_chunks_sql(
+        "org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
+        "AND source_uri > {after:String}"
     )
     only = f"AND {has_live_chunks} " if searchable == "only" else ""
-    flag = f"{has_live_chunks} AS searchable, " if searchable == "flag" else ""
+    # A mirror's flagged read also takes each copy's list, which no other caller reads.
+    flag = f"{has_live_chunks} AS searchable, access_json, " if searchable == "flag" else ""
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
         "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
@@ -384,7 +375,7 @@ async def _revisions(
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
         "JSONExtractString(metadata, 'read_at') AS read_at, "
-        "JSONExtractString(metadata, 'text_sha256') AS text_sha256, access_json, "
+        "JSONExtractString(metadata, 'text_sha256') AS text_sha256, "
         f"{flag}{checks} "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
@@ -418,10 +409,10 @@ async def _revisions(
             "text_sha256": str(r.get("text_sha256") or ""),
             "inline_pictures": "1" if r.get("inline_pictures") else "",
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
-            "access_json": str(r.get("access_json") or ""),
         }
         if searchable == "flag":
             doc["searchable"] = "1" if r.get("searchable") else ""
+            doc["access_json"] = str(r.get("access_json") or "")
         found.append(doc)
     return found
 
