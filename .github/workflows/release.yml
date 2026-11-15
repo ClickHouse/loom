@@ -20,7 +20,7 @@ name: release
 # docker-smoke (the quickstart and the installer rehearsal) -> github-release
 # -> sign-files (keyless, each file the release serves) -> attach-signatures
 # -> release-check (tag push only), and pypi, npm, mcp-registry (dispatch
-# only). A re-run after a partial publish is safe: the bundle keeps the
+# only). A re-run after a partial publish is safe: the stack bundle keeps the
 # ClickHouse release it was first published with, the release is updated in
 # place, PyPI skips files it already has, npm and the MCP Registry skip a
 # version they already have, a re-run of failed jobs tags the same build again,
@@ -855,8 +855,9 @@ jobs:
             release/agent/agent-setup.txt
 
   # Signs the files the release serves, downloaded as users download them, so
-  # a kept stack bundle is signed as published. Its own job, so the OIDC token
-  # reaches only cosign; attach-signatures uploads the Sigstore bundles.
+  # a kept stack bundle is signed as published. Its own job, so no step that
+  # can write to the release can also request the OIDC token; attach-signatures
+  # uploads the Sigstore bundles.
   sign-files:
     name: Sign the release files
     if: ${{ !cancelled() && needs.github-release.result == 'success' }}
@@ -872,14 +873,17 @@ jobs:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign and verify each file
-        id: sign
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
         run: |
           bash scripts/release/download_release_files.sh "$VERSION" files
           for file in files/*; do
             case $file in *.sigstore.json) continue ;; esac
-            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
+            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file" || {
+              echo "::error::could not sign $file (cosign's error above); see docs/development/release-process.md#a-failed-tag-or-signature"
+              exit 1
+            }
           done
           bash scripts/release/verify_release_files.sh "$VERSION" files
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -887,6 +891,7 @@ jobs:
           name: release-signatures
           path: files/*.sigstore.json
           if-no-files-found: error
+          overwrite: true # a re-run of this job replaces the earlier attempt's
           retention-days: 30 # as long as the run can be re-run
 
   attach-signatures:
@@ -902,7 +907,7 @@ jobs:
         with:
           name: release-signatures
           path: sigstore
-      - name: Upload the bundles
+      - name: Upload the Sigstore bundles
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" sigstore/*.sigstore.json --clobber --repo "$GITHUB_REPOSITORY"

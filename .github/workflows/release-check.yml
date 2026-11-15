@@ -98,6 +98,7 @@ jobs:
       - name: Every release file carries the release workflow's keyless signature
         env:
           VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
         run: |
           bash scripts/release/download_release_files.sh "$VERSION" "$RUNNER_TEMP/files"
           bash scripts/release/verify_release_files.sh "$VERSION" "$RUNNER_TEMP/files"

@@ -91,24 +91,18 @@ def run(
 
 BUILD = {"version", "preflight", "clickhouse", "build", "verify"}
 REGISTRIES = {"pypi", "npm", "mcp-registry"}
-# github-release, then the release files' signatures.
 RELEASE = {"github-release", "sign-files", "attach-signatures"}
 
 
 def test_a_tag_push_builds_tags_smokes_and_releases() -> None:
     ran = run(event="push", dry_run=None, published=False)
-    assert (
-        ran
-        == BUILD
-        | {
-            "docker",
-            "docker-tag",
-            "sign",
-            "docker-smoke",
-            "release-check",
-        }
-        | RELEASE
-    )
+    assert ran == BUILD | RELEASE | {
+        "docker",
+        "docker-tag",
+        "sign",
+        "docker-smoke",
+        "release-check",
+    }
 
 
 def test_the_registry_dispatch_on_the_published_tag_reaches_every_registry() -> None:

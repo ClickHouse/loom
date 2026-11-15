@@ -262,7 +262,10 @@ there costs a candidate number, not a final version.
    images', into a Sigstore bundle `<file>.sigstore.json`, and verifies each as users do
    (`scripts/release/verify_release_files.sh`). It holds the run's OIDC token in a job of its own,
    with read-only contents; `attach-signatures` then uploads the Sigstore bundles to the release.
-   Signing what the release serves covers a stack bundle the release kept from an earlier run;
+   Signing what the release serves covers a stack bundle the release kept from an earlier run. A
+   dispatch builds the files again, and `github-release` replaces them, so until its own
+   `sign-files` and `attach-signatures` finish, the tag run's Sigstore bundles do not verify the
+   replaced files;
 10. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
     was just published, signed in to nothing: the one-liner from github.com in the same clean
     containers, pulling both images anonymously, and verifies the signatures of both images and
@@ -344,14 +347,18 @@ the `digest=` line, then the `docker buildx imagetools create` command without t
   || { echo "<tag> does not name $digest" >&2; false; }
 ```
 
-A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, say) leaves the
-release published with some files unsigned. "Re-run failed jobs" on that run signs every file the
+A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, say) leaves files on
+the release without a Sigstore bundle that verifies them: unsigned, or, on a dispatch, with the tag
+run's bundles beside the files the dispatch replaced. "Re-run failed jobs" signs every file the
 release serves again and replaces its Sigstore bundles; on a tag push, `release-check` runs after
-them. A `release-check` that
-fails on a file's signature after both passed cannot be fixed by re-running it, since that signs
-nothing: dispatch the tag (`gh workflow run release.yml --ref vX.Y.Z`), which signs the files
-again and also publishes the SDKs and the MCP Registry listing once their environments are
-approved.
+them. A `release-check` that fails on a listing or a download is re-run the same way. One that
+finds a file whose bundle does not verify, after `sign-files` and `attach-signatures` passed,
+re-runs `sign-files` alone, which also re-runs the jobs after it and publishes nothing:
+
+```bash
+job=$(gh run view <run> -R ClickHouse/loom --json jobs --jq '.jobs[] | select(.name == "Sign the release files") | .databaseId')
+gh run rerun <run> -R ClickHouse/loom --job "$job"
+```
 
 ### When the clickhouse job stops
 

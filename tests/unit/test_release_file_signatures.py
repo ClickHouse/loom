@@ -5,6 +5,7 @@ a stub cosign."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -42,18 +43,25 @@ else:
     shutil.copy(tmp / "assets" / name, out / name)
 """
 
-# sign-blob writes the bundle --bundle names; verify-blob runs `verify`.
+# sign-blob writes the file's sha256 as its bundle; verify-blob passes only on a
+# bundle of the same bytes, unless `verify` overrides it.
 COSIGN = """#!/bin/sh
 echo "cosign $*" >> "{tmp}/calls"
-if [ "$1" = sign-blob ]; then echo '{{}}' > "$4"; exit 0; fi
+if [ "$1" = sign-blob ]; then sha256sum < "$5" > "$4"; exit 0; fi
 {verify}
+[ "$(sha256sum < "$2")" = "$(cat "$4")" ]
 """
 
 
-def _env(tmp_path: Path, assets: dict[str, str] | None, verify: str = "exit 0") -> dict[str, str]:
+def _bundle(body: str) -> str:
+    """The stub's Sigstore bundle of a file holding `body`."""
+    return hashlib.sha256(body.encode()).hexdigest() + "  -\n"
+
+
+def _env(tmp_path: Path, assets: dict[str, str] | None, verify: str = "") -> dict[str, str]:
     """PATH with the stubs, serving a release with `assets` (None: the API fails)."""
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(parents=True)
     (bin_dir / "curl").write_text(CURL.format(tmp=str(tmp_path)))
     (bin_dir / "cosign").write_text(COSIGN.format(tmp=tmp_path, verify=verify))
     for stub in bin_dir.iterdir():
@@ -64,7 +72,8 @@ def _env(tmp_path: Path, assets: dict[str, str] | None, verify: str = "exit 0") 
             (tmp_path / "assets" / name).write_text(body)
         urls = [{"browser_download_url": f"{DOWNLOAD}/{name}"} for name in assets]
         (tmp_path / "release.json").write_text(json.dumps({"assets": urls}))
-    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "VERSION": "1.2.0"}
+    env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+    return {**env, "PATH": f"{bin_dir}:{env['PATH']}", "VERSION": "1.2.0"}
 
 
 def _step(job: dict, name: str) -> dict:
@@ -73,15 +82,16 @@ def _step(job: dict, name: str) -> dict:
 
 
 def _run(script: str, env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    cwd.mkdir(parents=True, exist_ok=True)
     (cwd / "scripts").symlink_to(ROOT / "scripts")
     return subprocess.run(
         ["bash", "-e", "-c", script], env=env, cwd=cwd, capture_output=True, text=True
     )
 
 
-def _cosign_calls(tmp_path: Path) -> list[str]:
+def _calls(tmp_path: Path, tool: str) -> list[str]:
     lines = (tmp_path / "calls").read_text().splitlines()
-    return [line.removeprefix("cosign ") for line in lines if line.startswith("cosign ")]
+    return [line.removeprefix(f"{tool} ") for line in lines if line.startswith(f"{tool} ")]
 
 
 def _verify_blob(file: str) -> str:
@@ -97,29 +107,43 @@ CHECK_FILES = _step(
 )
 
 
+def _check(tmp_path: Path, assets: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    env = {**_env(tmp_path, assets), "RUNNER_TEMP": str(tmp_path / "tmp")}
+    return _run(CHECK_FILES["run"], env, tmp_path / "work")
+
+
 def test_sign_files_signs_and_verifies_every_file_the_release_serves(tmp_path: Path) -> None:
     """A Sigstore bundle an earlier run attached is signed again, not signed itself."""
     assets = {"install.sh": "a", "loom-stack.tar.gz": "b", "install.sh.sigstore.json": "{}"}
-    (tmp_path / "work").mkdir()
     result = _run(SIGN["run"], _env(tmp_path, assets), tmp_path / "work")
     assert result.returncode == 0, result.stdout + result.stderr
     files = ["files/install.sh", "files/loom-stack.tar.gz"]
-    assert _cosign_calls(tmp_path) == [
+    assert _calls(tmp_path, "cosign") == [
         *(f"sign-blob --yes --bundle {f}.sigstore.json {f}" for f in files),
         *(_verify_blob(f) for f in files),
     ]
-    assert SIGN["env"]["VERSION"] == "${{ needs.version.outputs.version }}"
 
 
-def test_only_cosign_holds_the_oidc_token_and_only_attach_signatures_writes() -> None:
+def test_a_failed_signature_names_the_recovery(tmp_path: Path) -> None:
+    env = _env(tmp_path, {"install.sh": "a"})
+    (tmp_path / "bin/cosign").write_text("#!/bin/sh\nexit 1\n")
+    result = _run(SIGN["run"], env, tmp_path / "work")
+    assert result.returncode == 1
+    assert "could not sign files/install.sh" in result.stdout
+    assert "#a-failed-tag-or-signature" in result.stdout
+
+
+def test_both_steps_read_the_runs_version_and_list_with_the_runs_token() -> None:
+    token = "${{ github.token }}"
+    assert SIGN["env"] == {"VERSION": "${{ needs.version.outputs.version }}", "GH_TOKEN": token}
+    assert CHECK_FILES["env"] == {"VERSION": "${{ inputs.version }}", "GH_TOKEN": token}
+
+
+def test_no_step_that_writes_to_the_release_can_request_an_oidc_token() -> None:
     sign, attach = RELEASE["sign-files"], RELEASE["attach-signatures"]
     assert sign["permissions"] == {"contents": "read", "id-token": "write"}
     actions = {s["uses"].split("@")[0] for s in sign["steps"] if "uses" in s}
-    assert actions == {
-        "actions/checkout",
-        "sigstore/cosign-installer",
-        "actions/upload-artifact",
-    }
+    assert actions == {"actions/checkout", "sigstore/cosign-installer", "actions/upload-artifact"}
     assert attach["permissions"] == {"contents": "write"}
 
 
@@ -132,24 +156,28 @@ def test_attach_signatures_uploads_the_bundles_sign_files_made() -> None:
     ]
     assert upload["with"]["name"] == download["with"]["name"]
     assert upload["with"]["path"] == "files/*.sigstore.json"
-    attach = _step(RELEASE["attach-signatures"], "Upload the bundles")
+    assert upload["with"]["overwrite"] is True  # a re-run of sign-files uploads it again
+    attach = _step(RELEASE["attach-signatures"], "Upload the Sigstore bundles")
     assert f"{download['with']['path']}/*.sigstore.json --clobber" in attach["run"]
 
 
-def test_release_check_waits_for_the_signatures() -> None:
-    assert RELEASE["sign-files"]["needs"] == ["version", "github-release"]
-    assert RELEASE["attach-signatures"]["needs"] == "sign-files"
-    assert RELEASE["release-check"]["needs"] == ["version", "attach-signatures"]
-
-
-def test_release_check_verifies_each_published_file_signed_in_to_nothing(tmp_path: Path) -> None:
-    assets = {"install.sh": "a", "install.sh.sigstore.json": "{}"}
-    env = {**_env(tmp_path, assets), "RUNNER_TEMP": str(tmp_path / "tmp")}
-    (tmp_path / "work").mkdir()
-    result = _run(CHECK_FILES["run"], env, tmp_path / "work")
+def test_release_check_verifies_each_published_file(tmp_path: Path) -> None:
+    result = _check(tmp_path, {"install.sh": "a", "install.sh.sigstore.json": _bundle("a")})
     assert result.returncode == 0, result.stdout + result.stderr
-    assert _cosign_calls(tmp_path) == [_verify_blob(f"{tmp_path}/tmp/files/install.sh")]
-    assert CHECK_FILES["env"] == {"VERSION": "${{ inputs.version }}"}
+    assert _calls(tmp_path, "cosign") == [_verify_blob(f"{tmp_path}/tmp/files/install.sh")]
+
+
+def test_a_file_replaced_after_signing_fails_until_it_is_signed_again(tmp_path: Path) -> None:
+    """A dispatch replaces the files; the tag run's Sigstore bundles no longer verify them."""
+    assets = {"install.sh": "rebuilt", "install.sh.sigstore.json": _bundle("tag run")}
+    result = _check(tmp_path / "before", assets)
+    assert result.returncode == 1
+    assert "could not verify release.yml's signature on install.sh" in result.stdout
+    signed = _run(SIGN["run"], _env(tmp_path / "sign", assets), tmp_path / "sign/work")
+    assert signed.returncode == 0, signed.stdout + signed.stderr
+    bundle = (tmp_path / "sign/work/files/install.sh.sigstore.json").read_text()
+    assets["install.sh.sigstore.json"] = bundle  # what attach-signatures uploads
+    assert _check(tmp_path / "after", assets).returncode == 0
 
 
 @pytest.mark.parametrize(
@@ -161,12 +189,20 @@ def test_release_check_verifies_each_published_file_signed_in_to_nothing(tmp_pat
     ids=["a file without its bundle", "no files"],
 )
 def test_release_check_fails_closed(tmp_path: Path, assets: dict[str, str], error: str) -> None:
-    env = {**_env(tmp_path, assets), "RUNNER_TEMP": str(tmp_path / "tmp")}
-    (tmp_path / "work").mkdir()
-    result = _run(CHECK_FILES["run"], env, tmp_path / "work")
+    result = _check(tmp_path, assets)
     assert result.returncode == 1
     assert error in result.stdout + result.stderr
-    assert _cosign_calls(tmp_path) == []
+    assert "#a-failed-tag-or-signature" in result.stdout
+    assert _calls(tmp_path, "cosign") == []
+
+
+def test_the_token_reaches_the_listing_and_no_download(tmp_path: Path) -> None:
+    env = {**_env(tmp_path, {"install.sh": "a"}), "GH_TOKEN": "t0ken"}
+    script = ROOT / "scripts/release/download_release_files.sh"
+    subprocess.run(["bash", str(script), "1.2.0", str(tmp_path / "d")], env=env, check=True)
+    listing, download = _calls(tmp_path, "curl")
+    assert listing == f"-fsSL -H Authorization: Bearer t0ken {API}"
+    assert download == f"-fsSL --output-dir {tmp_path}/d -O {DOWNLOAD}/install.sh"
 
 
 def test_a_failed_release_listing_is_not_read_as_an_empty_release(tmp_path: Path) -> None:
@@ -203,13 +239,7 @@ def test_a_file_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -> 
     assert result.returncode == 1
     assert "could not verify release.yml's signature on a" in result.stdout
     assert "#a-failed-tag-or-signature" in result.stdout
-    assert len(_cosign_calls(tmp_path)) == 1  # stops at the first
-
-
-def test_a_missing_bundle_names_the_recovery(tmp_path: Path) -> None:
-    result = _verify(tmp_path, "exit 0", ["a"])
-    assert result.returncode == 1
-    assert "#a-failed-tag-or-signature" in result.stdout
+    assert len(_calls(tmp_path, "cosign")) == 1  # stops at the first
 
 
 def test_a_directory_without_files_fails(tmp_path: Path) -> None:
