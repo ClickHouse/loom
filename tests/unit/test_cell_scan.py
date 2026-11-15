@@ -20,8 +20,8 @@ from server.cli.cell_scan import Budget, Refused, ScanResult, Table, TableList, 
 from server.core import cell
 from server.core.errors import BackendUnavailableError
 
-ONE = Topology("default", frozenset({"localhost"}), 1)
-TWO = Topology("main", frozenset({"ch-0", "ch-1"}), 1)
+ONE = Topology("default", 1, (("localhost", 9000),))
+TWO = Topology("main", 1, (("ch-0", 9000), ("ch-1", 9000)))
 NAMES = {"os-0": "ch-0", "os-1": "ch-1"}
 
 Answer = list[dict[str, Any]] | Callable[[str, dict[str, Any]], list[dict[str, Any]]]
@@ -129,13 +129,11 @@ async def test_the_topology_reads_the_configured_cluster(monkeypatch: pytest.Mon
         ],
     )
     topology = await cell_scan.read_topology(ch)
-    assert topology == Topology(
-        "main", frozenset({"ch-0", "ch-1"}), 2, (("ch-0", 9000), ("ch-1", 9000))
-    )
+    assert topology == Topology("main", 2, (("ch-0", 9000), ("ch-1", 9000)))
     assert topology.multi
     assert "2 shards" in str(topology.refusals()[0])
     monkeypatch.setattr(cell_scan.settings, "ch_cluster", "")
-    assert await cell_scan.read_topology(FakeCH()) == Topology("", frozenset(), 0)
+    assert await cell_scan.read_topology(FakeCH()) == Topology("", 0)
 
 
 async def test_two_servers_under_one_host_name_are_two_and_refuse(
@@ -288,13 +286,13 @@ def test_a_cluster_refuses_tables_one_host_cannot_scan_alone() -> None:
     assert "would miss the others' rows" in refusals[0].reason
     # A replicated table needs a listed cluster to sync through, even on one host.
     replicated = [Table("loom", "memory", "ReplicatedMergeTree")]
-    _, refusals = cell_scan.judge_clickhouse(replicated, _CLASSIFIED, Topology("", frozenset(), 0))
+    _, refusals = cell_scan.judge_clickhouse(replicated, _CLASSIFIED, Topology("", 0))
     assert "LOOM_CH_CLUSTER (unset) lists no host" in refusals[0].reason
     scanned, refusals = cell_scan.judge_clickhouse(replicated, _CLASSIFIED, ONE)
     assert refusals == [] and scanned == replicated
     # So does a shared one: an unlisted cluster is not known to be one host.
     shared = [Table("loom", "memory", "SharedReplacingMergeTree")]
-    unlisted = Topology("main", frozenset(), 0)
+    unlisted = Topology("main", 0)
     _, refusals = cell_scan.judge_clickhouse(shared, _CLASSIFIED, unlisted)
     assert "LOOM_CH_CLUSTER (main) lists no host" in refusals[0].reason
 
@@ -688,3 +686,30 @@ async def test_a_sync_that_does_not_finish_names_its_hosts_not_the_budget() -> N
         Refused, match="SYSTEM FLUSH ASYNC INSERT QUEUE did not finish on localhost"
     ):
         await cell_scan.scan(ch, tables, ONE, Budget(600))
+
+
+async def test_two_servers_under_one_host_name_refuse_before_any_read() -> None:
+    same = Topology("main", 1, (("ch-0", 9000), ("ch-0", 9001)))
+    ch = FakeCH()
+    with pytest.raises(Refused, match="lists host ch-0 2 times"):
+        await cell_scan.host_names(ch, same)
+    listed = await cell_scan.list_tables(ch, None, same, {})
+    assert [r.reason for r in listed.refusals] == [
+        "lists host ch-0 2 times (ports 9000, 9001): give each server its own host name"
+    ]
+    assert ch.calls == []
+
+
+async def test_a_sync_cut_by_the_budget_refuses_as_the_budget() -> None:
+    clock = _Clock()
+    budget = Budget(60, clock)
+    timeout = _DatabaseError("Code: 159. DB::Exception: Timeout exceeded")
+
+    def spend(*_: Any) -> list[dict[str, Any]]:
+        clock.t += 61  # the statement ran the budget out
+        raise timeout
+
+    ch = FakeCH().on("SYSTEM", spend)
+    tables = TableList(clickhouse=[Table("loom", "memory", "ReplicatedMergeTree")])
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
+        await cell_scan.scan(ch, tables, ONE, budget)

@@ -31,6 +31,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.cli.cell_scan import WHOLE_SQL, Refusal, Topology, databases, per_host
+from server.core.ch import query_tag
+from server.core.ch_errors import error_code, error_line
+
+_ACCESS_DENIED = 497  # ClickHouse's ACCESS_DENIED
 
 # Each privilege attach needs and the grants that imply it, closest first.
 _IMPLIED_BY: dict[str, tuple[str, ...]] = {
@@ -251,13 +255,22 @@ def parse_show_grants(lines: Iterable[str]) -> list[Grant]:
 
 
 def resolve_grants(
-    user: str, grant_rows: Iterable[Mapping[str, Any]], role_rows: Iterable[Mapping[str, Any]]
+    user: str,
+    grant_rows: Iterable[Mapping[str, Any]],
+    role_rows: Iterable[Mapping[str, Any]],
+    *,
+    default_only: bool = False,
 ) -> list[Grant]:
     """`user`'s grants from one host's `system.grants` and `system.role_grants` rows, every
-    role it holds followed (default or not, since it can set any)."""
+    role it holds followed (default or not, since it can set any). `default_only` follows
+    only the user's default roles, the ones a new session has (attach's own reads run in
+    one), and every role those hold: `granted_role_is_default` marks the user's own grants,
+    while a role's grant of another always passes it on."""
     granted: dict[str, set[str]] = {}
     for r in role_rows:
         holder = r.get("user_name") or r.get("role_name")
+        if default_only and r.get("user_name") and r.get("granted_role_is_default") == 0:
+            continue
         granted.setdefault(str(holder), set()).add(str(r["granted_role_name"]))
     roles: set[str] = set()
     todo = list(granted.get(user, ()))
@@ -634,7 +647,8 @@ async def _show_grants(ch: Any) -> list[Grant]:
     return parse_show_grants(str(next(iter(r.values()))) for r in rows if r)
 
 
-HostGrants = dict[str, dict[str, list["Grant"]]]
+# Per host, each user it defines and that user's grants.
+HostGrants = dict[str, dict[str, list[Grant]]]
 
 
 async def own_refusals(
@@ -647,15 +661,27 @@ async def own_refusals(
     keeps them."""
     dbs = databases()
     own = await _own_user(ch)
+    # `SHOW GRANTS FINAL` prints the grants of every role the user holds, a role a session
+    # does not have included: this first look names what is missing; the rows decide.
     if missing := own_problems(await _show_grants(ch), topology, dbs):
         return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")], {}
     if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
         return wrong, {}
-    per_user = await _host_grants(ch, topology, names)
+    try:
+        per_user, own_grants = await _host_grants(ch, topology, names, own)
+    except Exception as e:  # only a refused read is judged here; the rest pass to the caller
+        if error_code(e) != _ACCESS_DENIED:
+            raise
+        reason = (
+            f"attach's own user cannot read the grants ({error_line(e)}); a grant held only "
+            "through a role that is not a default role does not reach its sessions"
+        )
+        return [Refusal(f"user {own}", reason)], {}
     out = []
-    for host, users in sorted(per_user.items()):
-        # Each host keeps its own users: attach's must hold the same on every one.
-        if lacks := own_problems(users.get(own, []), topology, dbs):
+    for host, grants in sorted(own_grants.items()):
+        # Each host keeps its own users: attach's must hold the same on every one, through
+        # its default roles alone, as its sessions have them.
+        if lacks := own_problems(grants, topology, dbs):
             out.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
     return out, per_user
 
@@ -686,25 +712,27 @@ async def _process_users(
 
 
 async def _host_grants(
-    ch: Any, topology: Topology, names: Mapping[str, str]
-) -> dict[str, dict[str, list[Grant]]]:
+    ch: Any, topology: Topology, names: Mapping[str, str], own: str
+) -> tuple[HostGrants, dict[str, list[Grant]]]:
     """Per host, each user it defines and that user's grants, from `system.grants` and
-    `system.role_grants` on every topology (every granted role followed, default or not)."""
+    `system.role_grants` on every topology (every granted role followed, default or not);
+    and per host the grants of `own` through its default roles alone."""
     users = await per_host(ch, topology, names, "SELECT hostName() AS h, name FROM {source:users}")
     # Every column: `access_object` and `is_wildcard` are read where the server has them.
     grants = await per_host(ch, topology, names, "SELECT hostName() AS h, * FROM {source:grants}")
     roles = await per_host(
-        ch,
-        topology,
-        names,
-        "SELECT hostName() AS h, user_name, role_name, granted_role_name FROM {source:role_grants}",
+        ch, topology, names, "SELECT hostName() AS h, * FROM {source:role_grants}"
     )
-    return {
+    every = {
         host: {
             str(u["name"]): resolve_grants(str(u["name"]), grants[host], roles[host]) for u in found
         }
         for host, found in users.items()
     }
+    own_grants = {
+        host: resolve_grants(own, grants[host], roles[host], default_only=True) for host in users
+    }
+    return every, own_grants
 
 
 def _on(host: str) -> str:
@@ -716,8 +744,6 @@ async def check_writers(
 ) -> list[Refusal]:
     """Every ClickHouse writer of the configured databases the operator has not named.
     `names` is `cell_scan.host_names()` on a cluster of several hosts, else empty."""
-    from server.core.ch import query_tag
-
     dbs = databases()
     with query_tag("cell.writers"):
         lacking, per_user = await own_refusals(ch, topology, names)

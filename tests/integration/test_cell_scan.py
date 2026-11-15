@@ -175,9 +175,7 @@ async def test_a_postgres_table_without_a_plain_org_index_refuses(own_pg: Any) -
     await own_pg.execute("CREATE INDEX ON loom.scan_probe (org) WHERE id > 0")
     tables = TableList(postgres=["loom.scan_probe"])
     with pytest.raises(Refused, match="postgres loom.scan_probe: has no plain btree index"):
-        await cell_scan.scan(
-            get_client(), tables, cell_scan.Topology("", frozenset(), 0), Budget(60)
-        )
+        await cell_scan.scan(get_client(), tables, cell_scan.Topology("", 0), Budget(60))
 
 
 _PASSWORD = "x{tag}"
@@ -284,7 +282,8 @@ async def test_grants_are_read_as_the_server_keeps_them(
         await ch.execute(f"GRANT {role} TO {users['writer']}")
         await ch.execute(f"SET DEFAULT ROLE NONE TO {users['writer']}")
         topology = await cell_scan.read_topology(ch)
-        (grants,) = (await cell_writers._host_grants(ch, topology, {})).values()
+        every, _ = await cell_writers._host_grants(ch, topology, {}, "")
+        (grants,) = every.values()
         assert f"SELECT ON {schema}.*" in cell_writers.own_problems(
             grants[users["narrow"]], topology, [schema]
         )
@@ -436,3 +435,40 @@ async def test_an_outside_keeper_map_on_an_inside_ones_root_refuses(
     finally:
         await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
         await ch.execute(f"DROP TABLE IF EXISTS {schema}.km SYNC")
+
+
+async def test_a_read_held_only_through_a_non_default_role_refuses(
+    ch: Any, scratch: tuple[str, str], users: dict[str, str]
+) -> None:
+    """A new session has the user's default roles alone, so `system.tables` hides from it
+    what a role it does not have would show: attach's own needs count only through its
+    default roles, though `SHOW GRANTS FINAL` prints every role's."""
+    from tests.integration._resources import ch_client_from_env
+
+    schema, telemetry = scratch
+    narrow = users["narrow"]
+    role = f"{narrow}_role"
+    try:
+        for grant in (
+            "SELECT ON system.*",
+            "SHOW USERS, SHOW ROLES ON *.*",
+            f"SELECT ON {schema}.*",
+            f"SELECT ON {telemetry}.*",
+            "SYSTEM SYNC REPLICA, SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
+        ):
+            await ch.execute(f"GRANT {grant} TO {narrow}")
+        await ch.execute(f"CREATE ROLE {role}")
+        await ch.execute(f"GRANT SHOW TABLES, SHOW COLUMNS ON *.* TO {role}")
+        await ch.execute(f"GRANT {role} TO {narrow}")
+        await ch.execute(f"SET DEFAULT ROLE NONE TO {narrow}")
+        topology = await cell_scan.read_topology(ch)
+        raw = ch_client_from_env(username=narrow, password=users["password"])
+        try:
+            listed = await cell_scan.list_tables(_AsUser(raw), None, topology, {})
+        finally:
+            raw.close()
+        assert [str(r) for r in listed.refusals] == [
+            f"user {narrow}: lacks SHOW TABLES ON *.*, SHOW COLUMNS ON *.*"
+        ]
+    finally:
+        await ch.execute(f"DROP ROLE IF EXISTS {role}")

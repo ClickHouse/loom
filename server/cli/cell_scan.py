@@ -30,9 +30,14 @@ from typing import Any
 
 from clickhouse_connect.driver.exceptions import DatabaseError
 
-from server.core import ch_names
+from server.core import ch_errors, ch_names, pg
 from server.core.cell import ORG_FREE, named_org, org_name_refusal
+from server.core.cell_triggers import ORG_TABLES
 from server.core.ch import query_tag
+from server.core.ch_errors import error_code, error_line
+from server.core.errors import BackendUnavailableError
+from server.erasure.store.census import classified_tables
+from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
 from server.settings import settings
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
@@ -146,20 +151,24 @@ def pg_quote(name: str) -> str:
 
 @dataclass(frozen=True)
 class Topology:
-    """`settings.ch_cluster` as `system.clusters` lists it: its configured host names, its
-    entries as (host name, port), one per server, and its shard count (no hosts when the
-    cluster is unset or unlisted)."""
+    """`settings.ch_cluster` as `system.clusters` lists it: its entries as (host name,
+    port), one per server, and its shard count (no entries when the cluster is unset or
+    unlisted)."""
 
     cluster: str
-    hosts: frozenset[str]
     shards: int
     entries: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def hosts(self) -> frozenset[str]:
+        """The configured host names."""
+        return frozenset(host for host, _ in self.entries)
 
     @property
     def multi(self) -> bool:
         """More than one server: reads go through `clusterAllReplicas`, statements that must
         reach every replica carry `ON CLUSTER`. Two servers on one machine are two."""
-        return len(self.entries or self.hosts) > 1
+        return len(self.entries) > 1
 
     def refusals(self) -> list[Refusal]:
         out = []
@@ -191,7 +200,7 @@ class Topology:
 async def read_topology(ch: Any) -> Topology:
     cluster = settings.ch_cluster
     if not cluster:
-        return Topology("", frozenset(), 0)
+        return Topology("", 0)
     with query_tag(_TAG):
         rows = await ch.query_all(
             "SELECT host_name, port, shard_num FROM system.clusters WHERE cluster = {c:String} "
@@ -200,7 +209,6 @@ async def read_topology(ch: Any) -> Topology:
         )
     return Topology(
         cluster,
-        frozenset(str(r["host_name"]) for r in rows),
         len({int(r["shard_num"]) for r in rows}),
         tuple(sorted((str(r["host_name"]), int(r["port"])) for r in rows)),
     )
@@ -209,7 +217,10 @@ async def read_topology(ch: Any) -> Topology:
 async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
     """Each answering host's OS hostname (an opaque group key) and the one configured name
     it answers for in the cluster; Refused unless there is one group per listed host, each
-    with exactly one name, the names together the listing."""
+    with exactly one name, the names together the listing. The topology's own refusals (two
+    servers under one host name, several shards) come first, before any read."""
+    if refusals := topology.refusals():
+        raise Refused(refusals)
     with query_tag(_TAG):
         rows = await ch.query_all(
             "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
@@ -436,14 +447,12 @@ async def reverse_clickhouse(
     """A classified table the listing did not return, whose `DESCRIBE TABLE` (which errors
     rather than hides on a missing grant) shows an `org` column, refuses; so does a
     `DESCRIBE` refused for want of a grant. A table that does not exist is not scanned."""
-    from server.core.ch_errors import error_code, error_line
-
     seen = {t.canonical for t in listed}
     out = []
     for name in sorted(set(classified) - seen):
         db, table = ch_names.split_table(name)
         try:
-            rows = await ch.query_all(f"DESCRIBE TABLE {quote(db)}.{quote(table)}")
+            rows = await ch.query_all(f"DESCRIBE TABLE {quote(db)}.{quote(table)} {WHOLE_SQL}")
         except Exception as e:  # noqa: BLE001 — every failure but a missing table refuses
             if error_code(e) in _UNKNOWN_TABLE_CODES:
                 continue
@@ -458,8 +467,6 @@ async def reverse_clickhouse(
 
 def pg_classified() -> set[str]:
     """Postgres's erasure classification, as `loom.<name>`."""
-    from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
-
     return {t.removeprefix("pg:") for t in PG_CENSUS} | set(PG_NO_MEMORY_CONTENT)
 
 
@@ -468,9 +475,6 @@ async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
     the refusals: one erasure does not classify, a census table the listing missed whose
     `pg_attribute` shows an `org` column (`information_schema.columns` hides the columns of
     a table the reading role holds no privilege on)."""
-    from server.core.cell_triggers import ORG_TABLES
-    from server.erasure.store.steps_pg import PG_CENSUS
-
     names = [f"loom.{r['relname']}" for r in await conn.fetch(ORG_TABLES)]
     known = pg_classified()
     refusals = [
@@ -504,15 +508,16 @@ async def list_tables(
 async def _list_tables(
     ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
 ) -> TableList:
-    from server.cli.cell_writers import own_refusals
-    from server.erasure.store.census import classified_tables
+    from server.cli.cell_writers import own_refusals  # it imports this module
 
+    if refusals := topology.refusals():
+        return TableList(refusals=refusals)
     # The system tables hide what the reading user cannot see: a narrower user lists short.
     lacking, _ = await own_refusals(ch, topology, names)
     if lacking:
         return TableList(refusals=lacking)
     classified = set(classified_tables())
-    out = TableList(refusals=topology.refusals())
+    out = TableList()
     tables, problems = await list_clickhouse(ch, topology, names, databases())
     if problems:
         out.refusals += problems
@@ -611,8 +616,6 @@ def pg_skip_scan_sql(table: str) -> str:
 
 
 async def _pg_orgs(table: str, budget: Budget) -> list[str]:
-    from server.core import pg
-
     subject = f"postgres {table}"
     while True:
         left = budget.require(subject)
@@ -644,14 +647,10 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
 
 
 def _unavailable(e: BaseException) -> bool:
-    from server.core.errors import BackendUnavailableError
-
     return isinstance(e, BackendUnavailableError)
 
 
 def _ch_transient(e: BaseException) -> bool:
-    from server.core import ch_errors
-
     return (
         ch_errors.is_transient_network_error(e)
         or ch_errors.is_connection_failure(e)
@@ -664,16 +663,14 @@ def _on_cluster(topology: Topology) -> str:
     return f" ON CLUSTER {quote(topology.cluster)}" if topology.multi else ""
 
 
-async def _system(ch: Any, sql: str, topology: Topology, left: float, subject: str) -> None:
-    """A SYSTEM statement bounded by `left`. On several hosts it carries `ON CLUSTER`
-    (`_on_cluster`) and each host's status is read back: every listed host must answer, each
-    with status 0 (pinned with `distributed_ddl_output_mode = 'throw'`, so a profile's
-    `never_throw` hides none). One that does not finish in time refuses with the server's
-    error and the hosts it did not finish on: a replica that cannot sync, not a budget to
-    raise."""
-    from server.core.ch_errors import error_code, error_line
-
-    seconds = max(1, int(left))
+async def _system(ch: Any, sql: str, topology: Topology, budget: Budget, subject: str) -> None:
+    """A SYSTEM statement bounded by what is left of `budget`. On several hosts it carries
+    `ON CLUSTER` (`_on_cluster`) and each host's status is read back: every listed host must
+    answer, each with status 0 (pinned with `distributed_ddl_output_mode = 'throw'`, so a
+    profile's `never_throw` hides none). One that does not finish in time refuses as the
+    budget when the budget is spent, else with the server's error and the hosts it did not
+    finish on: a replica that cannot sync."""
+    seconds = max(1, int(budget.require(subject)))
     # `receive_timeout` bounds SYNC REPLICA's own wait.
     bounds = {"max_execution_time": seconds, "receive_timeout": seconds}
     what = sql.split(" ON CLUSTER ")[0].split(" `")[0]
@@ -694,6 +691,8 @@ async def _system(ch: Any, sql: str, topology: Topology, left: float, subject: s
     except Exception as e:  # only a timeout is judged here; the rest pass to the caller
         if error_code(e) not in _TIMEOUT_CODES:
             raise
+        if budget.left() <= 0:
+            raise Refused([_out_of_budget(subject, budget.seconds)]) from None
         done = {str(r.get("host")) for r in getattr(e, "rows", ()) if r.get("status") == 0}
         unfinished = ", ".join(sorted(topology.hosts - done)) or "this server"
         raise Refused(
@@ -771,15 +770,13 @@ async def _read_scan(
 
 
 async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) -> list[bytes | None]:
-    from server.core.ch_errors import error_code, error_line
-
     subject = f"clickhouse {table.canonical}"
     while True:
-        left = budget.require(subject)
+        budget.require(subject)
         try:
             # Rows buffered on any replica land before the table is read.
             flush = f"SYSTEM FLUSH ASYNC INSERT QUEUE{_on_cluster(topology)}"
-            await _system(ch, flush, topology, left, subject)
+            await _system(ch, flush, topology, budget, subject)
             if table.engine.startswith("Replicated"):
                 # Every replica pulls every part acknowledged before now, so the read
                 # through any one of them sees them all.
@@ -787,7 +784,7 @@ async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) ->
                     ch,
                     f"SYSTEM SYNC REPLICA{_on_cluster(topology)} {table.sql} LIGHTWEIGHT",
                     topology,
-                    budget.require(subject),
+                    budget,
                     subject,
                 )
             extra: dict[str, Any] = {

@@ -94,7 +94,7 @@ def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
     assert cell_writers.own_problems(full, ONE, DBS) == []
     assert cell_writers.own_problems(full, TWO, DBS) == ["READ ON REMOTE", "CLUSTER ON *.*"]
     narrow = [Grant("SELECT", "loom", "memory"), Grant("SELECT", "system"), Grant("SHOW")]
-    assert cell_writers.own_problems(narrow, Topology("", frozenset(), 0), DBS) == [
+    assert cell_writers.own_problems(narrow, Topology("", 0), DBS) == [
         "SHOW USERS ON *.*",
         "SHOW ROLES ON *.*",
         "SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
@@ -155,6 +155,27 @@ def test_a_grants_row_as_newer_servers_write_it() -> None:
         Grant("URL"),
         Grant("INSERT", "lo*"),
     ]
+
+
+def test_attachs_own_sessions_have_only_its_default_roles() -> None:
+    grant_rows = [
+        {"user_name": None, "role_name": "kept", "access_type": "SHOW"},
+        {"user_name": None, "role_name": "inner", "access_type": "SELECT"},
+        {"user_name": None, "role_name": "spare", "access_type": "INSERT", "database": "loom"},
+    ]
+    # A role's grant of another reads `granted_role_is_default` 1, as the server writes it.
+    role_rows = [
+        {"user_name": "u", "role_name": None, "granted_role_name": "kept",
+         "granted_role_is_default": 1},
+        {"user_name": None, "role_name": "kept", "granted_role_name": "inner",
+         "granted_role_is_default": 1},
+        {"user_name": "u", "role_name": None, "granted_role_name": "spare",
+         "granted_role_is_default": 0},
+    ]  # fmt: skip
+    every = cell_writers.resolve_grants("u", grant_rows, role_rows)
+    assert {g.access for g in every} == {"SHOW", "SELECT", "INSERT"}
+    session = cell_writers.resolve_grants("u", grant_rows, role_rows, default_only=True)
+    assert {g.access for g in session} == {"SHOW", "SELECT"}
 
 
 def test_roles_are_followed_and_partial_revokes_ignored() -> None:
@@ -454,7 +475,14 @@ async def test_a_narrow_own_user_refuses_before_any_other_read() -> None:
     assert not [sql for _, sql, _ in ch.calls if "system." in sql]
 
 
-def _cluster(process_user: str = "attach", lacking_on: str = "") -> FakeCH:
+def _cluster(
+    process_user: str = "attach",
+    lacking_on: str = "",
+    grants: list[dict[str, Any]] | None = None,
+    roles: list[dict[str, Any]] | None = None,
+) -> FakeCH:
+    """Two hosts; `lacking_on` a host whose attach grants leave SHOW out; `grants` and
+    `roles` extra `system.grants` and `system.role_grants` rows."""
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM, CLUSTER ON *.* TO attach"},
         {"g": "GRANT SHOW USERS, SHOW ROLES, REMOTE ON *.* TO attach"},
@@ -500,10 +528,13 @@ def _cluster(process_user: str = "attach", lacking_on: str = "") -> FakeCH:
                 {"h": "os-1", "name": "local"},
             ],
         )
-        .on("system.grants", [*attach_grants, local_writer])
+        .on("system.grants", [*attach_grants, local_writer, *(grants or [])])
         .on(
             "system.role_grants",
-            [{"h": "os-1", "user_name": "local", "role_name": None, "granted_role_name": "w"}],
+            [
+                {"h": "os-1", "user_name": "local", "role_name": None, "granted_role_name": "w"},
+                *(roles or []),
+            ],
         )
         .on("system.user_directories", [{"h": "os-0", "name": "ldap", "type": "ldap"}])
         .on(
@@ -615,6 +646,42 @@ async def test_the_listing_checks_every_host_runs_it_as_attachs_user() -> None:
     assert [r.subject for r in listed.refusals] == ["host ch-1"]
     assert listed.clickhouse == []
     listed = await cell_scan.list_tables(_cluster(lacking_on="os-1"), None, TWO, NAMES)
+    assert [str(r) for r in listed.refusals] == [
+        "user attach: lacks SHOW TABLES ON *.*, SHOW COLUMNS ON *.* on host ch-1"
+    ]
+
+
+def _own_through_a_spare_role(host: str) -> list[dict[str, Any]]:
+    """Attach holding SHOW only through a role that is not a default one, on `host`."""
+    return [
+        {"h": host, "user_name": None, "role_name": "spare", "access_type": "SHOW",
+         "database": None, "table": None, "grant_option": 0, "is_partial_revoke": 0},
+    ]  # fmt: skip
+
+
+async def test_a_need_held_only_through_a_non_default_role_refuses_on_one_host() -> None:
+    ch = _single_host()
+    ch.routes = [r for r in ch.routes if r[0] not in ("system.grants", "system.role_grants")]
+    rows = [
+        _row("attach", a) for a in ("SELECT", "SHOW USERS", "SHOW ROLES", "SYSTEM")
+    ] + _own_through_a_spare_role("x")
+    ch.on("system.grants", rows)
+    ch.on(
+        "system.role_grants",
+        [{"h": "x", "user_name": "attach", "role_name": None, "granted_role_name": "spare",
+          "granted_role_is_default": 0}],
+    )  # fmt: skip
+    refusals = await cell_writers.check_writers(ch, ONE, {}, Allowed())
+    assert [str(r) for r in refusals] == [
+        "user attach: lacks SHOW TABLES ON *.*, SHOW COLUMNS ON *.*"
+    ]
+
+
+async def test_a_need_held_only_through_a_non_default_role_refuses_on_one_of_several() -> None:
+    spare = {"h": "os-1", "user_name": "attach", "role_name": None,
+             "granted_role_name": "spare", "granted_role_is_default": 0}  # fmt: skip
+    ch = _cluster(lacking_on="os-1", grants=_own_through_a_spare_role("os-1"), roles=[spare])
+    listed = await cell_scan.list_tables(ch, None, TWO, NAMES)
     assert [str(r) for r in listed.refusals] == [
         "user attach: lacks SHOW TABLES ON *.*, SHOW COLUMNS ON *.* on host ch-1"
     ]
