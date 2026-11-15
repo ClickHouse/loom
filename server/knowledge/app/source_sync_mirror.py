@@ -79,7 +79,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
     except _Refused:
         return result  # the store refused the account: nothing more is read or written
-    stored = sync.stored_by_file_id(result, [c for c in copies if c["searchable"]])
+    stored = sync.stored_with_room(result, [c for c in copies if c["searchable"]])
     try:
         for uri, f in addressed:
             access = functools.partial(_listed_access, token, f, result)
@@ -129,23 +129,22 @@ async def _refresh_lists(
     `listed` at its address, or `unread` when a `whole` listing does not have it there.
     Each list is compared with the one the storage authority holds, and changed lists
     are written a batch at a time as they are read, so a turn the deadline or the
-    store cuts keeps what it read. False when the deadline cut it."""
+    store cuts keeps what it read. Only a read from the store stops at the deadline:
+    a list the listing carried is compared and written all the same. False when the
+    deadline cut it."""
     for start in range(0, len(copies), _REWRITE_BATCH):
-        if run.budget.exhausted():
-            result.mark(sync.TurnMark.PASS_BOUND)
-            return False
         batch = copies[start : start + _REWRITE_BATCH]
         held = {c["source_uri"]: c["access_json"] for c in batch}
         held |= await documents.committed_lists(src.org, src.mirror, list(held))
         changed: dict[str, access_list.AccessList] = {}
         try:
             for uri in held:
-                if run.budget.exhausted():
-                    result.mark(sync.TurnMark.PASS_BOUND)
-                    break
                 f = listed.get(uri)
                 if f is None and not whole:
                     continue  # an incomplete search may have missed it: it keeps its list
+                if f is not None and "permissions" not in f and run.budget.exhausted():
+                    result.mark(sync.TurnMark.PASS_BOUND)  # only a read costs time
+                    break
                 access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
                 if access_list.from_json(held[uri]) != access:
                     changed[uri] = access

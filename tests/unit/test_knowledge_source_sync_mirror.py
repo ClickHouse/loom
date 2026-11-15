@@ -368,7 +368,8 @@ def test_a_walk_cut_at_its_bounds_reads_unread_where_it_did_not_reach(
         200, json={"id": "doc1", "mimeType": DOCS, "parents": [FOLDER], "trashed": False}
     )
     _turn(world, _mirrored())
-    assert world.docs[uri]["access_json"] == ""  # kept, since the store says it is there
+    # The document is kept (the store says it is there), its list unread.
+    assert world.docs[uri]["access_json"] == ""
     assert len(mirror["listings"]) == 2
 
 
@@ -633,7 +634,7 @@ def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
         del f["permissions"]
     result = _turn(world, _mirrored())
     assert result.cut and len(mirror["rewrites"]) == 2  # batches one and two
-    assert reads == [[u] for u in sorted(world.docs)][:2]  # each batch its own heads, none past
+    assert reads == [[u] for u in sorted(world.docs)]  # each batch reads its own heads
 
 
 def test_a_mirrored_source_without_a_mirror_turn_is_refused_a_turn() -> None:
@@ -707,3 +708,28 @@ def test_a_turn_between_full_intervals_looks_up_no_absent_file(world: Any, mirro
     assert lookups == [] and result.removed == 0
     [(written, _)] = world.upserts
     assert world.docs[written.source_uri]["access_json"] == ""  # it admits nobody meanwhile
+
+
+def test_a_deadline_with_every_list_already_listed_still_records_the_listing(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file(f"doc{n}", DOCS, f"2026-01-0{n}T00:00:00.000Z", permissions=READERS)
+        for n in (1, 2, 3)
+    ]
+    _turn(world, _mirrored())
+    out = {"read": False}
+    real = source_sync_mirror.store.every_copy
+
+    async def _then_out_of_time(*a: Any, **kw: Any) -> Any:
+        copies = await real(*a, **kw)
+        out["read"] = True  # the deadline passes once the stored copies are read
+        return copies
+
+    monkeypatch.setattr(source_sync_mirror, "_REWRITE_BATCH", 1)
+    monkeypatch.setattr(source_sync_mirror.store, "every_copy", _then_out_of_time)
+    monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["read"])
+    for f in world.files:
+        f["permissions"] = []  # every list narrowed, each carried by the listing
+    result = _turn(world, _mirrored())
+    assert not result.cut and len(mirror["rewrites"]) == 3 and len(mirror["listings"]) == 2

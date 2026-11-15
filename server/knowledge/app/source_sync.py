@@ -7,7 +7,7 @@ each other kind, and a mirrored folder source, has its own turn module
 `source_sync_mirror`), chosen by `_turn_of`, which builds on the public helpers
 here: `Pass` and `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and
 `valid_stamp` for a turn's start and stamp, `open_listing` and `vendor_failure` for
-a folder listing, `stored_copies_with_room` and `stored_by_file_id` for the stored
+a folder listing, `stored_copies_with_room` and `stored_with_room` for the stored
 copies and the turn's room under the document bound, `sync_item` and `sync_file`
 for one listed item, with `give_up`, `wait` and `require_current` for its fetch,
 `write_document` and `counted` for its write, `ours`, `file_gone`,
@@ -622,10 +622,10 @@ async def stored_copies_with_room(
     the turn's room for new documents: LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS less what it
     holds, so past the bound a turn still updates and retires but writes no new file."""
     revisions = await store.source_revisions(src.org, *home(src), pictures=pictures)
-    return stored_by_file_id(turn, revisions)
+    return stored_with_room(turn, revisions)
 
 
-def stored_by_file_id(
+def stored_with_room(
     turn: TurnResult, revisions: list[dict[str, str]]
 ) -> dict[str, dict[str, str]]:
     """The stored copies `revisions` by file id, and the turn's room for new documents
@@ -978,7 +978,7 @@ async def _fetch_and_write(
     turn: TurnResult,
     *,
     stored_content_sha256: str,
-    permissions: access_list.AccessList = access_list.UNREAD,
+    permissions: access_list.AccessList,
 ) -> str:
     """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
     text equals the stored copy), `skipped` (another writer took the address during the
@@ -1800,10 +1800,10 @@ __all__ = [
     "stamp_of",
     "start_waits",
     "stored_copies_with_room",
+    "stored_with_room",
     "sync_file",
     "sync_item",
     "valid_stamp",
-    "stored_by_file_id",
     "vendor_failure",
     "wait",
     "write_document",
