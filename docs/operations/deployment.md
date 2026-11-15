@@ -1025,19 +1025,20 @@ cosign verify ghcr.io/clickhouse/loom:X.Y.Z \
 
 The signature is on each image's multi-arch index, so verify the tag or the index digest
 (the `Digest:` line of `docker buildx imagetools inspect ghcr.io/clickhouse/loom:X.Y.Z`), not
-one architecture's.
+one architecture's. The one-line installer pins `X.Y.Z` in its generated `.env`; pin an immutable
+version (or that index digest) in production rather than tracking `latest`
+([release process](../development/release-process.md)).
 
 Each file on the GitHub Release (`install.sh`, the bundle and its checksum, the SDK packages, the
-plugin zips, `agent-setup.txt`) has a Sigstore bundle next to it, named `<file>.sigstore.json`,
-from the same workflow run (releases after 1.2.0). Download both and check the file:
+plugin zips, `agent-setup.txt`) has a Sigstore bundle beside it, `<file>.sigstore.json`, made by
+the same workflow (a release published before the workflow signed its files has none). Download
+both and check the file:
 
-````bash
+```bash
 cosign verify-blob install.sh --bundle install.sh.sigstore.json \
   --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
-``` The one-line installer pins `X.Y.Z` in its generated `.env`; pin an immutable
-version (or that index digest) in production rather than tracking `latest`
-([release process](../development/release-process.md)).
+```
 
 The document extractor service (the parsers, apart from the server: [document
 extraction](../architecture/document-extraction.md)) is an image of its own, built by
@@ -1090,7 +1091,7 @@ flowchart LR
   R1 --> CH[(ClickHouse)]
   R2 --> CH
   RN --> CH
-````
+```
 
 The replica that holds the `workers_supervisor` lease runs the background workers in a
 child process, so it answers requests as fast as the others. When it stops, another

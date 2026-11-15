@@ -265,9 +265,8 @@ there costs a candidate number, not a final version.
    containers, pulling both images anonymously, and verifies the signatures of both images and
    of every file the release carries, which must come from `release.yml` on that tag, as a user
    does ([container images](../operations/deployment.md#container-images)); a file without its
-   `.sigstore.json` fails. A release published before the release workflow signed its images or
-   its files (1.2.0 and earlier) lacks those signatures, so a check of it fails its `signatures`
-   job.
+   `.sigstore.json` fails. A release published before the release workflow signed its images, or
+   its files, lacks those signatures, so a check of it fails its `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
