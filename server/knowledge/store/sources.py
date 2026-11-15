@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
@@ -308,6 +308,15 @@ async def source_documents(
 _INLINE_PICTURE = r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*<?data:"
 
 
+async def every_copy_flagged(
+    org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
+) -> list[dict[str, str]]:
+    """Every live document the sync wrote under `tag`, as `source_revisions` reads
+    them, each with `searchable` ("1" or "") saying whether its chunks are live; one
+    read where a mirrored turn needs both."""
+    return await _revisions(org, namespace, tag, chunks="flag", pictures=False, ch=ch)
+
+
 async def source_revisions(
     org: str,
     namespace: str,
@@ -334,8 +343,22 @@ async def source_revisions(
     its revision must not let the next turn skip the file. Its chunks are those of its
     version or of its revision, since a rewrite of the row alone (a new list, a
     metadata edit) keeps the revision and its chunks. Without it every live document
-    counts, which is what removal needs, and `searchable` ("1" or "") says which of
-    them would."""
+    counts, which is what removal needs."""
+    chunks: Literal["only", "any"] = "only" if searchable_only else "any"
+    return await _revisions(org, namespace, tag, chunks=chunks, pictures=pictures, ch=ch)
+
+
+async def _revisions(
+    org: str,
+    namespace: str,
+    tag: str,
+    *,
+    chunks: Literal["only", "flag", "any"],
+    pictures: bool,
+    ch: _CHClient | None,
+) -> list[dict[str, str]]:
+    """`source_revisions` and `every_copy_flagged`: the copies whose chunks are live
+    (`only`), every copy flagged `searchable` (`flag`), or every copy (`any`)."""
     # One set of (address, kind, value) serves both tests, so ClickHouse reads the
     # chunks once; a chunk written before chunks recorded their revision has none.
     live = (
@@ -349,8 +372,8 @@ async def source_revisions(
         f"((source_uri, ('version', version)) IN ({live}) "
         f"OR (source_uri, ('revision', revision)) IN ({live}))"
     )
-    chunks = f"AND {searchable} " if searchable_only else ""
-    flag = "" if searchable_only else f"{searchable} AS searchable, "
+    only = f"AND {searchable} " if chunks == "only" else ""
+    flag = f"{searchable} AS searchable, " if chunks == "flag" else ""
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
         "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
@@ -367,7 +390,7 @@ async def source_revisions(
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
         "AND source_uri > {after:String} "
-        f"{chunks}ORDER BY source_uri LIMIT {REVISIONS_PAGE}"
+        f"{only}ORDER BY source_uri LIMIT {REVISIONS_PAGE}"
     )
     params = {
         "org": org,
@@ -397,7 +420,8 @@ async def source_revisions(
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
             "access_json": str(r.get("access_json") or ""),
         }
-        doc["searchable"] = "1" if searchable_only or r.get("searchable") else ""
+        if chunks == "flag":
+            doc["searchable"] = "1" if r.get("searchable") else ""
         found.append(doc)
     return found
 
@@ -432,6 +456,7 @@ __all__ = [
     "pending_delete_sources",
     "read_states",
     "source_documents",
+    "every_copy_flagged",
     "source_revisions",
     "sources_in",
     "write_state",

@@ -1,7 +1,7 @@
-"""A mirrored folder-store source's turn: every listing is complete, and each file is
-written into the namespace's mirror with the permission list the store gives it
-(docs/architecture/document-sources.md, The mirror; Every complete listing reads the
-lists again).
+"""A mirrored folder-store source's turn: every listing is a full one (no
+`modified_after`), and each file is written into the namespace's mirror with the
+permission list the store gives it (docs/architecture/document-sources.md, The mirror;
+Every complete listing reads the lists again).
 
 The turn first brings every stored copy's list to what the store says now: the list of
 the file listed at its address, or `unread` for a copy a whole listing does not have
@@ -27,7 +27,6 @@ from server.core.ch import sequential_reads
 from server.core.pg_lease import PublicationPending
 from server.knowledge.app import mirrors
 from server.knowledge.app import source_sync as sync
-from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import (
     KnowledgeSource,
@@ -51,8 +50,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     then write its new and changed files and retire the gone ones."""
     detail = json_object(state.get("detail", ""))
     result = sync.TurnResult()
-    # Every listing is complete; `full` is the periodic full interval, which gives each
-    # given-up file its one more try.
+    # Every listing is a full one; `full` is the periodic full interval, which gives
+    # each given-up file its one more try.
     result.full = bool(detail.get("full")) or sync.full_due(detail)
     sync.start_waits(result, detail)
     started = datetime.now(UTC)
@@ -60,7 +59,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     if opened is None:
         return result
     token, listing, files = opened
-    src = dataclasses.replace(src, mirror=await _mirror(src))
+    src = dataclasses.replace(src, mirror=await mirrors.ensure_mirror(src.org, src.namespace))
     if result.complete and not listing.walk_cut:
         listed_ids = {str(f["id"]) for f in files}
         result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
@@ -69,9 +68,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     whole = listing.whole and not listing.lost_item
     # A head whose row ClickHouse does not have yet is not among the copies read, so a
     # listing that began with one owed vouches for nothing.
-    owed = await documents.publications_owed(src.org, src.mirror, src.source_id)
+    own = mirror_uri("", src.source_id)  # the end of every address this source writes
+    owed = await documents.publications_owed(src.org, src.mirror, own)
     with sequential_reads():  # a replica behind the last turn would show an older list
-        copies = await store.source_revisions(src.org, *home(src), searchable_only=False)
+        copies = await store.every_copy_flagged(src.org, *home(src))
     try:
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
     except _Refused:
@@ -93,7 +93,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
     if lists_current and whole:
-        if owed or await documents.publications_owed(src.org, src.mirror, src.source_id):
+        if owed or await documents.publications_owed(src.org, src.mirror, own):
             _note(result, "publication: a written list is not in ClickHouse yet")
             return result
         pass_context.check_stop()
@@ -109,15 +109,6 @@ class _Refused(Exception):
 def _note(result: sync.TurnResult, note: str) -> None:
     if note not in result.note:  # once, however many files it was for
         result.note = "; ".join(filter(None, [result.note, note]))
-
-
-async def _mirror(src: KnowledgeSource) -> str:
-    """The namespace's mirror, made under the namespace's sources lease only when it has
-    none, so a turn takes the lease once per mirror."""
-    if mirror := await mirrors.live_mirror(src.org, src.namespace):
-        return mirror
-    async with source_ops.sources_lease(src.org, src.namespace):
-        return await mirrors.ensure_mirror(src.org, src.namespace)
 
 
 async def _refresh_lists(
@@ -142,12 +133,10 @@ async def _refresh_lists(
         held = {c["source_uri"]: c["access_json"] for c in batch}
         held |= await documents.committed_lists(src.org, src.mirror, list(held))
         changed: dict[str, access_list.AccessList] = {}
-        cut = False
         try:
             for uri in held:
                 if run.budget.exhausted():
                     result.mark(sync.TurnMark.PASS_BOUND)
-                    cut = True
                     break
                 f = listed.get(uri)
                 if f is None and not whole:
@@ -161,7 +150,7 @@ async def _refresh_lists(
             await _write_lists(src, changed)  # what was read is written all the same
             raise
         await _write_lists(src, changed)
-        if cut:
+        if result.cut:  # the deadline, here or in a read it gave up
             return False
     return True
 
@@ -176,6 +165,7 @@ async def _listed_access(
     refused the account."""
     if "permissions" not in f:
         if run.budget.exhausted():
+            result.mark(sync.TurnMark.PASS_BOUND)  # its list is not current: no vouching
             return access_list.UNREAD
         pass_context.check_stop()
         try:

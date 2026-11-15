@@ -578,10 +578,10 @@ async def open_listing(
     except gdrive.VendorError as e:
         vendor_failure(turn, e)
         return None
-    note_listing(turn, listing)
+    _note_listing(turn, listing)
     if listing.ran_out:
         return None  # out of pass time: nothing more is written or retired this turn
-    if check_items and not await items_visible(token, src.items, turn, run.budget.exhausted):
+    if check_items and not await _items_visible(token, src.items, turn, run.budget.exhausted):
         return None
     files = [f for f in listing.files if gdrive.valid_file_id(str(f.get("id") or ""))]
     turn.documents_seen = len(files)
@@ -598,7 +598,7 @@ def vendor_failure(turn: TurnResult, e: gdrive.VendorError) -> None:
         turn.fail("failed", client_error(e))
 
 
-def note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
+def _note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
     """The listing's notes on the turn. An incomplete listing (the store could not search
     everything, or an item listed nothing) has its files written, but the turn keeps its
     stamp, retires nothing and lists again next pass; a listing the pass ran out on
@@ -694,7 +694,7 @@ def _visibility_checks(
             yield gdrive.require_folder, item["in"]
 
 
-async def items_visible(
+async def _items_visible(
     token: str, items: list[dict[str, Any]], turn: TurnResult, out_of_time: Callable[[], bool]
 ) -> bool:
     """Whether the turn may go on after checking that the account still sees every folder
@@ -897,9 +897,9 @@ async def sync_file(
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
     `access` runs just before a fetch and gives the permission list the write carries
-    (`unread` without it). A native document whose
-    stored text still holds its pictures' bytes (an earlier conversion's) is fetched
-    and converted again at its same revision when a full listing lists it."""
+    (`unread` without it). A native document whose stored text still holds its
+    pictures' bytes (an earlier conversion's) is fetched and converted again at its
+    same revision when a full listing lists it."""
     revision = str(f.get("modifiedTime") or "")
     # A copy stored with its pictures' bytes, at this revision and address, is converted
     # again; a moved file takes the ordinary write-and-retire path.
@@ -1789,8 +1789,6 @@ __all__ = [
     "file_gone",
     "full_due",
     "give_up",
-    "items_visible",
-    "note_listing",
     "open_listing",
     "ours",
     "require_current",

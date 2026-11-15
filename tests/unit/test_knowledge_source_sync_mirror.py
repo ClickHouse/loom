@@ -159,6 +159,13 @@ def test_a_mirror_never_takes_a_name_already_in_use(monkeypatch: pytest.MonkeyPa
     async def _add(org: str, namespace: str, mirror: str, **kw: Any) -> None:
         added.append(mirror)
 
+    from server.core import leases
+
+    @contextlib.asynccontextmanager
+    async def _holding(name: str, **kw: Any) -> AsyncIterator[bool]:
+        yield True
+
+    monkeypatch.setattr(leases, "holding", _holding)
     monkeypatch.setattr(mirrors, "new_mirror_name", lambda: next(names))
     monkeypatch.setattr(mirrors, "mirrors_of", _none)
     monkeypatch.setattr(mirrors, "add_mirror", _add)
@@ -431,11 +438,11 @@ def test_a_mirror_is_made_under_the_sources_lease_only_when_there_is_none(
 
     monkeypatch.setattr(leases, "holding", _holding)
     monkeypatch.setattr(mirrors, "live_mirror", _live)
-    monkeypatch.setattr(mirrors, "ensure_mirror", _made)
+    monkeypatch.setattr(mirrors, "_made_mirror", _made)
     live = MIRROR
-    assert asyncio.run(source_sync_mirror._mirror(_mirrored())) == MIRROR and leased == []
+    assert asyncio.run(mirrors.ensure_mirror("o", "team")) == MIRROR and leased == []
     live = ""
-    assert asyncio.run(source_sync_mirror._mirror(_mirrored())) == "acl-" + "b" * 24
+    assert asyncio.run(mirrors.ensure_mirror("o", "team")) == "acl-" + "b" * 24
     assert len(leased) == 1
 
 
@@ -491,8 +498,7 @@ def test_two_turns_at_once_make_one_mirror(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(mirrors, "directory", lambda: _Directory())
 
     async def _both() -> list[str]:
-        src = _mirrored()
-        return list(await asyncio.gather(*(source_sync_mirror._mirror(src) for _ in range(2))))
+        return list(await asyncio.gather(*(mirrors.ensure_mirror("o", "team") for _ in range(2))))
 
     made = asyncio.run(_both())
     assert made[0] == made[1] and len(registry) == 1

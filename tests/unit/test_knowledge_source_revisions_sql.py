@@ -42,13 +42,7 @@ def _row(name: str, content: str) -> str:
 async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
     pictures: bool,
 ) -> None:
-    ch = LocalCH(
-        ddl("documents"),
-        "SET enable_quantized_codec = 1",
-        ddl("chunks"),
-        ddl("chunk_supersessions"),
-        *(_row(n, c) for n, c in DOCS.items()),
-    )
+    ch = LocalCH(ddl("documents"), *(_row(n, c) for n, c in DOCS.items()))
     rows = await store.source_revisions(
         "o", "ns", source_tag("drive"), searchable_only=False, pictures=pictures, ch=ch
     )
@@ -180,7 +174,5 @@ async def test_a_read_of_every_copy_flags_which_are_searchable() -> None:
         _chunk_of("cut", 1, 1),
         _version("cut", 2, 2),
     )
-    rows = await store.source_revisions(
-        "o", "ns", source_tag("drive"), searchable_only=False, ch=ch
-    )
+    rows = await store.every_copy_flagged("o", "ns", source_tag("drive"), ch=ch)
     assert {r["file_id"]: r["searchable"] for r in rows} == {"cut": "", "relisted": "1"}

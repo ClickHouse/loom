@@ -21,12 +21,22 @@ async def live_mirror(org: str, namespace: str) -> str:
 
 
 async def ensure_mirror(org: str, namespace: str) -> str:
-    """The namespace's live mirror, made now if it has none. The caller holds the
-    namespace's sources lease, so two turns never make two mirrors. A new name already
-    in use is drawn again: no namespace of the form is ever taken for a mirror
-    (rolling-upgrade rule 51)."""
+    """The namespace's live mirror, made now if it has none, under the namespace's
+    sources lease, so two turns never make two mirrors. A new name already in use is
+    drawn again: no namespace of the form is ever taken for a mirror (rolling-upgrade
+    rule 51)."""
     if live := await live_mirror(org, namespace):
         return live
+    # Imported here: the sources' app module builds on the stores this one re-exports.
+    from server.knowledge.app.sources import sources_lease
+
+    async with sources_lease(org, namespace):
+        return await _made_mirror(org, namespace)
+
+
+async def _made_mirror(org: str, namespace: str) -> str:
+    if live := await live_mirror(org, namespace):
+        return live  # another turn made it while this one waited for the lease
     mirror = new_mirror_name()
     while await directory().in_use(org, mirror):
         mirror = new_mirror_name()

@@ -321,3 +321,12 @@ def test_a_listing_row_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(mirrors.record_listing(ORG, MIRROR, "sid", "decks", datetime.now(UTC)))
     [row] = ch.inserted("knowledge_source_listings")
     assert set(row) | {"version"} == set(column_names("knowledge_source_listings"))
+
+
+def test_a_registered_mirror_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = RecordingCH()
+    ch.install(monkeypatch)
+    asyncio.run(mirrors.add_mirror(ORG, "team", MIRROR))
+    [row] = ch.inserted("knowledge_mirrors")
+    assert set(row) | {"version"} == set(column_names("knowledge_mirrors"))
+    assert row["mirror"] == MIRROR and row["deleted"] is False

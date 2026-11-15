@@ -183,6 +183,9 @@ class _World:
             and (d.get("chunks", True) or not searchable_only)
         ]
 
+    async def every_copy_flagged(self, org: str, ns: str, tag: str) -> list[dict[str, str]]:
+        return await self.source_revisions(org, ns, tag, searchable_only=False)
+
     async def source_documents(self, org: str, ns: str, tag: str) -> list[dict[str, Any]]:
         return await self.source_revisions(org, ns, tag, searchable_only=False)
 
@@ -238,6 +241,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         "latest_source",
         "insert_source",
         "source_revisions",
+        "every_copy_flagged",
         "source_documents",
         "count_documents",
     ):
@@ -1698,7 +1702,7 @@ def test_folder_checks_run_ten_at_a_time_each_folder_once(
     monkeypatch.setattr(gdrive, "require_folder", _require)
     items = [*_folders(25), {"type": "filter", "in": "f0"}]
     turn = source_sync.TurnResult()
-    assert asyncio.run(source_sync.items_visible("t", items, turn, lambda: False))
+    assert asyncio.run(source_sync._items_visible("t", items, turn, lambda: False))
     assert most == 10 and len(checked) == 25 and turn.complete
 
 
@@ -1716,7 +1720,7 @@ def test_folder_checks_stop_at_the_pass_bound(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(gdrive, "require_folder", _require)
     turn = source_sync.TurnResult()
-    assert not asyncio.run(source_sync.items_visible("t", _folders(25), turn, _out_of_time))
+    assert not asyncio.run(source_sync._items_visible("t", _folders(25), turn, _out_of_time))
     assert len(checked) == 10 and turn.cut
 
 
@@ -1739,7 +1743,7 @@ def test_the_worst_folder_check_in_a_batch_decides_the_turn(
 
     monkeypatch.setattr(gdrive, "require_folder", _require)
     turn = source_sync.TurnResult()
-    assert not asyncio.run(source_sync.items_visible("t", _folders(4), turn, lambda: False))
+    assert not asyncio.run(source_sync._items_visible("t", _folders(4), turn, lambda: False))
     assert turn.status == status
 
 
@@ -1750,7 +1754,7 @@ def test_a_folder_check_s_own_bug_is_raised(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(gdrive, "require_folder", _require)
     with pytest.raises(KeyError):
         asyncio.run(
-            source_sync.items_visible("t", _folders(2), source_sync.TurnResult(), lambda: False)
+            source_sync._items_visible("t", _folders(2), source_sync.TurnResult(), lambda: False)
         )
 
 
