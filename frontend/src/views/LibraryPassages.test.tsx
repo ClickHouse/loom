@@ -50,6 +50,39 @@ describe("LibraryPassages", () => {
     vi.resetAllMocks();
   });
 
+  it("drops the hits of other places as soon as it searches new places, and keeps none on a failure", async () => {
+    vi.mocked(searchKnowledge).mockResolvedValueOnce([{ ...HIT, namespace: "a" }]);
+    const props = {
+      navEnabled: true,
+      onHitsShown: vi.fn(),
+      onOpen: vi.fn(),
+      everywhere: true,
+      placeLabel: (n: string) => n,
+    };
+    const { rerender } = render(
+      <LibraryPassages {...props} identity={{ org: "o", namespace: "a" }} namespaces={["c"]} />,
+    );
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Passage to find"), "events");
+    await user.click(screen.getByRole("button", { name: "Find" }));
+    await screen.findByRole("list", { name: "Passages found" });
+    // A place comes back (Read again): the places change directly, with no wait between.
+    let fail: (e: unknown) => void = () => {};
+    vi.mocked(searchKnowledge).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    rerender(<LibraryPassages {...props} identity={{ org: "o", namespace: "a" }} namespaces={["b", "c"]} />);
+    await waitFor(() => expect(searchKnowledge).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("list", { name: "Passages found" })).toBeNull();
+    expect(screen.getByText(/in 3 places/)).toBeInTheDocument();
+    fail(new TypeError("Failed to fetch"));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Passages found" })).toBeNull();
+  });
+
   it("says what it searches, tied to its field", () => {
     render(<LibraryPassages identity={identity} navEnabled onHitsShown={vi.fn()} onOpen={vi.fn()} />);
     expect(screen.getByLabelText("Passage to find")).toHaveAccessibleDescription(/whatever the tag filter/);

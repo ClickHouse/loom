@@ -152,6 +152,8 @@ export function LibraryPassages({
       setHits(null);
       return;
     }
+    // Hits of other places do not stand for these: a failure here keeps only these places'.
+    if (searchedFor.current !== placesKey) setHits(null);
     searchedFor.current = placesKey;
     const ctrl = new AbortController();
     searching.current = ctrl;

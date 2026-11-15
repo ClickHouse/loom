@@ -418,15 +418,16 @@ export function Documents() {
   // The collections answer on screen, for a read that lands after it was started.
   const keptNow = useRef(collections.kept);
   keptNow.current = collections.kept;
-  // The places whose refusal read the collections again: each does so once.
+  // The places ("org/namespace") whose refusal read the collections again, once each until a
+  // read finds none refused (a place revoked again then reads them again).
   const askedAgainFor = useRef(new Set<string>());
   // What a read found refused, kept under the answer it was started under, while that answer
   // is still the one on screen (a later one may name a grant that caught up).
   const recordRefused = (under: unknown, found: PlaceFailure[]) => {
     if (found.length === 0 || keptNow.current !== under) return;
     setRefused((prev) => ({ under, failures: [...(prev.under === under ? prev.failures : []), ...found] }));
-    const first = found.filter((f) => !askedAgainFor.current.has(f.namespace));
-    for (const f of first) askedAgainFor.current.add(f.namespace);
+    const first = found.filter((f) => !askedAgainFor.current.has(`${picked.org}/${f.namespace}`));
+    for (const f of first) askedAgainFor.current.add(`${picked.org}/${f.namespace}`);
     if (first.length) invalidateSharedCollections();
   };
   const placesWaiting = !collections.kept && !collections.error;
@@ -547,6 +548,7 @@ export function Documents() {
           setRowsScope(scope);
           setReadOf({ key: scope, read: r.read, failed: r.failed, oneAtATime: r.oneAtATime });
           recordRefused(under, r.refused);
+          if (!r.failed.some((f) => isRefusal(f.error))) askedAgainFor.current.clear();
           // A read that returned a document: the library holds one, whatever filter
           // narrows a later read. An unfiltered read that returned none: it holds none.
           if (r.rows?.length) setListedScope(at);
@@ -1217,16 +1219,24 @@ export function Documents() {
     </div>
   );
   // What a read of several places left out, said where the rows start: never more than read.
-  const readNotes = across && report && (
-    <ReadNotes
-      failed={leftOut}
-      firstOnly={report.oneAtATime ? placeLabel(report.read[0] ?? "") : null}
-      others={report.oneAtATime ? readPlaces.length - 1 : 0}
-      cut={placesCut}
-      collectionsFailed={ownShelf && !!collections.error && !collections.kept ? namespaceLabel(picked.namespace) : null}
-      label={placeLabel}
-      onRetry={reload}
-    />
+  // One status region for the whole visit of a list of several places, so each note is said.
+  const readNotes = across && (
+    <div role="status" className="mb-3 space-y-1 text-xs text-text-muted empty:mb-0">
+      {report && (
+        <ReadNotes
+          failed={leftOut}
+          firstOnly={report.oneAtATime ? placeLabel(report.read[0] ?? "") : null}
+          // The places asked but the one read and those skipped as refused (named apart).
+          others={report.oneAtATime ? readPlaces.length - leftOut.length - 1 : 0}
+          cut={placesCut}
+          collectionsFailed={
+            ownShelf && !!collections.error && !collections.kept ? namespaceLabel(picked.namespace) : null
+          }
+          label={placeLabel}
+          onRetry={reload}
+        />
+      )}
+    </div>
   );
 
   // The top level's collections, below the documents so they start where the list rules
@@ -2047,7 +2057,7 @@ function ReadNotes({
     lines.push(`Not shown, as you can't read ${refused.length === 1 ? "it" : "them"}: ${names(refused)}.`);
   if (lines.length === 0 && broken.length === 0) return null;
   return (
-    <div role="status" className="mb-3 space-y-1 text-xs text-text-muted">
+    <>
       {lines.map((l) => (
         <p key={l}>{l}</p>
       ))}
@@ -2060,7 +2070,7 @@ function ReadNotes({
           </Button>
         </p>
       )}
-    </div>
+    </>
   );
 }
 

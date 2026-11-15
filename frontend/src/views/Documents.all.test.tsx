@@ -411,6 +411,70 @@ describe("All documents", () => {
     expect(screen.getByRole("checkbox", { name: "Select Drain a lane" })).toBeChecked();
   });
 
+  it("counts the places a one-place-per-read server did not read without those skipped as refused", async () => {
+    let older = false;
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (older)
+        return { rows: [{ ...EVERY[0], namespace: undefined }], next_cursor: null, ignored_args: ["namespaces"] };
+      if (places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    // Legal is refused and kept under the collections' answer, which is read again once.
+    await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await settle();
+    // Then the reads land on a replica that reads one place per call.
+    older = true;
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:one" } });
+    expect(
+      await screen.findByText(
+        "Only Namespace team is shown: this server lists one place per read, so 2 other places are not.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Not shown, as you can't read it: Legal.")).toBeInTheDocument();
+  });
+
+  it("reads the collections again when a place is refused again after a read that found none", async () => {
+    let refuse = true;
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (refuse && places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    await waitFor(() => expect(collectionPlaces.invalidate).toHaveBeenCalledTimes(1));
+    await settle();
+    // Granted, and the collections answer again: the list reads Legal, and finds none refused.
+    refuse = false;
+    act(() => invalidateSharedCollections());
+    expect(await screen.findByText("Services agreement")).toBeInTheDocument();
+    await settle();
+    expect(collectionPlaces.invalidate).toHaveBeenCalledTimes(2);
+    // Revoked again: its refusal reads the collections again.
+    refuse = true;
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:two" } });
+    await waitFor(() => expect(collectionPlaces.invalidate).toHaveBeenCalledTimes(3));
+  });
+
+  it("keeps one status region for its notes, there before any note is", async () => {
+    let answer = (_v: unknown) => {};
+    api.listKnowledge.mockImplementation(
+      () =>
+        new Promise((r) => {
+          answer = r;
+        }),
+    );
+    render(<Documents />);
+    await waitFor(() => expect(api.listKnowledge).toHaveBeenCalled());
+    const region = screen.getAllByRole("status").find((el) => el.classList.contains("empty:mb-0"));
+    expect(region).toBeEmptyDOMElement();
+    await act(async () => answer({ rows: [EVERY[0]], next_cursor: null, ignored_args: ["namespaces"] }));
+    await waitFor(() => expect(region).toHaveTextContent(/^Only Namespace team is shown/));
+  });
+
   it("says how many places it read, not of how many, when the collections could not be loaded", async () => {
     api.listCollections.mockRejectedValue(new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "busy" }));
     render(<Documents />);
