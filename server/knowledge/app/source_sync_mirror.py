@@ -45,6 +45,11 @@ from server.workers import pass_context
 # Seconds between two files' permission reads: ten a second stay well under the store's
 # per-user rate limit.
 PERMISSIONS_PACE_S = 0.1  # not a setting: the store's limit, the same on every deployment
+# Why a listing row waits on a publication: one owed passes, one parked needs an operator.
+_HELD_BACK = {
+    "owed": "publication: a written list is not in ClickHouse yet",
+    "parked": "publication: a written list is parked; see the knowledge delivery backlog",
+}
 # List rewrites read and written in one round trip each.
 _REWRITE_BATCH = 100  # not a setting: a bound on one statement's size
 
@@ -104,8 +109,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
     if lists_current and whole:
-        if owed or await documents.publications_owed(src.org, src.mirror, suffix):
-            _note(result, "publication: a written list is not in ClickHouse yet")
+        held_back = owed or await documents.publications_owed(src.org, src.mirror, suffix)
+        if held_back:
+            _note(result, _HELD_BACK[held_back])
             return result
         pass_context.check_stop()
         await sync.require_current(src)  # an erasure since the last write lands no row
@@ -194,8 +200,8 @@ async def _file_access(
             f["permissions"] = None  # read again next turn
             _note(result, "permissions: a file's list could not be read")
         else:
-            if f["permissions"] is None:  # a Viewer account may not see who it is shared with
-                _note(result, "permissions: the account may not read a file's sharing")
+            if f["permissions"] is None:  # a 403 (a Viewer account) or a file gone since
+                _note(result, "permissions: the store gave no list for a file")
         await asyncio.sleep(PERMISSIONS_PACE_S)
     return access_list.from_drive_permissions(f.get("permissions"))
 

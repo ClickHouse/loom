@@ -481,8 +481,8 @@ def test_a_source_removed_before_its_turn_makes_no_mirror(
 def test_a_publication_still_owed_in_the_mirror_records_no_listing_row(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _owed(org: str, namespace: str, uri_suffix: str) -> bool:
-        return namespace == MIRROR  # a head ClickHouse has no row for yet
+    async def _owed(org: str, namespace: str, uri_suffix: str) -> str:
+        return "owed" if namespace == MIRROR else ""  # a head ClickHouse has no row for yet
 
     monkeypatch.setattr(documents, "publications_owed", _owed)
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
@@ -540,9 +540,9 @@ def test_two_turns_at_once_make_one_mirror(monkeypatch: pytest.MonkeyPatch) -> N
 def test_a_publication_owed_when_the_copies_were_read_records_no_listing_row(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    answers = iter([True, False])  # owed at the read, settled by the turn's end
+    answers = iter(["owed", ""])  # owed at the read, settled by the turn's end
 
-    async def _owed(org: str, namespace: str, uri_suffix: str) -> bool:
+    async def _owed(org: str, namespace: str, uri_suffix: str) -> str:
         return next(answers)
 
     monkeypatch.setattr(documents, "publications_owed", _owed)
@@ -772,7 +772,7 @@ def test_a_viewer_account_s_unread_lists_are_noted(
     ]
     _turn(world, _mirrored())
     assert all(d["access_json"] == "" for d in world.docs.values()) and len(world.docs) == 2
-    assert _detail(world)["error"] == "permissions: the account may not read a file's sharing"
+    assert _detail(world)["error"] == "permissions: the store gave no list for a file"
 
 
 def test_a_copy_behind_its_file_is_never_widened_by_the_store_s_new_list(
@@ -851,3 +851,16 @@ def test_a_copy_another_writer_holds_does_not_stop_later_narrowings(
     _turn(world, _mirrored())
     [row] = mirror["rewrites"]
     assert "/doc2/" in row["source_uri"] and len(mirror["listings"]) == listings
+
+
+def test_a_parked_publication_is_noted_as_needing_an_operator(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _parked(org: str, namespace: str, uri_suffix: str) -> str:
+        return "parked"
+
+    monkeypatch.setattr(documents, "publications_owed", _parked)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    assert mirror["listings"] == []
+    assert "parked; see the knowledge delivery backlog" in _detail(world)["error"]

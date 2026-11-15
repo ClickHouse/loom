@@ -214,16 +214,24 @@ async def test_an_owed_delivery_counts_only_for_the_source_whose_addresses_it_en
             uri,
         )
     try:
-        assert await pg_documents.owed_ending(org, ns, "#sid-a")
-        assert not await pg_documents.owed_ending(org, ns, "#sid-c")
+        assert await pg_documents.owed_ending(org, ns, "#sid-a") == "owed"
+        assert await pg_documents.owed_ending(org, ns, "#sid-c") == ""
         await pg_conn.execute(
             "UPDATE loom.knowledge_deliveries SET settled = true "
             "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-a'",
             org,
             ns,
         )
-        assert not await pg_documents.owed_ending(org, ns, "#sid-a")
-        assert await pg_documents.owed_ending(org, ns, "#sid-b")  # the other source's
+        assert await pg_documents.owed_ending(org, ns, "#sid-a") == ""
+        assert await pg_documents.owed_ending(org, ns, "#sid-b") == "owed"  # the other's
+        await pg_conn.execute(
+            "UPDATE loom.knowledge_deliveries SET lease_until = 'infinity', "
+            "fenced_until = now(), attempts = 10 "
+            "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-b'",
+            org,
+            ns,
+        )
+        assert await pg_documents.owed_ending(org, ns, "#sid-b") == "parked"
     finally:
         await pg_conn.execute(
             "DELETE FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2", org, ns

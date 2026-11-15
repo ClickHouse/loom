@@ -116,7 +116,6 @@ from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
-    MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     home,
@@ -902,7 +901,6 @@ async def sync_file(
     revision = str(f.get("modifiedTime") or "")
     # A copy stored with its pictures' bytes, at this revision and address, is converted
     # again; a moved file takes the ordinary write-and-retire path.
-    checked = turn.kind_state.get(_PICTURES_CHECKED, {})  # a folder turn's own record
     reconvert = bool(
         prior is not None
         and f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
@@ -910,7 +908,7 @@ async def sync_file(
         and prior["source_revision"] == revision
         and prior["source_uri"] == uri
         # Checked at this revision already: its conversion changed nothing.
-        and checked.get(str(f["id"])) != revision
+        and turn.kind_state[_PICTURES_CHECKED].get(str(f["id"])) != revision
     )
     if reconvert and _given_up(turn, f):
         # Its older copy is still served: not counted unconverted; the waits say when it
@@ -1147,6 +1145,12 @@ async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     return doc is None or ours(src, doc)
 
 
+def in_mirror(src: KnowledgeSource) -> bool:
+    """Whether the source's rows live in its namespace's mirror (`home`)."""
+    namespace, _ = home(src)
+    return namespace != src.namespace
+
+
 def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
     """Whether `doc` is one this source's sync wrote."""
     _, tag = home(src)
@@ -1193,7 +1197,7 @@ async def write_document(
     fetch is seconds old by now."""
     namespace, tag = home(src)
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if src.access == MIRRORED_ACCESS:
+    if in_mirror(src):
         tags.append(tag)  # its `source-id:<id>`, and no repository tag
     elif repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -1247,7 +1251,7 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
     except PublicationPending:  # the delete is committed; the worker publishes it
         deleted = True
     # The audit log outlives an erasure, so a mirror's addresses never go in it.
-    if deleted and src.access != MIRRORED_ACCESS:
+    if deleted and not in_mirror(src):
         await audit.emit(
             "knowledge.delete",
             org=src.org,
@@ -1784,6 +1788,7 @@ __all__ = [
     "file_gone",
     "full_due",
     "give_up",
+    "in_mirror",
     "open_listing",
     "ours",
     "require_current",

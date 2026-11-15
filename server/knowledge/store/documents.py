@@ -310,14 +310,15 @@ async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> d
     return await pg_documents.head_lists(org, namespace, source_uris)
 
 
-async def publications_owed(org: str, namespace: str, uri_suffix: str) -> bool:
+async def publications_owed(org: str, namespace: str, uri_suffix: str) -> str:
     """Whether a commit of the namespace's documents whose address ends in `uri_suffix`
-    still waits on its publication to ClickHouse, under the Postgres authority; never
-    under the ClickHouse authority."""
+    still waits on its publication to ClickHouse, under the Postgres authority:
+    `parked`, `owed` or "" (`pg_documents.owed_ending`); "" under the ClickHouse
+    authority."""
     from server.core import pg
 
     if not pg.enabled():
-        return False
+        return ""
     from server.knowledge.store import pg_documents
 
     return await pg_documents.owed_ending(org, namespace, uri_suffix)

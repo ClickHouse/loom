@@ -510,19 +510,20 @@ async def unpublished(org: str, namespace: str) -> tuple[int, int]:
     return int(row["owed"]), int(row["parked"])
 
 
-async def owed_ending(org: str, namespace: str, suffix: str) -> bool:
-    """Whether a delivery of a source whose address ends in `suffix` is owed or parked."""
+async def owed_ending(org: str, namespace: str, suffix: str) -> str:
+    """`parked` when a delivery of a source whose address ends in `suffix` is parked
+    past LOOM_PG_DELIVERY_MAX_ATTEMPTS, else `owed` when one is still owed, else ""."""
     if pg.unstorable([org, namespace, suffix]):
-        return False  # no delivery holds what Postgres cannot store
-    return bool(
-        await pg.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM loom.knowledge_deliveries WHERE org = $1 "
-            "AND namespace = $2 AND NOT settled AND right(source_uri, length($3)) = $3)",
-            org,
-            namespace,
-            suffix,
-        )
+        return ""  # no delivery holds what Postgres cannot store
+    row = await pg.fetchrow(
+        "SELECT bool_or(lease_until = 'infinity') AS parked, count(*) > 0 AS owed "
+        "FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2 "
+        "AND NOT settled AND right(source_uri, length($3)) = $3",
+        org,
+        namespace,
+        suffix,
     )
+    return "parked" if row["parked"] else "owed" if row["owed"] else ""
 
 
 async def backlog(cap: int) -> pg_pipeline.Backlog:
