@@ -561,16 +561,9 @@ def served(src: KnowledgeSource) -> bool:
     return src.access == NAMESPACE_ACCESS
 
 
-def synced(src: KnowledgeSource) -> bool:
-    """Whether this build's sync worker runs `src`: every source it serves, and a
-    mirrored folder-store source, which it writes into the namespace's mirror. Its
-    ops still refuse a mirrored one (`served`)."""
-    return served(src) or mirror_synced(src)
-
-
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
-    folder-store source."""
+    folder-store source. Its ops still refuse one (`served`)."""
     return src.access == MIRRORED_ACCESS and src.kind == "gdrive"
 
 
@@ -678,7 +671,6 @@ __all__ = [
     "state_key",
     "stored_config",
     "sync_of",
-    "synced",
     "unique_items",
     "unknown_keys",
     "unread_file_note",

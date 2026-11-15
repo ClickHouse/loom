@@ -120,7 +120,6 @@ from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
-    MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     home,
@@ -130,7 +129,6 @@ from server.knowledge.domain.sources import (
     served,
     source_key,
     source_tag,
-    synced,
     turn_lease_name,
 )
 from server.knowledge.store import documents
@@ -196,7 +194,6 @@ class TurnMark(StrEnum):
     INCOMPLETE_SEARCH = "listing: incomplete search"
     ITEM_LOST = "listing: an item listed nothing"
     INCOMPLETE_RESULT = "listing: incomplete result"
-    LIST_UNREAD = "listing: a file's permissions could not be read"
 
 
 @dataclass
@@ -385,10 +382,11 @@ async def run_sync(
 
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
     """The sources a pass syncs: those whose namespace is active, of the sources this
-    build's worker runs (`synced`), mirrored ones only while auth is on."""
+    build serves and the mirrored ones its worker writes, the latter only while auth is
+    on."""
     # With auth off there is no reader a mirror's lists could be checked against.
     mirrors_on = settings.auth_actually_required()
-    syncable = [s for s in found if synced(s) and (served(s) or mirrors_on)]
+    syncable = [s for s in found if served(s) or (mirror_synced(s) and mirrors_on)]
     inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in syncable}))
     return [s for s in syncable if (s.org, s.namespace) not in inactive]
 
@@ -872,12 +870,11 @@ async def sync_file(
     run: Pass,
     turn: TurnResult,
     *,
-    ready: Callable[[], Awaitable[bool]] | None = None,
-    access: Callable[[], access_list.AccessList] | None = None,
+    access: Callable[[], Awaitable[access_list.AccessList | None]] | None = None,
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
-    `ready` runs just before a fetch, and False from it skips the file; `access` gives
-    the permission list the write carries, once `ready` ran. A native document whose
+    `access` runs just before a fetch and gives the permission list the write carries
+    (`unread` without it); None from it skips the file. A native document whose
     stored text still holds its pictures' bytes (an earlier conversion's) is fetched
     and converted again at its same revision when a full listing lists it."""
     revision = str(f.get("modifiedTime") or "")
@@ -899,19 +896,31 @@ async def sync_file(
     # The stored content's hash, from the full listing's read.
     stored_content_sha256 = prior["stored_content_sha256"] if reconvert and prior else ""
 
-    async def before_fetch() -> bool:
-        return await _fetchable(f, run, turn) and (ready is None or await ready())
+    permissions = access_list.UNREAD
 
-    fetch_and_write = functools.partial(
-        _fetch_and_write,
-        src,
-        token,
-        f,
-        uri,
-        turn,
-        stored_content_sha256=stored_content_sha256,
-        access=access,
-    )
+    async def before_fetch() -> bool:
+        nonlocal permissions
+        if not await _fetchable(f, run, turn):
+            return False
+        if access is None:
+            return True
+        listed = await access()
+        if listed is None:
+            return False
+        permissions = listed
+        return True
+
+    async def fetch_and_write() -> str:
+        return await _fetch_and_write(
+            src,
+            token,
+            f,
+            uri,
+            turn,
+            stored_content_sha256=stored_content_sha256,
+            permissions=permissions,
+        )
+
     return await sync_item(
         src, f, uri, prior, run, turn, fetch_and_write, before_fetch, refetch=reconvert
     )
@@ -950,7 +959,7 @@ async def _fetch_and_write(
     turn: TurnResult,
     *,
     stored_content_sha256: str,
-    access: Callable[[], access_list.AccessList] | None = None,
+    permissions: access_list.AccessList = access_list.UNREAD,
 ) -> str:
     """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
     text equals the stored copy), `skipped` (another writer took the address during the
@@ -1008,7 +1017,7 @@ async def _fetch_and_write(
             ingested_format=fetched.ingested_format,
             original=fetched.original,
             extra_metadata=extra or None,
-            permissions=access() if access else access_list.UNREAD,
+            permissions=permissions,
         )
     except ValidationError as e:
         # The write refuses this file whatever the pass: it will not go through.
@@ -1170,10 +1179,11 @@ async def write_document(
     another writer took the address while the item was fetched: the check before the
     fetch is seconds old by now."""
     namespace, tag = home(src)
+    mirrored = namespace != src.namespace
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if src.access == MIRRORED_ACCESS:
+    if mirrored:
         tags.append(tag)  # its `source-id:<id>`
-    if namespace == src.namespace and (repo := _repo_tag(src)):
+    elif repo := _repo_tag(src):
         tags.insert(1, repo)  # a mirror is no repository's namespace
     metadata: dict[str, Any] = {
         "source_kind": src.kind,
@@ -1757,8 +1767,12 @@ __all__ = [
     "capped",
     "client_error",
     "counted",
+    "file_gone",
     "full_due",
     "give_up",
+    "items_visible",
+    "note_listing",
+    "ours",
     "require_current",
     "retire",
     "retire_absent",
@@ -1767,8 +1781,11 @@ __all__ = [
     "stamp_of",
     "start_waits",
     "stored_copies_with_room",
+    "sync_file",
     "sync_item",
     "valid_stamp",
+    "vendor_failure",
     "wait",
+    "with_room",
     "write_document",
 ]

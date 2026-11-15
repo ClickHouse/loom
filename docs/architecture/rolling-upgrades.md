@@ -787,8 +787,8 @@ schema. These rules keep that safe. The operator procedure is in
     reading `permissions.list` for a file the listing leaves them out of, and writes
     into the namespace's mirror (made under the namespace's sources lease when it has
     none) at `<address>#<source id>`, tagged `source-id:<id>`. It first brings every
-    stored copy's list to the store's, or to `unread` for a copy the listing does not
-    have at its address, bounded by the pass's deadline only; then it fetches and writes
+    stored copy's list to the store's, or to `unread` for a copy a whole listing does
+    not have at its address, bounded by the pass's deadline only; then it fetches and writes
     each new or changed file with its list, and retires a copy whose file is gone. The
     listing's start goes to `loom.knowledge_source_listings` once every stored copy's
     list is written. No request can add a mirrored source yet, so N meets none it did

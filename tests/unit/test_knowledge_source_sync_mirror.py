@@ -288,8 +288,9 @@ def test_a_failed_permission_read_reads_unread_and_the_turn_goes_on(
     }
     assert lists["doc1"] == ""
     assert access_list.from_json(lists["doc2"]).emails == ("ann@example.com",)
-    # `unread` admits nobody, so the listing still vouches; nothing is retired this turn.
+    # `unread` admits nobody, so the listing still vouches.
     assert len(mirror["listings"]) == 1 and _detail(world)["status"] == "ok"
+    assert "permissions could not be read" in _detail(world)["error"]
 
 
 def test_a_copy_without_live_chunks_still_takes_the_store_s_list(
@@ -348,7 +349,7 @@ def test_a_walk_cut_at_its_bounds_reads_unread_where_it_did_not_reach(
     assert len(mirror["listings"]) == 2
 
 
-def test_a_rate_limit_on_a_new_file_s_permissions_writes_no_document(
+def test_a_rate_limit_on_a_new_file_s_permissions_ends_the_turn(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def _limited(token: str, file_id: str, **kw: Any) -> Any:
@@ -358,8 +359,7 @@ def test_a_rate_limit_on_a_new_file_s_permissions_writes_no_document(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     _turn(world, _mirrored())
     assert world.upserts == [] and _detail(world)["status"] == "rate_limited"
-    # No stored copy holds a list this turn left unread, so the listing still vouches.
-    assert len(mirror["listings"]) == 1
+    assert mirror["listings"] == []
 
 
 def test_a_file_whose_fetch_fails_leaves_the_listing_row_to_land(world: Any, mirror: Any) -> None:
@@ -492,3 +492,48 @@ def test_two_turns_at_once_make_one_mirror(monkeypatch: pytest.MonkeyPatch) -> N
 
     made = asyncio.run(_both())
     assert made[0] == made[1] and len(registry) == 1
+
+
+def test_a_publication_owed_when_the_copies_were_read_records_no_listing_row(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = iter([True, False])  # owed at the read, settled by the turn's end
+
+    async def _owed(org: str, namespace: str) -> bool:
+        return next(answers)
+
+    monkeypatch.setattr(documents, "publications_owed", _owed)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    assert len(world.upserts) == 1 and mirror["listings"] == []
+    assert "a publication to ClickHouse is owed" in _detail(world)["error"]
+
+
+def test_a_failed_permission_read_does_not_hold_back_retirement(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
+
+    async def _failing(token: str, file_id: str, **kw: Any) -> Any:
+        raise gdrive.VendorError("permissions of doc1: http 500", status=500)
+
+    monkeypatch.setattr(gdrive, "file_permissions", _failing)
+    del world.files[0]["permissions"]
+    gone = world.files.pop()  # doc2 deleted in the store
+    world.file_answers[gone["id"]] = httpx.Response(404)
+    result = _turn(world, _mirrored())
+    assert result.removed == 1 and len(world.docs) == 1
+
+
+def test_an_incomplete_search_leaves_an_unlisted_copy_s_list_as_it_was(
+    world: Any, mirror: Any
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    world.files, world.incomplete_search = [], True
+    _turn(world, _mirrored())
+    assert mirror["rewrites"] == []
