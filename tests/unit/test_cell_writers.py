@@ -1,8 +1,8 @@
 """`server/cli/cell_writers.py`: reading grants (attach's own from `SHOW GRANTS FINAL`,
-every user's from `system.grants` and `system.role_grants` per host), the writer
-predicate, the objects, user directories and extra replicas it refuses, and attach's own
-grants. A cluster of several hosts cannot run in CI, so its per-host reads are pinned here
-on a fake ClickHouse. CH-free."""
+every user's from `system.grants` and `system.role_grants` per host), the writer predicate,
+the objects, user directories and extra replicas it refuses, and attach's own grants. A
+cluster of several hosts cannot run in CI, so its per-host reads are pinned here on a fake
+ClickHouse. CH-free."""
 
 from __future__ import annotations
 
@@ -121,6 +121,13 @@ def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
         ([Grant("SOURCES")], "holds SOURCES on *.*"),
         ([Grant("WRITE")], "holds WRITE on *.*"),
         (parse_show_grants(["GRANT READ ON REMOTE TO u"]), "holds REMOTE on *.*"),
+        # Acting as another user, or reaching this server again through a source.
+        ([Grant("IMPERSONATE")], "holds IMPERSONATE on *.*"),
+        ([Grant("SET DEFINER")], "holds SET DEFINER on *.*"),
+        ([Grant("ALLOW SQL SECURITY NONE")], "holds ALLOW SQL SECURITY NONE on *.*"),
+        ([Grant("URL")], "holds URL on *.*"),
+        ([Grant("MYSQL")], "holds MYSQL on *.*"),
+        ([Grant("FILE"), Grant("SQLITE"), Grant("CREATE FUNCTION")], ""),
         # A temporary Distributed table forwards as a permanent one does.
         ([Grant("CREATE TEMPORARY TABLE")], "holds CREATE TEMPORARY TABLE on *.*"),
         (
@@ -183,6 +190,13 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
             "named by an expression",
         ),
         ("AS SELECT m.org FROM loom.memory AS m", ""),
+        # An alias named like a database never hides the table it stands for.
+        (
+            "AS SELECT x.org FROM loom.x AS x INNER JOIN evil.t AS evil ON evil.id = x.id",
+            "database evil",
+        ),
+        ("AS SELECT x.org FROM loom.x AS x, evil.t AS evil", "database evil"),
+        ("AS SELECT org FROM loom.x AS evil, (SELECT 1 AS id) AS s", ""),
         ("AS SELECT m.org FROM loom.memory m JOIN (SELECT 1 AS id) AS s ON s.id = m.id", ""),
         ("AS WITH w AS (SELECT org FROM loom.memory) SELECT w.org FROM w", ""),
         ("AS SELECT x.org FROM loom.memory AS m", "database x"),
@@ -401,7 +415,10 @@ def _single_host() -> FakeCH:
         .on("system.role_grants", [])
         .on("system.users", [{"h": "x", "name": n} for n in ("attach", "server", "analyst")])
         .on("system.user_directories", [{"h": "x", "name": "users_xml", "type": "users_xml"}])
-        .on("system.table_functions", [{"name": "remote"}, {"name": "url"}])
+        .on(
+            "system.table_functions",
+            [{"h": "os-0", "name": "remote"}, {"h": "os-1", "name": "url"}],
+        )
         .on("system.tables", [])
         .on("system.replicas", [])
     )
@@ -427,7 +444,7 @@ async def test_a_narrow_own_user_refuses_before_any_other_read() -> None:
     assert not [sql for _, sql, _ in ch.calls if "system." in sql]
 
 
-def _cluster(process_user: str = "attach") -> FakeCH:
+def _cluster(process_user: str = "attach", lacking_on: str = "") -> FakeCH:
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM, CLUSTER ON *.* TO attach"},
         {"g": "GRANT SHOW USERS, REMOTE ON *.* TO attach"},
@@ -445,6 +462,7 @@ def _cluster(process_user: str = "attach") -> FakeCH:
         }
         for h in ("os-0", "os-1")
         for a in ("SELECT", "SHOW", "SHOW USERS", "SYSTEM", "REMOTE", "CLUSTER")
+        if not (h == lacking_on and a == "SHOW")
     ]
     local_writer = {
         "h": "os-1",
@@ -478,7 +496,10 @@ def _cluster(process_user: str = "attach") -> FakeCH:
             [{"h": "os-1", "user_name": "local", "role_name": None, "granted_role_name": "w"}],
         )
         .on("system.user_directories", [{"h": "os-0", "name": "ldap", "type": "ldap"}])
-        .on("system.table_functions", [{"name": "remote"}, {"name": "url"}])
+        .on(
+            "system.table_functions",
+            [{"h": "os-0", "name": "remote"}, {"h": "os-1", "name": "url"}],
+        )
         .on("system.tables", [])
         .on("system.replicas", [])
     )
@@ -551,3 +572,39 @@ async def test_objects_and_extra_replicas_refuse_unless_named() -> None:
         replicas=frozenset({"loom.memory:dr"}),
     )
     assert await cell_writers.check_writers(ch(), ONE, {}, allowed) == []
+
+
+def test_an_outside_keeper_map_sharing_an_inside_ones_keys_counts() -> None:
+    rows = [
+        {"database": "loom", "name": "km", "engine": "KeeperMap",
+         "engine_full": "KeeperMap('/loom/namespace_write_keys')"},
+        {"database": "side", "name": "same", "engine": "KeeperMap",
+         "engine_full": "KeeperMap('//loom/namespace_write_keys/', 100)"},
+        {"database": "side", "name": "other", "engine": "KeeperMap",
+         "engine_full": "KeeperMap('/side/keys')"},
+    ]  # fmt: skip
+    assert cell_writers.object_problems(rows, DBS) == {
+        "side.same": "a KeeperMap table sharing loom.km's keys"
+    }
+
+
+def test_an_outside_table_that_connects_out_counts() -> None:
+    rows = [
+        {"database": "side", "name": "u", "engine": "URL", "engine_full": "URL('http://x', CSV)"},
+        {"database": "side", "name": "p", "engine": "PostgreSQL", "engine_full": "PostgreSQL(...)"},
+        {"database": "side", "name": "m", "engine": "MergeTree", "engine_full": "MergeTree"},
+    ]
+    assert cell_writers.object_problems(rows, DBS) == {
+        "side.u": "a URL table, which connects out with credentials of its own",
+        "side.p": "a PostgreSQL table, which connects out with credentials of its own",
+    }
+
+
+async def test_the_listing_checks_every_host_runs_it_as_attachs_user() -> None:
+    listed = await cell_scan.list_tables(_cluster("default"), None, TWO, NAMES)
+    assert [r.subject for r in listed.refusals] == ["host ch-1"]
+    assert listed.clickhouse == []
+    listed = await cell_scan.list_tables(_cluster(lacking_on="os-1"), None, TWO, NAMES)
+    assert [str(r) for r in listed.refusals] == [
+        "user attach: lacks SHOW TABLES ON *.*, SHOW COLUMNS ON *.* on host ch-1"
+    ]

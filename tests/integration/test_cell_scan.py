@@ -339,3 +339,89 @@ async def test_the_schemas_own_objects_read_nothing_outside(ch: Any) -> None:
         for r in await ch.query_all("SELECT name FROM system.table_functions")
     )
     assert cell_writers.object_problems(rows, cell_scan.databases(), functions) == {}
+
+
+class _AsUser:
+    """The reads the checks make, as another ClickHouse user."""
+
+    def __init__(self, raw: Any) -> None:
+        self.raw = raw
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        result = self.raw.query(sql, parameters=params or {})
+        return [dict(zip(result.column_names, row, strict=True)) for row in result.result_rows]
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        rows = await self.query_all(sql, params)
+        return rows[0] if rows else None
+
+
+async def test_a_user_that_cannot_see_every_table_refuses_before_listing(
+    ch: Any, scratch: tuple[str, str], users: dict[str, str]
+) -> None:
+    """`system.tables` hides a Buffer table in a database the reading user holds no grant
+    on: a user without SHOW TABLES and SHOW COLUMNS on every database is refused before any
+    listing, by both the table list and the writer check."""
+    from tests.integration._resources import ch_client_from_env
+
+    schema, telemetry = scratch
+    side = f"{schema}_side"
+    narrow = users["narrow"]
+    await ch.execute(_mergetree(f"{schema}.memory"))
+    try:
+        await ch.execute(f"CREATE DATABASE {side}")
+        await ch.execute(
+            f"CREATE TABLE {side}.buf AS {schema}.memory "
+            f"ENGINE = Buffer({schema}, memory, 1, 10, 100, 10000, 1000000, 10000000, 100000000)"
+        )
+        for grant in (
+            "SELECT ON system.*",
+            "SHOW USERS ON *.*",
+            f"SELECT, SHOW ON {schema}.*",
+            f"SELECT, SHOW ON {telemetry}.*",
+            "SYSTEM SYNC REPLICA, SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
+        ):
+            await ch.execute(f"GRANT {grant} TO {narrow}")
+        topology = await cell_scan.read_topology(ch)
+        raw = ch_client_from_env(username=narrow, password=users["password"])
+        try:
+            as_narrow = _AsUser(raw)
+            listed = await cell_scan.list_tables(as_narrow, None, topology, {})
+            refusals = await cell_writers.check_writers(
+                as_narrow, topology, {}, cell_writers.Allowed()
+            )
+        finally:
+            raw.close()
+        for found in (listed.refusals, refusals):
+            assert [r.subject for r in found] == [f"user {narrow}"], found
+            assert "SHOW TABLES ON *.*" in found[0].reason
+            assert "SHOW COLUMNS ON *.*" in found[0].reason
+        assert listed.clickhouse == [] and listed.postgres == []
+    finally:
+        await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
+
+
+async def test_an_outside_keeper_map_on_an_inside_ones_root_refuses(
+    ch: Any, scratch: tuple[str, str]
+) -> None:
+    schema, _ = scratch
+    side = f"{schema}_side"
+    root = f"/loom_it_keys/{schema}"
+    try:
+        await ch.execute(f"CREATE DATABASE {side}")
+        for db in (schema, side):
+            await ch.execute(
+                f"CREATE TABLE {db}.km (org String, v UInt8) ENGINE = KeeperMap('{root}') "
+                "PRIMARY KEY org"
+            )
+        rows = await ch.query_all(
+            "SELECT database, name, engine, engine_full FROM system.tables "
+            "WHERE database IN {dbs:Array(String)} AND name = 'km'",
+            {"dbs": [schema, side]},
+        )
+        assert cell_writers.object_problems(rows, cell_scan.databases()) == {
+            f"{side}.km": f"a KeeperMap table sharing {schema}.km's keys"
+        }
+    finally:
+        await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
+        await ch.execute(f"DROP TABLE IF EXISTS {schema}.km SYNC")

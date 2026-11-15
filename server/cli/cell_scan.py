@@ -475,7 +475,7 @@ async def list_tables(
     from server.erasure.store.census import classified_tables
 
     # The system tables hide what the reading user cannot see: a narrower user lists short.
-    if lacking := await own_refusals(ch, topology):
+    if lacking := await own_refusals(ch, topology, names):
         return TableList(refusals=lacking)
     classified = set(classified_tables())
     out = TableList(refusals=topology.refusals())

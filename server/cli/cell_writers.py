@@ -14,10 +14,14 @@ leaving the org with data and no placement. The check reads, on every host of
   databases without a grant on them;
 - the user directories, the objects that write the configured databases without a grant on
   them or bring in what lies outside them (a view, a forwarding table or an external engine
-  inside them reading outside), and the replicas outside the cluster.
+  inside them reading outside; a networked table outside them; a KeeperMap table outside
+  them sharing an inside one's keys), and the replicas outside the cluster.
 
-It is a point-in-time check: a grant or an object added later passes it, so doctor runs it
-on every run. Every refusal is returned as data (`cell_scan.Refusal`)."""
+The check is a list of known write routes judged at one point in time, not a proof: a grant
+or an object added later, another server on the same Keeper (a KeeperMap table's keys, a
+replica outside the cluster's users), and a route outside ClickHouse's grant model pass it,
+so doctor runs it again on every run. Every refusal is returned as data
+(`cell_scan.Refusal`)."""
 
 from __future__ import annotations
 
@@ -71,8 +75,25 @@ _WRITER_ACCESS = frozenset(
 #   connection, as the cluster's configured user, and the server that takes the insert does
 #   not check INSERT on the destination (a Buffer table and a materialized view do: the
 #   insert, or the view's creation, refuses without it);
-# - REMOTE and SOURCES (`READ` and `WRITE ON REMOTE` on newer servers): an
-#   `INSERT INTO FUNCTION remote(…)` or `cluster(…)` runs on the far server as another user.
+# - a source that connects to an address the query names (REMOTE, URL, MYSQL, POSTGRES and
+#   the other networked ones, or SOURCES, all of them; `READ` and `WRITE ON <source>` on
+#   newer servers): it can reach this server again, over its own protocols, as another user,
+#   as `INSERT INTO FUNCTION remote(…)` does;
+# - IMPERSONATE (`EXECUTE AS`): a statement run as another user;
+# - SET DEFINER and ALLOW SQL SECURITY NONE: a view or a materialized view created to run as
+#   another user, or with no check at all (ALTER VIEW MODIFY SQL SECURITY needs SET DEFINER
+#   to name another user).
+#
+# Not counted, each running as the caller with no address of its own: FILE, SQLITE and DISK
+# (files on the server, never a statement), CREATE FUNCTION (a SQL function is an
+# expression; an executable one is defined in the server's files), NAMED COLLECTION (its
+# credentials reach a server only through a source or a table engine counted above), and
+# SYSTEM RELOAD CONFIG and USERS (they read files the grant model does not reach).
+_NETWORKED_SOURCES = frozenset(
+    {"REMOTE", "URL", "MONGO", "REDIS", "MYSQL", "POSTGRES", "ODBC", "JDBC", "HDFS", "S3",
+     "HIVE", "AZURE", "KAFKA", "NATS", "RABBITMQ", "YTSAURUS", "ARROW FLIGHT", "BIGQUERY",
+     "ELASTICSEARCH", "SOURCES"}
+)  # fmt: skip
 _ANYWHERE_ACCESS = frozenset(
     {
         "ALL",
@@ -81,10 +102,12 @@ _ANYWHERE_ACCESS = frozenset(
         "CREATE VIEW",
         "CREATE TEMPORARY TABLE",
         "CREATE ARBITRARY TEMPORARY TABLE",
-        "REMOTE",
-        "SOURCES",
         "READ",
         "WRITE",
+        "IMPERSONATE",
+        "SET DEFINER",
+        "ALLOW SQL SECURITY NONE",
+        *_NETWORKED_SOURCES,
     }
 )
 
@@ -93,7 +116,7 @@ _ANYWHERE_ACCESS = frozenset(
 _OWN_DIRECTORIES = frozenset({"users_xml", "local_directory", "replicated", "memory"})
 
 # Objects that write a database named in their definition, without a grant on it.
-_FORWARDING = frozenset({"Buffer", "Distributed", "Merge"})
+_FORWARDING = frozenset({"Alias", "Buffer", "Distributed", "Merge"})
 # Engines that write by themselves, from outside ClickHouse.
 _STREAMS = frozenset(
     {
@@ -205,9 +228,9 @@ def _target(on: str) -> tuple[str | None, str | None] | str:
 
 
 def parse_show_grants(lines: Iterable[str]) -> list[Grant]:
-    """The grants of `SHOW GRANTS FINAL` (attach's own), whose lines already hold its roles',
-    and its partial revokes (`revoked`). Role grants (`GRANT r TO u`) and the revokes of a
-    grant option alone are left out."""
+    """The grants of `SHOW GRANTS FINAL` (attach's own), whose lines already hold its
+    roles', and its partial revokes (`revoked`). Role grants (`GRANT r TO u`) and the
+    revokes of a grant option alone are left out."""
     out = []
     for line in lines:
         m = _GRANT.match(line.strip())
@@ -370,7 +393,19 @@ _LOCAL_ENGINES = frozenset(
      "EmbeddedRocksDB"}
 )  # fmt: skip
 # Which argument of a forwarding engine names the database it reads or writes.
-_DATABASE_ARG = {"Buffer": 0, "Distributed": 1, "Merge": 0}
+_DATABASE_ARG = {"Alias": 0, "Buffer": 0, "Distributed": 1, "Merge": 0}
+# Engines that open a connection of their own, to an address and with credentials their
+# definition holds: one outside the configured databases can point back at this server as
+# another user, so every one outside refuses unless the operator names it (whether it points
+# back is not judged).
+_NETWORKED = frozenset(
+    {"URL", "MySQL", "PostgreSQL", "MaterializedPostgreSQL", "ODBC", "JDBC", "MongoDB",
+     "Redis", "S3", "S3Queue", "GCS", "OSS", "COSN", "HDFS", "Hive", "AzureBlobStorage",
+     "AzureQueue", "Remote", "RemoteSecure", "ArrowFlight", "BigQuery", "Elasticsearch",
+     "YTsaurus", "Kafka", "NATS", "RabbitMQ", "Executable", "ExecutablePool", "QueryRunner",
+     "Iceberg", "IcebergS3", "IcebergAzure", "IcebergHDFS", "DeltaLake", "DeltaLakeS3",
+     "DeltaLakeAzure", "Hudi", "Paimon", "PaimonS3", "PaimonAzure", "PaimonHDFS"}
+)  # fmt: skip
 
 
 def _engine_args(engine_full: str) -> list[str]:
@@ -387,7 +422,8 @@ def _engine_database(engine: str, engine_full: str) -> str:
     i = _DATABASE_ARG[engine]
     if i >= len(args) or args[i] == "currentDatabase()":
         return ""
-    return args[i]
+    # An Alias may name its target as one `'db.table'` string.
+    return args[i].split(".", 1)[0] if engine == "Alias" else args[i]
 
 
 def _engine_targets(engine_full: str, dbs: list[str]) -> bool:
@@ -397,7 +433,7 @@ def _engine_targets(engine_full: str, dbs: list[str]) -> bool:
     regexp = re.search(r"REGEXP\s*\(\s*'((?:[^'\\]|\\.)*)'", head, re.I)
     if regexp and any(re.search(regexp.group(1), db) for db in dbs):
         return True
-    return any(a in dbs for a in _engine_args(engine_full))
+    return any(a in dbs or a.split(".", 1)[0] in dbs for a in _engine_args(engine_full))
 
 
 def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -> str:
@@ -417,6 +453,11 @@ def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -
     for call in _CALL.finditer(code):
         if call.group(1).lower() in functions:
             return f"the table function {call.group(1)}"
+    # A table reference's database is judged as it is: an alias of the same name never hides
+    # it.
+    for db in _referenced_databases(code):
+        if db not in dbs:
+            return f"database {db}"
     aliases = {
         name.strip("`")
         for m in _ALIAS.finditer(code)
@@ -427,6 +468,58 @@ def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -
         if name not in dbs and name not in aliases:
             return f"database {name}"
     return ""
+
+
+_FROM = re.compile(r"\bFROM\b", re.I)
+_JOINED = re.compile(rf"(?<!ARRAY\s)\bJOIN\s+({_NAME})\s*\.\s*{_NAME}(?!\s*\()", re.I)
+# What ends a FROM list: the next clause, or a join.
+_FROM_END = re.compile(
+    r"\b(?:WHERE|PREWHERE|GROUP|ORDER|LIMIT|HAVING|SETTINGS|UNION|FORMAT|WINDOW|QUALIFY|"
+    r"INNER|LEFT|RIGHT|FULL|CROSS|JOIN|ARRAY|ANY|ALL|ASOF|SEMI|ANTI|GLOBAL|PASTE|SAMPLE|"
+    r"FINAL|ON|USING|INTERSECT|EXCEPT)\b",
+    re.I,
+)
+_LEADING_REF = re.compile(rf"\s*({_NAME})\s*\.\s*{_NAME}(?!\s*\()")
+
+
+def _referenced_databases(code: str) -> set[str]:
+    """The database of every qualified table reference: each item of a FROM list (a comma
+    join included) and each joined table."""
+    out = {m.group(1).strip("`") for m in _JOINED.finditer(code)}
+    for m in _FROM.finditer(code):
+        depth, start, items = 0, m.end(), []
+        i = start
+        while i < len(code):
+            ch = code[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    break
+            elif depth == 0 and ch == ",":
+                items.append(code[start:i])
+                start = i + 1
+            elif (
+                depth == 0
+                and (end := _FROM_END.match(code, i))
+                and (i == 0 or not (code[i - 1].isalnum() or code[i - 1] == "_"))
+            ):
+                del end
+                break
+            i += 1
+        items.append(code[start:i])
+        for item in items:
+            if ref := _LEADING_REF.match(item):
+                out.add(ref.group(1).strip("`"))
+    return out
+
+
+def keeper_root(engine_full: str) -> str:
+    """A KeeperMap table's root path, normalised: one slash between parts, none at the
+    ends."""
+    args = _engine_args(engine_full)
+    return "/".join(p for p in (args[0] if args else "").split("/") if p)
 
 
 def object_problems(
@@ -442,6 +535,14 @@ def object_problems(
     a view reading outside them (`_view_reads_outside`, with `functions` the table
     functions), a forwarding table naming a database outside them, and any other engine but
     the MergeTree family and `_LOCAL_ENGINES`."""
+    rows = list(rows)
+    # The keys of a KeeperMap table live under its root path in Keeper, shared by every
+    # table with that root.
+    roots = {
+        keeper_root(str(r.get("engine_full") or "")): f"{r['database']}.{r['name']}"
+        for r in rows
+        if r["engine"] == "KeeperMap" and r["database"] in dbs
+    }
     out: dict[str, str] = {}
     for r in rows:
         db, name, engine = str(r["database"]), str(r["name"]), str(r["engine"])
@@ -451,7 +552,12 @@ def object_problems(
                 out[key] = why
             continue
         query = str(r.get("create_table_query") or "")
-        if engine in _FORWARDING and _engine_targets(str(r.get("engine_full") or ""), dbs):
+        if engine == "KeeperMap":
+            if shared := roots.get(keeper_root(str(r.get("engine_full") or ""))):
+                out[key] = f"a KeeperMap table sharing {shared}'s keys"
+        elif engine in _NETWORKED:
+            out[key] = f"a {engine} table, which connects out with credentials of its own"
+        elif engine in _FORWARDING and _engine_targets(str(r.get("engine_full") or ""), dbs):
             out[key] = f"a {engine} table writing a configured database"
         elif engine in _WRITING_VIEWS:
             to = _TO.search(query.split(" AS ", 1)[0])
@@ -531,13 +637,23 @@ async def _show_grants(ch: Any) -> list[Grant]:
     return parse_show_grants(str(next(iter(r.values()))) for r in rows if r)
 
 
-async def own_refusals(ch: Any, topology: Topology) -> list[Refusal]:
-    """What attach's own user lacks, from its own `SHOW GRANTS FINAL`: without it
-    `system.tables` and `system.columns` would silently list less than there is."""
-    missing = own_problems(await _show_grants(ch), topology, databases())
-    if not missing:
-        return []
-    return [Refusal(f"user {await _own_user(ch)}", f"attach's own user lacks {', '.join(missing)}")]
+async def own_refusals(ch: Any, topology: Topology, names: Mapping[str, str]) -> list[Refusal]:
+    """What attach's own user lacks to read what the checks read: without it `system.tables`
+    and `system.columns` would silently list less than there is. First its own
+    `SHOW GRANTS FINAL`; then, on several hosts, that every host runs the reads as this
+    user; then that user's grants as each host keeps them."""
+    dbs = databases()
+    own = await _own_user(ch)
+    if missing := own_problems(await _show_grants(ch), topology, dbs):
+        return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")]
+    if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
+        return wrong
+    out = []
+    for host, users in sorted((await _host_grants(ch, topology, names)).items()):
+        # Each host keeps its own users: attach's must hold the same on every one.
+        if lacks := own_problems(users.get(own, []), topology, dbs):
+            out.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
+    return out
 
 
 async def _process_users(
@@ -600,18 +716,11 @@ async def check_writers(
 
     dbs = databases()
     with query_tag("cell.writers"):
-        own = await _own_user(ch)
-        if lacking := await own_refusals(ch, topology):
+        if lacking := await own_refusals(ch, topology, names):
             return lacking
-        if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
-            return wrong
         refusals: list[Refusal] = []
         per_user = await _host_grants(ch, topology, names)
         for host, users in sorted(per_user.items()):
-            # Each host keeps its own users: attach's must hold the same on every one.
-            lacks = own_problems(users.get(own, []), topology, dbs)
-            if lacks:
-                refusals.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
             for user, grants in sorted(users.items()):
                 if user not in allowed.users and (why := writer_reason(grants, dbs)):
                     refusals.append(
@@ -656,12 +765,13 @@ _OBJECTS_SQL = (
 async def _objects(
     ch: Any, topology: Topology, names: Mapping[str, str], allowed: Allowed, dbs: list[str]
 ) -> list[Refusal]:
-    kinds = sorted(_FORWARDING | _WRITING_VIEWS)
+    kinds = sorted(_FORWARDING | _WRITING_VIEWS | _NETWORKED | {"KeeperMap"})
     rows = await per_host(ch, topology, names, _OBJECTS_SQL, {"kinds": kinds, "dbs": dbs})
-    functions = frozenset(
-        str(r["name"]).lower()
-        for r in await ch.query_all("SELECT name FROM system.table_functions")
+    # Each host's own: a build may add one.
+    listed = await per_host(
+        ch, topology, names, "SELECT hostName() AS h, name FROM {source:table_functions}"
     )
+    functions = frozenset(str(r["name"]).lower() for found in listed.values() for r in found)
     out = []
     for host, found in sorted(rows.items()):
         for key, why in sorted(object_problems(found, dbs, functions, topology.cluster).items()):
