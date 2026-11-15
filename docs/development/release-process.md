@@ -258,14 +258,16 @@ there costs a candidate number, not a final version.
    When neither is taken, move `:latest` (if it moved) and, for a final, `:X.Y` back to the
    previous release on both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
 9. `sign-files` downloads every file the release now serves, as users do
-   (`scripts/release/download_release_files.sh`), signs each with a keyless signature like the
-   images', into a Sigstore bundle `<file>.sigstore.json`, and verifies each as users do
-   (`scripts/release/verify_release_files.sh`). It holds the run's OIDC token in a job of its own,
-   with read-only contents; `attach-signatures` then uploads the Sigstore bundles to the release.
-   Signing what the release serves covers a stack bundle the release kept from an earlier run. A
-   dispatch builds the files again, and `github-release` replaces them, so until its own
-   `sign-files` and `attach-signatures` finish, the tag run's Sigstore bundles do not verify the
-   replaced files;
+   (`scripts/release/download_release_files.sh`), and signs each one that is byte-identical to
+   this run's build with a keyless signature like the images', into a Sigstore bundle
+   `<file>.sigstore.json` (`scripts/release/sign_release_files.sh`). A stack bundle and checksum
+   the release kept from an earlier run keep their Sigstore bundles when those verify; any other
+   file fails the job, since it was changed outside the workflow. It then verifies each file as
+   users do (`scripts/release/verify_release_files.sh`). It holds the run's OIDC token in a job of
+   its own, with read-only contents; `attach-signatures` then uploads the Sigstore bundles to the
+   release. A dispatch builds the files again, and `github-release` replaces them, so until its
+   own `sign-files` and `attach-signatures` finish, the tag run's Sigstore bundles do not verify
+   the replaced files;
 10. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
     was just published, signed in to nothing: the one-liner from github.com in the same clean
     containers, pulling both images anonymously, and verifies the signatures of both images and
@@ -349,28 +351,25 @@ the `digest=` line, then the `docker buildx imagetools create` command without t
 
 A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, say) leaves files on
 the release without a Sigstore bundle that verifies them: unsigned, or, on a dispatch, with the tag
-run's bundles beside the files the dispatch replaced. "Re-run failed jobs" signs every file the
-release serves again and replaces its Sigstore bundles; on a tag push, `release-check` runs after
-them. A `release-check` that fails on a listing or a download is re-run the same way.
-
-A file whose Sigstore bundle stops verifying after `sign-files` and `attach-signatures` passed, with
-no dispatch running, was changed outside the workflow. `sign-files` signs what the release serves,
-so first check that the served file is the one the run built: its sha256 must match the same file
-in the run's `release-files` artifact (`gh run download <run> -R ClickHouse/loom -n release-files`;
-a stack bundle and checksum the release kept come from the run that first published them). A file
-that differs is a security incident ([SECURITY.md](../../SECURITY.md)), not a signing failure: do
-not sign it. When every file matches, re-run `sign-files` alone, which also re-runs the jobs after
-it and publishes nothing:
+run's bundles beside the files the dispatch replaced. "Re-run failed jobs" signs them again and
+replaces their Sigstore bundles; on a tag push, `release-check` runs after them. A `release-check`
+that fails on a listing or a download is re-run the same way, and so is one that finds a file whose
+bundle does not verify after `sign-files` and `attach-signatures` passed, by re-running
+`sign-files` alone, which re-runs the jobs after it and publishes nothing to a registry:
 
 ```bash
 job=$(gh run view <run> -R ClickHouse/loom --json jobs --jq '.jobs[] | select(.name == "Sign the release files") | .databaseId')
 gh run rerun <run> -R ClickHouse/loom --job "$job"
 ```
 
-Both re-runs work for 30 days after the run, as long as its artifacts are kept. After that, only a
-dispatch on the tag signs the files again: it builds and replaces them, and publishes the SDKs and
-the MCP Registry listing once their environments are approved (the registries skip a version they
-already have).
+`sign-files` refuses a served file that is not this run's build and has no Sigstore bundle that
+verifies: it was changed outside the workflow, which is a security incident
+([SECURITY.md](../../SECURITY.md)), not a signing failure. "Re-run all jobs" on a run whose first
+signing failed refuses the stack bundle the same way, since the rebuilt bundle differs from the one
+the release kept: re-run failed jobs instead. Both re-runs work for 30 days after the run, as long
+as its artifacts are kept. After that, only a dispatch on the tag signs the files again: it builds
+and replaces them, and publishes the SDKs and the MCP Registry listing once their environments are
+approved (the registries skip a version they already have).
 
 ### When the clickhouse job stops
 

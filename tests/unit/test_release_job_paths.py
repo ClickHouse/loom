@@ -165,11 +165,11 @@ def test_a_dry_run_whose_build_fails_smokes_nothing() -> None:
     assert "docker-smoke" not in ran
 
 
-def test_a_failed_release_step_publishes_no_registry() -> None:
+def test_a_failed_release_step_signs_and_publishes_nothing() -> None:
     ran = run(
         event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({"github-release"})
     )
-    assert not ran & (REGISTRIES | {"sign-files", "attach-signatures", "release-check"})
+    assert not ran & ((RELEASE - {"github-release"}) | {"release-check"} | REGISTRIES)
 
 
 @pytest.mark.parametrize("failed", ["sign-files", "attach-signatures"])
