@@ -903,6 +903,7 @@ async def sync_file(
     revision = str(f.get("modifiedTime") or "")
     # A copy stored with its pictures' bytes, at this revision and address, is converted
     # again; a moved file takes the ordinary write-and-retire path.
+    checked = turn.kind_state.get(_PICTURES_CHECKED, {})  # a folder turn's own record
     reconvert = bool(
         prior is not None
         and f.get("mimeType") == GDRIVE_MIME_TYPES["docs"]
@@ -910,7 +911,7 @@ async def sync_file(
         and prior["source_revision"] == revision
         and prior["source_uri"] == uri
         # Checked at this revision already: its conversion changed nothing.
-        and turn.kind_state[_PICTURES_CHECKED].get(str(f["id"])) != revision
+        and checked.get(str(f["id"])) != revision
     )
     if reconvert and _given_up(turn, f):
         # Its older copy is still served: not counted unconverted; the waits say when it
@@ -1156,7 +1157,8 @@ async def _may_write(src: KnowledgeSource, uri: str) -> bool:
 
 def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
     """Whether `doc` is one this source's sync wrote."""
-    return doc.actor == SYNC_WORKER_ACTOR and home(src)[1] in doc.tags
+    _, tag = home(src)
+    return doc.actor == SYNC_WORKER_ACTOR and tag in doc.tags
 
 
 async def require_current(src: KnowledgeSource) -> None:
@@ -1199,8 +1201,8 @@ async def write_document(
     fetch is seconds old by now."""
     namespace, tag = home(src)
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if src.access == MIRRORED_ACCESS:
-        tags.append(tag)  # its `source-id:<id>`; a mirror is no repository's namespace
+    if tag != tags[-1]:
+        tags.append(tag)  # a mirror's `source-id:<id>`, and no repository tag
     elif repo := _repo_tag(src):
         tags.insert(1, repo)
     metadata: dict[str, Any] = {

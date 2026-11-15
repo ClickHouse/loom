@@ -170,7 +170,9 @@ def test_a_mirror_never_takes_a_name_already_in_use(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(mirrors, "mirrors_of", _none)
     monkeypatch.setattr(mirrors, "add_mirror", _add)
     monkeypatch.setattr(mirrors, "directory", lambda: _Directory())
-    assert asyncio.run(mirrors.ensure_mirror("o", "team")) == "acl-" + "2" * 24
+    assert asyncio.run(mirrors.ensure_mirror("o", "team", still_current=_current)) == (
+        "acl-" + "2" * 24
+    )
     assert added == ["acl-" + "2" * 24]
 
 
@@ -418,38 +420,59 @@ def test_a_moved_file_keeps_its_list_at_its_new_address_and_none_at_its_old(
     assert access_list.from_json(world.docs[moved]["access_json"]).emails == ("ann@example.com",)
 
 
-def test_a_mirror_is_made_under_the_sources_lease_only_when_there_is_none(
+async def _current() -> None:
+    return None
+
+
+def test_a_namespace_s_live_mirror_is_kept_and_none_is_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    added: list[str] = []
+
+    async def _live(org: str, namespace: str) -> str:
+        return MIRROR
+
+    async def _add(org: str, namespace: str, mirror: str, **kw: Any) -> None:
+        added.append(mirror)
+
+    monkeypatch.setattr(mirrors, "live_mirror", _live)
+    monkeypatch.setattr(mirrors, "add_mirror", _add)
+    assert asyncio.run(mirrors.ensure_mirror("o", "team", still_current=_current)) == MIRROR
+    assert added == []
+
+
+def test_a_source_removed_before_its_turn_makes_no_mirror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.core import leases
 
-    leased: list[str] = []
+    added: list[str] = []
 
     @contextlib.asynccontextmanager
     async def _holding(name: str, **kw: Any) -> AsyncIterator[bool]:
-        leased.append(name)
         yield True
 
-    async def _live(org: str, namespace: str) -> str:
-        return live
+    async def _none(org: str, namespace: str) -> str:
+        return ""
 
-    async def _made(org: str, namespace: str) -> str:
-        return "acl-" + "b" * 24
+    async def _add(org: str, namespace: str, mirror: str, **kw: Any) -> None:
+        added.append(mirror)
+
+    async def _gone() -> None:
+        raise source_sync.SourceGone("o/team/decks")  # the namespace's erasure removed it
 
     monkeypatch.setattr(leases, "holding", _holding)
-    monkeypatch.setattr(mirrors, "live_mirror", _live)
-    monkeypatch.setattr(mirrors, "_made_mirror", _made)
-    live = MIRROR
-    assert asyncio.run(mirrors.ensure_mirror("o", "team")) == MIRROR and leased == []
-    live = ""
-    assert asyncio.run(mirrors.ensure_mirror("o", "team")) == "acl-" + "b" * 24
-    assert len(leased) == 1
+    monkeypatch.setattr(mirrors, "live_mirror", _none)
+    monkeypatch.setattr(mirrors, "add_mirror", _add)
+    with pytest.raises(source_sync.SourceGone):
+        asyncio.run(mirrors.ensure_mirror("o", "team", still_current=_gone))
+    assert added == []
 
 
 def test_a_publication_still_owed_in_the_mirror_records_no_listing_row(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _owed(org: str, namespace: str, source_id: str) -> bool:
+    async def _owed(org: str, namespace: str, uri_suffix: str) -> bool:
         return namespace == MIRROR  # a head ClickHouse has no row for yet
 
     monkeypatch.setattr(documents, "publications_owed", _owed)
@@ -498,7 +521,8 @@ def test_two_turns_at_once_make_one_mirror(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(mirrors, "directory", lambda: _Directory())
 
     async def _both() -> list[str]:
-        return list(await asyncio.gather(*(mirrors.ensure_mirror("o", "team") for _ in range(2))))
+        made = (mirrors.ensure_mirror("o", "team", still_current=_current) for _ in range(2))
+        return list(await asyncio.gather(*made))
 
     made = asyncio.run(_both())
     assert made[0] == made[1] and len(registry) == 1
@@ -509,7 +533,7 @@ def test_a_publication_owed_when_the_copies_were_read_records_no_listing_row(
 ) -> None:
     answers = iter([True, False])  # owed at the read, settled by the turn's end
 
-    async def _owed(org: str, namespace: str, source_id: str) -> bool:
+    async def _owed(org: str, namespace: str, uri_suffix: str) -> bool:
         return next(answers)
 
     monkeypatch.setattr(documents, "publications_owed", _owed)

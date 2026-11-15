@@ -33,6 +33,7 @@ from server.knowledge.domain.sources import (
     home,
     json_object,
     mirror_uri,
+    mirror_uri_suffix,
 )
 from server.knowledge.store import documents
 from server.knowledge.store import sources as store
@@ -59,7 +60,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     if opened is None:
         return result
     token, listing, files = opened
-    src = dataclasses.replace(src, mirror=await mirrors.ensure_mirror(src.org, src.namespace))
+    current = functools.partial(sync.require_current, src)
+    mirror = await mirrors.ensure_mirror(src.org, src.namespace, still_current=current)
+    src = dataclasses.replace(src, mirror=mirror)
     if result.complete and not listing.walk_cut:
         listed_ids = {str(f["id"]) for f in files}
         result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
@@ -68,7 +71,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     whole = listing.whole and not listing.lost_item
     # A head whose row ClickHouse does not have yet is not among the copies read, so a
     # listing that began with one owed vouches for nothing.
-    own = mirror_uri("", src.source_id)  # the end of every address this source writes
+    own = mirror_uri_suffix(src.source_id)
     owed = await documents.publications_owed(src.org, src.mirror, own)
     with sequential_reads():  # a replica behind the last turn would show an older list
         copies = await store.every_copy_flagged(src.org, *home(src))

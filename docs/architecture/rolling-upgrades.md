@@ -753,11 +753,11 @@ schema. These rules keep that safe. The operator procedure is in
     `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
     default (`namespace`) is what every row N-1 writes means. N stores a source whose
     `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
-    credential for it. N serves none either: its sync pass skips one, its retire pass
-    leaves its delete request alone, and `check`, `rotate`, `update`, `sync_now` and an
-    `add` of a removed one's name refuse with `SOURCE_NOT_SERVED`. So beside the build
-    that writes mirrors, N never syncs a mirrored source into the named namespace or
-    orphans its documents.
+    credential for it. N serves none either: its sync pass skips one (rule 54's build
+    syncs a mirrored `gdrive` one into the mirror), its retire pass leaves its delete
+    request alone, and `check`, `rotate`, `update`, `sync_now` and an `add` of a removed
+    one's name refuse with `SOURCE_NOT_SERVED`. So beside the build that writes mirrors,
+    N never syncs a mirrored source into the named namespace or orphans its documents.
 
     On N, each namespace erasure step reads the registry, which keeps every mirror the
     named namespaces have had, so every run of the step, a resume's or a replay's
@@ -765,7 +765,8 @@ schema. These rules keep that safe. The operator procedure is in
     over the named namespaces and their mirrors, and the census counts it the same way.
     The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a
     live one keeps the name in use. N-1 runs no mirror pass and counts no registry row;
-    this build writes no mirror, so N-1 meets an empty registry.
+    N writes no mirror, so N-1 meets an empty registry, and the build that writes
+    mirrors (rule 54) runs beside N, which reads them.
     `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
     `tests/unit/test_knowledge_sources.py` and
     `tests/unit/test_knowledge_source_sync.py` check N's side.

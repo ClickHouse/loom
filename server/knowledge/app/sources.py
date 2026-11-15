@@ -344,8 +344,9 @@ async def _source_or_404(org: str, namespace: str, name: str) -> KnowledgeSource
 
 
 def _require_served(src: KnowledgeSource) -> None:
-    """This build syncs only sources shown to every reader of the namespace: a mirrored
-    one, which a later build writes, is that build's to read."""
+    """This build's ops serve only sources shown to every reader of the namespace; its
+    sync worker writes a mirrored `gdrive` one into the mirror (`mirror_synced`), and
+    a later build serves it."""
     if not domain.served(src):
         raise ValidationError(
             f"source {src.name!r} is not served by this server yet (access "

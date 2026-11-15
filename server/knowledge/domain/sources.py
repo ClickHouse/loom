@@ -191,7 +191,12 @@ def source_id_tag(source_id: str) -> str:
 def mirror_uri(address: str, source_id: str) -> str:
     """A mirrored document's `source_uri`: the file's address and its source's id, so
     each source that reaches a file keeps its own copy and list."""
-    return f"{address}#{source_id}"
+    return address + mirror_uri_suffix(source_id)
+
+
+def mirror_uri_suffix(source_id: str) -> str:
+    """The end of every `source_uri` a mirrored source writes."""
+    return f"#{source_id}"
 
 
 def home(src: KnowledgeSource) -> tuple[str, str]:
@@ -658,6 +663,7 @@ __all__ = [
     "max_items",
     "mirror_synced",
     "mirror_uri",
+    "mirror_uri_suffix",
     "normalize_name",
     "options_in",
     "parse_config",

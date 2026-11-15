@@ -193,6 +193,38 @@ async def test_the_head_lists_answer_each_live_head_s_permission_list(
     assert lists == {"docs/kept.md": "", "docs/listed.md": listed}
 
 
+async def test_an_owed_delivery_counts_only_for_the_source_whose_addresses_it_ends(
+    pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.store import pg_documents
+
+    # Leased a day ahead, so no delivery worker claims these rows; removed at the end.
+    for uri in ("https://docs.example.com/d/1#sid-a", "https://docs.example.com/d/2#sid-b"):
+        await pg_conn.execute(
+            "INSERT INTO loom.knowledge_deliveries "
+            "(org, namespace, source_uri, version, user_id, row, targets, lease_until) "
+            "VALUES ($1, $2, $3, 1, '-', '{}'::jsonb, 1, now() + interval '1 day')",
+            org,
+            ns,
+            uri,
+        )
+    try:
+        assert await pg_documents.owed_ending(org, ns, "#sid-a")
+        assert not await pg_documents.owed_ending(org, ns, "#sid-c")
+        await pg_conn.execute(
+            "UPDATE loom.knowledge_deliveries SET settled = true "
+            "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-a'",
+            org,
+            ns,
+        )
+        assert not await pg_documents.owed_ending(org, ns, "#sid-a")
+        assert await pg_documents.owed_ending(org, ns, "#sid-b")  # the other source's
+    finally:
+        await pg_conn.execute(
+            "DELETE FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2", org, ns
+        )
+
+
 async def test_a_commit_over_a_version_its_writer_did_not_read_is_refused(
     call: Any, pg_conn: Any, org: str, ns: str
 ) -> None:
