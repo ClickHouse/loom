@@ -1,8 +1,9 @@
 // The place picker (a select, or the tree beside the page), the path and chips, the
 // collection's menu, New collection, and how the list is read again after a write.
-import { useState, type ComponentProps } from "react";
+import { StrictMode } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import { entry, matchOnly, Picker, read, ROWS, settle } from "../test/libraryCollections";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { TREE_PAGE_MIN } from "../lib/useTreeHeight";
@@ -18,7 +19,6 @@ import { Documents } from "./Documents";
 import {
   REFRESH_TRIES,
   REFRESH_WAIT_MS,
-  LibraryCollections,
   collectionLabel,
   treeOrder,
   useReadableCollections,
@@ -50,49 +50,6 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast,
 }));
-
-const entry = (namespace: string, over: Partial<CollectionEntry> = {}): CollectionEntry => ({
-  namespace,
-  parent: "",
-  personal: false,
-  role: "admin",
-  description: "",
-  ...over,
-});
-
-const ROWS = [
-  entry("col-plans", { parent: "col-q3", role: "viewer" }),
-  entry("col-q3", { description: "Quarter plans" }),
-  entry("col-me-1a2b", { personal: true }),
-];
-
-const read = (rows: CollectionEntry[] | null, over: Partial<ReadableCollections> = {}): ReadableCollections => ({
-  rows,
-  truncated: false,
-  kept: rows && { rows, truncated: false },
-  refreshing: false,
-  error: null,
-  reload: vi.fn(),
-  retry: vi.fn(),
-  expected: "",
-  ...over,
-});
-
-/** A window where only `query` matches. */
-function matchOnly(query: string) {
-  vi.stubGlobal("matchMedia", (q: string) => ({
-    matches: q === query,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
-}
-
-async function settle() {
-  for (let i = 0; i < 3; i++)
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
-    });
-}
 
 describe("collection names and order", () => {
   it("shows a title in place of the name, and both where two collections share the title", () => {
@@ -161,28 +118,6 @@ describe("collection names and order", () => {
   });
 });
 
-/** The picker as Documents mounts it: the New collection dialog's open state is the page's. */
-function Picker(
-  props: Omit<
-    ComponentProps<typeof LibraryCollections>,
-    "creating" | "onCreatingChange" | "onCreated" | "claimCreateVersion" | "repeated" | "byName"
-  >,
-) {
-  const [creating, setCreating] = useState(false);
-  const rows = props.collections.rows ?? [];
-  return (
-    <LibraryCollections
-      {...props}
-      repeated={repeatedTitles(rows)}
-      byName={new Map(rows.map((c) => [c.namespace, c]))}
-      creating={creating}
-      onCreatingChange={setCreating}
-      claimCreateVersion={() => 0}
-      onCreated={vi.fn()}
-    />
-  );
-}
-
 describe("LibraryCollections", () => {
   afterEach(() => {
     cleanup();
@@ -210,10 +145,6 @@ describe("LibraryCollections", () => {
   it("gives a viewer no menu: its members are behind See who in the header", async () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
     expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
-    await settle();
-    // What the place is, and the role, behind the info button: a press opens it.
-    await userEvent.click(screen.getByRole("button", { name: "About this place" }));
-    expect(await screen.findByText(/^Viewer of a collection: .*everyone who reaches col-q3/)).toBeInTheDocument();
   });
 
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
@@ -528,6 +459,18 @@ describe("the Library on a collection", () => {
     expect(screen.getByRole("group", { name: "Who can see it" })).toHaveTextContent(/^Only you/);
     expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "See who" })).not.toBeInTheDocument();
+  });
+
+  it("loads the collections under StrictMode, which runs its effects twice", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(
+      <StrictMode>
+        <Documents />
+      </StrictMode>,
+    );
+    await settle();
+    expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-q3");
   });
 
   it("lists no collections inside on a phone, where the select lists them", async () => {

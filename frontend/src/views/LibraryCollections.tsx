@@ -23,6 +23,7 @@ import {
 } from "../lib/collections";
 import { fmtInt } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
+import { useAbortableEffect } from "../lib/hooks";
 import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
@@ -122,14 +123,10 @@ export function useReadableCollections(org: string, showing: string | null = nul
   // Each read waits for `expect` (a name in an org), which the reload or write that asked for
   // it sets; a later reload or write replaces it, a retry keeps it.
   const [asked, setAsked] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
-  // Every request to read, counted as it is made: a read out joins only the ones made before
-  // it started, never a write after it.
-  const requested = useRef(0);
   const reload = useCallback(
     (expect = "") => {
       // An old failure would read as "no collections" before the new answer lands.
       setError(null);
-      requested.current += 1;
       setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name: expect } }));
     },
     [org],
@@ -138,14 +135,13 @@ export function useReadableCollections(org: string, showing: string | null = nul
   // one made in another org is not waited for.
   useEffect(
     () =>
-      onCollectionsChanged((made) => {
-        requested.current += 1;
+      onCollectionsChanged((made) =>
         setAsked((r) => ({
           ...r,
           refreshes: r.refreshes + 1,
           expect: { org: made?.org ?? org, name: made?.name ?? "" },
-        }));
-      }),
+        })),
+      ),
     [org],
   );
   const expected = asked.expect.org === org ? asked.expect.name : "";
@@ -153,29 +149,10 @@ export function useReadableCollections(org: string, showing: string | null = nul
   // effect captures it when it starts: `showing` changing restarts no read.
   const answered = answer?.org === org && answer.reloads === asked.reloads;
   const hold = answered && showing !== null && answer.rows.some((c) => c.namespace === showing) ? showing : "";
-  // The last read, out or answered, what it waits for, and the requests it answers (those
-  // made before it started). An effect for the same collection with no newer request adopts
-  // it instead of starting another: a create's refresh and the reload that opens what it made
-  // are one read, whichever order and however many renders React gives them.
-  const flight = useRef<{
-    org: string;
-    name: string;
-    upTo: number;
-    ctl: AbortController;
-    read: Promise<{ rows: CollectionEntry[]; truncated: boolean }>;
-  } | null>(null);
-  // The answer counts for what was asked by the time it lands, the requests it adopted too.
-  const latest = useRef(asked);
-  latest.current = asked;
-  useEffect(() => {
-    let alive = true;
-    setError(null);
-    let out = flight.current;
-    if (!(out && out.org === org && out.name === expected && out.upTo >= requested.current)) {
-      out?.ctl.abort();
-      const ctl = new AbortController();
-      const signal = ctl.signal;
-      const read = (async () => {
+  useAbortableEffect(
+    (signal, live) => {
+      setError(null);
+      void (async () => {
         for (let attempt = 0; ; attempt++) {
           // Pages read from replicas that disagree can list a collection twice: once here.
           const byName = new Map<string, CollectionEntry>();
@@ -191,32 +168,19 @@ export function useReadableCollections(org: string, showing: string | null = nul
           if (caughtUp || attempt >= REFRESH_TRIES - 1) return { rows, truncated: !!cursor };
           await wait(REFRESH_WAIT_MS, signal);
         }
-      })();
-      out = { org, name: expected, upTo: requested.current, ctl, read };
-      flight.current = out;
-    }
-    const mine = out;
-    mine.read
-      .then(({ rows, truncated }) => {
-        if (!alive) return;
-        const now = latest.current;
-        setAnswer({ org, reloads: now.reloads, refreshes: now.refreshes, rows, truncated });
-      })
-      .catch((e) => {
-        if (alive && !mine.ctl.signal.aborted) setError(e);
-      });
-    // The read stays out past this effect, for the next to adopt; the next that starts its
-    // own aborts it, and so does leaving the page.
-    return () => {
-      alive = false;
-    };
-    // By value: a request that changes nothing (the same reload twice) starts no read.
-  }, [org, asked.reloads, asked.refreshes, asked.expect.org, asked.expect.name]);
-  useEffect(() => () => flight.current?.ctl.abort(), []);
+      })()
+        .then(({ rows, truncated }) => {
+          if (live()) setAnswer({ org, reloads: asked.reloads, refreshes: asked.refreshes, rows, truncated });
+        })
+        .catch((e) => {
+          if (live()) setError(e);
+        });
+    },
+    [org, asked],
+  );
   const kept = answer && answer.org === org ? answer : null;
   const retry = useCallback(() => {
     setError(null);
-    requested.current += 1;
     setAsked((r) => (kept ? { ...r, refreshes: r.refreshes + 1 } : { ...r, reloads: r.reloads + 1 }));
   }, [kept]);
   const current = kept && kept.reloads === asked.reloads ? kept : null;
