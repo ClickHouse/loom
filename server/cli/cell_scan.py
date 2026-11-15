@@ -649,10 +649,11 @@ async def scan(
     budget: Budget,
     configured: Iterable[str] = (),
 ) -> ScanResult:
-    """The distinct orgs of every table of `tables` and the `configured` orgs; Refused,
-    naming the table, when a statement runs out of `budget`. A `NULL` org is named
-    malformed. The caller connects ClickHouse inside `ch.statement_timeout()` of the budget,
-    so the driver's own read timeout does not end a long statement first."""
+    """The distinct orgs of every table of `tables` and the `configured` orgs; Refused, with
+    the listing's refusals before any read, and naming the table when a statement runs out
+    of `budget` or fails other than transiently. A `NULL` org is named malformed. The caller
+    connects ClickHouse inside `ch.statement_timeout()` of the budget, so the driver's own
+    read timeout does not end a long statement first."""
     if tables.refusals:
         raise Refused(tables.refusals)
     result = ScanResult()

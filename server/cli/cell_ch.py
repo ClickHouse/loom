@@ -13,7 +13,10 @@ from server.core import ch_names
 from server.core.ch import query_tag
 from server.settings import settings
 
-TAG = "cell.scan"  # system.query_log's log_comment of the scan's statements
+# system.query_log's log_comment of the scan's statements and the reads both modules share
+# (the host names, attach's own grants), and of the writer check's own.
+TAG = "cell.scan"
+WRITERS_TAG = "cell.writers"
 
 # A `clusterAllReplicas` read: every replica answers (one that does not is unverified, not
 # absent), and the initiator reads its own host locally, never a second time over a

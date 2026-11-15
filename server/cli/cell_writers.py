@@ -18,8 +18,9 @@ leaving the org with data and no placement. The check reads, on every host of
   them sharing an inside one's keys), and the replicas outside the cluster.
 
 The check is a list of known write routes judged at one point in time, not a proof: a grant
-or an object added later, another server on the same Keeper (a KeeperMap table's keys, a
-replica outside the cluster's users), and a route outside ClickHouse's grant model pass it,
+or an object added later, another server on the same Keeper (its KeeperMap tables on an
+inside table's root, the users of a replica named with `--ch-allow-replica` or one added
+later), and a route outside ClickHouse's grant model pass it,
 so doctor runs it again on every run. Every refusal is returned as data (`cell_ch.Refusal`),
 but for a host that answers outside the cluster's names, which raises `cell_ch.Refused`."""
 
@@ -34,6 +35,7 @@ from server.cli.cell_ch import (
     CLUSTER_SQL,
     TAG,
     WHOLE_SQL,
+    WRITERS_TAG,
     Refusal,
     Refused,
     Topology,
@@ -910,7 +912,7 @@ async def check_writers(
     `cell_ch.Refused` when a host answers outside the cluster's names; every other refusal
     is returned."""
     dbs = databases()
-    with query_tag("cell.writers"):
+    with query_tag(WRITERS_TAG):
         lacking, per_user = await own_refusals(ch, topology, names)
         if lacking:
             return lacking
