@@ -1,6 +1,7 @@
 // A collection's sharing in its header: who can see it in words, Share for its admins, See
 // who for anyone else, the person's own files as theirs alone, the read's states, and the
 // members dialog with who else can see it through each parent.
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import type { CollectionEntry, GrantEntry } from "../api";
@@ -611,6 +612,49 @@ describe("the collection header", () => {
     expect(screen.getByText("Only you")).toBeInTheDocument();
     answer({ rows: [grant("ada"), grant("bob")] });
     expect(await screen.findByText("You and bob")).toBeInTheDocument();
+  });
+
+  it("forgets a change once a parent's link leaves the place, so the parent's unchanged close reads nothing", async () => {
+    const { mid, byName } = family();
+    pages((ns) => (ns === "col-top" ? [grant("ada", { role: "admin" })] : [grant("ada", { role: "admin" })]));
+    function Moving() {
+      const [current, setCurrent] = useState(mid);
+      return (
+        <Header collection={current} byName={byName} onOpenPlace={(ns) => setCurrent(byName.get(ns) ?? current)} />
+      );
+    }
+    render(<Moving />);
+    expect(await screen.findByText(/^Only you|^You/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    let dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Add member" }));
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "bob" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(api.createGrant).toHaveBeenCalled());
+    const through = await within(dialog).findByRole("region", { name: "Also can see it, through Engineering" });
+    fireEvent.click(within(through).getByRole("button", { name: "Engineering" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await screen.findByText(/^Only you|^You/);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("ada");
+    const reads = api.listGrants.mock.calls.length;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.listGrants.mock.calls.length).toBe(reads);
+  });
+
+  it("says who can see a parent missing from a cut list wasn't read, in the dialog", async () => {
+    api.listGrants.mockResolvedValue({ rows: [grant("ada")] });
+    render(<Header collection={entry("col-a", { parent: "col-later", role: "writer" })} truncated />);
+    await screen.findByText(/Also everyone who can see a collection not listed here/);
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    const hidden = await within(dialog).findByRole("region", {
+      name: "Also can see it, through a collection not listed here",
+    });
+    expect(hidden).toHaveTextContent("Who can see that collection wasn't read: the list of collections was cut short.");
   });
 });
 

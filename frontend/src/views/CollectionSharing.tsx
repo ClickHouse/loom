@@ -23,7 +23,8 @@ import { focusViewHeading } from "../lib/place";
 const INHERIT_DEPTH = 8;
 
 /** The grants read on one collection of the way up: the one shown first, then its parents.
- *  `failed`: a parent's grants could not be read. */
+ *  `failed`: a parent's grants could not be read. `refused`: the reader may not read them
+ *  (403), so they are not shown, rather than failed. */
 export type ReadAt = GrantsAt & { failed?: boolean; refused?: boolean };
 
 /** What the header says about who can see a collection: one line naming them, and one
@@ -41,9 +42,10 @@ function plural(n: number, one: string, many: string): string {
 
 /** Who can see a collection, in words, from the active grants on it and on the parents the
  *  person can read. `me`: whoami's subject; its other spellings come from the grants read.
- *  `above`: a parent missing from the list, in words, whose grants reach it unseen. `empty`:
- *  it holds no documents yet. A read cut short counts "or more", and a parent whose grants could not be
- *  read is named as one; neither concludes "Only you" nor no one else. */
+ *  `above`: a parent missing from the list, in words, whose grants reach it unseen.
+ *  `empty`: it holds no documents yet. A read cut short counts "or more", and a parent
+ *  whose grants could not be read is named as one; neither concludes "Only you" or that no
+ *  one else can see it. */
 export function whoCanSee({
   grants,
   me,
@@ -94,13 +96,12 @@ export function whoCanSee({
       })),
     ...(above ? [{ who: above, text: `Also everyone who can see ${above}` }] : []),
   ];
-  const noticeOf = (u: { text: string }) => u.text;
   const shown = grants[0]?.namespace ?? "";
   const inherited = [...new Set([...from.values()].filter((ns) => ns !== shown))].map(titleOf);
   const subjects = [...from.keys()];
   const others = subjects.filter((s) => s !== "");
   const inheritedFrom = inherited.length > 0 ? `Inherited from ${joined(inherited)}` : "";
-  const tail = [inheritedFrom, ...unseen.map(noticeOf)];
+  const tail = [inheritedFrom, ...unseen.map((u) => u.text)];
   const shared = empty ? "Anything added here is shared with them" : "";
   if (others.includes("everyone")) {
     // Only where the grant to everyone comes from: nothing when it is on the collection itself.
@@ -128,7 +129,7 @@ export function whoCanSee({
     const [through, ...rest] = unseen;
     return {
       who: through ? `Everyone who can see ${through.who}` : "More people than are shown here",
-      how: [...rest.map(noticeOf), shared].filter(Boolean).join(" · "),
+      how: [...rest.map((u) => u.text), shared].filter(Boolean).join(" · "),
       onlyYou: false,
     };
   }
@@ -181,7 +182,7 @@ type SharingAnswer = { key: string; grants: ReadAt[] } | { key: string; error: u
  *
  * The dialog belongs to the place it opened in: a move elsewhere closes it, so a grant never
  * lands on another collection, and coming back does not reopen it. The grants are read again
- * as it closes.
+ * as it closes, if it changed one.
  */
 export function useCollectionSharing({
   org,
@@ -219,7 +220,11 @@ export function useCollectionSharing({
   // The dialog wrote a grant since it opened: its close reads the grants again.
   const changed = useRef(false);
   const [version, setVersion] = useState(0);
-  useEffect(() => setOpenFor(null), [place]);
+  useEffect(() => {
+    // A move closes the dialog: what it changed is read on the next place anyway.
+    setOpenFor(null);
+    changed.current = false;
+  }, [place]);
   const { chain, above } = useMemo(
     () => (collection ? wayUp(collection, byName) : { chain: [], above: null }),
     [collection, byName],
@@ -357,7 +362,9 @@ export function useCollectionSharing({
         namespace: "",
         title: hiddenWords,
         rows: null,
-        note: "Who can see that collection isn't shown to you.",
+        note: truncated
+          ? "Who can see that collection wasn't read: the list of collections was cut short."
+          : "Who can see that collection isn't shown to you.",
       });
     }
   } else if (answer && "error" in answer && (chain.length > 1 || hiddenWords)) {

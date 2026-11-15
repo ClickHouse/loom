@@ -211,10 +211,12 @@ describe("LibraryCollections", () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
     expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
     await settle();
-    // What the place is, and the role, behind the info button beside the select: a click (a
-    // tap on a phone) opens it. fireEvent: a userEvent click here makes the create tests below
-    // read the list three times, through state this test does not reach.
-    fireEvent.click(screen.getByRole("button", { name: "About this place" }));
+    // What the place is, and the role, behind the info button beside the select: a press
+    // (a tap on a phone) opens it. Without the hover: a pointer move over the button's
+    // tooltip trigger leaves `window.event` a pointermove in this file's later tests, and React
+    // gives updates outside a handler that event's continuous priority, so a create's two
+    // list updates render apart and the list is read three times instead of once.
+    await userEvent.setup({ skipHover: true }).click(screen.getByRole("button", { name: "About this place" }));
     expect(await screen.findByText(/^Viewer of a collection: .*everyone who reaches col-q3/)).toBeInTheDocument();
   });
 
