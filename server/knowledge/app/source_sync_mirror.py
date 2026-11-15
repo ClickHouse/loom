@@ -141,6 +141,9 @@ async def _refresh_lists(
     are written a batch at a time as they are read, so a turn the deadline or the
     store cuts keeps what it read. False when the deadline cut it."""
     for start in range(0, len(copies), _REWRITE_BATCH):
+        if run.budget.exhausted():
+            result.mark(sync.TurnMark.PASS_BOUND)
+            return False
         batch = copies[start : start + _REWRITE_BATCH]
         held = {c["source_uri"]: c["access_json"] for c in batch}
         held |= await documents.committed_lists(src.org, src.mirror, list(held))
@@ -158,8 +161,10 @@ async def _refresh_lists(
                 access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
                 if access_list.from_json(held[uri]) != access:
                     changed[uri] = access
-        finally:
-            await _write_lists(src, changed)  # Loom's own store, refused or not
+        except _Refused:
+            await _write_lists(src, changed)  # Loom's own store: the store's refusal is not
+            raise
+        await _write_lists(src, changed)
         if cut:
             return False
     return True

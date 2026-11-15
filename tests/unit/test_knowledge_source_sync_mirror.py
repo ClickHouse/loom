@@ -123,9 +123,11 @@ def test_an_absent_file_reads_unread_before_it_is_retired(world: Any, mirror: An
     [(written, _)] = world.upserts
     world.files = []
     world.file_answers["doc1"] = httpx.Response(404)
+    audits = len(world.audits)
     result = _turn(world, _mirrored())
     assert [r["access_json"] for r in mirror["rewrites"]] == [""]
     assert result.removed == 1 and written.source_uri not in world.docs
+    assert len(world.audits) == audits  # the audit log outlives an erasure: no address
 
 
 def test_an_incomplete_listing_records_no_listing_row(world: Any, mirror: Any) -> None:
@@ -592,7 +594,7 @@ def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
         del f["permissions"]
     result = _turn(world, _mirrored())
     assert result.cut and len(mirror["rewrites"]) == 2  # batches one and two
-    assert [len(uris) for uris in reads] == [1, 1, 1]  # each batch reads its own heads
+    assert reads == [[u] for u in sorted(world.docs)][:2]  # each batch its own heads, none past
 
 
 def test_a_mirrored_source_without_a_mirror_turn_is_refused_a_turn() -> None:

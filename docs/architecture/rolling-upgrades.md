@@ -786,18 +786,22 @@ schema. These rules keep that safe. The operator procedure is in
     (`SOURCE_NOT_SERVED`, rule 52). Each turn lists every file with its permissions,
     reading `permissions.list` for a file the listing leaves them out of, and writes
     into the namespace's mirror (made under the namespace's sources lease when it has
-    none) at `<address>#<source id>`, tagged `source-id:<id>`. It first brings every
-    stored copy's list to the store's, or to `unread` for a copy a whole listing does
-    not have at its address, bounded by the pass's deadline only; then it fetches and writes
-    each new or changed file with its list, and retires a copy whose file is gone. The
-    listing's start goes to `loom.knowledge_source_listings` once every stored copy's
-    list is written. No request can add a mirrored source yet, so N meets none it did
-    not write. N-1 serves no mirrored source (rule 52) and reads no listing row. N
-    counts a document as searchable when its chunks are those of its version or of its
-    revision, which a row-only rewrite (a new list, a metadata edit) keeps, so such a
-    rewrite stays until the file changes; N-1 checks the version alone, so after a
-    metadata edit it fetches and writes the file again, as it does today.
-    `tests/unit/test_knowledge_source_sync_mirror.py` and
+    none) at `<address>#<source id>`, tagged `source-id:<id>`. Once the turn starts, it
+    brings every stored copy's list to the store's, or to `unread` for a copy a whole
+    listing does not have at its address, bounded by the pass's deadline only; then it
+    fetches and writes each new or changed file with its list, and retires a copy whose
+    file is gone, with no audit row, since the audit log outlives an erasure. A pass
+    whose document bound is spent before the turn starts reaches no mirrored source.
+    The listing's start goes to `loom.knowledge_source_listings` once every stored
+    copy's list is written. No request can add a mirrored source yet, so N meets none
+    it did not write, and N runs every mirrored `gdrive` source as one shared service
+    account: the build that adds sources of another credential mode stores them in a
+    form `mirror_synced` rejects while N may run. By rule 52, N-1 serves no mirrored
+    source, and it reads no listing row. N counts a document as searchable when its
+    chunks are those of its version or of its revision, which a row-only rewrite (a new
+    list, a metadata edit) keeps, so such a rewrite stays until the file changes; N-1
+    checks the version alone, so after a metadata edit it fetches and writes the file
+    again, as it does today. `tests/unit/test_knowledge_source_sync_mirror.py` and
     `tests/unit/test_knowledge_source_revisions_sql.py` check N's side.
 
 ## What checks them
