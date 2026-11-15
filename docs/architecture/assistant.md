@@ -628,8 +628,9 @@ Each policy also carries its table's live predicate, the one the erasure census 
 version of a row, and the row stays in the table until a merge or a purge, so `FINAL`
 picks each key's latest version and the policy then drops it when that version is a
 tombstone: a deleted or erased key is absent, and its earlier versions do not come back.
-A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, keeps every other
-user, Loom's own included, reading the tables as before, whatever the server's
+A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, on every table the
+analyst has a policy on (the canary and a retired table included), keeps every other user,
+Loom's own included, reading the tables as before, whatever the server's
 `users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies
 on a table, so this one would widen any permissive policy someone else put on an
 allowlisted table: before every write Loom lists them in `system.row_policies` and,

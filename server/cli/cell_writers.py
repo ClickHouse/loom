@@ -20,9 +20,9 @@ leaving the org with data and no placement. The check reads, on every host of
 The check is a list of known write routes judged at one point in time, not a proof: a grant
 or an object added later, another server on the same Keeper (its KeeperMap tables on an
 inside table's root, the users of a replica named with `--ch-allow-replica` or one added
-later), and a route outside ClickHouse's grant model pass it,
-so doctor runs it again on every run. Every refusal is returned as data (`cell_ch.Refusal`),
-but for a host that answers outside the cluster's names, which raises `cell_ch.Refused`."""
+later), and a route outside ClickHouse's grant model pass it, so doctor runs it again on
+every run. Every refusal is returned as data (`cell_ch.Refusal`), but for a host that
+answers outside the cluster's names, which raises `cell_ch.Refused`."""
 
 from __future__ import annotations
 

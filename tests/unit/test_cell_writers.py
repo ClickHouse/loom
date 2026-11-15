@@ -6,6 +6,7 @@ ClickHouse. CH-free."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -856,3 +857,58 @@ async def test_a_refused_process_list_read_is_named() -> None:
 
 class _AccessDenied(Exception):
     """A server refusal as the driver words one."""
+
+
+def _looms_policies() -> list[dict[str, Any]]:
+    """The row policies Loom's analyst setup writes, as `system.row_policies` lists them."""
+    from server.insights.domain import analysis
+
+    caps = analysis.Caps(
+        max_execution_s=10,
+        max_rows_to_read=1000,
+        max_memory_bytes=10_000,
+        max_result_rows=50,
+        max_result_bytes=100_000,
+        max_concurrent=4,
+        max_threads=2,
+    )
+    sql = analysis.entity_sql("`loom`", analysis.SettingNames("SQL_"), "pw", b"\0" * 32, caps)
+    shape = re.compile(
+        r"CREATE ROW POLICY OR REPLACE `(\w+)` ON `loom`\.(\w+) AS (\w+) FOR SELECT "
+        r"USING (.*) TO (ALL EXCEPT )?`(\w+)`$"
+    )
+    rows = []
+    for stmt in sql:
+        if m := shape.match(stmt):
+            name, table, kind, using, except_, user = m.groups()
+            rows.append(
+                _policy(
+                    name,
+                    table,
+                    select_filter=using,
+                    is_restrictive=int(kind == "restrictive"),
+                    apply_to_all=int(bool(except_)),
+                    apply_to_list=[] if except_ else [user],
+                    apply_to_except=[user] if except_ else [],
+                )
+            )
+    assert len(rows) == sum(s.startswith("CREATE ROW POLICY") for s in sql)
+    return rows
+
+
+def test_the_policies_loom_s_analyst_setup_writes_pass() -> None:
+    rows = _looms_policies()
+    assert {r["table"] for r in rows} >= {"memory", "analysis_canary"}
+    assert cell_writers.row_policy_problems(rows, "attach") == []
+    # Without every other user's policy, the canary would read no row for attach.
+    alone = [
+        r
+        for r in rows
+        if not (r["table"] == "analysis_canary" and r["short_name"] == "loom_analyst_others")
+    ]
+    assert cell_writers.row_policy_problems(alone, "attach") == [
+        (
+            "row policy on loom.analysis_canary",
+            "no permissive policy `USING 1` covers attach: it reads no row",
+        )
+    ]

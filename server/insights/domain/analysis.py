@@ -30,7 +30,7 @@ from server.core.sql_literal import sql_string
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
 # back its narrower grants over N's (`needs_rewrite`).
-ENTITY_VERSION = 2
+ENTITY_VERSION = 3
 
 # ClickHouse server error codes.
 BAD_ARGUMENTS = 36
@@ -39,9 +39,11 @@ ACCESS_DENIED = 497
 ANALYST_USER = "loom_analyst"
 POLICY_NAME = "loom_analyst_scope"
 CAPS_PROFILE = "loom_analyst_caps"
-# A row policy on a table hides it from every user no policy names, unless the
-# server's `users_without_row_policies_can_read_rows` is on; this one keeps
-# every other user reading the table as before, whatever the server says.
+# A row policy on a table hides it from every user no policy names, unless the server's
+# `users_without_row_policies_can_read_rows` is on; this one keeps every other user reading
+# the table as before, whatever the server says. It goes on every table the analyst has a
+# policy on: the allowlist, a retired table and the canary, so no table reads short for
+# anyone else (the first attach's org scan refuses a table whose rows it cannot all read).
 OTHERS_POLICY_NAME = "loom_analyst_others"
 # Tables that left the allowlist: each keeps a policy that reads nothing, so a
 # grant that outlives it (a write cut short) still reads no row.
@@ -529,8 +531,10 @@ def entity_sql(
         out.append(policy_sql(db, OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
         out.append(policy_sql(db, POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
     for name in RETIRED_TABLES:
+        out.append(policy_sql(db, OTHERS_POLICY_NAME, name, "1", f"ALL EXCEPT {user}"))
         out.append(policy_sql(db, POLICY_NAME, name, "0", user))
     out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
+    out.append(policy_sql(db, OTHERS_POLICY_NAME, CANARY_TABLE, "1", f"ALL EXCEPT {user}"))
     # Last of the policies: a canary that reads under the key means all of them do.
     out.append(policy_sql(db, POLICY_NAME, CANARY_TABLE, condition, user))
     out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile))
@@ -586,7 +590,9 @@ def structure_digest() -> str:
     `SQL_` prefix: a server's prefix is not part of a version. A unit test
     pins it to ENTITY_VERSION, so a change to either cannot ship without a
     new version."""
-    parts = [f"retired:{name}" for name in RETIRED_TABLES]
+    # Every other user's policy goes on each table the analyst has one on.
+    parts = ["others:allowlist,retired,canary"]
+    parts += [f"retired:{name}" for name in RETIRED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
     parts += [policy_filter(SettingNames("SQL_"), b"\0" * 32), CANARY_TABLE]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
