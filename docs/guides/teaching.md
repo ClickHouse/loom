@@ -63,12 +63,12 @@ Each student then works in a repository made from that template, with **Use this
 template** on its page or with the tool that hands out your assignments, and opens it in
 a codespace or clones it to a laptop.
 
-`python grading/grade.py` checks the work against the student's running stack, and the
-`Grade` workflow runs the same checks on every push against a fresh stack on a GitHub
-Actions runner. It prints one line per check and writes the table to the run's summary;
-the run fails while any check fails. Each check fails on the untouched starter and needs
-no API key. Lab 3 and the answers page are graded by hand: their exercises ask for
-explanations.
+`python grading/grade.py` runs the lab code against the student's running stack and checks
+what it wrote and returned, not how it got there, so read the code too. The `Grade` workflow
+runs the same checks on every push, against a fresh stack on a GitHub Actions runner, and
+writes the table of checks to the run's summary; the run fails while any check fails. Each
+check fails on the untouched starter and needs no API key. Lab 3 and the answers page are
+graded by hand: their exercises ask for explanations.
 
 A grading run takes about two minutes, most of it starting the stack. In a private
 repository those minutes count against the Actions quota of the account or organization
@@ -109,8 +109,8 @@ docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.m
 Then search the namespace's documents with `knowledge.search` over HTTP (with no
 `Authorization` header on the single-user stack) or the SDK
 ([knowledge documents](../features/knowledge.md)). The SDK's `knowledge.ingest_file`
-publishes a local file without copying it into the container, as the course starter's
-`labs/lab2.py` does.
+publishes a local file without copying it into the container; the course starter's
+`labs/lab2.py` asks for it.
 
 Exercises:
 

@@ -24,6 +24,5 @@ jobs:
         run: |
           curl -fsSL --retry 3 https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh
           LOOM_CONNECT=none sh loom-install.sh
-          rm loom-install.sh
       - run: pip install -r requirements.txt
       - run: python grading/grade.py

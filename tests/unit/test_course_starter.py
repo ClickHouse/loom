@@ -29,13 +29,10 @@ from tests.unit.tracked_files import tracked
 
 ROOT = Path(__file__).resolve().parents[2]
 STARTER = ROOT / "examples" / "course-starter"
-URL = re.compile(
-    r"https://(?:github\.com/ClickHouse/loom/blob|raw\.githubusercontent\.com/ClickHouse/loom)"
-    r"/main/([\w./-]+)(?:#([\w-]+))?"
-)
+URL = re.compile(r"https://github\.com/ClickHouse/loom/blob/main/([\w./-]+)(?:#([\w-]+))?")
 # Keys the starter sets for itself: its name and its postCreateCommand.
 OWN_SETUP = {"name", "postCreateCommand"}
-USES = re.compile(r"uses: (\S+@[0-9a-f]{40})")
+USES = re.compile(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}")
 
 
 def devcontainer(path: Path) -> dict:
@@ -57,15 +54,11 @@ def test_start_script_is_the_root_one() -> None:
     assert (STARTER / ".devcontainer" / "start-loom.sh").read_bytes() == root.read_bytes()
 
 
-def test_workflow_pins_are_the_root_workflows_ones() -> None:
-    """Dependabot keeps the root workflows' pins current; the starter's follow them."""
-    root = {
-        pin
-        for p in (ROOT / ".github" / "workflows").glob("*.yml")
-        for pin in USES.findall(p.read_text())
-    }
-    starter = USES.findall((STARTER / ".github" / "workflows" / "grade.yml").read_text())
-    assert starter and set(starter) <= root, set(starter) - root
+def test_workflow_actions_are_pinned_to_commits() -> None:
+    """A teacher's copy keeps its pins; a commit, unlike a tag, cannot move under it."""
+    workflow = (STARTER / ".github" / "workflows" / "grade.yml").read_text()
+    uses = re.findall(r"uses: (\S+)", workflow)
+    assert uses and [u for u in uses if not USES.fullmatch(u)] == []
 
 
 @pytest.mark.parametrize("path", tracked("examples/course-starter"))
