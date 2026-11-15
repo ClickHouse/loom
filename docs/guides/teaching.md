@@ -69,7 +69,7 @@ the run fails while any check fails. Each check fails on the untouched starter a
 no API key. Lab 3 and the answers page are graded by hand: their exercises ask for
 explanations.
 
-A grading run takes several minutes, most of it pulling the stack's images. In a private
+A grading run takes about two minutes, most of it starting the stack. In a private
 repository those minutes count against the Actions quota of the account or organization
 that owns it ([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions));
 codespaces cost what [Setup](#setup) says.

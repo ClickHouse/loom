@@ -120,6 +120,8 @@ async def lab4_query() -> None:
         "exec", "-T", "loom", "loom", "sql-access", "grant",
         "--user", "course_grader", "--org", "dev", "--namespaces", "local", "--rotate",
     )  # fmt: skip
+    if "password:" not in granted:
+        raise Failed(f"loom sql-access grant printed no password: {granted.strip()}")
     password = granted.split("password:")[-1].strip()
     query = (ROOT / "labs" / "lab4.sql").read_text()
     out = compose(
