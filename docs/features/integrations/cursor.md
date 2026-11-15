@@ -2,13 +2,31 @@
 
 Cursor gets Loom in two independent pieces:
 
-| Piece              | What it gives                                      | How                                                                                                                                |
-| ------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| MCP tools          | the `loom_*` tools in Cursor's agent               | the [install link](#mcp-tools) for a local single-user server, else `loom install --client cursor` ([MCP clients](mcp-clients.md)) |
-| Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh`                                                                 |
+| Piece              | What it gives                                      | How                                                                                                                                                     |
+| ------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP tools          | the `loom_*` tools in Cursor's agent               | the [plugin](#plugin), the [install link](#mcp-tools) for a local single-user server, or `loom install --client cursor` ([MCP clients](mcp-clients.md)) |
+| Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh`                                                                                      |
 
-There is no Cursor plugin, so no code shunt and no capture of tool calls, runs or
-working memory; the [Claude Code](claude-code.md) and [Codex](codex.md) plugins have those.
+The Cursor plugin carries the MCP entry and the `loom` and `loom-code` skills, and has no
+hooks: no code shunt and no capture of tool calls, runs or working memory; the
+[Claude Code](claude-code.md) and [Codex](codex.md) plugins have those.
+
+## Plugin
+
+The repository is a Cursor plugin marketplace: `.cursor-plugin/` at its root holds the
+`clickhouse-loom` plugin, which installs the `loom` MCP server and the root `skills/`. The
+plugin asks for one value, **Loom MCP URL**, set when it is installed or later under
+**Configure**:
+
+| Server                                     | Loom MCP URL                                             | Sign-in                   |
+| ------------------------------------------ | -------------------------------------------------------- | ------------------------- |
+| single-user, on the same machine           | `http://localhost:7777/mcp?toolset=coding` (the default) | none                      |
+| team server with `LOOM_OAUTH_ENABLED=true` | `https://<your server>/mcp?toolset=coding`               | browser, on first connect |
+
+The entry sends no `Authorization` header, so a team server without OAuth answers 401;
+for one, write the entry with a token through `loom install --client cursor` below.
+[Clients that sign in by browser](mcp-clients.md#clients-that-sign-in-by-browser) has
+the OAuth details.
 
 ## MCP tools
 

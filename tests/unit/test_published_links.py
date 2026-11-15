@@ -44,6 +44,7 @@ def test_published_links_resolve() -> None:
         for f in (
             "server.json",
             ".claude-plugin/plugin.json",
+            ".cursor-plugin/plugin.json",
             "integrations/claude-code-plugin/.claude-plugin/plugin.json",
             "integrations/codex-plugin/.codex-plugin/plugin.json",
             "pyproject.toml",
