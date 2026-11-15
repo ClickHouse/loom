@@ -36,6 +36,7 @@ from server.knowledge.domain.sources import (
     source_id_tag,
 )
 from server.knowledge.store import documents
+from server.knowledge.store import mirrors as mirror_store
 from server.knowledge.store import sources as store
 from server.workers import pass_context
 
@@ -94,8 +95,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # it does not have already reads `unread`, so waiting for the interval costs nothing.
     if result.full and result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
-        ids = {str(f["id"]): uri for uri, f in listed.items()}
-        await sync.retire_absent(src, ids, gone, run, result)
+        addresses = {str(f["id"]): uri for uri, f in listed.items()}
+        await sync.retire_absent(src, addresses, gone, run, result)
     # A listing that searched everything and reached every item vouches for the lists,
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
@@ -104,7 +105,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
             _note(result, "publication: a written list is not in ClickHouse yet")
             return result
         pass_context.check_stop()
-        await mirrors.record_listing(src.org, src.mirror, src.source_id, src.name, started)
+        await mirror_store.record_listing(src.org, src.mirror, src.source_id, src.name, started)
     return result
 
 
@@ -174,6 +175,9 @@ async def _file_access(
         except gdrive.VendorError:
             f["permissions"] = None  # read again next turn
             _note(result, "permissions: a file's list could not be read")
+        else:
+            if f["permissions"] is None:  # a Viewer account may not see who it is shared with
+                _note(result, "permissions: the account may not read a file's sharing")
         await asyncio.sleep(PERMISSIONS_PACE_S)
     return access_list.from_drive_permissions(f.get("permissions"))
 

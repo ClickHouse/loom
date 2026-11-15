@@ -22,6 +22,7 @@ from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import MIRRORED_ACCESS, mirror_uri
 from server.knowledge.store import documents
+from server.knowledge.store import mirrors as mirror_store
 from server.settings import settings
 from tests.unit.test_knowledge_source_sync import DOCS, FOLDER, KEY, PDF, _detail, _file, _source
 from tests.unit.test_knowledge_source_sync import world as world  # the fixture
@@ -62,7 +63,7 @@ def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(mirrors, "live_mirror", _live)
     monkeypatch.setattr(source_sync_mirror, "PERMISSIONS_PACE_S", 0)
-    monkeypatch.setattr(mirrors, "record_listing", _listing)
+    monkeypatch.setattr(mirror_store, "record_listing", _listing)
     monkeypatch.setattr(documents, "get_many_by_uris", _get_many)
     monkeypatch.setattr(documents, "insert_many", _insert_many)
     monkeypatch.setattr(gdrive, "file_permissions", _permissions)
@@ -756,3 +757,19 @@ def test_a_deadline_with_every_list_already_listed_still_records_the_listing(
         f["permissions"] = []  # every list narrowed, each carried by the listing
     result = _turn(world, _mirrored())
     assert not result.cut and len(mirror["rewrites"]) == 3 and len(mirror["listings"]) == 2
+
+
+def test_a_viewer_account_s_unread_lists_are_noted(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _will_not_say(token: str, file_id: str, **kw: Any) -> Any:
+        return None  # a 403: the account may not see who the file is shared with
+
+    monkeypatch.setattr(gdrive, "file_permissions", _will_not_say)
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    _turn(world, _mirrored())
+    assert all(d["access_json"] == "" for d in world.docs.values()) and len(world.docs) == 2
+    assert _detail(world)["error"] == "permissions: the account may not read a file's sharing"

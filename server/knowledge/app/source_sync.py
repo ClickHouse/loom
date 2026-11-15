@@ -896,9 +896,9 @@ async def sync_file(
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
     `read_access` runs at the start of the fetch and gives the permission list the
-    write carries (`unread` without it). A native document whose stored text still holds its
-    pictures' bytes (an earlier conversion's) is fetched and converted again at its
-    same revision when a full listing lists it."""
+    write carries (`unread` without it). A native document whose stored text still
+    holds its pictures' bytes (an earlier conversion's) is fetched and converted again
+    at its same revision when a full listing lists it."""
     revision = str(f.get("modifiedTime") or "")
     # A copy stored with its pictures' bytes, at this revision and address, is converted
     # again; a moved file takes the ordinary write-and-retire path.
@@ -1231,7 +1231,8 @@ async def write_document(
 
 async def retire(src: KnowledgeSource, uri: str) -> bool:
     """Retire one of the source's documents, with the audit row the transport would
-    have written for `knowledge.delete`; False when it is no longer the source's."""
+    have written for `knowledge.delete` (none in a mirror: the audit log outlives an
+    erasure); False when it is no longer the source's."""
     namespace, _ = home(src)
     with sequential_reads():  # a replica behind a person's write would say still ours
         still_ours = await _may_write(src, uri)

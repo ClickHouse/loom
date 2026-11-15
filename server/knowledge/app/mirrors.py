@@ -12,7 +12,6 @@ from server.knowledge.store.mirrors import (
     add_mirror,
     forget_mirrors,
     mirrors_of,
-    record_listing,
 )
 
 
@@ -49,4 +48,4 @@ async def _register_mirror(org: str, namespace: str) -> str:
     return mirror
 
 
-__all__ = ["ensure_mirror", "forget_mirrors", "live_mirror", "mirrors_of", "record_listing"]
+__all__ = ["ensure_mirror", "forget_mirrors", "live_mirror", "mirrors_of"]

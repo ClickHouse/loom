@@ -798,11 +798,15 @@ schema. These rules keep that safe. The operator procedure is in
     meets none it did not write, and N runs every mirrored `gdrive` source as one shared
     service account: the build that adds sources of another credential mode stores them
     in a form `mirror_synced` rejects while N may run. By rule 52, N-1 serves no
-    mirrored source, and it reads no listing row. N counts a document as searchable when
-    its chunks are those of its version or of its revision, which a row-only rewrite (a
-    new list, a metadata edit) keeps, so such a rewrite stays until the file changes;
-    N-1 checks the version alone, so after a metadata edit it fetches and writes the
-    file again, as it does today. `tests/unit/test_knowledge_source_sync_mirror.py` and
+    mirrored source, and it reads no listing row; an N-1 namespace erasure has no
+    listings step, so it leaves the mirror's listing rows (source names and times, no
+    memory content), which the next erasure of the namespace on N removes, since its
+    scope holds every mirror the namespace has had. N counts a document as searchable
+    when its chunks are those of its version or of its revision, which a row-only
+    rewrite (a new list, a metadata edit) keeps, so such a rewrite stays until the file
+    changes; N-1 checks the version alone, so after a metadata edit it fetches and
+    writes the file again, as it does today.
+    `tests/unit/test_knowledge_source_sync_mirror.py` and
     `tests/unit/test_knowledge_source_revisions_sql.py` check N's side.
 
 ## What checks them
