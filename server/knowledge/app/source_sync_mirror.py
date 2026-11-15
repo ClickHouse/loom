@@ -165,7 +165,11 @@ async def _refresh_lists(
         finally:
             # A rate limit or the deadline still writes what was read; a stopped pass
             # writes nothing (`_write_lists` checks).
-            await _write_lists(src, changed)
+            written = await _write_lists(src, changed)
+        if not written:
+            # A copy another writer holds keeps its list: the listing vouches for nothing.
+            _note(result, "permissions: a stored copy is not this source's to write")
+            return False
     return not result.cut
 
 
@@ -193,17 +197,18 @@ async def _file_access(
     return access_list.from_drive_permissions(f.get("permissions"))
 
 
-async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.AccessList]) -> None:
+async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.AccessList]) -> bool:
     """Write each stored document's new list as a new row with everything else as it
-    was: its chunks are kept, so nothing is embedded again."""
+    was: its chunks are kept, so nothing is embedded again. False when a document is
+    not this source's to write, so its list stays as it was."""
     if not lists:
-        return
+        return True
     pass_context.check_stop()
     with sequential_reads():  # a replica behind the last write would carry old content
-        docs = await documents.get_many_by_uris(src.org, src.mirror, list(lists))
-    docs = [d for d in docs if sync.ours(src, d)]
+        found = await documents.get_many_by_uris(src.org, src.mirror, list(lists))
+    docs = [d for d in found if sync.ours(src, d)]
     if not docs:
-        return
+        return len(found) == 0
     await sync.require_current(src)
     rows = [
         documents.build_document_row(
@@ -215,6 +220,7 @@ async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.Access
     ]
     with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
         await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
+    return len(docs) == len(found)
 
 
 __all__ = ["PERMISSIONS_PACE_S", "turn"]

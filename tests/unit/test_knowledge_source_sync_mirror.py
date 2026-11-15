@@ -789,3 +789,23 @@ def test_a_copy_behind_its_file_is_never_widened_by_the_store_s_new_list(
     ]
     _turn(world, _mirrored())
     assert access_list.from_json(world.docs[uri]["access_json"]).emails == ("ann@example.com",)
+
+
+def test_a_copy_another_writer_holds_keeps_its_list_and_no_listing_row_lands(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    held = documents.get_many_by_uris
+
+    async def _taken(org: str, namespace: str, uris: list[str], **kw: Any) -> list[Any]:
+        return [
+            d.model_copy(update={"actor": "user:someone"}) for d in await held(org, namespace, uris)
+        ]
+
+    monkeypatch.setattr(documents, "get_many_by_uris", _taken)
+    world.files[0]["permissions"] = []
+    listings = len(mirror["listings"])
+    _turn(world, _mirrored())
+    assert mirror["rewrites"] == [] and len(mirror["listings"]) == listings
+    assert _detail(world)["error"] == "permissions: a stored copy is not this source's to write"

@@ -27,7 +27,7 @@ async def ensure_mirror(
 ) -> str:
     """The namespace's live mirror, made under its sources lease if it has none.
     `still_current` raises under the lease when an erasure removed the asking source
-    meanwhile, so no mirror outlives its namespace (rolling-upgrade rule 51)."""
+    meanwhile, so no mirror outlives its namespace (rolling-upgrade rules 52 and 54)."""
     if live := await live_mirror(org, namespace):
         return live
     async with sources_lease(org, namespace):
