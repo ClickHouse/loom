@@ -4,6 +4,8 @@ import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { MenuTrigger } from "./Menu";
+import { GatedItem, menuReasons } from "./GatedItem";
+import { Unavailable } from "./Unavailable";
 
 export interface ListToolbarAction {
   label: string;
@@ -12,6 +14,8 @@ export interface ListToolbarAction {
   danger?: boolean;
   disabled?: boolean;
   loading?: boolean;
+  /** Why the action is unavailable for the rows selected: it stays in view with it. */
+  reason?: string | null;
 }
 
 export interface ListToolbarProps {
@@ -59,6 +63,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
   const bar = useRef<HTMLDivElement>(null);
   const Bar = search ? "search" : "div";
   const selecting = !!selection && selection.count > 0;
+  const reasons = menuReasons(selection?.actions.map((a) => a.reason) ?? [], "list-toolbar-actions");
   const wasSelecting = useRef(selecting);
   useLayoutEffect(() => {
     if (wasSelecting.current && !selecting) {
@@ -96,17 +101,18 @@ export function ListToolbar({ label, search = true, children, count, selection }
             </Button>
             <div className="ml-auto hidden items-center gap-2 sm:flex">
               {selection.actions.map((a) => (
-                <Button
-                  key={a.label}
-                  type={a.danger ? "danger" : "secondary"}
-                  htmlType="button"
-                  iconLeft={a.icon}
-                  disabled={a.disabled}
-                  loading={a.loading}
-                  onClick={a.onClick}
-                >
-                  {a.label}
-                </Button>
+                <Unavailable key={a.label} reason={a.reason}>
+                  <Button
+                    type={a.danger ? "danger" : "secondary"}
+                    htmlType="button"
+                    iconLeft={a.icon}
+                    disabled={a.disabled}
+                    loading={a.loading}
+                    onClick={a.onClick}
+                  >
+                    {a.label}
+                  </Button>
+                </Unavailable>
               ))}
             </div>
             <div className="ml-auto sm:hidden">
@@ -118,15 +124,18 @@ export function ListToolbar({ label, search = true, children, count, selection }
                 </MenuTrigger>
                 <Dropdown.Content align="end">
                   {selection.actions.map((a) => (
-                    <Dropdown.Item
+                    <GatedItem
                       key={a.label}
-                      type={a.danger ? "danger" : "default"}
+                      danger={a.danger}
+                      reason={a.reason}
+                      describedBy={a.reason ? reasons.idOf(a.reason) : undefined}
                       disabled={a.disabled || a.loading}
                       onSelect={a.onClick}
                     >
                       {a.label}
-                    </Dropdown.Item>
+                    </GatedItem>
                   ))}
+                  {reasons.lines}
                 </Dropdown.Content>
               </Dropdown>
             </div>

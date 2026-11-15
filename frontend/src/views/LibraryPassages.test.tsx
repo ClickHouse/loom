@@ -96,7 +96,7 @@ describe("LibraryPassages", () => {
     );
     expect(within(first).getByRole("button")).toHaveAccessibleDescription(/Raw events are kept for 30 days/);
     await user.click(within(first).getByRole("button"));
-    expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf");
+    expect(onOpen).toHaveBeenCalledWith("repo://handbook/retention.pdf", undefined);
     // Gone (folded, or another place), the hits no longer show and the list below takes its
     // keys back.
     cleanup();

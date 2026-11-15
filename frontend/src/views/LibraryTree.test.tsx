@@ -102,13 +102,13 @@ describe("placeTree", () => {
 });
 
 describe("LibraryTree", () => {
-  it("lists the namespace, My files and the roots, the children hidden until shown", async () => {
+  it("lists All documents, the namespace, My files and the roots, the children hidden until shown", async () => {
     tree();
-    expect(places()).toEqual(["Namespace bench", "My files", "Engineering", "Legal"]);
+    expect(places()).toEqual(["All documents", "Namespace bench", "My files", "Engineering", "Legal"]);
     const show = screen.getByRole("button", { name: "Collections in Engineering" });
     expect(show).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(show);
-    expect(places()).toEqual(["Namespace bench", "My files", "Engineering", "Runbooks", "Legal"]);
+    expect(places()).toEqual(["All documents", "Namespace bench", "My files", "Engineering", "Runbooks", "Legal"]);
     expect(screen.getByRole("button", { name: "Collections in Engineering" })).toHaveAttribute("aria-expanded", "true");
   });
 
@@ -168,7 +168,15 @@ describe("LibraryTree", () => {
 
   it("shows the parents of the collection shown, and what is inside it", () => {
     tree({ current: "col-runbooks" });
-    expect(places()).toEqual(["Namespace bench", "My files", "Engineering", "Runbooks", "Ingest", "Legal"]);
+    expect(places()).toEqual([
+      "All documents",
+      "Namespace bench",
+      "My files",
+      "Engineering",
+      "Runbooks",
+      "Ingest",
+      "Legal",
+    ]);
     expect(screen.getByRole("link", { name: "Runbooks" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Engineering" })).not.toHaveAttribute("aria-current");
   });
@@ -296,7 +304,7 @@ describe("LibraryTree", () => {
     expect(t.children.get("col-b")?.map((c) => c.namespace)).toEqual(["col-a"]);
     expect(t.children.get("col-a")).toBeUndefined();
     tree({ rows, current: "col-a" });
-    expect(places()).toEqual(["Namespace bench", "My files", "B", "A", "Engineering", "Legal"]);
+    expect(places()).toEqual(["All documents", "Namespace bench", "My files", "B", "A", "Engineering", "Legal"]);
     expect(screen.getByRole("link", { name: "A" })).toHaveAttribute("aria-current", "page");
   });
 
@@ -321,7 +329,7 @@ describe("LibraryTree", () => {
       // With the namespace's row above it.
       tree({ rows: null });
       act(() => vi.advanceTimersByTime(300));
-      expect(places()).toEqual(["Namespace bench"]);
+      expect(places()).toEqual(["All documents", "Namespace bench"]);
       expect(screen.getByText("Loading collections")).toBeInTheDocument();
       cleanup();
       tree({ rows: null, namespace: null, failed: true });
@@ -402,7 +410,7 @@ describe("LibraryTree", () => {
     });
     expect(places()).not.toContain("Runbooks");
     update({ rows: ROWS });
-    expect(places()).toEqual(["My files", "Engineering", "Runbooks", "Ingest", "Legal"]);
+    expect(places()).toEqual(["All documents", "My files", "Engineering", "Runbooks", "Ingest", "Legal"]);
   });
 
   it("saves only what the person opened, not what a move showed", () => {

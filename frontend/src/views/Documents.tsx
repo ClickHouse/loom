@@ -15,6 +15,7 @@ import {
 import { flushSync } from "react-dom";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
+import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
@@ -43,7 +44,7 @@ import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError, toastWithId } from "../components/Toast";
-import { committedAnyway, toastCommitted } from "../lib/errorWords";
+import { committedAnyway, errorLine, toastCommitted } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -58,7 +59,7 @@ import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
 import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "../lib/collections";
-import { formatBytesShort } from "../lib/format";
+import { fmtInt, formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
@@ -81,6 +82,9 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
+import { ALL_DOCUMENTS, linkedAll, placeQuery } from "../lib/libraryPlace";
+import { listAcross, MAX_PLACES_READ, type PlaceFailure } from "../lib/libraryAcross";
+import { PlaceTitleLink } from "./LibraryHierarchy";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -150,8 +154,20 @@ function linkedCollection(): string | null {
  *  `note` are the arrival's focus and words (a tree pick keeps the person on its row). */
 function moveTo(c: string | null, arriveFocus?: string, note?: string): void {
   useStore.getState().clearPendingDoc();
-  useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
+  useStore.getState().navigate("knowledge", { query: placeQuery(c), arriveFocus, note });
 }
+
+/** A row's key: its address, and in a list of several places its place too, since two
+ *  places can hold the same address. */
+function rowKeyOf(r: KnowledgeEntry, across: boolean): string {
+  return across ? `${r.namespace ?? ""}\n${r.source_uri}` : r.source_uri;
+}
+
+/** A search reads the place shown, or every place the person reads. */
+type SearchScope = "here" | "everywhere";
+
+/** Why a write to a place is unavailable in All documents when none can take it. */
+const NO_PLACE_TO_ADD = "Open a collection or a memory namespace to add documents there.";
 
 // Why a restore left the document deleted (`knowledge.restore`'s `reason`).
 const RESTORE_REFUSED: Record<RestoreRefusal, string> = {
@@ -176,9 +192,12 @@ export function Documents() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const collection = linkedCollection();
+  // All documents (`?place=all`) lists the documents of every place the person reads.
+  const all = linkedAll();
+  const collection = all ? null : linkedCollection();
   const pickCollection = useCallback((c: string | null) => {
     setViewParam("collection", c);
+    setViewParam("place", null);
     // A document open in one place, or a link's still to open, is not in another.
     setViewParam("doc", null);
     useStore.getState().clearPendingDoc();
@@ -191,8 +210,8 @@ export function Documents() {
   const goTo = useCallback(
     (c: string | null, arriveFocus?: string, note?: string) => {
       // A collection is opened only once the list names it: a list that failed reads again.
-      if (c && listFailed) retryList();
-      if (c !== linkedCollection()) moveTo(c, arriveFocus, note);
+      if (c && c !== ALL_DOCUMENTS && listFailed) retryList();
+      if (c !== (linkedAll() ? ALL_DOCUMENTS : linkedCollection())) moveTo(c, arriveFocus, note);
     },
     [listFailed, retryList],
   );
@@ -203,7 +222,7 @@ export function Documents() {
   const placeVersion = useRef(0);
   useLayoutEffect(() => {
     placeVersion.current += 1;
-  }, [picked.org, picked.namespace, collection]);
+  }, [picked.org, picked.namespace, collection, all]);
   const claimCreateVersion = useCallback<ClaimCreateVersion>(() => {
     placeVersion.current += 1;
     return placeVersion.current;
@@ -230,12 +249,12 @@ export function Documents() {
   const resolving = !!collection && collections.rows === null && !listFailed;
   // Taken from the kept list, so the header holds steady while the list is read again.
   const headerCollection = collection ? (byName.get(collection) ?? null) : null;
-  const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
+  const treeCurrent = all ? ALL_DOCUMENTS : (shown?.namespace ?? (resolving ? collection : null));
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
   const mine = useStore((s) => s.myNamespaces);
   const ownShelf = isMemoryNamespace(picked.namespace, mine);
-  const noPlace = !shown && !resolving && !ownShelf;
+  const noPlace = !all && !shown && !resolving && !ownShelf;
   // With no namespace in the header, the Library opens the person's own files; a token that
   // is not a person's has none, so it stays on the top level, which lists the collections.
   const opensFirst = picked.namespace ? null : (collections.rows?.find((c) => c.personal) ?? null);
@@ -266,9 +285,14 @@ export function Documents() {
   }, [collection, collections.rows, collections.truncated, collections.expected, shown, pickCollection, fallback]);
   // A correction, not a pick: the entry is replaced, so Back leaves the Library.
   useEffect(() => {
-    if (!collection && opensFirst) pickCollection(opensFirst.namespace);
-  }, [collection, opensFirst, pickCollection]);
-  const identity = useMemo(() => (shown ? { ...picked, namespace: shown.namespace } : picked), [picked, shown]);
+    if (!collection && !all && opensFirst) pickCollection(opensFirst.namespace);
+  }, [collection, all, opensFirst, pickCollection]);
+  // In All documents what is added goes to the header's namespace, else to My files.
+  const own = collections.kept?.rows.find((c) => c.personal) ?? null;
+  const addsTo = all ? (ownShelf ? null : own) : shown;
+  const identity = useMemo(() => (addsTo ? { ...picked, namespace: addsTo.namespace } : picked), [picked, addsTo]);
+  // The place a preview or a dialog opened in: another one closes it.
+  const place = `${identity.org}/${identity.namespace}${all ? "/all" : ""}`;
   // Each write stays in view for a role known to be below writer, with what it needs: a viewer
   // of the collection shown, or a role on the namespace that falls short of knowledge.add and
   // knowledge.delete (WRITER). While the role loads the writes say so and the selection waits,
@@ -283,7 +307,14 @@ export function Documents() {
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
-  const writeReason = shown ? viewerOfShown : viewerHere;
+  // The writes to `identity`: the collection shown, My files or the header's namespace.
+  const writeReason = addsTo
+    ? addsTo === shown
+      ? viewerOfShown
+      : null
+    : all && !ownShelf
+      ? NO_PLACE_TO_ADD
+      : viewerHere;
   // A role that cannot write, or not yet known to, gets no selection for a bulk delete.
   const readOnly = writeReason !== null;
   // Known to be below writer, rather than not known yet: the empty state's viewer words.
@@ -310,8 +341,8 @@ export function Documents() {
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
   // collection is shown (the header never holds one), so a document meant for it is added
-  // from this page.
-  const elsewhere = resolving || noPlace || !!shown;
+  // from this page (All documents adds to it only when it holds documents).
+  const elsewhere = resolving || noPlace || !!shown || (all && !ownShelf);
   useEffect(() => {
     useStore.getState().setLibraryElsewhere(elsewhere);
   }, [elsewhere]);
@@ -330,24 +361,20 @@ export function Documents() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewFile, setPreviewFile] = useState<InlinePreview | null>(null);
   // The preview's Tables dialog: the typed datasets its file became.
-  const [tablesFor, setTablesFor] = useState<string | null>(null);
+  const [tablesFor, setTablesFor] = useState<KnowledgeEntry | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
-  // The documents Move to… was opened for; another place shown closes it.
-  const [moving, setMoving] = useState<string[] | null>(null);
+  // The documents Move to… was opened for, and the place they are in; another place shown
+  // closes it.
+  const [moving, setMoving] = useState<{ from: string; uris: string[] } | null>(null);
   // Whether the open Move to… dialog moved any document: focus then goes to the search.
   const movedSome = useRef(false);
-  const openMove = useCallback((uris: string[]) => {
+  const openMove = useCallback((from: string, uris: string[]) => {
     movedSome.current = false;
-    setMoving(uris);
+    setMoving({ from, uris });
   }, []);
-  useEffect(() => setMoving(null), [identity.org, identity.namespace]);
+  useEffect(() => setMoving(null), [place]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
-  // A reason that appears while Edit details is open closes it. Add and Replace stay: they
-  // hold an upload in flight, which the server refuses if the role no longer reaches it.
-  useEffect(() => {
-    if (writeReason) setEditEntry(null);
-  }, [writeReason]);
 
   // `nextCursor` is the server's continuation, null once the namespace is fully loaded.
   // `scopeRef` stamps each first-page load so a "Load more" that resolves after the scope
@@ -364,6 +391,36 @@ export function Documents() {
   // first; the memoised rows render again only when what they show changes.
   const listQuery = useDeferredValue(query);
   const parsedQuery = useMemo(() => parseSearchQuery(listQuery), [listQuery]);
+  const filtering = listQuery.trim() !== "";
+  // Where a search looks: the place shown, or every place. All documents reads every place
+  // whatever is typed; another place starts each visit here.
+  const [scope, setScope] = useState<SearchScope>("here");
+  useEffect(() => setScope("here"), [place]);
+  const across = all || (scope === "everywhere" && filtering);
+  // Every place the person reads in the Library, in the tree's order: the header's namespace,
+  // then My files and the collections. Waits for the collections' first answer.
+  const everyPlace = useMemo(() => {
+    const out = new Set<string>(ownShelf ? [picked.namespace] : []);
+    for (const { c } of treeOrder(collections.kept?.rows ?? [])) out.add(c.namespace);
+    return [...out];
+  }, [ownShelf, picked.namespace, collections.kept]);
+  const placesWaiting = !collections.kept && !collections.error;
+  // One read names at most MAX_PLACES_READ places; the rest are said to be left out.
+  const everyRead = useMemo(() => everyPlace.slice(0, MAX_PLACES_READ), [everyPlace]);
+  const placesCut = everyPlace.length - everyRead.length;
+  const readPlaces = across ? everyRead : [identity.namespace];
+  // What the rows on screen were read for: the org and the places, in order.
+  const readKey = `${identity.org}/${readPlaces.join("\n")}`;
+  // A place's name on a row and in the notes: the header's namespace, My files or a
+  // collection's title, told apart from another of the same title.
+  const placeLabel = useCallback(
+    (ns: string) => {
+      const c = byName.get(ns);
+      if (c) return c.personal ? collectionTitle(c) : distinctTitle(c, repeated);
+      return ns === picked.namespace ? namespaceLabel(ns) : ns;
+    },
+    [byName, repeated, picked.namespace],
+  );
   const queryTags = parsedQuery.tags;
   // Built from the tags' text (a tag holds no space), so a keystroke that leaves the tags as
   // they were hands every row the same set.
@@ -382,8 +439,18 @@ export function Documents() {
   const [loadError, setLoadError] = useState<unknown>(null);
   // The namespace the failed read was for: an error belongs to the place it came from.
   const [loadErrorFor, setLoadErrorFor] = useState("");
-  // The place ("org/namespace") the rows on screen were read for.
+  // The places (`readKey`) the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
+  // What a read of several places read, keyed to what it was read for: the places the rows
+  // and the cursor come from, those that failed, and whether the server read only the first.
+  const [readOf, setReadOf] = useState<{
+    key: string;
+    read: string[];
+    failed: PlaceFailure[];
+    oneAtATime: boolean;
+  } | null>(null);
+  // A Load more in flight: a new read stops it.
+  const moreRead = useRef<AbortController | null>(null);
   // The place whose list returned a document on this visit: a later filtered or failed
   // read there keeps the passages (an unfiltered empty one is an empty library).
   const [listedScope, setListedScope] = useState("");
@@ -394,14 +461,16 @@ export function Documents() {
 
   const load = (signal: AbortSignal, live: () => boolean) => {
     scopeRef.current += 1;
-    if (resolving || noPlace) {
+    moreRead.current?.abort();
+    if (resolving || noPlace || (across && placesWaiting)) {
       shownScope.current = "";
       setRows(null);
       setLoadError(null);
       return;
     }
-    // Blank only for a new namespace; a new filter keeps the rows until the next land.
-    const scope = `${identity.org}/${identity.namespace}`;
+    // Blank only for new places; a new filter keeps the rows until the next land.
+    const scope = readKey;
+    const places = readPlaces;
     if (shownScope.current !== scope) {
       shownScope.current = scope;
       setRows(null);
@@ -411,20 +480,26 @@ export function Documents() {
     }
     setNextCursor(null);
     const tags = JSON.parse(serverTags) as string[];
-    listKnowledge(
-      { org: identity.org, namespace: identity.namespace },
-      {
-        signal,
-        fields: LIBRARY_LIST_FIELDS,
-        limit: LIBRARY_PAGE,
-        ...(tags.length ? { tags } : {}),
-      },
+    // No place to read: nothing is asked, and the page says why.
+    if (places.length === 0) {
+      setRows([]);
+      setRowsScope(scope);
+      setRowsFor(serverTags);
+      setReadOf({ key: scope, read: [], failed: [], oneAtATime: false });
+      return;
+    }
+    listAcross(
+      identity.org,
+      places,
+      { fields: LIBRARY_LIST_FIELDS, limit: LIBRARY_PAGE, ...(tags.length ? { tags } : {}) },
+      signal,
     )
       .then((r) => {
         if (live()) {
           setLoadError(null);
-          setRows(r.rows || []);
+          setRows(r.rows);
           setRowsScope(scope);
+          setReadOf({ key: scope, read: r.read, failed: r.failed, oneAtATime: r.oneAtATime });
           // A read that returned a document: the library holds one, whatever filter
           // narrows a later read. An unfiltered read that returned none: it holds none.
           if (r.rows?.length) setListedScope(scope);
@@ -439,15 +514,16 @@ export function Documents() {
         if (!live()) return;
         // A failed read is said as a failure, never as an empty library.
         setLoadError(e);
-        setLoadErrorFor(identity.namespace);
+        setLoadErrorFor(places.length === 1 ? places[0] : "");
         setRows([]);
         setRowsScope(scope);
         setRowsFor(serverTags);
+        setReadOf(null);
       });
   };
 
   // A memory write cannot change the document list.
-  useAbortableEffect(load, [identity.org, identity.namespace, serverTags, reloads, resolving, noPlace]);
+  useAbortableEffect(load, [readKey, serverTags, reloads, resolving, noPlace, across && placesWaiting]);
   // A collection refused or gone while shown (deleted, or the grant revoked): reading the
   // collections again leaves it, and the page shows the namespace.
   const refusedShown =
@@ -481,18 +557,24 @@ export function Documents() {
     repeated,
     truncated: collections.kept?.truncated ?? false,
     empty: emptyLibrary,
-    place: collection ?? picked.namespace,
+    place: all ? ALL_DOCUMENTS : (collection ?? picked.namespace),
     onOpenPlace: goTo,
   });
   const readTags = JSON.parse(serverTags) as string[];
+  // The read on screen's own report; one for other places is not this list's.
+  const report = readOf?.key === readKey && rowsScope === readKey ? readOf : null;
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
     const scope = scopeRef.current;
-    markShown(shownRows?.map((r) => r.source_uri) ?? []);
+    markShown(shownRows?.map((r) => rowKeyOf(r, across)) ?? []);
     setLoadingMore(true);
+    const ac = new AbortController();
+    moreRead.current = ac;
     try {
-      const r = await listKnowledge(
-        { org: identity.org, namespace: identity.namespace },
+      // The places the first page came from, so the cursor and the places agree.
+      const r = await listAcross(
+        identity.org,
+        report?.read.length ? report.read : readPlaces,
         {
           cursor: nextCursor,
           fields: LIBRARY_LIST_FIELDS,
@@ -500,12 +582,13 @@ export function Documents() {
           // The tags the list was read with, so the cursor and the filter agree.
           ...(readTags.length ? { tags: readTags } : {}),
         },
+        ac.signal,
       );
       if (scopeRef.current !== scope) return;
-      setRows((prev) => [...(prev || []), ...(r.rows || [])]);
+      setRows((prev) => [...(prev || []), ...r.rows]);
       setNextCursor(r.next_cursor ?? null);
     } catch (e) {
-      if (scopeRef.current === scope) toastError("Load more failed", e, { read: true });
+      if (scopeRef.current === scope && !ac.signal.aborted) toastError("Load more failed", e, { read: true });
     } finally {
       // Always: a load for a scope the list has left must not leave the button spinning.
       setLoadingMore(false);
@@ -530,20 +613,22 @@ export function Documents() {
   // with the page, with its namespace, and when the reader opens or closes a document
   // themselves: its answer then opens nothing.
   const linkRead = useRef<AbortController | null>(null);
-  useEffect(() => () => linkRead.current?.abort(), [identity.org, identity.namespace]);
+  useEffect(() => () => linkRead.current?.abort(), [place]);
+  // Where a row's document is: the place it was read from, else the place shown.
+  const placeOf = (r: KnowledgeEntry) => ({ org: identity.org, namespace: r.namespace || identity.namespace });
 
   useEffect(() => {
     // Only rows read for the place shown: a navigation renders the new place before its
     // rows land.
     // Nor while the URL names a collection the list has not confirmed (it may yet).
-    if (!pendingDocSourceUri || !rows || rowsScope !== `${identity.org}/${identity.namespace}`) return;
+    if (!pendingDocSourceUri || !rows || rowsScope !== readKey) return;
     if (collection && !shown) return;
     const uri = pendingDocSourceUri;
     clearPendingDoc();
     // A link to a document the namespace does not hold opens nothing, and the URL stops
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
-  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
+  }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, readKey]);
   // After a row's delete, the read that drops the row hands focus to the search field (a
   // move's dialog hands it there itself as it closes).
   useEffect(() => {
@@ -551,7 +636,8 @@ export function Documents() {
     focusSearchOnRead.current = false;
     searchRef.current?.focus();
   }, [rows]);
-  const onDelete = async (source_uri: string) => {
+  const onDelete = async (r: KnowledgeEntry) => {
+    const source_uri = r.source_uri;
     if (
       !(await confirmAction({
         title: "Delete this document?",
@@ -562,7 +648,7 @@ export function Documents() {
       }))
     )
       return;
-    const place = { org: identity.org, namespace: identity.namespace };
+    const place = placeOf(r);
     try {
       await deleteKnowledge(place, source_uri);
       toast(`Deleted ${source_uri}`, "ok", undoNotice(place, source_uri));
@@ -624,11 +710,7 @@ export function Documents() {
 
   const onDownload = async (r: KnowledgeEntry) => {
     try {
-      await downloadKnowledge(
-        { org: identity.org, namespace: identity.namespace },
-        r.source_uri,
-        r.original_filename || textDownloadName(r.source_uri),
-      );
+      await downloadKnowledge(placeOf(r), r.source_uri, r.original_filename || textDownloadName(r.source_uri));
     } catch (e) {
       toastError("Download failed", e, { read: true });
     }
@@ -638,8 +720,10 @@ export function Documents() {
   const openSeq = useRef(0);
   const onOpen = async (r: KnowledgeEntry) => {
     linkRead.current?.abort();
-    // The open document is the page's URL (`?doc=`): a reload or Back reopens it.
-    setViewParam("doc", r.source_uri);
+    // The open document is the page's URL (`?doc=`): a reload or Back reopens it. One of
+    // another place has no address here: the link would open it in the place shown.
+    const at = placeOf(r);
+    setViewParam("doc", !all && at.namespace === identity.namespace ? r.source_uri : null);
     setPreviewEntry(r);
     setPreviewDoc(null);
     setShowText(false);
@@ -655,12 +739,12 @@ export function Documents() {
     // An answer for an open the page has since left (another place shown) is dropped.
     const opened = ++openSeq.current;
     try {
-      const docPromise = getKnowledge({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch((e) => {
+      const docPromise = getKnowledge(at, r.source_uri).catch((e) => {
         if (opened === openSeq.current) toastError("Open failed", e, { read: true });
         return null;
       });
       const blobPromise = r.has_blob
-        ? fetchKnowledgePreview({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch(() => null)
+        ? fetchKnowledgePreview(at, r.source_uri).catch(() => null)
         : Promise.resolve(null);
       const [d, blob] = await Promise.all([docPromise, blobPromise]);
       if (opened !== openSeq.current) {
@@ -673,11 +757,11 @@ export function Documents() {
       if (opened === openSeq.current) setPreviewLoading(false);
     }
   };
-  // A document by its address: from the rows loaded, else read on its own (a link or a
-  // passage past the first page), under one abort so a newer open wins; `onMissing` when
-  // the namespace does not hold it.
-  const openByUri = (uri: string, onMissing: () => void) => {
-    const target = rows?.find((r) => r.source_uri === uri);
+  // A document by its address and place (the place shown unless given): from the rows
+  // loaded, else read on its own (a link or a passage past the first page), under one abort
+  // so a newer open wins; `onMissing` when the namespace does not hold it.
+  const openByUri = (uri: string, onMissing: () => void, ns = identity.namespace) => {
+    const target = rows?.find((r) => r.source_uri === uri && placeOf(r).namespace === ns);
     if (target) {
       void onOpen(target);
       return;
@@ -685,11 +769,11 @@ export function Documents() {
     linkRead.current?.abort();
     const ac = new AbortController();
     linkRead.current = ac;
-    void findDocument({ org: identity.org, namespace: identity.namespace }, uri, ac.signal)
+    void findDocument({ org: identity.org, namespace: ns }, uri, ac.signal)
       .then((found) => {
         if (ac.signal.aborted) return;
         // The latest render's open: its preview state, not the one this read started from.
-        if (found) void handlers.current.onOpen(found);
+        if (found) void handlers.current.onOpen({ ...found, namespace: found.namespace || ns });
         else onMissing();
       })
       .catch((e) => {
@@ -698,11 +782,13 @@ export function Documents() {
   };
   // The deep-link effect, the rows and the passage panel call the latest render's handlers
   // without re-firing on them or rendering every row again.
-  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri });
-  handlers.current = { onOpen, onDownload, onDelete, openByUri };
+  const onMove = (r: KnowledgeEntry) => openMove(placeOf(r).namespace, [r.source_uri]);
+  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri, onMove });
+  handlers.current = { onOpen, onDownload, onDelete, openByUri, onMove };
   // Stable, so the passage list is not built again on each render of the page.
   const openPassage = useCallback(
-    (uri: string) => handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info")),
+    (uri: string, ns?: string) =>
+      handlers.current.openByUri(uri, () => toast(`${uri} is no longer in this library`, "info"), ns),
     [],
   );
 
@@ -727,7 +813,6 @@ export function Documents() {
   // A preview or a dialog belongs to the place it was opened in: another place shown (Back
   // into a collection, a collection confirmed after a wait) closes it, so nothing opened for
   // one is written to the other. The address is the new place's own.
-  const place = `${identity.org}/${identity.namespace}`;
   const openedIn = useRef(place);
   useEffect(() => {
     if (openedIn.current === place) return;
@@ -811,14 +896,40 @@ export function Documents() {
   // Checkboxes: one row, a Shift-click range, every row shown; Escape clears them while no
   // dialog is up (each owns its Escape).
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
-  const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
+  // Why a row's writes are unavailable: the place shown's reason, or, for a row of another
+  // place, that place's role (a viewer of a collection; the server decides the rest).
+  const reasonFor = (r: KnowledgeEntry): string | null => {
+    const ns = placeOf(r).namespace;
+    if (ns === identity.namespace) return writeReason;
+    const c = byName.get(ns);
+    if (c) return c.role === "viewer" ? needsRole("writer", collectionTitle(c)) : null;
+    return ns === picked.namespace ? viewerHere : null;
+  };
+  // Only rows whose place takes the writes can be selected: the selection holds bulk writes.
+  const rowKeys = useMemo(
+    () => (visibleRows ?? []).filter((r) => reasonFor(r) === null).map((r) => rowKeyOf(r, across)),
+    // What reasonFor reads: the roles and the places.
+    [visibleRows, across, writeReason, viewerHere, byName, identity.namespace, picked.namespace],
+  );
+  // A reason that appears while Edit details is open closes it. Add and Replace stay: they
+  // hold an upload in flight, which the server refuses if the role no longer reaches it.
+  const editReason = editEntry ? reasonFor(editEntry) : null;
+  useEffect(() => {
+    if (editReason) setEditEntry(null);
+  }, [editReason]);
+  // The preview's writes: the previewed document's place's.
+  const previewReason = previewEntry ? reasonFor(previewEntry) : writeReason;
+  const previewNs = previewEntry ? placeOf(previewEntry).namespace : identity.namespace;
+  const previewCollection = byName.get(previewNs);
+  const previewIn = previewCollection ? collectionTitle(previewCollection) : previewNs;
+  const rowByKey = useMemo(() => new Map((rows ?? []).map((r) => [rowKeyOf(r, across), r])), [rows, across]);
   const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry || !!moving;
-  const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
+  const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && rowKeys.length > 0 });
   const { selected } = selection;
   const clearSelection = selection.clear;
   // One tab stop over the rows: the arrows move, Enter previews, Space selects.
   const passagesHaveKeys = passageHitsShown && keysIn === "passages";
-  const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesHaveKeys });
+  const listNav = useRowNav({ enabled: !dialogOpen && !!visibleRows?.length && !passagesHaveKeys });
   const listRef = useCallback(
     (el: HTMLDivElement | null) => {
       listNav(el);
@@ -830,7 +941,7 @@ export function Documents() {
   // Finding a passage: once the place's list has returned a document on this visit, and
   // through a later filtered or failed read (it searches the whole namespace). A new place
   // folds it.
-  const canFindPassages = rows !== null && !emptyLibrary && listedScope === place;
+  const canFindPassages = rows !== null && !emptyLibrary && listedScope === readKey;
   // Taken away (a new place, or the library emptied), the panel comes back folded.
   useEffect(() => {
     if (!canFindPassages) setPassagesOpen(false);
@@ -871,20 +982,46 @@ export function Documents() {
     )
       return;
     setBulkBusy(true);
+    // One call per place the selected rows are in.
+    const groups = selectedByPlace();
+    let deleted = 0;
+    let answered = false;
+    let done = false;
+    let refused = false;
     try {
-      const r = await bulkDeleteKnowledge({ org: identity.org, namespace: identity.namespace }, Array.from(selected));
-      toast(`Deleted ${r.total_tombstoned} document${r.total_tombstoned === 1 ? "" : "s"}`, "ok");
-      clearSelection();
-      reload();
-    } catch (e) {
-      // Deleted, with only lists and search behind: the selection goes, so none is sent again.
-      if (committedAnyway("Bulk delete failed", e)) {
-        clearSelection();
-        reload();
+      for (const [ns, uris] of groups) {
+        try {
+          const r = await bulkDeleteKnowledge({ org: identity.org, namespace: ns }, uris);
+          deleted += r.total_tombstoned;
+          answered = true;
+          done = true;
+        } catch (e) {
+          // Deleted, with only lists and search behind: the selection goes, so none is sent again.
+          const lead = groups.size > 1 ? `Bulk delete failed in ${placeLabel(ns)}` : "Bulk delete failed";
+          if (committedAnyway(lead, e)) done = true;
+          else refused = true;
+        }
       }
+      if (answered) {
+        toast(`Deleted ${deleted} document${deleted === 1 ? "" : "s"}`, "ok");
+      }
+      // A place that refused keeps its rows selected; the rest leave with the next read.
+      if (!refused) clearSelection();
+      if (done) reload();
     } finally {
       setBulkBusy(false);
     }
+  };
+  // The selected rows' addresses, by the place each is in, in the list's order.
+  const selectedByPlace = () => {
+    const out = new Map<string, string[]>();
+    for (const key of rowKeys) {
+      const r = selected.has(key) ? rowByKey.get(key) : undefined;
+      if (!r) continue;
+      const ns = placeOf(r).namespace;
+      out.set(ns, [...(out.get(ns) ?? []), r.source_uri]);
+    }
+    return out;
   };
 
   const aggregateStats = useMemo(() => {
@@ -902,7 +1039,6 @@ export function Documents() {
     return { chunks, bytes, withBlob };
   }, [rows]);
 
-  const filtering = listQuery.trim() !== "";
   const failed = !!loadError;
   const docCount = aggregateStats && rows ? `${rows.length.toLocaleString()}${nextCursor ? "+" : ""}` : "";
   // The tags are the server's (they cover the library); the words and a sort but newest
@@ -958,13 +1094,61 @@ export function Documents() {
       download: (r) => void handlers.current.onDownload(r),
       replace: setReplaceEntry,
       edit: setEditEntry,
-      remove: (uri) => void handlers.current.onDelete(uri),
-      move: (uri) => openMove([uri]),
-      writeReason,
-      ...(readOnly ? {} : { toggle: toggleRow }),
+      remove: (r) => void handlers.current.onDelete(r),
+      move: (r) => handlers.current.onMove(r),
+      toggle: toggleRow,
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
+      openPlace: (p) => goTo(p),
     }),
-    [toggleRow, readOnly, writeReason],
+    [toggleRow, goTo],
+  );
+  // Each place's line on a row, once per place, so a memoised row keeps its props.
+  const whereOf = useMemo(() => {
+    const out = new Map<string, DocPlace>();
+    for (const ns of everyRead) {
+      out.set(ns, { label: placeLabel(ns), place: byName.has(ns) ? ns : null });
+    }
+    return out;
+  }, [everyRead, placeLabel, byName]);
+  const selectedPlaces = selected.size > 0 ? [...selectedByPlace().keys()] : [];
+  // A passage search reads the places the list does.
+  const passagePlaces = readPlaces;
+  // All documents with nothing to read: no place listed, or the collections not read.
+  const noneToRead = across && rows !== null && readPlaces.length === 0;
+  // Every place the person reads was read, so "none anywhere" is true of the Library.
+  const wholeRead =
+    !!report &&
+    report.failed.length === 0 &&
+    !report.oneAtATime &&
+    placesCut === 0 &&
+    !collections.error &&
+    !collections.kept?.truncated;
+  // The search's scope, under the bar while something is searched and there is another place
+  // to search: the bar keeps the field's room, and the list starts where it did.
+  const scopeLine = !all && filtering && everyPlace.length > 1 && (
+    <div className="-mt-1 mb-3 flex items-center gap-2">
+      <ButtonGroup
+        aria-label="Search in"
+        selected={scope}
+        onClick={(v) => setScope(v === "everywhere" ? "everywhere" : "here")}
+        options={[
+          { value: "here", label: shown ? "This collection" : "This namespace" },
+          { value: "everywhere", label: "Everywhere" },
+        ]}
+      />
+    </div>
+  );
+  // What a read of several places left out, said where the rows start: never more than read.
+  const readNotes = across && report && (
+    <ReadNotes
+      failed={report.failed}
+      firstOnly={report.oneAtATime ? placeLabel(report.read[0] ?? "") : null}
+      others={report.oneAtATime ? readPlaces.length - 1 : 0}
+      cut={placesCut}
+      collectionsFailed={ownShelf && !!collections.error && !collections.kept ? namespaceLabel(picked.namespace) : null}
+      label={placeLabel}
+      onRetry={reload}
+    />
   );
 
   // The top level's collections, below the documents so they start where the list rules
@@ -989,8 +1173,9 @@ export function Documents() {
       repeated={repeated}
       byName={byName}
       current={shown}
+      all={all}
       opening={resolving ? collection : null}
-      place={collection ?? picked.namespace}
+      place={all ? ALL_DOCUMENTS : (collection ?? picked.namespace)}
       onPick={goTo}
       onLeave={pickCollection}
       creating={creatingCollection}
@@ -1027,16 +1212,17 @@ export function Documents() {
     collections.rows && !collections.truncated && (!collection || shown)
       ? { rows: collections.rows, shown }
       : undefined;
-  // Where documents can go from here: the header's namespace when the person adds there, and
-  // the collections they write, in tree order; not the place shown.
+  // Where documents can go from the place they are in: the header's namespace when the person
+  // adds there, and the collections they write, in tree order; not their own place.
   const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
+  const movingFrom = moving?.from ?? identity.namespace;
   const movePlaces = useMemo<MovePlace[]>(() => {
     const out: MovePlace[] = [];
-    if (addsToHeader && identity.namespace !== picked.namespace) {
+    if (addsToHeader && movingFrom !== picked.namespace) {
       out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
     }
     for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
-      if (c.role === "viewer" || c.namespace === identity.namespace) continue;
+      if (c.role === "viewer" || c.namespace === movingFrom) continue;
       out.push({
         namespace: c.namespace,
         label: c.personal ? collectionTitle(c) : distinctTitle(c, repeated),
@@ -1045,13 +1231,13 @@ export function Documents() {
       });
     }
     return out;
-  }, [collections.kept, repeated, identity.namespace, addsToHeader, picked.namespace]);
+  }, [collections.kept, repeated, movingFrom, addsToHeader, picked.namespace]);
   const moveDialog = moving && (
     <MoveDocumentsDialog
       org={identity.org}
-      from={identity.namespace}
-      fromLabel={shown ? collectionTitle(shown) : `Namespace ${identity.namespace}`}
-      sourceUris={moving}
+      from={moving.from}
+      fromLabel={placeLabel(moving.from)}
+      sourceUris={moving.uris}
       places={movePlaces}
       placesReading={
         collections.kept ? (collections.kept.truncated ? "truncated" : null) : collections.error ? "failed" : "loading"
@@ -1082,7 +1268,7 @@ export function Documents() {
         batchStarted.current = v;
       }}
       identity={{ org: identity.org, namespace: identity.namespace }}
-      place={shown ? distinctTitle(shown, repeated) : identity.namespace}
+      place={addsTo ? distinctTitle(addsTo, repeated) : identity.namespace}
       tree={folderTree}
       // Folders wait for a list still being read (or read again after it failed), or one too
       // long to show; a collection not in a whole list takes none.
@@ -1177,10 +1363,11 @@ export function Documents() {
     <PageContainer>
       <PageHeader
         title="Library"
-        tab={placeTitle(shown, repeated, ownShelf && !resolving ? picked.namespace : null)}
+        tab={all ? "All documents" : placeTitle(shown, repeated, ownShelf && !resolving ? picked.namespace : null)}
         actions={
           <>
-            {!resolving && !shown?.personal && (
+            {/* A place's own sources; All documents is no one place. */}
+            {!resolving && !all && !shown?.personal && (
               // Where this place's documents are pulled from; SourcesList decides when its
               // button shows, and opens the list below the header.
               <Suspense fallback={null}>
@@ -1214,11 +1401,11 @@ export function Documents() {
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
           {/* On a collection the select or the path below names where the documents are. */}
-          {!shown && !resolving && <ScopeBadge kind="namespace" value={picked.namespace} />}
+          {!shown && !resolving && !all && <ScopeBadge kind="namespace" value={picked.namespace} />}
         </span>
       </PageHeader>
       {picker}
-      {seesGaps && !resolving && <KnowledgeGaps org={identity.org} namespace={identity.namespace} />}
+      {seesGaps && !resolving && !all && <KnowledgeGaps org={identity.org} namespace={identity.namespace} />}
       {/* One line: who can see the collection shown, the library's figures once they are read,
           what the library is behind the tip. A phone, with the place picker above the list, has
           room for who can see it only: the bar's count says how many are shown. */}
@@ -1233,6 +1420,7 @@ export function Documents() {
                   `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
                   `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
                   ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
+                  ...(across && report ? [placesRead(report.read.length, readPlaces.length + placesCut)] : []),
                 ].join(" · ")
               : "Reference docs your agents can read."}
           </span>
@@ -1257,13 +1445,21 @@ export function Documents() {
         label="Search and filters"
         count={countShown && <span aria-busy={reading || undefined}>{countShown}</span>}
         selection={
-          selected.size > 0 && !readOnly
+          selected.size > 0
             ? {
                 count: selected.size,
                 onClear: clearSelection,
                 all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
                 actions: [
-                  { label: "Move to…", icon: "arrow-right", onClick: () => openMove(Array.from(selected)) },
+                  {
+                    label: "Move to…",
+                    icon: "arrow-right",
+                    reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
+                    onClick: () => {
+                      const [from] = selectedPlaces;
+                      if (from) openMove(from, selectedByPlace().get(from) ?? []);
+                    },
+                  },
                   { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
                 ],
               }
@@ -1306,12 +1502,17 @@ export function Documents() {
         {canFindPassages && passagesToggle("mr-auto")}
         {sortSelect("w-40")}
       </div>
+      {scopeLine}
+      {readNotes}
 
       {/* Inside the documents: a passage, cited by revision and place, opens its document. */}
       {canFindPassages && passagesOpen && (
         <div ref={passagesBox}>
           <LibraryPassages
-            identity={identity}
+            key={passagePlaces.join("\n")}
+            identity={{ org: identity.org, namespace: passagePlaces[0] ?? identity.namespace }}
+            namespaces={passagePlaces.slice(1)}
+            placeLabel={passagePlaces.length > 1 ? placeLabel : undefined}
             navEnabled={!dialogOpen && keysIn === "passages"}
             onHitsShown={setPassageHitsShown}
             onOpen={openPassage}
@@ -1325,7 +1526,7 @@ export function Documents() {
           onOpenChange={(v) => {
             if (!v) setReplaceEntry(null);
           }}
-          identity={{ org: identity.org, namespace: identity.namespace }}
+          identity={placeOf(replaceEntry)}
           onAdded={reload}
           replaceMode={
             replaceEntry
@@ -1344,7 +1545,7 @@ export function Documents() {
         onOpenChange={(v) => {
           if (!v) setEditEntry(null);
         }}
-        identity={{ org: identity.org, namespace: identity.namespace }}
+        identity={editEntry ? placeOf(editEntry) : { org: identity.org, namespace: identity.namespace }}
         entry={editEntry}
         onSaved={reload}
       />
@@ -1361,17 +1562,41 @@ export function Documents() {
 
       {failed && <ListState kind="error" things="documents" error={loadError} onRetry={reload} />}
 
-      {emptyLibrary && (
+      {/* All documents with no place to read: the collections' failure, or none at all. */}
+      {noneToRead &&
+        (collections.error ? (
+          <ListState kind="error" things="collections" error={collections.error} onRetry={collections.retry} />
+        ) : (
+          <ListState
+            kind="empty"
+            icon="folder-open"
+            title="No place to read yet"
+            description="Collections you make or are shared with you, and a memory namespace you pick in the header, list their documents here."
+            action={{ label: "New collection", onClick: () => setCreatingCollection(true) }}
+          />
+        ))}
+
+      {emptyLibrary && !noneToRead && (
         <ListState
           kind="empty"
           icon="document"
-          title={shown ? "This collection is empty" : "Your library is empty"}
+          title={
+            across
+              ? wholeRead
+                ? "No documents in any place you read"
+                : "No documents in the places read"
+              : shown
+                ? "This collection is empty"
+                : "Your library is empty"
+          }
           description={
             knownReadOnly
               ? "Nothing has been added yet. Its members who write can add documents."
-              : folderTree
-                ? "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file, or a folder of them: the server extracts each, your agents search them, and you can download the originals back any time."
-                : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
+              : all
+                ? `Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file to ${placeLabel(identity.namespace)}, or open a collection and add it there: the server extracts each, and your agents search them.`
+                : folderTree
+                  ? "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file, or a folder of them: the server extracts each, your agents search them, and you can download the originals back any time."
+                  : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
           }
           // One Add, unavailable with why to a role that cannot add or is still loading, so it
           // keeps its focus as the role resolves.
@@ -1404,13 +1629,16 @@ export function Documents() {
         <div ref={listRef} className="space-y-2" aria-busy={reading || undefined}>
           {shownRows.map((r) => (
             <DocRow
-              key={r.source_uri}
+              key={rowKeyOf(r, across)}
+              rowKey={rowKeyOf(r, across)}
               entry={r}
-              active={previewEntry?.source_uri === r.source_uri}
-              checked={selected.has(r.source_uri)}
+              active={!!previewEntry && rowKeyOf(previewEntry, across) === rowKeyOf(r, across)}
+              checked={selected.has(rowKeyOf(r, across))}
               selecting={selected.size > 0}
               activeTags={activeTags}
               actions={rowActions}
+              writeReason={reasonFor(r)}
+              where={across ? (whereOf.get(placeOf(r).namespace) ?? null) : null}
             />
           ))}
         </div>
@@ -1466,16 +1694,11 @@ export function Documents() {
             // On a phone the buttons wrap under the details; wider, they stay at the right.
             <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
               {previewEntry.has_blob && (
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  iconLeft="table"
-                  onClick={() => setTablesFor(previewEntry.source_uri)}
-                >
+                <Button type="secondary" htmlType="button" iconLeft="table" onClick={() => setTablesFor(previewEntry)}>
                   Tables
                 </Button>
               )}
-              <Unavailable reason={writeReason} tip="Upload a new file version of this document">
+              <Unavailable reason={previewReason} tip="Upload a new file version of this document">
                 <Button
                   type="secondary"
                   htmlType="button"
@@ -1493,8 +1716,8 @@ export function Documents() {
                 what="document"
                 // A collection's document is not in the namespace the answer reads: said by title.
                 reason={
-                  shown && ownShelf
-                    ? `Ask AI answers about ${picked.namespace}; this document is in the collection ${collectionTitle(shown)}.`
+                  ownShelf && previewNs !== picked.namespace
+                    ? `Ask AI answers about ${picked.namespace}; this document is in the collection ${previewIn}.`
                     : undefined
                 }
                 item={{
@@ -1573,7 +1796,7 @@ export function Documents() {
                   original file.
                 </div>
                 {previewEntry && (
-                  <Unavailable reason={writeReason}>
+                  <Unavailable reason={previewReason}>
                     <Button
                       type="secondary"
                       htmlType="button"
@@ -1629,9 +1852,9 @@ export function Documents() {
       </Modal>
       {tablesFor && (
         <DatasetsDialog
-          identity={identity}
-          sourceUri={tablesFor}
-          approveReason={writeReason}
+          identity={{ ...identity, ...placeOf(tablesFor) }}
+          sourceUri={tablesFor.source_uri}
+          approveReason={reasonFor(tablesFor)}
           onClose={() => setTablesFor(null)}
         />
       )}
@@ -1664,18 +1887,88 @@ interface DocRowActions {
   /** The writes. */
   replace: (r: KnowledgeEntry) => void;
   edit: (r: KnowledgeEntry) => void;
-  remove: (sourceUri: string) => void;
-  move: (sourceUri: string) => void;
-  /** Why the writes are unavailable, or null: a viewer of the collection shown, a role on
-   *  the namespace known to be below writer, or the role still loading. The writes stay in
-   *  the menu, unavailable, with it. */
-  writeReason: string | null;
-  /** Selection, for the bulk delete; absent where the caller cannot write, or before its role is known. */
-  toggle?: (sourceUri: string, range?: boolean) => void;
+  remove: (r: KnowledgeEntry) => void;
+  move: (r: KnowledgeEntry) => void;
+  /** Selection, for the bulk writes, by the row's key; a row whose writes are unavailable has none. */
+  toggle: (key: string, range?: boolean) => void;
   tag: (tag: string) => void;
+  /** Open a place: a collection, or null for the header's namespace. */
+  openPlace: (place: string | null) => void;
+}
+
+/** Where a row's document lives, on a list of several places: the place's name and the
+ *  collection its link opens (null for the header's namespace). */
+interface DocPlace {
+  label: string;
+  place: string | null;
+}
+
+/** "9 places", or "7 of 9 places" when some were not read. */
+function placesRead(read: number, asked: number): string {
+  const n = read === asked ? fmtInt(read) : `${fmtInt(read)} of ${fmtInt(asked)}`;
+  return `${n} place${asked === 1 ? "" : "s"}`;
+}
+
+/** What a read of several places left out, under the toolbar: places refused or failed, all
+ *  but the first on a server that reads one per call, those past one read's most. */
+function ReadNotes({
+  failed,
+  firstOnly,
+  others,
+  cut,
+  collectionsFailed,
+  label,
+  onRetry,
+}: {
+  failed: PlaceFailure[];
+  /** The one place read, on a server that reads one per call; else null. */
+  firstOnly: string | null;
+  others: number;
+  cut: number;
+  /** The one place read when the collections' list failed; else null. */
+  collectionsFailed: string | null;
+  label: (ns: string) => string;
+  onRetry: () => void;
+}) {
+  const refused = failed.filter((f) => f.error instanceof ApiError && [403, 404].includes(f.error.status));
+  const broken = failed.filter((f) => !refused.includes(f));
+  const names = (list: PlaceFailure[]) => list.map((f) => label(f.namespace)).join(", ");
+  const lines: string[] = [];
+  if (firstOnly !== null) {
+    lines.push(
+      `Only ${firstOnly} is shown: this server lists one place per read, so ${fmtInt(others)} other place${others === 1 ? " is" : "s are"} not.`,
+    );
+  }
+  if (cut > 0) {
+    lines.push(`The first ${fmtInt(MAX_PLACES_READ)} places are shown; ${fmtInt(cut)} more are not read.`);
+  }
+  if (collectionsFailed !== null) {
+    lines.push(`Only ${collectionsFailed} is shown: the collections could not be loaded.`);
+  }
+  if (refused.length)
+    lines.push(`Not shown, since you can no longer read ${refused.length === 1 ? "it" : "them"}: ${names(refused)}.`);
+  if (lines.length === 0 && broken.length === 0) return null;
+  return (
+    <div role="status" className="mb-3 space-y-1 text-xs text-text-muted">
+      {lines.map((l) => (
+        <p key={l}>{l}</p>
+      ))}
+      {broken.length > 0 && (
+        <p className="flex flex-wrap items-center gap-2 text-danger">
+          {/* The error's words end the line. */}
+          <span>{`Couldn't read ${names(broken)}; the other places are shown: ${errorLine(broken[0].error, { read: true })}`}</span>
+          <Button type="empty" htmlType="button" onClick={onRetry}>
+            Read again
+          </Button>
+        </p>
+      )}
+    </div>
+  );
 }
 
 interface DocRowProps {
+  /** The row's key in the list: its address, with its place on a list of several. */
+  rowKey: string;
   entry: KnowledgeEntry;
   active: boolean;
   checked: boolean;
@@ -1683,21 +1976,37 @@ interface DocRowProps {
   selecting: boolean;
   activeTags: ReadonlySet<string>;
   actions: DocRowActions;
+  /** Why the row's writes are unavailable (its place's role, or still loading), or null; they
+   *  stay in the menu with it, and the row has no checkbox. */
+  writeReason: string | null;
+  /** Where the document lives, on a list of several places. */
+  where: DocPlace | null;
 }
 
 // Memoised: a hundred rows of Click UI checkboxes, badges, icons and menus rendered again
 // on every keystroke in the search.
-const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
+const DocRow = memo(function DocRow({
+  rowKey,
+  entry: r,
+  active,
+  checked,
+  selecting,
+  activeTags,
+  actions,
+  writeReason,
+  where,
+}: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
-  const { replace, edit, remove, move, toggle, writeReason } = actions;
+  const { replace, edit, remove, move } = actions;
+  const toggle = writeReason === null ? actions.toggle : undefined;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
     // Uploading a file into a text-only document is the same replace flow.
     { label: "Replace content", icon: "refresh", reason: writeReason, onSelect: () => replace(r) },
     { label: "Edit details", icon: "pencil", reason: writeReason, onSelect: () => edit(r) },
-    { label: "Move to…", icon: "arrow-right", reason: writeReason, onSelect: () => move(r.source_uri) },
+    { label: "Move to…", icon: "arrow-right", reason: writeReason, onSelect: () => move(r) },
     {
       label: "Copy URI",
       icon: "copy",
@@ -1708,12 +2017,12 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
         );
       },
     },
-    { label: "Delete", icon: "trash", danger: true, reason: writeReason, onSelect: () => remove(r.source_uri) },
+    { label: "Delete", icon: "trash", danger: true, reason: writeReason, onSelect: () => remove(r) },
   ];
   return (
     <ListRow
-      data-doc-row={r.source_uri}
-      data-focus-key={`doc:${r.source_uri}`}
+      data-doc-row={rowKey}
+      data-focus-key={`doc:${rowKey}`}
       active={active}
       checked={checked}
       trailing={<RowMenu name={name} items={menu} />}
@@ -1724,7 +2033,7 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
             aria-label={`Select ${name}`}
             onClick={(e) => {
               e.stopPropagation();
-              toggle(r.source_uri, e.shiftKey);
+              toggle(rowKey, e.shiftKey);
             }}
             className="list-row-control"
           />
@@ -1734,7 +2043,7 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
       <button
         type="button"
         data-row-open=""
-        onClick={() => (selecting && toggle ? toggle(r.source_uri) : actions.open(r))}
+        onClick={() => (selecting && toggle ? toggle(rowKey) : actions.open(r))}
         className="list-row-open block w-full"
         aria-label={`Preview ${name}`}
       >
@@ -1771,6 +2080,19 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
           </span>
         )}
       </button>
+      {/* Where it lives, a link to that place, on a list of several places. */}
+      {where && (
+        <span className="mt-1 flex min-w-0 items-center gap-1 text-xs text-text-muted">
+          <span className="shrink-0">In</span>
+          <PlaceTitleLink
+            collection={where.place}
+            title={where.label}
+            titleClassName="min-w-0 truncate"
+            className="list-row-control min-w-0 max-w-full"
+            onOpen={() => actions.openPlace(where.place)}
+          />
+        </span>
+      )}
       <TagList tags={r.tags ?? []} activeTags={activeTags} onTagClick={actions.tag} className="mt-2" />
     </ListRow>
   );

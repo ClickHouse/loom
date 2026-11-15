@@ -29,6 +29,7 @@ import {
   titleTooLong,
 } from "../lib/collections";
 import { LIBRARY_PLACES_LABEL } from "../lib/useTreeFocusHandoff";
+import { ALL_DOCUMENTS } from "../lib/libraryPlace";
 import { MORE_SHOWN, useShowMore } from "../lib/useShowMore";
 import {
   collectionPath,
@@ -175,7 +176,7 @@ export const LibraryTree = memo(function LibraryTree({
   /** The header's namespace, or null when it holds no documents (a code or tracker
    *  namespace, or none). */
   namespace: string | null;
-  /** The collection shown, or null for the header's namespace. */
+  /** The collection shown, `ALL_DOCUMENTS`, or null for the header's namespace. */
   current: string | null;
   onPick: PickPlace;
   claimCreateVersion: ClaimCreateVersion;
@@ -273,34 +274,43 @@ export const LibraryTree = memo(function LibraryTree({
       className="library-tree"
       style={{ maxHeight: viewHeight }}
     >
-      {(namespace !== null || tree.own) && (
-        <ul>
-          {namespace !== null && (
-            <li>
-              <PlaceRow
-                collection={null}
-                label={namespaceLabel(namespace)}
-                icon="book"
-                depth={0}
-                here={current === null}
-                onPick={onPick}
-              />
-            </li>
-          )}
-          {tree.own && (
-            <li>
-              <PlaceRow
-                collection={tree.own.namespace}
-                label={collectionTitle(tree.own)}
-                icon="user"
-                depth={0}
-                here={tree.own.namespace === current}
-                onPick={onPick}
-              />
-            </li>
-          )}
-        </ul>
-      )}
+      <ul>
+        {/* Every place's documents in one list, above the places. */}
+        <li>
+          <PlaceRow
+            collection={ALL_DOCUMENTS}
+            label="All documents"
+            icon="list-bulleted"
+            depth={0}
+            here={current === ALL_DOCUMENTS}
+            onPick={onPick}
+          />
+        </li>
+        {namespace !== null && (
+          <li>
+            <PlaceRow
+              collection={null}
+              label={namespaceLabel(namespace)}
+              icon="book"
+              depth={0}
+              here={current === null}
+              onPick={onPick}
+            />
+          </li>
+        )}
+        {tree.own && (
+          <li>
+            <PlaceRow
+              collection={tree.own.namespace}
+              label={collectionTitle(tree.own)}
+              icon="user"
+              depth={0}
+              here={tree.own.namespace === current}
+              onPick={onPick}
+            />
+          </li>
+        )}
+      </ul>
       {/* Below the namespace's row while the list is read; a failed read says so beside the
           page, with a button to read it again. */}
       {rows === null && !failed && <Loading label="Loading collections" layout="inline" className="px-2" />}
@@ -404,7 +414,7 @@ function PlaceRow({
 }: {
   collection: string | null;
   label: string;
-  icon: "book" | "user" | "folder-open" | "folder-closed";
+  icon: "book" | "user" | "folder-open" | "folder-closed" | "list-bulleted";
   depth: number;
   here: boolean;
   expanded?: boolean;

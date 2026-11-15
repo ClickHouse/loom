@@ -39,7 +39,8 @@ function countText(hits: KnowledgeHit[] | null, done: boolean): string {
 
 /** A hit's name among the others: its document and its chunk. */
 function hitKey(h: KnowledgeHit): string {
-  return `${h.source_uri}#${h.chunk_idx}`;
+  // Two places can hold the same address.
+  return `${h.namespace ?? ""}/${h.source_uri}#${h.chunk_idx}`;
 }
 
 /** The last path segment of a source URI, its document's short name. */
@@ -59,17 +60,23 @@ export const PASSAGES_PANEL_ID = "library-passages";
 /** The open panel below the Library's toolbar; its toggle is the toolbar's. */
 export function LibraryPassages({
   identity,
+  namespaces = [],
+  placeLabel,
   navEnabled,
   onHitsShown,
   onOpen,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
+  /** The other places searched beside `identity`'s, in a search everywhere. */
+  namespaces?: string[];
+  /** A place's name, for the hits of a search of several: each says where it is. */
+  placeLabel?: (namespace: string) => string;
   /** The arrows move through the hits (off while a dialog is open). */
   navEnabled: boolean;
   /** Told whether hits show, so the list below hands its row keys over to them. */
   onHitsShown: (shown: boolean) => void;
-  /** Open the document a hit is from. */
-  onOpen: (sourceUri: string) => void;
+  /** Open the document a hit is from, in the place it is in. */
+  onOpen: (sourceUri: string, namespace?: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
@@ -111,7 +118,7 @@ export function LibraryPassages({
     setBusy(true);
     setError(null);
     try {
-      const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal });
+      const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal, namespaces });
       if (!ctrl.signal.aborted) {
         const before = new Set(q === asked.query ? (hits ?? []).map(hitKey) : []);
         const added = found.some((h) => !before.has(hitKey(h)));
@@ -171,7 +178,7 @@ export function LibraryPassages({
                       .filter(Boolean)
                       .join(", ")}
                     aria-describedby={excerptId}
-                    onClick={() => onOpen(h.source_uri)}
+                    onClick={() => onOpen(h.source_uri, h.namespace || undefined)}
                     className="list-row-open block w-full"
                   >
                     <span className="flex flex-wrap items-center gap-2 text-sm">
@@ -181,6 +188,9 @@ export function LibraryPassages({
                         <span className="min-w-0 truncate font-mono text-xs text-text-muted">{h.source_uri}</span>
                       )}
                       {h.section && <span className="text-text-muted">{h.section}</span>}
+                      {placeLabel && h.namespace && (
+                        <span className="text-text-muted">in {placeLabel(h.namespace)}</span>
+                      )}
                       {cited && <Badge size="sm" state="neutral" text={cited} />}
                       {matched.map((k) => (
                         <Badge key={k} size="sm" state="neutral" text={k} />
@@ -196,15 +206,17 @@ export function LibraryPassages({
           })}
         </ol>
       ),
-    [hits, busy, nav, onOpen],
+    [hits, busy, nav, onOpen, placeLabel],
   );
 
   return (
     <section id={PASSAGES_PANEL_ID} aria-label="Find a passage" className="mb-4 rounded-sm border border-border p-3">
       <div className="space-y-3">
         <p id={`${PASSAGES_PANEL_ID}-hint`} className="text-xs text-text-muted">
-          Searches every document in this library, whatever the tag filter. Each passage is cited by the revision it was
-          read from and its place.
+          {namespaces.length > 0
+            ? "Searches every document in every place you read, whatever the tag filter."
+            : "Searches every document in this library, whatever the tag filter."}{" "}
+          Each passage is cited by the revision it was read from and its place.
         </p>
         <form
           className="flex gap-2"

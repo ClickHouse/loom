@@ -1668,6 +1668,7 @@ How misses are recorded and grouped, their erasure and their rolling-upgrade not
 - [Search and ask](./memory/search-and-ask.md) — how `memory.ask` cites documents.
 - [Retention and erasure](./memory/retention-and-erasure.md) — what erasure removes.
 - [The dashboard](./dashboard.md) — the Library page lists, uploads and downloads
-  documents, and finds a passage inside them, cited by revision and place.
+  documents, one place's or every place's the person reads (`knowledge.list` with
+  `namespaces`), and finds a passage inside them, cited by revision and place.
 - [Memory architecture](../architecture/memory-architecture.md) — the chunk and
   document tables from the inside.
