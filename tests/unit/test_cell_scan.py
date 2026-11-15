@@ -525,3 +525,63 @@ async def test_the_listing_refuses_a_user_that_would_list_short() -> None:
     assert "SHOW TABLES ON *.*" in listed.refusals[0].reason
     assert listed.clickhouse == [] and listed.postgres == []
     assert not [sql for _, sql, _ in ch.calls if "system." in sql]
+
+
+class _RawBody(FakeCH):
+    """Streams a scan's body as raw text, as ClickHouse writes it."""
+
+    def __init__(self, body: str) -> None:
+        super().__init__()
+        self.body = body
+        self.on("SYSTEM", [])
+
+    @asynccontextmanager
+    async def raw_stream(
+        self, sql: str, params: Any = None, *, settings: Any = None
+    ) -> AsyncIterator[AsyncIterator[bytes]]:
+        self.calls.append(("raw_stream", sql, dict(settings or {})))
+        data = self.body.encode()
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield data[:7]
+            yield data[7:]
+
+        yield chunks()
+
+
+_ROWS = '{"k":"o","v":"61636D65"}\n{"k":"o","v":"62657461"}\n'
+# What a server writes once a statement fails after its first block: a text tail...
+_TEXT_TAIL = (
+    "\n__exception__\nsryzxwaxggultnva\nCode: 159. DB::Exception: Timeout exceeded: elapsed "
+    "1005.795 ms, maximum: 1000.000 ms. (TIMEOUT_EXCEEDED) (version 26.10.3.7 (official "
+    "build))\n143 sryzxwaxggultnva\n__exception__\n"
+)
+# ...or, with `http_write_exception_in_output_format`, a row of the format.
+_JSON_TAIL = '{"exception": "Code: 159. DB::Exception: Timeout exceeded (TIMEOUT_EXCEEDED)"}\n'
+
+
+@pytest.mark.parametrize("tail", [_TEXT_TAIL, _JSON_TAIL])
+async def test_a_timeout_written_into_the_body_mid_stream_refuses_as_the_budget(
+    tail: str,
+) -> None:
+    ch = _RawBody(_ROWS + tail)
+    tables = TableList(clickhouse=[Table("loom", "memory", "MergeTree")])
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
+        await cell_scan.scan(ch, tables, ONE, Budget(600))
+
+
+async def test_any_other_error_in_the_body_is_named() -> None:
+    ch = _RawBody(_ROWS + '{"exception": "Code: 241. DB::Exception: Memory limit exceeded"}\n')
+    tables = TableList(clickhouse=[Table("loom", "memory", "MergeTree")])
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan failed: Code: 241"):
+        await cell_scan.scan(ch, tables, ONE, Budget(600))
+    ch = _RawBody('{"unexpected": 1}\n')
+    with pytest.raises(Refused, match="the scan failed"):
+        await cell_scan.scan(ch, tables, ONE, Budget(600))
+
+
+async def test_an_on_cluster_row_without_a_status_is_named() -> None:
+    ch = FakeCH().on("SYSTEM", [{"exception": "Code: 999. Keeper session expired"}])
+    tables = TableList(clickhouse=[Table("loom", "memory", "ReplicatedMergeTree")])
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan failed: Code: 999"):
+        await cell_scan.scan(ch, tables, TWO, Budget(600))

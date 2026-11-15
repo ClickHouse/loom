@@ -7,13 +7,14 @@ leaving the org with data and no placement. The check reads, on every host of
 `settings.ch_cluster` (through `clusterAllReplicas` on several):
 
 - attach's own grants first, since `system.tables` and `system.columns` silently hide what
-  the reading user cannot see;
+  the reading user cannot see: a partial revoke of any of them refuses too;
 - every user's grants, roles followed and partial revokes ignored (a revoke only narrows a
   grant, so ignoring one over-approximates); a grant that creates tables, or reads or writes
   through `remote` (REMOTE, SOURCES), counts on any database, since it writes the configured
   databases without a grant on them;
 - the user directories, the objects that write the configured databases without a grant on
-  them, and the replicas outside the cluster.
+  them or bring in what lies outside them (a view, a forwarding table or an external engine
+  inside them reading outside), and the replicas outside the cluster.
 
 It is a point-in-time check: a grant or an object added later passes it, so doctor runs it
 on every run. Every refusal is returned as data (`cell_scan.Refusal`)."""
@@ -65,14 +66,26 @@ _WRITER_ACCESS = frozenset(
 )
 
 # Grants that write the configured databases wherever they are held, on any database:
-# - creating a table: a Distributed table on another database forwards its inserts to a
-#   remote shard over the cluster's connection, as the cluster's configured user, and the
-#   server that takes the insert does not check INSERT on the destination (a Buffer table
-#   and a materialized view do: the insert, or the view's creation, refuses without it);
+# - creating a table, a temporary one included: a Distributed table on another database, or
+#   a temporary Distributed table, forwards its inserts to a remote shard over the cluster's
+#   connection, as the cluster's configured user, and the server that takes the insert does
+#   not check INSERT on the destination (a Buffer table and a materialized view do: the
+#   insert, or the view's creation, refuses without it);
 # - REMOTE and SOURCES (`READ` and `WRITE ON REMOTE` on newer servers): an
 #   `INSERT INTO FUNCTION remote(…)` or `cluster(…)` runs on the far server as another user.
 _ANYWHERE_ACCESS = frozenset(
-    {"ALL", "CREATE", "CREATE TABLE", "CREATE VIEW", "REMOTE", "SOURCES", "READ", "WRITE"}
+    {
+        "ALL",
+        "CREATE",
+        "CREATE TABLE",
+        "CREATE VIEW",
+        "CREATE TEMPORARY TABLE",
+        "CREATE ARBITRARY TEMPORARY TABLE",
+        "REMOTE",
+        "SOURCES",
+        "READ",
+        "WRITE",
+    }
 )
 
 # The user directories ClickHouse itself keeps; any other (LDAP) defines users the check
@@ -112,12 +125,14 @@ class Allowed:
 @dataclass(frozen=True)
 class Grant:
     """One privilege a user holds: `database` None for a global grant, `table` None for the
-    whole database; a `database` ending in `*` is a prefix grant."""
+    whole database; a `database` ending in `*` is a prefix grant. `revoked` marks a partial
+    revoke, which narrows a grant: no grant counts it, and attach's own user refuses one."""
 
     access: str
     database: str | None = None
     table: str | None = None
     grant_option: bool = False
+    revoked: bool = False
 
     def covers(self, database: str | None) -> bool:
         """Whether this grant reaches all of `database` (None: every database)."""
@@ -140,14 +155,27 @@ def _db_match(grant: Grant, database: str) -> bool:
 def holds(grants: Iterable[Grant], access: str, database: str | None = None) -> bool:
     """Whether `grants` give `access` on all of `database` (None: globally)."""
     wanted = {access, *_IMPLIED_BY.get(access, ())}
-    return any(g.access in wanted and g.covers(database) for g in grants)
+    return any(g.access in wanted and g.covers(database) and not g.revoked for g in grants)
+
+
+def narrowing(grants: Iterable[Grant], access: str, database: str | None = None) -> list[Grant]:
+    """The partial revokes in `grants` of `access`, or of a grant implying it, on any part
+    of `database` (None: anywhere)."""
+    wanted = {access, *_IMPLIED_BY.get(access, ())}
+    return [
+        g
+        for g in grants
+        if g.revoked
+        and g.access in wanted
+        and (database is None or g.database is None or _db_match(g, database))
+    ]
 
 
 # -- reading grants ----------------------------------------------------------------------
 
 _GRANT = re.compile(
-    r"^GRANT (?P<privs>.+?) ON (?P<on>(?:`(?:[^`\\]|\\.)*`|[^\s`])+) TO \S.*?"
-    r"(?P<opt> WITH GRANT OPTION)?$"
+    r"^(?P<verb>GRANT|REVOKE) (?P<privs>.+?) ON (?P<on>(?:`(?:[^`\\]|\\.)*`|[^\s`])+) "
+    r"(?:TO|FROM) \S.*?(?P<opt> WITH GRANT OPTION)?$"
 )
 _IDENT = re.compile(r"`((?:[^`\\]|\\.)*)`|([^.`]+)")
 
@@ -177,23 +205,24 @@ def _target(on: str) -> tuple[str | None, str | None] | str:
 
 
 def parse_show_grants(lines: Iterable[str]) -> list[Grant]:
-    """The grants of `SHOW GRANTS FOR <user> FINAL`, whose lines already hold its roles'.
-    Role grants (`GRANT r TO u`) and revokes are left out."""
+    """The grants of `SHOW GRANTS FOR <user> FINAL`, whose lines already hold its roles',
+    and its partial revokes (`revoked`). Role grants (`GRANT r TO u`) and the revokes of a
+    grant option alone are left out."""
     out = []
     for line in lines:
         m = _GRANT.match(line.strip())
-        if m is None:
+        if m is None or m["privs"].startswith("GRANT OPTION FOR "):
             continue
         target = _target(m["on"])
-        option = bool(m["opt"])
+        option, revoked = bool(m["opt"]), m["verb"] == "REVOKE"
         for access in _split_privileges(m["privs"]):
             if isinstance(target, str):
                 # `READ ON REMOTE` is printed `REMOTE ON *.*`; a newer server may print it
                 # as written.
                 if access in ("READ", "WRITE"):
-                    out.append(Grant(target, grant_option=option))
+                    out.append(Grant(target, grant_option=option, revoked=revoked))
                 continue
-            out.append(Grant(access, target[0], target[1], option))
+            out.append(Grant(access, target[0], target[1], option, revoked))
     return out
 
 
@@ -215,8 +244,6 @@ def resolve_grants(
             todo.extend(granted.get(role, ()))
     out = []
     for r in grant_rows:
-        if r.get("is_partial_revoke"):
-            continue
         if r.get("user_name") == user or (r.get("role_name") in roles and not r.get("user_name")):
             out.append(
                 Grant(
@@ -224,6 +251,7 @@ def resolve_grants(
                     None if r.get("database") is None else str(r["database"]),
                     None if r.get("table") is None else str(r["table"]),
                     bool(r.get("grant_option")),
+                    bool(r.get("is_partial_revoke")),
                 )
             )
     return out
@@ -247,7 +275,18 @@ def own_problems(grants: list[Grant], topology: Topology, dbs: list[str]) -> lis
             needs.append(("SYSTEM SYNC REPLICA", db))
     if topology.multi:
         needs += [("REMOTE", None), ("CLUSTER", None)]
-    return [_label(access, db) for access, db in needs if not holds(grants, access, db)]
+    out = []
+    for access, scope in needs:
+        if not holds(grants, access, scope):
+            out.append(_label(access, scope))
+        elif revokes := narrowing(grants, access, scope):
+            # A revoke hides part of what the checks read, which reads short silently.
+            out.append(
+                f"{_label(access, scope)} (narrowed by REVOKE "
+                + ", ".join(f"{g.access} ON {_scope(g)}" for g in revokes)
+                + ")"
+            )
+    return out
 
 
 def _label(access: str, db: str | None) -> str:
@@ -260,7 +299,7 @@ def writer_reason(grants: Iterable[Grant], dbs: list[str]) -> str:
     """Why a user with `grants` can write the configured databases ('' when it cannot): a
     grant that writes them from anywhere (`_ANYWHERE_ACCESS`), a writing grant on them or
     globally, else any grant there it can hand on."""
-    grants = list(grants)
+    grants = [g for g in grants if not g.revoked]  # a revoke only narrows: ignored
     for g in grants:
         if g.access in _ANYWHERE_ACCESS:
             return f"holds {g.access} on {_scope(g)}"
@@ -282,16 +321,62 @@ def _scope(g: Grant) -> str:
 
 _TO = re.compile(r"\bTO\s+(?:`((?:[^`\\]|\\.)*)`|(\w+))\s*\.", re.I)
 _NAME = r"(?:`(?:[^`\\]|\\.)*`|[A-Za-z_]\w*)"
-# A table function a view reads through.
-_TABLE_FUNCTION = re.compile(r"\b(?:FROM|(?<!ARRAY\s)JOIN)\s+(\w+)\s*\(", re.I)
-# Any qualified name: the schema's own views qualify only by a configured database, so any
-# other qualifier (another database, or an operator view's alias or column) counts as an
+# A call: of a table function (`system.table_functions`) it is a read through it, wherever
+# it stands in the query (a comma join, a subquery), so a scalar function of the same name
+# counts too, failing closed.
+_CALL = re.compile(r"(?<![\w.`])(\w+)\s*\(")
+# Any qualified name: the schema's own views qualify only by a configured database or a
+# table alias they define, so any other qualifier (another database, a column) counts as an
 # outside read, failing closed.
 _QUALIFIED = re.compile(rf"(?<![\w.`])({_NAME})\s*\.\s*{_NAME}")
+# The names a query defines for its tables and subqueries: `FROM t AS a`, `JOIN db.t a`,
+# `(SELECT …) AS s`, `WITH s AS (…)`.
+_ALIAS = re.compile(
+    rf"(?:\b(?:FROM|JOIN)\s+(?:{_NAME}\s*\.\s*)?{_NAME}|\))\s+(?:AS\s+)?({_NAME})"
+    rf"|(?:\bWITH|,)\s*({_NAME})\s+AS\s*\(",
+    re.I,
+)
+_NOT_ALIAS = frozenset(
+    {"WHERE", "PREWHERE", "GROUP", "ORDER", "LIMIT", "HAVING", "ON", "USING", "FINAL",
+     "SAMPLE", "ARRAY", "LEFT", "RIGHT", "INNER", "OUTER", "FULL", "CROSS", "ANY", "ALL",
+     "ASOF", "SEMI", "ANTI", "GLOBAL", "JOIN", "UNION", "SETTINGS", "FORMAT", "WINDOW",
+     "QUALIFY", "AS", "SELECT", "FROM", "WITH", "INTERVAL"}
+)  # fmt: skip
 # A dictionary or Join table read by name, which a string literal holds.
 _BY_NAME = re.compile(r"\b(?:dict\w*|joinGet\w*)\s*\(\s*'((?:[^'\\]|\\.)*)'", re.I)
 _STRING = re.compile(r"'(?:[^'\\]|\\.)*'")
-_ARGS = re.compile(r"'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`|(\w+)")
+_ARGS = re.compile(r"'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`|(\w+\(\))|(\w+)")
+
+# Objects judged by the query they run: a view's or a window view's.
+_QUERIES = frozenset({"View", "MaterializedView", "WindowView", "LiveView"})
+# Objects that write to their target without the writer holding a grant on it.
+_WRITING_VIEWS = frozenset({"MaterializedView", "WindowView"})
+# Engines inside the configured databases that keep their rows there and read nothing else;
+# any other engine inside (a URL, S3, File, remote database or dictionary) reads outside
+# them, and an insert through a view on it brings that in.
+_LOCAL_ENGINES = frozenset(
+    {"KeeperMap", "Memory", "Log", "TinyLog", "StripeLog", "Set", "Join", "Null",
+     "EmbeddedRocksDB"}
+)  # fmt: skip
+# Which argument of a forwarding engine names the database it reads or writes.
+_DATABASE_ARG = {"Buffer": 0, "Distributed": 1, "Merge": 0}
+
+
+def _engine_args(engine_full: str) -> list[str]:
+    inner = engine_full.partition("(")[2].rpartition(")")[0]
+    return [a or b or c or d for a, b, c, d in _ARGS.findall(inner)]
+
+
+def _engine_database(engine: str, engine_full: str) -> str:
+    """The database a Buffer, Distributed or Merge definition names: '' for the table's own
+    (`currentDatabase()`), `REGEXP` for a pattern."""
+    if engine == "Merge" and re.search(r"\bREGEXP\s*\(", engine_full, re.I):
+        return "REGEXP"
+    args = _engine_args(engine_full)
+    i = _DATABASE_ARG[engine]
+    if i >= len(args) or args[i] == "currentDatabase()":
+        return ""
+    return args[i]
 
 
 def _engine_targets(engine_full: str, dbs: list[str]) -> bool:
@@ -301,59 +386,89 @@ def _engine_targets(engine_full: str, dbs: list[str]) -> bool:
     regexp = re.search(r"REGEXP\s*\(\s*'((?:[^'\\]|\\.)*)'", head, re.I)
     if regexp and any(re.search(regexp.group(1), db) for db in dbs):
         return True
-    return any((a or b or c) in dbs for a, b, c in _ARGS.findall(head.partition("(")[2]))
+    return any(a in dbs for a in _engine_args(engine_full))
 
 
-def _view_reads_outside(query: str, dbs: list[str]) -> str:
-    """What a view's query reads outside the configured databases: a table function, a
-    dictionary or Join table not named in them, or any name qualified by something other
-    than one of them; '' when there is none."""
+def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -> str:
+    """What a view's query reads outside the configured databases: a table function
+    (`functions`, lowercase), a dictionary or Join table not named in them, or any name
+    qualified by something other than one of them or an alias the query defines; '' when
+    there is none."""
     select = re.split(r"\bAS\s+(?=SELECT|WITH|\()", query, maxsplit=1, flags=re.I)[-1]
     for by_name in _BY_NAME.finditer(select):
         db, dot, _ = by_name.group(1).partition(".")
         if not dot or db.strip("`") not in dbs:
             return f"the dictionary or table {by_name.group(1)}"
     code = _STRING.sub("''", select)
-    if function := _TABLE_FUNCTION.search(code):
-        return f"the table function {function.group(1)}"
+    for call in _CALL.finditer(code):
+        if call.group(1).lower() in functions:
+            return f"the table function {call.group(1)}"
+    aliases = {
+        name.strip("`")
+        for m in _ALIAS.finditer(code)
+        if (name := m.group(1) or m.group(2)) and name.upper() not in _NOT_ALIAS
+    }
     for q in _QUALIFIED.finditer(code):
         name = q.group(1).strip("`")
-        if name not in dbs:
+        if name not in dbs and name not in aliases:
             return f"database {name}"
     return ""
 
 
-def object_problems(rows: Iterable[Mapping[str, Any]], dbs: list[str]) -> dict[str, str]:
+def object_problems(
+    rows: Iterable[Mapping[str, Any]], dbs: list[str], functions: frozenset[str] = frozenset()
+) -> dict[str, str]:
     """Each object (`db.name`) that writes the configured databases without a grant on them,
-    and why: a Buffer, Distributed or Merge table or materialized view outside them whose
-    target is inside, an outside table a view inside reads, a materialized view inside
-    reading outside them or through a table function, a stream engine inside."""
+    or brings in what lies outside them, and why: outside them, a Buffer, Distributed or
+    Merge table, or a materialized or window view, whose target is inside, and a table a
+    view inside reads; inside them, a view reading outside them (`_view_reads_outside`, with
+    `functions` the table functions), a forwarding table naming a database outside them, and
+    any other engine but the MergeTree family and `_LOCAL_ENGINES`."""
     out: dict[str, str] = {}
     for r in rows:
         db, name, engine = str(r["database"]), str(r["name"]), str(r["engine"])
         key = f"{db}.{name}"
+        if db in dbs:
+            if why := _inside_problem(r, engine, dbs, functions):
+                out[key] = why
+            continue
         query = str(r.get("create_table_query") or "")
-        inside = db in dbs
-        if not inside and engine in _FORWARDING and _engine_targets(str(r["engine_full"]), dbs):
+        if engine in _FORWARDING and _engine_targets(str(r.get("engine_full") or ""), dbs):
             out[key] = f"a {engine} table writing a configured database"
-        elif not inside and engine == "MaterializedView":
+        elif engine in _WRITING_VIEWS:
             to = _TO.search(query.split(" AS ", 1)[0])
             if to and (to.group(1) or to.group(2)) in dbs:
-                out[key] = "a materialized view writing a configured database"
-        elif inside and engine == "MaterializedView":
-            if source := _view_reads_outside(query, dbs):
-                out[key] = f"a materialized view reading {source}"
-        elif inside and engine in _STREAMS:
-            out[key] = f"a {engine} table, which writes by itself"
-        if not inside:
-            for dep_db, dep in zip(
-                r.get("dependencies_database") or [],
-                r.get("dependencies_table") or [],
-                strict=False,
-            ):
-                if dep_db in dbs:
-                    out.setdefault(f"{dep_db}.{dep}", f"a view reading {key}, outside")
+                out[key] = f"a {_kind(engine)} writing a configured database"
+        for dep_db, dep in zip(
+            r.get("dependencies_database") or [], r.get("dependencies_table") or [], strict=False
+        ):
+            if dep_db in dbs:
+                out.setdefault(f"{dep_db}.{dep}", f"a view reading {key}, outside")
     return out
+
+
+def _kind(engine: str) -> str:
+    return {"MaterializedView": "materialized view", "WindowView": "window view"}.get(
+        engine, engine
+    )
+
+
+def _inside_problem(
+    r: Mapping[str, Any], engine: str, dbs: list[str], functions: frozenset[str]
+) -> str:
+    if engine in _QUERIES:
+        source = _view_reads_outside(str(r.get("create_table_query") or ""), dbs, functions)
+        return f"a {_kind(engine)} reading {source}" if source else ""
+    if engine in _FORWARDING:
+        target = _engine_database(engine, str(r.get("engine_full") or ""))
+        if target and target not in dbs:
+            return f"a {engine} table reading database {target}"
+        return ""
+    if engine in _STREAMS:
+        return f"a {engine} table, which writes by itself"
+    if engine.endswith("MergeTree") or engine in _LOCAL_ENGINES:
+        return ""
+    return f"a {engine} table, which reads outside the configured databases"
 
 
 def extra_replicas(rows: Iterable[Mapping[str, Any]]) -> dict[str, set[str]]:
@@ -512,18 +627,23 @@ _OBJECTS_SQL = (
     "SELECT hostName() AS h, database, name, engine, engine_full, create_table_query, "
     "dependencies_database, dependencies_table FROM {source:tables} "
     "WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') AND ("
-    "engine IN {kinds:Array(String)} OR notEmpty(dependencies_database))"
+    "engine IN {kinds:Array(String)} OR notEmpty(dependencies_database) "
+    "OR (database IN {dbs:Array(String)} AND NOT endsWith(engine, 'MergeTree')))"
 )
 
 
 async def _objects(
     ch: Any, topology: Topology, names: Mapping[str, str], allowed: Allowed, dbs: list[str]
 ) -> list[Refusal]:
-    kinds = sorted(_FORWARDING | _STREAMS | {"MaterializedView"})
-    rows = await per_host(ch, topology, names, _OBJECTS_SQL, {"kinds": kinds})
+    kinds = sorted(_FORWARDING | _WRITING_VIEWS)
+    rows = await per_host(ch, topology, names, _OBJECTS_SQL, {"kinds": kinds, "dbs": dbs})
+    functions = frozenset(
+        str(r["name"]).lower()
+        for r in await ch.query_all("SELECT name FROM system.table_functions")
+    )
     out = []
     for host, found in sorted(rows.items()):
-        for key, why in sorted(object_problems(found, dbs).items()):
+        for key, why in sorted(object_problems(found, dbs, functions).items()):
             if key not in allowed.objects:
                 out.append(
                     Refusal(f"object {key}", f"{why}{_on(host)}: name it with --ch-allow-object")

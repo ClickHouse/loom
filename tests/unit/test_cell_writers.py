@@ -38,6 +38,7 @@ def test_show_grants_lines_become_grants() -> None:
         Grant("SELECT", "odd.db"),
         Grant("REMOTE"),
         Grant("REMOTE"),
+        Grant("INSERT", "loom", "secret", revoked=True),
     ]
 
 
@@ -52,6 +53,35 @@ def test_a_privilege_is_held_through_any_grant_implying_it() -> None:
     assert not holds([Grant("SELECT", "loom", "memory")], "SELECT", "loom")
     assert not holds([Grant("SELECT", "other")], "SELECT", "loom")
     assert not holds([Grant("SELECT", "loom")], "SELECT")
+
+
+def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
+    lines = [
+        "GRANT SELECT, SHOW, SYSTEM ON *.* TO attach",
+        "GRANT SHOW USERS ON *.* TO attach",
+        "REVOKE SHOW TABLES ON side.* FROM attach",
+        "REVOKE SELECT ON loom.secret FROM attach",
+        "REVOKE GRANT OPTION FOR SELECT ON other.* FROM attach",
+    ]
+    assert cell_writers.own_problems(parse_show_grants(lines), ONE, DBS) == [
+        "SHOW TABLES ON *.* (narrowed by REVOKE SHOW TABLES ON side.*)",
+        "SELECT ON loom.* (narrowed by REVOKE SELECT ON loom.secret)",
+    ]
+    # On several hosts the revokes come as `system.grants` rows.
+    rows = [
+        {"user_name": "attach", "access_type": a, "database": None}
+        for a in ("SELECT", "SHOW", "SHOW USERS", "SYSTEM", "REMOTE", "CLUSTER")
+    ]
+    rows.append(
+        {"user_name": "attach", "access_type": "SHOW", "database": "side", "is_partial_revoke": 1}
+    )
+    grants = cell_writers.resolve_grants("attach", rows, [])
+    assert cell_writers.own_problems(grants, TWO, DBS) == [
+        "SHOW TABLES ON *.* (narrowed by REVOKE SHOW ON side.*)",
+        "SHOW COLUMNS ON *.* (narrowed by REVOKE SHOW ON side.*)",
+    ]
+    # A writer's revokes stay ignored: it is judged by what it was granted.
+    assert writer_reason(parse_show_grants(["REVOKE INSERT ON loom.* FROM w"]), DBS) == ""
 
 
 def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
@@ -89,6 +119,12 @@ def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
         ([Grant("SOURCES")], "holds SOURCES on *.*"),
         ([Grant("WRITE")], "holds WRITE on *.*"),
         (parse_show_grants(["GRANT READ ON REMOTE TO u"]), "holds REMOTE on *.*"),
+        # A temporary Distributed table forwards as a permanent one does.
+        ([Grant("CREATE TEMPORARY TABLE")], "holds CREATE TEMPORARY TABLE on *.*"),
+        (
+            [Grant("CREATE ARBITRARY TEMPORARY TABLE")],
+            "holds CREATE ARBITRARY TEMPORARY TABLE on *.*",
+        ),
     ],
 )
 def test_the_writer_predicate(grants: list[Grant], reason: str) -> None:
@@ -116,6 +152,7 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
     assert cell_writers.resolve_grants("u", grant_rows, role_rows) == [
         Grant("INSERT", "loom"),
         Grant("SELECT"),
+        Grant("SELECT", "loom", "secret", revoked=True),
     ]
 
 
@@ -126,7 +163,13 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
         ("AS SELECT dictGet('side.orgs', 'org', id) AS org FROM loom.memory", "side.orgs"),
         ("AS SELECT dictGet('orgs', 'org', id) AS org FROM loom.memory", "dictionary or table"),
         ("AS SELECT joinGet('loom.j', 'org', id) AS org FROM loom.memory", ""),
-        ("AS SELECT m.org FROM loom.memory AS m", "database m"),
+        ("AS SELECT m.org FROM loom.memory AS m", ""),
+        ("AS SELECT m.org FROM loom.memory m JOIN (SELECT 1 AS id) AS s ON s.id = m.id", ""),
+        ("AS WITH w AS (SELECT org FROM loom.memory) SELECT w.org FROM w", ""),
+        ("AS SELECT x.org FROM loom.memory AS m", "database x"),
+        ("AS SELECT org FROM loom.memory, remote('far:9000', loom.memory)", "function remote"),
+        ("AS SELECT org FROM loom.memory, url('http://x', CSV, 'org String')", "function url"),
+        ("AS SELECT org FROM loom.memory WHERE id IN (SELECT id FROM s3('x'))", "function s3"),
         ("AS SELECT org FROM loom.memory WHERE note = 'side.x'", ""),
         ("AS SELECT t.1 AS org FROM loom.memory", ""),
         ("AS SELECT org FROM s3('http://x', CSV)", "the table function s3"),
@@ -141,8 +184,66 @@ def test_any_outside_name_a_view_reads_counts(query: str, reason: str) -> None:
             "create_table_query": f"CREATE MATERIALIZED VIEW loom.v TO loom.t {query}",
         }
     ]
-    found = cell_writers.object_problems(rows, DBS).get("loom.v", "")
+    functions = frozenset({"remote", "url", "s3"})
+    found = cell_writers.object_problems(rows, DBS, functions).get("loom.v", "")
     assert reason in found and bool(found) == bool(reason), found
+
+
+def _inside(engine: str, **row: str) -> dict[str, str]:
+    return {"database": "loom", "name": "x", "engine": engine, **row}
+
+
+@pytest.mark.parametrize(
+    ("row", "reason"),
+    [
+        (
+            _inside(
+                "View", create_table_query="CREATE VIEW loom.x AS SELECT org FROM remote('f', a.b)"
+            ),
+            "a View reading the table function remote",
+        ),
+        (_inside("View", create_table_query="CREATE VIEW loom.x AS SELECT org FROM loom.m"), ""),
+        (
+            _inside("Merge", engine_full="Merge('side', '^t$')"),
+            "a Merge table reading database side",
+        ),
+        (_inside("Merge", engine_full="Merge(REGEXP('^lo'), '^t$')"), "reading database REGEXP"),
+        (_inside("Merge", engine_full="Merge(currentDatabase(), '^t$')"), ""),
+        (_inside("Merge", engine_full="Merge('loom', '^t$')"), ""),
+        (
+            _inside("Distributed", engine_full="Distributed('main', 'side', 't', rand())"),
+            "a Distributed table reading database side",
+        ),
+        (_inside("Buffer", engine_full="Buffer('loom_telemetry', 't', 16, 1, 1, 1, 1, 1, 1)"), ""),
+        (_inside("URL", engine_full="URL('http://x', CSV)"), "a URL table, which reads outside"),
+        (_inside("S3", engine_full="S3('http://x')"), "a S3 table, which reads outside"),
+        (_inside("File", engine_full="File(CSV)"), "a File table, which reads outside"),
+        (_inside("Memory", engine_full="Memory"), ""),
+        (
+            _inside(
+                "WindowView",
+                create_table_query="CREATE WINDOW VIEW loom.x TO loom.t AS SELECT org FROM side.s",
+            ),
+            "a window view reading database side",
+        ),
+    ],
+)
+def test_an_object_inside_reading_outside_counts(row: dict[str, str], reason: str) -> None:
+    found = cell_writers.object_problems([row], DBS, frozenset({"remote"})).get("loom.x", "")
+    assert reason in found and bool(found) == bool(reason), found
+
+
+def test_a_window_view_outside_writing_inside_counts() -> None:
+    row = {
+        "database": "side",
+        "name": "wv",
+        "engine": "WindowView",
+        "create_table_query": "CREATE WINDOW VIEW side.wv TO loom.memory AS SELECT org FROM side.s",
+    }
+    assert cell_writers.object_problems([row], DBS) == {
+        "side.wv": "a window view writing a configured database"
+    }
+    assert "WindowView" in cell_writers._WRITING_VIEWS
 
 
 def test_objects_writing_the_configured_databases_without_a_grant() -> None:
@@ -208,7 +309,7 @@ def test_objects_writing_the_configured_databases_without_a_grant() -> None:
         },
         {"database": "loom", "name": "feed", "engine": "Kafka", "engine_full": "Kafka(...)"},
     ]
-    assert cell_writers.object_problems(rows, DBS) == {
+    assert cell_writers.object_problems(rows, DBS, frozenset({"url"})) == {
         "side.buf": "a Buffer table writing a configured database",
         "side.dist": "a Distributed table writing a configured database",
         "side.merged": "a Merge table writing a configured database",
@@ -261,6 +362,7 @@ def _single_host() -> FakeCH:
         .on("SHOW GRANTS FOR `analyst` FINAL", [{"g": "GRANT SELECT ON loom.* TO analyst"}])
         .on("system.users", [{"h": "x", "name": n} for n in ("attach", "server", "analyst")])
         .on("system.user_directories", [{"h": "x", "name": "users_xml", "type": "users_xml"}])
+        .on("system.table_functions", [{"name": "remote"}, {"name": "url"}])
         .on("system.tables", [])
         .on("system.replicas", [])
     )
@@ -337,6 +439,7 @@ def _cluster(process_user: str = "attach") -> FakeCH:
             [{"h": "os-1", "user_name": "local", "role_name": None, "granted_role_name": "w"}],
         )
         .on("system.user_directories", [{"h": "os-0", "name": "ldap", "type": "ldap"}])
+        .on("system.table_functions", [{"name": "remote"}, {"name": "url"}])
         .on("system.tables", [])
         .on("system.replicas", [])
     )

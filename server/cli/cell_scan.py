@@ -630,8 +630,8 @@ async def _system(ch: Any, sql: str, topology: Topology, left: float, subject: s
             "default_format": "JSONEachRow",
         },
     )
-    rows = [json.loads(line) for line in body.decode().splitlines() if line.strip()]
-    failed = [r for r in rows if int(r.get("status", 1)) != 0]
+    rows = _body_rows(body.decode("utf-8", "replace").splitlines(), "status")
+    failed = [r for r in rows if int(r["status"]) != 0]
     if failed:
         raise Refused(
             [Refusal(f"replica {r.get('host')}", f"{subject}: {r.get('error')}") for r in failed]
@@ -662,19 +662,39 @@ def ch_scan_sql(table: Table, topology: Topology) -> str:
     return f"{host} UNION ALL {orgs} FORMAT JSONEachRow"
 
 
+class BodyError(Exception):
+    """An error ClickHouse wrote into a response body after it began streaming rows: its
+    text keeps the server's `Code: <n>.`, so the error's code is read as any other's."""
+
+
+def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
+    """The JSONEachRow rows of a body, each holding `key`; BodyError at the first line that
+    is not one (an `{"exception": …}` row, or the text tail a server appends once a
+    statement fails after its first block), with the rest of the body as its text."""
+    lines = list(lines)
+    rows = []
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        if not isinstance(row, dict) or key not in row:
+            exception = row.get("exception") if isinstance(row, dict) else None
+            raise BodyError(str(exception or "\n".join(lines[i:]))[:2000])
+        rows.append(row)
+    return rows
+
+
 async def _read_scan(
     ch: Any, sql: str, params: dict[str, Any], extra: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    buffer = b""
+    body = b""
     async with ch.raw_stream(sql, params, settings=extra) as chunks:
         async for chunk in chunks:
-            buffer += chunk
-            *lines, buffer = buffer.split(b"\n")
-            rows.extend(json.loads(line) for line in lines if line.strip())
-    if buffer.strip():
-        rows.append(json.loads(buffer))
-    return rows
+            body += chunk
+    return _body_rows(body.decode("utf-8", "replace").splitlines(), "k")
 
 
 async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) -> list[bytes | None]:

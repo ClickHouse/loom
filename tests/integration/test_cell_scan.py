@@ -304,3 +304,22 @@ async def test_every_table_a_view_fills_from_a_log_table_is_a_log_table(ch: Any)
             )
         )
     assert closure(_LOGGED, edges) == cell_scan.LOG_TABLES
+
+
+async def test_the_schemas_own_objects_read_nothing_outside(ch: Any) -> None:
+    """Every view, materialized view and table of the schema, judged as the writer check
+    judges objects inside the configured databases: none reads outside them."""
+    rows = await ch.query_all(
+        "SELECT database, name, engine, engine_full, create_table_query, "
+        "dependencies_database, dependencies_table FROM system.tables "
+        "WHERE database IN {dbs:Array(String)}",
+        {"dbs": cell_scan.databases()},
+    )
+    assert any(r["engine"] == "View" for r in rows) and any(
+        r["engine"] == "MaterializedView" for r in rows
+    )
+    functions = frozenset(
+        str(r["name"]).lower()
+        for r in await ch.query_all("SELECT name FROM system.table_functions")
+    )
+    assert cell_writers.object_problems(rows, cell_scan.databases(), functions) == {}
