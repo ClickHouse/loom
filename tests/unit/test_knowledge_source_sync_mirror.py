@@ -864,3 +864,22 @@ def test_a_parked_publication_is_noted_as_needing_an_operator(
     _turn(world, _mirrored())
     assert mirror["listings"] == []
     assert "parked; see the knowledge delivery backlog" in _detail(world)["error"]
+
+
+def test_a_delivery_owed_at_the_read_and_parked_by_the_end_is_noted_parked_first(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    answers = iter(["owed", "parked"])
+
+    async def _owed(org: str, namespace: str, uri_suffix: str) -> str:
+        return next(answers)
+
+    async def _will_not_say(token: str, file_id: str, **kw: Any) -> Any:
+        return None
+
+    monkeypatch.setattr(documents, "publications_owed", _owed)
+    monkeypatch.setattr(gdrive, "file_permissions", _will_not_say)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    _turn(world, _mirrored())
+    assert mirror["listings"] == []
+    assert _detail(world)["error"].startswith("publication: a written list is parked")

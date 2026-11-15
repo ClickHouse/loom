@@ -32,10 +32,10 @@ from server.knowledge.app import source_sync as sync
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import (
     KnowledgeSource,
+    home,
     json_object,
     mirror_uri,
     mirror_uri_suffix,
-    source_id_tag,
 )
 from server.knowledge.store import documents
 from server.knowledge.store import mirrors as mirror_store
@@ -82,7 +82,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     suffix = mirror_uri_suffix(src.source_id)
     owed = await documents.publications_owed(src.org, src.mirror, suffix)
     with sequential_reads():  # a replica behind the last turn would show an older list
-        copies = await store.every_copy(src.org, src.mirror, source_id_tag(src.source_id))
+        copies = await store.every_copy(src.org, *home(src))
     try:
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
     except _Refused:
@@ -109,9 +109,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
     if lists_current and whole:
-        held_back = owed or await documents.publications_owed(src.org, src.mirror, suffix)
+        # The state at the end wins: a delivery owed at the read may be parked by now.
+        held_back = await documents.publications_owed(src.org, src.mirror, suffix) or owed
         if held_back:
-            _note(result, _HELD_BACK[held_back])
+            _note(result, _HELD_BACK[held_back], first=True)
             return result
         pass_context.check_stop()
         await sync.require_current(src)  # an erasure since the last write lands no row
@@ -128,9 +129,12 @@ class _Refused(Exception):
     credential); the turn's status says which."""
 
 
-def _note(result: sync.TurnResult, note: str) -> None:
-    if note not in result.note:  # once, however many files it was for
-        result.note = "; ".join(filter(None, [result.note, note]))
+def _note(result: sync.TurnResult, note: str, *, first: bool = False) -> None:
+    """Add `note` once, however many files it was for; `first` puts it ahead of the
+    rest, so the state's 200-character cut keeps it."""
+    if note not in result.note:
+        notes = [note, result.note] if first else [result.note, note]
+        result.note = "; ".join(filter(None, notes))
 
 
 async def _refresh_lists(
@@ -170,11 +174,10 @@ async def _refresh_lists(
                     access = access_list.common(stored, access)
                 if stored != access:
                     changed[uri] = access
-        finally:
-            # A rate limit or the deadline still writes what was read; a stopped pass
-            # writes nothing (`_write_lists` checks).
-            written = await _write_lists(src, changed)
-        if not written:
+        except _Refused:
+            await _write_lists(src, changed)  # what was read is written all the same
+            raise
+        if not await _write_lists(src, changed):
             # A copy another writer holds keeps its list: the listing vouches for nothing,
             # but the later batches' narrowings are still written.
             _note(result, "permissions: a stored copy is not this source's to write")

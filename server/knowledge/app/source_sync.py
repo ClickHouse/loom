@@ -1145,7 +1145,7 @@ async def _may_write(src: KnowledgeSource, uri: str) -> bool:
     return doc is None or ours(src, doc)
 
 
-def in_mirror(src: KnowledgeSource) -> bool:
+def _in_mirror(src: KnowledgeSource) -> bool:
     """Whether the source's rows live in its namespace's mirror (`home`)."""
     namespace, _ = home(src)
     return namespace != src.namespace
@@ -1197,7 +1197,7 @@ async def write_document(
     fetch is seconds old by now."""
     namespace, tag = home(src)
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if in_mirror(src):
+    if _in_mirror(src):
         tags.append(tag)  # its `source-id:<id>`, and no repository tag
     elif repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -1251,7 +1251,7 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
     except PublicationPending:  # the delete is committed; the worker publishes it
         deleted = True
     # The audit log outlives an erasure, so a mirror's addresses never go in it.
-    if deleted and not in_mirror(src):
+    if deleted and not _in_mirror(src):
         await audit.emit(
             "knowledge.delete",
             org=src.org,
@@ -1788,7 +1788,6 @@ __all__ = [
     "file_gone",
     "full_due",
     "give_up",
-    "in_mirror",
     "open_listing",
     "ours",
     "require_current",
