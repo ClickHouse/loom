@@ -138,9 +138,12 @@ def _sign(
 ) -> subprocess.CompletedProcess[str]:
     """The sign-files step on a release serving `served`, the run having built `built`."""
     work = tmp_path / "work"
-    (work / "built/python").mkdir(parents=True)
+    (work / "built").mkdir(parents=True)
     for name, body in built.items():
-        (work / "built/python" / name).write_text(body)
+        # The artifact's layout: release/stack, release/python, ...
+        folder = work / "built" / ("stack" if name.startswith("loom-stack") else "python")
+        folder.mkdir(exist_ok=True)
+        (folder / name).write_text(body)
     return _run(SIGN["run"], {**_env(tmp_path, served), **env}, work)
 
 
@@ -210,19 +213,30 @@ def test_a_dispatch_signs_what_it_rebuilt_and_keeps_the_signed_stack_pair(tmp_pa
     assert kept.read_text() == _bundle("tag run sum")
 
 
-NO_BUNDLE = "has no Sigstore bundle: never signed, attached by hand, or changed"
-INCIDENT = "its Sigstore bundle does not verify (cosign's error above): unless Sigstore is down"
+NOT_BUILT = "is not this run's build: delete it from the release if the workflow does not make it"
+NO_BUNDLE = "kept from an earlier run, has no Sigstore bundle: that run never signed it"
+INCIDENT = "kept from an earlier run, has a Sigstore bundle that does not verify"
 
 
 @pytest.mark.parametrize(
     ("served", "error"),
     [
-        ({"install.sh": "swapped"}, NO_BUNDLE),
-        ({"install.sh": "swapped", "install.sh.sigstore.json": _bundle("a")}, INCIDENT),
-        ({"install.sh": "a", "zz.txt": "uploaded by hand"}, NO_BUNDLE),
+        ({"install.sh": "swapped"}, NOT_BUILT),
+        ({"install.sh": "swapped", "install.sh.sigstore.json": _bundle("swapped")}, NOT_BUILT),
+        ({"install.sh": "a", "zz.txt": "uploaded by hand"}, NOT_BUILT),
         ({"loom-stack.tar.gz": "tag run, never signed"}, NO_BUNDLE),
+        (
+            {"loom-stack.tar.gz": "swapped", "loom-stack.tar.gz.sigstore.json": _bundle("x")},
+            INCIDENT,
+        ),
     ],
-    ids=["replaced", "replaced beside its old bundle", "not built by the run", "kept unsigned"],
+    ids=[
+        "replaced",
+        "replaced with a bundle of its own bytes",
+        "not built by the run",
+        "kept unsigned",
+        "kept, bundle does not verify",
+    ],
 )
 def test_a_file_that_is_not_this_runs_build_fails_before_anything_is_signed(
     tmp_path: Path, served: dict[str, str], error: str

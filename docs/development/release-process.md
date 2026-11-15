@@ -260,9 +260,9 @@ there costs a candidate number, not a final version.
 9. `sign-files` downloads every file the release now serves, as users do
    (`scripts/release/download_release_files.sh`), and signs each one that is byte-identical to
    this run's build with a keyless signature like the images', into a Sigstore bundle
-   `<file>.sigstore.json` (`scripts/release/sign_release_files.sh`). A file it did not build (the
-   stack bundle and checksum the release kept from an earlier run) keeps its Sigstore bundle when
-   that verifies; any other file fails the job, signing nothing
+   `<file>.sigstore.json` (`scripts/release/sign_release_files.sh`). The stack bundle and
+   checksum the release kept from an earlier run keep their Sigstore bundles when those verify;
+   any other file that is not this run's build fails the job, signing nothing
    ([a failed tag or signature](#a-failed-tag-or-signature)). It then verifies each file as
    users do (`scripts/release/verify_release_files.sh`). It holds the run's OIDC token in a job of
    its own, with read-only contents; `attach-signatures` then uploads the Sigstore bundles to the
@@ -356,20 +356,22 @@ A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, s
 the release without a Sigstore bundle that verifies them. Any later run signs them again while the
 stack bundle and checksum on the release carry Sigstore bundles that verify: "Re-run failed jobs",
 or a dispatch. When they carry none, because the tag run's own signing failed, only "Re-run failed
-jobs" on the tag run signs them, within 30 days and before any dispatch: a dispatch, "Re-run all
+jobs" on the tag run signs them, while its artifacts are kept (30 days, unless the repository's
+artifact retention limit is shorter) and before any dispatch: a dispatch, "Re-run all
 jobs" or a second push of the tag rebuilds the stack bundle and checksum but keeps the ones the
 release carries, which then no run can sign. Past that, release a new version.
 
 A `release-check` that fails on a listing or a download: "Re-run failed jobs". One that finds a
-Sigstore bundle that does not verify after `sign-files` and `attach-signatures` passed, with no
-dispatch running, means the release changed after it was signed: a security incident
-([SECURITY.md](../../SECURITY.md)).
+Sigstore bundle that does not verify after the latest release run's `sign-files` and
+`attach-signatures` passed means the release changed after it was signed: a security incident
+([SECURITY.md](../../SECURITY.md)). A run whose signing failed is recovered as above instead.
 
-`sign-files` refuses a file that is not this run's build unless its Sigstore bundle verifies. One
-whose bundle does not verify, outside a Sigstore outage, was changed outside the workflow: a
-security incident, not a signing failure. One with no bundle is a file its publishing run never
-signed (above), a file attached to the release by hand, which is deleted from the release if the
-workflow does not make it, or one changed with its bundle removed.
+`sign-files` refuses any file that is not this run's build, except a kept stack bundle or checksum
+whose Sigstore bundle verifies. A file attached to the release by hand: delete it from the release
+when the workflow does not make it, then "Re-run failed jobs". A kept stack bundle or checksum with
+no Sigstore bundle was never signed (above). Any other refusal, and a kept file whose Sigstore
+bundle does not verify outside a Sigstore outage, means the file was changed outside the workflow:
+a security incident, not a signing failure.
 
 ### When the clickhouse job stops
 
