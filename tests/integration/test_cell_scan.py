@@ -25,6 +25,7 @@ from server.core.ch import get_client
 from server.settings import settings
 from tests.integration._pg_database import own_database
 from tests.integration._resources import unique_org
+from tests.log_tables import LOGGED, closure
 
 
 @pytest.fixture
@@ -322,7 +323,7 @@ async def test_every_table_a_view_fills_from_a_log_table_is_a_log_table(ch: Any)
                 f"{ch_names.logical(to.group(1))}.{to.group(2)}",
             )
         )
-    assert cell_scan.closure(cell_scan.LOGGED, edges) == cell_scan.LOG_TABLES
+    assert closure(LOGGED, edges) == cell_scan.LOG_TABLES
 
 
 async def test_the_schemas_own_objects_read_nothing_outside(ch: Any) -> None:

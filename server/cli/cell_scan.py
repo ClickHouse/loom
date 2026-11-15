@@ -15,8 +15,8 @@ The scan reads, one statement per table and no long transaction:
 
 Log tables (`LOG_TABLES`) are listed and judged but never scanned: a log row keeps the org a
 caller typed, before any check, so placing a log-only org would let anyone pin an org name
-to this cell. Every refusal is returned as data (`Refusal`), so attach and doctor print the
-same names and reasons."""
+to this cell. Every refusal is a `Refusal`, returned by the listing and raised in `Refused`
+by the scan, so attach and doctor print the same names and reasons."""
 
 from __future__ import annotations
 
@@ -50,10 +50,6 @@ from server.core.ch_errors import error_code, error_line
 from server.core.errors import BackendUnavailableError
 from server.erasure.store.census import classified_tables
 from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
-
-# The tables a request writes with the org it named, before any check. `LOG_TABLES` holds
-# them and every table a view fills from one of them (`closure`).
-LOGGED = frozenset({"loom.agent_events", "loom.code_search_trace"})
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
 # unauthenticated request's log row keeps the org it named), and tables a view fills from
@@ -115,16 +111,6 @@ def _out_of_budget(subject: str, seconds: float) -> Refusal:
 
 def pg_quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
-
-
-def closure(roots: Iterable[str], views: Iterable[tuple[set[str], str]]) -> set[str]:
-    """`roots` and every table a view fills from one of them, through any chain of views
-    (each view as its sources and its target)."""
-    views = list(views)
-    out = set(roots)
-    while grown := {to for sources, to in views if sources & out} - out:
-        out |= grown
-    return out
 
 
 # -- the table list ----------------------------------------------------------------------

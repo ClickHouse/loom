@@ -47,7 +47,7 @@ class Refusal:
 
 
 class Refused(Exception):
-    """The scan stops; `refusals` name why."""
+    """The scan or a check stops; `refusals` name why."""
 
     def __init__(self, refusals: Iterable[Refusal]) -> None:
         self.refusals = list(refusals)

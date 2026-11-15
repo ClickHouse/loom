@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import re
 
-from server.cli.cell_scan import LOG_TABLES, LOGGED, closure
+from server.cli.cell_scan import LOG_TABLES
+from tests.log_tables import LOGGED, closure
 from tests.unit import schema_ddl
 
 # The tables whose orgs attach places: every row's org was checked by the request or the

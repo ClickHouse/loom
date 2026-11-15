@@ -20,8 +20,8 @@ leaving the org with data and no placement. The check reads, on every host of
 The check is a list of known write routes judged at one point in time, not a proof: a grant
 or an object added later, another server on the same Keeper (a KeeperMap table's keys, a
 replica outside the cluster's users), and a route outside ClickHouse's grant model pass it,
-so doctor runs it again on every run. Every refusal is returned as data
-(`cell_ch.Refusal`)."""
+so doctor runs it again on every run. Every refusal is returned as data (`cell_ch.Refusal`),
+but for a host that answers outside the cluster's names, which raises `cell_ch.Refused`."""
 
 from __future__ import annotations
 
@@ -758,7 +758,9 @@ async def check_writers(
     ch: Any, topology: Topology, names: Mapping[str, str], allowed: Allowed
 ) -> list[Refusal]:
     """Every ClickHouse writer of the configured databases the operator has not named.
-    `names` is `cell_ch.host_names()` on a cluster of several hosts, else empty."""
+    `names` is `cell_ch.host_names()` on a cluster of several hosts, else empty. Raises
+    `cell_ch.Refused` when a host answers outside the cluster's names; every other refusal
+    is returned."""
     dbs = databases()
     with query_tag("cell.writers"):
         lacking, per_user = await own_refusals(ch, topology, names)
