@@ -1149,9 +1149,10 @@ class CHClient:
         *,
         settings: dict[str, Any] | None = None,
     ) -> bytes:
-        """A SELECT's whole output as bytes (`FORMAT RawBLOB` for one String
-        value), read under one pool slot like any query. `settings` are this
-        statement's own ClickHouse settings."""
+        """A statement's whole output as bytes: a SELECT's (`FORMAT RawBLOB` for
+        one String value), or a `SYSTEM … ON CLUSTER` statement's status rows;
+        read under one pool slot like any query. `settings` are this statement's
+        own ClickHouse settings."""
 
         async def _q() -> bytes:
             return await self.client.raw_query(

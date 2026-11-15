@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from server.cli.cell_scan import LOG_TABLES
+from server.cli.cell_scan import LOG_TABLES, LOGGED, closure
 from tests.unit import schema_ddl
 
 # The tables whose orgs attach places: every row's org was checked by the request or the
@@ -201,23 +201,10 @@ def test_every_table_with_an_org_column_is_judged() -> None:
     assert not (LOG_TABLES | _DATA_TABLES) - tables, (LOG_TABLES | _DATA_TABLES) - tables
 
 
-# The tables a request writes with the org it named, before any check.
-_LOGGED = {"loom.agent_events", "loom.code_search_trace"}
-
-
-def closure(roots: set[str], views: list[tuple[set[str], str]]) -> set[str]:
-    """`roots` and every table a view fills from one of them, through any chain of views
-    (each view as its sources and its target)."""
-    out = set(roots)
-    while grown := {to for sources, to in views if sources & out} - out:
-        out |= grown
-    return out
-
-
 def test_every_table_views_fill_from_a_log_table_is_a_log_table() -> None:
     views = []
     for m in _VIEW.finditer(_text()):
         to = _TO.search(m.group(2))
         assert to, m.group(1)
         views.append((set(_SOURCE.findall(m.group(2))), to.group(1)))
-    assert closure(_LOGGED, views) == LOG_TABLES
+    assert closure(LOGGED, views) == LOG_TABLES

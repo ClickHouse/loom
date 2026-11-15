@@ -21,7 +21,7 @@ The check is a list of known write routes judged at one point in time, not a pro
 or an object added later, another server on the same Keeper (a KeeperMap table's keys, a
 replica outside the cluster's users), and a route outside ClickHouse's grant model pass it,
 so doctor runs it again on every run. Every refusal is returned as data
-(`cell_scan.Refusal`)."""
+(`cell_ch.Refusal`)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from server.cli.cell_scan import WHOLE_SQL, Refusal, Topology, databases, per_host
+from server.cli.cell_ch import WHOLE_SQL, Refusal, Topology, databases, per_host
 from server.core.ch import query_tag
 from server.core.ch_errors import error_code, error_line
 
@@ -266,19 +266,24 @@ def resolve_grants(
     only the user's default roles, the ones a new session has (attach's own reads run in
     one), and every role those hold: `granted_role_is_default` marks the user's own grants,
     while a role's grant of another always passes it on."""
-    granted: dict[str, set[str]] = {}
+    # A user and a role may share a name: each holder is keyed by its kind.
+    granted: dict[tuple[str, str], set[str]] = {}
     for r in role_rows:
-        holder = r.get("user_name") or r.get("role_name")
-        if default_only and r.get("user_name") and r.get("granted_role_is_default") == 0:
+        holder = (
+            ("user", str(r["user_name"]))
+            if r.get("user_name")
+            else ("role", str(r.get("role_name")))
+        )
+        if default_only and holder[0] == "user" and r.get("granted_role_is_default") == 0:
             continue
-        granted.setdefault(str(holder), set()).add(str(r["granted_role_name"]))
+        granted.setdefault(holder, set()).add(str(r["granted_role_name"]))
     roles: set[str] = set()
-    todo = list(granted.get(user, ()))
+    todo = list(granted.get(("user", user), ()))
     while todo:
         role = todo.pop()
         if role not in roles:
             roles.add(role)
-            todo.extend(granted.get(role, ()))
+            todo.extend(granted.get(("role", role), ()))
     out = []
     for r in grant_rows:
         if r.get("user_name") == user or (r.get("role_name") in roles and not r.get("user_name")):
@@ -370,6 +375,12 @@ def _scope(g: Grant) -> str:
 
 _TO = re.compile(r"\bTO\s+(?:`((?:[^`\\]|\\.)*)`|(\w+))\s*\.", re.I)
 _NAME = r"(?:`(?:[^`\\]|\\.)*`|[A-Za-z_]\w*)"
+# `CREATE … VIEW <name>`: a view's `TO` target follows it, and its name may hold anything.
+_VIEW_HEAD = re.compile(
+    rf"\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+|WINDOW\s+|LIVE\s+)?VIEW\s+"
+    rf"(?:IF\s+NOT\s+EXISTS\s+)?(?:{_NAME}\s*\.\s*)?{_NAME}",
+    re.I,
+)
 # A call: of a table function (`system.table_functions`) it is a read through it, wherever
 # it stands in the query (a comma join, a subquery), so a scalar function of the same name
 # counts too, failing closed.
@@ -486,7 +497,10 @@ def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -
 
 
 _FROM = re.compile(r"\bFROM\b", re.I)
-_JOINED = re.compile(rf"(?<!ARRAY\s)\bJOIN\s+({_NAME})\s*\.\s*{_NAME}(?!\s*\()", re.I)
+# A qualified name ClickHouse keeps as one quoted identifier: a parameterized view's call is
+# stored as `` `db.view`(a = 1) ``.
+_DOTTED = r"`((?:[^`\\.]|\\.)+)\.(?:[^`\\]|\\.)*`"
+_JOINED = re.compile(rf"(?<!ARRAY\s)\bJOIN\s+(?:({_NAME})\s*\.\s*{_NAME}|{_DOTTED}\s*\()", re.I)
 # What ends a FROM list: the next clause, or a join.
 _FROM_END = re.compile(
     r"\b(?:WHERE|PREWHERE|GROUP|ORDER|LIMIT|HAVING|SETTINGS|UNION|FORMAT|WINDOW|QUALIFY|"
@@ -494,13 +508,13 @@ _FROM_END = re.compile(
     r"FINAL|ON|USING|INTERSECT|EXCEPT)\b",
     re.I,
 )
-_LEADING_REF = re.compile(rf"\s*({_NAME})\s*\.\s*{_NAME}(?!\s*\()")
+_LEADING_REF = re.compile(rf"\s*(?:({_NAME})\s*\.\s*{_NAME}|{_DOTTED}\s*\()")
 
 
 def _referenced_databases(code: str) -> set[str]:
     """The database of every qualified table reference: each item of a FROM list (a comma
     join included) and each joined table."""
-    out = {m.group(1).strip("`") for m in _JOINED.finditer(code)}
+    out = {(m.group(1) or m.group(2)).strip("`") for m in _JOINED.finditer(code)}
     for m in _FROM.finditer(code):
         depth, start, items = 0, m.end(), []
         i = start
@@ -521,7 +535,7 @@ def _referenced_databases(code: str) -> set[str]:
         items.append(code[start:i])
         for item in items:
             if ref := _LEADING_REF.match(item):
-                out.add(ref.group(1).strip("`"))
+                out.add((ref.group(1) or ref.group(2)).strip("`"))
     return out
 
 
@@ -569,7 +583,8 @@ def object_problems(
         elif engine in _FORWARDING and _engine_targets(str(r.get("engine_full") or ""), dbs):
             out[key] = f"a table of engine {engine} writing a configured database"
         elif engine in _WRITING_VIEWS:
-            to = _TO.search(query.split(" AS ", 1)[0])
+            head = _VIEW_HEAD.match(query)
+            to = _TO.search(query, head.end()) if head else None
             if to and (to.group(1) or to.group(2)) in dbs:
                 out[key] = f"a {_kind(engine)} writing a configured database"
         for dep_db, dep in zip(
@@ -743,7 +758,7 @@ async def check_writers(
     ch: Any, topology: Topology, names: Mapping[str, str], allowed: Allowed
 ) -> list[Refusal]:
     """Every ClickHouse writer of the configured databases the operator has not named.
-    `names` is `cell_scan.host_names()` on a cluster of several hosts, else empty."""
+    `names` is `cell_ch.host_names()` on a cluster of several hosts, else empty."""
     dbs = databases()
     with query_tag("cell.writers"):
         lacking, per_user = await own_refusals(ch, topology, names)

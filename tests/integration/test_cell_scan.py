@@ -17,13 +17,14 @@ from typing import Any
 
 import pytest
 
-from server.cli import cell_scan, cell_writers
-from server.cli.cell_scan import Budget, Refused, Table, TableList
+from server.cli import cell_ch, cell_scan, cell_writers
+from server.cli.cell_ch import Refused
+from server.cli.cell_scan import Budget, Table, TableList
 from server.core import cell, ch_names, pg
 from server.core.ch import get_client
 from server.settings import settings
 from tests.integration._pg_database import own_database
-from tests.unit.test_cell_scan_tables import _LOGGED, closure
+from tests.integration._resources import unique_org
 
 
 @pytest.fixture
@@ -85,7 +86,7 @@ async def test_the_listing_judges_every_org_table(
         _mergetree(f"{telemetry}.sli_minute"),
     ):
         await ch.execute(sql)
-    topology = await cell_scan.read_topology(ch)
+    topology = await cell_ch.read_topology(ch)
     assert not topology.multi
     listed = await cell_scan.list_tables(ch, own_pg, topology, {})
     assert [str(r) for r in listed.refusals] == [
@@ -115,23 +116,26 @@ async def test_the_scan_finds_judges_and_names_every_org(
     await ch.execute(_mergetree(f"{schema}.memory"))
     await ch.execute(_mergetree(f"{schema}.chunks", "LowCardinality(String)"))
     long = "x" * (cell.ORG_MAX_BYTES + 1)
+    acme, gamma, delta = unique_org("scan"), unique_org("scan"), unique_org("scan")
     await ch.execute(
         f"INSERT INTO {schema}.memory (org, id) SETTINGS async_insert = 0 VALUES "
-        "('acme', 1), ('acme', 2), ('', 3), ('-', 4), (unhex('FF'), 5), ('a\\0b', 6), "
-        "({long:String}, 7)",
-        {"long": long},
+        "({acme:String}, 1), ({acme:String}, 2), ('', 3), ('-', 4), (unhex('FF'), 5), "
+        "('a\\0b', 6), ({long:String}, 7)",
+        {"acme": acme, "long": long},
     )
-    await own_pg.execute("INSERT INTO loom.tenancy (org) VALUES ('acme'), ('gamma'), ('-'), ('*')")
+    await own_pg.execute(
+        "INSERT INTO loom.tenancy (org) VALUES ($1), ($2), ('-'), ('*')", acme, gamma
+    )
     tables = TableList(
         clickhouse=[Table(schema, "memory", "MergeTree"), Table(schema, "chunks", "MergeTree")],
         postgres=["loom.tenancy", "loom.memory_current"],
     )
-    topology = await cell_scan.read_topology(ch)
-    result = await cell_scan.scan(ch, tables, topology, Budget(600), configured=["delta"])
+    topology = await cell_ch.read_topology(ch)
+    result = await cell_scan.scan(ch, tables, topology, Budget(600), configured=[delta])
     assert result.orgs == {
-        "acme": {"clickhouse loom.memory", "postgres loom.tenancy"},
-        "gamma": {"postgres loom.tenancy"},
-        "delta": {"configured"},
+        acme: {"clickhouse loom.memory", "postgres loom.tenancy"},
+        gamma: {"postgres loom.tenancy"},
+        delta: {"configured"},
     }
     assert result.malformed == {"clickhouse loom.memory": ["ff", "'a\\x00b'"]}
     assert result.too_long == {long: {"clickhouse loom.memory"}}
@@ -175,7 +179,7 @@ async def test_a_postgres_table_without_a_plain_org_index_refuses(own_pg: Any) -
     await own_pg.execute("CREATE INDEX ON loom.scan_probe (org) WHERE id > 0")
     tables = TableList(postgres=["loom.scan_probe"])
     with pytest.raises(Refused, match="postgres loom.scan_probe: has no plain btree index"):
-        await cell_scan.scan(get_client(), tables, cell_scan.Topology("", 0), Budget(60))
+        await cell_scan.scan(get_client(), tables, cell_ch.Topology("", 0), Budget(60))
 
 
 _PASSWORD = "x{tag}"
@@ -208,7 +212,7 @@ async def test_the_writer_check_names_a_writer_and_an_object(
             f"CREATE TABLE {side}.buf AS {schema}.memory "
             f"ENGINE = Buffer({schema}, memory, 1, 10, 100, 10000, 1000000, 10000000, 100000000)"
         )
-        topology = await cell_scan.read_topology(ch)
+        topology = await cell_ch.read_topology(ch)
         others = {str(r["name"]) for r in await ch.query_all("SELECT name FROM system.users")} - {
             users["writer"]
         }
@@ -245,7 +249,7 @@ async def test_a_user_that_creates_tables_anywhere_is_a_writer(
     try:
         await ch.execute(f"CREATE DATABASE {side}")
         await ch.execute(f"GRANT CREATE TABLE, INSERT, SELECT ON {side}.* TO {creator}")
-        topology = await cell_scan.read_topology(ch)
+        topology = await cell_ch.read_topology(ch)
         refusals = await cell_writers.check_writers(ch, topology, {}, cell_writers.Allowed())
         assert f"user {creator}: holds CREATE TABLE on {side}.*: name it with --ch-allow-user" in [
             str(r) for r in refusals
@@ -257,7 +261,7 @@ async def test_a_user_that_creates_tables_anywhere_is_a_writer(
                 f"ENGINE = Buffer({schema}, memory, 1, 0, 1, 1, 1, 1, 1)"
             )
             with pytest.raises(Exception, match="ACCESS_DENIED|Not enough privileges"):
-                raw.command(f"INSERT INTO {side}.buf VALUES ('acme', 1)")
+                raw.command(f"INSERT INTO {side}.buf VALUES ('{unique_org('scan')}', 1)")
         finally:
             raw.close()
         assert await ch.query_all(f"SELECT org FROM {schema}.memory") == []
@@ -281,7 +285,7 @@ async def test_grants_are_read_as_the_server_keeps_them(
         await ch.execute(f"GRANT INSERT ON {schema}.* TO {role}")
         await ch.execute(f"GRANT {role} TO {users['writer']}")
         await ch.execute(f"SET DEFAULT ROLE NONE TO {users['writer']}")
-        topology = await cell_scan.read_topology(ch)
+        topology = await cell_ch.read_topology(ch)
         every, _ = await cell_writers._host_grants(ch, topology, {}, "")
         (grants,) = every.values()
         assert f"SELECT ON {schema}.*" in cell_writers.own_problems(
@@ -304,7 +308,7 @@ async def test_every_table_a_view_fills_from_a_log_table_is_a_log_table(ch: Any)
     views = await ch.query_all(
         "SELECT create_table_query, as_select FROM system.tables "
         "WHERE database IN {dbs:Array(String)} AND engine = 'MaterializedView'",
-        {"dbs": cell_scan.databases()},
+        {"dbs": cell_ch.databases()},
     )
     assert views
     edges = []
@@ -318,7 +322,7 @@ async def test_every_table_a_view_fills_from_a_log_table_is_a_log_table(ch: Any)
                 f"{ch_names.logical(to.group(1))}.{to.group(2)}",
             )
         )
-    assert closure(_LOGGED, edges) == cell_scan.LOG_TABLES
+    assert cell_scan.closure(cell_scan.LOGGED, edges) == cell_scan.LOG_TABLES
 
 
 async def test_the_schemas_own_objects_read_nothing_outside(ch: Any) -> None:
@@ -328,7 +332,7 @@ async def test_the_schemas_own_objects_read_nothing_outside(ch: Any) -> None:
         "SELECT database, name, engine, engine_full, create_table_query, "
         "dependencies_database, dependencies_table FROM system.tables "
         "WHERE database IN {dbs:Array(String)}",
-        {"dbs": cell_scan.databases()},
+        {"dbs": cell_ch.databases()},
     )
     assert any(r["engine"] == "View" for r in rows) and any(
         r["engine"] == "MaterializedView" for r in rows
@@ -337,7 +341,7 @@ async def test_the_schemas_own_objects_read_nothing_outside(ch: Any) -> None:
         str(r["name"]).lower()
         for r in await ch.query_all("SELECT name FROM system.table_functions")
     )
-    assert cell_writers.object_problems(rows, cell_scan.databases(), functions) == {}
+    assert cell_writers.object_problems(rows, cell_ch.databases(), functions) == {}
 
 
 class _AsUser:
@@ -381,7 +385,7 @@ async def test_a_user_that_cannot_see_every_table_refuses_before_listing(
             "SYSTEM SYNC REPLICA, SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
         ):
             await ch.execute(f"GRANT {grant} TO {narrow}")
-        topology = await cell_scan.read_topology(ch)
+        topology = await cell_ch.read_topology(ch)
         raw = ch_client_from_env(username=narrow, password=users["password"])
         try:
             as_narrow = _AsUser(raw)
@@ -429,7 +433,7 @@ async def test_an_outside_keeper_map_on_an_inside_ones_root_refuses(
             "WHERE database IN {dbs:Array(String)} AND name = 'km'",
             {"dbs": [schema, side]},
         )
-        assert cell_writers.object_problems(rows, cell_scan.databases()) == {
+        assert cell_writers.object_problems(rows, cell_ch.databases()) == {
             f"{side}.km": f"a KeeperMap table sharing {schema}.km's keys"
         }
     finally:
@@ -461,7 +465,7 @@ async def test_a_read_held_only_through_a_non_default_role_refuses(
         await ch.execute(f"GRANT SHOW TABLES, SHOW COLUMNS ON *.* TO {role}")
         await ch.execute(f"GRANT {role} TO {narrow}")
         await ch.execute(f"SET DEFAULT ROLE NONE TO {narrow}")
-        topology = await cell_scan.read_topology(ch)
+        topology = await cell_ch.read_topology(ch)
         raw = ch_client_from_env(username=narrow, password=users["password"])
         try:
             listed = await cell_scan.list_tables(_AsUser(raw), None, topology, {})

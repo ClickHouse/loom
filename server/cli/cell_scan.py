@@ -30,6 +30,18 @@ from typing import Any
 
 from clickhouse_connect.driver.exceptions import DatabaseError
 
+from server.cli.cell_ch import (
+    TAG,
+    WHOLE,
+    WHOLE_SQL,
+    Refusal,
+    Refused,
+    Topology,
+    databases,
+    per_host,
+    quote,
+)
+from server.cli.cell_writers import own_refusals
 from server.core import ch_errors, ch_names, pg
 from server.core.cell import ORG_FREE, named_org, org_name_refusal
 from server.core.cell_triggers import ORG_TABLES
@@ -38,7 +50,10 @@ from server.core.ch_errors import error_code, error_line
 from server.core.errors import BackendUnavailableError
 from server.erasure.store.census import classified_tables
 from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
-from server.settings import settings
+
+# The tables a request writes with the org it named, before any check. `LOG_TABLES` holds
+# them and every table a view fills from one of them (`closure`).
+LOGGED = frozenset({"loom.agent_events", "loom.code_search_trace"})
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
 # unauthenticated request's log row keeps the org it named), and tables a view fills from
@@ -56,25 +71,6 @@ LOG_TABLES = frozenset(
     }
 )
 
-# A `clusterAllReplicas` read: every replica answers (one that does not is unverified, not
-# absent), and the initiator reads its own host locally, never a second time over a
-# connection as the cluster's configured user.
-_CLUSTER = "skip_unavailable_shards = 0, prefer_localhost_replica = 1"
-# Every read the scan and the checks make throws past a limit rather than return what it has
-# read so far: a profile's `break` would shorten a list or a scan silently.
-WHOLE = {
-    "timeout_overflow_mode": "throw",
-    "timeout_overflow_mode_leaf": "throw",
-    "read_overflow_mode": "throw",
-    "read_overflow_mode_leaf": "throw",
-    "result_overflow_mode": "throw",
-    "distinct_overflow_mode": "throw",
-    "set_overflow_mode": "throw",
-}
-_WHOLE = ", ".join(f"{k} = '{v}'" for k, v in WHOLE.items())
-WHOLE_SQL = f"SETTINGS {_WHOLE}"
-_CLUSTER_SQL = f"SETTINGS {_CLUSTER}, {_WHOLE}"
-
 # A refreshable view's temporary table while a refresh exchanges its target.
 _EXCHANGE = re.compile(r"^\.tmp\.inner(_id)?\.")
 # A provider transition's copies (server/erasure/store/provider_copies.py).
@@ -89,26 +85,6 @@ _TIMEOUT_CODES = frozenset({159})  # TIMEOUT_EXCEEDED
 _UNKNOWN_TABLE_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
 
 _sleep = asyncio.sleep  # the seam the retry tests replace
-_TAG = "cell.scan"  # system.query_log's log_comment of every statement the scan issues
-
-
-@dataclass(frozen=True)
-class Refusal:
-    """One reason attach stops: what it names (a table, a host, an org) and why."""
-
-    subject: str
-    reason: str
-
-    def __str__(self) -> str:
-        return f"{self.subject}: {self.reason}"
-
-
-class Refused(Exception):
-    """The scan stops; `refusals` name why."""
-
-    def __init__(self, refusals: Iterable[Refusal]) -> None:
-        self.refusals = list(refusals)
-        super().__init__("; ".join(str(r) for r in self.refusals))
 
 
 class Budget:
@@ -137,161 +113,17 @@ def _out_of_budget(subject: str, seconds: float) -> Refusal:
     return Refusal(subject, f"the scan ran out of --scan-budget ({seconds:g} s): raise it")
 
 
-def quote(name: str) -> str:
-    """A ClickHouse identifier in backquotes."""
-    return "`" + name.replace("\\", "\\\\").replace("`", "\\`") + "`"
-
-
 def pg_quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-# -- the ClickHouse cluster ------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Topology:
-    """`settings.ch_cluster` as `system.clusters` lists it: its entries as (host name,
-    port), one per server, and its shard count (no entries when the cluster is unset or
-    unlisted)."""
-
-    cluster: str
-    shards: int
-    entries: tuple[tuple[str, int], ...] = ()
-
-    @property
-    def hosts(self) -> frozenset[str]:
-        """The configured host names."""
-        return frozenset(host for host, _ in self.entries)
-
-    @property
-    def multi(self) -> bool:
-        """More than one server: reads go through `clusterAllReplicas`, statements that must
-        reach every replica carry `ON CLUSTER`. Two servers on one machine are two."""
-        return len(self.entries) > 1
-
-    def refusals(self) -> list[Refusal]:
-        out = []
-        if self.shards > 1:
-            out.append(
-                Refusal(
-                    f"cluster {self.cluster}",
-                    f"{self.shards} shards: a replica holds only its shard's rows, so a scan "
-                    "through one would miss the others'",
-                )
-            )
-        # The checks tell servers apart by configured host name alone.
-        ports: dict[str, list[int]] = {}
-        for host, port in self.entries:
-            ports.setdefault(host, []).append(port)
-        for host, listed in sorted(ports.items()):
-            if len(listed) > 1:
-                out.append(
-                    Refusal(
-                        f"cluster {self.cluster}",
-                        f"lists host {host} {len(listed)} times (ports "
-                        f"{', '.join(str(p) for p in sorted(listed))}): give each server its "
-                        "own host name",
-                    )
-                )
-        return out
-
-
-async def read_topology(ch: Any) -> Topology:
-    cluster = settings.ch_cluster
-    if not cluster:
-        return Topology("", 0)
-    with query_tag(_TAG):
-        rows = await ch.query_all(
-            "SELECT host_name, port, shard_num FROM system.clusters WHERE cluster = {c:String} "
-            + WHOLE_SQL,
-            {"c": cluster},
-        )
-    return Topology(
-        cluster,
-        len({int(r["shard_num"]) for r in rows}),
-        tuple(sorted((str(r["host_name"]), int(r["port"])) for r in rows)),
-    )
-
-
-async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
-    """Each answering host's OS hostname (an opaque group key) and the one configured name
-    it answers for in the cluster; Refused unless there is one group per listed host, each
-    with exactly one name, the names together the listing. The topology's own refusals (two
-    servers under one host name, several shards) come first, before any read."""
-    if refusals := topology.refusals():
-        raise Refused(refusals)
-    with query_tag(_TAG):
-        rows = await ch.query_all(
-            "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
-            "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "
-            f"GROUP BY h {_CLUSTER_SQL}",
-            {"c": topology.cluster},
-        )
-    where = f"cluster {topology.cluster}"
-    refusals = []
-    out: dict[str, str] = {}
-    for r in rows:
-        names = sorted(str(n) for n in r["names"])
-        if not names:
-            refusals.append(
-                Refusal(
-                    f"host {r['h']}",
-                    f"this host's address in {where} does not resolve to a local interface",
-                )
-            )
-        elif len(names) > 1:
-            refusals.append(
-                Refusal(
-                    f"host {r['h']}",
-                    f"this host answers for several entries in {where} ({', '.join(names)}): "
-                    "two local entries, or two hosts with one OS hostname",
-                )
-            )
-        else:
-            out[str(r["h"])] = names[0]
-    named = sorted(out.values())
-    if not refusals and (len(named) != len(set(named)) or set(named) != topology.hosts):
-        missing = sorted(topology.hosts - set(named))
-        refusals.append(
-            Refusal(
-                where,
-                "the answering hosts are not the listed ones"
-                + (f" (no answer for {', '.join(missing)})" if missing else ""),
-            )
-        )
-    if refusals:
-        raise Refused(refusals)
-    return out
-
-
-async def per_host(
-    ch: Any,
-    topology: Topology,
-    names: Mapping[str, str],
-    sql: str,
-    params: dict[str, Any] | None = None,
-) -> dict[str, list[dict[str, Any]]]:
-    """The rows of `sql`, which selects `hostName() AS h` from `{source:<table>}`, grouped
-    by the configured name of the host each came from: system table `<table>` itself on one
-    host (grouped under ''), through `clusterAllReplicas` on several (grouped by `names`,
-    from `host_names()`)."""
-    m = re.search(r"\{source:(\w+)\}", sql)
-    assert m, sql
-    table = f"system.{m.group(1)}"
-    if not topology.multi:
-        local = sql.replace(m.group(0), table) + " " + WHOLE_SQL
-        return {"": await ch.query_all(local, params or {})}
-    rows = await ch.query_all(
-        sql.replace(m.group(0), f"clusterAllReplicas({{c:String}}, {table})") + " " + _CLUSTER_SQL,
-        {**(params or {}), "c": topology.cluster},
-    )
-    out: dict[str, list[dict[str, Any]]] = {name: [] for name in names.values()}
-    for r in rows:
-        name = names.get(str(r["h"]))
-        if name is None:
-            raise Refused([Refusal(f"host {r['h']}", "answered without a configured name")])
-        out[name].append(r)
+def closure(roots: Iterable[str], views: Iterable[tuple[set[str], str]]) -> set[str]:
+    """`roots` and every table a view fills from one of them, through any chain of views
+    (each view as its sources and its target)."""
+    views = list(views)
+    out = set(roots)
+    while grown := {to for sources, to in views if sources & out} - out:
+        out |= grown
     return out
 
 
@@ -324,10 +156,6 @@ class TableList:
     clickhouse: list[Table] = field(default_factory=list)
     postgres: list[str] = field(default_factory=list)
     refusals: list[Refusal] = field(default_factory=list)
-
-
-def databases() -> list[str]:
-    return sorted({ch_names.database(), ch_names.telemetry_database()})
 
 
 _COLUMNS_SQL = (
@@ -501,15 +329,13 @@ async def list_tables(
     """The scan's table list in both stores, with every refusal it found, attach's own
     ClickHouse grants checked first. `names` is `host_names()` on a cluster of several
     hosts, else empty."""
-    with query_tag(_TAG):
+    with query_tag(TAG):
         return await _list_tables(ch, pg_conn, topology, names)
 
 
 async def _list_tables(
     ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
 ) -> TableList:
-    from server.cli.cell_writers import own_refusals  # it imports this module
-
     if refusals := topology.refusals():
         return TableList(refusals=refusals)
     # The system tables hide what the reading user cannot see: a narrower user lists short.
@@ -641,13 +467,9 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
             failure = e
         if bound.expired() or getattr(failure, "sqlstate", None) == "57014":  # the timeout
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-        if not (pg.is_outage(failure) or _unavailable(failure)):
+        if not (pg.is_outage(failure) or isinstance(failure, BackendUnavailableError)):
             raise Refused([Refusal(subject, f"the scan failed: {failure}")]) from failure
         await _sleep(_RETRY_PAUSE_S)
-
-
-def _unavailable(e: BaseException) -> bool:
-    return isinstance(e, BackendUnavailableError)
 
 
 def _ch_transient(e: BaseException) -> bool:
@@ -846,7 +668,7 @@ async def scan(
     result = ScanResult()
     for org in sorted(configured):
         result.add("configured", org)
-    with query_tag(_TAG):
+    with query_tag(TAG):
         for name in tables.postgres:
             for org in await _pg_orgs(name, budget):
                 result.add(f"postgres {name}", org)

@@ -10,8 +10,8 @@ from typing import Any
 
 import pytest
 
-from server.cli import cell_scan, cell_writers
-from server.cli.cell_scan import Topology
+from server.cli import cell_ch, cell_scan, cell_writers
+from server.cli.cell_ch import Topology
 from server.cli.cell_writers import Allowed, Grant, holds, parse_show_grants, writer_reason
 from tests.unit.test_cell_scan import NAMES, ONE, TWO, FakeCH
 
@@ -178,6 +178,16 @@ def test_attachs_own_sessions_have_only_its_default_roles() -> None:
     assert {g.access for g in session} == {"SHOW", "SELECT"}
 
 
+def test_a_role_named_as_a_user_is_not_that_user() -> None:
+    grant_rows = [
+        {"user_name": None, "role_name": "attach", "access_type": "INSERT", "database": "loom"},
+        {"user_name": None, "role_name": "w", "access_type": "SHOW"},
+    ]
+    # Role `attach` holds role `w`; user `attach` holds neither.
+    role_rows = [{"user_name": None, "role_name": "attach", "granted_role_name": "w"}]
+    assert cell_writers.resolve_grants("attach", grant_rows, role_rows) == []
+
+
 def test_roles_are_followed_and_partial_revokes_ignored() -> None:
     grant_rows = [
         {"user_name": None, "role_name": "inner", "access_type": "INSERT", "database": "loom"},
@@ -221,6 +231,18 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
             "database evil",
         ),
         ("AS SELECT x.org FROM loom.x AS x, evil.t AS evil", "database evil"),
+        # A parameterized view's call, as written and as the server stores it.
+        ("AS SELECT m.org FROM loom.memory AS side, side.pv(a = 1) AS m", "database side"),
+        ("AS SELECT m.org FROM loom.memory AS side, `side.pv`(a = 1) AS m", "database side"),
+        (
+            "AS SELECT m.org FROM loom.memory AS side JOIN side.pv(a = 1) AS m ON m.id = side.id",
+            "database side",
+        ),
+        (
+            "AS SELECT m.org FROM loom.memory AS x JOIN `side.pv`(a = 1) AS m ON m.id = x.id",
+            "database side",
+        ),
+        ("AS SELECT m.org FROM loom.memory AS x JOIN `loom.pv`(a = 1) AS m ON m.id = x.id", ""),
         ("AS SELECT org FROM loom.x AS evil, (SELECT 1 AS id) AS s", ""),
         ("AS SELECT m.org FROM loom.memory m JOIN (SELECT 1 AS id) AS s ON s.id = m.id", ""),
         ("AS WITH w AS (SELECT org FROM loom.memory) SELECT w.org FROM w", ""),
@@ -300,6 +322,19 @@ def test_an_object_inside_reading_outside_counts(row: dict[str, str], reason: st
         "loom.x", ""
     )
     assert reason in found and bool(found) == bool(reason), found
+
+
+def test_a_view_name_holding_as_does_not_hide_its_target() -> None:
+    row = {
+        "database": "side",
+        "name": "a AS b",
+        "engine": "MaterializedView",
+        "create_table_query": "CREATE MATERIALIZED VIEW side.`a AS b` TO loom.memory "
+        "(`org` String) AS SELECT org FROM side.s",
+    }
+    assert cell_writers.object_problems([row], DBS) == {
+        "side.a AS b": "a materialized view writing a configured database"
+    }
 
 
 def test_a_window_view_outside_writing_inside_counts() -> None:
@@ -559,7 +594,7 @@ async def test_a_cluster_reads_every_host_and_names_what_each_defines() -> None:
     ]
     reads = [s for k, s, _ in ch.calls if k == "query_all" and "hostName()" in s]
     assert reads and all(
-        "clusterAllReplicas({c:String}, system." in s and s.endswith(cell_scan._CLUSTER_SQL)
+        "clusterAllReplicas({c:String}, system." in s and s.endswith(cell_ch._CLUSTER_SQL)
         for s in reads
     )
     allowed = Allowed(users=frozenset({"attach", "local"}), user_directories=frozenset({"ldap"}))

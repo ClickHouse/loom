@@ -15,8 +15,9 @@ from typing import Any
 
 import pytest
 
-from server.cli import cell_scan
-from server.cli.cell_scan import Budget, Refused, ScanResult, Table, TableList, Topology
+from server.cli import cell_ch, cell_scan
+from server.cli.cell_ch import Refused, Topology
+from server.cli.cell_scan import Budget, ScanResult, Table, TableList
 from server.core import cell
 from server.core.errors import BackendUnavailableError
 
@@ -120,7 +121,7 @@ def test_the_budget_counts_down_and_refuses_naming_the_subject() -> None:
 
 
 async def test_the_topology_reads_the_configured_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cell_scan.settings, "ch_cluster", "main")
+    monkeypatch.setattr(cell_ch.settings, "ch_cluster", "main")
     ch = FakeCH().on(
         "FROM system.clusters",
         [
@@ -128,18 +129,18 @@ async def test_the_topology_reads_the_configured_cluster(monkeypatch: pytest.Mon
             {"host_name": "ch-1", "port": 9000, "shard_num": 2},
         ],
     )
-    topology = await cell_scan.read_topology(ch)
+    topology = await cell_ch.read_topology(ch)
     assert topology == Topology("main", 2, (("ch-0", 9000), ("ch-1", 9000)))
     assert topology.multi
     assert "2 shards" in str(topology.refusals()[0])
-    monkeypatch.setattr(cell_scan.settings, "ch_cluster", "")
-    assert await cell_scan.read_topology(FakeCH()) == Topology("", 0)
+    monkeypatch.setattr(cell_ch.settings, "ch_cluster", "")
+    assert await cell_ch.read_topology(FakeCH()) == Topology("", 0)
 
 
 async def test_two_servers_under_one_host_name_are_two_and_refuse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cell_scan.settings, "ch_cluster", "main")
+    monkeypatch.setattr(cell_ch.settings, "ch_cluster", "main")
     ch = FakeCH().on(
         "FROM system.clusters",
         [
@@ -147,7 +148,7 @@ async def test_two_servers_under_one_host_name_are_two_and_refuse(
             {"host_name": "ch-0", "port": 9001, "shard_num": 1},
         ],
     )
-    topology = await cell_scan.read_topology(ch)
+    topology = await cell_ch.read_topology(ch)
     # Several servers: a plain MergeTree table there refuses, statements carry ON CLUSTER.
     assert topology.multi and topology.hosts == frozenset({"ch-0"})
     assert [str(r) for r in topology.refusals()] == [
@@ -164,7 +165,7 @@ async def test_each_host_answers_for_exactly_one_listed_name() -> None:
     ch = FakeCH().on(
         "clusterAllReplicas", [{"h": "os-0", "names": ["ch-0"]}, {"h": "os-1", "names": ["ch-1"]}]
     )
-    assert await cell_scan.host_names(ch, TWO) == NAMES
+    assert await cell_ch.host_names(ch, TWO) == NAMES
     # Every clusterAllReplicas read waits for every replica and reads its own host locally.
     assert "skip_unavailable_shards = 0, prefer_localhost_replica = 1" in ch.sql("query_all")[0]
 
@@ -183,7 +184,7 @@ async def test_a_host_without_one_configured_name_refuses(
     rows: list[dict[str, Any]], reason: str
 ) -> None:
     with pytest.raises(Refused, match=reason):
-        await cell_scan.host_names(FakeCH().on("clusterAllReplicas", rows), TWO)
+        await cell_ch.host_names(FakeCH().on("clusterAllReplicas", rows), TWO)
 
 
 # -- the table list ----------------------------------------------------------------------
@@ -262,8 +263,8 @@ def test_engines_are_judged_and_log_tables_left_unscanned() -> None:
 
 
 def test_the_classification_compares_canonical_names(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cell_scan.settings, "ch_database", "prod_loom")
-    monkeypatch.setattr(cell_scan.settings, "ch_telemetry_database", "prod_telemetry")
+    monkeypatch.setattr(cell_ch.settings, "ch_database", "prod_loom")
+    monkeypatch.setattr(cell_ch.settings, "ch_telemetry_database", "prod_telemetry")
     tables = [
         Table("prod_loom", "memory", "MergeTree"),
         Table("prod_telemetry", "sli_minute", "MergeTree"),
@@ -472,7 +473,7 @@ async def test_a_spent_budget_refuses_before_any_statement() -> None:
 
 
 async def test_a_listing_with_refusals_is_never_scanned() -> None:
-    tables = TableList(refusals=[cell_scan.Refusal("clickhouse loom.x", "engine Memory")])
+    tables = TableList(refusals=[cell_ch.Refusal("clickhouse loom.x", "engine Memory")])
     with pytest.raises(Refused, match="engine Memory"):
         await cell_scan.scan(FakeCH(), tables, ONE, Budget(600))
 
@@ -692,7 +693,7 @@ async def test_two_servers_under_one_host_name_refuse_before_any_read() -> None:
     same = Topology("main", 1, (("ch-0", 9000), ("ch-0", 9001)))
     ch = FakeCH()
     with pytest.raises(Refused, match="lists host ch-0 2 times"):
-        await cell_scan.host_names(ch, same)
+        await cell_ch.host_names(ch, same)
     listed = await cell_scan.list_tables(ch, None, same, {})
     assert [r.reason for r in listed.refusals] == [
         "lists host ch-0 2 times (ports 9000, 9001): give each server its own host name"
