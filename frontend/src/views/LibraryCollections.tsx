@@ -238,8 +238,8 @@ export function LibraryCollections({
   quietError?: boolean;
   /** A collection the URL names that the list has not confirmed yet. */
   opening?: string | null;
-  /** Where the page is, as the URL names it (a collection, else the header's namespace):
-   *  the list confirming it is no move. */
+  /** Where the page is, as the URL names it (a collection, `ALL_DOCUMENTS`, else the header's
+   *  namespace): the list confirming it is no move. */
   place?: string;
   /** Open a place: a collection, `ALL_DOCUMENTS`, or null for the header's namespace. */
   onPick: (collection: string | null) => void;

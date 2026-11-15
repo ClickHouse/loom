@@ -135,19 +135,23 @@ export function LibraryPassages({
 
   // The search last asked for: run again on the new places when they change, or once they
   // are known, so the hits always answer the places named.
-  const want = useRef<{ q: string; topK: number } | null>(null);
+  const want = useRef<string | null>(null);
   // A search asked for while the places were still being read.
   const parked = useRef(false);
-  const placesKey = [identity.org, identity.namespace, ...namespaces].join("\n");
+  const placesKey = [identity.org, everywhere ? "everywhere" : "here", identity.namespace, ...namespaces].join("\n");
   const search = async (q: string, topK: number) => {
     if (!q) return;
-    want.current = { q, topK };
+    want.current = q;
     searching.current?.abort();
-    // Parked until the places are known; said, not spun, when they could not be read.
+    // Parked until the places are known; said, not spun, when they could not be read. Hits of
+    // other places would read as these places' answer, so they go.
     parked.current = waiting || !!unavailable;
     setBusy(!unavailable);
     setError(unavailable ?? null);
-    if (parked.current) return;
+    if (parked.current) {
+      setHits(null);
+      return;
+    }
     searchedFor.current = placesKey;
     const ctrl = new AbortController();
     searching.current = ctrl;
@@ -170,13 +174,8 @@ export function LibraryPassages({
   // Runs when the places change or arrive (the search reads the latest render's).
   useEffect(() => {
     if (!want.current) return;
-    if (unavailable) {
-      if (parked.current) void search(want.current.q, TOP_K);
-      return;
-    }
-    if (waiting) return;
-    if (searchedFor.current === placesKey && !parked.current) return;
-    void search(want.current.q, TOP_K);
+    if (searchedFor.current === placesKey && !parked.current && !waiting && !unavailable) return;
+    void search(want.current, TOP_K);
   }, [placesKey, waiting, unavailable]);
 
   // More may be behind any answer until asking for more adds none, up to the most the op

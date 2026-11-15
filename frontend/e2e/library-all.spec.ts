@@ -146,6 +146,10 @@ test.describe("375 px with touch", () => {
     const link = row(page, "Storage tiering RFC").getByRole("link", { name: "Engineering" });
     const box = await link.boundingBox();
     expect(box && box.x + box.width).toBeLessThanOrEqual(375);
+    // A 44 px target under a coarse pointer.
+    expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+    expect(Math.round(box?.height ?? 0)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box?.width ?? 0)).toBeGreaterThanOrEqual(44);
     expect(await violations(page)).toEqual([]);
   });
 });

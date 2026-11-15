@@ -1312,6 +1312,17 @@ textarea[aria-invalid="true"]:focus-visible {
   .list-row[data-deleted] {
     border-style: dashed;
   }
+  /* A Library row's link to where it lives, on a list of several places: a 44 px target under
+     a coarse pointer (WCAG 2.5.8), as the row's other controls are. */
+  @media (pointer: coarse) {
+    .doc-row-place {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--spacing-hit);
+      min-width: var(--spacing-hit);
+    }
+  }
+
   /* 1 px down, so the checkbox sits on the row's first line of text: a measured hand size. */
   .list-row-leading {
     display: flex;

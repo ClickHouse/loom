@@ -222,6 +222,9 @@ describe("All documents", () => {
     });
     render(<Documents />);
     await screen.findByText("Drain a lane");
+    // The refusal reads the collections again, and their answer the list: then Load more.
+    await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await settle();
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     expect(await screen.findByText("A later note")).toBeInTheDocument();
     const more = api.listKnowledge.mock.calls.find((c) => (c[1] as ListOpts).cursor === "c-2") as unknown[];
@@ -241,6 +244,25 @@ describe("All documents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(pages).toBe(2));
     expect(screen.getByText("Drain a lane")).toBeInTheDocument();
+    expect(toasts.toastWithId).toHaveBeenCalledWith(
+      "The list was read again from the top: the server that answered could not go on from there",
+      "info",
+      expect.any(ApiError),
+    );
+    expect(toasts.toastError).not.toHaveBeenCalled();
+  });
+
+  it("reads the first page again when the cursor of a list read one place at a time is refused", async () => {
+    let pages = 0;
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: ListOpts) => {
+      if (opts.cursor) throw new ApiError({ status: 422, code: "VALIDATION_FAILED", message: "bad cursor" });
+      pages += 1;
+      return { rows: [EVERY[0]], next_cursor: "c-2", ignored_args: ["namespaces"] };
+    });
+    render(<Documents />);
+    await screen.findByText(/^Only Namespace team is shown/);
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(pages).toBe(2));
     expect(toasts.toastWithId).toHaveBeenCalledWith(
       "The list was read again from the top: the server that answered could not go on from there",
       "info",
@@ -305,15 +327,13 @@ describe("All documents", () => {
     });
     render(<Documents />);
     await screen.findByText("Drain a lane");
-    await settle();
     const probes = () => api.listKnowledge.mock.calls.filter((c) => (c[1] as ListOpts).limit === 1).length;
-    expect(probes()).toBe(4);
-    // The refusal reads the collections again, once.
+    // The refusal reads the collections again, once, and their new answer reads every place
+    // again (a grant may have caught up): one pass of reads per place per answer.
+    await waitFor(() => expect(probes()).toBe(8));
+    await settle();
     expect(collectionPlaces.invalidate).toHaveBeenCalledTimes(1);
     expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(2);
-    // Under the new answer the place is asked again (a grant may have caught up), once.
-    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:one" } });
-    await waitFor(() => expect(probes()).toBe(8));
     // Then left out while that answer stands: one read, of the places it can read.
     const before = api.listKnowledge.mock.calls.length;
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:two" } });
@@ -362,29 +382,15 @@ describe("All documents", () => {
     );
   });
 
-  it("reads a refused place again once the collections answer again, as a lagging grant catches up", async () => {
-    let granted = false;
+  it("reads a refused place again as soon as the collections answer again, as a lagging grant catches up", async () => {
+    // The grant reaches the reading replica by the time the collections answer again.
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
       const places = [id.namespace, ...(opts.namespaces ?? [])];
-      if (!granted && places.includes("col-legal")) throw REFUSED;
+      if (api.listCollections.mock.calls.length < 2 && places.includes("col-legal")) throw REFUSED;
       return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
     });
     render(<Documents />);
-    await screen.findByText("Drain a lane");
-    await settle();
-    expect(screen.queryByText("Services agreement")).toBeNull();
-    granted = true;
-    // The next read, under the collections' new answer, asks for it again.
-    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:one" } });
-    await waitFor(() =>
-      expect(placesOf(api.listKnowledge.mock.calls.at(-1) as unknown[])).toEqual([
-        "team",
-        "col-me",
-        "col-eng",
-        "col-legal",
-      ]),
-    );
-    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
+    // No other read is asked for: the collections' new answer reads the list again.
     expect(await screen.findByText("Services agreement")).toBeInTheDocument();
     expect(screen.queryByText(/Not shown/)).toBeNull();
   });
@@ -483,7 +489,9 @@ describe("The Library's search scope", () => {
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
     await settle();
     const scope = screen.getByRole("group", { name: "Search in" });
-    expect(within(scope).getByRole("button", { name: "This collection" })).toBeInTheDocument();
+    // The option picked is said, not only drawn.
+    expect(within(scope).getByRole("button", { name: "This collection" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(scope).getByRole("button", { name: "Everywhere" })).toHaveAttribute("aria-pressed", "false");
     // Here: one place read, and its rows say no place.
     expect(api.listKnowledge.mock.calls.every((c) => !(c[1] as ListOpts).namespaces)).toBe(true);
     expect(screen.queryByText("Team plan")).toBeNull();
@@ -512,6 +520,37 @@ describe("The Library's search scope", () => {
     expect(toasts.toastWithId).not.toHaveBeenCalled();
     expect(api.listKnowledge.mock.calls.filter((c) => !(c[1] as ListOpts).cursor)).toHaveLength(1);
   });
+
+  for (const [what, everywhere] of [
+    ["fails", () => Promise.reject(new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "busy" }))],
+    ["is still reading", () => new Promise(() => {})],
+  ] as const) {
+    it(`drops the passages found here when the search goes everywhere and its read ${what}`, async () => {
+      api.searchKnowledge.mockResolvedValue([
+        { source_uri: "runbooks/drain.md", chunk_idx: 0, content: "Drain it.", section: "", score: 1 },
+      ]);
+      api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+        if (opts.namespaces?.length) return everywhere();
+        return { rows: EVERY.filter((r) => r.namespace === id.namespace), next_cursor: null };
+      });
+      render(<Documents />);
+      await screen.findByText("Drain a lane");
+      fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+      fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "drain" } });
+      fireEvent.click(screen.getByRole("button", { name: "Find" }));
+      await screen.findByRole("list", { name: "Passages found" });
+      fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+      await settle();
+      fireEvent.click(
+        within(screen.getByRole("group", { name: "Search in" })).getByRole("button", { name: "Everywhere" }),
+      );
+      await settle();
+      // The hits were this collection's: they do not stand for every place.
+      expect(screen.queryByRole("list", { name: "Passages found" })).toBeNull();
+      expect(screen.getByLabelText("Passage to find")).toHaveValue("drain");
+      expect(api.searchKnowledge).toHaveBeenCalledTimes(1);
+    });
+  }
 
   it("says a passage search reads every place while the list is still reading them", async () => {
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {

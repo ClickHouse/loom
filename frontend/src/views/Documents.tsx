@@ -169,7 +169,6 @@ type SearchScope = "here" | "everywhere";
 
 /** Why All documents' Add is unavailable when no place it adds to is known. */
 const NO_PLACE_TO_ADD = "Open a collection or a memory namespace to add documents there.";
-const NO_FAILURES: PlaceFailure[] = [];
 const NO_LIST_TO_ADD =
   "The collections could not be loaded, so My files is not known yet; load them again to add here.";
 const ADD_WAITS = "My files is not known until the collections are loaded.";
@@ -312,7 +311,6 @@ export function Documents() {
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
-  // All documents without the header's namespace adds to My files, known once the list answers.
   // The writes to `identity` (Add, the empty state): the collection shown, My files or the
   // header's namespace; each row's own are `reasonFor`'s.
   const addReason = (): string | null => {
@@ -412,11 +410,11 @@ export function Documents() {
   }, [ownShelf, picked.namespace, collections.kept]);
   // Places a read was refused under the collections answer on screen: later reads leave them
   // out and name them again, until the collections answer again (a grant may have caught up).
-  const [refused, setRefused] = useState<{ under: unknown; failures: PlaceFailure[] }>({
-    under: null,
-    failures: NO_FAILURES,
-  });
-  const refusedHere = refused.under === collections.kept ? refused.failures : NO_FAILURES;
+  const [refused, setRefused] = useState<{ under: unknown; failures: PlaceFailure[] }>({ under: null, failures: [] });
+  const refusedHere = useMemo(
+    () => (refused.under === collections.kept ? refused.failures : []),
+    [refused, collections.kept],
+  );
   // The collections answer on screen, for a read that lands after it was started.
   const keptNow = useRef(collections.kept);
   keptNow.current = collections.kept;
@@ -612,6 +610,14 @@ export function Documents() {
   const readTags = JSON.parse(serverTags) as string[];
   // The read on screen's own report; one for other places is not this list's.
   const report = readOf?.key === readKey && rowsScope === readKey ? readOf : null;
+  // A new collections answer while places are refused reads them again: a grant that lagged
+  // behind the list is read as soon as the list answers again.
+  const refusedUnder = useRef(collections.kept);
+  useEffect(() => {
+    if (refusedUnder.current === collections.kept) return;
+    refusedUnder.current = collections.kept;
+    if (report?.failed.some((f) => isRefusal(f.error))) reload();
+  }, [collections.kept, report]);
   const leftOut = report?.failed ?? [];
   // Whether every place the person reads is known: not while the collections failed or stop early.
   const placesKnown = !!collections.kept && !collections.kept.truncated;
@@ -2030,7 +2036,9 @@ function ReadNotes({
     );
   }
   if (cut > 0) {
-    lines.push(`The first ${fmtInt(MAX_PLACES_READ)} places are shown; ${fmtInt(cut)} more are not read.`);
+    lines.push(
+      `${fmtInt(cut)} place${cut === 1 ? " is" : "s are"} past the most one read takes (${fmtInt(MAX_PLACES_READ)}), and not read.`,
+    );
   }
   if (collectionsFailed !== null) {
     lines.push(`Only ${collectionsFailed} is shown: the collections could not be loaded.`);
@@ -2178,7 +2186,7 @@ const DocRow = memo(function DocRow({
             collection={where.place}
             title={where.label}
             titleClassName="min-w-0 truncate"
-            className="list-row-control min-w-0 max-w-full"
+            className="list-row-control doc-row-place min-w-0 max-w-full"
             onOpen={() => actions.openPlace(where.place)}
           />
         </span>
