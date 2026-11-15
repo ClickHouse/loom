@@ -155,7 +155,13 @@ class FakeLoom:
         if op == "memory.delete":
             return {"tombstoned": self.versions.pop(key, None) is not None}
         if op == "memory.search":
-            return {"results": [], "abstain": True, "abstain_code": "below_threshold"}
+            reason = "no row is above the similarity gate"
+            return {
+                "results": [],
+                "abstain": True,
+                "abstain_code": "below_threshold",
+                "abstain_reason": reason,
+            }
         if op == "knowledge.ingest":
             self.documents[body["source_uri"]] = self.uploads[body["upload_id"]]
             return {"ingestion_id": "job-1", "state": "queued"}
@@ -207,8 +213,10 @@ def grant(argv: tuple[str, ...]) -> str:
 
 
 def grade_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, solved: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, solved: bool, abstain_answer: str = ""
 ) -> list[tuple[str, bool, str]]:
+    """The grader's results on a copy of the starter, filled in when `solved`;
+    `abstain_answer` replaces what the Lab 1 solution returns from its search."""
     copy = tmp_path / "course"
     shutil.copytree(STARTER, copy)
     if solved:
@@ -217,6 +225,8 @@ def grade_copy(
             for old, new in edits:
                 assert old in text, f"{path} no longer holds the block a solution fills in"
                 text = text.replace(old, new)
+            if abstain_answer:
+                text = text.replace("return hits.abstain_code", f"return {abstain_answer}")
             (copy / path).write_text(text)
     loom = FakeLoom()
     monkeypatch.setattr(
@@ -283,3 +293,12 @@ def test_main_writes_one_summary_row_per_check(
         "| Lab A | pass |",
         "| Lab B | fail: two lines / and a pipe |",
     ]
+
+
+@pytest.mark.parametrize("answer", ["hits.abstain_reason", "hits.abstain", "hits"])
+def test_a_lab_1_answer_that_is_not_an_abstain_code_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: str
+) -> None:
+    results = grade_copy(tmp_path, monkeypatch, solved=True, abstain_answer=answer)
+    failed = [title for title, ok, _ in results if not ok]
+    assert failed == ["Lab 1: a search nothing answers abstains"]

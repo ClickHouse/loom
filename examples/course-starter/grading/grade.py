@@ -12,6 +12,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -65,9 +66,10 @@ async def lab1_abstain_code() -> None:
     lab1 = load("lab1")
     async with lab1.make_agent() as agent:
         code = await run_student(lab1.unknown_question(agent))
-    # Any code: a later release may add one, and this copy keeps its checks.
-    if not code:
-        raise Failed("unknown_question returned no abstain_code: ask something no fact answers")
+    # A code's shape, not a list of codes: a later release may add one, and this
+    # copy keeps its checks. A reason, a flag or the hits are not a code.
+    if not isinstance(code, str) or not re.fullmatch(r"[a-z]+(_[a-z]+)*", code):
+        raise Failed(f"unknown_question returned {code!r}, not an abstain_code")
 
 
 async def lab2_cited_hit() -> None:
