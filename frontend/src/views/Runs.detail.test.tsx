@@ -227,6 +227,39 @@ describe("Runs page", () => {
     expect(useStore.getState().recallRunFilter).toBe("r-full");
   });
 
+  it("copies the whole run id and session id, though the dialog shows them cut", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const runId = "run-0b7e4c2a-9f1d-4d8e-a3c5-6e2f1b9d7a40-claude-code";
+    const sessionId = "session-5d1c9e7b-2a4f-4b6e-8c3d-9f0a1e2b3c4d";
+    const long = { ...full, run_id: runId, session_id: sessionId };
+    listRuns.mockResolvedValue([long]);
+    getRun.mockResolvedValue(detail({ run: long }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    // The session id is shown cut to fit the header.
+    expect(within(dialog).queryByText(`session ${sessionId}`)).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Copy run id" }));
+    });
+    expect(writeText).toHaveBeenLastCalledWith(runId);
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Copy session id" }));
+    });
+    expect(writeText).toHaveBeenLastCalledWith(sessionId);
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers no session id to copy on a run without a session", async () => {
+    listRuns.mockResolvedValue([{ ...full, session_id: "-" }]);
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Copy run id" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Copy session id" })).toBeNull();
+  });
+
   it("shows the verdict run.get carries, which the list row does not", async () => {
     useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "dev", roles: ["admin"] } });
     // run.list answers with RUNS_FIELDS alone, so the row has no grade fields.
