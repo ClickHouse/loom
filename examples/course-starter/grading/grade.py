@@ -25,13 +25,6 @@ from loom import Agent
 ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = os.environ.get("LOOM_BASE_URL", "http://localhost:7777")
 INSTALL_DIR = os.environ.get("LOOM_INSTALL_DIR", str(Path.home() / ".loom"))
-ABSTAIN_CODES = {
-    "no_match",
-    "below_threshold",
-    "entity_absent",
-    "low_calibrated_confidence",
-    "page_expired",
-}
 
 
 class Failed(Exception):
@@ -72,8 +65,9 @@ async def lab1_abstain_code() -> None:
     lab1 = load("lab1")
     async with lab1.make_agent() as agent:
         code = await run_student(lab1.unknown_question(agent))
-    if code not in ABSTAIN_CODES:
-        raise Failed(f"unknown_question returned {code!r}, not an abstain code")
+    # Any code: a later release may add one, and this copy keeps its checks.
+    if not code:
+        raise Failed("unknown_question returned no abstain_code: ask something no fact answers")
 
 
 async def lab2_cited_hit() -> None:

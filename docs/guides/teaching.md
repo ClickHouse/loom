@@ -59,6 +59,12 @@ gh repo create <owner>/loom-labs --private --source . --push
 gh repo edit <owner>/loom-labs --template
 ```
 
+The push runs the grading workflow once, before the repository is a template, and that run
+fails by design: each check's line names the part of the starter still to be written. The
+copy is the starter on `main`, tested against `main`, while every run installs the latest
+release, so a failure for any other reason means the two differ. Later pushes to the
+template are not graded.
+
 Each student then works in a repository made from that template, with **Use this
 template** on its page or with the tool that hands out your assignments, and opens it in
 a codespace or clones it to a laptop.

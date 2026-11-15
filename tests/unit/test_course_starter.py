@@ -256,9 +256,10 @@ def test_every_check_passes_on_a_solution(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_main_says_when_the_stack_does_not_answer(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    grade = load_grader(STARTER)
+    shutil.copytree(STARTER, tmp_path / "course")
+    grade = load_grader(tmp_path / "course")
     monkeypatch.setattr(grade, "stack_answers", lambda: False)
     assert grade.main() == 2
     assert "does not answer" in capsys.readouterr().out
@@ -267,7 +268,8 @@ def test_main_says_when_the_stack_does_not_answer(
 def test_main_writes_one_summary_row_per_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    grade = load_grader(STARTER)
+    shutil.copytree(STARTER, tmp_path / "course")
+    grade = load_grader(tmp_path / "course")
 
     async def results() -> list[tuple[str, bool, str]]:
         return [("Lab A", True, ""), ("Lab B", False, "two\nlines | and a pipe")]
