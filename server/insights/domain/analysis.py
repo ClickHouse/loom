@@ -598,7 +598,7 @@ def structure_digest() -> str:
     pins it to ENTITY_VERSION, so a change to either cannot ship without a
     new version."""
     # Every other user's policy goes on each table the analyst has one on.
-    parts = ["others:allowlist,retired,canary"]
+    parts = [f"others:{t}" for t in others_policy_tables()]
     parts += [f"retired:{name}" for name in RETIRED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
     parts += [policy_filter(SettingNames("SQL_"), b"\0" * 32), CANARY_TABLE]

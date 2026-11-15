@@ -222,8 +222,8 @@ async def test_the_writer_check_names_a_writer_and_an_object(
         )
         assert [str(r) for r in refusals if schema in str(r) or users["writer"] in str(r)] == [
             f"user {users['writer']}: holds INSERT on {schema}.*: name it with --ch-allow-user",
-            f"object {side}.buf: a table of engine Buffer writing a configured database: name it with "
-            "--ch-allow-object",
+            f"object {side}.buf: a table of engine Buffer writing a configured database: "
+            "name it with --ch-allow-object",
         ]
         allowed = cell_writers.Allowed(
             users=frozenset(others | {users["writer"]}), objects=frozenset({f"{side}.buf"})

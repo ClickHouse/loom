@@ -310,7 +310,7 @@ async def _current_statements() -> list[str]:
 async def _foreign_problem() -> tuple[str, str]:
     """Why nothing may be written, and the names behind it, or ('', '') when
     nothing stops a write: a second Loom database writing the analyst user, or
-    a permissive policy Loom did not write on an allowlisted table. The names
+    a permissive policy Loom did not write on a table it widens. The names
     go to the log and the CLI, never to `/v1/health`."""
     if others := await store.other_deployments():
         return (
