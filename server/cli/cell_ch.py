@@ -44,7 +44,7 @@ WHOLE = {
 }
 _WHOLE = ", ".join(f"{k} = '{v}'" for k, v in WHOLE.items())
 WHOLE_SQL = f"SETTINGS {_WHOLE}"
-_CLUSTER_SQL = f"SETTINGS {_CLUSTER}, {_WHOLE}"
+CLUSTER_SQL = f"SETTINGS {_CLUSTER}, {_WHOLE}"
 
 
 @dataclass(frozen=True)
@@ -161,7 +161,7 @@ async def per_host(
         local = sql.replace(m.group(0), table) + " " + WHOLE_SQL
         return {"": await ch.query_all(local, params or {})}
     rows = await ch.query_all(
-        sql.replace(m.group(0), f"clusterAllReplicas({{c:String}}, {table})") + " " + _CLUSTER_SQL,
+        sql.replace(m.group(0), f"clusterAllReplicas({{c:String}}, {table})") + " " + CLUSTER_SQL,
         {**(params or {}), "c": topology.cluster},
     )
     out: dict[str, list[dict[str, Any]]] = {name: [] for name in names.values()}

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.cli.cell_ch import (
-    _CLUSTER_SQL,
+    CLUSTER_SQL,
     TAG,
     WHOLE_SQL,
     Refusal,
@@ -127,6 +127,9 @@ _ANYWHERE_ACCESS = frozenset(
         *_NETWORKED_SOURCES,
     }
 )
+
+# Grants that make a row policy, which hides rows from a reader it does not cover.
+_POLICY_ACCESS = frozenset({"CREATE ROW POLICY", "ALTER ROW POLICY"})
 
 # The user directories ClickHouse itself keeps; any other (LDAP) defines users the check
 # cannot read.
@@ -377,6 +380,11 @@ def writer_reason(grants: Iterable[Grant], dbs: list[str]) -> str:
     for g in reaching:
         if g.grant_option:
             return f"holds {g.access} WITH GRANT OPTION on {_scope(g)}"
+    # A row policy created later hides rows from the next scan or check, as a write made
+    # later adds them: on the configured databases or the system tables the checks read.
+    for g in grants:
+        if g.access in _POLICY_ACCESS and (g.touches("system") or any(g.touches(db) for db in dbs)):
+            return f"holds {g.access} on {_scope(g)}, which can hide rows from the scan"
     return ""
 
 
@@ -694,7 +702,7 @@ async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
         rows = await ch.query_all(
             "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
             "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "
-            f"GROUP BY h {_CLUSTER_SQL}",
+            f"GROUP BY h {CLUSTER_SQL}",
             {"c": topology.cluster},
         )
     where = f"cluster {topology.cluster}"
@@ -788,7 +796,7 @@ async def _row_policies(
         names,
         "SELECT hostName() AS h, short_name, database, table, select_filter, is_restrictive, "
         "apply_to_all, apply_to_list, apply_to_except FROM {source:row_policies} "
-        "WHERE database IN {dbs:Array(String)}",
+        "WHERE database IN {dbs:Array(String)} OR database = 'system'",
         {"dbs": dbs},
     )
     out = []
@@ -806,17 +814,26 @@ def _applies(r: Mapping[str, Any], user: str) -> bool:
 
 def row_policy_problems(rows: Iterable[Mapping[str, Any]], own: str) -> list[tuple[str, str]]:
     """What hides rows from attach's own user, per row policy on a table of the configured
-    databases. Once a table has a row policy, a user that no permissive policy covers reads
-    none of its rows, and a restrictive one filters them: either shortens the scan silently.
-    Loom's own pair passes (`analysis.POLICY_NAME` for the analyst, and
-    `analysis.OTHERS_POLICY_NAME` letting every other user read every row) while it covers
-    attach's user as written; every other policy refuses."""
+    databases or a system table. Any policy on a system table refuses: the checks read them.
+    Once a table has a row policy, a user that no permissive policy covers reads none of its
+    rows, and a restrictive one filters them: either shortens the scan silently. Loom's own
+    pair passes (`analysis.POLICY_NAME` for the analyst, and `analysis.OTHERS_POLICY_NAME`
+    letting every other user read every row) while it covers attach's user as written; every
+    other policy refuses."""
     tables: dict[str, list[Mapping[str, Any]]] = {}
     for r in rows:
         tables.setdefault(f"{ch_names.logical(str(r['database']))}.{r['table']}", []).append(r)
     out = []
     for table, policies in sorted(tables.items()):
         subject = f"row policy on {table}"
+        if table.startswith("system."):
+            # The checks read the system tables: a policy there hides what they read. Loom
+            # writes none.
+            out += [
+                (f"{subject}: {p['short_name']}", "a row policy hides rows from the checks")
+                for p in policies
+            ]
+            continue
         others = [p for p in policies if p["short_name"] == OTHERS_POLICY_NAME]
         for p in policies:
             name = str(p["short_name"])

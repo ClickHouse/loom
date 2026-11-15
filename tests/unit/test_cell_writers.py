@@ -142,6 +142,13 @@ def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
         ([Grant("URL")], "holds URL on *.*"),
         ([Grant("MYSQL")], "holds MYSQL on *.*"),
         ([Grant("FILE"), Grant("SQLITE"), Grant("CREATE FUNCTION")], ""),
+        # A row policy made later hides rows from the next scan or check.
+        ([Grant("CREATE ROW POLICY")], "holds CREATE ROW POLICY on *.*"),
+        (
+            [Grant("ALTER ROW POLICY", "system")],
+            "holds ALTER ROW POLICY on system.*, which can hide rows from the scan",
+        ),
+        ([Grant("CREATE ROW POLICY", "elsewhere")], ""),
         # A temporary Distributed table forwards as a permanent one does.
         ([Grant("CREATE TEMPORARY TABLE")], "holds CREATE TEMPORARY TABLE on *.*"),
         (
@@ -625,7 +632,7 @@ async def test_a_cluster_reads_every_host_and_names_what_each_defines() -> None:
     ]
     reads = [s for k, s, _ in ch.calls if k == "query_all" and "hostName()" in s]
     assert reads and all(
-        "clusterAllReplicas({c:String}, system." in s and s.endswith(cell_ch._CLUSTER_SQL)
+        "clusterAllReplicas({c:String}, system." in s and s.endswith(cell_ch.CLUSTER_SQL)
         for s in reads
     )
     allowed = Allowed(users=frozenset({"attach", "local"}), user_directories=frozenset({"ldap"}))
@@ -770,6 +777,20 @@ def test_loom_s_own_row_policy_pair_lets_attach_read_every_row() -> None:
     assert cell_writers.row_policy_problems(rows, "attach") == []
 
 
+def test_any_row_policy_on_a_system_table_refuses() -> None:
+    rows = [
+        _policy("own", database="system", table="grants", apply_to_all=1),
+        _policy("loom_analyst_others", database="system", table="tables", apply_to_all=1),
+    ]
+    assert cell_writers.row_policy_problems(rows, "attach") == [
+        ("row policy on system.grants: own", "a row policy hides rows from the checks"),
+        (
+            "row policy on system.tables: loom_analyst_others",
+            "a row policy hides rows from the checks",
+        ),
+    ]
+
+
 @pytest.mark.parametrize(
     ("rows", "reason"),
     [
@@ -802,6 +823,13 @@ def test_a_row_policy_hiding_rows_from_attach_refuses(
 ) -> None:
     found = cell_writers.row_policy_problems(rows, "attach")
     assert any(reason in why for _, why in found), found
+
+
+async def test_the_row_policies_read_covers_the_system_tables() -> None:
+    ch = _cluster()
+    await cell_writers.own_refusals(ch, TWO, NAMES)
+    (sql,) = [s for s in ch.sql("query_all") if "system.row_policies" in s]
+    assert "database IN {dbs:Array(String)} OR database = 'system'" in sql
 
 
 async def test_a_row_policy_on_a_configured_table_refuses_the_listing() -> None:
