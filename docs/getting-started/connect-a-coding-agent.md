@@ -69,6 +69,10 @@ the plugin installed: an entry with the same name replaces the plugin's.
 
 ## Cursor and other MCP clients
 
+On a Cursor Teams or Enterprise plan, a team admin can install the [Cursor
+plugin](../features/integrations/cursor.md#plugin) (untested in Cursor), which adds the MCP
+entry and Loom's skills for every member.
+
 For Cursor or VS Code against a single-user server on the same machine, no token is needed:
 use the [Cursor](../features/integrations/cursor.md#mcp-tools) or
 [VS Code](../features/integrations/vscode.md#local-single-user-server) install link. Otherwise, in the dashboard,
