@@ -18,8 +18,7 @@ import pytest
 from server.cli import cell_ch, cell_scan, cell_writers
 from server.cli.cell_ch import Refused, Topology
 from server.cli.cell_scan import Budget, ScanResult, Table, TableList
-from server.core import cell
-from server.core.errors import BackendUnavailableError
+from server.core import cell, pg
 
 ONE = Topology("default", 1, (("localhost", 9000),))
 TWO = Topology("main", 1, (("ch-0", 9000), ("ch-1", 9000)))
@@ -556,7 +555,7 @@ def _pg_sessions(monkeypatch: pytest.MonkeyPatch, *answers: Any) -> list[int]:
 
 @pytest.mark.parametrize(
     "failure",
-    [_PgOutage("connection reset"), BackendUnavailableError("down")],
+    [_PgOutage("connection reset"), pg.PostgresUnavailableError("Postgres did not answer")],
 )
 async def test_the_postgres_scan_retries_an_outage_once_it_clears(
     monkeypatch: pytest.MonkeyPatch, failure: BaseException
@@ -678,13 +677,9 @@ async def test_every_read_throws_past_a_limit_rather_than_stopping_short() -> No
     tables = TableList(clickhouse=[Table("loom", "memory", "MergeTree")])
     await cell_scan.scan(ch, tables, ONE, Budget(600))
     settings = [s for k, _, s in ch.calls if k == "raw_stream"][0]
-    for name in (
-        "timeout_overflow_mode",
-        "read_overflow_mode",
-        "result_overflow_mode",
-        "distinct_overflow_mode",
-        "set_overflow_mode",
-    ):
+    modes = [k for k in cell_ch.WHOLE if "overflow_mode" in k]
+    assert "group_by_overflow_mode" in modes and len(modes) == 8
+    for name in modes:
         assert settings[name] == "throw", name
     # Nor does a setting cut, filter or sample the rows.
     for name, value in (

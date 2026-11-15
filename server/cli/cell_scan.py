@@ -47,7 +47,6 @@ from server.core.cell import ORG_FREE, named_org, org_name_refusal
 from server.core.cell_triggers import ORG_TABLES
 from server.core.ch import query_tag
 from server.core.ch_errors import error_code, error_line
-from server.core.errors import BackendUnavailableError
 from server.erasure.store.census import classified_tables
 from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
 
@@ -456,7 +455,8 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
         timed_out = getattr(failure, "sqlstate", None) == "57014" and budget.left() <= 1
         if bound.expired() or timed_out:
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-        if not (pg.is_outage(failure) or isinstance(failure, BackendUnavailableError)):
+        # A connect that finds Postgres down comes as PostgresUnavailableError.
+        if not (pg.is_outage(failure) or isinstance(failure, pg.PostgresUnavailableError)):
             raise Refused([Refusal(subject, f"the scan failed: {failure}")]) from failure
         await _sleep(_RETRY_PAUSE_S)
 
@@ -619,7 +619,7 @@ async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) ->
                 for r in rows
                 if r["k"] == "o"
             ]
-        # A timeout is the budget only when none is left (a profile's estimate can throw early).
+        # A timeout is the budget only when none is left: a profile's estimate throws early.
         if error_code(failure) in _TIMEOUT_CODES and budget.left() <= 1:
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
         if error_code(failure) in _TIMEOUT_CODES or not _ch_transient(failure):
