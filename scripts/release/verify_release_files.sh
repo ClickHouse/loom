@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks that each file in DIR carries the keyless signature the release
-# workflow's run on vX.Y.Z made, in DIR/<file name>.sigstore.json, as a user
+# workflow's run on vVERSION made, in DIR/<file name>.sigstore.json, as a user
 # checks it with cosign 3. A file without its Sigstore bundle fails.
 #
 #   verify_release_files.sh VERSION DIR

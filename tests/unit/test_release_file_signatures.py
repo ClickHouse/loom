@@ -56,7 +56,7 @@ with open(tmp / "calls", "a") as calls:
 if os.environ.get("STUB_COSIGN_FAILS"):
     sys.exit(1)
 valued = {{"--bundle", "--certificate-identity", "--certificate-oidc-issuer"}}
-(blob,) = [a for i, a in enumerate(args) if not a.startswith("--") and args[i - 1] not in valued]
+(blob,) = [a for prev, a in zip(["", *args], args) if not a.startswith("--") and prev not in valued]
 bundle = pathlib.Path(args[args.index("--bundle") + 1])
 digest = hashlib.sha256(pathlib.Path(blob).read_bytes()).hexdigest()
 if command == "sign-blob":
@@ -163,6 +163,7 @@ def test_sign_files_signs_and_verifies_each_file_this_run_built(tmp_path: Path) 
         *(_sign_blob(f) for f in files),
         *(_verify_blob(f) for f in files),
     ]
+    assert (tmp_path / "work/files/install.sh.sigstore.json").read_text() == _bundle("a")
 
 
 def test_a_kept_stack_bundle_keeps_its_sigstore_bundle(tmp_path: Path) -> None:
@@ -177,21 +178,26 @@ def test_a_kept_stack_bundle_keeps_its_sigstore_bundle(tmp_path: Path) -> None:
     assert _calls(tmp_path, "cosign") == [_verify_blob("files/loom-stack.tar.gz")] * 2
 
 
+NO_BUNDLE = "has no Sigstore bundle: if the run that published it never signed it"
+INCIDENT = "its Sigstore bundle does not verify (cosign's error above): unless Sigstore is down"
+
+
 @pytest.mark.parametrize(
-    "served",
+    ("served", "error"),
     [
-        {"install.sh": "swapped"},
-        {"install.sh": "swapped", "install.sh.sigstore.json": _bundle("a")},
-        {"install.sh": "a", "zz.txt": "uploaded by hand"},
+        ({"install.sh": "swapped"}, NO_BUNDLE),
+        ({"install.sh": "swapped", "install.sh.sigstore.json": _bundle("a")}, INCIDENT),
+        ({"install.sh": "a", "zz.txt": "uploaded by hand"}, NO_BUNDLE),
+        ({"loom-stack.tar.gz": "tag run, never signed"}, NO_BUNDLE),
     ],
-    ids=["replaced", "replaced beside its old bundle", "not built by the run"],
+    ids=["replaced", "replaced beside its old bundle", "not built by the run", "kept unsigned"],
 )
-def test_a_file_changed_outside_the_workflow_fails_before_anything_is_signed(
-    tmp_path: Path, served: dict[str, str]
+def test_a_file_that_is_not_this_runs_build_fails_before_anything_is_signed(
+    tmp_path: Path, served: dict[str, str], error: str
 ) -> None:
-    result = _sign(tmp_path, served, {"install.sh": "a"})
+    result = _sign(tmp_path, served, {"install.sh": "a", "loom-stack.tar.gz": "rebuilt"})
     assert result.returncode == 1
-    assert "changed outside the workflow" in result.stdout
+    assert error in result.stdout
     assert "SECURITY.md" in result.stdout
     assert _signed(tmp_path) == []
 

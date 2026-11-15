@@ -362,14 +362,20 @@ job=$(gh run view <run> -R ClickHouse/loom --json jobs --jq '.jobs[] | select(.n
 gh run rerun <run> -R ClickHouse/loom --job "$job"
 ```
 
-`sign-files` refuses a served file that is not this run's build and has no Sigstore bundle that
-verifies: it was changed outside the workflow, which is a security incident
-([SECURITY.md](../../SECURITY.md)), not a signing failure. "Re-run all jobs" on a run whose first
-signing failed refuses the stack bundle the same way, since the rebuilt bundle differs from the one
-the release kept: re-run failed jobs instead. Both re-runs work for 30 days after the run, as long
-as its artifacts are kept. After that, only a dispatch on the tag signs the files again: it builds
-and replaces them, and publishes the SDKs and the MCP Registry listing once their environments are
-approved (the registries skip a version they already have).
+`sign-files` signs only this run's build, so a file it did not build is refused unless its Sigstore
+bundle verifies. A file with a Sigstore bundle that does not verify, outside a Sigstore outage,
+was changed outside the workflow: a security incident ([SECURITY.md](../../SECURITY.md)), not a
+signing failure. A file with no Sigstore bundle is either one the run that published it never
+signed, or one changed with its bundle removed. A dispatch keeps the stack bundle and checksum the
+release carries, so only "Re-run failed jobs" on the run that published them can sign them; the
+same holds after "Re-run all jobs" on a run whose first signing failed, since its rebuilt bundle
+differs from the one the release kept.
+
+"Re-run failed jobs" and the `sign-files` re-run work for 30 days after the run, as long as its
+artifacts are kept. After that, a dispatch on the tag signs every file it builds again, and
+publishes the SDKs and the MCP Registry listing once their environments are approved (the
+registries skip a version they already have); a stack bundle the release kept without a Sigstore
+bundle stays unsigned, and its fix is a new patch release.
 
 ### When the clickhouse job stops
 
