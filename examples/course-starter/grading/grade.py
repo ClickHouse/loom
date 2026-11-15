@@ -92,6 +92,9 @@ async def lab2_cited_hit() -> None:
 async def lab2_cutoff() -> None:
     lab2 = load("lab2")
     async with lab2.make_agent() as agent:
+        # Ingested again, so a cutoff is judged on the notes even when the
+        # previous check stopped before them.
+        await run_student(lab2.ingest(agent))
         if not await run_student(lab2.answerable(agent, lab2.QUESTION)):
             raise Failed("answerable(QUESTION) is False")
         if await run_student(lab2.answerable(agent, lab2.UNANSWERABLE)):
@@ -146,21 +149,26 @@ async def lab4_query() -> None:
     if "password:" not in granted:
         raise Failed(f"loom sql-access grant printed no password: {granted.strip()}")
     password = granted.split("password:")[-1].strip()
-    # A fact saved now, under a key of this run, so the last hour holds a row
-    # whatever the other labs wrote; deleted once the check has read it.
+    # A fact saved now, so the last hour holds a row whatever the other labs
+    # wrote; deleted once the check has read it. Its key and value name this
+    # run: a value an earlier fact holds is merged into it, and no row is written.
     grader = Agent(org="dev", namespace="local", agent="course-grader", consumer="course-grading")
-    key = f"grading/check/lab4/{uuid.uuid4().hex}"
+    run = uuid.uuid4().hex
+    key = f"grading/check/lab4/{run}"
     async with grader:
-        await grader.memory.set(key, "The grader ran the Lab 4 check.")
+        await grader.memory.set(key, f"The grader ran the Lab 4 check, run {run}.")
         try:
+            # Counted before and after: a fact that turns an hour old between the
+            # queries leaves the student's count equal to one of the two.
+            before = counts(sql(password, REFERENCE))
             got = sql(password, (ROOT / "labs" / "lab4.sql").read_text())
-            want = counts(sql(password, REFERENCE))
+            after = counts(sql(password, REFERENCE))
         finally:
             await grader.memory.delete(key)
     if not got:
         raise Failed("lab4.sql returns no rows")
-    if counts(got) != want:
-        raise Failed(f"lab4.sql counts {counts(got)}; the last hour holds {want}")
+    if counts(got) not in (before, after):
+        raise Failed(f"lab4.sql counts {counts(got)}; the last hour holds {after}")
 
 
 CHECKS: list[tuple[str, Callable[[], Awaitable[None]]]] = [

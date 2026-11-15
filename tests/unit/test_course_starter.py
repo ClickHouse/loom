@@ -6,19 +6,24 @@ every course: each check fails on the untouched starter and passes on a solution
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import functools
 import importlib.util
+import io
 import json
 import re
 import shutil
+from contextlib import redirect_stdout
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import httpx
 import pytest
 
+from server.cli import sql_access
 from tests.unit.markdown_links import anchors
 from tests.unit.tracked_files import tracked
 
@@ -30,6 +35,7 @@ URL = re.compile(
 )
 # Keys the starter sets for itself: its name and its postCreateCommand.
 OWN_SETUP = {"name", "postCreateCommand"}
+USES = re.compile(r"uses: (\S+@[0-9a-f]{40})")
 
 
 def devcontainer(path: Path) -> dict:
@@ -44,6 +50,22 @@ def test_devcontainer_matches_the_root_one() -> None:
     assert {k: v for k, v in starter.items() if k not in OWN_SETUP} == {
         k: v for k, v in root.items() if k not in OWN_SETUP
     }
+
+
+def test_start_script_is_the_root_one() -> None:
+    root = ROOT / ".devcontainer" / "start-loom.sh"
+    assert (STARTER / ".devcontainer" / "start-loom.sh").read_bytes() == root.read_bytes()
+
+
+def test_workflow_pins_are_the_root_workflows_ones() -> None:
+    """Dependabot keeps the root workflows' pins current; the starter's follow them."""
+    root = {
+        pin
+        for p in (ROOT / ".github" / "workflows").glob("*.yml")
+        for pin in USES.findall(p.read_text())
+    }
+    starter = USES.findall((STARTER / ".github" / "workflows" / "grade.yml").read_text())
+    assert starter and set(starter) <= root, set(starter) - root
 
 
 @pytest.mark.parametrize("path", tracked("examples/course-starter"))
@@ -166,13 +188,29 @@ class FakeLoom:
         """`docker compose exec` of the grader: the grant prints a password, and
         any query counts the live memories by agent; a file of comments returns nothing."""
         if "sql-access" in args:
-            return "  ✓ course_grader created; it reads dev/local\n  password: pw\n"
+            return grant(args[args.index("sql-access") :])
         if not [line for line in stdin.splitlines() if line.strip() and not line.startswith("--")]:
             return ""
         counts: dict[str, int] = {}
         for key in self.versions:
             counts[self.agents[key]] = counts.get(self.agents[key], 0) + 1
         return "".join(json.dumps({"agent": a, "facts": n}) + "\n" for a, n in counts.items())
+
+
+def grant(argv: tuple[str, ...]) -> str:
+    """What the grader's `loom sql-access grant` prints, through the real CLI's
+    parser and output with the ClickHouse statements left out."""
+    parser = argparse.ArgumentParser()
+    sql_access.register_sql_access_cli(parser.add_subparsers())
+    args = parser.parse_args(list(argv))
+    assert args.rotate, "a grader's user that exists gets a password only with --rotate"
+    done = SimpleNamespace(user=args.user, created=False, rows={("dev", "local")}, password="pw")
+    with (
+        mock.patch.object(sql_access, "_connected", lambda *_, **__: done),
+        redirect_stdout(io.StringIO()) as out,
+    ):
+        assert args.func(args) == 0
+    return out.getvalue()
 
 
 def grade_copy(
@@ -222,3 +260,31 @@ def test_every_check_fails_on_the_untouched_starter(
 def test_every_check_passes_on_a_solution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     results = grade_copy(tmp_path, monkeypatch, solved=True)
     assert [(title, why) for title, ok, why in results if not ok] == []
+
+
+def test_main_says_when_the_stack_does_not_answer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    grade = load_grader(STARTER)
+    monkeypatch.setattr(grade, "stack_answers", lambda: False)
+    assert grade.main() == 2
+    assert "does not answer" in capsys.readouterr().out
+
+
+def test_main_writes_one_summary_row_per_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    grade = load_grader(STARTER)
+
+    async def results() -> list[tuple[str, bool, str]]:
+        return [("Lab A", True, ""), ("Lab B", False, "two\nlines | and a pipe")]
+
+    monkeypatch.setattr(grade, "stack_answers", lambda: True)
+    monkeypatch.setattr(grade, "run_checks", results)
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    assert grade.main() == 1
+    assert summary.read_text().splitlines()[-2:] == [
+        "| Lab A | pass |",
+        "| Lab B | fail: two lines / and a pipe |",
+    ]
