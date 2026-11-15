@@ -178,7 +178,29 @@ def test_a_kept_stack_bundle_keeps_its_sigstore_bundle(tmp_path: Path) -> None:
     assert _calls(tmp_path, "cosign") == [_verify_blob("files/loom-stack.tar.gz")] * 2
 
 
-NO_BUNDLE = "has no Sigstore bundle: if the run that published it never signed it"
+def test_a_dispatch_signs_what_it_rebuilt_and_keeps_the_signed_stack_pair(tmp_path: Path) -> None:
+    """What every final's dispatch meets: rebuilt files beside the tag run's stack pair."""
+    served = {
+        "install.sh": "a",
+        "x.whl": "rebuilt",
+        "x.whl.sigstore.json": _bundle("tag run"),
+        "loom-stack.tar.gz": "tag run",
+        "loom-stack.tar.gz.sigstore.json": _bundle("tag run"),
+    }
+    built = {"install.sh": "a", "x.whl": "rebuilt", "loom-stack.tar.gz": "rebuilt"}
+    result = _sign(tmp_path, served, built)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _signed(tmp_path) == [_sign_blob("files/install.sh"), _sign_blob("files/x.whl")]
+    files = sorted((tmp_path / "work/files").glob("*.sigstore.json"))
+    assert [f.name for f in files] == [
+        "install.sh.sigstore.json",
+        "loom-stack.tar.gz.sigstore.json",
+        "x.whl.sigstore.json",
+    ]
+    assert (tmp_path / "work/files/x.whl.sigstore.json").read_text() == _bundle("rebuilt")
+
+
+NO_BUNDLE = "has no Sigstore bundle: if no run ever signed it, release a new version"
 INCIDENT = "its Sigstore bundle does not verify (cosign's error above): unless Sigstore is down"
 
 

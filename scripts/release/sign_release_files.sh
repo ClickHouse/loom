@@ -27,7 +27,7 @@ for file in "$served"/*; do
   if [ -n "$ours" ] && cmp -s "$file" "$ours"; then
     sign+=("$file")
   elif [ ! -f "$file.sigstore.json" ]; then
-    echo "::error::$name is not this run's build and has no Sigstore bundle: if the run that published it never signed it, re-run that run's failed jobs before any dispatch; otherwise report it as SECURITY.md describes ($recovery)"
+    echo "::error::$name is not this run's build and has no Sigstore bundle: if no run ever signed it, release a new version; otherwise report it as SECURITY.md describes ($recovery)"
     exit 1
   elif cosign verify-blob "$file" --bundle "$file.sigstore.json" \
     --certificate-identity "$identity" \

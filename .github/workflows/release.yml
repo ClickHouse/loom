@@ -24,7 +24,9 @@ name: release
 # ClickHouse release it was first published with, the release is updated in
 # place, PyPI skips files it already has, npm and the MCP Registry skip a
 # version they already have, a re-run of failed jobs tags the same build again,
-# and a run on a tag whose images are published builds and tags none.
+# and a run on a tag whose images are published builds and tags none. A tag
+# run whose file signing failed is the exception: re-run its failed jobs
+# before any dispatch (docs/development/release-process.md).
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the

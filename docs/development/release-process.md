@@ -300,7 +300,9 @@ move the version's tags onto other bytes.
 Never move a published `X.Y.Z` tag: `published_images.sh` fails when a published image was built
 from another commit than the run's, and a fix needs a new version.
 
-A re-run after a partial publish is safe: each publish job skips what already exists.
+A re-run after a partial publish is safe: each publish job skips what already exists. The one
+exception is a tag run whose file signing failed, which [a failed tag or
+signature](#a-failed-tag-or-signature) recovers.
 
 **Why publish the verified files.** A job that rebuilt its own artifact could ship unchecked bytes. Publishing what `verify` passed means the GitHub Release and the registries carry the same bytes.
 
@@ -351,11 +353,12 @@ the `digest=` line, then the `docker buildx imagetools create` command without t
 ```
 
 A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, say) leaves files on
-the release without a Sigstore bundle that verifies them. Recover it with "Re-run failed jobs" on
-the same run, within 30 days and before any dispatch of the tag: a dispatch rebuilds the files but
-keeps the stack bundle the release carries, which then no run can sign. Once a dispatch has run,
-"Re-run all jobs" has replaced the run's attempt, or 30 days have passed, the files cannot be
-signed: release a new version.
+the release without a Sigstore bundle that verifies them. Any later run signs them again while the
+stack bundle and checksum on the release carry Sigstore bundles that verify: "Re-run failed jobs",
+or a dispatch. When they carry none, because the tag run's own signing failed, only "Re-run failed
+jobs" on the tag run signs them, within 30 days and before any dispatch: a dispatch, "Re-run all
+jobs" or a second push of the tag rebuilds the stack bundle and checksum but keeps the ones the
+release carries, which then no run can sign. Past that, release a new version.
 
 A `release-check` that fails on a listing or a download: "Re-run failed jobs". One that finds a
 Sigstore bundle that does not verify after `sign-files` and `attach-signatures` passed: re-run
