@@ -385,7 +385,6 @@ export function useCollectionSharing({
       onOpenChange={(v) => {
         if (v) return;
         setOpenFor(null);
-        // Read the grants again only when the dialog changed one.
         if (changed.current) setVersion((n) => n + 1);
         changed.current = false;
       }}
@@ -398,7 +397,6 @@ export function useCollectionSharing({
       label={shown.title?.trim() || undefined}
       // The collection's role decides, not a token claim: none reaches a collection.
       manage={shown.role === "admin"}
-      // [] with sign-in off or no parents; null until the header answers; else what it read.
       inherited={signInOff || (chain.length === 1 && !hiddenWords) ? [] : answer === null ? null : inherited}
       onCloseAutoFocus={(e) => {
         if (!leftFor.current) return;
