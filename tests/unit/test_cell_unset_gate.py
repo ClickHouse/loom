@@ -129,7 +129,7 @@ def test_a_failed_read_keeps_the_unset_verdict(monkeypatch: pytest.MonkeyPatch) 
     from server.core import pg
 
     _rows(monkeypatch, "enforced")
-    monkeypatch.setattr(pg, "fetchrow", AsyncMock(side_effect=OSError("down")))
+    monkeypatch.setattr(pg, "fetchrow_reset", AsyncMock(side_effect=OSError("down")))
     assert asyncio.run(cell.refresh()) is False
     assert "enforced" in cell.gate_reason()
 
@@ -141,9 +141,9 @@ def test_the_read_asks_whether_a_tenancy_row_exists(monkeypatch: pytest.MonkeyPa
 
     async def _row(sql: str, *_a):
         seen.append(sql)
-        return {"first": None, "mode": None, "own": None, "tenancy": True}
+        return {"first": None, "mode": None, "own": None, "tenancy": True, "marked": True}
 
-    monkeypatch.setattr(pg, "fetchrow", _row)
+    monkeypatch.setattr(pg, "fetchrow_reset", _row)
     assert asyncio.run(cell.refresh()) is True
     assert "EXISTS (SELECT 1 FROM loom.tenancy)" in seen[0]
     assert cell._view.state() == "partial"
@@ -380,7 +380,8 @@ def test_a_gated_process_first_heartbeat_reports_not_serving(
     monkeypatch.setattr(settings, "serves_traffic", True)
     _rows(monkeypatch, "enforced")
     assert instances.row()["serving"] == 0
-    assert instances.cell_row()["tenancy_mode"] == ""
+    # The derived state, which attach reads to name a process gated with LOOM_CELL unset.
+    assert instances.cell_row()["tenancy_mode"] == "enforced"
     _rows(monkeypatch, "open")
     assert instances.row()["serving"] == 1
 
@@ -495,10 +496,13 @@ def test_an_unread_state_answers_503_while_postgres_migrations_are_pending(
 def test_a_cell_process_with_postgres_migrations_pending_boots_gated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.core import cell_router
+
     monkeypatch.setattr(settings, "cell", "eu-1")
     monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=False))
     monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
+    monkeypatch.setattr(cell_router, "start_reader", lambda: "reader")
     monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ("pg:008_cells.sql",))
-    assert asyncio.run(boot.start_cell_gate()) == ["loop"]
+    assert asyncio.run(boot.start_cell_gate()) == ["loop", "reader"]
     assert "not read yet" in cell.gate_reason()
     assert not cell.readiness_check().ok

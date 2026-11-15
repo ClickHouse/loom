@@ -2375,7 +2375,7 @@ class KnowledgeSettings(BaseModel):
             f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r}": url for key, url in routes.items()
         }
         for name, url in urls.items():
-            if url and not _is_http_url(url):
+            if url and not is_http_url(url):
                 raise ValueError(f"{name} is not an http(s) URL")
         # A token for a URL no route names would leave that service on the shared
         # token without a word: refused, as is a token that is not a string.
@@ -4284,7 +4284,7 @@ def url_host(url: str) -> str:
         return ""
 
 
-def _is_http_url(url: str) -> bool:
+def is_http_url(url: str) -> bool:
     """An http(s) base URL with a host that the extractor client's httpx can
     parse, and no query or fragment (the client appends `/v1/...`): a bad one is
     refused at load, not on the first call."""

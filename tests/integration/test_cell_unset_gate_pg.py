@@ -68,7 +68,13 @@ async def _gate(monkeypatch: pytest.MonkeyPatch, conn: Any) -> str:
     monkeypatch.setattr(settings, "cell", "")
     monkeypatch.setattr(settings, "storage_authority", "postgres")
     monkeypatch.setattr(cell, "_view", cell._View())
-    monkeypatch.setattr(pg, "fetchrow", conn.fetchrow)
+
+    @contextlib.asynccontextmanager
+    async def _connection() -> AsyncIterator[Any]:
+        yield conn
+
+    # The refresh's own statements (`pg.fetchrow_reset`) on the test's connection.
+    monkeypatch.setattr(pg, "connection", _connection)
     assert await cell.refresh() is True
     return cell.gate_reason()
 

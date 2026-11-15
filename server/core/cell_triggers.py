@@ -23,7 +23,7 @@ import logging
 import re
 from typing import Any
 
-from server.core import cell, pg
+from server.core import cell, pg, readiness
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +36,9 @@ TENANCY_TRIGGER = "tenancy_record"
 CELL_FIRST_TRIGGERS = ("cell_first_immutable", "cell_first_no_truncate")
 # Org-keyed tables the org triggers skip: the cell's own tenancy rows (`tenancy_record`
 # guards them instead), and the idempotency rows keyed by the caller's token org (a platform
-# admin's replay row for its home org is neither refused nor placed).
+# admin's replay row for its home org is not refused). Outside the guard is not outside the
+# first attach: its org scan (`server/cli/cell_scan.py`) reads every table with an `org`
+# column, these included, and places the orgs it finds.
 EXCLUDED = frozenset({"tenancy", "idempotency", "idempotency_fences"})
 # A table's DDL waits this long for its lock a try, LOCK_ATTEMPTS tries LOCK_RETRY_S
 # apart: a boot never queues behind a long transaction (and every write of the table
@@ -208,46 +210,71 @@ async def ensure(conn: Any) -> None:
     tries; a table whose lock it cannot take is logged with the holders of its locks, one
     the role cannot alter is logged as such, and either is skipped (the boot serves). A
     failed read of the state or the catalog raises. Runs on the migration session, which
-    holds the migration lock."""
+    holds the migration lock. `ensure_table` runs one table's part alone."""
     state = await cell.read_state(conn)
     if state == "open":
         return
-    # A table's statements, in one transaction: one lock wait, and every statement or none.
-    statements: dict[str, list[str]] = {}
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
-    for name in CELL_FIRST_TRIGGERS:
-        row = first.get(("cell_first", name))
-        if row is not None and row["enabled"] != "A":
-            statements.setdefault("cell_first", []).append(
-                f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
+    always = [
+        f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
+        for name in CELL_FIRST_TRIGGERS
+        if (row := first.get(("cell_first", name))) is not None and row["enabled"] != "A"
+    ]
+    if always:
+        await _run_ddl(conn, "cell_first", always)
+    if state != "enforced":
+        return
+    tables = await conn.fetch(ORG_TABLES)
+    for r in tables:
+        if r["relkind"] == "p":
+            # No trigger guards it: named here as missing() names it.
+            log.warning(
+                "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
             )
-    if state == "enforced":
-        present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
-        tables = await conn.fetch(ORG_TABLES)
-        for r in tables:
-            if r["relkind"] == "p":
-                # No trigger guards it: named here as missing() names it.
-                log.warning(
-                    "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
-                )
-        for r, names in _planned(tables):
-            table = r["relname"]
-            for name in names:
-                row = present.get((table, name))
-                if row is None:
-                    statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
-                elif row["enabled"] != "O":
-                    statements.setdefault(table, []).append(
-                        f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
-                    )
-    for table, sqls in statements.items():
-        await _run_ddl(conn, table, sqls)
+    present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
+    for r, names in _planned(tables):
+        if sqls := _table_statements(r["relname"], names, present):
+            await _run_ddl(conn, r["relname"], sqls)
 
 
-async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
-    """A table's DDL in one transaction, LOCK_ATTEMPTS short tries. The boot serves past
-    the two causes cells.md names (its lock not taken, a table this role cannot alter);
-    any other error fails it, as a failed read of the state does."""
+async def ensure_table(conn: Any, table: str, *, recording_first: bool = False) -> bool:
+    """`ensure` for one table of the planned set (`loom.tenancy` its guard, any other its
+    org triggers), so one table's DDL can run alone: in `enforced`, or with
+    `recording_first` also in a first cell's `recording`, where the org triggers' function
+    passes every row and a boot never creates them. False when the DDL was not applied (its
+    lock not taken, a table this role cannot alter); True when it was, or nothing was
+    needed. Raises for a table outside the planned set, or in another state."""
+    state = await cell.read_state(conn)
+    if state != "enforced" and not (recording_first and state == "recording"):
+        raise RuntimeError(f"cell triggers: not created in state {state!r}")
+    planned = [
+        (r, names) for r, names in _planned(await conn.fetch(ORG_TABLES)) if r["relname"] == table
+    ]
+    if not planned:
+        raise ValueError(f"loom.{table} carries no cell triggers")
+    ((_, names),) = planned
+    sqls = _table_statements(table, names, await _triggers(conn, names))
+    return not sqls or await _run_ddl(conn, table, sqls)
+
+
+def _table_statements(
+    table: str, names: tuple[str, ...], present: dict[tuple[str, str], Any]
+) -> list[str]:
+    """The DDL that gives `table` its named triggers, each present and enabled."""
+    out = []
+    for name in names:
+        row = present.get((table, name))
+        if row is None:
+            out.append(_create(f"loom.{_ident(table)}", name))
+        elif row["enabled"] != "O":
+            out.append(f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}")
+    return out
+
+
+async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> bool:
+    """A table's DDL in one transaction, LOCK_ATTEMPTS short tries; whether it applied. The
+    boot serves past the two causes cells.md names (its lock not taken, a table this role
+    cannot alter); any other error fails it, as a failed read of the state does."""
     import asyncpg
 
     for attempt in range(LOCK_ATTEMPTS):
@@ -256,12 +283,12 @@ async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
                 await conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
                 for sql in sqls:
                     await conn.execute(sql)
-            return
+            return True
         except asyncpg.exceptions.InsufficientPrivilegeError as e:
             log.warning(
                 "cell triggers: not applied on loom.%s (%s): this role cannot alter it", table, e
             )
-            return
+            return False
         except asyncpg.exceptions.LockNotAvailableError as e:
             # Short tries outlast a short transaction; an autovacuum is left to finish.
             if attempt < LOCK_ATTEMPTS - 1:
@@ -274,6 +301,7 @@ async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
                 "; ".join(sqls),
                 await _holders(conn, table),
             )
+    return False
 
 
 async def _holders(conn: Any, table: str) -> str:
@@ -393,3 +421,26 @@ def _function_defects(function: str, fn: Any) -> list[Defect]:
     if (fn["body"], list(fn["config"])) not in expected_functions(function):
         found.append(Defect("function", f"{function}() has a body or settings no migration writes"))
     return found
+
+
+def readiness_check() -> readiness.CheckResult:
+    """The `cell_triggers` readiness check of a process with LOOM_CELL set: whether its
+    pooled sessions keep the tenancy marker, as the cell-state read found it
+    (`cell.marked`). Without it the cell's triggers judge this process's writes as an
+    unchecked writer's, so it fails in `enforced` and `partial`; in `recording` it passes
+    with a warning, so a first cell behind a pooler that strips startup parameters does not
+    stall its rollout before attach. Missing triggers are named by `loom doctor` and attach,
+    not here: a first cell in `recording` has none."""
+    marked = cell.marked()
+    if marked is None or marked:
+        return readiness.result(True, "")
+    lost = (
+        "this process's pooled Postgres sessions do not keep the tenancy marker "
+        f"{pg.TENANCY_MARKER} (a pooler that drops startup parameters?)"
+    )
+    state = cell.reported_mode()
+    if state == "recording":
+        return readiness.CheckResult(True, f"{lost}; the triggers attach creates refuse its writes")
+    if state in ("enforced", "partial"):
+        return readiness.result(False, f"{lost}; the cell's triggers refuse its writes")
+    return readiness.result(True, "")

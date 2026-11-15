@@ -613,6 +613,23 @@ async def fetchval(sql: str, *args: Any) -> Any:
     return row[0] if row else None
 
 
+async def fetchrow_reset(sql: str) -> Any:
+    """`fetchrow` after RESET ALL, in one transaction, so behind a transaction pooler both
+    run on one server connection: the session's settings as its startup values leave them
+    (a session SET leaked onto that connection by another client is gone). Two round trips
+    more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure
+    leaves the transaction to the pool's reset, which rolls it back."""
+    async with connection() as conn:
+        try:
+            await conn.execute("BEGIN; RESET ALL")
+            row = await conn.fetchrow(sql)
+            await conn.execute("COMMIT")
+            return row
+        except Exception as e:
+            _raise_if_unavailable(e)
+            raise
+
+
 async def execute(sql: str, *args: Any) -> str:
     async with connection() as conn:
         try:

@@ -633,7 +633,8 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
     deployment's cell state right after its storage authority opened and migrated,
     before its first heartbeat and its lease decision, then on a timer. A failed first
     read refuses the boot, as a failed Postgres open does, unless Postgres migrations are
-    pending; later failures keep the last view."""
+    pending; later failures keep the last view. With LOOM_CELL set it also starts the
+    router reader (`cell_router.start_reader`)."""
     from server.core import cell
 
     if not cell.gated_by_state():
@@ -646,7 +647,13 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
         )
     # With Postgres migrations pending (LOOM_BOOT_MIGRATE off) the state tables may not
     # exist yet: the process boots, gated and unready until a read lands.
-    return [cell.start_refresh_loop()]
+    loops = [cell.start_refresh_loop()]
+    if settings.cell:
+        from server.core import cell_router
+
+        # What the heartbeat's `router` key reports, and what a new org's recording reads.
+        loops.append(cell_router.start_reader())
+    return loops
 
 
 async def ensure_default_namespace() -> None:
@@ -920,10 +927,12 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)
     readiness.register("config_drift", deployment_config.readiness_check)
-    from server.core import cell
+    from server.core import cell, cell_triggers
 
     if cell.gated_by_state():
         readiness.register("cell", cell.readiness_check)
+        if settings.cell:
+            readiness.register("cell_triggers", cell_triggers.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every
     # replica at once, and an LB with no ready backend would cut off the

@@ -711,3 +711,73 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
         )
         texts = {d.text for d in await cell_triggers.missing(conn)}
         assert "loom.tenancy_refuse_unmarked() has a body or settings no migration writes" in texts
+
+
+@pytest.mark.asyncio
+async def test_ensure_table_creates_a_recording_first_cells_triggers_only_when_asked() -> None:
+    """Attach creates a first cell's triggers in `recording`, one table at a time; a boot's
+    `ensure` never does, and the function passes every row there."""
+    async with _cell("recording") as (dsn, conn):
+        with pytest.raises(RuntimeError, match="recording"):
+            await cell_triggers.ensure_table(conn, "scope_generations")
+        assert await cell_triggers.ensure_table(conn, "scope_generations", recording_first=True)
+        assert await cell_triggers.ensure_table(conn, "tenancy", recording_first=True)
+        assert await _cell_triggers(conn) == {
+            ("scope_generations", "tenancy_insert", "O"),
+            ("scope_generations", "tenancy_update", "O"),
+            ("tenancy", "tenancy_record", "O"),
+        }
+        # Again: nothing to do.
+        assert await cell_triggers.ensure_table(conn, "scope_generations", recording_first=True)
+        with pytest.raises(ValueError, match="no cell triggers"):
+            await cell_triggers.ensure_table(conn, "idempotency", recording_first=True)
+        plain = await _unmarked(dsn)
+        try:
+            await plain.execute(_INSERT, "unheld-org", "s")  # recording passes every row
+            await plain.execute(_HOLD, "new-org")  # a first cell still recording records
+        finally:
+            await plain.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loom_cell", ["eu-1", ""])
+async def test_the_cell_refresh_reads_the_marker_its_pool_sends(loom_cell: str) -> None:
+    """The pool sends the marker as a startup value with LOOM_CELL set: the refresh reads it
+    after RESET ALL; without LOOM_CELL it reads false, never null."""
+    from server.settings import settings
+
+    async with _cell("recording") as (dsn, _conn):
+        saved = (settings.pg_dsn, settings.cell, pg._expected, cell._view)
+        settings.pg_dsn, settings.cell, pg._expected = dsn, loom_cell, None
+        try:
+            assert await cell.refresh() is True
+            assert cell.marked() is bool(loom_cell)
+            assert cell.reported_mode() == "recording"
+        finally:
+            await pg.close_pool()
+            settings.pg_dsn, settings.cell, pg._expected, cell._view = saved
+
+
+@pytest.mark.asyncio
+async def test_a_session_set_leaked_onto_the_connection_does_not_count_as_the_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behind a transaction pooler a server connection may carry another client's session
+    SET: the RESET ALL in the read's transaction removes it, so the read finds what a fresh
+    session of this process has."""
+    import asyncpg
+
+    async with _cell("recording") as (dsn, _conn):
+        leaked = await asyncpg.connect(dsn)
+        try:
+            await leaked.execute("SET loom.tenancy_checked = on")
+
+            @contextlib.asynccontextmanager
+            async def _connection() -> AsyncIterator[Any]:
+                yield leaked
+
+            monkeypatch.setattr(pg, "connection", _connection)
+            row = await pg.fetchrow_reset(cell._READ)
+            assert row["marked"] is False and not leaked.is_in_transaction()
+        finally:
+            await leaked.close()

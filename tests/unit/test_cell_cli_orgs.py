@@ -13,7 +13,7 @@ import pytest
 
 from server.auth import tenancy
 from server.cli import _ch
-from server.core import cell, errors, pg, pg_profile
+from server.core import cell, cell_router, errors, pg, pg_profile
 from server.settings import settings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -758,7 +758,9 @@ def test_a_cli_with_loom_cell_set_judges_only_its_stores(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         cell,
         "_view",
-        cell._decoded({"first": first, "mode": "enforced", "own": own, "tenancy": True}),
+        cell._decoded(
+            {"first": first, "mode": "enforced", "own": own, "tenancy": True, "marked": True}
+        ),
     )
     assert cell.gate_reason() != ""
     assert cell.cli_gate_reason() == ""
@@ -776,7 +778,7 @@ def test_a_cli_with_loom_cell_set_judges_only_its_stores(monkeypatch: pytest.Mon
 def _directory_attaching(monkeypatch: pytest.MonkeyPatch) -> None:
     """The directory answers that the first cell is `attaching`, as during the rollout
     (the state read's own tests are in test_cell_tenancy.py)."""
-    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=True))
+    monkeypatch.setattr(cell_router, "directory_answer", AsyncMock(return_value="attaching"))
 
 
 def _serving_cell(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -797,9 +799,15 @@ def test_a_cell_the_transports_would_close_refuses_the_command(
     first = {"is_first": True, "cell": "eu-1"}  # as the pool's json codec decodes it
     monkeypatch.setattr(
         pg,
-        "fetchrow",
+        "fetchrow_reset",
         AsyncMock(
-            return_value={"first": first, "mode": "recording", "own": None, "tenancy": False}
+            return_value={
+                "first": first,
+                "mode": "recording",
+                "own": None,
+                "tenancy": False,
+                "marked": True,
+            }
         ),
     )
     never = AsyncMock(side_effect=AssertionError("checked"))
@@ -835,8 +843,16 @@ def test_a_cli_counts_the_code_orgs_as_its_server_does(monkeypatch: pytest.Monke
     own = {"current_fp": accepted, "next_fp": None}
     monkeypatch.setattr(
         pg,
-        "fetchrow",
-        AsyncMock(return_value={"first": first, "mode": "enforced", "own": own, "tenancy": False}),
+        "fetchrow_reset",
+        AsyncMock(
+            return_value={
+                "first": first,
+                "mode": "enforced",
+                "own": own,
+                "tenancy": False,
+                "marked": True,
+            }
+        ),
     )
     monkeypatch.setattr(tenancy, "ensure_held", AsyncMock(return_value=None))
     asyncio.run(_ch.check_orgs(["acme"]))
@@ -878,7 +894,7 @@ def test_a_cell_records_or_refuses_a_declared_org_and_never_places_it(
     monkeypatch.setattr(tenancy, "ensure_held", _held)
     _serving_cell(monkeypatch)
     asyncio.run(_ch.check_orgs(["acme"]))
-    with pytest.raises(_ch.OrgNotHeld, match="loom cell place --org beta"):
+    with pytest.raises(_ch.OrgNotHeld, match="placed in cell 'us-1'"):
         asyncio.run(_ch.check_orgs(["beta"]))
     # No principal: the check records (in `recording`) or refuses, and places nothing.
     assert seen == [("acme", None), ("beta", None)]
@@ -896,13 +912,13 @@ def test_a_cli_process_reads_the_cells_mode_before_it_checks(
     statements: list[str] = []
 
     async def _fetchrow(_sql: str) -> dict[str, Any]:
-        return {"first": None, "mode": mode, "own": None, "tenancy": False}
+        return {"first": None, "mode": mode, "own": None, "tenancy": False, "marked": True}
 
     async def _fetchval(sql: str, org: str) -> bool:
         statements.append(sql)
         return sql != tenancy._HOLDS  # held only once recorded
 
-    monkeypatch.setattr(pg, "fetchrow", _fetchrow)
+    monkeypatch.setattr(pg, "fetchrow_reset", _fetchrow)
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
@@ -910,7 +926,7 @@ def test_a_cli_process_reads_the_cells_mode_before_it_checks(
         asyncio.run(_ch.check_orgs(["acme"]))
         assert statements == [tenancy._HOLDS, tenancy._RECORD]
     else:
-        with pytest.raises(_ch.OrgNotHeld, match="loom cell place --org acme"):
+        with pytest.raises(_ch.OrgNotHeld, match="org 'acme' is not held by this cell"):
             asyncio.run(_ch.check_orgs(["acme"]))
         assert statements == [tenancy._HOLDS]
 
@@ -919,25 +935,24 @@ def test_a_cli_recording_insert_that_finds_enforced_refuses_and_places_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The cell's rows read `recording`, but attach wrote `enforced` before the insert:
-    it records nothing, and the command refuses, naming `loom cell place`, with no
-    placement call."""
+    it records nothing, and the command refuses with no placement call."""
     monkeypatch.setattr(settings, "cell", "eu-1")
     monkeypatch.setattr(tenancy, "_held", set())
     monkeypatch.setattr(tenancy, "_elsewhere", {})
     statements: list[str] = []
 
     async def _fetchrow(_sql: str) -> dict[str, Any]:
-        return {"first": None, "mode": "recording", "own": None, "tenancy": False}
+        return {"first": None, "mode": "recording", "own": None, "tenancy": False, "marked": True}
 
     async def _fetchval(sql: str, org: str) -> None:
         statements.append(sql)  # nothing held, and the insert finds `enforced`
 
-    monkeypatch.setattr(pg, "fetchrow", _fetchrow)
+    monkeypatch.setattr(pg, "fetchrow_reset", _fetchrow)
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
     monkeypatch.setattr(tenancy, "_place", AsyncMock(side_effect=AssertionError("placed")))
-    with pytest.raises(_ch.OrgNotHeld, match="loom cell place --org acme"):
+    with pytest.raises(_ch.OrgNotHeld, match="org 'acme' is not held by this cell"):
         asyncio.run(_ch.check_orgs(["acme"]))
     assert statements == [tenancy._HOLDS, tenancy._RECORD, tenancy._HOLDS]
 
@@ -946,7 +961,7 @@ def test_a_cell_whose_rows_cannot_be_read_refuses_every_declared_org(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "cell", "eu-1")
-    monkeypatch.setattr(pg, "fetchrow", AsyncMock(side_effect=OSError("connection refused")))
+    monkeypatch.setattr(pg, "fetchrow_reset", AsyncMock(side_effect=OSError("connection refused")))
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     with pytest.raises(_ch.OrgNotHeld, match="not read yet"):
         asyncio.run(_ch.check_orgs(["acme"]))
@@ -1227,8 +1242,8 @@ def test_reconcile_records_its_org_on_a_recording_cell_only_when_it_heals(
         statements.append((sql, org))
         return sql != tenancy._HOLDS  # held only once recorded
 
-    row = {"first": None, "mode": "recording", "own": None, "tenancy": False}
-    monkeypatch.setattr(pg, "fetchrow", AsyncMock(return_value=row))
+    row = {"first": None, "mode": "recording", "own": None, "tenancy": False, "marked": True}
+    monkeypatch.setattr(pg, "fetchrow_reset", AsyncMock(return_value=row))
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     monkeypatch.setattr(pg_profile, "check_configured", AsyncMock())
@@ -1301,8 +1316,8 @@ def _cli_cell(monkeypatch: pytest.MonkeyPatch, mode: str, statements: list[str])
         statements.append(sql)
         return sql != tenancy._HOLDS  # held only once recorded
 
-    row = {"first": None, "mode": mode, "own": None, "tenancy": False}
-    monkeypatch.setattr(pg, "fetchrow", AsyncMock(return_value=row))
+    row = {"first": None, "mode": mode, "own": None, "tenancy": False, "marked": True}
+    monkeypatch.setattr(pg, "fetchrow_reset", AsyncMock(return_value=row))
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     monkeypatch.setattr(cell, "cli_gate_reason", lambda: "")
@@ -1313,7 +1328,7 @@ def test_a_restored_first_cell_the_directory_marks_serving_records_nothing_for_t
 ) -> None:
     statements: list[str] = []
     _cli_cell(monkeypatch, "recording", statements)
-    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=False))
+    monkeypatch.setattr(cell_router, "directory_answer", AsyncMock(return_value="serving"))
     with pytest.raises(_ch.OrgNotHeld, match="attaching"):
         asyncio.run(_ch.check_orgs(["acme"]))
     assert statements == [tenancy._HOLDS]
