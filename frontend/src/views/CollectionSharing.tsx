@@ -6,8 +6,8 @@ import { type CollectionEntry, isAuthDisabled } from "../api";
 import { distinctTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
 import { errorLine } from "../lib/errorWords";
-import { fmtInt } from "../lib/format";
-import { grantSpellings, isAgentSubject, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { andList, fmtInt } from "../lib/format";
+import { grantSpellings, isAgentSubject, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 import { allGrants, type GrantsAt } from "../lib/grantPages";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useAbortableEffect } from "../lib/hooks";
@@ -100,7 +100,7 @@ export function whoCanSee({
   const fromTitles = [...new Set([...from.values()].filter((ns) => ns !== ownNs))].map(titleOf);
   const subjects = [...from.keys()];
   const others = subjects.filter((s) => s !== "");
-  const inheritedFrom = fromTitles.length > 0 ? `Inherited from ${joined(fromTitles)}` : "";
+  const inheritedFrom = fromTitles.length > 0 ? `Inherited from ${andList(fromTitles)}` : "";
   const tail = [inheritedFrom, ...unseen.map((u) => u.text)];
   const shared = empty ? "Anything added here is shared with them" : "";
   if (others.includes("everyone")) {
@@ -137,7 +137,7 @@ export function whoCanSee({
     ? `${head.join(", ")} and more`
     : more > 0
       ? `${head.join(", ")} and ${fmtInt(more)} more`
-      : joined(head);
+      : andList(head);
   // Counted here only: grants.list folds a person's spellings within one place, not across the lineage.
   const here = new Set<string>();
   for (const r of grants[0]?.rows ?? []) {
@@ -148,7 +148,7 @@ export function whoCanSee({
   // The reader ("") is an agent when their own subject is one (a service account's token).
   const hereAgents = hereSubjects.filter((x) => isAgentSubject(x === "" ? me : x)).length;
   const herePeople = hereSubjects.length - hereGroups - hereAgents;
-  const counts = joined(
+  const counts = andList(
     [
       herePeople > 0 ? plural(herePeople, "person", "people") : "",
       hereGroups > 0 ? plural(hereGroups, "group", "groups") : "",

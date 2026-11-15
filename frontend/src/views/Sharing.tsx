@@ -13,7 +13,7 @@ import { useStore, useIdentity } from "../lib/state";
 import { canCallCodeRepos } from "../lib/canCall";
 import { Skeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
-import { displayAgent, SENTINEL_AGENTS } from "../lib/format";
+import { andList, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -160,7 +160,7 @@ export function Sharing() {
       repoCount > 0 ? `${repoCount} ${repoCount === 1 ? "repository" : "repositories"}` : "",
       shared > 0 ? `${shared} collection${shared === 1 ? "" : "s"}` : "",
     ].filter(Boolean);
-    return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
+    return andList(parts);
   };
   const spanned = counted(data.namespaces.map((n) => n.namespace));
   const empty = totals.namespaces === 0 && totals.agents === 0;

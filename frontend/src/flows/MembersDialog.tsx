@@ -27,9 +27,9 @@ import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
 import { isCollectionName } from "../lib/namespace";
 import { allGrants, GRANTS_READ } from "../lib/grantPages";
-import { fmtInt } from "../lib/format";
+import { andList, fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
-import { grantSpellings, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { grantSpellings, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 import { PlaceLink } from "../components/ui/PlaceLink";
 
 /** What Remove's confirm says: who still gets in once the grant here goes. Sign-in off serves
@@ -54,7 +54,7 @@ function removeConfirm(o: {
     const revoked = "The grant here is revoked.";
     if (o.signInOff) return { title, message: revoked };
     if (o.through.length) {
-      return { title, message: `${revoked} Everyone in ${o.org} can still see it through ${joined(o.through)}.` };
+      return { title, message: `${revoked} Everyone in ${o.org} can still see it through ${andList(o.through)}.` };
     }
     if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let others in.` };
     return {
@@ -74,7 +74,7 @@ function removeConfirm(o: {
   const revoked = "Their grant here is revoked.";
   if (o.signInOff) return { title, message: revoked };
   if (o.everyoneHere) return { title, message: `${revoked} Everyone in ${o.org} can still see it.` };
-  if (o.through.length) return { title, message: `${revoked} They can still see it through ${joined(o.through)}.` };
+  if (o.through.length) return { title, message: `${revoked} They can still see it through ${andList(o.through)}.` };
   if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let them in.` };
   return { title, message: revoked };
 }

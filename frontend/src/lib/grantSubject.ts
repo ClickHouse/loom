@@ -42,8 +42,3 @@ export function subjectLabel(subject: string, org = ""): string {
 export function isAgentSubject(subject: string): boolean {
   return subject.startsWith("agent:") || isServiceSubject(subject);
 }
-
-/** "a", "a and b", "a, b and c". */
-export function joined(parts: string[]): string {
-  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
-}
