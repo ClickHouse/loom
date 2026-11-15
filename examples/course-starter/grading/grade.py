@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import urllib.request
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import ModuleType
@@ -61,10 +62,10 @@ async def lab1_fact_saved_and_revised() -> None:
         got = await agent.memory.get(lab1.KEY)
         # Versions grow with time, so the ones written by this run are above the old head.
         written = [v for v in await agent.memory.history(lab1.KEY) if v["version"] > head]
-    if not got.get("found"):
+    if got is None:
         raise Failed(f"no fact under {lab1.KEY}")
-    if len(written) < 2:
-        raise Failed(f"save_and_revise wrote {len(written)} version(s) of {lab1.KEY}, not 2")
+    if len({v["value"] for v in written}) < 2:
+        raise Failed(f"save_and_revise did not write {lab1.KEY} with two different values")
 
 
 async def lab1_abstain_code() -> None:
@@ -81,9 +82,9 @@ async def lab2_cited_hit() -> None:
         raise Failed("set QUESTION and UNANSWERABLE")
     async with lab2.make_agent() as agent:
         await run_student(lab2.ingest(agent))
-        hits = await agent.knowledge.search(lab2.QUESTION, top_k=1)
-    if not hits or hits[0].source_uri != lab2.SOURCE_URI:
-        raise Failed(f"the best hit for QUESTION is not from {lab2.SOURCE_URI}")
+        hits = await agent.knowledge.search(lab2.QUESTION, top_k=1, uri_prefix=[lab2.SOURCE_URI])
+    if not hits:
+        raise Failed(f"QUESTION finds nothing in {lab2.SOURCE_URI}")
     if not hits[0].section:
         raise Failed("the best hit names no section of notes.md; give it ## headings")
 
@@ -109,12 +110,34 @@ def compose(*args: str, stdin: str = "") -> str:
     return done.stdout
 
 
+# What lab4.sql must count, run as the same user.
+REFERENCE = """
+SELECT agent, count() AS facts FROM loom.sql_v1_memories
+WHERE created_at > now() - INTERVAL 1 HOUR GROUP BY agent
+"""
+
+
+def sql(password: str, query: str) -> list[dict[str, object]]:
+    out = compose(
+        "exec", "-T", "clickhouse", "clickhouse-client",
+        "--user", "course_grader", "--password", password, "--format", "JSONEachRow",
+        stdin=query,
+    )  # fmt: skip
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def counts(rows: list[dict[str, object]]) -> dict[object, int]:
+    """Each row's agent and its one count."""
+    found = {}
+    for row in rows:
+        numbers = [int(v) for k, v in row.items() if k != "agent" and str(v).isdigit()]
+        if "agent" not in row or len(numbers) != 1:
+            raise Failed(f"a row of lab4.sql is not an agent and one count: {row}")
+        found[row["agent"]] = numbers[0]
+    return found
+
+
 async def lab4_query() -> None:
-    # A fact of the grader's own, so the query has a row to find whatever the
-    # other labs wrote.
-    grader = Agent(org="dev", namespace="local", agent="course-grader", consumer="course-grading")
-    async with grader:
-        await grader.memory.set("grading/check/lab4", "The grader ran the Lab 4 check.")
     # The grader's own read-only user, so the student's password stays as it is.
     granted = compose(
         "exec", "-T", "loom", "loom", "sql-access", "grant",
@@ -123,17 +146,21 @@ async def lab4_query() -> None:
     if "password:" not in granted:
         raise Failed(f"loom sql-access grant printed no password: {granted.strip()}")
     password = granted.split("password:")[-1].strip()
-    query = (ROOT / "labs" / "lab4.sql").read_text()
-    out = compose(
-        "exec", "-T", "clickhouse", "clickhouse-client",
-        "--user", "course_grader", "--password", password, "--format", "JSONEachRow",
-        stdin=query,
-    )  # fmt: skip
-    rows = [json.loads(line) for line in out.splitlines() if line.strip()]
-    if not rows:
+    # A fact saved now, under a key of this run, so the last hour holds a row
+    # whatever the other labs wrote; deleted once the check has read it.
+    grader = Agent(org="dev", namespace="local", agent="course-grader", consumer="course-grading")
+    key = f"grading/check/lab4/{uuid.uuid4().hex}"
+    async with grader:
+        await grader.memory.set(key, "The grader ran the Lab 4 check.")
+        try:
+            got = sql(password, (ROOT / "labs" / "lab4.sql").read_text())
+            want = counts(sql(password, REFERENCE))
+        finally:
+            await grader.memory.delete(key)
+    if not got:
         raise Failed("lab4.sql returns no rows")
-    if not any(row.get("agent") == "course-grader" for row in rows):
-        raise Failed("no row has agent = 'course-grader', whose fact was saved a moment ago")
+    if counts(got) != want:
+        raise Failed(f"lab4.sql counts {counts(got)}; the last hour holds {want}")
 
 
 CHECKS: list[tuple[str, Callable[[], Awaitable[None]]]] = [
@@ -181,7 +208,9 @@ def main() -> int:
             out.write(f"### {passed} of {len(results)} checks pass\n\n")
             out.write("| Check | Result |\n| --- | --- |\n")
             for title, ok, why in results:
-                out.write(f"| {title} | {'pass' if ok else 'fail: ' + why.replace('|', '/')} |\n")
+                # A table cell holds one line and no pipe.
+                cell = "pass" if ok else "fail: " + why.replace("|", "/").replace("\n", " ")
+                out.write(f"| {title} | {cell} |\n")
     return 0 if passed == len(results) else 1
 
 

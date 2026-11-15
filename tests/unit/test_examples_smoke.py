@@ -1,4 +1,5 @@
-"""Every script under examples/ runs end to end against a scripted Loom.
+"""Every script directly under examples/ runs end to end against a scripted Loom
+(the course starter's grader and labs run in test_course_starter.py).
 
 Each example is loaded by path and driven against an httpx MockTransport
 that answers the ops it calls, so a renamed SDK method or a changed

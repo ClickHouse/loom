@@ -43,11 +43,12 @@ containers, and name its install directory as `<dir>`: `~/.loom` on a laptop and
 ## Hand out the labs as an assignment
 
 The [course starter](../../examples/course-starter/README.md) is a repository for each
-student: the code of Labs 1, 2 and 4 with its gaps marked `TODO`, a SQL file, an answers
-page for the written exercises, a dev container that installs the latest release in a
-codespace with the Python SDK, and a grading workflow. Copy it into a new repository
-under your account or your school's organization, and mark that repository as a template
-(it needs `curl`, `git` and the [GitHub CLI](https://cli.github.com/), signed in):
+student: the code of Labs 1 and 2 and the Lab 4 query, with their gaps marked `TODO`, an
+answers page for the written exercises, a dev container that installs the latest release
+in a codespace with the Python SDK and Claude Code, and a grading workflow. Copy it into a
+new repository under your account or your school's organization, and mark that
+repository as a template (it needs `curl`, `tar`, `git` and the
+[GitHub CLI](https://cli.github.com/), signed in):
 
 ```bash
 mkdir loom-labs && cd loom-labs
