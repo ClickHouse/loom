@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from server import boot
-from server.core import cell, cell_router, cell_triggers, instances, pg, readiness
+from server.core import cell, cell_triggers, instances, pg, readiness
 from server.settings import settings
 
 _OWN = {"v": 1, "fields": {}}
@@ -30,8 +30,6 @@ def _cell(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "cell", "eu-1")
     monkeypatch.setattr(settings, "serves_traffic", True)
     monkeypatch.setattr(cell, "_view", cell._View())
-    monkeypatch.setattr(cell_router, "_router", None)
-    monkeypatch.setattr(cell_router, "_router_why", "")
 
 
 def _reported() -> dict[str, Any]:
@@ -201,3 +199,39 @@ def test_a_cell_refuses_to_boot_with_a_router_url_that_cannot_be_requested(
     # A deployment that is not a cell is untouched.
     monkeypatch.setattr(settings, "cell", "")
     assert cell.settings_problem() == ""
+
+
+def test_a_failed_reset_read_rolls_back_before_the_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read fails after `BEGIN; RESET ALL`: the transaction is rolled back on the
+    connection, so the pool gets it back idle, and the read's error is raised."""
+    sent: list[str] = []
+
+    class _Conn:
+        in_transaction = False
+
+        def is_closed(self) -> bool:
+            return False
+
+        def is_in_transaction(self) -> bool:
+            return self.in_transaction
+
+        async def execute(self, sql: str) -> str:
+            sent.append(sql)
+            self.in_transaction = sql.startswith("BEGIN")
+            return ""
+
+        async def fetchrow(self, sql: str) -> Any:
+            raise LookupError("relation does not exist")
+
+    conn = _Conn()
+
+    @contextlib.asynccontextmanager
+    async def _connection() -> AsyncIterator[Any]:
+        yield conn
+
+    monkeypatch.setattr(pg, "connection", _connection)
+    with pytest.raises(LookupError):
+        asyncio.run(pg.fetchrow_reset(cell._READ))
+    assert sent == ["BEGIN; RESET ALL", "ROLLBACK"] and not conn.in_transaction

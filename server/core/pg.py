@@ -618,7 +618,7 @@ async def fetchrow_reset(sql: str) -> Any:
     run on one server connection: the session's settings as its startup values leave them
     (a session SET leaked onto that connection by another client is gone). Two round trips
     more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure
-    leaves the transaction to the pool's reset, which rolls it back."""
+    rolls the transaction back before the connection returns to the pool."""
     async with connection() as conn:
         try:
             await conn.execute("BEGIN; RESET ALL")
@@ -626,6 +626,14 @@ async def fetchrow_reset(sql: str) -> Any:
             await conn.execute("COMMIT")
             return row
         except Exception as e:
+            if not _lost(conn) and conn.is_in_transaction():
+                try:
+                    await asyncio.wait_for(conn.execute("ROLLBACK"), _RELEASE_TIMEOUT_S)
+                except Exception as rollback:  # noqa: BLE001 — the read's error is raised
+                    log.warning(
+                        "Postgres rollback failed (%s); the pool resets the connection",
+                        error_summary(rollback),
+                    )
             _raise_if_unavailable(e)
             raise
 

@@ -548,22 +548,24 @@ One background reader per server process asks the route every
 has read `serving` (`server/core/cell_router.py`); nothing awaits it, so a slow router
 delays no beat and no request, and the beat reports what it last read, at most one period
 plus one beat old. Every uvicorn process runs one, so a thousand pods of eight workers ask
-up to 1,600 times a second, and the router answers the route from what its replica read from
-the directory. A process with no heartbeat (a CLI, the workers child) asks on demand
-instead, at most once every `LOOM_TENANCY_MODE_CACHE_S`.
+up to 1,600 times a second. Each router replica answers the route from its own read of the
+cell's row, made at most once per `LOOM_ROUTER_DIRECTORY_CACHE_S`, so the directory sees one
+read per replica per window; a failed read answers 503 for its window, so a down directory
+is asked no more often and still answers 503. A process with no heartbeat (a CLI, the
+workers child) asks on demand instead, at most once every `LOOM_TENANCY_MODE_CACHE_S`.
 
 The reader keeps the directory's last answer for the tenancy check too, as three values:
 `attaching`, another state, or unknown while no read has landed, the last one failed,
-answered 401 or 404, or is late (older than one period plus `LOOM_CELL_ROUTER_TIMEOUT_S`).
-Once a process has read `serving` it keeps that for its life and asks no more: only
-`loom cell restore` lowers it, and that restarts the processes. A first cell in `recording`
-records a new org only on `attaching`. A platform or `*`-org principal, or a call with no
-principal, places no org: on a first cell whose directory answers `attaching`, or before a
-`serving` answer cannot be read, such a call for an org the cell does not hold answers 503
-("attach in progress" or the directory unreadable), since the org's data may be in this cell
-until attach places it; once `serving`, and on a later cell, it answers 409 `WRONG_CELL`. A
-process booting after `serving` while the router is down answers those calls 503 until its
-first read lands.
+answered 401 or 404, or is late (older than the period this process reads at, the background
+reader's or the on-demand window, plus `LOOM_CELL_ROUTER_TIMEOUT_S`). Once a process has
+read `serving` it keeps that for its life and asks no more: only `loom cell restore` lowers
+it, and that restarts the processes. A first cell in `recording` records a new org only on
+`attaching`. A platform or `*`-org principal, or a call with no principal, places no org: on
+a first cell whose directory answers `attaching`, or cannot be read before it has read
+`serving`, such a call for an org the cell does not hold answers 503 ("attach in progress"
+or the directory unreadable), since the org's data may be in this cell until attach places
+it; once `serving`, and on a later cell, it answers 409 `WRONG_CELL`. A process booting
+after `serving` while the router is down answers those calls 503 until its first read lands.
 
 With `LOOM_CELL` set, a non-empty `LOOM_CELL_ROUTER_URL` that is not an http(s) URL with a
 host, a port at most 65535 and no `?` or `#` refuses the boot (`cell.settings_problem`); an

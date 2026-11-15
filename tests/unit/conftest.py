@@ -885,6 +885,17 @@ def _identity_caches_left_cold() -> Iterator[None]:
     summaries._SUMMARY_ENTITY_CACHE.clear()
 
 
+@pytest.fixture(autouse=True)
+def _cell_router_fresh() -> Any:
+    """`server.core.cell_router` keeps the directory's answer, a sticky `serving` and whether
+    a background reader runs for the process's life: every test starts with none read."""
+    from server.core import cell_router
+
+    cell_router._reset_for_tests()
+    yield
+    cell_router._reset_for_tests()
+
+
 def _reset_deferred_ledgers() -> None:
     from server.core import namespace_write_marks
     from server.memory.app import drops, graph_write_marks

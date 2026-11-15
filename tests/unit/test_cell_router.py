@@ -29,16 +29,7 @@ def _first_cell(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "cell", "eu-1")
     monkeypatch.setattr(settings, "cell_router_url", "https://router.test/")
     monkeypatch.setattr(settings, "cell_router_token", _TOKEN)
-    for name, value in (
-        ("_answer", None),
-        ("_serving", False),
-        ("_router", None),
-        ("_router_why", ""),
-        ("_unauthorized_since", None),
-        ("_background", False),
-        ("_read", None),
-    ):
-        monkeypatch.setattr(cell_router, name, value)
+    # The module's state is fresh: tests/unit/conftest.py resets it around every test.
     monkeypatch.setattr(cell, "_view", cell._View(read_at=time.monotonic(), first=(True, "eu-1")))
 
 
@@ -211,6 +202,27 @@ def test_a_late_background_answer_is_unknown(monkeypatch: pytest.MonkeyPatch) ->
     assert asyncio.run(cell_router.directory_answer()) == "unknown"
 
 
+def test_an_on_demand_answer_is_never_late_within_its_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the background reader an answer is read again only once it is
+    LOOM_TENANCY_MODE_CACHE_S old, so it counts for that window, not for the shorter
+    background period: at a mode cache longer than the beat, a fresh answer stays
+    `attaching` until the next read."""
+    monkeypatch.setattr(settings, "tenancy_mode_cache_s", 30.0)
+    monkeypatch.setattr(settings, "instance_heartbeat_seconds", 10.0)
+    monkeypatch.setattr(settings, "cell_router_timeout_s", 5.0)
+    clock = _clock(monkeypatch)
+    calls = _router(monkeypatch, ATTACHING)
+    assert asyncio.run(cell_router.directory_answer()) == "attaching"
+    for _ in range(29):
+        clock.advance(1)
+        assert asyncio.run(cell_router.directory_answer()) == "attaching"
+    assert len(calls) == 1
+    clock.advance(1)
+    assert asyncio.run(cell_router.directory_answer()) == "attaching" and len(calls) == 2
+
+
 def test_a_new_org_records_at_default_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """At the default settings the reader asks every period and a read takes at most the
     timeout, so its answer is never late between two reads: a new org on a recording
@@ -275,6 +287,20 @@ def test_a_401_turns_the_key_false_only_once_it_persists(monkeypatch: pytest.Mon
     assert cell_router.router_key()["router"] is True
     clock.advance(0.01)
     asyncio.run(cell_router.read_once())
+    key = cell_router.router_key()
+    assert key["router"] is False and str(key["router_why"]).startswith("401")
+
+
+def test_503s_between_401s_do_not_restart_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A transient answer proves nothing about the credential: 401s interleaved with 503s
+    still turn the key false once the first 401 is one LOOM_ROUTER_DIRECTORY_CACHE_S old."""
+    clock = _clock(monkeypatch)
+    unauthorized, down = (401, {"error": "no cell"}), (503, {"error": "down"})
+    _router(monkeypatch, ATTACHING, unauthorized, down, unauthorized, down, unauthorized)
+    asyncio.run(cell_router.read_once())
+    for _ in range(6):  # the last answer repeats: 401
+        clock.advance(settings.router_directory_cache_s / 4)
+        asyncio.run(cell_router.read_once())
     key = cell_router.router_key()
     assert key["router"] is False and str(key["router_why"]).startswith("401")
 
@@ -350,6 +376,8 @@ def test_the_period_is_the_shorter_of_the_beat_and_the_mode_cache(
     monkeypatch.setattr(settings, "tenancy_mode_cache_s", 7.0)
     assert cell_router.period_s() == 3.0
     monkeypatch.setattr(settings, "cell_router_timeout_s", 2.0)
+    assert cell_router.late_after_s() == 9.0  # on demand: the mode cache's window
+    monkeypatch.setattr(cell_router, "_background", True)
     assert cell_router.late_after_s() == 5.0
 
 

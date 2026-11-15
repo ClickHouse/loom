@@ -5,7 +5,7 @@ with the cell's own credential), for the tenancy check and the heartbeat
 Only a process with `LOOM_CELL` set on a first cell asks: a later cell's route answers
 404. The answer is three-valued for the tenancy check (`directory_answer`): `attaching`,
 `serving` or another state, and `unknown` while no read has landed, the last one failed or
-answered for no state of this cell, or it is late (older than one period plus
+answered for no state of this cell, or it is late (older than the period it is read at plus
 `LOOM_CELL_ROUTER_TIMEOUT_S`). Once the process has read `serving` it keeps it for its
 life and asks no more: only `loom cell restore` lowers it, and that restarts the processes.
 
@@ -68,9 +68,11 @@ def period_s() -> float:
 
 
 def late_after_s() -> float:
-    """The age past which an answer counts as `unknown`: one period, plus the time a read
-    may take."""
-    return period_s() + float(settings.cell_router_timeout_s)
+    """The age past which an answer counts as `unknown`: the period this process asks at
+    (the background reader's, or the on-demand window, LOOM_TENANCY_MODE_CACHE_S), plus the
+    time a read may take."""
+    every = period_s() if _background else float(settings.tenancy_mode_cache_s)
+    return every + float(settings.cell_router_timeout_s)
 
 
 async def directory_answer() -> str:
@@ -138,8 +140,10 @@ def _keep_router(router: bool | None, why: str, now: float) -> None:
             return
         _router, _router_why = False, why
         return
-    _unauthorized_since = None
     if router is not None:
+        # An answer that proves the configuration ends a run of 401s; a transient one
+        # between them does not.
+        _unauthorized_since = None
         _router, _router_why = router, why
     elif _router is None:
         _router_why = why

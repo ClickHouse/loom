@@ -781,3 +781,33 @@ async def test_a_session_set_leaked_onto_the_connection_does_not_count_as_the_ma
             assert row["marked"] is False and not leaked.is_in_transaction()
         finally:
             await leaked.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error() -> None:
+    """A read that fails inside the refresh's transaction is rolled back before the pool
+    takes the connection back, so the release logs nothing through the loop's handler."""
+    import asyncio
+
+    from server.settings import settings
+
+    async with _cell("recording") as (dsn, _conn):
+        saved = (settings.pg_dsn, settings.cell, pg._expected)
+        settings.pg_dsn, settings.cell, pg._expected = dsn, "eu-1", None
+        loop = asyncio.get_running_loop()
+        errors: list[dict[str, Any]] = []
+        handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: errors.append(context))
+        try:
+            with pytest.raises(pg.PostgresRefusedError):
+                await pg.fetchrow_reset("SELECT 1 / 0")
+            await asyncio.sleep(0.1)  # a release callback would have run by now
+            assert errors == []
+            # The pool hands the connection out again, outside any transaction.
+            async with pg.connection() as conn:
+                assert not conn.is_in_transaction()
+                assert await conn.fetchval("SELECT 1") == 1
+        finally:
+            loop.set_exception_handler(handler)
+            await pg.close_pool()
+            settings.pg_dsn, settings.cell, pg._expected = saved

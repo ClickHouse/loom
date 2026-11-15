@@ -4,7 +4,9 @@
   (`LOOM_CELL_ROUTER_TOKEN` there, its SHA-256 in the directory) and its configuration
   fingerprint, and gets back the cell and deployment id that hold it;
 - `GET /cells/v1/cells/<cell>`: the first cell's state (`attaching`, `serving`), for that
-  cell's own credential only, which it reads while its mode is `recording`;
+  cell's own credential only, which its processes read until they have read `serving`,
+  answered from each replica's read of the row at most once per
+  `LOOM_ROUTER_DIRECTORY_CACHE_S` (a failed read answering 503 for that window);
 - `GET /cells/lookup?org=`: which cell, and at which host, an org lives in (unauthenticated,
   rate-limited per client address); a placed org's answer is cached and given while the
   directory cannot be read, and before any cell is registered the lookup answers 503 with
@@ -162,6 +164,15 @@ def _this_version(value: dict[str, Any]) -> bool:
     return type(version) is int and version == cell_state.FINGERPRINT_VERSION
 
 
+class _StateRead(NamedTuple):
+    """One directory read of a first cell's row for its state route: the row (None when the
+    name is not the first cell), or the refusal of a read that failed, and when it ran."""
+
+    row: directory.Cell | None
+    error: str
+    read_at: float  # monotonic
+
+
 class _Placed(NamedTuple):
     cell: str
     host: str
@@ -209,10 +220,17 @@ class Router:
         self._table_lock = asyncio.Lock()
         self._refreshing: asyncio.Task[None] | None = None
         self._http: httpx.AsyncClient | None = None
+        # The first cell's row as its state route last read it, per cell name: read again
+        # once LOOM_ROUTER_DIRECTORY_CACHE_S old, a failed read answering 503 for its window
+        # too, so every process of a cell asking each period costs the directory one read
+        # per replica per window.
+        self._states: dict[str, _StateRead] = {}
+        self._states_lock = asyncio.Lock()
 
     def _forget_credentials(self) -> None:
         self._credentials_gen += 1
         self._credentials_at = None
+        self._states.clear()  # the rows they were read with are older than the change
 
     async def _credential(self, name: str) -> tuple[str, ...]:
         async with self._lock:
@@ -298,22 +316,40 @@ class Router:
 
     async def cell_state(self, request: Request) -> JSONResponse:
         """`GET /cells/v1/cells/<cell>`: the first cell's state, for its own credential
-        only. A first cell in `recording` records a new org only while this answers
-        `attaching`; any other answer counts as unreadable there."""
+        only, from this replica's last read of the row (`_state_row`). A first cell in
+        `recording` records a new org only while this answers `attaching`; any other
+        answer counts as unreadable there."""
         name = request.path_params["cell"]
         presented = await self._authenticated(request, name)
         if isinstance(presented, JSONResponse):
             return presented
-        try:
-            row = await directory.first_cell_named(name)
-        except directory.DirectoryUnavailable as e:
-            return _refused(503, e.reason)
+        read = await self._state_row(name)
+        if read.error:
+            return _refused(503, read.error)
+        row = read.row
         if row is None:
             return _refused(404, f"cell {name!r} is not the first cell")
         if not row.holds(presented):
-            self._forget_credentials()  # the cached hash is older than the row
+            self._forget_credentials()  # the cached hash or row is older than the row
             return _refused(401, "the credential names no cell of this directory")
         return JSONResponse({"cell": row.cell, "state": row.state})
+
+    async def _state_row(self, name: str) -> _StateRead:
+        """Cell `name`'s row for its state route, read from the directory at most once per
+        LOOM_ROUTER_DIRECTORY_CACHE_S; a failed read stands for its window too."""
+        async with self._states_lock:
+            now = self._clock()
+            read = self._states.get(name)
+            if read is None or now - read.read_at >= settings.router_directory_cache_s:
+                gen = self._credentials_gen
+                try:
+                    read = _StateRead(await directory.first_cell_named(name), "", now)
+                except directory.DirectoryUnavailable as e:
+                    read = _StateRead(None, e.reason, now)
+                # A read that began before a change is not kept for a window.
+                if gen == self._credentials_gen:
+                    self._states[name] = read
+            return read
 
     async def lookup(self, request: Request) -> JSONResponse:
         client = request.client.host if request.client else ""
@@ -705,10 +741,11 @@ class Router:
         response = await _answered(
             lambda: directory.attach_serving(name, deployment_id), _attach_answer
         )
-        # A 503's change may have committed: this replica reads the cell's issuers on its
-        # next request either way.
+        # A 503's change may have committed: this replica reads the cell's issuers and state
+        # on its next request either way.
         if response.status_code in (200, 503):
             self._table_at = None
+            self._states.pop(name, None)
         return response
 
     async def remove(self, request: Request) -> JSONResponse:
