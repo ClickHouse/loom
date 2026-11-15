@@ -310,17 +310,17 @@ async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> d
     return await pg_documents.head_lists(org, namespace, source_uris)
 
 
-async def publications_owed(org: str, namespace: str) -> bool:
-    """Whether a commit of the namespace still waits on its publication to ClickHouse,
-    under the Postgres authority; never under the ClickHouse authority."""
+async def publications_owed(org: str, mirror: str, source_id: str) -> bool:
+    """Whether a commit of one mirrored source's documents (those whose address ends in
+    `#<source_id>`) still waits on its publication to ClickHouse, under the Postgres
+    authority; never under the ClickHouse authority."""
     from server.core import pg
 
     if not pg.enabled():
         return False
     from server.knowledge.store import pg_documents
 
-    owed, parked = await pg_documents.unpublished(org, namespace)
-    return owed + parked > 0
+    return await pg_documents.owed_ending(org, mirror, f"#{source_id}")
 
 
 class DocumentListRow(TypedDict):

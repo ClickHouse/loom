@@ -314,7 +314,6 @@ async def source_revisions(
     tag: str,
     *,
     searchable_only: bool = True,
-    flag_searchable: bool = False,
     pictures: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
@@ -335,8 +334,8 @@ async def source_revisions(
     its revision must not let the next turn skip the file. Its chunks are those of its
     version or of its revision, since a rewrite of the row alone (a new list, a
     metadata edit) keeps the revision and its chunks. Without it every live document
-    counts, which is what removal needs; with `flag_searchable` as well, `searchable`
-    ("1" or "") says which of them would count."""
+    counts, which is what removal needs, and `searchable` ("1" or "") says which of
+    them would."""
     # One set of (address, kind, value) serves both tests, so ClickHouse reads the
     # chunks once; a chunk written before chunks recorded their revision has none.
     live = (
@@ -351,7 +350,7 @@ async def source_revisions(
         f"OR (source_uri, ('revision', revision)) IN ({live}))"
     )
     chunks = f"AND {searchable} " if searchable_only else ""
-    flag = f"{searchable} AS searchable, " if flag_searchable else ""
+    flag = "" if searchable_only else f"{searchable} AS searchable, "
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
         "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
@@ -398,8 +397,7 @@ async def source_revisions(
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
             "access_json": str(r.get("access_json") or ""),
         }
-        if flag_searchable:
-            doc["searchable"] = "1" if r.get("searchable") else ""
+        doc["searchable"] = "1" if searchable_only or r.get("searchable") else ""
         found.append(doc)
     return found
 

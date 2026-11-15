@@ -55,16 +55,12 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # given-up file its one more try.
     result.full = bool(detail.get("full")) or sync.full_due(detail)
     sync.start_waits(result, detail)
-    if not source_ops.credential_of(src):
-        # Fail closed before a mirror is made for a source that cannot list.
-        result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
-        return result
-    src = dataclasses.replace(src, mirror=await _mirror(src))
     started = datetime.now(UTC)
     opened = await sync.open_listing(src, result, run, fields=gdrive.LISTED_WITH_PERMISSIONS)
     if opened is None:
         return result
     token, listing, files = opened
+    src = dataclasses.replace(src, mirror=await _mirror(src))
     if result.complete and not listing.walk_cut:
         listed_ids = {str(f["id"]) for f in files}
         result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
@@ -73,24 +69,22 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     whole = listing.whole and not listing.lost_item
     # A head whose row ClickHouse does not have yet is not among the copies read, so a
     # listing that began with one owed vouches for nothing.
-    owed = await documents.publications_owed(src.org, src.mirror)
+    owed = await documents.publications_owed(src.org, src.mirror, src.source_id)
     with sequential_reads():  # a replica behind the last turn would show an older list
-        copies = await store.source_revisions(
-            src.org, *home(src), searchable_only=False, flag_searchable=True
-        )
+        copies = await store.source_revisions(src.org, *home(src), searchable_only=False)
     try:
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
-        stored = sync.with_room(result, [c for c in copies if c["searchable"]])
+    except _Refused:
+        return result  # the store refused the account: nothing more is read or written
+    stored = sync.with_room(result, [c for c in copies if c["searchable"]])
+    try:
         for uri, f in addressed:
-            if run.budget.exhausted():
-                result.mark(sync.TurnMark.PASS_BOUND)
-                break
-            access = functools.partial(_listed_access, token, f, result)
+            access = functools.partial(_listed_access, token, f, run, result)
             prior = stored.get(str(f["id"]))
             if not await sync.sync_file(src, token, f, uri, prior, run, result, access=access):
                 break
     except _Refused:
-        return result  # the store refused the account: nothing more is read or written
+        pass  # every stored list is written: the listing row may still land
     if result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
         ids = {str(f["id"]): uri for uri, f in listed.items()}
@@ -99,8 +93,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
     if lists_current and whole:
-        if owed or await documents.publications_owed(src.org, src.mirror):
-            _note(result, "listing: a publication to ClickHouse is owed in the mirror")
+        if owed or await documents.publications_owed(src.org, src.mirror, src.source_id):
+            _note(result, "publication: a written list is not in ClickHouse yet")
             return result
         pass_context.check_stop()
         await mirrors.record_listing(src.org, src.mirror, src.source_id, src.name, started)
@@ -158,11 +152,13 @@ async def _refresh_lists(
                 f = listed.get(uri)
                 if f is None and not whole:
                     continue  # an incomplete search may have missed it: it keeps its list
-                access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
+                access = (
+                    access_list.UNREAD if f is None else await _listed_access(token, f, run, result)
+                )
                 if access_list.from_json(held[uri]) != access:
                     changed[uri] = access
         except _Refused:
-            await _write_lists(src, changed)  # Loom's own store: the store's refusal is not
+            await _write_lists(src, changed)  # what was read is written all the same
             raise
         await _write_lists(src, changed)
         if cut:
@@ -171,29 +167,27 @@ async def _refresh_lists(
 
 
 async def _listed_access(
-    token: str, f: dict[str, Any], result: sync.TurnResult
+    token: str, f: dict[str, Any], run: sync.Pass, result: sync.TurnResult
 ) -> access_list.AccessList:
-    """The file's permission list, read first when the listing left it out."""
-    await _read_permissions(token, f, result)
+    """The file's permission list. The listing leaves it out for a shared drive's files
+    and for one the account may not share, so it is read then and kept on `f`. A file
+    the store will not say for, or whose read failed, reads `unread`, and so does one
+    the pass has no time left to read, which no fetch follows. _Refused when the store
+    refused the account."""
+    if "permissions" not in f:
+        if run.budget.exhausted():
+            return access_list.UNREAD
+        pass_context.check_stop()
+        try:
+            f["permissions"] = await gdrive.file_permissions(token, str(f["id"]))
+        except (gdrive.RateLimited, gdrive.CredentialRefused) as e:
+            sync.vendor_failure(result, e)
+            raise _Refused from e
+        except gdrive.VendorError:
+            f["permissions"] = None  # read again next turn
+            _note(result, "permissions: a file's list could not be read")
+        await asyncio.sleep(PERMISSIONS_PACE_S)
     return access_list.from_drive_permissions(f.get("permissions"))
-
-
-async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResult) -> None:
-    """Read the file's permissions when the listing left them out (a shared drive's
-    files, or one the account may not share). A file the store will not say for, or
-    whose read failed, reads `unread`. _Refused when the store refused the account."""
-    if "permissions" in f:
-        return
-    pass_context.check_stop()
-    try:
-        f["permissions"] = await gdrive.file_permissions(token, str(f["id"]))
-    except (gdrive.RateLimited, gdrive.CredentialRefused) as e:
-        sync.vendor_failure(result, e)
-        raise _Refused from e
-    except gdrive.VendorError:
-        f["permissions"] = None  # read again next turn
-        _note(result, "permissions: a file's list could not be read")
-    await asyncio.sleep(PERMISSIONS_PACE_S)
 
 
 async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.AccessList]) -> None:

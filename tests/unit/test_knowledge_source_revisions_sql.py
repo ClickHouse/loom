@@ -42,7 +42,13 @@ def _row(name: str, content: str) -> str:
 async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
     pictures: bool,
 ) -> None:
-    ch = LocalCH(ddl("documents"), *(_row(n, c) for n, c in DOCS.items()))
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        *(_row(n, c) for n, c in DOCS.items()),
+    )
     rows = await store.source_revisions(
         "o", "ns", source_tag("drive"), searchable_only=False, pictures=pictures, ch=ch
     )
@@ -161,7 +167,7 @@ async def test_a_row_only_rewrite_stays_searchable_and_a_cut_write_does_not() ->
 
 
 @pytest.mark.asyncio
-async def test_every_copy_can_come_back_flagged_searchable_or_not() -> None:
+async def test_a_read_of_every_copy_flags_which_are_searchable() -> None:
     ch = LocalCH(
         ddl("documents"),
         "SET enable_quantized_codec = 1",
@@ -175,6 +181,6 @@ async def test_every_copy_can_come_back_flagged_searchable_or_not() -> None:
         _version("cut", 2, 2),
     )
     rows = await store.source_revisions(
-        "o", "ns", source_tag("drive"), searchable_only=False, flag_searchable=True, ch=ch
+        "o", "ns", source_tag("drive"), searchable_only=False, ch=ch
     )
     assert {r["file_id"]: r["searchable"] for r in rows} == {"cut": "", "relisted": "1"}

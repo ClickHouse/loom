@@ -510,6 +510,21 @@ async def unpublished(org: str, namespace: str) -> tuple[int, int]:
     return int(row["owed"]), int(row["parked"])
 
 
+async def owed_ending(org: str, namespace: str, suffix: str) -> bool:
+    """Whether a delivery of a source whose address ends in `suffix` is owed or parked."""
+    if pg.unstorable([org, namespace, suffix]):
+        return False  # no delivery holds what Postgres cannot store
+    return bool(
+        await pg.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM loom.knowledge_deliveries WHERE org = $1 "
+            "AND namespace = $2 AND NOT settled AND right(source_uri, length($3)) = $3)",
+            org,
+            namespace,
+            suffix,
+        )
+    )
+
+
 async def backlog(cap: int) -> pg_pipeline.Backlog:
     """The knowledge deliveries owed, for the pipeline gauges: not parked (up to `cap`),
     parked, and the age of the oldest owed one by its head's commit."""

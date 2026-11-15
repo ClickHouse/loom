@@ -352,7 +352,7 @@ def test_a_walk_cut_at_its_bounds_reads_unread_where_it_did_not_reach(
     assert len(mirror["listings"]) == 2
 
 
-def test_a_rate_limit_on_a_new_file_s_permissions_ends_the_turn(
+def test_a_rate_limit_on_a_new_file_s_permissions_writes_no_document(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def _limited(token: str, file_id: str, **kw: Any) -> Any:
@@ -362,7 +362,8 @@ def test_a_rate_limit_on_a_new_file_s_permissions_ends_the_turn(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     _turn(world, _mirrored())
     assert world.upserts == [] and _detail(world)["status"] == "rate_limited"
-    assert mirror["listings"] == []
+    # No stored copy's list was left unread, so the listing still vouches.
+    assert len(mirror["listings"]) == 1
 
 
 def test_a_file_whose_fetch_fails_leaves_the_listing_row_to_land(world: Any, mirror: Any) -> None:
@@ -441,7 +442,7 @@ def test_a_mirror_is_made_under_the_sources_lease_only_when_there_is_none(
 def test_a_publication_still_owed_in_the_mirror_records_no_listing_row(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _owed(org: str, namespace: str) -> bool:
+    async def _owed(org: str, namespace: str, source_id: str) -> bool:
         return namespace == MIRROR  # a head ClickHouse has no row for yet
 
     monkeypatch.setattr(documents, "publications_owed", _owed)
@@ -502,14 +503,14 @@ def test_a_publication_owed_when_the_copies_were_read_records_no_listing_row(
 ) -> None:
     answers = iter([True, False])  # owed at the read, settled by the turn's end
 
-    async def _owed(org: str, namespace: str) -> bool:
+    async def _owed(org: str, namespace: str, source_id: str) -> bool:
         return next(answers)
 
     monkeypatch.setattr(documents, "publications_owed", _owed)
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     _turn(world, _mirrored())
     assert len(world.upserts) == 1 and mirror["listings"] == []
-    assert "a publication to ClickHouse is owed" in _detail(world)["error"]
+    assert _detail(world)["error"] == "publication: a written list is not in ClickHouse yet"
 
 
 def test_a_failed_permission_read_does_not_hold_back_retirement(
@@ -601,3 +602,58 @@ def test_a_mirrored_source_without_a_mirror_turn_is_refused_a_turn() -> None:
     src = dataclasses.replace(_mirrored(), kind="notion")
     with pytest.raises(ValueError, match="does not sync"):
         source_sync._turn_of(src)
+
+
+def test_a_rate_limit_on_a_new_file_after_the_lists_keeps_the_listing_row(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+
+    async def _limited(token: str, file_id: str, **kw: Any) -> Any:
+        raise gdrive.RateLimited("rate_limited")
+
+    monkeypatch.setattr(gdrive, "file_permissions", _limited)
+    world.files[0]["permissions"] = []  # the stored copy's list, narrowed
+    world.files.append(_file("doc2", DOCS, "2026-01-02T00:00:00.000Z"))  # new, unlisted perms
+    _turn(world, _mirrored())
+    [row] = mirror["rewrites"]
+    assert access_list.from_json(row["access_json"]) == access_list.AccessList()
+    assert len(world.upserts) == 1 and len(mirror["listings"]) == 2
+
+
+def test_no_mirror_is_made_for_a_source_that_cannot_list(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    made: list[str] = []
+
+    async def _live(org: str, namespace: str) -> str:
+        made.append(namespace)
+        return MIRROR
+
+    monkeypatch.setattr(mirrors, "live_mirror", _live)
+    world.fail_listing = 403
+    _turn(world, _mirrored())
+    assert made == [] and world.upserts == []
+
+
+def test_files_past_the_deadline_that_need_no_read_do_not_cut_the_turn(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
+    copies_read = {"done": False}
+    real = source_sync_mirror._refresh_lists
+
+    async def _then_out_of_time(*a: Any, **kw: Any) -> bool:
+        ok = await real(*a, **kw)
+        copies_read["done"] = True
+        return ok
+
+    monkeypatch.setattr(source_sync_mirror, "_refresh_lists", _then_out_of_time)
+    monkeypatch.setattr(PassBudget, "exhausted", lambda self: copies_read["done"])
+    result = _turn(world, _mirrored())  # both unchanged: nothing to fetch or read
+    assert not result.cut and len(mirror["listings"]) == 2

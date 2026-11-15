@@ -161,7 +161,6 @@ class _World:
         tag: str,
         *,
         searchable_only: bool = True,
-        flag_searchable: bool = False,
         pictures: bool = False,
     ) -> list[dict[str, str]]:
         return [
