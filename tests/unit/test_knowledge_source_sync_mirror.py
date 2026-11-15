@@ -108,6 +108,8 @@ def test_a_narrowed_list_rewrites_the_row_and_the_same_list_writes_nothing(
 ) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     _turn(world, _mirrored())
+    for doc in world.docs.values():
+        doc["revision"] = 4  # the stored row's revision, which its chunks record
     assert len(world.upserts) == 1
     _turn(world, _mirrored())  # same revision, same list
     assert len(world.upserts) == 1 and mirror["rewrites"] == []
@@ -119,12 +121,17 @@ def test_a_narrowed_list_rewrites_the_row_and_the_same_list_writes_nothing(
     [(written, _)] = world.upserts
     assert row["content"] == written.content and row["tags"] == written.tags
     assert row["doc_id"] == "d" and row["version"] > 1 and row["superseded_at"] is None
+    # The revision is what keeps the rewritten row searchable over its old chunks.
+    assert row["revision"] == world.docs[row["source_uri"]]["revision"] == 4
 
 
-def test_an_absent_file_reads_unread_before_it_is_retired(world: Any, mirror: Any) -> None:
+def test_an_absent_file_reads_unread_before_it_is_retired(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     _turn(world, _mirrored())
     [(written, _)] = world.upserts
+    monkeypatch.setattr(settings, "knowledge_source_sync_full_interval_seconds", 0)
     world.files = []
     world.file_answers["doc1"] = httpx.Response(404)
     audits = len(world.audits)
@@ -559,6 +566,7 @@ def test_a_failed_permission_read_does_not_hold_back_retirement(
     del world.files[0]["permissions"]
     gone = world.files.pop()  # doc2 deleted in the store
     world.file_answers[gone["id"]] = httpx.Response(404)
+    monkeypatch.setattr(settings, "knowledge_source_sync_full_interval_seconds", 0)
     result = _turn(world, _mirrored())
     assert result.removed == 1 and len(world.docs) == 1
 
@@ -687,3 +695,15 @@ def test_files_past_the_deadline_that_need_no_read_do_not_cut_the_turn(
     monkeypatch.setattr(PassBudget, "exhausted", lambda self: copies_read["done"])
     result = _turn(world, _mirrored())  # both unchanged: nothing to fetch or read
     assert not result.cut and len(mirror["listings"]) == 2
+
+
+def test_a_turn_between_full_intervals_looks_up_no_absent_file(world: Any, mirror: Any) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    world.files = []
+    before = len(world.requests)
+    result = _turn(world, _mirrored())
+    lookups = [r for r in world.requests[before:] if r.url.path.endswith("/files/doc1")]
+    assert lookups == [] and result.removed == 0
+    [(written, _)] = world.upserts
+    assert world.docs[written.source_uri]["access_json"] == ""  # it admits nobody meanwhile

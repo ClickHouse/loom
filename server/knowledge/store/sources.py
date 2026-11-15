@@ -308,7 +308,7 @@ async def source_documents(
 _INLINE_PICTURE = r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*<?data:"
 
 
-async def every_copy_flagged(
+async def every_copy(
     org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, str]]:
     """Every live document the sync wrote under `tag`, as `source_revisions` reads
@@ -357,7 +357,7 @@ async def _revisions(
     pictures: bool,
     ch: _CHClient | None,
 ) -> list[dict[str, str]]:
-    """`source_revisions` and `every_copy_flagged`: the copies whose chunks are live
+    """`source_revisions` and `every_copy`: the copies whose chunks are live
     (`only`), every copy flagged `searchable` (`flag`), or every copy (`any`)."""
     # One set of (address, kind, value) serves both tests, so ClickHouse reads the
     # chunks once; a chunk written before chunks recorded their revision has none.
@@ -448,7 +448,7 @@ __all__ = [
     "all_active_sources",
     "count_documents",
     "directory_row",
-    "every_copy_flagged",
+    "every_copy",
     "get_source",
     "inactive_namespaces",
     "insert_source",

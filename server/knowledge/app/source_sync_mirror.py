@@ -9,9 +9,9 @@ there. A changed list is written as a new row over the stored one that keeps its
 chunks, so nothing is embedded again, and the same list writes nothing. The reads are
 bounded by the pass's deadline only, never by its document bound, and what was read is
 written. Then each new or changed file is fetched and written with its list, as a
-folder turn writes, and a copy whose file is gone is retired on the store's word. The
-listing row lands once every stored copy's list was brought up to date by a listing
-that searched everything."""
+folder turn writes, and at the full interval a copy whose file is gone is retired on
+the store's word. The listing row lands once every stored copy's list was brought up
+to date by a listing that searched everything."""
 
 from __future__ import annotations
 
@@ -74,12 +74,12 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     suffix = mirror_uri_suffix(src.source_id)
     owed = await documents.publications_owed(src.org, src.mirror, suffix)
     with sequential_reads():  # a replica behind the last turn would show an older list
-        copies = await store.every_copy_flagged(src.org, src.mirror, source_id_tag(src.source_id))
+        copies = await store.every_copy(src.org, src.mirror, source_id_tag(src.source_id))
     try:
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
     except _Refused:
         return result  # the store refused the account: nothing more is read or written
-    stored = sync.with_room(result, [c for c in copies if c["searchable"]])
+    stored = sync.stored_by_file_id(result, [c for c in copies if c["searchable"]])
     try:
         for uri, f in addressed:
             access = functools.partial(_listed_access, token, f, result)
@@ -88,7 +88,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
                 break
     except _Refused:
         pass  # every stored list is written: the listing row may still land
-    if result.complete:
+    # As in a folder turn, only a full listing looks up what it no longer has: a copy
+    # it does not have already reads `unread`, so waiting for the interval costs nothing.
+    if result.full and result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
         ids = {str(f["id"]): uri for uri, f in listed.items()}
         await sync.retire_absent(src, ids, gone, run, result)
@@ -151,7 +153,7 @@ async def _refresh_lists(
             await _write_lists(src, changed)  # what was read is written all the same
             raise
         await _write_lists(src, changed)
-        if result.cut:  # the deadline, here or in a read it gave up
+        if result.cut:  # the deadline stopped this batch
             return False
     return True
 

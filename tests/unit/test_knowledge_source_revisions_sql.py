@@ -174,5 +174,5 @@ async def test_a_read_of_every_copy_flags_which_are_searchable() -> None:
         _chunk_of("cut", 1, 1),
         _version("cut", 2, 2),
     )
-    rows = await store.every_copy_flagged("o", "ns", source_tag("drive"), ch=ch)
+    rows = await store.every_copy("o", "ns", source_tag("drive"), ch=ch)
     assert {r["file_id"]: r["searchable"] for r in rows} == {"cut": "", "relisted": "1"}

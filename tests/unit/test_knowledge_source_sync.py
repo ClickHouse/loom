@@ -183,7 +183,7 @@ class _World:
             and (d.get("chunks", True) or not searchable_only)
         ]
 
-    async def every_copy_flagged(self, org: str, ns: str, tag: str) -> list[dict[str, str]]:
+    async def every_copy(self, org: str, ns: str, tag: str) -> list[dict[str, str]]:
         return await self.source_revisions(org, ns, tag, searchable_only=False)
 
     async def source_documents(self, org: str, ns: str, tag: str) -> list[dict[str, Any]]:
@@ -241,7 +241,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         "latest_source",
         "insert_source",
         "source_revisions",
-        "every_copy_flagged",
+        "every_copy",
         "source_documents",
         "count_documents",
     ):
@@ -285,6 +285,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
                 doc_id="d",
                 content=d.get("content", ""),
                 version=d.get("version", 1),
+                revision=d.get("revision", 1),
                 ingested_at="2026-01-01T00:00:00",
                 actor=d["actor"],
                 tags=d["tags"],

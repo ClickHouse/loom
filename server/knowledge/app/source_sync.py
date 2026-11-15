@@ -1,13 +1,16 @@
-"""The sync of registered document sources into their namespaces' documents:
-one pass over every active source, run by the `knowledge_source_sync` worker and
-by `loom knowledge sync`. The shared-folder turn, over its items
-(`source_gdrive_items`), is below; each other kind has its own
-turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`),
-chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
-`TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
-turn's start and stamp, `stored_copies_with_room` for the stored copies and the turn's
-room under the document bound, `sync_item` for one listed item, with `give_up`, `wait`
-and `require_current` for its fetch, `write_document` and `counted` for its write,
+"""The sync of registered document sources into their namespaces' documents, or
+for a mirrored folder source into the namespace's mirror: one pass over every
+active source, run by the `knowledge_source_sync` worker and by `loom knowledge
+sync`. The shared-folder turn, over its items (`source_gdrive_items`), is below;
+each other kind, and a mirrored folder source, has its own turn module
+(`source_sync_linear`, `source_sync_notion`, `source_sync_recording`,
+`source_sync_mirror`), chosen by `_turn_of`, which builds on the public helpers
+here: `Pass` and `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and
+`valid_stamp` for a turn's start and stamp, `open_listing` and `vendor_failure` for
+a folder listing, `stored_copies_with_room` and `stored_by_file_id` for the stored
+copies and the turn's room under the document bound, `sync_item` and `sync_file`
+for one listed item, with `give_up`, `wait` and `require_current` for its fetch,
+`write_document` and `counted` for its write, `ours`, `file_gone`,
 `retire_absent` and `retire`, and `client_error`. A kind's own bookkeeping goes in
 `TurnResult.kind_state`, which the sync state keeps.
 
@@ -19,16 +22,16 @@ so two copies of the worker never sync it at once.
 A turn lists the source's files: every file on its first turn, when asked
 (`full`) and once `knowledge_source_sync_full_interval_seconds` have passed
 since the last full listing; otherwise those changed after the stored stamp. A
-file whose stored copy has the listed revision is skipped without a fetch, unless
+file whose stored copy has the listed revision, and whose chunks are those of its
+version or of its revision, is skipped without a fetch, unless
 a full listing finds a native document whose stored text still holds its
 pictures' bytes and that the sync state has not recorded as checked at this
-revision. A
-changed file is fetched, turned into Markdown and written with
+revision. A changed file is fetched, turned into Markdown and written with
 `knowledge.upsert` as `worker:knowledge-source-sync`, `imported`, tagged
-`source:<name>`. A native document is exported as Markdown, a presentation
-converted slide by slide, and a PDF, `.pptx` or `.docx` file sent to the
-extractor service its format is routed to (the server parses no original
-itself); the bytes are kept as the document's original. A file that cannot be
+`source:<name>` (and, in a mirror, `source-id:<id>`). A native document is exported
+as Markdown, a presentation converted slide by slide, and a PDF, `.pptx` or `.docx`
+file sent to the extractor service its format is routed to (the server parses no
+original itself); the bytes are kept as the document's original. A file that cannot be
 stored is counted `unconverted` with its reason and not written. One the store
 or the extractor refuses, one over the size bound and one whose write is refused
 are also given up on their revision at once, so later passes skip them without a
@@ -60,25 +63,25 @@ listed again and its written files are skipped by revision. A listing that outla
 pass budget writes nothing (no time is left to write), so a source's listing must fit in
 one pass; the item and walk bounds keep it there.
 
-After the sync, the extraction leg mines into decision rows in the same
-namespace (`decision_extract.extract_document`, as `loom decisions extract`
-does) each of a source's documents whose stored revision is not the one last
-mined for it. The mined revision is kept per document in the source's sync state
-and written only after that document's extraction settled, so a document a turn
-wrote is mined on a later pass whatever stopped this one. A native document is
-written with a hash of its title and text, which its mined key carries, so a
-copy written again at its mined revision with other text (a reconversion, or its
-redo after a cut write) is mined again. The leg holds the source's lease and
-bills its model calls to the namespace. A namespace whose own spend on this leg
-reached `knowledge_source_sync_cap_share` of its daily cost cap (read before
-each document; a cap that cannot be read counts as reached), an org whose model
-calls are switched off and a namespace whose calls are held are left for a later
-pass. A document whose extraction fails waits like a file: it is tried again for
-`_WAIT_PASSES` passes on the same revision, then left until it is written again.
-Its model reads stop shortly before the pass's deadline (a try, nothing written;
-one that had a whole pass's read time is given up on at once). Each decision's
-writes run whole with their audit row, and the run stops writing before the next
-one once the pass is stopped or the source's lease is lost.
+After the sync, the extraction leg mines into decision rows in the same namespace
+(`decision_extract.extract_document`, as `loom decisions extract` does) each of a
+namespace source's documents (a mirror's are never mined) whose stored revision is not
+the one last mined for it. The mined revision is kept per document in the source's sync
+state and written only after that document's extraction settled, so a document a turn
+wrote is mined on a later pass whatever stopped this one. A native document is written
+with a hash of its title and text, which its mined key carries, so a copy written again
+at its mined revision with other text (a reconversion, or its redo after a cut write) is
+mined again. The leg holds the source's lease and bills its model calls to the
+namespace. A namespace whose own spend on this leg reached
+`knowledge_source_sync_cap_share` of its daily cost cap (read before each document; a
+cap that cannot be read counts as reached), an org whose model calls are switched off
+and a namespace whose calls are held are left for a later pass. A document whose
+extraction fails waits like a file: it is tried again for `_WAIT_PASSES` passes on the
+same revision, then left until it is written again. Its model reads stop shortly before
+the pass's deadline (a try, nothing written; one that had a whole pass's read time is
+given up on at once). Each decision's writes run whole with their audit row, and the run
+stops writing before the next one once the pass is stopped or the source's lease is
+lost.
 
 `knowledge_source_sync_documents_per_pass` bounds the files fetched, the
 documents retired and the documents mined in one pass, across all sources.
@@ -460,7 +463,6 @@ async def _sync_one(
 def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
     """The turn function of a source; this module's `_turn` reads a folder, and a
     mirrored folder source writes into its namespace's mirror."""
-    kind = src.kind
     # Imported here: a kind's module builds on this one's helpers.
     if mirror_synced(src):
         from server.knowledge.app import source_sync_mirror
@@ -468,7 +470,8 @@ def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
         return source_sync_mirror.turn
     if not served(src):
         # `_usable` keeps such a source out; reaching here is a bug, never a folder turn.
-        raise ValueError(f"this build does not sync {src.access!r} sources")
+        raise ValueError(f"this build does not sync a {src.access} {src.kind!r} source")
+    kind = src.kind
     if kind == "linear":
         from server.knowledge.app import source_sync_linear
 
@@ -618,10 +621,13 @@ async def stored_copies_with_room(
     """The source's searchable stored copies by file id (`store.source_revisions`), and
     the turn's room for new documents: LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS less what it
     holds, so past the bound a turn still updates and retires but writes no new file."""
-    return with_room(turn, await store.source_revisions(src.org, *home(src), pictures=pictures))
+    revisions = await store.source_revisions(src.org, *home(src), pictures=pictures)
+    return stored_by_file_id(turn, revisions)
 
 
-def with_room(turn: TurnResult, revisions: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+def stored_by_file_id(
+    turn: TurnResult, revisions: list[dict[str, str]]
+) -> dict[str, dict[str, str]]:
     """The stored copies `revisions` by file id, and the turn's room for new documents
     (`stored_copies_with_room`)."""
     stored = {d["file_id"]: d for d in revisions}
@@ -919,7 +925,6 @@ async def sync_file(
         return True
     # The stored content's hash, from the full listing's read.
     stored_content_sha256 = prior["stored_content_sha256"] if reconvert and prior else ""
-
     before_fetch = functools.partial(_fetchable, f, run, turn)
 
     async def fetch_and_write() -> str:
@@ -1798,8 +1803,8 @@ __all__ = [
     "sync_file",
     "sync_item",
     "valid_stamp",
+    "stored_by_file_id",
     "vendor_failure",
     "wait",
-    "with_room",
     "write_document",
 ]
