@@ -15,8 +15,9 @@ The scan reads, one statement per table and no long transaction:
 
 Log tables (`LOG_TABLES`) are listed and judged but never scanned: a log row keeps the org a
 caller typed, before any check, so placing a log-only org would let anyone pin an org name
-to this cell. Every refusal is a `Refusal`, returned by the listing and raised in `Refused`
-by the scan, so attach and doctor print the same names and reasons."""
+to this cell. Every refusal is a `Refusal`, returned by the listing (but for a host that
+answers outside the cluster's names, which raises `Refused`) and raised in `Refused` by the
+scan, so attach and doctor print the same names and reasons."""
 
 from __future__ import annotations
 
@@ -312,8 +313,9 @@ async def list_tables(
     ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
 ) -> TableList:
     """The scan's table list in both stores, with every refusal it found, attach's own
-    ClickHouse grants checked first. `names` is `cell_writers.host_names()` on a cluster of
-    several hosts, else empty."""
+    ClickHouse grants checked first; raises `Refused` when a host answers outside the
+    cluster's names. `names` is `cell_writers.host_names()` on a cluster of several hosts,
+    else empty."""
     with query_tag(TAG):
         return await _list_tables(ch, pg_conn, topology, names)
 
@@ -652,9 +654,9 @@ async def scan(
 ) -> ScanResult:
     """The distinct orgs of every table of `tables` and the `configured` orgs; Refused, with
     the listing's refusals before any read, and naming the table when a statement runs out
-    of `budget` or fails other than transiently. A `NULL` org is named malformed. The caller
-    connects ClickHouse inside `ch.statement_timeout()` of the budget, so the driver's own
-    read timeout does not end a long statement first."""
+    of `budget` or fails other than transiently. A ClickHouse `NULL` org is named malformed.
+    The caller connects ClickHouse inside `ch.statement_timeout()` of the budget, so the
+    driver's own read timeout does not end a long statement first."""
     if tables.refusals:
         raise Refused(tables.refusals)
     result = ScanResult()

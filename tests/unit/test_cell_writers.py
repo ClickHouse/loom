@@ -813,9 +813,26 @@ def test_any_row_policy_on_a_system_table_refuses() -> None:
         (
             [
                 _policy("loom_analyst_scope", apply_to_list=["attach"]),
-                _policy("loom_analyst_others", apply_to_all=1),
+                _policy("loom_analyst_others", apply_to_all=1, apply_to_except=["loom_analyst"]),
             ],
-            "the analyst's policy applies to attach",
+            "names other users or roles than Loom writes",
+        ),
+        # A role attach's user holds, in either list, covers or excludes it unnamed.
+        (
+            [
+                _policy("loom_analyst_scope", apply_to_list=["loom_analyst"]),
+                _policy(
+                    "loom_analyst_others", apply_to_all=1, apply_to_except=["loom_analyst", "r"]
+                ),
+            ],
+            "names other users or roles than Loom writes",
+        ),
+        (
+            [
+                _policy("loom_analyst_scope", apply_to_list=["loom_analyst", "r"]),
+                _policy("loom_analyst_others", apply_to_all=1, apply_to_except=["loom_analyst"]),
+            ],
+            "names other users or roles than Loom writes",
         ),
     ],
 )

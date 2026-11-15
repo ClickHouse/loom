@@ -45,7 +45,7 @@ from server.cli.cell_ch import (
 from server.core import ch_names
 from server.core.ch import query_tag
 from server.core.ch_errors import error_code, error_line
-from server.insights.domain.analysis import OTHERS_POLICY_NAME, POLICY_NAME
+from server.insights.domain.analysis import ANALYST_USER, OTHERS_POLICY_NAME, POLICY_NAME
 
 _ACCESS_DENIED = 497  # ClickHouse's ACCESS_DENIED
 
@@ -804,6 +804,14 @@ async def _row_policies(
     return out
 
 
+def _as_loom_writes(r: Mapping[str, Any]) -> bool:
+    """Whether one of Loom's two policies names exactly whom Loom writes it for: a role in
+    either list could cover or exclude attach's user without naming it."""
+    if r["short_name"] == POLICY_NAME:
+        return not r.get("apply_to_all") and list(r.get("apply_to_list") or []) == [ANALYST_USER]
+    return bool(r.get("apply_to_all")) and list(r.get("apply_to_except") or []) == [ANALYST_USER]
+
+
 def _applies(r: Mapping[str, Any], user: str) -> bool:
     if r.get("apply_to_all"):
         return user not in (r.get("apply_to_except") or [])
@@ -837,6 +845,8 @@ def row_policy_problems(rows: Iterable[Mapping[str, Any]], own: str) -> list[tup
             name = str(p["short_name"])
             if name not in (POLICY_NAME, OTHERS_POLICY_NAME):
                 out.append((f"{subject}: {name}", "a row policy hides rows from the scan"))
+            elif not _as_loom_writes(p):
+                out.append((f"{subject}: {name}", "names other users or roles than Loom writes"))
             elif name == POLICY_NAME and _applies(p, own):
                 out.append((f"{subject}: {name}", f"the analyst's policy applies to {own}"))
         if not any(
