@@ -168,8 +168,8 @@ docker compose --project-directory <dir> exec clickhouse clickhouse-client --use
 
 Exercises:
 
-- Write a query over `loom.sql_v1_memories` for the facts saved in the last hour, by
-  agent.
+- Write a query over `loom.sql_v1_memories` that counts the facts each agent created in
+  the last hour (by `created_at`, which a revision keeps).
 - Compare a `memory.search` result with a SQL query over the same rows and explain what
   ranking adds.
 

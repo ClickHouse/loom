@@ -113,8 +113,8 @@ SOLUTION = {
     ],
     "labs/lab4.sql": [
         (
-            "with the agent in a column named `agent`.\n",
-            "with the agent in a column named `agent`.\n"
+            "the agent in a column named `agent`.\n",
+            "the agent in a column named `agent`.\n"
             "SELECT agent, count() AS facts FROM loom.sql_v1_memories\n"
             "WHERE created_at > now() - INTERVAL 1 HOUR GROUP BY agent\n",
         )
@@ -212,11 +212,12 @@ def grant(argv: tuple[str, ...]) -> str:
     return out.getvalue()
 
 
-def grade_copy(
+def prepare(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, solved: bool, abstain_answer: str = ""
-) -> list[tuple[str, bool, str]]:
-    """The grader's results on a copy of the starter, filled in when `solved`;
-    `abstain_answer` replaces what the Lab 1 solution returns from its search."""
+) -> ModuleType:
+    """The grader of a copy of the starter, filled in when `solved`, against a
+    scripted Loom; `abstain_answer` replaces what the Lab 1 solution returns
+    from its search."""
     copy = tmp_path / "course"
     shutil.copytree(STARTER, copy)
     if solved:
@@ -225,7 +226,7 @@ def grade_copy(
             for old, new in edits:
                 assert old in text, f"{path} no longer holds the block a solution fills in"
                 text = text.replace(old, new)
-            if abstain_answer:
+            if abstain_answer and path == "labs/lab1.py":
                 text = text.replace("return hits.abstain_code", f"return {abstain_answer}")
             (copy / path).write_text(text)
     loom = FakeLoom()
@@ -240,6 +241,13 @@ def grade_copy(
     monkeypatch.setenv("LOOM_BASE_URL", "http://loom.test")
     grade = load_grader(copy)
     monkeypatch.setattr(grade, "compose", loom.compose)
+    return grade
+
+
+def grade_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, solved: bool, abstain_answer: str = ""
+) -> list[tuple[str, bool, str]]:
+    grade = prepare(tmp_path, monkeypatch, solved=solved, abstain_answer=abstain_answer)
     return asyncio.run(grade.run_checks())
 
 
@@ -302,3 +310,14 @@ def test_a_lab_1_answer_that_is_not_an_abstain_code_fails(
     results = grade_copy(tmp_path, monkeypatch, solved=True, abstain_answer=answer)
     failed = [title for title, ok, _ in results if not ok]
     assert failed == ["Lab 1: a search nothing answers abstains"]
+
+
+@pytest.mark.parametrize("lab", ["lab1", "lab2"])
+def test_a_solved_lab_runs_as_its_readme_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], lab: str
+) -> None:
+    """`python labs/<lab>.py`: its main() prints what the lab wrote and found."""
+    grade = prepare(tmp_path, monkeypatch, solved=True)
+    asyncio.run(grade.load(lab).main())
+    printed = capsys.readouterr().out
+    assert ("abstain_code: below_threshold" if lab == "lab1" else "answerable: True") in printed
