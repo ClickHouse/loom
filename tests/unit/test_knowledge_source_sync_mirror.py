@@ -290,7 +290,8 @@ def test_a_failed_permission_read_reads_unread_and_the_turn_goes_on(
     assert access_list.from_json(lists["doc2"]).emails == ("ann@example.com",)
     # `unread` admits nobody, so the listing still vouches.
     assert len(mirror["listings"]) == 1 and _detail(world)["status"] == "ok"
-    assert "permissions could not be read" in _detail(world)["error"]
+    # A note, not a mark: the dashboard shows a `listing:` note as a turn cut short.
+    assert _detail(world)["error"] == "permissions: a file's list could not be read"
 
 
 def test_a_copy_without_live_chunks_still_takes_the_store_s_list(
@@ -537,3 +538,64 @@ def test_an_incomplete_search_leaves_an_unlisted_copy_s_list_as_it_was(
     world.files, world.incomplete_search = [], True
     _turn(world, _mirrored())
     assert mirror["rewrites"] == []
+
+
+def test_lists_read_before_a_rate_limit_in_the_same_batch_are_written(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
+
+    async def _limited_after_one(token: str, file_id: str, **kw: Any) -> Any:
+        if file_id == "doc2":
+            raise gdrive.RateLimited("rate_limited")
+        return []  # doc1 shared with nobody now
+
+    monkeypatch.setattr(gdrive, "file_permissions", _limited_after_one)
+    for f in world.files:
+        del f["permissions"]
+    _turn(world, _mirrored())
+    [row] = mirror["rewrites"]
+    assert row["source_uri"].split("/")[-2] == "doc1"
+    assert access_list.from_json(row["access_json"]) == access_list.AccessList()
+    assert _detail(world)["status"] == "rate_limited"
+
+
+def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file(f"doc{n}", DOCS, f"2026-01-0{n}T00:00:00.000Z", permissions=READERS)
+        for n in (1, 2, 3)
+    ]
+    _turn(world, _mirrored())
+    reads: list[list[str]] = []
+
+    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, str]:
+        reads.append(uris)
+        return {}
+
+    out = {"reads": 0}
+
+    async def _permissions(token: str, file_id: str, **kw: Any) -> Any:
+        out["reads"] += 1
+        return []
+
+    monkeypatch.setattr(source_sync_mirror, "_REWRITE_BATCH", 1)
+    monkeypatch.setattr(documents, "committed_lists", _heads)
+    monkeypatch.setattr(gdrive, "file_permissions", _permissions)
+    monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["reads"] >= 2)
+    for f in world.files:
+        del f["permissions"]
+    result = _turn(world, _mirrored())
+    assert result.cut and len(mirror["rewrites"]) == 2  # batches one and two
+    assert [len(uris) for uris in reads] == [1, 1, 1]  # each batch reads its own heads
+
+
+def test_a_mirrored_source_without_a_mirror_turn_is_refused_a_turn() -> None:
+    src = dataclasses.replace(_mirrored(), kind="notion")
+    with pytest.raises(ValueError, match="does not sync"):
+        source_sync._turn_of(src)

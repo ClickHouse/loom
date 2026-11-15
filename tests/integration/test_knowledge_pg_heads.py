@@ -173,13 +173,24 @@ async def test_a_delete_is_a_deleted_head_and_the_get_finds_nothing(
 async def test_the_head_lists_answer_each_live_head_s_permission_list(
     call: Any, pg_conn: Any, org: str, ns: str
 ) -> None:
-    from server.knowledge.store import pg_documents
+    from server.knowledge.domain import access_list
+    from server.knowledge.store import documents, pg_documents
 
     await call("knowledge.add", {"source_uri": "docs/kept.md", "content": "Kept."})
+    await call("knowledge.add", {"source_uri": "docs/listed.md", "content": "Listed."})
     await call("knowledge.add", {"source_uri": "docs/gone.md", "content": "Soon gone."})
     await call("knowledge.delete", {"source_uri": "docs/gone.md"})
-    lists = await pg_documents.head_lists(org, ns, ["docs/kept.md", "docs/gone.md", "docs/none.md"])
-    assert lists == {"docs/kept.md": ""}  # a namespace document holds no list
+    # A row whose list a mirrored source's turn wrote, as that turn writes it.
+    listed = access_list.to_json(access_list.AccessList(emails=("ann@example.com",)))
+    doc = await documents.get_one(org, ns, "docs/listed.md")
+    assert doc is not None
+    row = documents.build_document_row(
+        doc, version=documents.version_past(doc.version), access_json=listed
+    )
+    await documents.insert_one(row, over=doc.version)
+    uris = ["docs/kept.md", "docs/listed.md", "docs/gone.md", "docs/none.md"]
+    lists = await pg_documents.head_lists(org, ns, uris)
+    assert lists == {"docs/kept.md": "", "docs/listed.md": listed}
 
 
 async def test_a_commit_over_a_version_its_writer_did_not_read_is_refused(

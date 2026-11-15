@@ -386,8 +386,9 @@ async def source_revisions(
         if len(page) < REVISIONS_PAGE:
             break
         after = str(page[-1]["source_uri"])
-    return [
-        {
+    found = []
+    for r in rows:
+        doc = {
             "source_uri": str(r.get("source_uri") or ""),
             "file_id": str(r.get("file_id") or ""),
             "source_revision": str(r.get("source_revision") or ""),
@@ -396,10 +397,11 @@ async def source_revisions(
             "inline_pictures": "1" if r.get("inline_pictures") else "",
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
             "access_json": str(r.get("access_json") or ""),
-            "searchable": "1" if searchable_only or r.get("searchable") else "",
         }
-        for r in rows
-    ]
+        if flag_searchable:
+            doc["searchable"] = "1" if r.get("searchable") else ""
+        found.append(doc)
+    return found
 
 
 async def count_documents(

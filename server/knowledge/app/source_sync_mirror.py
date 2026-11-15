@@ -26,14 +26,12 @@ from server.clients import gdrive
 from server.core.ch import sequential_reads
 from server.core.pg_lease import PublicationPending
 from server.knowledge.app import mirrors
-from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.app import source_sync as sync
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import (
     KnowledgeSource,
     home,
-    include_in,
     json_object,
     mirror_uri,
 )
@@ -49,38 +47,24 @@ _REWRITE_BATCH = 100  # not a setting: a bound on one statement's size
 
 
 async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> sync.TurnResult:
+    """List every file of a mirrored source, bring every stored copy's list up to date,
+    then write its new and changed files and retire the gone ones."""
     detail = json_object(state.get("detail", ""))
     result = sync.TurnResult()
     # Every listing is complete; `full` is the periodic full interval, which gives each
     # given-up file its one more try.
     result.full = bool(detail.get("full")) or sync.full_due(detail)
     sync.start_waits(result, detail)
-    credential = source_ops.credential_of(src)
-    if not credential:
-        # Fail closed: a credential that no longer opens is never read as "no auth".
+    if not source_ops.credential_of(src):
+        # Fail closed before a mirror is made for a source that cannot list.
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
         return result
     src = dataclasses.replace(src, mirror=await _mirror(src))
     started = datetime.now(UTC)
-    try:
-        token = await gdrive.access_token(gdrive.parse_service_account(credential))
-        listing = await gdrive_items.list_items(
-            token,
-            src.items,
-            include_in(src.config),
-            fields=gdrive.LISTED_WITH_PERMISSIONS,
-            out_of_time=run.budget.exhausted,
-        )
-    except gdrive.VendorError as e:
-        sync.vendor_failure(result, e)
+    opened = await sync.open_listing(src, result, run, fields=gdrive.LISTED_WITH_PERMISSIONS)
+    if opened is None:
         return result
-    sync.note_listing(result, listing)
-    if listing.ran_out:
-        return result
-    if not await sync.items_visible(token, src.items, result, run.budget.exhausted):
-        return result
-    files = [f for f in listing.files if gdrive.valid_file_id(str(f.get("id") or ""))]
-    result.documents_seen = len(files)
+    token, listing, files = opened
     if result.complete and not listing.walk_cut:
         listed_ids = {str(f["id"]) for f in files}
         result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
@@ -154,26 +138,28 @@ async def _refresh_lists(
     """Rewrite every stored copy's list to what the store says now: the list of the file
     `listed` at its address, or `unread` when a `whole` listing does not have it there.
     Each list is compared with the one the storage authority holds, and changed lists
-    are written a batch at a time as they are read, so a turn the deadline cuts keeps
-    what it read. True when every copy now has a list read this turn, or `unread`."""
+    are written a batch at a time as they are read, so a turn the deadline or the
+    store cuts keeps what it read. False when the deadline cut it."""
     for start in range(0, len(copies), _REWRITE_BATCH):
         batch = copies[start : start + _REWRITE_BATCH]
         held = {c["source_uri"]: c["access_json"] for c in batch}
         held |= await documents.committed_lists(src.org, src.mirror, list(held))
         changed: dict[str, access_list.AccessList] = {}
         cut = False
-        for uri in held:
-            if run.budget.exhausted():
-                result.mark(sync.TurnMark.PASS_BOUND)
-                cut = True
-                break
-            f = listed.get(uri)
-            if f is None and not whole:
-                continue  # an incomplete search may have missed it: it keeps its list
-            access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
-            if access_list.from_json(held[uri]) != access:
-                changed[uri] = access
-        await _write_lists(src, changed)
+        try:
+            for uri in held:
+                if run.budget.exhausted():
+                    result.mark(sync.TurnMark.PASS_BOUND)
+                    cut = True
+                    break
+                f = listed.get(uri)
+                if f is None and not whole:
+                    continue  # an incomplete search may have missed it: it keeps its list
+                access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
+                if access_list.from_json(held[uri]) != access:
+                    changed[uri] = access
+        finally:
+            await _write_lists(src, changed)  # Loom's own store, refused or not
         if cut:
             return False
     return True
@@ -201,7 +187,7 @@ async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResu
         raise _Refused from e
     except gdrive.VendorError:
         f["permissions"] = None  # read again next turn
-        _note(result, "listing: a file's permissions could not be read")
+        _note(result, "permissions: a file's list could not be read")
     await asyncio.sleep(PERMISSIONS_PACE_S)
 
 

@@ -120,6 +120,7 @@ from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
+    MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     home,
@@ -505,35 +506,16 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     # nothing (a definition in a code sample): file id -> the revision checked.
     checked = detail.get(_PICTURES_CHECKED)
     checked = checked if isinstance(checked, dict) else {}
-    credential = source_ops.credential_of(src)
-    if not credential:
-        # Fail closed: a credential that no longer opens is never read as "no auth".
-        turn.fail("credential_invalid", "the stored credential no longer opens; rotate it")
-        return turn
     listed_at = datetime.now(UTC)
-    try:
-        token = await gdrive.access_token(gdrive.parse_service_account(credential))
-        listing = await gdrive_items.list_items(
-            token,
-            src.items,
-            include_in(src.config),
-            modified_after="" if turn.full else stamp,
-            out_of_time=run.budget.exhausted,
-        )
-    except gdrive.VendorError as e:
-        vendor_failure(turn, e)
+    opened = await open_listing(
+        src, turn, run, modified_after="" if turn.full else stamp, check_items=turn.full
+    )
+    if opened is None:
         return turn
-    note_listing(turn, listing)
-    if listing.ran_out:
-        return turn  # out of pass time: nothing more is written or retired this turn
-    if turn.full and not await items_visible(token, src.items, turn, run.budget.exhausted):
-        return turn
-    files = listing.files
+    token, listing, files = opened
     # Only a whole listing of items the account still sees, every folder walked,
     # says what is absent; past a cut walk only the store's word on a file retires it.
     trusted = turn.full and turn.complete and not listing.walk_cut
-    files = [f for f in files if gdrive.valid_file_id(str(f.get("id") or ""))]
-    turn.documents_seen = len(files)
     turn.newest = capped(
         max((str(f.get("modifiedTime") or "") for f in files), default=""), listed_at
     )
@@ -563,6 +545,47 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
         gone = functools.partial(file_gone, token, listing=listing, turn=turn)
         await retire_absent(src, listed, gone, run, turn)
     return turn
+
+
+async def open_listing(
+    src: KnowledgeSource,
+    turn: TurnResult,
+    run: Pass,
+    *,
+    modified_after: str = "",
+    fields: str = gdrive.LISTED,
+    check_items: bool = True,
+) -> tuple[str, gdrive_items.Listing, list[dict[str, Any]]] | None:
+    """A folder turn's token, listing and listed files with valid ids, after checking
+    (with `check_items`) that the account still sees every item; None when the turn
+    must write nothing (a credential that does not open, a failed listing, the pass
+    running out), with the reason on `turn`."""
+    credential = source_ops.credential_of(src)
+    if not credential:
+        # Fail closed: a credential that no longer opens is never read as "no auth".
+        turn.fail("credential_invalid", "the stored credential no longer opens; rotate it")
+        return None
+    try:
+        token = await gdrive.access_token(gdrive.parse_service_account(credential))
+        listing = await gdrive_items.list_items(
+            token,
+            src.items,
+            include_in(src.config),
+            modified_after=modified_after,
+            fields=fields,
+            out_of_time=run.budget.exhausted,
+        )
+    except gdrive.VendorError as e:
+        vendor_failure(turn, e)
+        return None
+    note_listing(turn, listing)
+    if listing.ran_out:
+        return None  # out of pass time: nothing more is written or retired this turn
+    if check_items and not await items_visible(token, src.items, turn, run.budget.exhausted):
+        return None
+    files = [f for f in listing.files if gdrive.valid_file_id(str(f.get("id") or ""))]
+    turn.documents_seen = len(files)
+    return token, listing, files
 
 
 def vendor_failure(turn: TurnResult, e: gdrive.VendorError) -> None:
@@ -870,11 +893,11 @@ async def sync_file(
     run: Pass,
     turn: TurnResult,
     *,
-    access: Callable[[], Awaitable[access_list.AccessList | None]] | None = None,
+    access: Callable[[], Awaitable[access_list.AccessList]] | None = None,
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
     `access` runs just before a fetch and gives the permission list the write carries
-    (`unread` without it); None from it skips the file. A native document whose
+    (`unread` without it). A native document whose
     stored text still holds its pictures' bytes (an earlier conversion's) is fetched
     and converted again at its same revision when a full listing lists it."""
     revision = str(f.get("modifiedTime") or "")
@@ -902,12 +925,8 @@ async def sync_file(
         nonlocal permissions
         if not await _fetchable(f, run, turn):
             return False
-        if access is None:
-            return True
-        listed = await access()
-        if listed is None:
-            return False
-        permissions = listed
+        if access is not None:
+            permissions = await access()
         return True
 
     async def fetch_and_write() -> str:
@@ -1179,12 +1198,11 @@ async def write_document(
     another writer took the address while the item was fetched: the check before the
     fetch is seconds old by now."""
     namespace, tag = home(src)
-    mirrored = namespace != src.namespace
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if mirrored:
-        tags.append(tag)  # its `source-id:<id>`
+    if src.access == MIRRORED_ACCESS:
+        tags.append(tag)  # its `source-id:<id>`; a mirror is no repository's namespace
     elif repo := _repo_tag(src):
-        tags.insert(1, repo)  # a mirror is no repository's namespace
+        tags.insert(1, repo)
     metadata: dict[str, Any] = {
         "source_kind": src.kind,
         "source_name": src.name,
@@ -1772,6 +1790,7 @@ __all__ = [
     "give_up",
     "items_visible",
     "note_listing",
+    "open_listing",
     "ours",
     "require_current",
     "retire",
