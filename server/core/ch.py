@@ -1172,10 +1172,10 @@ class CHClient:
         *,
         settings: dict[str, Any] | None = None,
     ) -> AsyncIterator[AsyncIterator[bytes]]:
-        """A SELECT's output as raw byte chunks (`FORMAT RawBLOB` for one String value), for a
-        body too large to buffer. Opening is retried like any read; the stream holds one of
-        the `STREAM_SLOTS` until the block exits, not a pool slot, since the client sets how
-        long that takes. `settings` are this statement's own ClickHouse settings."""
+        """A SELECT's output as raw byte chunks (`FORMAT RawBLOB` for one String value), for
+        a body too large to buffer. Opening is retried like any read; the stream holds one
+        of the `STREAM_SLOTS` until the block exits, not a pool slot, since the client sets
+        how long that takes. `settings` are this statement's own ClickHouse settings."""
 
         held: list[int] = []  # the generation whose client opened the stream
 

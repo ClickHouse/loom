@@ -376,7 +376,8 @@ async def test_one_host_scans_without_on_cluster() -> None:
 
 def _cluster_status(*hosts: str, status: int = 0) -> list[dict[str, Any]]:
     return [
-        {"host": h, "port": 9000, "status": status, "error": "" if not status else "lost"}
+        # A 64-bit status, which JSONEachRow quotes, as a server sends it.
+        {"host": h, "port": 9000, "status": str(status), "error": "" if not status else "lost"}
         for h in hosts
     ]
 
@@ -677,7 +678,7 @@ async def test_a_sync_that_does_not_finish_names_its_hosts_not_the_budget() -> N
     timeout = "Code: 159. DB::Exception: Distributed DDL task is not finished on 1 of 2 hosts"
     ch = FakeCH().on(
         "SYSTEM SYNC REPLICA",
-        [{"host": "ch-0", "port": 9000, "status": 0, "error": ""}, {"exception": timeout}],
+        [{"host": "ch-0", "port": 9000, "status": "0", "error": ""}, {"exception": timeout}],
     )
     ch.on("SYSTEM FLUSH", _cluster_status("ch-0", "ch-1"))
     tables = TableList(clickhouse=[Table("loom", "memory", "ReplicatedMergeTree")])

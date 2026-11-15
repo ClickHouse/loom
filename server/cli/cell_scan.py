@@ -286,9 +286,9 @@ def pg_classified() -> set[str]:
 
 async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
     """Every table of schema `loom` with an `org` column (`cell_triggers.ORG_TABLES`), and
-    the refusals: one erasure does not classify, a census table the listing missed whose
-    `pg_attribute` shows an `org` column (`information_schema.columns` hides the columns of
-    a table the reading role holds no privilege on)."""
+    the refusals: one erasure does not classify, and a census table the listing leaves out
+    (a partition, or a relation of another kind) whose `pg_attribute` shows an `org`
+    column."""
     names = [f"loom.{r['relname']}" for r in await conn.fetch(ORG_TABLES)]
     known = pg_classified()
     refusals = [
@@ -505,7 +505,7 @@ async def _system(ch: Any, sql: str, topology: Topology, budget: Budget, subject
         # The statement was given the budget's whole seconds, so up to one is left over.
         if budget.left() <= 1:
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-        done = {str(r.get("host")) for r in getattr(e, "rows", ()) if r.get("status") == 0}
+        done = {str(r.get("host")) for r in getattr(e, "rows", ()) if str(r.get("status")) == "0"}
         unfinished = ", ".join(sorted(topology.hosts - done)) or "this server"
         raise Refused(
             [Refusal(subject, f"{what} did not finish on {unfinished}: {error_line(e)}")]
