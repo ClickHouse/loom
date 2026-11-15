@@ -811,3 +811,37 @@ async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error()
             loop.set_exception_handler(handler)
             await pg.close_pool()
             settings.pg_dsn, settings.cell, pg._expected = saved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "marked,leaked,expected",
+    [(True, False, True), (False, True, False), (False, False, False)],
+    ids=["startup-marker", "leaked-set", "no-marker"],
+)
+async def test_the_refresh_reads_marked_from_the_session_it_runs_on(
+    monkeypatch: pytest.MonkeyPatch, marked: bool, leaked: bool, expected: bool
+) -> None:
+    """`cell.refresh` on one real session: a startup marker reads true; a session `SET` of
+    it, as another client may leave on a pooled server connection, is dropped by the RESET
+    ALL in the read's transaction and reads false, as no marker does."""
+    from server.settings import settings
+
+    async with _cell("recording") as (dsn, _conn):
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", "eu-1")  # the startup marker goes with it
+        monkeypatch.setattr(pg, "_expected", None)
+        monkeypatch.setattr(cell, "_view", cell._View())
+        async with pg.dedicated(marked=marked) as session:
+            if leaked:
+                await session.execute("SET loom.tenancy_checked = 'on'")
+                assert await session.fetchval("SHOW loom.tenancy_checked") == "on"
+
+            @contextlib.asynccontextmanager
+            async def _connection() -> AsyncIterator[Any]:
+                yield session
+
+            monkeypatch.setattr(pg, "connection", _connection)
+            assert await cell.refresh() is True
+            assert cell.marked() is expected
+            assert cell.reported_mode() == "recording"

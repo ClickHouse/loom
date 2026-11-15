@@ -331,8 +331,58 @@ def test_the_key_is_present_only_on_a_first_cell_with_loom_cell_set(
     assert cell_router.router_key() == {}
 
 
+def test_router_why_tells_an_unread_first_row_from_an_absent_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cell, "_view", cell._View())
+    assert cell_router.router_key() == {
+        "router": None,
+        "router_why": "the cell's first row is not read yet",
+    }
+    monkeypatch.setattr(cell, "_view", cell._View(read_at=time.monotonic()))
+    assert cell_router.router_key() == {
+        "router": None,
+        "router_why": "this cell's first row is absent: run loom cell prepare",
+    }
+
+
+def test_a_run_of_the_same_failure_logs_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A router down, or answering 401 through a rotation, for many periods logs one
+    warning per change of cause, not one per read."""
+    _router(
+        monkeypatch,
+        (503, {"error": "down"}),
+        (503, {"error": "down"}),
+        (503, {"error": "down"}),
+        (401, {"error": "no cell"}),
+        (401, {"error": "no cell"}),
+        ATTACHING,
+        (503, {"error": "down"}),
+    )
+    with caplog.at_level("WARNING", logger=cell_router.log.name):
+        for _ in range(7):
+            asyncio.run(cell_router.read_once())
+    logged = [r.getMessage() for r in caplog.records if r.name == cell_router.log.name]
+    assert logged == [
+        "cell state: the router read: the router answered 503",
+        "cell state: the router read: 401: the router does not accept LOOM_CELL_ROUTER_TOKEN",
+        "cell state: the router read: the router answered 503",
+    ]
+
+
 def test_the_background_reader_asks_until_serving(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Its reads share one client, closed when it ends."""
     calls = _router(monkeypatch, ATTACHING, ATTACHING, SERVING)
+    clients: list[httpx.AsyncClient] = []
+    build = httpx.AsyncClient
+
+    def _client(**kw: Any) -> httpx.AsyncClient:
+        clients.append(build(**kw))
+        return clients[-1]
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
     sleeps: list[float] = []
 
     async def _sleep(s: float) -> None:
@@ -346,6 +396,7 @@ def test_the_background_reader_asks_until_serving(monkeypatch: pytest.MonkeyPatc
     asyncio.run(_run())
     assert len(calls) == 3 and sleeps == [cell_router.period_s()] * 3
     assert cell_router._serving and cell_router.router_key()["router"] is True
+    assert len(clients) == 1 and clients[0].is_closed
 
 
 def test_the_background_reader_waits_for_the_first_row_and_a_later_cell_never_asks(

@@ -2,25 +2,25 @@
 with the cell's own credential), for the tenancy check and the heartbeat
 (docs/architecture/cells.md, "The heartbeat's keys").
 
-Only a process with `LOOM_CELL` set on a first cell asks: a later cell's route answers
-404. The answer is three-valued for the tenancy check (`directory_answer`): `attaching`,
+Only a process with `LOOM_CELL` set on a first cell asks: a later cell's route answers 404.
+The answer is three-valued for the tenancy check (`directory_answer`): `attaching`,
 `serving` or another state, and `unknown` while no read has landed, the last one failed or
 answered for no state of this cell, or it is late (older than the period it is read at plus
-`LOOM_CELL_ROUTER_TIMEOUT_S`). Once the process has read `serving` it keeps it for its
-life and asks no more: only `loom cell restore` lowers it, and that restarts the processes.
+`LOOM_CELL_ROUTER_TIMEOUT_S`). Once the process has read `serving` it keeps it for its life
+and asks no more: only `loom cell restore` lowers it, and that restarts the processes.
 
 A server process runs one background reader (`start_reader`) that asks every
-`min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)`; nothing awaits it, so
-a slow router never delays a request or a beat. A process without the reader (a CLI, the
-workers child) asks on demand, at most once every `LOOM_TENANCY_MODE_CACHE_S`, the
-requests waiting sharing one call.
+`min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)`; nothing awaits it, so a
+slow router never delays a request or a beat. A process without the reader (a CLI, the
+workers child) asks on demand, at most once every `LOOM_TENANCY_MODE_CACHE_S`, the requests
+waiting sharing one call.
 
-The reader also keeps what the heartbeat's `router` key reports (`router_key`): `null`
-until the first answer, `true` once a 200 named this cell, `false` for a configuration that
-never works (a router setting unset, a URL that cannot be requested, a 404, an answer for
-another cell, a 401 that persists past `LOOM_ROUTER_DIRECTORY_CACHE_S`, the router
-replicas' credential cache), with `router_why` naming which; a transient failure keeps the
-last value, and while the key is `null` `router_why` names the last transient cause.
+The reader also keeps what the heartbeat's `router` key reports (`router_key`): `null` until
+the first answer, `true` once a 200 named this cell, `false` for a configuration that never
+works (a router setting unset, a URL that cannot be requested, a 404, an answer for another
+cell, a 401 that persists past `LOOM_ROUTER_DIRECTORY_CACHE_S`, the router replicas'
+credential cache), with `router_why` naming which; a transient failure keeps the last value,
+and while the key is `null` `router_why` names the last transient cause.
 """
 
 from __future__ import annotations
@@ -28,9 +28,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from server.core import cell
 from server.settings import settings
+
+if TYPE_CHECKING:
+    import httpx
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +48,8 @@ _serving = False
 _router: bool | None = None
 _router_why = ""
 _unauthorized_since: float | None = None
+# The cause last logged: a run of the same failure logs once.
+_logged_why = ""
 # Whether this process runs the background reader; without it reads are on demand.
 _background = False
 _read: asyncio.Task[None] | None = None
@@ -99,7 +105,12 @@ def router_key() -> dict[str, object]:
     if first is False:
         return {}
     if first is None:
-        return {"router": None, "router_why": "the cell's first row is not read yet"}
+        why = (
+            "this cell's first row is absent: run loom cell prepare"
+            if cell.rows_read()
+            else "the cell's first row is not read yet"
+        )
+        return {"router": None, "router_why": why}
     return {"router": _router, "router_why": _router_why}
 
 
@@ -114,12 +125,21 @@ async def _read_shared() -> None:
     await asyncio.shield(_read)
 
 
-async def read_once() -> None:
-    """Ask the router once and keep the answer."""
-    global _answer, _serving
-    state, router, why = await _ask()
-    if why and why != _router_why:
-        log.warning("cell state: the router read: %s", why)
+async def read_once(client: httpx.AsyncClient | None = None) -> None:
+    """Ask the router once, on `client` (the background reader's) or a client of its own,
+    and keep the answer."""
+    global _answer, _serving, _logged_why
+    if client is None:
+        import httpx
+
+        async with httpx.AsyncClient() as own:
+            state, router, why = await _ask(own)
+    else:
+        state, router, why = await _ask(client)
+    if why != _logged_why:
+        if why:
+            log.warning("cell state: the router read: %s", why)
+        _logged_why = why
     now = time.monotonic()
     _answer = (state, now)
     if state == SERVING:
@@ -149,7 +169,7 @@ def _keep_router(router: bool | None, why: str, now: float) -> None:
         _router_why = why
 
 
-async def _ask() -> tuple[str, bool | None, str]:
+async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str]:
     """(the answer for the tenancy check, the `router` value it proves or None for a
     transient failure, its cause)."""
     if missing := unset():
@@ -158,10 +178,11 @@ async def _ask() -> tuple[str, bool | None, str]:
 
     limit = float(settings.cell_router_timeout_s)
     try:
-        async with asyncio.timeout(limit), httpx.AsyncClient(timeout=limit) as c:
+        async with asyncio.timeout(limit):
             r = await c.get(
                 f"{router_url()}/cells/v1/cells/{settings.cell}",
                 headers={"Authorization": f"Bearer {settings.cell_router_token}"},
+                timeout=limit,
             )
     except (httpx.InvalidURL, httpx.UnsupportedProtocol) as e:
         # Never fixes itself; the boot refuses most such URLs (`cell.settings_problem`).
@@ -191,29 +212,39 @@ async def _ask() -> tuple[str, bool | None, str]:
 def start_reader() -> asyncio.Task[None]:
     """The background reader of a server process with `LOOM_CELL` set: it waits for the
     `first` row, asks on a first cell until it has read `serving`, and ends on a later
-    cell, which never asks."""
+    cell, which never asks. Its reads share one client, closed when it ends or is
+    cancelled at shutdown."""
     global _background
     _background = True
 
     async def _run() -> None:
+        import httpx
+
         from server.core.ch import set_query_tag
 
         set_query_tag("cell.router_read")
-        while not _serving:
-            first = cell.is_first()
-            if first is False:
-                return
-            if first:
-                try:
-                    await read_once()
-                except Exception as e:  # noqa: BLE001 — a failed read must not stop the reader
-                    log.warning("cell state: the router read failed: %s", type(e).__name__)
-            await asyncio.sleep(period_s())
+        client: httpx.AsyncClient | None = None
+        try:
+            while not _serving:
+                first = cell.is_first()
+                if first is False:
+                    return
+                if first:
+                    client = client or httpx.AsyncClient()
+                    try:
+                        await read_once(client)
+                    except Exception as e:  # noqa: BLE001 — a failed read must not stop the reader
+                        log.warning("cell state: the router read failed: %s", type(e).__name__)
+                await asyncio.sleep(period_s())
+        finally:
+            if client is not None:
+                await client.aclose()
 
     return asyncio.get_running_loop().create_task(_run(), name="loom-cell-router-read")
 
 
 def _reset_for_tests() -> None:
     global _answer, _serving, _router, _router_why, _unauthorized_since, _background, _read
+    global _logged_why
     _answer, _serving, _router, _router_why = None, False, None, ""
-    _unauthorized_since, _background, _read = None, False, None
+    _unauthorized_since, _background, _read, _logged_why = None, False, None, ""

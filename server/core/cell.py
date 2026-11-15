@@ -298,18 +298,23 @@ def is_first() -> bool | None:
     return None if _view.first is None else _view.first[0]
 
 
+def rows_read() -> bool:
+    """Whether a read of the state rows has landed in this process."""
+    return _view.read_at is not None
+
+
 def marked() -> bool | None:
     """Whether this process's pooled sessions keep the tenancy marker, as the last read
-    found it after RESET ALL (`refresh`); None until a read lands, so under the
-    ClickHouse authority, where nothing is read, always None."""
+    found it after RESET ALL (`refresh`); None until a read lands, so under the ClickHouse
+    authority, where nothing is read, always None."""
     return _view.marked
 
 
 def reported_mode() -> str:
-    """The state a heartbeat reports as its tenancy mode: the state the last read rows
-    make (`open`, `recording`, `enforced` or `partial`; a later cell's `recording` reads
+    """The state a heartbeat reports as its tenancy mode: the state the last read rows make
+    (`open`, `recording`, `enforced` or `partial`; a later cell's `recording` reads
     `enforced`), '' only before a read lands or in a process that never reads them."""
-    return "" if _view.read_at is None else _view.state()
+    return _view.state() if rows_read() else ""
 
 
 def mode() -> str:

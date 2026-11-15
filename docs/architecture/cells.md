@@ -1237,8 +1237,8 @@ row's rule). With `LOOM_CELL` unset a process reads only the mode and `first` ro
 whether a tenancy or own row exists, and only under the Postgres authority, where a
 deployment never prepared has none (the tables are created empty), so builds N-1 and N
 serve side by side unchanged. The router routes by host, issuer and the first cell,
-never by a cell's ops, so a cell's release waits on the router's only where its processes
-would load a router of an earlier build, as below.
+never by a cell's ops, so a cell's release does not wait on the router's, but for the one
+the next paragraph names.
 
 The keys beside a heartbeat's fingerprint ([the heartbeat's keys](#the-heartbeats-keys)) are
 the attach release's own heartbeat keys: a build before them reads only a fingerprint's
