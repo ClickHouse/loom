@@ -6,11 +6,12 @@ lists again).
 The turn first brings every stored copy's list to what the store says now: the list of
 the file listed at its address, or `unread` for a copy the listing does not have there.
 A changed list is written as a new row over the stored one that keeps its chunks, so
-nothing is embedded again, and the same list writes nothing. These writes are bounded
-by the pass's deadline only, never by its document bound. Then each new or changed file
-is fetched and written with its list, as a folder turn writes, and a copy whose file
-is gone is retired on the store's word. The listing row lands once every stored copy's
-list was brought up to date by a listing that searched everything."""
+nothing is embedded again, and the same list writes nothing. The reads are bounded by
+the pass's deadline only, never by its document bound, and what was read is written.
+Then each new or changed file is fetched and written with its list, as a folder turn
+writes, and a copy whose file is gone is retired on the store's word. The listing row
+lands once every stored copy's list was brought up to date by a listing that searched
+everything."""
 
 from __future__ import annotations
 
@@ -45,6 +46,8 @@ from server.workers import pass_context
 PERMISSIONS_PACE_S = 0.1  # not a setting: the store's limit, the same on every deployment
 # List rewrites read and written in one round trip each.
 _REWRITE_BATCH = 100  # not a setting: a bound on one statement's size
+# The statuses a refused permission read leaves, which stop the turn.
+_REFUSED = ("rate_limited", "credential_invalid")
 
 
 async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> sync.TurnResult:
@@ -88,7 +91,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     copies = await store.source_revisions(
         src.org, *home(src), searchable_only=False, flag_searchable=True
     )
-    lists_current = await _keep_lists(src, token, copies, listed, run, result)
+    lists_current = await _refresh_lists(src, token, copies, listed, run, result)
+    if result.status in _REFUSED:
+        return result  # the store refused a permission read: no fetch follows
     stored = sync.with_room(result, [c for c in copies if c["searchable"]])
     for uri, f in addressed:
         if run.budget.exhausted():
@@ -98,7 +103,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         prior = stored.get(str(f["id"]))
         if not await sync.sync_file(src, token, f, uri, prior, run, result, ready=ready):
             break
-        if result.status in ("rate_limited", "credential_invalid"):
+        if result.status in _REFUSED:
             break  # a permission read the store refused
     if result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
@@ -121,7 +126,7 @@ async def _mirror(src: KnowledgeSource) -> str:
         return await mirrors.ensure_mirror(src.org, src.namespace)
 
 
-async def _keep_lists(
+async def _refresh_lists(
     src: KnowledgeSource,
     token: str,
     copies: list[dict[str, str]],
@@ -129,9 +134,10 @@ async def _keep_lists(
     run: sync.Pass,
     result: sync.TurnResult,
 ) -> bool:
-    """Bring every stored copy's list to what the store says now: the list of the file
-    `listed` at its address, or `unread`. True when every copy now has a list read this
-    turn, or `unread`."""
+    """Rewrite every stored copy's list to what the store says now: the list of the file
+    `listed` at its address, or `unread`. Changed lists are written a batch at a time as
+    they are read, so a turn the deadline cuts keeps what it read. True when every copy
+    now has a list read this turn, or `unread`."""
     changed: dict[str, access_list.AccessList] = {}
     read_all = True
     for copy in copies:
@@ -149,7 +155,11 @@ async def _keep_lists(
             break
         if access_list.from_json(copy["access_json"]) != access:
             changed[copy["source_uri"]] = access
-    return await _rewrite_lists(src, changed, run, result) and read_all
+        if len(changed) == _REWRITE_BATCH:
+            await _write_lists(src, changed)
+            changed = {}
+    await _write_lists(src, changed)
+    return read_all
 
 
 async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResult) -> bool:
@@ -172,41 +182,27 @@ async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResu
     return True
 
 
-async def _rewrite_lists(
-    src: KnowledgeSource,
-    lists: dict[str, access_list.AccessList],
-    run: sync.Pass,
-    result: sync.TurnResult,
-) -> bool:
+async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.AccessList]) -> None:
     """Write each stored document's new list as a new row with everything else as it
-    was: its chunks are kept, so nothing is embedded again. False when the pass ran out
-    first."""
+    was: its chunks are kept, so nothing is embedded again."""
     namespace, _ = home(src)
-    uris = list(lists)
-    for start in range(0, len(uris), _REWRITE_BATCH):
-        if run.budget.exhausted():
-            result.mark(sync.TurnMark.PASS_BOUND)
-            return False
-        pass_context.check_stop()
-        with sequential_reads():  # a replica behind the last write would carry old content
-            docs = await documents.get_many_by_uris(
-                src.org, namespace, uris[start : start + _REWRITE_BATCH]
-            )
-        docs = [d for d in docs if sync.ours(src, d)]
-        if not docs:
-            continue
-        await sync.require_current(src)
-        rows = [
-            documents.build_document_row(
-                d,
-                version=documents.version_past(d.version),
-                access_json=access_list.to_json(lists[d.source_uri]),
-            )
-            for d in docs
-        ]
-        with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
-            await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
-    return True
+    pass_context.check_stop()
+    with sequential_reads():  # a replica behind the last write would carry old content
+        docs = await documents.get_many_by_uris(src.org, namespace, list(lists))
+    docs = [d for d in docs if sync.ours(src, d)]
+    if not docs:
+        return
+    await sync.require_current(src)
+    rows = [
+        documents.build_document_row(
+            d,
+            version=documents.version_past(d.version),
+            access_json=access_list.to_json(lists[d.source_uri]),
+        )
+        for d in docs
+    ]
+    with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
+        await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
 
 
 __all__ = ["PERMISSIONS_PACE_S", "turn"]

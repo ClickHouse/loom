@@ -215,7 +215,7 @@ def test_a_given_up_file_is_tried_again_once_per_full_interval(
     assert "bad1" not in _detail(world)["file_waits"]
 
 
-def test_the_pass_running_out_while_lists_are_read_writes_no_listing_row(
+def test_lists_read_before_the_pass_runs_out_are_written_and_no_listing_row_lands(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world.files = [
@@ -227,14 +227,40 @@ def test_the_pass_running_out_while_lists_are_read_writes_no_listing_row(
 
     async def _permissions(token: str, file_id: str, **kw: Any) -> Any:
         out["of_time"] = True
-        return READERS
+        return []  # everyone removed
 
     monkeypatch.setattr(gdrive, "file_permissions", _permissions)
     monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["of_time"])
     for f in world.files:
         del f["permissions"]  # a shared drive's files: read one at a time
     result = _turn(world, _mirrored())
+    [row] = mirror["rewrites"]  # the one list read before the deadline
+    assert access_list.from_json(row["access_json"]) == access_list.AccessList()
     assert result.cut and len(world.upserts) == 2 and len(mirror["listings"]) == 1
+
+
+def test_a_rate_limit_on_a_stored_copy_s_list_stops_the_turn_before_any_fetch(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+
+    async def _limited(token: str, file_id: str, **kw: Any) -> Any:
+        raise gdrive.RateLimited("rate_limited")
+
+    monkeypatch.setattr(gdrive, "file_permissions", _limited)
+    world.files = [
+        _file("doc1", DOCS, "2026-01-03T00:00:00.000Z", permissions=READERS),  # new
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),  # stored, its list unread
+    ]
+    _turn(world, _mirrored())
+    assert len(world.upserts) == 1 and _detail(world)["status"] == "rate_limited"
+
+
+def test_a_new_mirror_name_has_the_form_no_token_may_name() -> None:
+    from server.core.naming import is_mirror_name, new_mirror_name
+
+    assert is_mirror_name(new_mirror_name())
 
 
 def test_a_failed_permission_read_reads_unread_and_the_turn_goes_on(

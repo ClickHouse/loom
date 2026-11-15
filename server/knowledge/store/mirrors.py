@@ -3,18 +3,12 @@ namespace's mirrored documents (docs/architecture/document-sources.md, The mirro
 
 from __future__ import annotations
 
-import secrets
 from datetime import datetime
 
 from server.core.repo_base import _CHClient, _default_client
 
 TABLE = "loom.knowledge_mirrors"
 LISTINGS = "loom.knowledge_source_listings"
-
-
-def new_mirror_name() -> str:
-    """A fresh mirror name: `acl-` and 24 random hex digits, a form no token may name."""
-    return "acl-" + secrets.token_hex(12)
 
 
 async def mirrors_of(
@@ -78,6 +72,5 @@ __all__ = [
     "add_mirror",
     "forget_mirrors",
     "mirrors_of",
-    "new_mirror_name",
     "record_listing",
 ]

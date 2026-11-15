@@ -466,6 +466,7 @@ def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
 
         return source_sync_mirror.turn
     if not served(src):
+        # `_usable` keeps such a source out; reaching here is a bug, never a folder turn.
         raise ValueError(f"this build does not sync {src.access!r} sources")
     if kind == "linear":
         from server.knowledge.app import source_sync_linear
@@ -1159,9 +1160,10 @@ async def write_document(
     `unread`. False, writing nothing, when another writer took the address while the
     item was fetched: the check before the fetch is seconds old by now."""
     namespace, tag = home(src)
+    mirrored = src.access == MIRRORED_ACCESS
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if tag != source_tag(src.name):
-        tags.append(tag)  # a mirrored source's `source-id:<id>`
+    if mirrored:
+        tags.append(tag)  # its `source-id:<id>`
     if repo := _repo_tag(src):
         tags.insert(1, repo)
     metadata: dict[str, Any] = {
@@ -1191,9 +1193,9 @@ async def write_document(
         blob_content_type=str(f.get("mimeType") or "") if original else "",
         source_class="imported",
     )
-    permissions = access_list.UNREAD
-    if src.access == MIRRORED_ACCESS:
-        permissions = access_list.from_drive_permissions(f.get("permissions"))
+    permissions = (
+        access_list.from_drive_permissions(f.get("permissions")) if mirrored else access_list.UNREAD
+    )
     with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
         await writes.handle_knowledge_upsert(request, permissions=permissions)
     return True

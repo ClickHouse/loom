@@ -4,11 +4,11 @@ and the sync writes a mirrored source's documents into one
 
 from server.auth.directory import directory
 from server.core.ch import sequential_reads
+from server.core.naming import new_mirror_name
 from server.knowledge.store.mirrors import (
     add_mirror,
     forget_mirrors,
     mirrors_of,
-    new_mirror_name,
     record_listing,
 )
 
