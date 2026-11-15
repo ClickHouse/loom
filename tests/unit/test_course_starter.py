@@ -11,6 +11,7 @@ import asyncio
 import functools
 import importlib.util
 import io
+import itertools
 import json
 import re
 import shutil
@@ -132,6 +133,8 @@ class FakeLoom:
         self.agents: dict[str, str] = {}
         self.documents: dict[str, str] = {}
         self.uploads: dict[str, str] = {}
+        # Versions only grow, as the server's time stamps do, deletes included.
+        self.next_version = itertools.count(1)
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         op = request.url.path.removeprefix("/v1/")
@@ -143,7 +146,7 @@ class FakeLoom:
     def answer(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         key = body.get("memory_key", "")
         if op == "memory.set":
-            version = {"version": sum(map(len, self.versions.values())) + 1, "value": body["value"]}
+            version = {"version": next(self.next_version), "value": body["value"]}
             self.versions.setdefault(key, []).insert(0, {**version, "status": "active"})
             self.agents[key] = body["agent"]
             return {"memory_key": key, "status": "active", **version}
@@ -313,7 +316,7 @@ def test_a_lab_1_answer_that_is_not_an_abstain_code_fails(
 
 
 @pytest.mark.parametrize("lab", ["lab1", "lab2"])
-def test_a_solved_lab_runs_as_its_readme_says(
+def test_a_solved_lab_runs_as_its_docstring_says(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], lab: str
 ) -> None:
     """`python labs/<lab>.py`: its main() prints what the lab wrote and found."""
