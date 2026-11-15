@@ -38,10 +38,10 @@ async def ensure_mirror(
         if live := await live_mirror(org, namespace):
             return live  # another turn made it while this one waited for the lease
         await still_current()
-        return await _made_mirror(org, namespace)
+        return await _register_mirror(org, namespace)
 
 
-async def _made_mirror(org: str, namespace: str) -> str:
+async def _register_mirror(org: str, namespace: str) -> str:
     mirror = new_mirror_name()
     while await directory().in_use(org, mirror):
         mirror = new_mirror_name()

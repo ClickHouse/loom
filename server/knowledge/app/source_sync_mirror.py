@@ -30,10 +30,10 @@ from server.knowledge.app import source_sync as sync
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import (
     KnowledgeSource,
-    home,
     json_object,
     mirror_uri,
     mirror_uri_suffix,
+    source_id_tag,
 )
 from server.knowledge.store import documents
 from server.knowledge.store import sources as store
@@ -71,10 +71,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     whole = listing.whole and not listing.lost_item
     # A head whose row ClickHouse does not have yet is not among the copies read, so a
     # listing that began with one owed vouches for nothing.
-    own = mirror_uri_suffix(src.source_id)
-    owed = await documents.publications_owed(src.org, src.mirror, own)
+    suffix = mirror_uri_suffix(src.source_id)
+    owed = await documents.publications_owed(src.org, src.mirror, suffix)
     with sequential_reads():  # a replica behind the last turn would show an older list
-        copies = await store.every_copy_flagged(src.org, *home(src))
+        copies = await store.every_copy_flagged(src.org, src.mirror, source_id_tag(src.source_id))
     try:
         lists_current = await _refresh_lists(src, token, copies, listed, whole, run, result)
     except _Refused:
@@ -82,7 +82,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     stored = sync.with_room(result, [c for c in copies if c["searchable"]])
     try:
         for uri, f in addressed:
-            access = functools.partial(_listed_access, token, f, run, result)
+            access = functools.partial(_listed_access, token, f, result)
             prior = stored.get(str(f["id"]))
             if not await sync.sync_file(src, token, f, uri, prior, run, result, access=access):
                 break
@@ -96,7 +96,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
     if lists_current and whole:
-        if owed or await documents.publications_owed(src.org, src.mirror, own):
+        if owed or await documents.publications_owed(src.org, src.mirror, suffix):
             _note(result, "publication: a written list is not in ClickHouse yet")
             return result
         pass_context.check_stop()
@@ -144,9 +144,7 @@ async def _refresh_lists(
                 f = listed.get(uri)
                 if f is None and not whole:
                     continue  # an incomplete search may have missed it: it keeps its list
-                access = (
-                    access_list.UNREAD if f is None else await _listed_access(token, f, run, result)
-                )
+                access = access_list.UNREAD if f is None else await _listed_access(token, f, result)
                 if access_list.from_json(held[uri]) != access:
                     changed[uri] = access
         except _Refused:
@@ -159,17 +157,13 @@ async def _refresh_lists(
 
 
 async def _listed_access(
-    token: str, f: dict[str, Any], run: sync.Pass, result: sync.TurnResult
+    token: str, f: dict[str, Any], result: sync.TurnResult
 ) -> access_list.AccessList:
     """The file's permission list. The listing leaves it out for a shared drive's files
     and for one the account may not share, so it is read then and kept on `f`. A file
-    the store will not say for, or whose read failed, reads `unread`, and so does one
-    the pass has no time left to read, which no fetch follows. _Refused when the store
-    refused the account."""
+    the store will not say for, or whose read failed, reads `unread`. _Refused when the
+    store refused the account."""
     if "permissions" not in f:
-        if run.budget.exhausted():
-            result.mark(sync.TurnMark.PASS_BOUND)  # its list is not current: no vouching
-            return access_list.UNREAD
         pass_context.check_stop()
         try:
             f["permissions"] = await gdrive.file_permissions(token, str(f["id"]))

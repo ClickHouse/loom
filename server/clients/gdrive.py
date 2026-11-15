@@ -347,8 +347,8 @@ async def file_permissions(
         except NotFound:
             return None
         except CredentialRefused as e:
-            # A 403 here is the account not being let see the file's sharing (a rate
-            # limit is `RateLimited`); a 401 is the credential itself.
+            # A 403 here means the account may not see who the file is shared with (a
+            # rate limit is `RateLimited`); a 401 is the credential itself.
             if e.status == 403:
                 return None
             raise

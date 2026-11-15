@@ -920,17 +920,11 @@ async def sync_file(
     # The stored content's hash, from the full listing's read.
     stored_content_sha256 = prior["stored_content_sha256"] if reconvert and prior else ""
 
-    permissions = access_list.UNREAD
-
-    async def before_fetch() -> bool:
-        nonlocal permissions
-        if not await _fetchable(f, run, turn):
-            return False
-        if access is not None:
-            permissions = await access()
-        return True
+    before_fetch = functools.partial(_fetchable, f, run, turn)
 
     async def fetch_and_write() -> str:
+        # Read last, once the pass bound let the fetch go ahead.
+        permissions = await access() if access is not None else access_list.UNREAD
         return await _fetch_and_write(
             src,
             token,
@@ -1201,8 +1195,8 @@ async def write_document(
     fetch is seconds old by now."""
     namespace, tag = home(src)
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if tag != tags[-1]:
-        tags.append(tag)  # a mirror's `source-id:<id>`, and no repository tag
+    if src.access == MIRRORED_ACCESS:
+        tags.append(tag)  # its `source-id:<id>`, and no repository tag
     elif repo := _repo_tag(src):
         tags.insert(1, repo)
     metadata: dict[str, Any] = {

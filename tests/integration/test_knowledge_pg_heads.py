@@ -191,6 +191,11 @@ async def test_the_head_lists_answer_each_live_head_s_permission_list(
     uris = ["docs/kept.md", "docs/listed.md", "docs/gone.md", "docs/none.md"]
     lists = await pg_documents.head_lists(org, ns, uris)
     assert lists == {"docs/kept.md": "", "docs/listed.md": listed}
+    # The rewrite carried the row's chunks: the document is still found by its text.
+    head = await _head(pg_conn, org, ns, "docs/listed.md")
+    assert head["revision"] == doc.revision
+    hits = await call("knowledge.search", {"query": "Listed", "top_k": 5})
+    assert any(h["source_uri"] == "docs/listed.md" for h in hits["results"])
 
 
 async def test_an_owed_delivery_counts_only_for_the_source_whose_addresses_it_ends(

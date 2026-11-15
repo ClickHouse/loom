@@ -69,6 +69,10 @@ def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return seen
 
 
+async def _current() -> None:
+    return None
+
+
 def _turn(world: Any, src: Any) -> Any:
     world.sources = [src]
     return asyncio.run(source_sync.run_sync())
@@ -418,10 +422,6 @@ def test_a_moved_file_keeps_its_list_at_its_new_address_and_none_at_its_old(
         "/doc1b/edit#" + _mirrored().source_id
     )
     assert access_list.from_json(world.docs[moved]["access_json"]).emails == ("ann@example.com",)
-
-
-async def _current() -> None:
-    return None
 
 
 def test_a_namespace_s_live_mirror_is_kept_and_none_is_registered(
