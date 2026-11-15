@@ -310,6 +310,19 @@ async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> d
     return await pg_documents.head_lists(org, namespace, source_uris)
 
 
+async def publications_owed(org: str, namespace: str) -> bool:
+    """Whether a commit of the namespace still waits on its publication to ClickHouse,
+    under the Postgres authority; never under the ClickHouse authority."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return False
+    from server.knowledge.store import pg_documents
+
+    owed, parked = await pg_documents.unpublished(org, namespace)
+    return owed + parked > 0
+
+
 class DocumentListRow(TypedDict):
     """One `knowledge.list` row: the document's listing columns and its live
     chunk count."""

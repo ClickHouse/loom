@@ -385,8 +385,10 @@ async def run_sync(
 
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
     """The sources a pass syncs: those whose namespace is active, of the sources this
-    build's worker runs (`synced`)."""
-    syncable = [s for s in found if synced(s)]
+    build's worker runs (`synced`), mirrored ones only while auth is on."""
+    # With auth off there is no reader a mirror's lists could be checked against.
+    mirrors_on = settings.auth_actually_required()
+    syncable = [s for s in found if synced(s) and (served(s) or mirrors_on)]
     inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in syncable}))
     return [s for s in syncable if (s.org, s.namespace) not in inactive]
 
@@ -599,8 +601,8 @@ async def stored_copies_with_room(
 
 
 def with_room(turn: TurnResult, revisions: list[dict[str, str]]) -> dict[str, dict[str, str]]:
-    """The searchable stored copies `revisions` by file id, and the turn's room for new
-    documents (`stored_copies_with_room`)."""
+    """The stored copies `revisions` by file id, and the turn's room for new documents
+    (`stored_copies_with_room`)."""
     stored = {d["file_id"]: d for d in revisions}
     turn.bound = settings.knowledge_source_max_documents
     turn.room = max(0, turn.bound - len(stored))
@@ -875,10 +877,9 @@ async def sync_file(
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
     `ready` runs just before a fetch, and False from it skips the file; `access` gives
-    the permission list the write carries, once `ready` ran. A
-    native document whose stored text still holds its pictures' bytes (an earlier
-    conversion's) is fetched and converted again at its same revision when a full
-    listing lists it."""
+    the permission list the write carries, once `ready` ran. A native document whose
+    stored text still holds its pictures' bytes (an earlier conversion's) is fetched
+    and converted again at its same revision when a full listing lists it."""
     revision = str(f.get("modifiedTime") or "")
     # A copy stored with its pictures' bytes, at this revision and address, is converted
     # again; a moved file takes the ordinary write-and-retire path.
@@ -1126,6 +1127,7 @@ async def _may_write(src: KnowledgeSource, uri: str) -> bool:
 
 
 def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:
+    """Whether `doc` is one this source's sync wrote."""
     return doc.actor == SYNC_WORKER_ACTOR and home(src)[1] in doc.tags
 
 
@@ -1171,8 +1173,8 @@ async def write_document(
     tags = ["source-kind:design_doc", source_tag(src.name)]
     if src.access == MIRRORED_ACCESS:
         tags.append(tag)  # its `source-id:<id>`
-    if repo := _repo_tag(src):
-        tags.insert(1, repo)
+    if namespace == src.namespace and (repo := _repo_tag(src)):
+        tags.insert(1, repo)  # a mirror is no repository's namespace
     metadata: dict[str, Any] = {
         "source_kind": src.kind,
         "source_name": src.name,

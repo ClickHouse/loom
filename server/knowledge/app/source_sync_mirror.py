@@ -116,9 +116,12 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # A listing that searched everything and reached every item vouches for the lists,
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
+    namespace, _ = home(src)
     if lists_current and listing.whole and not listing.lost_item:
+        # A head whose row ClickHouse does not have yet was not among the copies read.
+        if await documents.publications_owed(src.org, namespace):
+            return result
         pass_context.check_stop()
-        namespace, _ = home(src)
         await mirrors.record_listing(src.org, namespace, src.source_id, src.name, started)
     return result
 
@@ -197,6 +200,8 @@ async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResu
 async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.AccessList]) -> None:
     """Write each stored document's new list as a new row with everything else as it
     was: its chunks are kept, so nothing is embedded again."""
+    if not lists:
+        return
     namespace, _ = home(src)
     pass_context.check_stop()
     with sequential_reads():  # a replica behind the last write would carry old content

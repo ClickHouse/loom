@@ -40,6 +40,7 @@ async def forget_mirrors(org: str, mirrors: dict[str, str], *, ch: _CHClient | N
 
 
 async def add_mirror(org: str, namespace: str, mirror: str, *, ch: _CHClient | None = None) -> None:
+    """Register `mirror` as the namespace's live mirror."""
     await (ch or _default_client()).insert(
         TABLE, [{"org": org, "namespace": namespace, "mirror": mirror, "deleted": False}]
     )

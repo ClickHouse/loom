@@ -323,14 +323,14 @@ async def head_lists(org: str, namespace: str, uris: Sequence[str]) -> dict[str,
     if not uris or pg.unstorable([org, namespace]):
         return {}
     got = await pg.fetch(
-        "SELECT source_uri, coalesce(row->>'access_json', '') AS access_json "
+        "SELECT source_uri, row->'access_json' AS access_json "
         "FROM loom.knowledge_heads "
         "WHERE org = $1 AND namespace = $2 AND source_uri = ANY($3::text[]) AND NOT deleted",
         org,
         namespace,
         sorted(set(uris)),
     )
-    return {str(r["source_uri"]): str(r["access_json"]) for r in got}
+    return {str(r["source_uri"]): str(restore_text(r["access_json"]) or "") for r in got}
 
 
 async def serving(org: str, sources: Sequence[tuple[str, str]]) -> dict[tuple[str, str], Serving]:

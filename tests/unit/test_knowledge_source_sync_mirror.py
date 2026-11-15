@@ -137,8 +137,9 @@ def test_an_incomplete_listing_records_no_listing_row(world: Any, mirror: Any) -
 
 def test_a_mirrored_source_is_never_mined(world: Any, mirror: Any) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
-    _turn(world, _mirrored())
-    assert world.mined == []
+    result = _turn(world, _mirrored())
+    # Left out before its stored copies are read, not failed while reading them.
+    assert world.mined == [] and result.errors == [] and result.failed == 0
 
 
 def test_a_mirror_never_takes_a_name_already_in_use(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -236,10 +237,11 @@ def test_lists_read_before_the_pass_runs_out_are_written_and_no_listing_row_land
     monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["of_time"])
     for f in world.files:
         del f["permissions"]  # a shared drive's files: read one at a time
+    listings = len(mirror["listings"])
     result = _turn(world, _mirrored())
     [row] = mirror["rewrites"]  # the one list read before the deadline
     assert access_list.from_json(row["access_json"]) == access_list.AccessList()
-    assert result.cut and len(world.upserts) == 2 and len(mirror["listings"]) == 1
+    assert result.cut and len(world.upserts) == 2 and len(mirror["listings"]) == listings
 
 
 def test_a_rate_limit_on_a_stored_copy_s_list_stops_the_turn_before_any_fetch(
@@ -431,3 +433,62 @@ def test_a_mirror_is_made_under_the_sources_lease_only_when_there_is_none(
     live = ""
     assert asyncio.run(source_sync_mirror._mirror(_mirrored())) == "acl-" + "b" * 24
     assert len(leased) == 1
+
+
+def test_a_publication_still_owed_in_the_mirror_records_no_listing_row(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _owed(org: str, namespace: str) -> bool:
+        return namespace == MIRROR  # a head ClickHouse has no row for yet
+
+    monkeypatch.setattr(documents, "publications_owed", _owed)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    assert len(world.upserts) == 1 and mirror["listings"] == []
+
+
+def test_a_mirrored_source_is_not_synced_while_auth_is_off(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    result = _turn(world, _mirrored())
+    assert (result.sources, world.upserts, mirror["listings"]) == (0, [], [])
+
+
+def test_two_turns_at_once_make_one_mirror(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import leases
+
+    registry: dict[str, str] = {}
+    lock = asyncio.Lock()
+    names = iter(["acl-" + "1" * 24, "acl-" + "2" * 24])
+
+    @contextlib.asynccontextmanager
+    async def _holding(name: str, **kw: Any) -> AsyncIterator[bool]:
+        async with lock:
+            yield True
+
+    async def _mirrors_of(org: str, namespaces: list[str], **kw: Any) -> dict[str, str]:
+        await asyncio.sleep(0)  # the other turn runs between the read and the write
+        return {m: ns for m, ns in registry.items() if ns in namespaces}
+
+    async def _add(org: str, namespace: str, mirror: str, **kw: Any) -> None:
+        await asyncio.sleep(0)
+        registry[mirror] = namespace
+
+    class _Directory:
+        async def in_use(self, org: str, namespace: str, **kw: Any) -> bool:
+            return False
+
+    monkeypatch.setattr(leases, "holding", _holding)
+    monkeypatch.setattr(mirrors, "mirrors_of", _mirrors_of)
+    monkeypatch.setattr(mirrors, "add_mirror", _add)
+    monkeypatch.setattr(mirrors, "new_mirror_name", lambda: next(names))
+    monkeypatch.setattr(mirrors, "directory", lambda: _Directory())
+
+    async def _both() -> list[str]:
+        src = _mirrored()
+        return list(await asyncio.gather(*(source_sync_mirror._mirror(src) for _ in range(2))))
+
+    made = asyncio.run(_both())
+    assert made[0] == made[1] and len(registry) == 1
