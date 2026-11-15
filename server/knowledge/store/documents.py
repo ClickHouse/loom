@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -310,7 +310,9 @@ async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> d
     return await pg_documents.head_lists(org, namespace, source_uris)
 
 
-async def publications_owed(org: str, namespace: str, uri_suffix: str) -> str:
+async def publications_owed(
+    org: str, namespace: str, uri_suffix: str
+) -> Literal["parked", "owed", ""]:
     """Whether a commit of the namespace's documents whose address ends in `uri_suffix`
     still waits on its publication to ClickHouse, under the Postgres authority:
     `parked`, `owed` or "" (`pg_documents.owed_ending`); "" under the ClickHouse

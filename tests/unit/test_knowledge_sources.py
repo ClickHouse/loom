@@ -449,6 +449,32 @@ def test_list_and_inspect_answer_a_mirrored_source_without_its_config(fake: _Sto
     assert listed.sources[0].config == {} and seen.config == {}
 
 
+def test_list_and_inspect_show_a_mirrored_source_s_sync_without_its_counts(
+    fake: _Store,
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    key = (ORG, NS, "design-decks")
+    fake.rows[key] = dataclasses.replace(fake.rows[key], access=domain.MIRRORED_ACCESS)
+    detail = {
+        "status": "ok",
+        "last_synced_at": "2026-01-01T00:00:00+00:00",
+        "documents_seen": 412,
+        "changed": 3,
+        "unconverted_reasons": {"too_large": 1},
+        "error": "export f1: http_503",
+    }
+    fake.states["design-decks"] = {"state_value": "", "detail": json.dumps(detail)}
+    listed = asyncio.run(
+        app.handle_knowledge_source_list(KnowledgeSourceListInput(org=ORG, namespace=NS))
+    )
+    body = KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
+    seen = asyncio.run(app.handle_knowledge_source_inspect(body))
+    # What the mirror holds goes only to a platform admin: no count, reason or error.
+    for sync in (listed.sources[0].sync, seen.sync):
+        shown = sync.model_dump(exclude_defaults=True)
+        assert shown == {"status": "ok", "last_synced_at": "2026-01-01T00:00:00+00:00"}
+
+
 def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) -> None:
     # The later build retires its documents from the mirror by this value.
     for name in ("design-decks", "other"):

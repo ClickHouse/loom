@@ -15,7 +15,7 @@ import base64
 import time
 from collections.abc import Mapping, Sequence, Set
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc_second
@@ -510,7 +510,7 @@ async def unpublished(org: str, namespace: str) -> tuple[int, int]:
     return int(row["owed"]), int(row["parked"])
 
 
-async def owed_ending(org: str, namespace: str, suffix: str) -> str:
+async def owed_ending(org: str, namespace: str, suffix: str) -> Literal["parked", "owed", ""]:
     """`parked` when a delivery of a source whose address ends in `suffix` is parked
     past LOOM_PG_DELIVERY_MAX_ATTEMPTS, else `owed` when one is still owed, else ""."""
     if pg.unstorable([org, namespace, suffix]):

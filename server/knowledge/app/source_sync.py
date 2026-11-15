@@ -116,6 +116,7 @@ from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import access_list, convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
+    MIRRORED_ACCESS,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     home,
@@ -1147,8 +1148,7 @@ async def _may_write(src: KnowledgeSource, uri: str) -> bool:
 
 def _in_mirror(src: KnowledgeSource) -> bool:
     """Whether the source's rows live in its namespace's mirror (`home`)."""
-    namespace, _ = home(src)
-    return namespace != src.namespace
+    return src.access == MIRRORED_ACCESS
 
 
 def ours(src: KnowledgeSource, doc: documents.DocumentRow) -> bool:

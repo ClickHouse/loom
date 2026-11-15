@@ -8,12 +8,13 @@ the file listed at its address, or `unread` for a copy a whole listing does not 
 there. A copy behind its file's revision takes only the part of the new list its own
 admitted: its text was shared under that list, and the content write widens it. A
 changed list is written as a new row over the stored one that keeps its chunks, so
-nothing is embedded again, and the same list writes nothing. The reads are
-bounded by the pass's deadline only, never by its document bound, and what was read is
-written. Then each new or changed file is fetched and written with its list, as a
-folder turn writes, and at the full interval a copy whose file is gone is retired on
-the store's word. The listing row lands once every stored copy's list was brought up
-to date by a listing that searched everything."""
+nothing is embedded again, and the same list writes nothing. The reads are bounded by
+the pass's deadline only, never by its document bound, and what was read is written.
+Then each new or changed file is fetched and written with its list, as a folder turn
+writes (a mirrored copy is never converted again for the pictures its stored text holds,
+as a folder turn does on a full listing), and at the full interval a copy whose file is
+gone is retired on the store's word. The listing row lands once every stored copy's list
+was brought up to date by a listing that searched everything."""
 
 from __future__ import annotations
 
@@ -112,7 +113,11 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         # The state at the end wins: a delivery owed at the read may be parked by now.
         held_back = await documents.publications_owed(src.org, src.mirror, suffix) or owed
         if held_back:
-            _note(result, _HELD_BACK[held_back], first=True)
+            note = _HELD_BACK[held_back]
+            if result.error:  # the state shows the error alone: the note goes with it
+                result.error = f"{note}; {result.error}"
+            else:
+                _note(result, note, first=True)
             return result
         pass_context.check_stop()
         await sync.require_current(src)  # an erasure since the last write lands no row

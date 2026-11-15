@@ -883,3 +883,20 @@ def test_a_delivery_owed_at_the_read_and_parked_by_the_end_is_noted_parked_first
     _turn(world, _mirrored())
     assert mirror["listings"] == []
     assert _detail(world)["error"].startswith("publication: a written list is parked")
+
+
+def test_a_parked_publication_is_shown_beside_a_failed_fetch(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _parked(org: str, namespace: str, uri_suffix: str) -> str:
+        return "parked"
+
+    monkeypatch.setattr(documents, "publications_owed", _parked)
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("bad1", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    world.file_answers["bad1"] = httpx.Response(503)
+    _turn(world, _mirrored())
+    error = _detail(world)["error"]
+    assert error.startswith("publication: a written list is parked") and "503" in error

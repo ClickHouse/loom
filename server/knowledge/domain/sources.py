@@ -629,6 +629,19 @@ def sync_of(detail: str) -> dict[str, Any]:
     return {k: v for k, t in SYNC_FIELDS.items() if isinstance(v := state.get(k), t)}
 
 
+# What a namespace's readers see of a mirrored source's sync: never its counts, its
+# reasons or its error text, which describe what the mirror holds.
+_MIRRORED_SYNC_SHOWN = frozenset({"requested_at", "last_synced_at", "status"})
+
+
+def sync_shown(src: KnowledgeSource, detail: str) -> dict[str, Any]:
+    """The sync state the namespace's readers are shown for `src` (`sync_of`)."""
+    shown = sync_of(detail)
+    if served(src):
+        return shown
+    return {k: v for k, v in shown.items() if k in _MIRRORED_SYNC_SHOWN}
+
+
 __all__ = [
     "GDRIVE_DEFAULT_INCLUDE",
     "GDRIVE_MIME_TYPES",
@@ -677,6 +690,7 @@ __all__ = [
     "state_key",
     "stored_config",
     "sync_of",
+    "sync_shown",
     "unique_items",
     "unknown_keys",
     "unread_file_note",

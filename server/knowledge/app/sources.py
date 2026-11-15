@@ -378,8 +378,8 @@ def _answered_include(src: KnowledgeSource) -> list[str]:
     return domain.include_in(src.config) if src.kind == "gdrive" else []
 
 
-def _sync(state: dict[str, str] | None) -> KnowledgeSourceSync:
-    return KnowledgeSourceSync(**domain.sync_of((state or {}).get("detail", "")))
+def _sync(src: KnowledgeSource, state: dict[str, str] | None) -> KnowledgeSourceSync:
+    return KnowledgeSourceSync(**domain.sync_shown(src, (state or {}).get("detail", "")))
 
 
 async def handle_knowledge_source_list(
@@ -398,7 +398,7 @@ async def handle_knowledge_source_list(
                 config=domain.id_list_config(s) or {},
                 created_by=s.created_by,
                 created_at=_iso(s.created_at),
-                sync=_sync(states.get(s.name)),
+                sync=_sync(s, states.get(s.name)),
             )
             for s in found
         ],
@@ -420,7 +420,7 @@ async def handle_knowledge_source_inspect(
         config=domain.id_list_config(src) or {},
         created_by=src.created_by,
         created_at=_iso(src.created_at),
-        sync=_sync(states.get(src.name)),
+        sync=_sync(src, states.get(src.name)),
         documents=[
             KnowledgeSourceDocument(
                 source_uri=str(d.get("source_uri") or ""),
