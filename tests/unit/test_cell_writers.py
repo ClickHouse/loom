@@ -1,14 +1,16 @@
-"""`server/cli/cell_writers.py`: reading grants (`SHOW GRANTS … FINAL` on one host,
-`system.grants` and `system.role_grants` per host on several), the writer predicate, the
-objects, user directories and extra replicas it refuses, and attach's own grants. A cluster
-of several hosts cannot run in CI, so its per-host reads are pinned here on a fake
-ClickHouse. CH-free."""
+"""`server/cli/cell_writers.py`: reading grants (attach's own from `SHOW GRANTS FINAL`,
+every user's from `system.grants` and `system.role_grants` per host), the writer
+predicate, the objects, user directories and extra replicas it refuses, and attach's own
+grants. A cluster of several hosts cannot run in CI, so its per-host reads are pinned here
+on a fake ClickHouse. CH-free."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from server.cli import cell_writers
+from server.cli import cell_scan, cell_writers
 from server.cli.cell_scan import Topology
 from server.cli.cell_writers import Allowed, Grant, holds, parse_show_grants, writer_reason
 from tests.unit.test_cell_scan import NAMES, ONE, TWO, FakeCH
@@ -131,6 +133,19 @@ def test_the_writer_predicate(grants: list[Grant], reason: str) -> None:
     assert writer_reason(grants, DBS) == reason
 
 
+def test_a_grants_row_as_newer_servers_write_it() -> None:
+    rows = [
+        {"user_name": "u", "access_type": "READ", "access_object": "REMOTE", "database": None},
+        {"user_name": "u", "access_type": "WRITE", "access_object": "URL", "database": None},
+        {"user_name": "u", "access_type": "INSERT", "database": "lo", "is_wildcard": 1},
+    ]
+    assert cell_writers.resolve_grants("u", rows, []) == [
+        Grant("REMOTE"),
+        Grant("URL"),
+        Grant("INSERT", "lo*"),
+    ]
+
+
 def test_roles_are_followed_and_partial_revokes_ignored() -> None:
     grant_rows = [
         {"user_name": None, "role_name": "inner", "access_type": "INSERT", "database": "loom"},
@@ -163,6 +178,10 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
         ("AS SELECT dictGet('side.orgs', 'org', id) AS org FROM loom.memory", "side.orgs"),
         ("AS SELECT dictGet('orgs', 'org', id) AS org FROM loom.memory", "dictionary or table"),
         ("AS SELECT joinGet('loom.j', 'org', id) AS org FROM loom.memory", ""),
+        (
+            "AS SELECT dictGet(concat('other.', 'd'), 'org', id) AS org FROM loom.memory",
+            "named by an expression",
+        ),
         ("AS SELECT m.org FROM loom.memory AS m", ""),
         ("AS SELECT m.org FROM loom.memory m JOIN (SELECT 1 AS id) AS s ON s.id = m.id", ""),
         ("AS WITH w AS (SELECT org FROM loom.memory) SELECT w.org FROM w", ""),
@@ -214,6 +233,12 @@ def _inside(engine: str, **row: str) -> dict[str, str]:
             _inside("Distributed", engine_full="Distributed('main', 'side', 't', rand())"),
             "a Distributed table reading database side",
         ),
+        # Another cluster's shards are servers outside this one.
+        (
+            _inside("Distributed", engine_full="Distributed('other', 'loom', 't', rand())"),
+            "a Distributed table reading cluster other, not main",
+        ),
+        (_inside("Distributed", engine_full="Distributed('main', 'loom', 't')"), ""),
         (_inside("Buffer", engine_full="Buffer('loom_telemetry', 't', 16, 1, 1, 1, 1, 1, 1)"), ""),
         (_inside("URL", engine_full="URL('http://x', CSV)"), "a URL table, which reads outside"),
         (_inside("S3", engine_full="S3('http://x')"), "a S3 table, which reads outside"),
@@ -229,7 +254,9 @@ def _inside(engine: str, **row: str) -> dict[str, str]:
     ],
 )
 def test_an_object_inside_reading_outside_counts(row: dict[str, str], reason: str) -> None:
-    found = cell_writers.object_problems([row], DBS, frozenset({"remote"})).get("loom.x", "")
+    found = cell_writers.object_problems([row], DBS, frozenset({"remote"}), "main").get(
+        "loom.x", ""
+    )
     assert reason in found and bool(found) == bool(reason), found
 
 
@@ -348,6 +375,11 @@ def test_a_replica_keeper_lists_outside_the_cluster_is_extra() -> None:
     assert cell_writers.extra_replicas(rows) == {"loom.memory": {"dr"}}
 
 
+def _row(user: str, access: str, database: str | None = None) -> dict[str, Any]:
+    return {"h": "x", "user_name": user, "role_name": None, "access_type": access,
+            "database": database, "table": None, "grant_option": 0, "is_partial_revoke": 0}  # fmt: skip
+
+
 def _single_host() -> FakeCH:
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM ON *.* TO attach"},
@@ -357,9 +389,16 @@ def _single_host() -> FakeCH:
         FakeCH()
         .on("currentUser()", [{"u": "attach"}])
         .on("SHOW GRANTS FINAL", own)
-        .on("SHOW GRANTS FOR `attach` FINAL", own)
-        .on("SHOW GRANTS FOR `server` FINAL", [{"g": "GRANT INSERT, SELECT ON loom.* TO server"}])
-        .on("SHOW GRANTS FOR `analyst` FINAL", [{"g": "GRANT SELECT ON loom.* TO analyst"}])
+        .on(
+            "system.grants",
+            [
+                *(_row("attach", a) for a in ("SELECT", "SHOW", "SHOW USERS", "SYSTEM")),
+                _row("server", "INSERT", "loom"),
+                _row("server", "SELECT", "loom"),
+                _row("analyst", "SELECT", "loom"),
+            ],
+        )
+        .on("system.role_grants", [])
         .on("system.users", [{"h": "x", "name": n} for n in ("attach", "server", "analyst")])
         .on("system.user_directories", [{"h": "x", "name": "users_xml", "type": "users_xml"}])
         .on("system.table_functions", [{"name": "remote"}, {"name": "url"}])
@@ -458,8 +497,7 @@ async def test_a_cluster_reads_every_host_and_names_what_each_defines() -> None:
     ]
     reads = [s for k, s, _ in ch.calls if k == "query_all" and "hostName()" in s]
     assert reads and all(
-        "clusterAllReplicas({c:String}, system." in s
-        and s.endswith("SETTINGS skip_unavailable_shards = 0, prefer_localhost_replica = 1")
+        "clusterAllReplicas({c:String}, system." in s and s.endswith(cell_scan._CLUSTER_SQL)
         for s in reads
     )
     allowed = Allowed(users=frozenset({"attach", "local"}), user_directories=frozenset({"ldap"}))

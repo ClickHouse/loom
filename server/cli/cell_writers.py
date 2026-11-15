@@ -26,7 +26,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from server.cli.cell_scan import Refusal, Topology, databases, per_host, quote
+from server.cli.cell_scan import Refusal, Topology, databases, per_host
 
 # Each privilege attach needs and the grants that imply it, closest first.
 _IMPLIED_BY: dict[str, tuple[str, ...]] = {
@@ -205,7 +205,7 @@ def _target(on: str) -> tuple[str | None, str | None] | str:
 
 
 def parse_show_grants(lines: Iterable[str]) -> list[Grant]:
-    """The grants of `SHOW GRANTS FOR <user> FINAL`, whose lines already hold its roles',
+    """The grants of `SHOW GRANTS FINAL` (attach's own), whose lines already hold its roles',
     and its partial revokes (`revoked`). Role grants (`GRANT r TO u`) and the revokes of a
     grant option alone are left out."""
     out = []
@@ -245,16 +245,27 @@ def resolve_grants(
     out = []
     for r in grant_rows:
         if r.get("user_name") == user or (r.get("role_name") in roles and not r.get("user_name")):
-            out.append(
-                Grant(
-                    str(r["access_type"]),
-                    None if r.get("database") is None else str(r["database"]),
-                    None if r.get("table") is None else str(r["table"]),
-                    bool(r.get("grant_option")),
-                    bool(r.get("is_partial_revoke")),
-                )
-            )
+            out.append(_row_grant(r))
     return out
+
+
+def _row_grant(r: Mapping[str, Any]) -> Grant:
+    """A `system.grants` row as a Grant: `READ ON REMOTE` is access `READ` on object
+    `REMOTE` there, read as `REMOTE` (as `SHOW GRANTS` prints it), and a wildcard database
+    as a prefix."""
+    access = str(r["access_type"])
+    if access in ("READ", "WRITE") and r.get("access_object"):
+        access = str(r["access_object"])
+    database = None if r.get("database") is None else str(r["database"])
+    if database is not None and r.get("is_wildcard") and not database.endswith("*"):
+        database += "*"
+    return Grant(
+        access,
+        database,
+        None if r.get("table") is None else str(r["table"]),
+        bool(r.get("grant_option")),
+        bool(r.get("is_partial_revoke")),
+    )
 
 
 # -- judging -----------------------------------------------------------------------------
@@ -343,7 +354,7 @@ _NOT_ALIAS = frozenset(
      "QUALIFY", "AS", "SELECT", "FROM", "WITH", "INTERVAL"}
 )  # fmt: skip
 # A dictionary or Join table read by name, which a string literal holds.
-_BY_NAME = re.compile(r"\b(?:dict\w*|joinGet\w*)\s*\(\s*'((?:[^'\\]|\\.)*)'", re.I)
+_BY_NAME = re.compile(r"\b(?:dict\w*|joinGet\w*)\s*\(\s*('((?:[^'\\]|\\.)*)')?", re.I)
 _STRING = re.compile(r"'(?:[^'\\]|\\.)*'")
 _ARGS = re.compile(r"'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`|(\w+\(\))|(\w+)")
 
@@ -396,9 +407,12 @@ def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -
     there is none."""
     select = re.split(r"\bAS\s+(?=SELECT|WITH|\()", query, maxsplit=1, flags=re.I)[-1]
     for by_name in _BY_NAME.finditer(select):
-        db, dot, _ = by_name.group(1).partition(".")
+        if by_name.group(1) is None:
+            # A name built at run time can name anything.
+            return "a dictionary or table named by an expression"
+        db, dot, _ = by_name.group(2).partition(".")
         if not dot or db.strip("`") not in dbs:
-            return f"the dictionary or table {by_name.group(1)}"
+            return f"the dictionary or table {by_name.group(2)}"
     code = _STRING.sub("''", select)
     for call in _CALL.finditer(code):
         if call.group(1).lower() in functions:
@@ -416,20 +430,24 @@ def _view_reads_outside(query: str, dbs: list[str], functions: frozenset[str]) -
 
 
 def object_problems(
-    rows: Iterable[Mapping[str, Any]], dbs: list[str], functions: frozenset[str] = frozenset()
+    rows: Iterable[Mapping[str, Any]],
+    dbs: list[str],
+    functions: frozenset[str] = frozenset(),
+    cluster: str = "",
 ) -> dict[str, str]:
     """Each object (`db.name`) that writes the configured databases without a grant on them,
     or brings in what lies outside them, and why: outside them, a Buffer, Distributed or
     Merge table, or a materialized or window view, whose target is inside, and a table a
-    view inside reads; inside them, a view reading outside them (`_view_reads_outside`, with
-    `functions` the table functions), a forwarding table naming a database outside them, and
-    any other engine but the MergeTree family and `_LOCAL_ENGINES`."""
+    view inside reads; inside them, a Distributed table over another cluster than `cluster`,
+    a view reading outside them (`_view_reads_outside`, with `functions` the table
+    functions), a forwarding table naming a database outside them, and any other engine but
+    the MergeTree family and `_LOCAL_ENGINES`."""
     out: dict[str, str] = {}
     for r in rows:
         db, name, engine = str(r["database"]), str(r["name"]), str(r["engine"])
         key = f"{db}.{name}"
         if db in dbs:
-            if why := _inside_problem(r, engine, dbs, functions):
+            if why := _inside_problem(r, engine, dbs, functions, cluster):
                 out[key] = why
             continue
         query = str(r.get("create_table_query") or "")
@@ -454,11 +472,19 @@ def _kind(engine: str) -> str:
 
 
 def _inside_problem(
-    r: Mapping[str, Any], engine: str, dbs: list[str], functions: frozenset[str]
+    r: Mapping[str, Any], engine: str, dbs: list[str], functions: frozenset[str], cluster: str
 ) -> str:
     if engine in _QUERIES:
         source = _view_reads_outside(str(r.get("create_table_query") or ""), dbs, functions)
         return f"a {_kind(engine)} reading {source}" if source else ""
+    if engine == "Distributed":
+        # Its shards are the servers of the cluster it names: another reads outside them.
+        named = (_engine_args(str(r.get("engine_full") or "")) or [""])[0]
+        if not cluster or named != cluster:
+            return (
+                f"a Distributed table reading cluster {named or '(none)'}, not "
+                f"{cluster or 'LOOM_CH_CLUSTER (unset)'}"
+            )
     if engine in _FORWARDING:
         target = _engine_database(engine, str(r.get("engine_full") or ""))
         if target and target not in dbs:
@@ -498,16 +524,17 @@ async def _own_user(ch: Any) -> str:
     return str((row or {}).get("u") or "")
 
 
-async def _show_grants(ch: Any, user: str | None) -> list[Grant]:
-    sql = "SHOW GRANTS FINAL" if user is None else f"SHOW GRANTS FOR {quote(user)} FINAL"
-    rows = await ch.query_all(sql)
+async def _show_grants(ch: Any) -> list[Grant]:
+    """Attach's own grants, as `SHOW GRANTS FINAL` prints them: the one read that needs no
+    privilege, so a user lacking `SELECT ON system.*` is told what it lacks."""
+    rows = await ch.query_all("SHOW GRANTS FINAL")
     return parse_show_grants(str(next(iter(r.values()))) for r in rows if r)
 
 
 async def own_refusals(ch: Any, topology: Topology) -> list[Refusal]:
     """What attach's own user lacks, from its own `SHOW GRANTS FINAL`: without it
     `system.tables` and `system.columns` would silently list less than there is."""
-    missing = own_problems(await _show_grants(ch, None), topology, databases())
+    missing = own_problems(await _show_grants(ch), topology, databases())
     if not missing:
         return []
     return [Refusal(f"user {await _own_user(ch)}", f"attach's own user lacks {', '.join(missing)}")]
@@ -541,17 +568,11 @@ async def _process_users(
 async def _host_grants(
     ch: Any, topology: Topology, names: Mapping[str, str]
 ) -> dict[str, dict[str, list[Grant]]]:
-    """Per host, each user it defines and that user's grants."""
+    """Per host, each user it defines and that user's grants, from `system.grants` and
+    `system.role_grants` on every topology (every granted role followed, default or not)."""
     users = await per_host(ch, topology, names, "SELECT hostName() AS h, name FROM {source:users}")
-    if not topology.multi:
-        return {"": {str(u["name"]): await _show_grants(ch, str(u["name"])) for u in users[""]}}
-    grants = await per_host(
-        ch,
-        topology,
-        names,
-        "SELECT hostName() AS h, user_name, role_name, access_type, database, table, "
-        "grant_option, is_partial_revoke FROM {source:grants}",
-    )
+    # Every column: `access_object` and `is_wildcard` are read where the server has them.
+    grants = await per_host(ch, topology, names, "SELECT hostName() AS h, * FROM {source:grants}")
     roles = await per_host(
         ch,
         topology,
@@ -588,7 +609,7 @@ async def check_writers(
         per_user = await _host_grants(ch, topology, names)
         for host, users in sorted(per_user.items()):
             # Each host keeps its own users: attach's must hold the same on every one.
-            lacks = own_problems(users.get(own, []), topology, dbs) if topology.multi else []
+            lacks = own_problems(users.get(own, []), topology, dbs)
             if lacks:
                 refusals.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
             for user, grants in sorted(users.items()):
@@ -643,7 +664,7 @@ async def _objects(
     )
     out = []
     for host, found in sorted(rows.items()):
-        for key, why in sorted(object_problems(found, dbs, functions).items()):
+        for key, why in sorted(object_problems(found, dbs, functions, topology.cluster).items()):
             if key not in allowed.objects:
                 out.append(
                     Refusal(f"object {key}", f"{why}{_on(host)}: name it with --ch-allow-object")

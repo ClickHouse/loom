@@ -528,11 +528,12 @@ async def test_the_listing_refuses_a_user_that_would_list_short() -> None:
 
 
 class _RawBody(FakeCH):
-    """Streams a scan's body as raw text, as ClickHouse writes it."""
+    """Streams a scan's body as raw text, as ClickHouse writes it: each scan the next of
+    `bodies`, the last one again once they run out."""
 
-    def __init__(self, body: str) -> None:
+    def __init__(self, *bodies: str) -> None:
         super().__init__()
-        self.body = body
+        self.bodies = list(bodies)
         self.on("SYSTEM", [])
 
     @asynccontextmanager
@@ -540,7 +541,7 @@ class _RawBody(FakeCH):
         self, sql: str, params: Any = None, *, settings: Any = None
     ) -> AsyncIterator[AsyncIterator[bytes]]:
         self.calls.append(("raw_stream", sql, dict(settings or {})))
-        data = self.body.encode()
+        data = (self.bodies.pop(0) if len(self.bodies) > 1 else self.bodies[0]).encode()
 
         async def chunks() -> AsyncIterator[bytes]:
             yield data[:7]
@@ -580,8 +581,47 @@ async def test_any_other_error_in_the_body_is_named() -> None:
         await cell_scan.scan(ch, tables, ONE, Budget(600))
 
 
-async def test_an_on_cluster_row_without_a_status_is_named() -> None:
-    ch = FakeCH().on("SYSTEM", [{"exception": "Code: 999. Keeper session expired"}])
+async def test_an_on_cluster_row_without_a_status_is_read_as_its_error() -> None:
+    # A Keeper session lost (999) clears by itself: retried, as when it is raised.
+    flaky = [{"exception": "Code: 999. DB::Exception: Keeper session expired"}]
+    answers = iter([flaky, _cluster_status("ch-0", "ch-1"), _cluster_status("ch-0", "ch-1")])
+    ch = FakeCH().on("SYSTEM", lambda *_: next(answers))
+    ch.on("SELECT DISTINCT org", [{"k": "h", "v": '["ch-0"]'}, *_org_rows(b"acme")])
     tables = TableList(clickhouse=[Table("loom", "memory", "ReplicatedMergeTree")])
-    with pytest.raises(Refused, match="clickhouse loom.memory: the scan failed: Code: 999"):
+    result = await cell_scan.scan(ch, tables, TWO, Budget(600))
+    assert result.orgs == {"acme": {"clickhouse loom.memory"}}
+    assert len(ch.sql("raw_bytes")) == 3
+    # Any other is named.
+    ch = FakeCH().on("SYSTEM", [{"host": "ch-0", "error": "no status"}])
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan failed"):
         await cell_scan.scan(ch, tables, TWO, Budget(600))
+
+
+async def test_a_transient_error_in_the_scan_body_is_retried() -> None:
+    readonly = '{"exception": "Code: 242. DB::Exception: Table is in readonly mode"}\n'
+    ch = _RawBody(_ROWS + readonly, _ROWS)
+    tables = TableList(clickhouse=[Table("loom", "memory", "MergeTree")])
+    result = await cell_scan.scan(ch, tables, ONE, Budget(600))
+    assert set(result.orgs) == {"acme", "beta"}
+    assert len(ch.sql("raw_stream")) == 2
+
+
+async def test_every_read_throws_past_a_limit_rather_than_stopping_short() -> None:
+    ch = FakeCH().on("SYSTEM", []).on("SELECT DISTINCT org", _org_rows(b"acme"))
+    tables = TableList(clickhouse=[Table("loom", "memory", "MergeTree")])
+    await cell_scan.scan(ch, tables, ONE, Budget(600))
+    settings = [s for k, _, s in ch.calls if k == "raw_stream"][0]
+    for name in (
+        "timeout_overflow_mode",
+        "read_overflow_mode",
+        "result_overflow_mode",
+        "distinct_overflow_mode",
+        "set_overflow_mode",
+    ):
+        assert settings[name] == "throw", name
+    # The listing's reads carry the same, on one host and through clusterAllReplicas.
+    for topology, names in ((ONE, {}), (TWO, NAMES)):
+        ch = _listing(("os-0", []), ("os-1", []))
+        await cell_scan.list_clickhouse(ch, topology, names, ["loom"])
+        assert all("distinct_overflow_mode = 'throw'" in s for s in ch.sql("query_all"))
+        assert all("result_overflow_mode = 'throw'" in s for s in ch.sql("query_all"))

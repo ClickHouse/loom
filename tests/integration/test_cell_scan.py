@@ -267,19 +267,35 @@ async def test_a_user_that_creates_tables_anywhere_is_a_writer(
         await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
 
 
-async def test_a_per_table_grant_and_read_on_remote_as_show_grants_prints_them(
+async def test_grants_are_read_as_the_server_keeps_them(
     ch: Any, scratch: tuple[str, str], users: dict[str, str]
 ) -> None:
+    """From `system.grants` and `system.role_grants`: a per-table grant is not one on the
+    database, `READ ON REMOTE` reads as REMOTE, and a role granted but not a default role
+    still makes its holder a writer, since the user can set it."""
     schema, _ = scratch
+    role = f"{users['writer']}_role"
     await ch.execute(_mergetree(f"{schema}.memory"))
     await ch.execute(f"GRANT SELECT ON {schema}.memory TO {users['narrow']}")
     await ch.execute(f"GRANT READ ON REMOTE TO {users['remote']}")
-    narrow = await cell_writers._show_grants(ch, users["narrow"])
-    assert f"SELECT ON {schema}.*" in cell_writers.own_problems(
-        narrow, cell_scan.Topology("", frozenset(), 0), [schema]
-    )
-    remote = await cell_writers._show_grants(ch, users["remote"])
-    assert cell_writers.holds(remote, "REMOTE"), remote
+    try:
+        await ch.execute(f"CREATE ROLE {role}")
+        await ch.execute(f"GRANT INSERT ON {schema}.* TO {role}")
+        await ch.execute(f"GRANT {role} TO {users['writer']}")
+        await ch.execute(f"SET DEFAULT ROLE NONE TO {users['writer']}")
+        topology = await cell_scan.read_topology(ch)
+        (grants,) = (await cell_writers._host_grants(ch, topology, {})).values()
+        assert f"SELECT ON {schema}.*" in cell_writers.own_problems(
+            grants[users["narrow"]], topology, [schema]
+        )
+        assert cell_writers.holds(grants[users["remote"]], "REMOTE"), grants[users["remote"]]
+        assert cell_writers.writer_reason(grants[users["writer"]], [schema]) == (
+            f"holds INSERT on {schema}.*"
+        )
+        refusals = await cell_writers.check_writers(ch, topology, {}, cell_writers.Allowed())
+        assert any(str(r).startswith(f"user {users['writer']}: holds INSERT") for r in refusals)
+    finally:
+        await ch.execute(f"DROP ROLE IF EXISTS {role}")
 
 
 async def test_every_table_a_view_fills_from_a_log_table_is_a_log_table(ch: Any) -> None:

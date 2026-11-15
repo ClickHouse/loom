@@ -28,8 +28,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from clickhouse_connect.driver.exceptions import DatabaseError
+
 from server.core import ch_names
-from server.core.cell import ORG_FREE, ORG_MAX_BYTES, named_org
+from server.core.cell import ORG_FREE, named_org, org_name_refusal
 from server.settings import settings
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
@@ -51,7 +53,21 @@ LOG_TABLES = frozenset(
 # A `clusterAllReplicas` read: every replica answers (one that does not is unverified, not
 # absent), and the initiator reads its own host locally, never a second time over a
 # connection as the cluster's configured user.
-_CLUSTER_SQL = "SETTINGS skip_unavailable_shards = 0, prefer_localhost_replica = 1"
+_CLUSTER = "skip_unavailable_shards = 0, prefer_localhost_replica = 1"
+# Every read the scan and the checks make throws past a limit rather than return what it has
+# read so far: a profile's `break` would shorten a list or a scan silently.
+WHOLE = {
+    "timeout_overflow_mode": "throw",
+    "timeout_overflow_mode_leaf": "throw",
+    "read_overflow_mode": "throw",
+    "read_overflow_mode_leaf": "throw",
+    "result_overflow_mode": "throw",
+    "distinct_overflow_mode": "throw",
+    "set_overflow_mode": "throw",
+}
+_WHOLE = ", ".join(f"{k} = '{v}'" for k, v in WHOLE.items())
+_LOCAL_SQL = f"SETTINGS {_WHOLE}"
+_CLUSTER_SQL = f"SETTINGS {_CLUSTER}, {_WHOLE}"
 
 # A refreshable view's temporary table while a refresh exchanges its target.
 _EXCHANGE = re.compile(r"^\.tmp\.inner(_id)?\.")
@@ -155,7 +171,7 @@ async def read_topology(ch: Any) -> Topology:
     if not cluster:
         return Topology("", frozenset(), 0)
     rows = await ch.query_all(
-        "SELECT host_name, shard_num FROM system.clusters WHERE cluster = {c:String}",
+        "SELECT host_name, shard_num FROM system.clusters WHERE cluster = {c:String} " + _LOCAL_SQL,
         {"c": cluster},
     )
     return Topology(
@@ -227,7 +243,8 @@ async def per_host(
     assert m, sql
     table = f"system.{m.group(1)}"
     if not topology.multi:
-        return {"": await ch.query_all(sql.replace(m.group(0), table), params or {})}
+        local = sql.replace(m.group(0), table) + " " + _LOCAL_SQL
+        return {"": await ch.query_all(local, params or {})}
     rows = await ch.query_all(
         sql.replace(m.group(0), f"clusterAllReplicas({{c:String}}, {table})") + " " + _CLUSTER_SQL,
         {**(params or {}), "c": topology.cluster},
@@ -509,7 +526,7 @@ class ScanResult:
         if named_org(text) is None:
             self.malformed.setdefault(source, []).append(repr(text))
             return
-        if len(text.encode()) > ORG_MAX_BYTES:
+        if org_name_refusal(text):
             self.too_long.setdefault(text, set()).add(source)
             return
         self.orgs.setdefault(text, set()).add(source)
@@ -662,9 +679,10 @@ def ch_scan_sql(table: Table, topology: Topology) -> str:
     return f"{host} UNION ALL {orgs} FORMAT JSONEachRow"
 
 
-class BodyError(Exception):
-    """An error ClickHouse wrote into a response body after it began streaming rows: its
-    text keeps the server's `Code: <n>.`, so the error's code is read as any other's."""
+class BodyError(DatabaseError):
+    """An error ClickHouse wrote into a response body after it began streaming rows: a
+    server error as the driver raises one, its text keeping the server's `Code: <n>.`, so it
+    is judged transient or not, and by code, as any other."""
 
 
 def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
@@ -690,11 +708,11 @@ def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
 async def _read_scan(
     ch: Any, sql: str, params: dict[str, Any], extra: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    body = b""
-    async with ch.raw_stream(sql, params, settings=extra) as chunks:
-        async for chunk in chunks:
-            body += chunk
-    return _body_rows(body.decode("utf-8", "replace").splitlines(), "k")
+    chunks: list[bytes] = []
+    async with ch.raw_stream(sql, params, settings=extra) as stream:
+        async for chunk in stream:
+            chunks.append(chunk)
+    return _body_rows(b"".join(chunks).decode("utf-8", "replace").splitlines(), "k")
 
 
 async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) -> list[bytes | None]:
@@ -717,7 +735,10 @@ async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) ->
                     budget.require(subject),
                     subject,
                 )
-            extra: dict[str, Any] = {"max_execution_time": max(1, int(budget.require(subject)))}
+            extra: dict[str, Any] = {
+                **WHOLE,
+                "max_execution_time": max(1, int(budget.require(subject))),
+            }
             if table.engine.startswith("Shared"):
                 extra["select_sequential_consistency"] = 1
             params = {"c": topology.cluster} if topology.multi else {}
