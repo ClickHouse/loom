@@ -451,7 +451,10 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
             raise
         except Exception as e:  # noqa: BLE001 — a failed statement is retried or named
             failure = e
-        if bound.expired() or getattr(failure, "sqlstate", None) == "57014":  # the timeout
+        # 57014 is also a cancel from outside (pg_cancel_backend), retried as an outage: the
+        # budget ran out only when there is none left, since the timeout is what was left.
+        timed_out = getattr(failure, "sqlstate", None) == "57014" and budget.left() <= 1
+        if bound.expired() or timed_out:
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
         if not (pg.is_outage(failure) or isinstance(failure, BackendUnavailableError)):
             raise Refused([Refusal(subject, f"the scan failed: {failure}")]) from failure

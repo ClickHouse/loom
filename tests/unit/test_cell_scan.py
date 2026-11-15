@@ -541,9 +541,14 @@ async def test_the_postgres_scan_retries_an_outage_once_it_clears(
 async def test_the_postgres_statement_timeout_refuses_as_the_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The statement timeout is what was left of the budget: a cancel with none left is it,
+    and one with budget left is a cancel from outside, retried as an outage."""
     _pg_sessions(monkeypatch, _Canceled("canceling statement due to statement timeout"))
     with pytest.raises(Refused, match="postgres loom.tenancy: the scan ran out of --scan-budget"):
-        await cell_scan.scan(FakeCH(), TableList(postgres=["loom.tenancy"]), ONE, Budget(60))
+        await cell_scan.scan(FakeCH(), TableList(postgres=["loom.tenancy"]), ONE, Budget(1))
+    _pg_sessions(monkeypatch, _Canceled("canceling statement due to user request"), [{"org": "a"}])
+    result = await cell_scan.scan(FakeCH(), TableList(postgres=["loom.tenancy"]), ONE, Budget(60))
+    assert result.orgs == {"a": {"postgres loom.tenancy"}}
 
 
 async def test_the_listing_refuses_a_user_that_would_list_short() -> None:
