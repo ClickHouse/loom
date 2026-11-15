@@ -32,6 +32,7 @@ from clickhouse_connect.driver.exceptions import DatabaseError
 
 from server.core import ch_names
 from server.core.cell import ORG_FREE, named_org, org_name_refusal
+from server.core.ch import query_tag
 from server.settings import settings
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
@@ -66,7 +67,7 @@ WHOLE = {
     "set_overflow_mode": "throw",
 }
 _WHOLE = ", ".join(f"{k} = '{v}'" for k, v in WHOLE.items())
-_LOCAL_SQL = f"SETTINGS {_WHOLE}"
+WHOLE_SQL = f"SETTINGS {_WHOLE}"
 _CLUSTER_SQL = f"SETTINGS {_CLUSTER}, {_WHOLE}"
 
 # A refreshable view's temporary table while a refresh exchanges its target.
@@ -80,6 +81,7 @@ _TIMEOUT_CODES = frozenset({159})  # TIMEOUT_EXCEEDED
 _UNKNOWN_TABLE_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
 
 _sleep = asyncio.sleep  # the seam the retry tests replace
+_TAG = "cell.scan"  # system.query_log's log_comment of every statement the scan issues
 
 
 @dataclass(frozen=True)
@@ -170,10 +172,12 @@ async def read_topology(ch: Any) -> Topology:
     cluster = settings.ch_cluster
     if not cluster:
         return Topology("", frozenset(), 0)
-    rows = await ch.query_all(
-        "SELECT host_name, shard_num FROM system.clusters WHERE cluster = {c:String} " + _LOCAL_SQL,
-        {"c": cluster},
-    )
+    with query_tag(_TAG):
+        rows = await ch.query_all(
+            "SELECT host_name, shard_num FROM system.clusters WHERE cluster = {c:String} "
+            + WHOLE_SQL,
+            {"c": cluster},
+        )
     return Topology(
         cluster,
         frozenset(str(r["host_name"]) for r in rows),
@@ -185,12 +189,13 @@ async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
     """Each answering host's OS hostname (an opaque group key) and the one configured name
     it answers for in the cluster; Refused unless there is one group per listed host, each
     with exactly one name, the names together the listing."""
-    rows = await ch.query_all(
-        "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
-        "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "
-        f"GROUP BY h {_CLUSTER_SQL}",
-        {"c": topology.cluster},
-    )
+    with query_tag(_TAG):
+        rows = await ch.query_all(
+            "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
+            "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "
+            f"GROUP BY h {_CLUSTER_SQL}",
+            {"c": topology.cluster},
+        )
     where = f"cluster {topology.cluster}"
     refusals = []
     out: dict[str, str] = {}
@@ -243,7 +248,7 @@ async def per_host(
     assert m, sql
     table = f"system.{m.group(1)}"
     if not topology.multi:
-        local = sql.replace(m.group(0), table) + " " + _LOCAL_SQL
+        local = sql.replace(m.group(0), table) + " " + WHOLE_SQL
         return {"": await ch.query_all(local, params or {})}
     rows = await ch.query_all(
         sql.replace(m.group(0), f"clusterAllReplicas({{c:String}}, {table})") + " " + _CLUSTER_SQL,
@@ -271,7 +276,7 @@ class Table:
 
     @property
     def canonical(self) -> str:
-        """`loom.<name>` or `loom_telemetry.<name>`: the name erasure's classification uses."""
+        """`loom.<name>` or `loom_telemetry.<name>`, as erasure's classification has it."""
         return f"{ch_names.logical(self.database)}.{self.name}"
 
     @property
@@ -471,11 +476,19 @@ async def list_tables(
     """The scan's table list in both stores, with every refusal it found, attach's own
     ClickHouse grants checked first. `names` is `host_names()` on a cluster of several
     hosts, else empty."""
+    with query_tag(_TAG):
+        return await _list_tables(ch, pg_conn, topology, names)
+
+
+async def _list_tables(
+    ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
+) -> TableList:
     from server.cli.cell_writers import own_refusals
     from server.erasure.store.census import classified_tables
 
     # The system tables hide what the reading user cannot see: a narrower user lists short.
-    if lacking := await own_refusals(ch, topology, names):
+    lacking, _ = await own_refusals(ch, topology, names)
+    if lacking:
         return TableList(refusals=lacking)
     classified = set(classified_tables())
     out = TableList(refusals=topology.refusals())
@@ -789,14 +802,12 @@ async def scan(
     naming the table, when a statement runs out of `budget`. A `NULL` org is named
     malformed. The caller connects ClickHouse inside `ch.statement_timeout()` of the budget,
     so the driver's own read timeout does not end a long statement first."""
-    from server.core.ch import query_tag
-
     if tables.refusals:
         raise Refused(tables.refusals)
     result = ScanResult()
     for org in sorted(configured):
         result.add("configured", org)
-    with query_tag("cell.scan"):
+    with query_tag(_TAG):
         for name in tables.postgres:
             for org in await _pg_orgs(name, budget):
                 result.add(f"postgres {name}", org)

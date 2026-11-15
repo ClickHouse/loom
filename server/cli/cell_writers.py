@@ -9,9 +9,9 @@ leaving the org with data and no placement. The check reads, on every host of
 - attach's own grants first, since `system.tables` and `system.columns` silently hide what
   the reading user cannot see: a partial revoke of any of them refuses too;
 - every user's grants, roles followed and partial revokes ignored (a revoke only narrows a
-  grant, so ignoring one over-approximates); a grant that creates tables, or reads or writes
-  through `remote` (REMOTE, SOURCES), counts on any database, since it writes the configured
-  databases without a grant on them;
+  grant, so ignoring one over-approximates); a grant that creates tables, acts as another
+  user, or connects out (`_ANYWHERE_ACCESS`) counts on any database, since it writes the
+  configured databases without a grant on them;
 - the user directories, the objects that write the configured databases without a grant on
   them or bring in what lies outside them (a view, a forwarding table or an external engine
   inside them reading outside; a networked table outside them; a KeeperMap table outside
@@ -30,12 +30,13 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from server.cli.cell_scan import Refusal, Topology, databases, per_host
+from server.cli.cell_scan import WHOLE_SQL, Refusal, Topology, databases, per_host
 
 # Each privilege attach needs and the grants that imply it, closest first.
 _IMPLIED_BY: dict[str, tuple[str, ...]] = {
     "SELECT": ("ALL",),
     "SHOW USERS": ("SHOW ACCESS", "ACCESS MANAGEMENT", "ALL"),
+    "SHOW ROLES": ("SHOW ACCESS", "ACCESS MANAGEMENT", "ALL"),
     "SHOW TABLES": ("SHOW", "ALL"),
     "SHOW COLUMNS": ("SHOW", "ALL"),
     "REMOTE": ("SOURCES", "ALL"),
@@ -299,6 +300,7 @@ def own_problems(grants: list[Grant], topology: Topology, dbs: list[str]) -> lis
     needs: list[tuple[str, str | None]] = [
         ("SELECT", "system"),
         ("SHOW USERS", None),
+        ("SHOW ROLES", None),
         ("SHOW TABLES", None),
         ("SHOW COLUMNS", None),
         ("SYSTEM FLUSH ASYNC INSERT QUEUE", None),
@@ -516,8 +518,7 @@ def _referenced_databases(code: str) -> set[str]:
 
 
 def keeper_root(engine_full: str) -> str:
-    """A KeeperMap table's root path, normalised: one slash between parts, none at the
-    ends."""
+    """A KeeperMap table's root path with one slash between parts and none at the ends."""
     args = _engine_args(engine_full)
     return "/".join(p for p in (args[0] if args else "").split("/") if p)
 
@@ -556,9 +557,9 @@ def object_problems(
             if shared := roots.get(keeper_root(str(r.get("engine_full") or ""))):
                 out[key] = f"a KeeperMap table sharing {shared}'s keys"
         elif engine in _NETWORKED:
-            out[key] = f"a {engine} table, which connects out with credentials of its own"
+            out[key] = f"a table of engine {engine}, which connects out with credentials of its own"
         elif engine in _FORWARDING and _engine_targets(str(r.get("engine_full") or ""), dbs):
-            out[key] = f"a {engine} table writing a configured database"
+            out[key] = f"a table of engine {engine} writing a configured database"
         elif engine in _WRITING_VIEWS:
             to = _TO.search(query.split(" AS ", 1)[0])
             if to and (to.group(1) or to.group(2)) in dbs:
@@ -588,19 +589,19 @@ def _inside_problem(
         named = (_engine_args(str(r.get("engine_full") or "")) or [""])[0]
         if not cluster or named != cluster:
             return (
-                f"a Distributed table reading cluster {named or '(none)'}, not "
+                f"a table of engine Distributed reading cluster {named or '(none)'}, not "
                 f"{cluster or 'LOOM_CH_CLUSTER (unset)'}"
             )
     if engine in _FORWARDING:
         target = _engine_database(engine, str(r.get("engine_full") or ""))
         if target and target not in dbs:
-            return f"a {engine} table reading database {target}"
+            return f"a table of engine {engine} reading database {target}"
         return ""
     if engine in _STREAMS:
-        return f"a {engine} table, which writes by itself"
+        return f"a table of engine {engine}, which writes by itself"
     if engine.endswith("MergeTree") or engine in _LOCAL_ENGINES:
         return ""
-    return f"a {engine} table, which reads outside the configured databases"
+    return f"a table of engine {engine}, which reads outside the configured databases"
 
 
 def extra_replicas(rows: Iterable[Mapping[str, Any]]) -> dict[str, set[str]]:
@@ -626,34 +627,42 @@ def extra_replicas(rows: Iterable[Mapping[str, Any]]) -> dict[str, set[str]]:
 
 
 async def _own_user(ch: Any) -> str:
-    row = await ch.query_one("SELECT currentUser() AS u")
+    row = await ch.query_one(f"SELECT currentUser() AS u {WHOLE_SQL}")
     return str((row or {}).get("u") or "")
 
 
 async def _show_grants(ch: Any) -> list[Grant]:
     """Attach's own grants, as `SHOW GRANTS FINAL` prints them: the one read that needs no
     privilege, so a user lacking `SELECT ON system.*` is told what it lacks."""
-    rows = await ch.query_all("SHOW GRANTS FINAL")
+    # Pinned: a profile's `break` could end the list before its REVOKE lines.
+    rows = await ch.query_all(f"SHOW GRANTS FINAL {WHOLE_SQL}")
     return parse_show_grants(str(next(iter(r.values()))) for r in rows if r)
 
 
-async def own_refusals(ch: Any, topology: Topology, names: Mapping[str, str]) -> list[Refusal]:
-    """What attach's own user lacks to read what the checks read: without it `system.tables`
-    and `system.columns` would silently list less than there is. First its own
-    `SHOW GRANTS FINAL`; then, on several hosts, that every host runs the reads as this
-    user; then that user's grants as each host keeps them."""
+HostGrants = dict[str, dict[str, list["Grant"]]]
+
+
+async def own_refusals(
+    ch: Any, topology: Topology, names: Mapping[str, str]
+) -> tuple[list[Refusal], HostGrants]:
+    """What attach's own user lacks to read what the checks read (without it `system.tables`
+    and `system.columns` would silently list less than there is), and every user's grants
+    per host once they could be read. First its own `SHOW GRANTS FINAL`; then, on several
+    hosts, that every host runs the reads as this user; then that user's grants as each host
+    keeps them."""
     dbs = databases()
     own = await _own_user(ch)
     if missing := own_problems(await _show_grants(ch), topology, dbs):
-        return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")]
+        return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")], {}
     if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
-        return wrong
+        return wrong, {}
+    per_user = await _host_grants(ch, topology, names)
     out = []
-    for host, users in sorted((await _host_grants(ch, topology, names)).items()):
+    for host, users in sorted(per_user.items()):
         # Each host keeps its own users: attach's must hold the same on every one.
         if lacks := own_problems(users.get(own, []), topology, dbs):
             out.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
-    return out
+    return out, per_user
 
 
 async def _process_users(
@@ -716,10 +725,10 @@ async def check_writers(
 
     dbs = databases()
     with query_tag("cell.writers"):
-        if lacking := await own_refusals(ch, topology, names):
+        lacking, per_user = await own_refusals(ch, topology, names)
+        if lacking:
             return lacking
         refusals: list[Refusal] = []
-        per_user = await _host_grants(ch, topology, names)
         for host, users in sorted(per_user.items()):
             for user, grants in sorted(users.items()):
                 if user not in allowed.users and (why := writer_reason(grants, dbs)):

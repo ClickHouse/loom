@@ -48,6 +48,9 @@ def test_a_privilege_is_held_through_any_grant_implying_it() -> None:
     assert holds([Grant("SOURCES")], "REMOTE")
     assert holds([Grant("ALL")], "SYSTEM SYNC REPLICA", "loom")
     assert holds([Grant("SHOW ACCESS")], "SHOW USERS")
+    assert holds([Grant("SHOW ACCESS")], "SHOW ROLES")
+    assert holds([Grant("ACCESS MANAGEMENT")], "SHOW ROLES")
+    assert not holds([Grant("SHOW USERS")], "SHOW ROLES")
     assert holds([Grant("SYSTEM FLUSH")], "SYSTEM FLUSH ASYNC INSERT QUEUE")
     assert holds([Grant("SELECT", "loom")], "SELECT", "loom")
     assert holds([Grant("SELECT", "lo*")], "SELECT", "loom")
@@ -60,7 +63,7 @@ def test_a_privilege_is_held_through_any_grant_implying_it() -> None:
 def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
     lines = [
         "GRANT SELECT, SHOW, SYSTEM ON *.* TO attach",
-        "GRANT SHOW USERS ON *.* TO attach",
+        "GRANT SHOW USERS, SHOW ROLES ON *.* TO attach",
         "REVOKE SHOW TABLES ON side.* FROM attach",
         "REVOKE SELECT ON loom.secret FROM attach",
         "REVOKE GRANT OPTION FOR SELECT ON other.* FROM attach",
@@ -72,7 +75,7 @@ def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
     # On several hosts the revokes come as `system.grants` rows.
     rows = [
         {"user_name": "attach", "access_type": a, "database": None}
-        for a in ("SELECT", "SHOW", "SHOW USERS", "SYSTEM", "REMOTE", "CLUSTER")
+        for a in ("SELECT", "SHOW", "SHOW USERS", "SHOW ROLES", "SYSTEM", "REMOTE", "CLUSTER")
     ]
     rows.append(
         {"user_name": "attach", "access_type": "SHOW", "database": "side", "is_partial_revoke": 1}
@@ -87,12 +90,13 @@ def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
 
 
 def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
-    full = [Grant("SELECT"), Grant("SHOW"), Grant("SHOW USERS"), Grant("SYSTEM")]
+    full = [Grant("SELECT"), Grant("SHOW"), Grant("SHOW ACCESS"), Grant("SYSTEM")]
     assert cell_writers.own_problems(full, ONE, DBS) == []
     assert cell_writers.own_problems(full, TWO, DBS) == ["READ ON REMOTE", "CLUSTER ON *.*"]
     narrow = [Grant("SELECT", "loom", "memory"), Grant("SELECT", "system"), Grant("SHOW")]
     assert cell_writers.own_problems(narrow, Topology("", frozenset(), 0), DBS) == [
         "SHOW USERS ON *.*",
+        "SHOW ROLES ON *.*",
         "SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
         "SELECT ON loom.*",
         "SELECT ON loom_telemetry.*",
@@ -238,25 +242,28 @@ def _inside(engine: str, **row: str) -> dict[str, str]:
         (_inside("View", create_table_query="CREATE VIEW loom.x AS SELECT org FROM loom.m"), ""),
         (
             _inside("Merge", engine_full="Merge('side', '^t$')"),
-            "a Merge table reading database side",
+            "a table of engine Merge reading database side",
         ),
         (_inside("Merge", engine_full="Merge(REGEXP('^lo'), '^t$')"), "reading database REGEXP"),
         (_inside("Merge", engine_full="Merge(currentDatabase(), '^t$')"), ""),
         (_inside("Merge", engine_full="Merge('loom', '^t$')"), ""),
         (
             _inside("Distributed", engine_full="Distributed('main', 'side', 't', rand())"),
-            "a Distributed table reading database side",
+            "a table of engine Distributed reading database side",
         ),
         # Another cluster's shards are servers outside this one.
         (
             _inside("Distributed", engine_full="Distributed('other', 'loom', 't', rand())"),
-            "a Distributed table reading cluster other, not main",
+            "a table of engine Distributed reading cluster other, not main",
         ),
         (_inside("Distributed", engine_full="Distributed('main', 'loom', 't')"), ""),
         (_inside("Buffer", engine_full="Buffer('loom_telemetry', 't', 16, 1, 1, 1, 1, 1, 1)"), ""),
-        (_inside("URL", engine_full="URL('http://x', CSV)"), "a URL table, which reads outside"),
-        (_inside("S3", engine_full="S3('http://x')"), "a S3 table, which reads outside"),
-        (_inside("File", engine_full="File(CSV)"), "a File table, which reads outside"),
+        (
+            _inside("URL", engine_full="URL('http://x', CSV)"),
+            "a table of engine URL, which reads outside",
+        ),
+        (_inside("S3", engine_full="S3('http://x')"), "a table of engine S3, which reads outside"),
+        (_inside("File", engine_full="File(CSV)"), "a table of engine File, which reads outside"),
         (_inside("Memory", engine_full="Memory"), ""),
         (
             _inside(
@@ -351,13 +358,13 @@ def test_objects_writing_the_configured_databases_without_a_grant() -> None:
         {"database": "loom", "name": "feed", "engine": "Kafka", "engine_full": "Kafka(...)"},
     ]
     assert cell_writers.object_problems(rows, DBS, frozenset({"url"})) == {
-        "side.buf": "a Buffer table writing a configured database",
-        "side.dist": "a Distributed table writing a configured database",
-        "side.merged": "a Merge table writing a configured database",
+        "side.buf": "a table of engine Buffer writing a configured database",
+        "side.dist": "a table of engine Distributed writing a configured database",
+        "side.merged": "a table of engine Merge writing a configured database",
         "side.mv": "a materialized view writing a configured database",
         "loom.pull_mv": "a materialized view reading database side",
         "loom.fn_mv": "a materialized view reading the table function url",
-        "loom.feed": "a Kafka table, which writes by itself",
+        "loom.feed": "a table of engine Kafka, which writes by itself",
     }
 
 
@@ -397,7 +404,7 @@ def _row(user: str, access: str, database: str | None = None) -> dict[str, Any]:
 def _single_host() -> FakeCH:
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM ON *.* TO attach"},
-        {"g": "GRANT SHOW USERS ON *.* TO attach"},
+        {"g": "GRANT SHOW USERS, SHOW ROLES ON *.* TO attach"},
     ]
     return (
         FakeCH()
@@ -406,7 +413,10 @@ def _single_host() -> FakeCH:
         .on(
             "system.grants",
             [
-                *(_row("attach", a) for a in ("SELECT", "SHOW", "SHOW USERS", "SYSTEM")),
+                *(
+                    _row("attach", a)
+                    for a in ("SELECT", "SHOW", "SHOW USERS", "SHOW ROLES", "SYSTEM")
+                ),
                 _row("server", "INSERT", "loom"),
                 _row("server", "SELECT", "loom"),
                 _row("analyst", "SELECT", "loom"),
@@ -447,7 +457,7 @@ async def test_a_narrow_own_user_refuses_before_any_other_read() -> None:
 def _cluster(process_user: str = "attach", lacking_on: str = "") -> FakeCH:
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM, CLUSTER ON *.* TO attach"},
-        {"g": "GRANT SHOW USERS, REMOTE ON *.* TO attach"},
+        {"g": "GRANT SHOW USERS, SHOW ROLES, REMOTE ON *.* TO attach"},
     ]
     attach_grants = [
         {
@@ -461,7 +471,7 @@ def _cluster(process_user: str = "attach", lacking_on: str = "") -> FakeCH:
             "is_partial_revoke": 0,
         }
         for h in ("os-0", "os-1")
-        for a in ("SELECT", "SHOW", "SHOW USERS", "SYSTEM", "REMOTE", "CLUSTER")
+        for a in ("SELECT", "SHOW", "SHOW USERS", "SHOW ROLES", "SYSTEM", "REMOTE", "CLUSTER")
         if not (h == lacking_on and a == "SHOW")
     ]
     local_writer = {
@@ -595,8 +605,8 @@ def test_an_outside_table_that_connects_out_counts() -> None:
         {"database": "side", "name": "m", "engine": "MergeTree", "engine_full": "MergeTree"},
     ]
     assert cell_writers.object_problems(rows, DBS) == {
-        "side.u": "a URL table, which connects out with credentials of its own",
-        "side.p": "a PostgreSQL table, which connects out with credentials of its own",
+        "side.u": "a table of engine URL, which connects out with credentials of its own",
+        "side.p": "a table of engine PostgreSQL, which connects out with credentials of its own",
     }
 
 

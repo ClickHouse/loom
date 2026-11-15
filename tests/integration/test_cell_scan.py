@@ -219,7 +219,7 @@ async def test_the_writer_check_names_a_writer_and_an_object(
         )
         assert [str(r) for r in refusals if schema in str(r) or users["writer"] in str(r)] == [
             f"user {users['writer']}: holds INSERT on {schema}.*: name it with --ch-allow-user",
-            f"object {side}.buf: a Buffer table writing a configured database: name it with "
+            f"object {side}.buf: a table of engine Buffer writing a configured database: name it with "
             "--ch-allow-object",
         ]
         allowed = cell_writers.Allowed(
@@ -396,7 +396,18 @@ async def test_a_user_that_cannot_see_every_table_refuses_before_listing(
             assert [r.subject for r in found] == [f"user {narrow}"], found
             assert "SHOW TABLES ON *.*" in found[0].reason
             assert "SHOW COLUMNS ON *.*" in found[0].reason
+            assert "SHOW ROLES ON *.*" in found[0].reason
         assert listed.clickhouse == [] and listed.postgres == []
+        # With every SHOW but SHOW ROLES, that alone is named.
+        await ch.execute(f"GRANT SHOW TABLES, SHOW COLUMNS ON *.* TO {narrow}")
+        raw = ch_client_from_env(username=narrow, password=users["password"])
+        try:
+            listed = await cell_scan.list_tables(_AsUser(raw), None, topology, {})
+        finally:
+            raw.close()
+        assert [str(r) for r in listed.refusals] == [
+            f"user {narrow}: attach's own user lacks SHOW ROLES ON *.*"
+        ]
     finally:
         await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
 
