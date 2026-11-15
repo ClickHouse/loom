@@ -273,6 +273,13 @@ def allowlisted_tables() -> tuple[str, ...]:
     return tuple(t.name for t in TABLES)
 
 
+def others_policy_tables() -> tuple[str, ...]:
+    """Every table `entity_sql` puts the every-other-user policy on: the allowlist, the
+    retired tables and the canary. A foreign permissive policy on any of them would be
+    widened by it (`store.analysis.foreign_policies_sql` looks on each)."""
+    return (*allowlisted_tables(), *RETIRED_TABLES, CANARY_TABLE)
+
+
 def scope_payload(org: str, namespaces: str, exp: int, query_id: str) -> str:
     """Each part but the last prefixed with its length in bytes, as
     ClickHouse's length() counts a String, so no two scopes share a payload.

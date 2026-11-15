@@ -186,6 +186,24 @@ def test_other_users_keep_reading_every_table() -> None:
     assert set(others.values()) == {"AS permissive FOR SELECT USING 1 TO ALL EXCEPT `loom_analyst`"}
 
 
+def test_the_foreign_policy_check_looks_on_every_table_the_others_policy_widens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
+    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS)
+    widened = {
+        m.group(1)
+        for s in sql
+        if (m := re.match(rf"CREATE ROW POLICY OR REPLACE `{boundary.OTHERS_POLICY_NAME}` "
+                          r"ON `loom`\.(\w+) ", s))
+    }  # fmt: skip
+    assert widened == set(boundary.others_policy_tables())
+    assert {"old_table", boundary.CANARY_TABLE} <= widened
+    check = store.foreign_policies_sql("'loom'")
+    for table in widened:
+        assert sql_string(table) in check, table
+
+
 def test_tombstoning_tables_are_read_live() -> None:
     # A table the saga tombstones keeps its rows; its policy must hide them.
     live = {t.name: t.live for t in boundary.TABLES}

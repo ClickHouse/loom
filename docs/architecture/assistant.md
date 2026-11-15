@@ -629,17 +629,17 @@ version of a row, and the row stays in the table until a merge or a purge, so `F
 picks each key's latest version and the policy then drops it when that version is a
 tombstone: a deleted or erased key is absent, and its earlier versions do not come back.
 A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, on every table the
-analyst has a policy on (the canary and a retired table included), keeps every other user,
-Loom's own included, reading the tables as before, whatever the server's
-`users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies
-on a table, so this one would widen any permissive policy someone else put on an
-allowlisted table: before every write Loom lists them in `system.row_policies` and,
-finding one, writes nothing and reports it, naming it in the server log and in
-`loom ch-setup`'s refusal, for an admin to drop or make restrictive. A restrictive
-policy is left alone, since it narrows every user it names. The analyst user, its
-profiles and its policies' names are server-wide, so analysis needs one Loom per
-ClickHouse service: a deployment that finds the analyst's scope policy in another
-database writes nothing and reports it, naming that database in the server log.
+analyst has a policy on (the canary and a retired table included), lets every other user,
+Loom's own included, read every row of them, whatever the server's
+`users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies on a
+table, so this one would widen any permissive policy someone else put on one of these
+tables: before every write Loom lists them in `system.row_policies` and, finding one, writes
+nothing and reports it, naming it in the server log and in `loom ch-setup`'s refusal, for an
+admin to drop or make restrictive. A restrictive policy is left alone, since it narrows
+every user it names. The analyst user, its profiles and its policies' names are server-wide,
+so analysis needs one Loom per ClickHouse service: a deployment that finds the analyst's
+scope policy in another database writes nothing and reports it, naming that database in the
+server log.
 
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`. The password holds a lower and an upper case letter, a

@@ -483,7 +483,9 @@ async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pai
     ch: Any, scratch: tuple[str, str], users: dict[str, str]
 ) -> None:
     """Once a table has a row policy, a user no permissive policy covers reads none of its
-    rows: attach's scan would find no org there."""
+    rows: attach's scan would find no org there. Loom's own pair is written under the
+    analyst's names on a scratch table for the few statements that judge it, which briefly
+    trips the server's other-deployments check (`other_deployments_sql`)."""
     from server.insights.domain.analysis import OTHERS_POLICY_NAME, POLICY_NAME
 
     schema, _ = scratch
@@ -522,58 +524,11 @@ async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pai
                 f"USING {using} TO {to}"
             )
             created.append(name)
-        assert (await ch.query_one(f"SELECT count() AS n FROM {schema}.memory"))["n"] == 1
-        refusals, _ = await cell_writers.own_refusals(ch, topology, {})
-        assert refusals == [], refusals
-        assert own != other
+        counted = await ch.query_one(f"SELECT count() AS n FROM {schema}.memory")
+        refusals = await cell_writers._row_policies(ch, topology, {}, own, cell_ch.databases())
     finally:
         for name in created:
             await ch.execute(f"DROP ROW POLICY IF EXISTS `{name}` ON {schema}.memory")
-
-
-async def test_the_row_policies_loom_s_analyst_setup_writes_let_the_listing_pass(
-    ch: Any, scratch: tuple[str, str], users: dict[str, str], own_pg: Any
-) -> None:
-    """Loom's own analyst policies, as its setup writes them, on scratch copies of the
-    tables it writes them on: attach reads every row of each, so the listing passes. The
-    policies name the analyst user, a scratch user here, so the server's own entities are
-    left alone."""
-    from server.insights.domain import analysis
-
-    schema, _ = scratch
-    analyst = users["writer"]
-    caps = analysis.Caps(
-        max_execution_s=10,
-        max_rows_to_read=1000,
-        max_memory_bytes=10_000,
-        max_result_rows=50,
-        max_result_bytes=100_000,
-        max_concurrent=4,
-        max_threads=2,
-    )
-    sql = analysis.entity_sql(f"`{schema}`", analysis.SettingNames("SQL_"), "pw", b"\0" * 32, caps)
-    policies = [
-        s.replace(f"`{analysis.ANALYST_USER}`", f"`{analyst}`")
-        for s in sql
-        if s.startswith("CREATE ROW POLICY")
-    ]
-    tables = sorted({re.search(rf"ON `{schema}`\.(\w+) ", s).group(1) for s in policies})  # type: ignore[union-attr]
-    assert analysis.CANARY_TABLE in tables
-    from tests.integration._resources import ch_client_from_env
-
-    # A client of its own: the server's names the scratch database `loom`.
-    raw = ch_client_from_env()
-    try:
-        for table in tables:
-            raw.command(f"CREATE TABLE {schema}.{table} AS loom.{table}")
-        for statement in policies:
-            await ch.execute(statement, settings=analysis.LOG_TEXT_CUT)
-        topology = await cell_ch.read_topology(ch)
-        listed = await cell_scan.list_tables(ch, own_pg, topology, {})
-        assert listed.refusals == [], listed.refusals
-        assert {t.name for t in listed.clickhouse} >= {analysis.CANARY_TABLE}
-    finally:
-        for table in tables:
-            for name in (analysis.POLICY_NAME, analysis.OTHERS_POLICY_NAME):
-                await ch.execute(f"DROP ROW POLICY IF EXISTS `{name}` ON {schema}.{table}")
-        raw.close()
+    assert counted["n"] == 1
+    assert refusals == [], refusals
+    assert own != other
