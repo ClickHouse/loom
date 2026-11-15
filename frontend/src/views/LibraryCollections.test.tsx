@@ -476,8 +476,8 @@ describe("the Library on a collection", () => {
     await settle();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
-    // The dialog's read, and the header's after it closes.
-    expect(api.listGrants.mock.calls.length - reads).toBe(2);
+    // The dialog's own read; closing it unchanged reads nothing again.
+    expect(api.listGrants.mock.calls.length - reads).toBe(1);
   });
 
   it("closes the members dialog when another collection is shown, so a grant never lands on it", async () => {

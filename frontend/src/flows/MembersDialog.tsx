@@ -108,8 +108,8 @@ interface Props {
    *  per person and repository is what the approver decides on, never a branch at a time.
    *  */
   pendingElsewhere?: Record<string, { namespace: string; label: string }[]>;
-  /** Fires after a member is added — the Setup checklist ticks "Invite a
-   * teammate" on it. */
+  /** Fires after the dialog changes who holds a grant: an add, a role change, a removal, an
+   *  approval or a rejection. Withdrawing one's own request changes no live grant. */
   onChanged?: () => void;
   /** Whether the caller may change the members, when the page knows it: a collection's role
    *  from `collection.list`, the gate's own answer (it reaches through parents and groups,
@@ -280,6 +280,7 @@ export function MembersDialog({
       await createGrant({ org, namespace }, subject, role, { replace: true });
       toast(`${subjectLabel(subject, org)} → ${role}`, "ok");
       load();
+      onChanged?.();
     } catch (e) {
       toastError("Update failed", e);
     } finally {
@@ -334,6 +335,7 @@ export function MembersDialog({
       await revokeGrant({ org, namespace }, subject);
       toast(toEveryone ? `Stopped sharing with everyone in ${org}` : `Removed ${who}`, "ok");
       load();
+      onChanged?.();
     } catch (e) {
       toastError("Remove failed", e);
     } finally {

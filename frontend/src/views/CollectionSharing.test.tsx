@@ -11,7 +11,11 @@ import { PHONE_QUERY } from "../lib/useMedia";
 import { axeViolations } from "../test/axe";
 import { type ReadAt, ShareButton, useCollectionSharing, whoCanSee } from "./CollectionSharing";
 
-const api = vi.hoisted(() => ({ listGrants: vi.fn(), isAuthDisabled: vi.fn(() => false) }));
+const api = vi.hoisted(() => ({
+  listGrants: vi.fn(),
+  createGrant: vi.fn(async () => ({})),
+  isAuthDisabled: vi.fn(() => false),
+}));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 
 const at = "2026-09-17T14:50:28Z";
@@ -218,6 +222,14 @@ describe("who can see a collection, in words", () => {
     expect(words([{ namespace: "col-a", rows }]).who).toBe("p0, p1, p2 and 1,200 more");
   });
 
+  it("says a parent refused to the reader isn't shown, not that it failed", () => {
+    const w = words([
+      { namespace: "col-a", rows: [grant("ada"), grant("bob")] },
+      { namespace: "col-top", rows: [], failed: true, refused: true },
+    ]);
+    expect(w.how).toBe("2 people here · Who can see top isn't shown to you");
+  });
+
   it("names the parent when no grant the person reads names anyone", () => {
     expect(words([{ namespace: "col-a", rows: [] }], { above: "Hidden" }).who).toBe("Everyone who can see Hidden");
   });
@@ -311,8 +323,14 @@ describe("the collection header", () => {
     });
     render(<Header collection={mid} byName={byName} />);
     expect(await screen.findByText("You and bob")).toBeInTheDocument();
-    expect(line()).toHaveTextContent("Also everyone who can see Engineering, whose members couldn't be read");
+    // A refusal is said as one, in the header and in the dialog.
+    expect(line()).toHaveTextContent("Who can see Engineering isn't shown to you");
+    expect(line()).not.toHaveTextContent("couldn't be read");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await screen.findByRole("dialog");
+    const through = await within(dialog).findByRole("region", { name: "Also can see it, through Engineering" });
+    expect(through).toHaveTextContent("Who can see Engineering isn't shown to you.");
   });
 
   it("reads every page of the grants, so the oldest (an early everyone) still counts", async () => {
@@ -560,13 +578,32 @@ describe("the collection header", () => {
     }
   });
 
-  it("reads the grants again when the members dialog closes, keeping the words busy meanwhile", async () => {
+  it("reads nothing again when the members dialog closes unchanged", async () => {
     api.listGrants.mockResolvedValue({ rows: [grant("ada", { role: "admin" })] });
     render(<Header collection={entry("col-a")} />);
     expect(await screen.findByText("Only you")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText("ada");
+    const reads = api.listGrants.mock.calls.length;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.listGrants.mock.calls.length).toBe(reads);
+    expect(line()).not.toHaveAttribute("aria-busy");
+  });
+
+  it("reads the grants again when the dialog changed one, keeping the words busy meanwhile", async () => {
+    api.listGrants.mockResolvedValue({ rows: [grant("ada", { role: "admin" })] });
+    render(<Header collection={entry("col-a")} />);
+    expect(await screen.findByText("Only you")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByText("ada");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add member" }));
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "bob" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(api.createGrant).toHaveBeenCalled());
     let answer: (v: unknown) => void = () => {};
     api.listGrants.mockReturnValue(new Promise((r) => (answer = r)));
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));

@@ -24,7 +24,7 @@ const INHERIT_DEPTH = 8;
 
 /** The grants read on one collection of the way up: the one shown first, then its parents.
  *  `failed`: a parent's grants could not be read. */
-export type ReadAt = GrantsAt & { failed?: boolean };
+export type ReadAt = GrantsAt & { failed?: boolean; refused?: boolean };
 
 /** What the header says about who can see a collection: one line naming them, and one
  *  saying how many and where their access comes from. */
@@ -40,9 +40,9 @@ function plural(n: number, one: string, many: string): string {
 }
 
 /** Who can see a collection, in words, from the active grants on it and on the parents the
- *  person can read. `me`: the person's spellings, counted among the people. `above`: a parent
- *  missing from the list, in words, whose grants reach it unseen. `empty`: it holds no
- *  documents yet. A read cut short counts "or more", and a parent whose grants could not be
+ *  person can read. `me`: whoami's subject; its other spellings come from the grants read.
+ *  `above`: a parent missing from the list, in words, whose grants reach it unseen. `empty`:
+ *  it holds no documents yet. A read cut short counts "or more", and a parent whose grants could not be
  *  read is named as one; neither concludes "Only you" nor no one else. */
 export function whoCanSee({
   grants,
@@ -86,11 +86,15 @@ export function whoCanSee({
   const unseen = [
     ...grants
       .filter((g) => g.failed)
-      .map((g) => ({ who: titleOf(g.namespace), notice: "whose members couldn't be read" })),
-    ...(above ? [{ who: above, notice: "" }] : []),
+      .map((g) => ({
+        who: titleOf(g.namespace),
+        text: g.refused
+          ? `Who can see ${titleOf(g.namespace)} isn't shown to you`
+          : `Also everyone who can see ${titleOf(g.namespace)}, whose members couldn't be read`,
+      })),
+    ...(above ? [{ who: above, text: `Also everyone who can see ${above}` }] : []),
   ];
-  const noticeOf = (u: { who: string; notice: string }) =>
-    `Also everyone who can see ${u.who}${u.notice ? `, ${u.notice}` : ""}`;
+  const noticeOf = (u: { text: string }) => u.text;
   const shown = grants[0]?.namespace ?? "";
   const inherited = [...new Set([...from.values()].filter((ns) => ns !== shown))].map(titleOf);
   const subjects = [...from.keys()];
@@ -212,6 +216,8 @@ export function useCollectionSharing({
   // to that page's heading, not back to Share, which the arrival could not do while the
   // dialog held it.
   const leftFor = useRef(false);
+  // The dialog wrote a grant since it opened: its close reads the grants again.
+  const changed = useRef(false);
   const [version, setVersion] = useState(0);
   useEffect(() => setOpenFor(null), [place]);
   const { chain, above } = useMemo(
@@ -238,7 +244,14 @@ export function useCollectionSharing({
       Promise.all([
         allGrants({ org, namespace: own }, signal),
         ...parents.map((namespace) =>
-          allGrants({ org, namespace }, signal).catch((): ReadAt => ({ namespace, rows: [], failed: true })),
+          allGrants({ org, namespace }, signal).catch(
+            (e): ReadAt => ({
+              namespace,
+              rows: [],
+              failed: true,
+              refused: e instanceof ApiError && e.status === 403,
+            }),
+          ),
         ),
       ])
         .then((grants) => {
@@ -331,6 +344,7 @@ export function useCollectionSharing({
         namespace: at.namespace,
         title: titleOf(at.namespace),
         rows: at.failed ? null : at.rows,
+        note: at.refused ? `Who can see ${titleOf(at.namespace)} isn't shown to you.` : undefined,
         cut: at.cut,
         onOpen: () => {
           leftFor.current = true;
@@ -364,7 +378,12 @@ export function useCollectionSharing({
       onOpenChange={(v) => {
         if (v) return;
         setOpenFor(null);
-        setVersion((n) => n + 1);
+        // Read the grants again only when the dialog changed one.
+        if (changed.current) setVersion((n) => n + 1);
+        changed.current = false;
+      }}
+      onChanged={() => {
+        changed.current = true;
       }}
       org={org}
       namespace={shown.namespace}
