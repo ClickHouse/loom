@@ -67,12 +67,8 @@ _IMPLIED_BY: dict[str, tuple[str, ...]] = {
 # them, or globally, must be one the operator names.
 _WRITER_ACCESS = frozenset(
     {
-        "ALL",
         "INSERT",
         "ALTER",
-        "CREATE",
-        "CREATE TABLE",
-        "CREATE VIEW",
         "ACCESS MANAGEMENT",
         "CREATE USER",
         "DROP USER",
@@ -698,9 +694,9 @@ async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
     through `clusterAllReplicas`."""
     if refusals := topology.refusals():
         raise Refused(refusals)
-    if lacking := await first_refusals(ch, topology):
-        raise Refused(lacking)
     with query_tag(TAG):
+        if lacking := await first_refusals(ch, topology):
+            raise Refused(lacking)
         rows = await ch.query_all(
             "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
             "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "

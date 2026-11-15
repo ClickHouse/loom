@@ -480,6 +480,10 @@ async def test_a_transient_failure_is_retried_and_a_timeout_refuses() -> None:
     timeout = _DatabaseError("Code: 159. DB::Exception: Timeout exceeded: elapsed 600 seconds")
     ch = FakeCH().on("SYSTEM", []).on("SELECT DISTINCT org", timeout)
     with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
+        await cell_scan.scan(ch, tables, ONE, Budget(1))  # the budget is spent
+    # With budget left, a timeout is the server's own (a profile's estimate): named.
+    ch = FakeCH().on("SYSTEM", []).on("SELECT DISTINCT org", timeout)
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan failed: Code: 159"):
         await cell_scan.scan(ch, tables, ONE, Budget(600))
     ch = FakeCH().on("SYSTEM", _DatabaseError("Code: 497. DB::Exception: Not enough privileges"))
     with pytest.raises(Refused, match="clickhouse loom.memory: the scan failed: Code: 497"):
@@ -631,7 +635,7 @@ async def test_a_timeout_written_into_the_body_mid_stream_refuses_as_the_budget(
     ch = _RawBody(_ROWS + tail)
     tables = TableList(clickhouse=[Table("loom", "memory", "MergeTree")])
     with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
-        await cell_scan.scan(ch, tables, ONE, Budget(600))
+        await cell_scan.scan(ch, tables, ONE, Budget(1))  # the budget is spent
 
 
 async def test_any_other_error_in_the_body_is_named() -> None:

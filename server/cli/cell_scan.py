@@ -619,9 +619,10 @@ async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) ->
                 for r in rows
                 if r["k"] == "o"
             ]
-        if error_code(failure) in _TIMEOUT_CODES:
+        # A timeout is the budget only when none is left (a profile's estimate can throw early).
+        if error_code(failure) in _TIMEOUT_CODES and budget.left() <= 1:
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-        if not _ch_transient(failure):
+        if error_code(failure) in _TIMEOUT_CODES or not _ch_transient(failure):
             raise Refused(
                 [Refusal(subject, f"the scan failed: {error_line(failure)}")]
             ) from failure

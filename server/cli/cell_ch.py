@@ -35,6 +35,7 @@ WHOLE = {
     "result_overflow_mode": "throw",
     "distinct_overflow_mode": "throw",
     "set_overflow_mode": "throw",
+    "group_by_overflow_mode": "throw",
     "limit": "0",
     "offset": "0",
     "additional_table_filters": "{}",
