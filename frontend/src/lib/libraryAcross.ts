@@ -34,20 +34,26 @@ function placed(page: KnowledgeListResponse, first: string): KnowledgeEntry[] {
   return (page.rows || []).map((r) => (r.namespace ? r : { ...r, namespace: first }));
 }
 
-/** Whether a read was refused for a place in it (403, or 404 for one gone): the one failure
- *  a place causes alone, so the only one worth finding the place for. */
+/** Whether a read was refused for a place in it (403: each named place is read-checked): the
+ *  one failure a place causes alone, so the only one worth finding the place for. */
 export function isRefusal(e: unknown): boolean {
-  return e instanceof ApiError && (e.status === 403 || e.status === 404);
+  return e instanceof ApiError && e.status === 403;
 }
 
-/** One page of `places`' documents, newest first. A refused read finds the places that fail
- *  alone and reads the rest; it throws when all or none of them fail alone. */
+/** One page of `places`' documents, newest first, without those `refused` names (known to
+ *  refuse, reported again). A refused read finds the places that fail alone and reads the rest;
+ *  it throws when all or none of them fail alone. */
 export async function listAcross(
   org: string,
   places: string[],
   opts: ListOpts,
   signal: AbortSignal,
+  refused: readonly PlaceFailure[] = [],
 ): Promise<AcrossPage> {
+  const known = refused.filter((f) => places.includes(f.namespace));
+  const skip = new Set(known.map((f) => f.namespace));
+  const asked = places.filter((p) => !skip.has(p));
+  if (asked.length === 0) return { rows: [], next_cursor: null, read: [], failed: known, oneAtATime: false };
   const read = (names: string[]) =>
     listKnowledge(
       { org, namespace: names[0] },
@@ -64,16 +70,16 @@ export async function listAcross(
     };
   };
   try {
-    return done(await read(places), places, []);
+    return done(await read(asked), asked, known);
   } catch (e) {
     // Any other failure (a limit, a busy server) is the read's, not a place's: the page offers
     // Retry rather than a call per place.
-    if (signal.aborted || places.length < 2 || opts.cursor || !isRefusal(e)) throw e;
-    const failed = await failingPlaces(org, places, signal);
-    if (failed.length === 0 || failed.length === places.length) throw e;
+    if (signal.aborted || asked.length < 2 || opts.cursor || !isRefusal(e)) throw e;
+    const failed = await failingPlaces(org, asked, signal);
+    if (failed.length === 0 || failed.length === asked.length) throw e;
     const gone = new Set(failed.map((f) => f.namespace));
-    const rest = places.filter((p) => !gone.has(p));
-    return done(await read(rest), rest, failed);
+    const rest = asked.filter((p) => !gone.has(p));
+    return done(await read(rest), rest, [...known, ...failed]);
   }
 }
 

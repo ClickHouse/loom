@@ -12,6 +12,8 @@ export interface RowSelection {
   /** Select every row on the page, or clear them all once they are. */
   toggleAll: () => void;
   clear: () => void;
+  /** Unselect these rows, the rest staying selected (a bulk write that went through for some). */
+  drop: (keys: readonly string[]) => void;
 }
 
 /**
@@ -63,6 +65,11 @@ export function useRowSelection(keys: readonly string[], { enabled = true }: { e
     setPicked(new Set());
   }, []);
 
+  const drop = useCallback((leaving: readonly string[]) => {
+    const out = new Set(leaving);
+    setPicked((prev) => new Set([...prev].filter((k) => !out.has(k))));
+  }, []);
+
   const allSelected = keys.length > 0 && selected.size === keys.length;
   const toggleAll = useCallback(() => {
     anchor.current = null;
@@ -73,5 +80,5 @@ export function useRowSelection(keys: readonly string[], { enabled = true }: { e
   const escape = useMemo(() => ({ Escape: clear }), [clear]);
   useKeyboard(escape, enabled && selected.size > 0);
 
-  return { selected, toggle, allSelected, toggleAll, clear };
+  return { selected, toggle, allSelected, toggleAll, clear, drop };
 }

@@ -16,11 +16,17 @@ const api = vi.hoisted(() => ({
   listCollections: vi.fn(),
   bulkDeleteKnowledge: vi.fn(),
   searchKnowledge: vi.fn(),
+  listMine: vi.fn(),
   getKnowledge: vi.fn(async () => ({ found: true, content: "text" })),
   fetchKnowledgePreview: vi.fn(async () => null),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
+const toasts = vi.hoisted(() => ({ toast: vi.fn(), toastError: vi.fn(), toastWithId: vi.fn() }));
+vi.mock("../components/Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/Toast")>()),
+  ...toasts,
+}));
 
 const COLLECTIONS = [
   { namespace: "col-me", parent: "", personal: true, role: "admin", description: "", title: "" },
@@ -223,6 +229,12 @@ describe("All documents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
     await waitFor(() => expect(pages).toBe(2));
     expect(screen.getByText("Drain a lane")).toBeInTheDocument();
+    expect(toasts.toastWithId).toHaveBeenCalledWith(
+      "The list was read again from the top: the server that answered could not go on from there",
+      "info",
+      expect.any(ApiError),
+    );
+    expect(toasts.toastError).not.toHaveBeenCalled();
   });
 
   it("says Add waits while the collections are read, with no header namespace to add to", async () => {
@@ -271,6 +283,71 @@ describe("All documents", () => {
     expect(await screen.findByText("Couldn't load documents")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText(/No documents/)).toBeNull();
+  });
+
+  it("leaves a refused place out of later reads instead of reading every place alone again", async () => {
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    const probes = () => api.listKnowledge.mock.calls.filter((c) => (c[1] as ListOpts).limit === 1).length;
+    expect(probes()).toBe(4);
+    // A tag asks the server again: one read, of the places not refused.
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:none" } });
+    await settle();
+    const last = api.listKnowledge.mock.calls.at(-1) as unknown[];
+    expect(placesOf(last)).toEqual(["team", "col-me", "col-eng"]);
+    expect(probes()).toBe(4);
+    expect(screen.getByText("Not shown, since you can no longer read it: Legal.")).toBeInTheDocument();
+  });
+
+  it("deletes the rows of the places that took the delete, and keeps a refused place's selected", async () => {
+    api.bulkDeleteKnowledge.mockImplementation(async (id: { namespace: string }, uris: string[]) => {
+      if (id.namespace === "col-eng") throw REFUSED;
+      return { results: [], total_tombstoned: uris.length };
+    });
+    render(<Documents />);
+    await screen.findByText("Services agreement");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Team plan" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Drain a lane" }));
+    await userEvent.click(within(screen.getByLabelText("Search and filters")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(toasts.toast).toHaveBeenCalledWith("Deleted 1 document", "ok"));
+    expect(toasts.toastError).toHaveBeenCalledWith("Bulk delete failed in Engineering", REFUSED);
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select Team plan" })).not.toBeChecked());
+    expect(screen.getByRole("checkbox", { name: "Select Drain a lane" })).toBeChecked();
+  });
+
+  it("says how many places it read, not of how many, when the collections could not be loaded", async () => {
+    api.listCollections.mockRejectedValue(new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "busy" }));
+    render(<Documents />);
+    await screen.findByText("Team plan");
+    expect(screen.getByText("Only Namespace team is shown: the collections could not be loaded.")).toBeInTheDocument();
+    expect(screen.getByText(/1 document · 2 chunks · 1 place read/)).toBeInTheDocument();
+  });
+
+  it("says how many places it read, not of how many, when the collections' list stops early", async () => {
+    api.listCollections.mockResolvedValue({ collections: COLLECTIONS, next_cursor: "more" });
+    render(<Documents />);
+    await screen.findByText("Services agreement");
+    expect(screen.getByText(/· 4 places read/)).toBeInTheDocument();
+  });
+
+  it("names what a passage search leaves out when one place is left to search", async () => {
+    api.listCollections.mockResolvedValue({ collections: [COLLECTIONS[2]], next_cursor: null });
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Team plan");
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    expect(
+      screen.getByText(/Searches every document in 1 place, whatever the tag filter; 1 other place is not searched/),
+    ).toBeInTheDocument();
   });
 
   it("says nothing is in any place only when every place was read and holds none", async () => {
@@ -334,6 +411,48 @@ describe("The Library's search scope", () => {
     // An empty search lists the place shown again.
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
     await waitFor(() => expect(screen.queryByText("Team plan")).toBeNull());
+  });
+
+  it("waits for the namespace's role before a row of it takes writes, in a search everywhere", async () => {
+    api.listMine.mockImplementation(() => new Promise(() => {}));
+    useStore.setState({ myNamespaces: null });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+    await settle();
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Search in" })).getByRole("button", { name: "Everywhere" }),
+    );
+    await screen.findByText("Team plan");
+    expect(screen.queryByRole("checkbox", { name: "Select Team plan" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Select Drain a lane" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Team plan" }));
+    const menu = await screen.findByRole("menu", { name: "Actions for Team plan" });
+    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toHaveAttribute("aria-disabled", "true");
+    expect(menu).toHaveTextContent("Your role on this namespace is still loading.");
+  });
+
+  it("says a passage search cannot run while the list's read of every place failed", async () => {
+    api.searchKnowledge.mockResolvedValue([]);
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      if (opts.namespaces?.length) throw new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "busy" });
+      return { rows: EVERY.filter((r) => r.namespace === id.namespace), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+    await settle();
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Search in" })).getByRole("button", { name: "Everywhere" }),
+    );
+    expect(await screen.findByText("Couldn't load documents")).toBeInTheDocument();
+    // The panel stays, and Find says why it does not run rather than spinning.
+    fireEvent.change(screen.getByLabelText("Passage to find"), { target: { value: "drain" } });
+    fireEvent.click(screen.getByRole("button", { name: "Find" }));
+    expect(await screen.findByText(/The places to search could not be read/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Find" })).not.toHaveAttribute("aria-busy", "true");
+    expect(api.searchKnowledge).not.toHaveBeenCalled();
   });
 
   it("keeps Find a passage open, with its query and hits, when the search goes everywhere", async () => {

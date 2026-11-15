@@ -210,6 +210,7 @@ export function LibraryCollections({
   byName,
   current,
   all = false,
+  quietError = false,
   opening = null,
   place = "",
   onPick,
@@ -233,6 +234,8 @@ export function LibraryCollections({
   current: CollectionEntry | null;
   /** All documents is shown. */
   all?: boolean;
+  /** The page says the collections' failure itself: no note here. */
+  quietError?: boolean;
   /** A collection the URL names that the list has not confirmed yet. */
   opening?: string | null;
   /** Where the page is, as the URL names it (a collection, else the header's namespace):
@@ -448,7 +451,7 @@ export function LibraryCollections({
         </p>
       )}
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}
-      {!!error && (
+      {!!error && !quietError && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
           <span>
             {rowsDrawn ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}

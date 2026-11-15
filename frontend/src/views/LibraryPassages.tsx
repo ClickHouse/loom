@@ -62,6 +62,7 @@ export function LibraryPassages({
   identity,
   namespaces = [],
   waiting = false,
+  unavailable = null,
   notSearched = 0,
   placeLabel,
   navEnabled,
@@ -73,6 +74,8 @@ export function LibraryPassages({
   namespaces?: string[];
   /** The places to search are still being read: a search waits for them. */
   waiting?: boolean;
+  /** Why the places to search are not known (the list's read failed): a search says it. */
+  unavailable?: string | null;
   /** Places a search everywhere leaves out (refused, past the most one read takes). */
   notSearched?: number;
   /** A place's name, for the hits of a search of several: each says where it is. */
@@ -128,10 +131,11 @@ export function LibraryPassages({
     if (!q) return;
     want.current = { q, topK };
     searching.current?.abort();
-    setBusy(true);
-    setError(null);
-    parked.current = waiting;
-    if (waiting) return;
+    // Parked until the places are known; said, not spun, when they could not be read.
+    parked.current = waiting || !!unavailable;
+    setBusy(!unavailable);
+    setError(unavailable ?? null);
+    if (parked.current) return;
     searchedFor.current = placesKey;
     const ctrl = new AbortController();
     searching.current = ctrl;
@@ -153,10 +157,15 @@ export function LibraryPassages({
 
   // Runs when the places change or arrive (the search reads the latest render's).
   useEffect(() => {
-    if (waiting || !want.current) return;
+    if (!want.current) return;
+    if (unavailable) {
+      if (parked.current) void search(want.current.q, TOP_K);
+      return;
+    }
+    if (waiting) return;
     if (searchedFor.current === placesKey && !parked.current) return;
     void search(want.current.q, TOP_K);
-  }, [placesKey, waiting]);
+  }, [placesKey, waiting, unavailable]);
 
   // More may be behind any answer until asking for more adds none, up to the most the op
   // lists.
@@ -238,8 +247,8 @@ export function LibraryPassages({
     <section id={PASSAGES_PANEL_ID} aria-label="Find a passage" className="mb-4 rounded-sm border border-border p-3">
       <div className="space-y-3">
         <p id={`${PASSAGES_PANEL_ID}-hint`} className="text-xs text-text-muted">
-          {namespaces.length > 0
-            ? `Searches every document in ${namespaces.length + 1} places, whatever the tag filter${
+          {namespaces.length > 0 || notSearched > 0
+            ? `Searches every document in ${namespaces.length + 1} place${namespaces.length ? "s" : ""}, whatever the tag filter${
                 notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : ""
               }.`
             : "Searches every document in this library, whatever the tag filter."}{" "}
