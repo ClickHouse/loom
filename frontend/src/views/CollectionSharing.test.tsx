@@ -11,6 +11,7 @@ import { repeatedTitles } from "../lib/collections";
 import { useStore } from "../lib/state";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { axeViolations } from "../test/axe";
+import { entry } from "../test/libraryCollections";
 import { type ReadAt, ShareButton, useCollectionSharing, whoCanSee } from "./CollectionSharing";
 
 const api = vi.hoisted(() => ({
@@ -35,15 +36,6 @@ const grant = (subject: string, over: Partial<GrantEntry> = {}): GrantEntry => (
   granted_by: "ada",
   ...over,
 });
-const entry = (namespace: string, over: Partial<CollectionEntry> = {}): CollectionEntry => ({
-  namespace,
-  parent: "",
-  personal: false,
-  role: "admin",
-  description: "",
-  ...over,
-});
-
 const ME = "ada";
 const words = (grants: ReadAt[], over = {}) =>
   whoCanSee({ grants, me: ME, org: "acme", titleOf: (ns) => ns.replace("col-", ""), ...over });
