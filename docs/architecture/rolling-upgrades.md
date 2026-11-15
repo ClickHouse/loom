@@ -785,17 +785,18 @@ schema. These rules keep that safe. The operator procedure is in
     N's sync worker runs a mirrored `gdrive` source, while its ops still refuse one
     (`SOURCE_NOT_SERVED`, rule 52). Each turn lists every file with its permissions,
     reading `permissions.list` for a file the listing leaves them out of, and writes
-    into the namespace's mirror (made under the namespace's sources lease) at
-    `<address>#<source id>`, tagged `source-id:<id>`: a new or changed file with its
-    list, an unchanged file's list alone when it changed, and `unread` over a file the
+    into the namespace's mirror (made under the namespace's sources lease when it has
+    none) at `<address>#<source id>`, tagged `source-id:<id>`: each stored copy's list
+    when it changed, a new or changed file with its list, and `unread` over a copy the
     listing no longer has before it is retired. The listing's start goes to
     `loom.knowledge_source_listings` once every list it read is written. No request can
     add a mirrored source yet, so N meets none it did not write. N-1 serves no mirrored
-    source (rule 52) and reads no listing row. A document counts as searchable when its
-    chunks are those of its version or of its revision, which a row-only rewrite keeps;
-    N-1 checks the version alone, so after a metadata edit it fetches and writes such a
-    file again, as it does today. `tests/unit/test_knowledge_source_sync_mirror.py`
-    checks N's side.
+    source (rule 52) and reads no listing row. N counts a document as searchable when
+    its chunks are those of its version or of its revision, which a row-only rewrite (a
+    new list, a metadata edit) keeps, so such a rewrite stays until the file changes;
+    N-1 checks the version alone, so after a metadata edit it fetches and writes the
+    file again, as it does today. `tests/unit/test_knowledge_source_sync_mirror.py` and
+    `tests/unit/test_knowledge_source_revisions_sql.py` check N's side.
 
 ## What checks them
 

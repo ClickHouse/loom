@@ -112,3 +112,49 @@ async def test_the_stored_check_flags_every_line_the_conversion_drops(
     )
     assert bool(rows[0]["m"]) is flagged
     assert (_DATA_DEFINITION.fullmatch(line) is not None) is dropped
+
+
+def _version(name: str, version: int, revision: int) -> str:
+    meta = json.dumps({"ingested_from": name, "source_revision": f"r{revision}"})
+    return (
+        "INSERT INTO loom.documents (org, namespace, source_uri, content, tags, metadata,"
+        " version, revision, actor) VALUES ('o', 'ns',"
+        f" 'https://docs.example.com/document/d/{name}/edit', 'x', ['{source_tag('drive')}'],"
+        f" '{meta}', {version}, {revision}, '{SYNC_WORKER_ACTOR}')"
+    )
+
+
+def _chunk_of(name: str, version: int, revision: int | None) -> str:
+    meta = "{}" if revision is None else json.dumps({"revision": revision})
+    return (
+        "INSERT INTO loom.chunks (org, namespace, source_uri, chunk_idx, content, doc_version,"
+        " chunk_metadata, embedding_model, embedding_dim, embedding, tags) VALUES ('o', 'ns',"
+        f" 'https://docs.example.com/document/d/{name}/edit', 0, 'x', {version}, '{meta}',"
+        f" 'm', 3072, arrayWithConstant(3072, toBFloat16(0)), ['{source_tag('drive')}'])"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_row_only_rewrite_stays_searchable_and_a_cut_write_does_not() -> None:
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        # A new list or a metadata edit: a new version over the revision's chunks.
+        _version("relisted", 1, 1),
+        _chunk_of("relisted", 1, 1),
+        _version("relisted", 2, 1),
+        # A write cut between its row and its chunks: a new revision with none.
+        _version("cut", 1, 1),
+        _chunk_of("cut", 1, 1),
+        _version("cut", 2, 2),
+        # Chunks written before chunks recorded their revision count by version alone.
+        _version("old", 1, 1),
+        _chunk_of("old", 1, None),
+        _version("old_rewritten", 1, 1),
+        _chunk_of("old_rewritten", 1, None),
+        _version("old_rewritten", 2, 1),
+    )
+    rows = await store.source_revisions("o", "ns", source_tag("drive"), ch=ch)
+    assert sorted(r["file_id"] for r in rows) == ["old", "relisted"]

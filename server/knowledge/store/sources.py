@@ -335,14 +335,18 @@ async def source_revisions(
     version or of its revision, since a rewrite of the row alone (a new list, a
     metadata edit) keeps the revision and its chunks. Without it every live document
     counts, which is what removal needs."""
+    # One set of (address, kind, value) serves both tests, so ClickHouse reads the
+    # chunks once; a chunk written before chunks recorded their revision has none.
     live = (
-        "SELECT source_uri, arrayJoin([doc_version, "
-        "JSONExtractUInt(chunk_metadata, 'revision')]) FROM loom.chunks "
+        "SELECT source_uri, arrayJoin(if(JSONHas(chunk_metadata, 'revision'), "
+        "[('version', doc_version), ('revision', JSONExtractUInt(chunk_metadata, 'revision'))], "
+        "[('version', doc_version)])) FROM loom.chunks "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}"
     )
     chunks = (
-        f"AND ((source_uri, version) IN ({live}) OR (source_uri, revision) IN ({live})) "
+        f"AND ((source_uri, ('version', version)) IN ({live}) "
+        f"OR (source_uri, ('revision', revision)) IN ({live})) "
         if searchable_only
         else ""
     )

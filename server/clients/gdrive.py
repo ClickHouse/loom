@@ -53,7 +53,7 @@ LISTED = "id,name,mimeType,modifiedTime,webViewLink,size"
 # What a probe's first listing page reads of each file.
 _PAGE_FIELDS = "id,name,mimeType,modifiedTime"
 # What a mirrored source reads of each permission (`domain.access_list`).
-_PERMISSION_FIELDS = "type,role,emailAddress,domain,allowFileDiscovery,deleted,pendingOwner,view"
+_PERMISSION_FIELDS = "type,role,emailAddress,domain,allowFileDiscovery,deleted,view"
 # A listing that also reads each file's permissions; the store leaves them out for a
 # file the account cannot share, and for a shared drive's files (`file_permissions`).
 LISTED_WITH_PERMISSIONS = f"{LISTED},permissions({_PERMISSION_FIELDS})"
@@ -414,6 +414,8 @@ async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:
 
 
 __all__ = [
+    "LISTED",
+    "LISTED_WITH_PERMISSIONS",
     "MAX_PARENTS",
     "PAGE_PACE_S",
     "CredentialRefused",
@@ -428,6 +430,7 @@ __all__ = [
     "drive_query",
     "export_markdown",
     "file_meta",
+    "file_permissions",
     "file_state",
     "filter_query",
     "folder_query",

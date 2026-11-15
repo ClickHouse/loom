@@ -361,9 +361,10 @@ later than a minute before that turn's listing started. A file added to a folder
 older modification time (moved or copied in) is not changed after the stamp; it arrives
 with the next full listing. A listed file whose stored copy has the same revision, and
 whose chunks are live, is skipped without a fetch, so a write cut between its document
-and its chunks is redone; a native document whose stored text still holds its pictures'
-bytes is the one exception (see `docs` below). A changed file is fetched and written
-with `knowledge.upsert`:
+and its chunks is redone. A metadata edit of a stored copy keeps its revision and its
+chunks, so the edit stays until the file changes. A native document whose stored text
+still holds its pictures' bytes is the one exception (see `docs` below). A changed file
+is fetched and written with `knowledge.upsert`:
 
 | File                             | Text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Original                       |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |

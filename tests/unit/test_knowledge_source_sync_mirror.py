@@ -6,19 +6,23 @@ and the listing row lands last."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 import pytest
 
 from server.clients import gdrive
+from server.code.app.index.pass_budget import PassBudget
 from server.core.secrets_at_rest import seal
-from server.knowledge.app import mirrors, source_sync
+from server.knowledge.app import mirrors, source_sync, source_sync_mirror
 from server.knowledge.domain import access_list
 from server.knowledge.domain.sources import MIRRORED_ACCESS, mirror_uri
 from server.knowledge.store import documents
-from tests.unit.test_knowledge_source_sync import DOCS, KEY, _file, _source
+from server.settings import settings
+from tests.unit.test_knowledge_source_sync import DOCS, KEY, PDF, _detail, _file, _source
 from tests.unit.test_knowledge_source_sync import world as world  # the fixture
 
 MIRROR = "acl-" + "a" * 24
@@ -35,7 +39,7 @@ def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The namespace's mirror, the listing rows recorded and the list-only rewrites."""
     seen: dict[str, Any] = {"listings": [], "rewrites": [], "permission_reads": []}
 
-    async def _ensure(org: str, namespace: str) -> str:
+    async def _live(org: str, namespace: str) -> str:
         return MIRROR
 
     async def _listing(org: str, namespace: str, source_id: str, name: str, started: Any) -> None:
@@ -49,7 +53,8 @@ def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         seen["permission_reads"].append(file_id)
         return None  # the store will not say
 
-    monkeypatch.setattr(mirrors, "ensure_mirror", _ensure)
+    monkeypatch.setattr(mirrors, "live_mirror", _live)
+    monkeypatch.setattr(source_sync_mirror, "PERMISSIONS_PACE_S", 0)
     monkeypatch.setattr(mirrors, "record_listing", _listing)
     monkeypatch.setattr(documents, "insert_one", _insert_one)
     monkeypatch.setattr(gdrive, "file_permissions", _permissions)
@@ -126,8 +131,6 @@ def test_a_mirrored_source_is_never_mined(world: Any, mirror: Any) -> None:
 
 
 def test_a_mirror_never_takes_a_name_already_in_use(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.auth import directory
-
     names = iter(["acl-" + "1" * 24, "acl-" + "2" * 24])
     taken = {"acl-" + "1" * 24}
     added: list[str] = []
@@ -145,7 +148,6 @@ def test_a_mirror_never_takes_a_name_already_in_use(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(mirrors, "new_mirror_name", lambda: next(names))
     monkeypatch.setattr(mirrors, "mirrors_of", _none)
     monkeypatch.setattr(mirrors, "add_mirror", _add)
-    monkeypatch.setattr(directory, "directory", lambda: _Directory())
     monkeypatch.setattr(mirrors, "directory", lambda: _Directory())
     assert asyncio.run(mirrors.ensure_mirror("o", "team")) == "acl-" + "2" * 24
     assert added == ["acl-" + "2" * 24]
@@ -169,3 +171,102 @@ def test_permissions_are_read_page_by_page_and_a_refusal_reads_none(
     got = asyncio.run(gdrive.file_permissions("tok", "doc1", pace_s=0))
     assert got == [READERS[0], {"type": "anyone", "role": "reader"}]
     assert asyncio.run(gdrive.file_permissions("tok", "locked", pace_s=0)) is None
+
+
+def test_a_new_revision_left_unwritten_still_takes_the_store_s_list(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 100)
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="10", permissions=READERS)]
+    _turn(world, _mirrored())
+    # The owner shares it with nobody and uploads a revision past the size bound.
+    world.files = [_file("pdf1", PDF, "2026-01-02T00:00:00.000Z", size="101", permissions=[])]
+    _turn(world, _mirrored())
+    assert len(world.upserts) == 1
+    [row] = mirror["rewrites"]
+    assert access_list.from_json(row["access_json"]) == access_list.AccessList()
+
+
+def test_a_given_up_file_is_tried_again_once_per_full_interval(world: Any, mirror: Any) -> None:
+    world.files = [_file("bad1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    world.file_answers["bad1"] = httpx.Response(503)
+    for _ in range(8):
+        _turn(world, _mirrored())
+    fetches = [r for r in world.requests if r.url.path.endswith("/bad1/export")]
+    # One fetch a pass until it is given up, then none until the full interval.
+    assert len(fetches) == source_sync._WAIT_PASSES
+    assert list(_detail(world)["file_waits"]) == ["bad1"]
+    world.files = []
+    _turn(world, _mirrored())
+    assert "bad1" not in _detail(world)["file_waits"]
+
+
+def test_the_pass_running_out_while_permissions_are_read_writes_no_listing_row(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = {"of_time": False}
+
+    async def _permissions(token: str, file_id: str, **kw: Any) -> Any:
+        out["of_time"] = True
+        return READERS
+
+    monkeypatch.setattr(gdrive, "file_permissions", _permissions)
+    monkeypatch.setattr(PassBudget, "exhausted", lambda self: out["of_time"])
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z"),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),
+    ]
+    result = _turn(world, _mirrored())
+    assert result.cut and len(world.upserts) <= 1 and mirror["listings"] == []
+
+
+def test_a_rate_limit_on_a_permission_read_stops_the_turn(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _limited(token: str, file_id: str, **kw: Any) -> Any:
+        raise gdrive.RateLimited("rate_limited")
+
+    monkeypatch.setattr(gdrive, "file_permissions", _limited)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    _turn(world, _mirrored())
+    assert world.upserts == [] and mirror["listings"] == []
+    assert _detail(world)["status"] == "rate_limited"
+
+
+def test_a_moved_file_keeps_its_list_at_its_new_address_and_none_at_its_old(
+    world: Any, mirror: Any
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    [(old, _)] = world.upserts
+    world.files[0]["webViewLink"] = "https://docs.example.com/document/d/doc1b/edit"
+    world.files[0]["modifiedTime"] = "2026-01-02T00:00:00.000Z"
+    _turn(world, _mirrored())
+    [moved] = world.docs
+    assert old.source_uri not in world.docs and moved.endswith(
+        "/doc1b/edit#" + _mirrored().source_id
+    )
+    assert access_list.from_json(world.docs[moved]["access_json"]).emails == ("ann@example.com",)
+
+
+def test_a_mirror_is_made_under_the_sources_lease_only_when_there_is_none(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import leases
+
+    @contextlib.asynccontextmanager
+    async def _busy(name: str, **kw: Any) -> AsyncIterator[bool]:
+        yield False
+
+    monkeypatch.setattr(leases, "holding", _busy)
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())  # the namespace has its mirror: no lease is taken
+    assert len(world.upserts) == 1
+
+    async def _none(org: str, namespace: str) -> str:
+        return ""
+
+    monkeypatch.setattr(mirrors, "live_mirror", _none)
+    world.files[0]["modifiedTime"] = "2026-01-02T00:00:00.000Z"
+    result = _turn(world, _mirrored())
+    assert len(world.upserts) == 1 and result.errors
