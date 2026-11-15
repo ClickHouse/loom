@@ -40,6 +40,40 @@ The `docker compose` commands in the labs run in that same terminal, act on the 
 containers, and name its install directory as `<dir>`: `~/.loom` on a laptop and
 `/workspaces/.loom` in a codespace.
 
+## Hand out the labs as an assignment
+
+The [course starter](../../examples/course-starter/README.md) is a repository for each
+student: the code of Labs 1, 2 and 4 with its gaps marked `TODO`, a SQL file, an answers
+page for the written exercises, a dev container that installs the latest release in a
+codespace with the Python SDK, and a grading workflow. Copy it into a new repository
+under your account or your school's organization, and mark that repository as a template
+(it needs `curl`, `git` and the [GitHub CLI](https://cli.github.com/), signed in):
+
+```bash
+mkdir loom-labs && cd loom-labs
+curl -fsSL https://github.com/ClickHouse/loom/archive/refs/heads/main.tar.gz \
+  | tar -xz --strip-components=3 loom-main/examples/course-starter
+git init -b main && git add . && git commit -m "Loom labs"
+gh repo create <owner>/loom-labs --private --source . --push
+gh repo edit <owner>/loom-labs --template
+```
+
+Each student then works in a repository made from that template, with **Use this
+template** on its page or with the tool that hands out your assignments, and opens it in
+a codespace or clones it to a laptop.
+
+`python grading/grade.py` checks the work against the student's running stack, and the
+`Grade` workflow runs the same checks on every push against a fresh stack on a GitHub
+Actions runner. It prints one line per check and writes the table to the run's summary;
+the run fails while any check fails. Each check fails on the untouched starter and needs
+no API key. Lab 3 and the answers page are graded by hand: their exercises ask for
+explanations.
+
+A grading run takes several minutes, most of it pulling the stack's images. In a private
+repository those minutes count against the Actions quota of the account or organization
+that owns it ([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions));
+codespaces cost what [Setup](#setup) says.
+
 ## Lab 1: an agent that remembers
 
 Build a small agent with the Python SDK: an identity, facts it saves and reads back, a
@@ -73,7 +107,9 @@ docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.m
 
 Then search the namespace's documents with `knowledge.search` over HTTP (with no
 `Authorization` header on the single-user stack) or the SDK
-([knowledge documents](../features/knowledge.md)).
+([knowledge documents](../features/knowledge.md)). The SDK's `knowledge.ingest_file`
+publishes a local file without copying it into the container, as the course starter's
+`labs/lab2.py` does.
 
 Exercises:
 
