@@ -502,12 +502,7 @@ def _referenced_databases(code: str) -> set[str]:
             elif depth == 0 and ch == ",":
                 items.append(code[start:i])
                 start = i + 1
-            elif (
-                depth == 0
-                and (end := _FROM_END.match(code, i))
-                and (i == 0 or not (code[i - 1].isalnum() or code[i - 1] == "_"))
-            ):
-                del end
+            elif depth == 0 and _FROM_END.match(code, i):
                 break
             i += 1
         items.append(code[start:i])

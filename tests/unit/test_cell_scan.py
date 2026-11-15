@@ -6,6 +6,7 @@ returns. CH-free."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -122,13 +123,43 @@ async def test_the_topology_reads_the_configured_cluster(monkeypatch: pytest.Mon
     monkeypatch.setattr(cell_scan.settings, "ch_cluster", "main")
     ch = FakeCH().on(
         "FROM system.clusters",
-        [{"host_name": "ch-0", "shard_num": 1}, {"host_name": "ch-1", "shard_num": 2}],
+        [
+            {"host_name": "ch-0", "port": 9000, "shard_num": 1},
+            {"host_name": "ch-1", "port": 9000, "shard_num": 2},
+        ],
     )
     topology = await cell_scan.read_topology(ch)
-    assert topology == Topology("main", frozenset({"ch-0", "ch-1"}), 2) and topology.multi
+    assert topology == Topology(
+        "main", frozenset({"ch-0", "ch-1"}), 2, (("ch-0", 9000), ("ch-1", 9000))
+    )
+    assert topology.multi
     assert "2 shards" in str(topology.refusals()[0])
     monkeypatch.setattr(cell_scan.settings, "ch_cluster", "")
     assert await cell_scan.read_topology(FakeCH()) == Topology("", frozenset(), 0)
+
+
+async def test_two_servers_under_one_host_name_are_two_and_refuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cell_scan.settings, "ch_cluster", "main")
+    ch = FakeCH().on(
+        "FROM system.clusters",
+        [
+            {"host_name": "ch-0", "port": 9000, "shard_num": 1},
+            {"host_name": "ch-0", "port": 9001, "shard_num": 1},
+        ],
+    )
+    topology = await cell_scan.read_topology(ch)
+    # Several servers: a plain MergeTree table there refuses, statements carry ON CLUSTER.
+    assert topology.multi and topology.hosts == frozenset({"ch-0"})
+    assert [str(r) for r in topology.refusals()] == [
+        "cluster main: lists host ch-0 2 times (ports 9000, 9001): give each server its own "
+        "host name"
+    ]
+    _, refusals = cell_scan.judge_clickhouse(
+        [Table("loom", "memory", "MergeTree")], {"loom.memory"}, topology
+    )
+    assert "would miss the others' rows" in refusals[0].reason
 
 
 async def test_each_host_answers_for_exactly_one_listed_name() -> None:
@@ -471,14 +502,16 @@ def _pg_sessions(monkeypatch: pytest.MonkeyPatch, *answers: Any) -> list[int]:
     queue = list(answers)
 
     class _Conn:
-        def __init__(self, rows: list[dict[str, str]]) -> None:
+        def __init__(self, rows: list[dict[str, str]] | None) -> None:
             self.rows = rows
 
         async def fetchval(self, sql: str, *_: Any) -> bool:
             return True  # the org index exists
 
         async def fetch(self, sql: str) -> list[dict[str, str]]:
-            return self.rows
+            if self.rows is None:
+                await asyncio.Event().wait()  # a primary that vanished: no answer, ever
+            return self.rows or []
 
     @asynccontextmanager
     async def dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> Any:
@@ -625,3 +658,33 @@ async def test_every_read_throws_past_a_limit_rather_than_stopping_short() -> No
         await cell_scan.list_clickhouse(ch, topology, names, ["loom"])
         assert all("distinct_overflow_mode = 'throw'" in s for s in ch.sql("query_all"))
         assert all("result_overflow_mode = 'throw'" in s for s in ch.sql("query_all"))
+
+
+async def test_a_postgres_server_that_never_answers_refuses_as_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cell_scan, "_PG_MARGIN_S", 0.05)
+    _pg_sessions(monkeypatch, None)
+    with pytest.raises(Refused, match="postgres loom.tenancy: the scan ran out of --scan-budget"):
+        await cell_scan.scan(FakeCH(), TableList(postgres=["loom.tenancy"]), ONE, Budget(0.05))
+
+
+async def test_a_sync_that_does_not_finish_names_its_hosts_not_the_budget() -> None:
+    timeout = "Code: 159. DB::Exception: Distributed DDL task is not finished on 1 of 2 hosts"
+    ch = FakeCH().on(
+        "SYSTEM SYNC REPLICA",
+        [{"host": "ch-0", "port": 9000, "status": 0, "error": ""}, {"exception": timeout}],
+    )
+    ch.on("SYSTEM FLUSH", _cluster_status("ch-0", "ch-1"))
+    tables = TableList(clickhouse=[Table("loom", "memory", "ReplicatedMergeTree")])
+    with pytest.raises(Refused) as refused:
+        await cell_scan.scan(ch, tables, TWO, Budget(600))
+    (refusal,) = refused.value.refusals
+    assert refusal.reason.startswith("SYSTEM SYNC REPLICA did not finish on ch-1: Code: 159.")
+    assert "--scan-budget" not in refusal.reason
+    # On one host, that host.
+    ch = FakeCH().on("SYSTEM", _DatabaseError("Code: 159. DB::Exception: Timeout exceeded"))
+    with pytest.raises(
+        Refused, match="SYSTEM FLUSH ASYNC INSERT QUEUE did not finish on localhost"
+    ):
+        await cell_scan.scan(ch, tables, ONE, Budget(600))

@@ -77,6 +77,9 @@ _PROVIDER_COPY = "_provider_rebuild_"
 _SKIPPED_ENGINES = frozenset({"View", "MaterializedView"})
 
 _RETRY_PAUSE_S = 1.0  # not a setting: the pause before a transient failure's retry
+# How long past the budget a Postgres try may take before this side gives it up, so the
+# server's own statement timeout fires first when the server answers.
+_PG_MARGIN_S = 5.0  # not a setting: a margin over --scan-budget
 _TIMEOUT_CODES = frozenset({159})  # TIMEOUT_EXCEEDED
 _UNKNOWN_TABLE_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
 
@@ -143,29 +146,46 @@ def pg_quote(name: str) -> str:
 
 @dataclass(frozen=True)
 class Topology:
-    """`settings.ch_cluster` as `system.clusters` lists it: its configured host names and
-    shard count (no hosts when the cluster is unset or unlisted)."""
+    """`settings.ch_cluster` as `system.clusters` lists it: its configured host names, its
+    entries as (host name, port), one per server, and its shard count (no hosts when the
+    cluster is unset or unlisted)."""
 
     cluster: str
     hosts: frozenset[str]
     shards: int
+    entries: tuple[tuple[str, int], ...] = ()
 
     @property
     def multi(self) -> bool:
-        """More than one host: reads go through `clusterAllReplicas`, statements that must
-        reach every replica carry `ON CLUSTER`."""
-        return len(self.hosts) > 1
+        """More than one server: reads go through `clusterAllReplicas`, statements that must
+        reach every replica carry `ON CLUSTER`. Two servers on one machine are two."""
+        return len(self.entries or self.hosts) > 1
 
     def refusals(self) -> list[Refusal]:
+        out = []
         if self.shards > 1:
-            return [
+            out.append(
                 Refusal(
                     f"cluster {self.cluster}",
                     f"{self.shards} shards: a replica holds only its shard's rows, so a scan "
                     "through one would miss the others'",
                 )
-            ]
-        return []
+            )
+        # The checks tell servers apart by configured host name alone.
+        ports: dict[str, list[int]] = {}
+        for host, port in self.entries:
+            ports.setdefault(host, []).append(port)
+        for host, listed in sorted(ports.items()):
+            if len(listed) > 1:
+                out.append(
+                    Refusal(
+                        f"cluster {self.cluster}",
+                        f"lists host {host} {len(listed)} times (ports "
+                        f"{', '.join(str(p) for p in sorted(listed))}): give each server its "
+                        "own host name",
+                    )
+                )
+        return out
 
 
 async def read_topology(ch: Any) -> Topology:
@@ -174,7 +194,7 @@ async def read_topology(ch: Any) -> Topology:
         return Topology("", frozenset(), 0)
     with query_tag(_TAG):
         rows = await ch.query_all(
-            "SELECT host_name, shard_num FROM system.clusters WHERE cluster = {c:String} "
+            "SELECT host_name, port, shard_num FROM system.clusters WHERE cluster = {c:String} "
             + WHOLE_SQL,
             {"c": cluster},
         )
@@ -182,6 +202,7 @@ async def read_topology(ch: Any) -> Topology:
         cluster,
         frozenset(str(r["host_name"]) for r in rows),
         len({int(r["shard_num"]) for r in rows}),
+        tuple(sorted((str(r["host_name"]), int(r["port"])) for r in rows)),
     )
 
 
@@ -595,8 +616,11 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
     subject = f"postgres {table}"
     while True:
         left = budget.require(subject)
+        # The server's statement timeout cannot fire on a primary that vanished, and the
+        # connection has no client timeout: the budget bounds the try on this side too.
+        bound = asyncio.timeout(left + _PG_MARGIN_S)
         try:
-            async with pg.dedicated(statement_timeout_ms=max(1, int(left * 1000))) as conn:
+            async with bound, pg.dedicated(statement_timeout_ms=max(1, int(left * 1000))) as conn:
                 if not await conn.fetchval(_PG_ORG_INDEX, table):
                     raise Refused(
                         [
@@ -612,7 +636,7 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
             raise
         except Exception as e:  # noqa: BLE001 — a failed statement is retried or named
             failure = e
-        if getattr(failure, "sqlstate", None) == "57014":  # query_canceled: the timeout
+        if bound.expired() or getattr(failure, "sqlstate", None) == "57014":  # the timeout
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
         if not (pg.is_outage(failure) or _unavailable(failure)):
             raise Refused([Refusal(subject, f"the scan failed: {failure}")]) from failure
@@ -644,23 +668,37 @@ async def _system(ch: Any, sql: str, topology: Topology, left: float, subject: s
     """A SYSTEM statement bounded by `left`. On several hosts it carries `ON CLUSTER`
     (`_on_cluster`) and each host's status is read back: every listed host must answer, each
     with status 0 (pinned with `distributed_ddl_output_mode = 'throw'`, so a profile's
-    `never_throw` hides none)."""
+    `never_throw` hides none). One that does not finish in time refuses with the server's
+    error and the hosts it did not finish on: a replica that cannot sync, not a budget to
+    raise."""
+    from server.core.ch_errors import error_code, error_line
+
     seconds = max(1, int(left))
     # `receive_timeout` bounds SYNC REPLICA's own wait.
     bounds = {"max_execution_time": seconds, "receive_timeout": seconds}
-    if not topology.multi:
-        await ch.execute(sql, settings=bounds)
-        return
-    body = await ch.raw_bytes(
-        sql,
-        settings={
-            **bounds,
-            "distributed_ddl_output_mode": "throw",
-            "distributed_ddl_task_timeout": seconds,
-            "default_format": "JSONEachRow",
-        },
-    )
-    rows = _body_rows(body.decode("utf-8", "replace").splitlines(), "status")
+    what = sql.split(" ON CLUSTER ")[0].split(" `")[0]
+    try:
+        if not topology.multi:
+            await ch.execute(sql, settings=bounds)
+            return
+        body = await ch.raw_bytes(
+            sql,
+            settings={
+                **bounds,
+                "distributed_ddl_output_mode": "throw",
+                "distributed_ddl_task_timeout": seconds,
+                "default_format": "JSONEachRow",
+            },
+        )
+        rows = _body_rows(body.decode("utf-8", "replace").splitlines(), "status")
+    except Exception as e:  # only a timeout is judged here; the rest pass to the caller
+        if error_code(e) not in _TIMEOUT_CODES:
+            raise
+        done = {str(r.get("host")) for r in getattr(e, "rows", ()) if r.get("status") == 0}
+        unfinished = ", ".join(sorted(topology.hosts - done)) or "this server"
+        raise Refused(
+            [Refusal(subject, f"{what} did not finish on {unfinished}: {error_line(e)}")]
+        ) from e
     failed = [r for r in rows if int(r["status"]) != 0]
     if failed:
         raise Refused(
@@ -695,7 +733,11 @@ def ch_scan_sql(table: Table, topology: Topology) -> str:
 class BodyError(DatabaseError):
     """An error ClickHouse wrote into a response body after it began streaming rows: a
     server error as the driver raises one, its text keeping the server's `Code: <n>.`, so it
-    is judged transient or not, and by code, as any other."""
+    is judged transient or not, and by code, as any other. `rows` are the rows before it."""
+
+    def __init__(self, text: str, rows: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(text)
+        self.rows = list(rows or [])
 
 
 def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
@@ -703,7 +745,7 @@ def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
     is not one (an `{"exception": …}` row, or the text tail a server appends once a
     statement fails after its first block), with the rest of the body as its text."""
     lines = list(lines)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for i, line in enumerate(lines):
         if not line.strip():
             continue
@@ -713,7 +755,7 @@ def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
             row = None
         if not isinstance(row, dict) or key not in row:
             exception = row.get("exception") if isinstance(row, dict) else None
-            raise BodyError(str(exception or "\n".join(lines[i:]))[:2000])
+            raise BodyError(str(exception or "\n".join(lines[i:]))[:2000], rows)
         rows.append(row)
     return rows
 
