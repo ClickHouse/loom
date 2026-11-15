@@ -58,7 +58,6 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from server.core import cell as cell_state
-from server.core.cell import named_org
 from server.core.cell_probe import PATH as PROBE_PATH
 from server.router import directory, routing
 from server.router.limits import (
@@ -256,7 +255,7 @@ class Router:
         body = await _body(request)
         if not isinstance(body, dict):
             return _refused(400, "a placement is a JSON object: org, cell, fingerprint")
-        org, name = named_org(body.get("org")), body.get("cell")
+        org, name = cell_state.named_org(body.get("org")), body.get("cell")
         if org is None or not isinstance(name, str) or not cell_state.NAME.fullmatch(name):
             return _refused(400, "a placement names an org and a cell")
         presented = await self._authenticated(request, name)
@@ -321,7 +320,7 @@ class Router:
         if not self.lookups.admit(client):
             wait = str(self.lookups.wait_s(client))
             return _refused(429, "too many lookups", {"Retry-After": wait})
-        org = named_org(request.query_params.get("org"))
+        org = cell_state.named_org(request.query_params.get("org"))
         if org is None:
             return _refused(400, "a lookup names an org: ?org=")
         cached = self._placed.get(org)
@@ -658,7 +657,7 @@ class Router:
             return _refused(
                 400, f"a batch is a JSON object of deployment_id and 1 to {ATTACH_BATCH} orgs"
             )
-        named = [named_org(o) for o in orgs]
+        named = [cell_state.named_org(o) for o in orgs]
         if None in named:
             return _refused(400, "each org of a batch is a name an org can have")
         name = request.path_params["cell"]

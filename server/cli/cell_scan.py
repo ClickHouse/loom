@@ -655,8 +655,9 @@ async def scan(
     """The distinct orgs of every table of `tables` and the `configured` orgs; Refused, with
     the listing's refusals before any read, and naming the table when a statement runs out
     of `budget` or fails other than transiently. A ClickHouse `NULL` org is named malformed.
-    The caller connects ClickHouse inside `ch.statement_timeout()` of the budget, so the
-    driver's own read timeout does not end a long statement first."""
+    The caller runs `list_tables`, `check_writers` and this inside `ch.statement_timeout()`
+    of the budget, the client connected inside it too, so the client's own bounds, read
+    per call, do not end a long statement first."""
     if tables.refusals:
         raise Refused(tables.refusals)
     result = ScanResult()
