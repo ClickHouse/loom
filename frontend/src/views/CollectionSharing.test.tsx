@@ -502,6 +502,19 @@ describe("the collection header", () => {
     expect(await axeViolations(dialog)).toEqual([]);
   });
 
+  it("says No members yet at once on a top-level collection, with no parents to wait for", async () => {
+    let answerHeader: (v: unknown) => void = () => {};
+    api.listGrants.mockReturnValueOnce(new Promise((r) => (answerHeader = r))).mockResolvedValue({ rows: [] });
+    render(<Header collection={entry("col-a", { role: "writer" })} />);
+    // The header's read is out, unanswered, before the dialog opens.
+    await waitFor(() => expect(api.listGrants).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/^No members yet/)).toBeInTheDocument();
+    expect(within(dialog).queryByText("Loading who else can see it")).not.toBeInTheDocument();
+    answerHeader({ rows: [] });
+  });
+
   it("holds the dialog's empty line until the header has read the parents", async () => {
     const { mid, byName } = family();
     let answerTop: (v: unknown) => void = () => {};

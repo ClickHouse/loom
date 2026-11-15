@@ -20,7 +20,7 @@ export async function allGrants(id: { org: string; namespace: string }, signal?:
   let cursor: string | null = null;
   for (let page = 0; page < GRANTS_PAGES; page++) {
     const r = await listGrants(id, { limit: GRANTS_PAGE, cursor, signal });
-    rows.push(...(r.rows ?? []));
+    rows.push(...r.rows);
     cursor = r.next_cursor ?? null;
     if (!cursor) return { namespace: id.namespace, rows };
   }

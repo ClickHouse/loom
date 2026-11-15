@@ -400,7 +400,8 @@ export function useCollectionSharing({
       manage={shown.role === "admin"}
       // Until the header answers for this collection, who else can see it is still being read;
       // a failed answer lists the parents as unread.
-      inherited={signInOff ? [] : answer === null ? null : inherited}
+      // No parents to read (a top-level collection): nothing to wait for.
+      inherited={signInOff || (chain.length === 1 && !hiddenWords) ? [] : answer === null ? null : inherited}
       onCloseAutoFocus={(e) => {
         if (!leftFor.current) return;
         leftFor.current = false;

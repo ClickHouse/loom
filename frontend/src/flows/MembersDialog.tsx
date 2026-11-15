@@ -30,7 +30,7 @@ import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
 import { grantSpellings, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
-import { PlaceLink } from "../views/LibraryHierarchy";
+import { PlaceLink } from "../components/ui/PlaceLink";
 
 /** What Remove's confirm says: who still gets in once the grant here goes. Sign-in off serves
  *  every request, so it says only that the grant is revoked. */

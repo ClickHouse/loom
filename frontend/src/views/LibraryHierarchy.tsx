@@ -7,18 +7,10 @@
  * server's (`collection.list` gives each collection's parent); in the path, a parent the
  * caller cannot read is a dots button, never a link, and gives its address when tapped.
  */
-import {
-  type ComponentProps,
-  type ComponentPropsWithoutRef,
-  forwardRef,
-  type MouseEvent,
-  type ReactNode,
-  useMemo,
-  useState,
-} from "react";
+import { type ComponentProps, type ComponentPropsWithoutRef, useMemo, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
-import { Link } from "@clickhouse/click-ui/Link";
+import { PlaceLink } from "../components/ui/PlaceLink";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import type { CollectionEntry } from "../api";
 import { type ShowMoreRows, useShowMore } from "../lib/useShowMore";
@@ -30,8 +22,6 @@ import { TextClamp, useClamped } from "../components/ui/TextClamp";
 import { Tip } from "../components/ui/Tooltip";
 import { COLLECTIONS_LISTED, collectionOrder, collectionTitle, distinctTitle, roleLabel } from "../lib/collections";
 import { fmtInt } from "../lib/format";
-import { isModifiedClick } from "../lib/graphLink";
-import { navigationHref } from "../lib/state";
 
 const HEADING_ID = "library-top-level";
 const SHARED_HEADING_ID = "library-collections-shared";
@@ -123,32 +113,6 @@ export interface Home {
   collection: string | null;
   open: () => void;
 }
-
-/** A link to a place in the Library: a plain click opens it here, a modified one (a new
- *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it.
- *  `plain`: a bare anchor its class draws (a tree row, a chip), not Click UI's Link. */
-export const PlaceLink = forwardRef<
-  HTMLAnchorElement,
-  { collection: string | null; onOpen: () => void; plain?: boolean; children: ReactNode } & Omit<
-    ComponentPropsWithoutRef<"a">,
-    "href" | "children"
-  >
->(function PlaceLink({ collection, onOpen, plain = false, children, onClick, ...rest }, ref) {
-  const props = {
-    ...rest,
-    ref,
-    href: navigationHref("knowledge", collection ? { collection } : {}),
-    onClick: (e: MouseEvent<HTMLAnchorElement>) => {
-      // A wrapping tooltip trigger's handler runs first (it closes the tip): it does nothing
-      // once the click's default is prevented.
-      onClick?.(e);
-      if (isModifiedClick(e)) return;
-      e.preventDefault();
-      onOpen();
-    },
-  };
-  return plain ? <a {...props}>{children}</a> : <Link {...props}>{children}</Link>;
-});
 
 /** A place's link by its title (in the tree, the chips and the path), the title cut to its
  *  box: when cut, the whole title is a tooltip on the link (a keyboard focus opens it too);
