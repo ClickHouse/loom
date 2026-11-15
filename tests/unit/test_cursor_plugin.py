@@ -8,7 +8,10 @@ import posixpath
 import re
 from pathlib import Path
 
-from server.identity.app.token_clients import client_config
+from server.cli._client import DEFAULT_BASE_URL
+from server.cli.install import _install_mcp_url
+from server.identity.app.token_clients import CODING_TOOLSET
+from tests.unit.test_loom_code_skill import ROOT_SKILLS
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_DIR = ROOT / ".cursor-plugin"
@@ -43,11 +46,10 @@ def test_the_default_url_is_the_one_loom_install_writes_for_cursor() -> None:
     # Cursor follows to its browser sign-in.
     entry = json.loads((ROOT / MANIFEST["mcpServers"]).read_text())["mcpServers"]["loom"]
     assert entry == {"url": "${LOOM_MCP_URL}"}
-    local = client_config("cursor", "http://localhost:7777/mcp", "")
     default = MANIFEST["variables"]["properties"]["LOOM_MCP_URL"]["default"]
-    assert default == local["config"]["mcpServers"]["loom"]["url"]
+    assert default == _install_mcp_url(DEFAULT_BASE_URL, CODING_TOOLSET)
 
 
 def test_the_plugin_ships_the_root_skills() -> None:
     names = {p.parent.name for p in (ROOT / MANIFEST["skills"]).glob("*/SKILL.md")}
-    assert names == {"loom", "loom-code"}
+    assert names == set(ROOT_SKILLS)

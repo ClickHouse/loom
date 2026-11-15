@@ -83,8 +83,8 @@ router still works through the shell.
 
 ## Install
 
-Install either this skill (`loom-code-skill`) or the `loom` plugin, not
-both: the plugin ships its own skill named `loom-code`.
+In Claude Code, install either this skill (`loom-code-skill`) or the `loom`
+plugin, not both: the plugin ships its own skill named `loom-code`.
 
 ## Identity
 

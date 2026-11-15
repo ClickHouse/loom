@@ -13,18 +13,25 @@ hooks: no code shunt and no capture of tool calls, runs or working memory; the
 
 ## Plugin
 
-The repository is a Cursor plugin marketplace: `.cursor-plugin/` at its root holds the
-`clickhouse-loom` plugin, which installs the `loom` MCP server and the root `skills/`. The
-plugin asks for one value, **Loom MCP URL**, set when it is installed or later under
-**Configure**:
+`.cursor-plugin/` at the repository root makes it a Cursor plugin marketplace with one
+plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The plugin is
+not yet listed in Cursor's marketplace and has not been installed in a Cursor build. On
+a Teams or Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs →
+Add Marketplace → Import from Repo** with `https://github.com/ClickHouse/loom`, and
+members install it from **Customize**.
 
-| Server                                     | Loom MCP URL                                             | Sign-in                   |
-| ------------------------------------------ | -------------------------------------------------------- | ------------------------- |
-| single-user, on the same machine           | `http://localhost:7777/mcp?toolset=coding` (the default) | none                      |
-| team server with `LOOM_OAUTH_ENABLED=true` | `https://<your server>/mcp?toolset=coding`               | browser, on first connect |
+The plugin has one variable, **Loom MCP URL**, whose value is set in Cursor's dashboard
+under **Plugins**; for a team marketplace the team admin sets it for every member.
 
-The entry sends no `Authorization` header, so a team server without OAuth answers 401;
-for one, write the entry with a token through `loom install --client cursor` below.
+| Server                                     | Loom MCP URL                                             | Sign-in             |
+| ------------------------------------------ | -------------------------------------------------------- | ------------------- |
+| single-user, on each member's machine      | `http://localhost:7777/mcp?toolset=coding` (the default) | none                |
+| team server with `LOOM_OAUTH_ENABLED=true` | `https://<your server>/mcp`                              | browser, per person |
+
+A server with OAuth on takes the bare URL, the resource its protected-resource metadata
+names; tools outside its default toolset run through `loom_op`. The entry sends no
+`Authorization` header, so a team server without OAuth answers 401; for one, write the
+entry with a token through `loom install --client cursor` below.
 [Clients that sign in by browser](mcp-clients.md#clients-that-sign-in-by-browser) has
 the OAuth details.
 
