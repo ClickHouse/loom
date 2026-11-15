@@ -23,11 +23,11 @@ ISSUER = "https://token.actions.githubusercontent.com"
 API = "https://api.github.com/repos/ClickHouse/loom/releases/tags/v1.2.0"
 DOWNLOAD = "https://github.com/ClickHouse/loom/releases/download/v1.2.0"
 
-# Serves API from release.json (or exits 22, as curl -f does, when it is absent)
-# and each download URL from assets/<name>.
+# Serves API from $STUB_TMP/release.json (or exits 22, as curl -f does, when it
+# is absent) and each download URL from $STUB_TMP/assets/<name>.
 CURL = f"""#!{sys.executable}
-import pathlib, shutil, sys
-tmp = pathlib.Path({{tmp!r}})
+import os, pathlib, shutil, sys
+tmp = pathlib.Path(os.environ["STUB_TMP"])
 args = sys.argv[1:]
 with open(tmp / "calls", "a") as calls:
     calls.write("curl " + " ".join(args) + "\\n")
@@ -46,7 +46,7 @@ else:
 # sign-blob writes the file's sha256 as its bundle; verify-blob passes only on a
 # bundle of the same bytes, unless `verify` overrides it.
 COSIGN = """#!/bin/sh
-echo "cosign $*" >> "{tmp}/calls"
+echo "cosign $*" >> "$STUB_TMP/calls"
 if [ "$1" = sign-blob ]; then sha256sum < "$5" > "$4"; exit 0; fi
 {verify}
 [ "$(sha256sum < "$2")" = "$(cat "$4")" ]
@@ -62,8 +62,8 @@ def _env(tmp_path: Path, assets: dict[str, str] | None, verify: str = "") -> dic
     """PATH with the stubs, serving a release with `assets` (None: the API fails)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
-    (bin_dir / "curl").write_text(CURL.format(tmp=str(tmp_path)))
-    (bin_dir / "cosign").write_text(COSIGN.format(tmp=tmp_path, verify=verify))
+    (bin_dir / "curl").write_text(CURL)
+    (bin_dir / "cosign").write_text(COSIGN.format(verify=verify))
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
     if assets is not None:
@@ -73,7 +73,8 @@ def _env(tmp_path: Path, assets: dict[str, str] | None, verify: str = "") -> dic
         urls = [{"browser_download_url": f"{DOWNLOAD}/{name}"} for name in assets]
         (tmp_path / "release.json").write_text(json.dumps({"assets": urls}))
     env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
-    return {**env, "PATH": f"{bin_dir}:{env['PATH']}", "VERSION": "1.2.0"}
+    path = f"{bin_dir}:{env['PATH']}"
+    return {**env, "PATH": path, "STUB_TMP": str(tmp_path), "VERSION": "1.2.0"}
 
 
 def _step(job: dict, name: str) -> dict:
@@ -113,7 +114,7 @@ def _check(tmp_path: Path, assets: dict[str, str]) -> subprocess.CompletedProces
 
 
 def test_sign_files_signs_and_verifies_every_file_the_release_serves(tmp_path: Path) -> None:
-    """A Sigstore bundle an earlier run attached is signed again, not signed itself."""
+    """An earlier run's Sigstore bundle is replaced, never signed as a release file."""
     assets = {"install.sh": "a", "loom-stack.tar.gz": "b", "install.sh.sigstore.json": "{}"}
     result = _run(SIGN["run"], _env(tmp_path, assets), tmp_path / "work")
     assert result.returncode == 0, result.stdout + result.stderr
@@ -246,6 +247,7 @@ def test_a_directory_without_files_fails(tmp_path: Path) -> None:
     result = _verify(tmp_path, "exit 0", [])
     assert result.returncode == 1
     assert "no release files in" in result.stdout
+    assert "#a-failed-tag-or-signature" in result.stdout
 
 
 @pytest.mark.parametrize("script", ["verify_release_files.sh", "download_release_files.sh"])
@@ -253,4 +255,5 @@ def test_a_directory_without_files_fails(tmp_path: Path) -> None:
 def test_a_missing_version_or_dir_is_a_usage_error(script: str, args: list[str]) -> None:
     path = ROOT / "scripts/release" / script
     result = subprocess.run(["bash", str(path), *args], capture_output=True, text=True)
-    assert result.returncode == 2 and "usage:" in result.stderr
+    assert result.returncode == 2
+    assert "usage:" in result.stderr

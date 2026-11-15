@@ -109,17 +109,17 @@ def test_the_registry_dispatch_on_the_published_tag_reaches_every_registry() -> 
     """No image is built, tagged or signed again: their signatures are verified,
     and the registries still publish."""
     ran = run(event="workflow_dispatch", dry_run=False, published=True)
-    assert ran == BUILD | {"sign", "docker-smoke"} | RELEASE | REGISTRIES
+    assert ran == BUILD | RELEASE | {"sign", "docker-smoke"} | REGISTRIES
 
 
 def test_a_dispatch_on_a_tag_whose_images_are_not_out_builds_them_and_publishes() -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=False)
-    assert ran == (BUILD | {"docker", "docker-tag", "sign", "docker-smoke"} | RELEASE | REGISTRIES)
+    assert ran == BUILD | RELEASE | {"docker", "docker-tag", "sign", "docker-smoke"} | REGISTRIES
 
 
 def test_a_prerelease_dispatch_skips_only_the_mcp_registry_listing() -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=True, prerelease=True)
-    assert ran == BUILD | {"sign", "docker-smoke", "pypi", "npm"} | RELEASE
+    assert ran == BUILD | RELEASE | {"sign", "docker-smoke", "pypi", "npm"}
 
 
 def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
@@ -141,14 +141,14 @@ def test_a_failure_before_the_release_publishes_nothing(
 @pytest.mark.parametrize("failed", ["verify", "clickhouse", "preflight"])
 def test_a_failure_on_the_published_tag_smokes_and_publishes_nothing(failed: str) -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({failed}))
-    assert not ran & ({"docker-smoke", "release-check"} | RELEASE | REGISTRIES)
+    assert not ran & (RELEASE | {"docker-smoke", "release-check"} | REGISTRIES)
 
 
 def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
     """A re-run of every job, or the tag pushed again at the same commit: what is
     out is verified, not signed."""
     ran = run(event="push", dry_run=None, published=True)
-    assert ran == BUILD | {"sign", "docker-smoke", "release-check"} | RELEASE
+    assert ran == BUILD | RELEASE | {"sign", "docker-smoke", "release-check"}
 
 
 @pytest.mark.parametrize(("event", "dry_run"), [("push", None), ("workflow_dispatch", False)])

@@ -32,6 +32,6 @@ for file in "$dir"/*; do
   checked=$((checked + 1))
 done
 [ "$checked" -gt 0 ] || {
-  echo "::error::no release files in $dir"
+  echo "::error::no release files in $dir; $recovery"
   exit 1
 }

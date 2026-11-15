@@ -351,14 +351,26 @@ A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, s
 the release without a Sigstore bundle that verifies them: unsigned, or, on a dispatch, with the tag
 run's bundles beside the files the dispatch replaced. "Re-run failed jobs" signs every file the
 release serves again and replaces its Sigstore bundles; on a tag push, `release-check` runs after
-them. A `release-check` that fails on a listing or a download is re-run the same way. One that
-finds a file whose bundle does not verify, after `sign-files` and `attach-signatures` passed,
-re-runs `sign-files` alone, which also re-runs the jobs after it and publishes nothing:
+them. A `release-check` that fails on a listing or a download is re-run the same way.
+
+A file whose Sigstore bundle stops verifying after `sign-files` and `attach-signatures` passed, with
+no dispatch running, was changed outside the workflow. `sign-files` signs what the release serves,
+so first check that the served file is the one the run built: its sha256 must match the same file
+in the run's `release-files` artifact (`gh run download <run> -R ClickHouse/loom -n release-files`;
+a stack bundle and checksum the release kept come from the run that first published them). A file
+that differs is a security incident ([SECURITY.md](../../SECURITY.md)), not a signing failure: do
+not sign it. When every file matches, re-run `sign-files` alone, which also re-runs the jobs after
+it and publishes nothing:
 
 ```bash
 job=$(gh run view <run> -R ClickHouse/loom --json jobs --jq '.jobs[] | select(.name == "Sign the release files") | .databaseId')
 gh run rerun <run> -R ClickHouse/loom --job "$job"
 ```
+
+Both re-runs work for 30 days after the run, as long as its artifacts are kept. After that, only a
+dispatch on the tag signs the files again: it builds and replaces them, and publishes the SDKs and
+the MCP Registry listing once their environments are approved (the registries skip a version they
+already have).
 
 ### When the clickhouse job stops
 
