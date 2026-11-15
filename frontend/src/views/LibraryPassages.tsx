@@ -54,6 +54,15 @@ function shortName(uri: string): string {
   );
 }
 
+/** What a search reads: this library, or every place (how many once the places are known,
+ *  and how many it leaves out). */
+function hint(everywhere: boolean, unknown: boolean, places: number, notSearched: number): string {
+  if (!everywhere && notSearched === 0) return "Searches every document in this library, whatever the tag filter.";
+  if (unknown) return "Searches every document in every place you read, whatever the tag filter.";
+  const left = notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : "";
+  return `Searches every document in ${places} place${places === 1 ? "" : "s"}, whatever the tag filter${left}.`;
+}
+
 /** The panel's id, for the toggle in the Library's toolbar that opens it (`aria-controls`). */
 export const PASSAGES_PANEL_ID = "library-passages";
 
@@ -62,6 +71,7 @@ export function LibraryPassages({
   identity,
   namespaces = [],
   waiting = false,
+  everywhere = false,
   unavailable = null,
   notSearched = 0,
   placeLabel,
@@ -74,6 +84,8 @@ export function LibraryPassages({
   namespaces?: string[];
   /** The places to search are still being read: a search waits for them. */
   waiting?: boolean;
+  /** A search of every place the person reads, whatever is known of them yet. */
+  everywhere?: boolean;
   /** Why the places to search are not known (the list's read failed): a search says it. */
   unavailable?: string | null;
   /** Places a search everywhere leaves out (refused, past the most one read takes). */
@@ -247,12 +259,8 @@ export function LibraryPassages({
     <section id={PASSAGES_PANEL_ID} aria-label="Find a passage" className="mb-4 rounded-sm border border-border p-3">
       <div className="space-y-3">
         <p id={`${PASSAGES_PANEL_ID}-hint`} className="text-xs text-text-muted">
-          {namespaces.length > 0 || notSearched > 0
-            ? `Searches every document in ${namespaces.length + 1} place${namespaces.length ? "s" : ""}, whatever the tag filter${
-                notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : ""
-              }.`
-            : "Searches every document in this library, whatever the tag filter."}{" "}
-          Each passage is cited by the revision it was read from and its place.
+          {hint(everywhere, waiting || !!unavailable, namespaces.length + 1, notSearched)} Each passage is cited by the
+          revision it was read from and its place.
         </p>
         <form
           className="flex gap-2"

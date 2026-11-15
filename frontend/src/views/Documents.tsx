@@ -313,20 +313,16 @@ export function Documents() {
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
   // All documents without the header's namespace adds to My files, known once the list answers.
-  const addWaits = all && !ownShelf && !collections.kept;
   // The writes to `identity` (Add, the empty state): the collection shown, My files or the
   // header's namespace; each row's own are `reasonFor`'s.
-  const writeReason = addsTo
-    ? addsTo === shown
-      ? viewerOfShown
-      : null
-    : all && !ownShelf
-      ? addWaits
-        ? collections.error
-          ? NO_LIST_TO_ADD
-          : ADD_WAITS
-        : NO_PLACE_TO_ADD
-      : viewerHere;
+  const addReason = (): string | null => {
+    if (addsTo) return addsTo === shown ? viewerOfShown : null;
+    if (!all || ownShelf) return viewerHere;
+    // All documents without the header's namespace adds to My files, once the list names it.
+    if (collections.kept) return NO_PLACE_TO_ADD;
+    return collections.error ? NO_LIST_TO_ADD : ADD_WAITS;
+  };
+  const writeReason = addReason();
   // Known to be unable to add, rather than not known yet: the empty state's words.
   const knownReadOnly = writeReason !== null && writeReason !== ROLE_LOADING && writeReason !== ADD_WAITS;
   // The place's admins manage its sources. An admin claim reaches no collection, so there
@@ -421,6 +417,20 @@ export function Documents() {
     failures: NO_FAILURES,
   });
   const refusedHere = refused.under === collections.kept ? refused.failures : NO_FAILURES;
+  // The collections answer on screen, for a read that lands after it was started.
+  const keptNow = useRef(collections.kept);
+  keptNow.current = collections.kept;
+  // The places whose refusal read the collections again: each does so once.
+  const askedAgainFor = useRef(new Set<string>());
+  // What a read found refused, kept under the answer it was started under, while that answer
+  // is still the one on screen (a later one may name a grant that caught up).
+  const recordRefused = (under: unknown, found: PlaceFailure[]) => {
+    if (found.length === 0 || keptNow.current !== under) return;
+    setRefused((prev) => ({ under, failures: [...(prev.under === under ? prev.failures : []), ...found] }));
+    const first = found.filter((f) => !askedAgainFor.current.has(f.namespace));
+    for (const f of first) askedAgainFor.current.add(f.namespace);
+    if (first.length) invalidateSharedCollections();
+  };
   const placesWaiting = !collections.kept && !collections.error;
   // The places one read asks for: up to MAX_PLACES_READ it can read, a refused one not
   // counted; the rest are said to be left out.
@@ -503,6 +513,7 @@ export function Documents() {
     const scope = readKey;
     const places = readPlaces;
     const at = place;
+    const under = collections.kept;
     if (shownScope.current !== scope) {
       shownScope.current = scope;
       setRows(null);
@@ -537,6 +548,7 @@ export function Documents() {
           setRows(r.rows);
           setRowsScope(scope);
           setReadOf({ key: scope, read: r.read, failed: r.failed, oneAtATime: r.oneAtATime });
+          recordRefused(under, r.refused);
           // A read that returned a document: the library holds one, whatever filter
           // narrows a later read. An unfiltered read that returned none: it holds none.
           if (r.rows?.length) setListedScope(at);
@@ -600,22 +612,6 @@ export function Documents() {
   const readTags = JSON.parse(serverTags) as string[];
   // The read on screen's own report; one for other places is not this list's.
   const report = readOf?.key === readKey && rowsScope === readKey ? readOf : null;
-  // A place newly refused: remembered under this collections answer, and the collections read
-  // again the first time a place is refused, so one revoked leaves the tree.
-  const askedAgainFor = useRef(new Set<string>());
-  // Each read's refusals are taken once: a later collections answer does not take them again.
-  const tookFrom = useRef<unknown>(null);
-  useEffect(() => {
-    if (!report || tookFrom.current === report) return;
-    tookFrom.current = report;
-    const known = new Set(refusedHere.map((f) => f.namespace));
-    const fresh = (report?.failed ?? []).filter((f) => isRefusal(f.error) && !known.has(f.namespace));
-    if (fresh.length === 0) return;
-    setRefused({ under: collections.kept, failures: [...refusedHere, ...fresh] });
-    const first = fresh.filter((f) => !askedAgainFor.current.has(f.namespace));
-    for (const f of first) askedAgainFor.current.add(f.namespace);
-    if (first.length) invalidateSharedCollections();
-  }, [report, refusedHere, collections.kept]);
   const leftOut = report?.failed ?? [];
   // Whether every place the person reads is known: not while the collections failed or stop early.
   const placesKnown = !!collections.kept && !collections.kept.truncated;
@@ -1602,6 +1598,7 @@ export function Documents() {
             }
             notSearched={passagesLeftOut}
             placeLabel={across ? placeLabel : undefined}
+            everywhere={across}
             navEnabled={!dialogOpen && keysIn === "passages"}
             onHitsShown={setPassageHitsShown}
             onOpen={openPassage}

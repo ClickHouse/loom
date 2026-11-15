@@ -21,7 +21,10 @@ export interface AcrossPage {
   /** The places the rows come from: those asked, without the ones that failed, or only the
    *  first when the server reads one place per call. The cursor holds for exactly these. */
   read: string[];
+  /** Every place left out: those it was told to skip, then those this read found failing. */
   failed: PlaceFailure[];
+  /** The places this read found refused itself (not those it was told to skip). */
+  refused: PlaceFailure[];
   /** The server ignored `namespaces` (a build a release behind): only the first was read. */
   oneAtATime: boolean;
 }
@@ -40,37 +43,40 @@ export function isRefusal(e: unknown): boolean {
   return e instanceof ApiError && e.status === 403;
 }
 
-/** One page of `places`' documents, newest first, without those `refused` names (known to
- *  refuse, reported again). A refused read finds the places that fail alone and reads the rest;
- *  it throws when all or none of them fail alone. */
+/** One page of `places`' documents, newest first, without the `skip` places (known to refuse,
+ *  reported again). A refused read finds the places that fail alone and reads the rest; it
+ *  throws when all or none of them fail alone. */
 export async function listAcross(
   org: string,
   places: string[],
   opts: ListOpts,
   signal: AbortSignal,
-  refused: readonly PlaceFailure[] = [],
+  skip: readonly PlaceFailure[] = [],
 ): Promise<AcrossPage> {
-  const known = refused.filter((f) => places.includes(f.namespace));
-  const skip = new Set(known.map((f) => f.namespace));
-  const asked = places.filter((p) => !skip.has(p));
-  if (asked.length === 0) return { rows: [], next_cursor: null, read: [], failed: known, oneAtATime: false };
+  const known = skip.filter((f) => places.includes(f.namespace));
+  const skipped = new Set(known.map((f) => f.namespace));
+  const asked = places.filter((p) => !skipped.has(p));
+  if (asked.length === 0) {
+    return { rows: [], next_cursor: null, read: [], failed: known, refused: [], oneAtATime: false };
+  }
   const read = (names: string[]) =>
     listKnowledge(
       { org, namespace: names[0] },
       { ...opts, ...(names.length > 1 ? { namespaces: names.slice(1) } : {}), signal },
     );
-  const done = (page: KnowledgeListResponse, names: string[], failed: PlaceFailure[]): AcrossPage => {
+  const done = (page: KnowledgeListResponse, names: string[], found: PlaceFailure[]): AcrossPage => {
     const oneAtATime = names.length > 1 && (page.ignored_args ?? []).includes("namespaces");
     return {
       rows: placed(page, names[0]),
       next_cursor: page.next_cursor ?? null,
       read: oneAtATime ? names.slice(0, 1) : names,
-      failed,
+      failed: [...known, ...found],
+      refused: found.filter((f) => isRefusal(f.error)),
       oneAtATime,
     };
   };
   try {
-    return done(await read(asked), asked, known);
+    return done(await read(asked), asked, []);
   } catch (e) {
     // Any other failure (a limit, a busy server) is the read's, not a place's: the page offers
     // Retry rather than a call per place.
@@ -79,7 +85,7 @@ export async function listAcross(
     if (failed.length === 0 || failed.length === asked.length) throw e;
     const gone = new Set(failed.map((f) => f.namespace));
     const rest = asked.filter((p) => !gone.has(p));
-    return done(await read(rest), rest, [...known, ...failed]);
+    return done(await read(rest), rest, failed);
   }
 }
 

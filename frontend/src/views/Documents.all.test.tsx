@@ -9,6 +9,7 @@ import { useStore } from "../lib/state";
 import { ApiError } from "../lib/errors";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { axeViolations } from "../test/axe";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { Documents } from "./Documents";
 
 const api = vi.hoisted(() => ({
@@ -325,6 +326,42 @@ describe("All documents", () => {
     expect(screen.getByText("Not shown, as you can't read it: Legal.")).toBeInTheDocument();
   });
 
+  it("asks a refused place again when the collections answered while the refused read was in flight", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let held = false;
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (!held && places.length > 1) {
+        held = true;
+        await gate;
+      }
+      if (places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await waitFor(() => expect(held).toBe(true));
+    // A new collections answer lands before the read's refusal does.
+    const lists = api.listCollections.mock.calls.length;
+    act(() => invalidateSharedCollections());
+    await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(lists));
+    await settle();
+    release();
+    await screen.findByText("Drain a lane");
+    await settle();
+    // Found under the answer the read started with: not kept, and the next read asks again.
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:one" } });
+    await waitFor(() =>
+      expect(
+        api.listKnowledge.mock.calls.some(
+          (c) => (c[1] as ListOpts & { tags?: string[] }).tags?.[0] === "one" && placesOf(c).includes("col-legal"),
+        ),
+      ).toBe(true),
+    );
+  });
+
   it("reads a refused place again once the collections answer again, as a lagging grant catches up", async () => {
     let granted = false;
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
@@ -474,6 +511,24 @@ describe("The Library's search scope", () => {
     );
     expect(toasts.toastWithId).not.toHaveBeenCalled();
     expect(api.listKnowledge.mock.calls.filter((c) => !(c[1] as ListOpts).cursor)).toHaveLength(1);
+  });
+
+  it("says a passage search reads every place while the list is still reading them", async () => {
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      if (opts.namespaces?.length) return new Promise(() => {});
+      return { rows: EVERY.filter((r) => r.namespace === id.namespace), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    fireEvent.click(screen.getAllByRole("button", { name: "Find a passage" })[0]);
+    expect(screen.getByText(/Searches every document in this library/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+    await settle();
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Search in" })).getByRole("button", { name: "Everywhere" }),
+    );
+    await settle();
+    expect(screen.getByText(/Searches every document in every place you read/)).toBeInTheDocument();
   });
 
   it("waits for the namespace's role before a row of it takes writes, in a search everywhere", async () => {
