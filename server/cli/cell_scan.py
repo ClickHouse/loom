@@ -502,7 +502,8 @@ async def _system(ch: Any, sql: str, topology: Topology, budget: Budget, subject
     except Exception as e:  # only a timeout is judged here; the rest pass to the caller
         if error_code(e) not in _TIMEOUT_CODES:
             raise
-        if budget.left() <= 0:
+        # The statement was given the budget's whole seconds, so up to one is left over.
+        if budget.left() <= 1:
             raise Refused([_out_of_budget(subject, budget.seconds)]) from None
         done = {str(r.get("host")) for r in getattr(e, "rows", ()) if r.get("status") == 0}
         unfinished = ", ".join(sorted(topology.hosts - done)) or "this server"

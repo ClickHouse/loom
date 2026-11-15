@@ -233,6 +233,9 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
         ("AS SELECT x.org FROM loom.x AS x, evil.t AS evil", "database evil"),
         # A parameterized view's call, as written and as the server stores it.
         ("AS SELECT m.org FROM loom.memory AS side, side.pv(a = 1) AS m", "database side"),
+        ("AS SELECT m.org FROM loom.memory AS side FINAL, side.pv(a = 1) AS m", "database side"),
+        ("AS SELECT m.org FROM loom.memory AS side FINAL, side.t AS m", "database side"),
+        ("AS SELECT m.org FROM loom.memory AS side SAMPLE 0.1, side.t AS m", "database side"),
         ("AS SELECT m.org FROM loom.memory AS side, `side.pv`(a = 1) AS m", "database side"),
         (
             "AS SELECT m.org FROM loom.memory AS side JOIN side.pv(a = 1) AS m ON m.id = side.id",

@@ -719,3 +719,14 @@ async def test_a_sync_cut_by_the_budget_refuses_as_the_budget() -> None:
     tables = TableList(clickhouse=[Table("loom", "memory", "ReplicatedMergeTree")])
     with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
         await cell_scan.scan(ch, tables, ONE, budget)
+    # Given the budget's whole seconds, the statement times out with under one left.
+    clock, spent = _Clock(), 100.7
+    budget = Budget(spent, clock)
+
+    def spend_whole(*_: Any) -> list[dict[str, Any]]:
+        clock.t += 100  # the 100 s it was given: 0.7 s is left
+        raise timeout
+
+    ch = FakeCH().on("SYSTEM", spend_whole)
+    with pytest.raises(Refused, match="clickhouse loom.memory: the scan ran out of --scan-budget"):
+        await cell_scan.scan(ch, tables, ONE, budget)
