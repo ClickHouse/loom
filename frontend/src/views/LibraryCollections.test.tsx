@@ -452,6 +452,8 @@ describe("the Library on a collection", () => {
   });
 
   it("says who can see the collection in its header, and Share opens the members dialog in place", async () => {
+    // Signed in as someone other than bob, whoever an earlier test left signed in.
+    useStore.setState({ whoami: { authenticated: true, subject: "ada", org: "acme", roles: [] } });
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     api.listGrants.mockResolvedValue({
       rows: [
@@ -1453,8 +1455,8 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await answer(q4);
       await settle();
-      // Read again (how many times rests on React's batching); what was made is listed and shown.
-      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      // The create's refresh and the page's read for the move are one read.
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
       expect(api.createCollection).toHaveBeenCalledWith(
         "acme",
         "",
@@ -1482,8 +1484,8 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await act(async () => answer(q4));
       await settle();
-      // Read again (how many times rests on React's batching); what was made is opened.
-      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      // The create's refresh and the page's read for the move are one read.
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
       expect(api.createCollection).toHaveBeenCalledWith(
         "acme",
         expect.any(String),
@@ -1546,8 +1548,8 @@ describe("the Library on a collection", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
-      // Read again (how many times rests on React's batching); the second is listed.
-      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      // The create's refresh and the page's read for the move are one read.
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
       expect(within(tree).getByRole("link", { name: "Q5" })).toHaveAttribute("aria-current", "page");
     });
 

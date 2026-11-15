@@ -370,7 +370,8 @@ describe("MembersDialog paging", () => {
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(confirm.mock.calls[0][0]).toMatchObject({
       title: "Stop sharing Runbooks with everyone in acme?",
-      message: "Only those named here or on a parent, and the members of groups named, keep access.",
+      message:
+        "The grant here is revoked. Only those named here or on a parent, and the members of groups named, keep access.",
     });
     unmount();
     render(

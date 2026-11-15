@@ -57,7 +57,10 @@ function removeConfirm(o: {
       return { title, message: `${revoked} Everyone in ${o.org} can still see it through ${joined(o.through)}.` };
     }
     if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let others in.` };
-    return { title, message: "Only those named here or on a parent, and the members of groups named, keep access." };
+    return {
+      title,
+      message: `${revoked} Only those named here or on a parent, and the members of groups named, keep access.`,
+    };
   }
   const title = `Remove ${o.who} from ${o.name}?`;
   const revoked = "Their grant here is revoked.";
