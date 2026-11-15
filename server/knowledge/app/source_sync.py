@@ -708,18 +708,14 @@ async def retire_absent(
     gone: Callable[[str], Awaitable[bool | None]],
     run: Pass,
     turn: TurnResult,
-    *,
-    docs: list[dict[str, str]] | None = None,
 ) -> None:
-    """Retire the source's documents (`docs`, read here when not given) whose item a
-    complete listing lacks, or that sit at an address that is no longer their item's.
-    `listed` maps each listed item's id to its address. An item missing from the
-    listing is looked up first with `gone(id)`: a listing paged while items changed can
-    miss one, so only an item the store reports gone counts. `gone` answers False when
-    the lookup fails (nothing is retired) and None when the turn must stop (it records
-    why)."""
-    if docs is None:
-        docs = await store.source_revisions(src.org, *home(src), searchable_only=False)
+    """Retire the source's documents whose item a complete listing lacks, or that
+    sit at an address that is no longer their item's. `listed` maps each listed
+    item's id to its address. An item missing from the listing is looked up first
+    with `gone(id)`: a listing paged while items changed can miss one, so only an
+    item the store reports gone counts. `gone` answers False when the lookup fails
+    (nothing is retired) and None when the turn must stop (it records why)."""
+    docs = await store.source_revisions(src.org, *home(src), searchable_only=False)
     for doc in docs:
         address = listed.get(doc["file_id"])
         if address == doc["source_uri"]:
@@ -875,9 +871,11 @@ async def sync_file(
     turn: TurnResult,
     *,
     ready: Callable[[], Awaitable[bool]] | None = None,
+    access: Callable[[], access_list.AccessList] | None = None,
 ) -> bool:
     """Handle one listed file at address `uri`; False when the turn must stop listing.
-    `ready` runs just before a fetch, and False from it skips the file. A
+    `ready` runs just before a fetch, and False from it skips the file; `access` gives
+    the permission list the write carries, once `ready` ran. A
     native document whose stored text still holds its pictures' bytes (an earlier
     conversion's) is fetched and converted again at its same revision when a full
     listing lists it."""
@@ -904,7 +902,14 @@ async def sync_file(
         return await _fetchable(f, run, turn) and (ready is None or await ready())
 
     fetch_and_write = functools.partial(
-        _fetch_and_write, src, token, f, uri, turn, stored_content_sha256=stored_content_sha256
+        _fetch_and_write,
+        src,
+        token,
+        f,
+        uri,
+        turn,
+        stored_content_sha256=stored_content_sha256,
+        access=access,
     )
     return await sync_item(
         src, f, uri, prior, run, turn, fetch_and_write, before_fetch, refetch=reconvert
@@ -944,6 +949,7 @@ async def _fetch_and_write(
     turn: TurnResult,
     *,
     stored_content_sha256: str,
+    access: Callable[[], access_list.AccessList] | None = None,
 ) -> str:
     """Fetch, convert and write one file: `written`, `unchanged` (a reconversion whose
     text equals the stored copy), `skipped` (another writer took the address during the
@@ -1001,6 +1007,7 @@ async def _fetch_and_write(
             ingested_format=fetched.ingested_format,
             original=fetched.original,
             extra_metadata=extra or None,
+            permissions=access() if access else access_list.UNREAD,
         )
     except ValidationError as e:
         # The write refuses this file whatever the pass: it will not go through.
@@ -1149,20 +1156,20 @@ async def write_document(
     ingested_format: str,
     original: bytes = b"",
     extra_metadata: dict[str, Any] | None = None,
+    permissions: access_list.AccessList = access_list.UNREAD,
 ) -> bool:
     """Write one item (`f`: its `id`, `name`, `modifiedTime` and, with an original,
     its `mimeType`) at `uri` in the source's home (`domain.home`) with
     `knowledge.upsert`, as the sync worker: tagged `source-kind:design_doc`,
     `source:<name>`, in a mirror `source-id:<id>` and, on a repository's trunk code
     namespace, its `repo:<id>`, class `imported`, with the source's kind and name, the
-    item's id and revision and the conversion in its metadata. A mirrored item carries
-    the permission list of its listed `permissions`; one listed without them is
-    `unread`. False, writing nothing, when another writer took the address while the
-    item was fetched: the check before the fetch is seconds old by now."""
+    item's id and revision and the conversion in its metadata, and the permission
+    list its turn read (`unread` outside a mirror). False, writing nothing, when
+    another writer took the address while the item was fetched: the check before the
+    fetch is seconds old by now."""
     namespace, tag = home(src)
-    mirrored = src.access == MIRRORED_ACCESS
     tags = ["source-kind:design_doc", source_tag(src.name)]
-    if mirrored:
+    if src.access == MIRRORED_ACCESS:
         tags.append(tag)  # its `source-id:<id>`
     if repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -1192,9 +1199,6 @@ async def write_document(
         original_filename=str(f.get("name") or "") if original else "",
         blob_content_type=str(f.get("mimeType") or "") if original else "",
         source_class="imported",
-    )
-    permissions = (
-        access_list.from_drive_permissions(f.get("permissions")) if mirrored else access_list.UNREAD
     )
     with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
         await writes.handle_knowledge_upsert(request, permissions=permissions)

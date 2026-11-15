@@ -88,9 +88,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
     addressed = [(mirror_uri(sync.source_uri_of(f), src.source_id), f) for f in files]
     listed = {uri: f for uri, f in addressed if uri.startswith("https://")}
-    copies = await store.source_revisions(
-        src.org, *home(src), searchable_only=False, flag_searchable=True
-    )
+    with sequential_reads():  # a replica behind the last turn would show an older list
+        copies = await store.source_revisions(
+            src.org, *home(src), searchable_only=False, flag_searchable=True
+        )
     lists_current = await _refresh_lists(src, token, copies, listed, run, result)
     if result.status in _REFUSED:
         return result  # the store refused a permission read: no fetch follows
@@ -100,18 +101,23 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
             result.mark(sync.TurnMark.PASS_BOUND)
             break
         ready = functools.partial(_read_permissions, token, f, result)
+        access = functools.partial(_access_of, f)
         prior = stored.get(str(f["id"]))
-        if not await sync.sync_file(src, token, f, uri, prior, run, result, ready=ready):
+        if not await sync.sync_file(
+            src, token, f, uri, prior, run, result, ready=ready, access=access
+        ):
             break
         if result.status in _REFUSED:
             break  # a permission read the store refused
     if result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
         ids = {str(f["id"]): uri for uri, f in listed.items()}
-        await sync.retire_absent(src, ids, gone, run, result, docs=copies)
-    # A listing that searched everything and reached every item vouches for the lists;
-    # a walk cut at its bounds still does, since every copy it did not reach is `unread`.
-    if lists_current and listing.whole and not listing.lost_item and result.status == "ok":
+        await sync.retire_absent(src, ids, gone, run, result)
+    # A listing that searched everything and reached every item vouches for the lists,
+    # whatever a file's content did; a walk cut at its bounds still does, since every
+    # copy it did not reach is `unread`.
+    if lists_current and listing.whole and not listing.lost_item:
+        pass_context.check_stop()
         namespace, _ = home(src)
         await mirrors.record_listing(src.org, namespace, src.source_id, src.name, started)
     return result
@@ -135,31 +141,37 @@ async def _refresh_lists(
     result: sync.TurnResult,
 ) -> bool:
     """Rewrite every stored copy's list to what the store says now: the list of the file
-    `listed` at its address, or `unread`. Changed lists are written a batch at a time as
-    they are read, so a turn the deadline cuts keeps what it read. True when every copy
-    now has a list read this turn, or `unread`."""
-    changed: dict[str, access_list.AccessList] = {}
-    read_all = True
-    for copy in copies:
-        if run.budget.exhausted():
-            result.mark(sync.TurnMark.PASS_BOUND)
-            read_all = False
-            break
-        f = listed.get(copy["source_uri"])
-        if f is None:
-            access = access_list.UNREAD
-        elif await _read_permissions(token, f, result):
-            access = access_list.from_drive_permissions(f.get("permissions"))
-        else:
-            read_all = False
-            break
-        if access_list.from_json(copy["access_json"]) != access:
-            changed[copy["source_uri"]] = access
-        if len(changed) == _REWRITE_BATCH:
-            await _write_lists(src, changed)
-            changed = {}
-    await _write_lists(src, changed)
-    return read_all
+    `listed` at its address, or `unread`. Each list is compared with the one the storage
+    authority holds, and changed lists are written a batch at a time as they are read,
+    so a turn the deadline cuts keeps what it read. True when every copy now has a list
+    read this turn, or `unread`."""
+    namespace, _ = home(src)
+    for start in range(0, len(copies), _REWRITE_BATCH):
+        batch = copies[start : start + _REWRITE_BATCH]
+        held = {c["source_uri"]: c["access_json"] for c in batch}
+        held |= await documents.committed_lists(src.org, namespace, list(held))
+        changed: dict[str, access_list.AccessList] = {}
+        read_all = True
+        for uri in held:
+            if run.budget.exhausted():
+                result.mark(sync.TurnMark.PASS_BOUND)
+                read_all = False
+                break
+            f = listed.get(uri)
+            if f is not None and not await _read_permissions(token, f, result):
+                read_all = False
+                break
+            access = access_list.UNREAD if f is None else _access_of(f)
+            if access_list.from_json(held[uri]) != access:
+                changed[uri] = access
+        await _write_lists(src, changed)
+        if not read_all:
+            return False
+    return True
+
+
+def _access_of(f: dict[str, Any]) -> access_list.AccessList:
+    return access_list.from_drive_permissions(f.get("permissions"))
 
 
 async def _read_permissions(token: str, f: dict[str, Any], result: sync.TurnResult) -> bool:

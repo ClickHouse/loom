@@ -297,6 +297,19 @@ async def live_versions(
     return {str(r["source_uri"]): int(r["version"]) for r in rows}
 
 
+async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> dict[str, str]:
+    """Each source's permission list as its committed head holds it under the Postgres
+    authority, a commit ClickHouse has not published yet included; empty under the
+    ClickHouse authority, where a sequential read of the rows is already current."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return {}
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.head_lists(org, namespace, source_uris)
+
+
 class DocumentListRow(TypedDict):
     """One `knowledge.list` row: the document's listing columns and its live
     chunk count."""

@@ -170,6 +170,18 @@ async def test_a_delete_is_a_deleted_head_and_the_get_finds_nothing(
     assert not again["deleted"]
 
 
+async def test_the_head_lists_answer_each_live_head_s_permission_list(
+    call: Any, pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.store import pg_documents
+
+    await call("knowledge.add", {"source_uri": "docs/kept.md", "content": "Kept."})
+    await call("knowledge.add", {"source_uri": "docs/gone.md", "content": "Soon gone."})
+    await call("knowledge.delete", {"source_uri": "docs/gone.md"})
+    lists = await pg_documents.head_lists(org, ns, ["docs/kept.md", "docs/gone.md", "docs/none.md"])
+    assert lists == {"docs/kept.md": ""}  # a namespace document holds no list
+
+
 async def test_a_commit_over_a_version_its_writer_did_not_read_is_refused(
     call: Any, pg_conn: Any, org: str, ns: str
 ) -> None:

@@ -316,6 +316,23 @@ async def heads(org: str, namespace: str, uris: Sequence[str]) -> dict[str, Head
     return {str(r["source_uri"]): Head(decode_row(r["row"]), bool(r["owed"])) for r in got}
 
 
+async def head_lists(org: str, namespace: str, uris: Sequence[str]) -> dict[str, str]:
+    """The permission list (`access_json`) of each live head among these sources, read
+    without the rest of the row."""
+    uris = [u for u in uris if not pg.unstorable(u)]
+    if not uris or pg.unstorable([org, namespace]):
+        return {}
+    got = await pg.fetch(
+        "SELECT source_uri, coalesce(row->>'access_json', '') AS access_json "
+        "FROM loom.knowledge_heads "
+        "WHERE org = $1 AND namespace = $2 AND source_uri = ANY($3::text[]) AND NOT deleted",
+        org,
+        namespace,
+        sorted(set(uris)),
+    )
+    return {str(r["source_uri"]): str(r["access_json"]) for r in got}
+
+
 async def serving(org: str, sources: Sequence[tuple[str, str]]) -> dict[tuple[str, str], Serving]:
     """What the heads of these (namespace, source_uri) pairs serve, in one read; a pair
     with no head (or a key Postgres cannot store, which holds none) is absent."""

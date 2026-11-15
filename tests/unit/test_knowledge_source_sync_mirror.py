@@ -112,6 +112,9 @@ def test_a_narrowed_list_rewrites_the_row_and_the_same_list_writes_nothing(
     assert len(world.upserts) == 1  # no content fetched, nothing embedded
     [row] = mirror["rewrites"]
     assert access_list.from_json(row["access_json"]) == access_list.AccessList()
+    [(written, _)] = world.upserts
+    assert row["content"] == written.content and row["tags"] == written.tags
+    assert row["doc_id"] == "d" and row["version"] > 1 and row["superseded_at"] is None
 
 
 def test_an_absent_file_reads_unread_before_it_is_retired(world: Any, mirror: Any) -> None:
@@ -343,7 +346,7 @@ def test_a_walk_cut_at_its_bounds_reads_unread_where_it_did_not_reach(
     assert len(mirror["listings"]) == 2
 
 
-def test_a_rate_limit_on_a_permission_read_stops_the_turn(
+def test_a_rate_limit_on_a_new_file_s_permissions_writes_no_document(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def _limited(token: str, file_id: str, **kw: Any) -> Any:
@@ -352,8 +355,38 @@ def test_a_rate_limit_on_a_permission_read_stops_the_turn(
     monkeypatch.setattr(gdrive, "file_permissions", _limited)
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     _turn(world, _mirrored())
-    assert world.upserts == [] and mirror["listings"] == []
-    assert _detail(world)["status"] == "rate_limited"
+    assert world.upserts == [] and _detail(world)["status"] == "rate_limited"
+    # No stored copy holds a list this turn left unread, so the listing still vouches.
+    assert len(mirror["listings"]) == 1
+
+
+def test_a_file_whose_fetch_fails_leaves_the_listing_row_to_land(world: Any, mirror: Any) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("bad1", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    world.file_answers["bad1"] = httpx.Response(503)
+    _turn(world, _mirrored())
+    assert len(world.upserts) == 1 and _detail(world)["status"] == "failed"
+    assert len(mirror["listings"]) == 1
+
+
+def test_a_list_is_compared_with_the_one_the_committed_head_holds(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    [uri] = world.docs
+    widened = READERS + [{"type": "user", "role": "reader", "emailAddress": "bob@example.com"}]
+
+    async def _heads(org: str, namespace: str, uris: list[str]) -> dict[str, str]:
+        # A widening committed and not yet published: ClickHouse still holds Ann alone.
+        return {uri: access_list.to_json(access_list.from_drive_permissions(widened))}
+
+    monkeypatch.setattr(documents, "committed_lists", _heads)
+    _turn(world, _mirrored())  # the store names Ann alone again
+    [row] = mirror["rewrites"]
+    assert access_list.from_json(row["access_json"]).emails == ("ann@example.com",)
 
 
 def test_a_moved_file_keeps_its_list_at_its_new_address_and_none_at_its_old(
