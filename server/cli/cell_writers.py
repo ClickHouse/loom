@@ -459,8 +459,8 @@ def _engine_args(engine_full: str) -> list[str]:
 
 
 def _engine_database(engine: str, engine_full: str) -> str:
-    """The database a Buffer, Distributed or Merge definition names: '' for the table's own
-    (`currentDatabase()`), `REGEXP` for a pattern."""
+    """The database a Buffer, Distributed, Merge or Alias definition names: '' for the
+    table's own (`currentDatabase()`), `REGEXP` for a pattern."""
     if engine == "Merge" and re.search(r"\bREGEXP\s*\(", engine_full, re.I):
         return "REGEXP"
     args = _engine_args(engine_full)
@@ -472,8 +472,8 @@ def _engine_database(engine: str, engine_full: str) -> str:
 
 
 def _engine_targets(engine_full: str, dbs: list[str]) -> bool:
-    """Whether a Buffer, Distributed or Merge definition names a configured database (a
-    Merge's `REGEXP` matching one counts)."""
+    """Whether a Buffer, Distributed, Merge or Alias definition names a configured database
+    (a Merge's `REGEXP` matching one counts)."""
     head = engine_full.split(")")[0]
     regexp = re.search(r"REGEXP\s*\(\s*'((?:[^'\\]|\\.)*)'", head, re.I)
     if regexp and any(re.search(regexp.group(1), db) for db in dbs):
@@ -571,8 +571,8 @@ def object_problems(
     cluster: str = "",
 ) -> dict[str, str]:
     """Each object (`db.name`) that writes the configured databases without a grant on them,
-    or brings in what lies outside them, and why: outside them, a Buffer, Distributed or
-    Merge table, or a materialized or window view, whose target is inside, and a table a
+    or brings in what lies outside them, and why: outside them, a Buffer, Distributed, Merge
+    or Alias table, or a materialized or window view, whose target is inside, and a table a
     view inside reads; inside them, a Distributed table over another cluster than `cluster`,
     a view reading outside them (`_view_reads_outside`, with `functions` the table
     functions), a forwarding table naming a database outside them, and any other engine but
