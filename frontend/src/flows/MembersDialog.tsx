@@ -129,8 +129,12 @@ interface Props {
 /** A collection holds documents: its roles say what they let one do with them. */
 const COLLECTION_ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
   { value: "viewer", label: "Viewer", desc: "Read its documents" },
-  { value: "writer", label: "Writer", desc: "Read and add documents" },
-  { value: "admin", label: "Admin", desc: "Manage members and settings, and delete it" },
+  { value: "writer", label: "Writer", desc: "Read, add, move and delete documents, and add collections inside" },
+  {
+    value: "admin",
+    label: "Admin",
+    desc: "What a writer does, and manage its members and sources, move it and delete it",
+  },
 ];
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
@@ -297,6 +301,8 @@ export function MembersDialog({
       (x) => x.status === "active" && x.subject === "everyone" && x.subject !== subject,
     );
     const through = (inherited ?? []).filter((p) => reaches(p.rows)).map((p) => p.title);
+    // A parent whose grants were not all read (unread, hidden, or cut) may let anyone in.
+    const unknownAbove = (inherited ?? []).some((p) => p.rows === null || p.cut);
     const who = subjectLabel(subject, org);
     // The grant to everyone is no member: removing it narrows the collection to who is named.
     const toEveryone = subject === "everyone";
@@ -311,7 +317,9 @@ export function MembersDialog({
         message: toEveryone
           ? through.length
             ? `The grant here is revoked.${still}`
-            : "Only those named here or on a parent, and the members of groups named, keep access."
+            : unknownAbove
+              ? "The grant here is revoked. A collection it sits in may still let others in."
+              : "Only those named here or on a parent, and the members of groups named, keep access."
           : `Their grant here is revoked.${still}${
               // A namespace's gate also admits a token's own roles; no claim reaches a collection.
               isCollectionName(namespace) ? "" : " A token of theirs may still carry roles that let them in."

@@ -15,9 +15,9 @@ import { useStore } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
 import { IconButton } from "../components/IconButton";
 import { LoadingSkeleton } from "../components/ui";
-import { focusInMain } from "../components/ui/ListState";
 import { type InheritedAccess, MembersDialog } from "../flows/MembersDialog";
 import { collectionPath, type HiddenPart, hiddenWhat } from "./LibraryHierarchy";
+import { focusViewHeading } from "../lib/place";
 
 /** How far up the tree a collection's grants reach it (docs/architecture/sharing.md). */
 const INHERIT_DEPTH = 8;
@@ -296,7 +296,7 @@ export function useCollectionSharing({
             // failure mounts a fresh alert, which is announced; focus goes to the page's
             // heading, as a list's Retry sends it.
             onClick={() => {
-              focusInMain(null);
+              focusViewHeading();
               setState(null);
               setVersion((n) => n + 1);
             }}
@@ -346,13 +346,15 @@ export function useCollectionSharing({
         note: "Who can see that collection isn't shown to you.",
       });
     }
-  } else if (answer && (chain.length > 1 || hiddenWords)) {
-    // The header's read failed: the parents are there, but who they let in is unknown.
+  } else if (answer && "error" in answer && (chain.length > 1 || hiddenWords)) {
+    // The header's read failed: the parents are there, but who they let in is unknown, in
+    // the header's words (a refusal is not a failure).
+    const refused = answer.error instanceof ApiError && answer.error.status === 403;
     inherited.push({
       namespace: "",
       title: "the collections it sits in",
       rows: null,
-      note: "Who else can see it couldn't be read.",
+      note: refused ? "Who else can see it isn't shown to you." : "Who else can see it couldn't be read.",
     });
   }
   const shown = collection && !collection.personal && openFor === collection.namespace ? collection : null;
@@ -377,7 +379,7 @@ export function useCollectionSharing({
         if (!leftFor.current) return;
         leftFor.current = false;
         e.preventDefault();
-        focusInMain(null);
+        focusViewHeading();
       }}
       notice={
         signInOff ? "Sign-in is off: everyone who can reach this server can see it, whoever is listed here." : undefined

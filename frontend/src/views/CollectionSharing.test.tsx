@@ -241,7 +241,7 @@ function Header(props: {
     onOpenPlace: props.onOpenPlace ?? (() => {}),
   });
   return (
-    <main>
+    <main id="main">
       <h1>Library</h1>
       {line}
       {button}
@@ -512,6 +512,23 @@ describe("the collection header", () => {
     });
     expect(unread).toHaveTextContent("Who else can see it couldn't be read.");
     expect(within(dialog).queryByText(/^No members yet/)).not.toBeInTheDocument();
+  });
+
+  it("says in the dialog that who else can see it isn't shown, after a refused read", async () => {
+    const { mid, byName } = family();
+    api.listGrants.mockImplementation(async ({ namespace }: { namespace: string }) => {
+      if (namespace === "col-a" && api.listGrants.mock.calls.length === 1)
+        throw new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "no" });
+      return { rows: [] };
+    });
+    render(<Header collection={{ ...mid, role: "writer" }} byName={byName} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Who can see it isn't shown to you/);
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    const unread = await within(dialog).findByRole("region", {
+      name: "Also can see it, through the collections it sits in",
+    });
+    expect(unread).toHaveTextContent("Who else can see it isn't shown to you.");
   });
 
   it("reads the shown collection and at most eight parents above it", async () => {

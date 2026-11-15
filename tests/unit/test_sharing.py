@@ -588,8 +588,12 @@ def test_collection_list_with_auth_off_answers_admin(
         return {}
 
     monkeypatch.setattr(collections.namespaces_repo, "labels", _labels)
-    context.set_current_auth(None)
-    out = asyncio.run(collections.handle_collection_list(CollectionListInput(org=ORG)))
+
+    async def _list() -> Any:
+        context.set_current_auth(None)
+        return await collections.handle_collection_list(CollectionListInput(org=ORG))
+
+    out = asyncio.run(_list())
     assert {(c.namespace, c.role) for c in out.collections} == {
         ("col-hr", "admin"),
         ("col-q3", "admin"),

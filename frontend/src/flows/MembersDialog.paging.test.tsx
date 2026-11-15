@@ -401,7 +401,7 @@ describe("MembersDialog paging", () => {
     vi.mocked(api.listGrants).mockResolvedValue({ rows: [] });
     render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" />);
     fireEvent.click(await screen.findByRole("button", { name: "Add member" }));
-    expect(screen.getByText("Read and add documents")).toBeInTheDocument();
+    expect(screen.getByText("Read, add, move and delete documents, and add collections inside")).toBeInTheDocument();
   });
 
   it("says a token may still let a member removed from a namespace in, and not on a collection", async () => {
@@ -417,5 +417,30 @@ describe("MembersDialog paging", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
     await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
     expect(confirm.mock.calls[1][0].message).toBe("Their grant here is revoked.");
+  });
+
+  it("does not narrow access on stopping sharing with everyone while a parent's grants are unknown", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
+    const unknown = [
+      { namespace: "col-top", title: "Engineering", rows: null },
+      {
+        namespace: "",
+        title: "a collection you can't open",
+        rows: null,
+        note: "Who can see that collection isn't shown to you.",
+      },
+      { namespace: "col-big", title: "Big", rows: [grant("carol")], cut: true },
+    ];
+    for (const [i, p] of unknown.entries()) {
+      const { unmount } = render(
+        <MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" inherited={[p]} />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Stop sharing with everyone in acme" }));
+      await waitFor(() => expect(confirm).toHaveBeenCalledTimes(i + 1));
+      expect(confirm.mock.calls[i][0].message).toBe(
+        "The grant here is revoked. A collection it sits in may still let others in.",
+      );
+      unmount();
+    }
   });
 });
