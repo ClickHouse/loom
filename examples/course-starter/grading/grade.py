@@ -132,6 +132,8 @@ def counts(rows: list[dict[str, object]]) -> dict[object, int]:
         numbers = [int(v) for k, v in row.items() if k != "agent" and str(v).isdigit()]
         if "agent" not in row or len(numbers) != 1:
             raise Failed(f"a row of lab4.sql is not an agent and one count: {row}")
+        if row["agent"] in found:
+            raise Failed(f"lab4.sql returns more than one row for agent {row['agent']}")
         found[row["agent"]] = numbers[0]
     return found
 
@@ -163,8 +165,9 @@ async def lab4_query() -> None:
             await grader.memory.delete(key)
     if not got:
         raise Failed("lab4.sql returns no rows")
-    if counts(got) not in (before, after):
-        raise Failed(f"lab4.sql counts {counts(got)}; the last hour holds {after}")
+    student = counts(got)
+    if student not in (before, after):
+        raise Failed(f"lab4.sql counts {student}; the last hour holds {after}")
 
 
 CHECKS: list[tuple[str, Callable[[], Awaitable[None]]]] = [

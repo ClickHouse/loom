@@ -324,3 +324,16 @@ def test_a_solved_lab_runs_as_its_docstring_says(
     asyncio.run(grade.load(lab).main())
     printed = capsys.readouterr().out
     assert ("abstain_code: below_threshold" if lab == "lab1" else "answerable: True") in printed
+
+
+def test_lab_4_rows_are_one_count_per_agent(tmp_path: Path) -> None:
+    shutil.copytree(STARTER, tmp_path / "course")
+    grade = load_grader(tmp_path / "course")
+    assert grade.counts([{"agent": "a", "facts": "2"}, {"agent": "b", "facts": 1}]) == {
+        "a": 2,
+        "b": 1,
+    }
+    with pytest.raises(grade.Failed, match="more than one row for agent a"):
+        grade.counts([{"agent": "a", "facts": 1}, {"agent": "a", "facts": 2}])
+    with pytest.raises(grade.Failed, match="not an agent and one count"):
+        grade.counts([{"agent": "a"}])

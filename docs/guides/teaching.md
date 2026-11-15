@@ -55,7 +55,7 @@ mkdir loom-labs && cd loom-labs
 curl -fsSL https://github.com/ClickHouse/loom/archive/refs/heads/main.tar.gz \
   | tar -xz --strip-components=3 loom-main/examples/course-starter
 git init -b main && git add . && git commit -m "Loom labs"
-gh repo create <owner>/loom-labs --private --source . --push
+gh repo create <owner>/loom-labs --public --source . --push
 gh repo edit <owner>/loom-labs --template
 ```
 
@@ -67,7 +67,9 @@ after the next release. Later pushes to the template are not graded.
 
 Each student then works in a repository made from that template, with **Use this
 template** on its page or with the tool that hands out your assignments, and opens it in
-a codespace or clones it to a laptop.
+a codespace or clones it to a laptop. A student needs read access to the template to use
+it: a public one holds no answers, and a private one works for the members of its
+organization or the collaborators you add.
 
 `python grading/grade.py` runs the lab code against the student's running stack and checks
 what it wrote and returned, not how it got there, so read the code too. The `Grade` workflow

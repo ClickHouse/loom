@@ -1,7 +1,7 @@
 #!/bin/sh
-# Sets up the codespace when it is created: the labs' Python environment in .venv
-# first, then the Loom stack and Claude Code by start-loom.sh: the Loom
-# repository's own codespace script, as it was when this course was copied.
+# Sets up the codespace when it is created: the labs' .venv first, then the Loom
+# stack and Claude Code. start-loom.sh is a copy of the Loom repository's codespace
+# script, as it was when this course was copied.
 set -eu
 
 sudo apt-get update -qq
