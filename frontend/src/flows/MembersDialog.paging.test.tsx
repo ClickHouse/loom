@@ -368,10 +368,10 @@ describe("MembersDialog paging", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Stop sharing with everyone in acme" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
+    // A top-level collection: no parent to name.
     expect(confirm.mock.calls[0][0]).toMatchObject({
       title: "Stop sharing Runbooks with everyone in acme?",
-      message:
-        "The grant here is revoked. Only those named here or on a parent, and the members of groups named, keep access.",
+      message: "The grant here is revoked. Only those named here, and the members of groups named, keep access.",
     });
     unmount();
     render(
@@ -524,5 +524,24 @@ describe("MembersDialog paging", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "group:eng" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Added group eng as writer", "ok"));
+  });
+
+  it("names the parents among who keeps access on stopping sharing in a collection that sits in one", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        namespace="col-a"
+        label="Runbooks"
+        inherited={[{ namespace: "col-top", title: "Engineering", rows: [grant("carol")] }]}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Stop sharing with everyone in acme" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0].message).toBe(
+      "The grant here is revoked. Only those named here or on a parent, and the members of groups named, keep access.",
+    );
   });
 });

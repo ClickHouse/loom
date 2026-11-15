@@ -112,7 +112,7 @@ export function whoCanSee({
   if (others.length === 0 && unseen.length === 0 && !cut) {
     return {
       who: subjects.length > 0 ? "Only you" : "No one is named on it",
-      how: "Not shared with anyone",
+      how: subjects.length > 0 ? "Not shared with anyone" : "",
       onlyYou: subjects.length > 0,
     };
   }
@@ -280,6 +280,8 @@ export function useCollectionSharing({
   };
   const answer = state?.key === key ? state : null;
   const read = answer && "grants" in answer ? answer.grants : null;
+  // The collection's own read was refused (403), not failed: said as "isn't shown to you".
+  const refusedOwn = !!answer && "error" in answer && answer.error instanceof ApiError && answer.error.status === 403;
   const hiddenWords = above ? hiddenWhat(truncated) : null;
 
   let line: ReactNode = null;
@@ -296,16 +298,15 @@ export function useCollectionSharing({
       </Line>
     );
   } else if (collection && answer && "error" in answer) {
-    const refused = answer.error instanceof ApiError && answer.error.status === 403;
     line = (
       <Line busy={reading}>
         <Icon name="warning" size="sm" aria-hidden="true" className="shrink-0" />
         <span role="alert" className="min-w-0 break-words">
-          {refused
+          {refusedOwn
             ? `Who can see it isn't shown to you: ${errorLine(answer.error, { read: true })}`
             : `Couldn't read who can see it: ${errorLine(answer.error, { read: true })}`}
         </span>
-        {!refused && (
+        {!refusedOwn && (
           <Link
             component="button"
             type="button"
@@ -370,12 +371,11 @@ export function useCollectionSharing({
   } else if (answer && "error" in answer && (chain.length > 1 || hiddenWords)) {
     // The header's read failed: the parents are there, but who they let in is unknown, in
     // the header's words (a refusal is not a failure).
-    const refused = answer.error instanceof ApiError && answer.error.status === 403;
     inherited.push({
       namespace: "",
       title: "the collections it sits in",
       rows: null,
-      note: refused ? "Who else can see it isn't shown to you." : "Who else can see it couldn't be read.",
+      note: refusedOwn ? "Who else can see it isn't shown to you." : "Who else can see it couldn't be read.",
     });
   }
   const shown = collection && !collection.personal && openFor === collection.namespace ? collection : null;

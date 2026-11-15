@@ -49,6 +49,14 @@ describe("who can see a collection, in words", () => {
     });
   });
 
+  it("says no one is named, without repeating it, when no grant names anyone", () => {
+    expect(words([{ namespace: "col-a", rows: [] }])).toEqual({
+      who: "No one is named on it",
+      how: "",
+      onlyYou: false,
+    });
+  });
+
   it("names you first, then groups, people and agents, and counts the rest", () => {
     const rows = ["bob", "group:eng", "agent:helper", "carol", "dan"].map((s) => grant(s));
     expect(words([{ namespace: "col-a", rows: [grant("ada"), ...rows] }])).toEqual({

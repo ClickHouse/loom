@@ -46,6 +46,8 @@ function removeConfirm(o: {
   through: string[];
   /** Parents being read, or not all read: they may let anyone in. */
   unknownAbove: boolean;
+  /** No collection it sits in: a top-level collection. */
+  noParents: boolean;
   /** A collection; a namespace's Remove keeps its own words. */
   collection: boolean;
 }): { title: string; message: string } {
@@ -59,7 +61,9 @@ function removeConfirm(o: {
     if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let others in.` };
     return {
       title,
-      message: `${revoked} Only those named here or on a parent, and the members of groups named, keep access.`,
+      message: o.noParents
+        ? `${revoked} Only those named here, and the members of groups named, keep access.`
+        : `${revoked} Only those named here or on a parent, and the members of groups named, keep access.`,
     };
   }
   const title = `Remove ${o.who} from ${o.name}?`;
@@ -362,6 +366,7 @@ export function MembersDialog({
           everyoneHere,
           through,
           unknownAbove,
+          noParents: inherited !== null && inherited.length === 0,
           collection: isCollectionName(namespace),
         }),
         confirmLabel: toEveryone ? "Stop sharing" : "Remove",
