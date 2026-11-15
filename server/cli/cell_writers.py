@@ -9,7 +9,9 @@ leaving the org with data and no placement. The check reads, on every host of
 - attach's own grants first, since `system.tables` and `system.columns` silently hide what
   the reading user cannot see;
 - every user's grants, roles followed and partial revokes ignored (a revoke only narrows a
-  grant, so ignoring one over-approximates);
+  grant, so ignoring one over-approximates); a grant that creates tables, or reads or writes
+  through `remote` (REMOTE, SOURCES), counts on any database, since it writes the configured
+  databases without a grant on them;
 - the user directories, the objects that write the configured databases without a grant on
   them, and the replicas outside the cluster.
 
@@ -62,8 +64,19 @@ _WRITER_ACCESS = frozenset(
     }
 )
 
-# The user directories ClickHouse itself keeps; any other (LDAP, Kerberos) defines users the
-# check cannot read.
+# Grants that write the configured databases wherever they are held, on any database:
+# - creating a table: a Distributed table on another database forwards its inserts to a
+#   remote shard over the cluster's connection, as the cluster's configured user, and the
+#   server that takes the insert does not check INSERT on the destination (a Buffer table
+#   and a materialized view do: the insert, or the view's creation, refuses without it);
+# - REMOTE and SOURCES (`READ` and `WRITE ON REMOTE` on newer servers): an
+#   `INSERT INTO FUNCTION remote(…)` or `cluster(…)` runs on the far server as another user.
+_ANYWHERE_ACCESS = frozenset(
+    {"ALL", "CREATE", "CREATE TABLE", "CREATE VIEW", "REMOTE", "SOURCES", "READ", "WRITE"}
+)
+
+# The user directories ClickHouse itself keeps; any other (LDAP) defines users the check
+# cannot read.
 _OWN_DIRECTORIES = frozenset({"users_xml", "local_directory", "replicated", "memory"})
 
 # Objects that write a database named in their definition, without a grant on it.
@@ -245,7 +258,12 @@ def _label(access: str, db: str | None) -> str:
 
 def writer_reason(grants: Iterable[Grant], dbs: list[str]) -> str:
     """Why a user with `grants` can write the configured databases ('' when it cannot): a
-    writing grant on them or globally, else any grant there it can hand on."""
+    grant that writes them from anywhere (`_ANYWHERE_ACCESS`), a writing grant on them or
+    globally, else any grant there it can hand on."""
+    grants = list(grants)
+    for g in grants:
+        if g.access in _ANYWHERE_ACCESS:
+            return f"holds {g.access} on {_scope(g)}"
     reaching = [g for g in grants if any(g.touches(db) for db in dbs)]
     for g in reaching:
         if g.access in _WRITER_ACCESS or g.access.startswith("ALTER "):
@@ -263,11 +281,16 @@ def _scope(g: Grant) -> str:
 
 
 _TO = re.compile(r"\bTO\s+(?:`((?:[^`\\]|\\.)*)`|(\w+))\s*\.", re.I)
-_NAME = r"(?:`(?:[^`\\]|\\.)*`|\w+)"
-_SOURCE = re.compile(
-    rf"\b(?:FROM|(?<!ARRAY\s)JOIN)\s+(?:`((?:[^`\\]|\\.)*)`|(\w+))(?:\s*(\()|\s*\.\s*{_NAME})?",
-    re.I,
-)
+_NAME = r"(?:`(?:[^`\\]|\\.)*`|[A-Za-z_]\w*)"
+# A table function a view reads through.
+_TABLE_FUNCTION = re.compile(r"\b(?:FROM|(?<!ARRAY\s)JOIN)\s+(\w+)\s*\(", re.I)
+# Any qualified name: the schema's own views qualify only by a configured database, so any
+# other qualifier (another database, or an operator view's alias or column) counts as an
+# outside read, failing closed.
+_QUALIFIED = re.compile(rf"(?<![\w.`])({_NAME})\s*\.\s*{_NAME}")
+# A dictionary or Join table read by name, which a string literal holds.
+_BY_NAME = re.compile(r"\b(?:dict\w*|joinGet\w*)\s*\(\s*'((?:[^'\\]|\\.)*)'", re.I)
+_STRING = re.compile(r"'(?:[^'\\]|\\.)*'")
 _ARGS = re.compile(r"'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`|(\w+)")
 
 
@@ -282,15 +305,20 @@ def _engine_targets(engine_full: str, dbs: list[str]) -> bool:
 
 
 def _view_reads_outside(query: str, dbs: list[str]) -> str:
-    """The first source outside the configured databases, or table function, a view's query
-    reads; '' when there is none."""
-    select = re.split(r"\bAS\s+(?=SELECT|WITH|\()", query, maxsplit=1, flags=re.I)
-    for m in _SOURCE.finditer(select[-1]):
-        name = m.group(1) or m.group(2)
-        if m.group(3):
-            return f"the table function {name}"
-        qualified = "." in m.group(0)
-        if qualified and name not in dbs:
+    """What a view's query reads outside the configured databases: a table function, a
+    dictionary or Join table not named in them, or any name qualified by something other
+    than one of them; '' when there is none."""
+    select = re.split(r"\bAS\s+(?=SELECT|WITH|\()", query, maxsplit=1, flags=re.I)[-1]
+    for by_name in _BY_NAME.finditer(select):
+        db, dot, _ = by_name.group(1).partition(".")
+        if not dot or db.strip("`") not in dbs:
+            return f"the dictionary or table {by_name.group(1)}"
+    code = _STRING.sub("''", select)
+    if function := _TABLE_FUNCTION.search(code):
+        return f"the table function {function.group(1)}"
+    for q in _QUALIFIED.finditer(code):
+        name = q.group(1).strip("`")
+        if name not in dbs:
             return f"database {name}"
     return ""
 
@@ -361,6 +389,15 @@ async def _show_grants(ch: Any, user: str | None) -> list[Grant]:
     return parse_show_grants(str(next(iter(r.values()))) for r in rows if r)
 
 
+async def own_refusals(ch: Any, topology: Topology) -> list[Refusal]:
+    """What attach's own user lacks, from its own `SHOW GRANTS FINAL`: without it
+    `system.tables` and `system.columns` would silently list less than there is."""
+    missing = own_problems(await _show_grants(ch, None), topology, databases())
+    if not missing:
+        return []
+    return [Refusal(f"user {await _own_user(ch)}", f"attach's own user lacks {', '.join(missing)}")]
+
+
 async def _process_users(
     ch: Any, topology: Topology, names: Mapping[str, str], own: str
 ) -> list[Refusal]:
@@ -428,8 +465,8 @@ async def check_writers(
     dbs = databases()
     with query_tag("cell.writers"):
         own = await _own_user(ch)
-        if missing := own_problems(await _show_grants(ch, None), topology, dbs):
-            return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")]
+        if lacking := await own_refusals(ch, topology):
+            return lacking
         if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
             return wrong
         refusals: list[Refusal] = []

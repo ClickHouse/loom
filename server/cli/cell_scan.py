@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core import ch_names
+from server.core.cell import ORG_FREE, ORG_MAX_BYTES, named_org
 from server.settings import settings
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
@@ -372,7 +373,7 @@ def _table_problem(t: Table, known: set[str], topology: Topology) -> str:
         return f"engine {t.engine or 'unknown'} holds an org column the scan cannot read"
     if t.canonical not in known:
         return "missing from erasure's table classification"
-    if t.engine.startswith("Replicated") and not topology.hosts:
+    if t.engine.startswith(("Replicated", "Shared")) and not topology.hosts:
         return (
             f"replicated, and LOOM_CH_CLUSTER ({topology.cluster or 'unset'}) lists no host: "
             "its replicas cannot be synced"
@@ -422,7 +423,8 @@ def pg_classified() -> set[str]:
 async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
     """Every table of schema `loom` with an `org` column (`cell_triggers.ORG_TABLES`), and
     the refusals: one erasure does not classify, a census table the listing missed whose
-    `information_schema.columns` shows an `org` column."""
+    `pg_attribute` shows an `org` column (`information_schema.columns` hides the columns of
+    a table the reading role holds no privilege on)."""
     from server.core.cell_triggers import ORG_TABLES
     from server.erasure.store.steps_pg import PG_CENSUS
 
@@ -435,9 +437,9 @@ async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
     ]
     for name in sorted({t.removeprefix("pg:") for t in PG_CENSUS} - set(names)):
         has_org = await conn.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = "
-            "'loom' AND table_name = $1 AND column_name = 'org')",
-            name.removeprefix("loom."),
+            "SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass($1) "
+            "AND attname = 'org' AND attnum > 0 AND NOT attisdropped)",
+            name,
         )
         if has_org:
             refusals.append(
@@ -449,10 +451,15 @@ async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
 async def list_tables(
     ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
 ) -> TableList:
-    """The scan's table list in both stores, with every refusal it found. `names` is
-    `host_names()` on a cluster of several hosts, else empty."""
+    """The scan's table list in both stores, with every refusal it found, attach's own
+    ClickHouse grants checked first. `names` is `host_names()` on a cluster of several
+    hosts, else empty."""
+    from server.cli.cell_writers import own_refusals
     from server.erasure.store.census import classified_tables
 
+    # The system tables hide what the reading user cannot see: a narrower user lists short.
+    if lacking := await own_refusals(ch, topology):
+        return TableList(refusals=lacking)
     classified = set(classified_tables())
     out = TableList(refusals=topology.refusals())
     tables, problems = await list_clickhouse(ch, topology, names, databases())
@@ -486,10 +493,6 @@ class ScanResult:
     elapsed_s: float = 0.0
 
     def add(self, source: str, value: bytes | str | None) -> None:
-        from server.auth.tenancy import ORG_FREE
-        from server.core.cell import ORG_MAX_BYTES
-        from server.router.app import named_org
-
         if value is None:
             self.malformed.setdefault(source, []).append("NULL")
             return
@@ -577,11 +580,12 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
                 return [str(r["org"]) for r in await conn.fetch(pg_skip_scan_sql(table))]
         except Refused:
             raise
-        except Exception as e:  # a transient failure is retried within budget, any other named
-            if getattr(e, "sqlstate", None) == "57014":  # query_canceled: the timeout
-                raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-            if not (pg.is_outage(e) or _unavailable(e)):
-                raise Refused([Refusal(subject, f"the scan failed: {e}")]) from e
+        except Exception as e:  # noqa: BLE001 — a failed statement is retried or named
+            failure = e
+        if getattr(failure, "sqlstate", None) == "57014":  # query_canceled: the timeout
+            raise Refused([_out_of_budget(subject, budget.seconds)]) from None
+        if not (pg.is_outage(failure) or _unavailable(failure)):
+            raise Refused([Refusal(subject, f"the scan failed: {failure}")]) from failure
         await _sleep(_RETRY_PAUSE_S)
 
 
@@ -700,18 +704,23 @@ async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) ->
             rows = await _read_scan(ch, ch_scan_sql(table, topology), params, extra)
         except Refused:
             raise
-        except Exception as e:  # a transient failure is retried within budget, any other named
-            if error_code(e) in _TIMEOUT_CODES:
-                raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-            if not _ch_transient(e):
-                raise Refused([Refusal(subject, f"the scan failed: {error_line(e)}")]) from e
-            await _sleep(_RETRY_PAUSE_S)
-            continue
-        if topology.multi:
-            _check_scan_host(rows, topology, subject)
-        return [
-            None if r["v"] is None else bytes.fromhex(str(r["v"])) for r in rows if r["k"] == "o"
-        ]
+        except Exception as e:  # noqa: BLE001 — a failed statement is retried or named
+            failure = e
+        else:
+            if topology.multi:
+                _check_scan_host(rows, topology, subject)
+            return [
+                None if r["v"] is None else bytes.fromhex(str(r["v"]))
+                for r in rows
+                if r["k"] == "o"
+            ]
+        if error_code(failure) in _TIMEOUT_CODES:
+            raise Refused([_out_of_budget(subject, budget.seconds)]) from None
+        if not _ch_transient(failure):
+            raise Refused(
+                [Refusal(subject, f"the scan failed: {error_line(failure)}")]
+            ) from failure
+        await _sleep(_RETRY_PAUSE_S)
 
 
 def _check_scan_host(rows: list[dict[str, Any]], topology: Topology, subject: str) -> None:

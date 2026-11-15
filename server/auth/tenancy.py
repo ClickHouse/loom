@@ -29,6 +29,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from server.core.cell import ORG_FREE
 from server.core.errors import (
     BackendUnavailableError,
     TenancyRefusedError,
@@ -43,8 +44,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Orgs that name no tenant: deployment-wide rows and the token defaults.
-ORG_FREE = frozenset({"", "-", "*"})
 
 # Orgs this process has seen held. Only grows: a tenancy row is never deleted.
 _held: set[str] = set()

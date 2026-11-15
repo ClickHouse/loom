@@ -201,16 +201,23 @@ def test_every_table_with_an_org_column_is_judged() -> None:
     assert not (LOG_TABLES | _DATA_TABLES) - tables, (LOG_TABLES | _DATA_TABLES) - tables
 
 
-def test_a_table_a_view_fills_from_a_log_table_is_a_log_table() -> None:
-    fed = set()
+# The tables a request writes with the org it named, before any check.
+_LOGGED = {"loom.agent_events", "loom.code_search_trace"}
+
+
+def closure(roots: set[str], views: list[tuple[set[str], str]]) -> set[str]:
+    """`roots` and every table a view fills from one of them, through any chain of views
+    (each view as its sources and its target)."""
+    out = set(roots)
+    while grown := {to for sources, to in views if sources & out} - out:
+        out |= grown
+    return out
+
+
+def test_every_table_views_fill_from_a_log_table_is_a_log_table() -> None:
+    views = []
     for m in _VIEW.finditer(_text()):
         to = _TO.search(m.group(2))
         assert to, m.group(1)
-        if set(_SOURCE.findall(m.group(2))) & LOG_TABLES:
-            fed.add(to.group(1))
-    assert fed == {
-        "loom.agent_cost_rollup_daily",
-        "loom.subject_last_seen",
-        "loom_telemetry.sli_minute",
-    }, fed
-    assert fed <= LOG_TABLES
+        views.append((set(_SOURCE.findall(m.group(2))), to.group(1)))
+    assert closure(_LOGGED, views) == LOG_TABLES

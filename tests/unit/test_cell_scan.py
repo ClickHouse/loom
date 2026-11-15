@@ -17,6 +17,7 @@ import pytest
 from server.cli import cell_scan
 from server.cli.cell_scan import Budget, Refused, ScanResult, Table, TableList, Topology
 from server.core import cell
+from server.core.errors import BackendUnavailableError
 
 ONE = Topology("default", frozenset({"localhost"}), 1)
 TWO = Topology("main", frozenset({"ch-0", "ch-1"}), 1)
@@ -260,6 +261,11 @@ def test_a_cluster_refuses_tables_one_host_cannot_scan_alone() -> None:
     assert "LOOM_CH_CLUSTER (unset) lists no host" in refusals[0].reason
     scanned, refusals = cell_scan.judge_clickhouse(replicated, _CLASSIFIED, ONE)
     assert refusals == [] and scanned == replicated
+    # So does a shared one: an unlisted cluster is not known to be one host.
+    shared = [Table("loom", "memory", "SharedReplacingMergeTree")]
+    unlisted = Topology("main", frozenset(), 0)
+    _, refusals = cell_scan.judge_clickhouse(shared, _CLASSIFIED, unlisted)
+    assert "LOOM_CH_CLUSTER (main) lists no host" in refusals[0].reason
 
 
 def test_a_provider_transition_refuses_up_front() -> None:
@@ -446,3 +452,76 @@ def test_the_postgres_skip_scan_quotes_its_table() -> None:
     sql = cell_scan.pg_skip_scan_sql('loom.odd"name')
     assert 'FROM "loom"."odd""name" WHERE org IS NOT NULL ORDER BY org LIMIT 1' in sql
     assert "t.org > o.org ORDER BY t.org LIMIT 1" in sql
+
+
+class _PgOutage(OSError):
+    """A dropped connection: `pg.is_outage` reads an OSError as one."""
+
+
+class _Canceled(Exception):
+    sqlstate = "57014"  # query_canceled: the statement timeout fired
+
+
+def _pg_sessions(monkeypatch: pytest.MonkeyPatch, *answers: Any) -> list[int]:
+    """`pg.dedicated` answering one session per entry: an exception raised on entering it,
+    or the rows of the skip scan. Records each session's statement timeout."""
+    from server.core import pg
+
+    timeouts: list[int] = []
+    queue = list(answers)
+
+    class _Conn:
+        def __init__(self, rows: list[dict[str, str]]) -> None:
+            self.rows = rows
+
+        async def fetchval(self, sql: str, *_: Any) -> bool:
+            return True  # the org index exists
+
+        async def fetch(self, sql: str) -> list[dict[str, str]]:
+            return self.rows
+
+    @asynccontextmanager
+    async def dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> Any:
+        timeouts.append(statement_timeout_ms)
+        answer = queue.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        yield _Conn(answer)
+
+    monkeypatch.setattr(pg, "dedicated", dedicated)
+    return timeouts
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [_PgOutage("connection reset"), BackendUnavailableError("down")],
+)
+async def test_the_postgres_scan_retries_an_outage_once_it_clears(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    timeouts = _pg_sessions(monkeypatch, failure, [{"org": "acme"}])
+    tables = TableList(postgres=["loom.tenancy"])
+    result = await cell_scan.scan(FakeCH(), tables, ONE, Budget(60))
+    assert result.orgs == {"acme": {"postgres loom.tenancy"}}
+    assert len(timeouts) == 2 and all(0 < t <= 60_000 for t in timeouts)
+
+
+async def test_the_postgres_statement_timeout_refuses_as_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _pg_sessions(monkeypatch, _Canceled("canceling statement due to statement timeout"))
+    with pytest.raises(Refused, match="postgres loom.tenancy: the scan ran out of --scan-budget"):
+        await cell_scan.scan(FakeCH(), TableList(postgres=["loom.tenancy"]), ONE, Budget(60))
+
+
+async def test_the_listing_refuses_a_user_that_would_list_short() -> None:
+    ch = (
+        FakeCH()
+        .on("currentUser()", [{"u": "attach"}])
+        .on("SHOW GRANTS FINAL", [{"g": "GRANT SELECT ON loom.memory TO attach"}])
+    )
+    listed = await cell_scan.list_tables(ch, None, ONE, {})
+    assert [r.subject for r in listed.refusals] == ["user attach"]
+    assert "SHOW TABLES ON *.*" in listed.refusals[0].reason
+    assert listed.clickhouse == [] and listed.postgres == []
+    assert not [sql for _, sql, _ in ch.calls if "system." in sql]

@@ -79,6 +79,16 @@ def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
         ([Grant("INSERT", "lo*")], "holds INSERT on lo*.*"),
         ([Grant("SELECT"), Grant("SHOW")], ""),
         ([Grant("INSERT", "elsewhere"), Grant("SELECT", "elsewhere", None, True)], ""),
+        # From any database: a Distributed table there forwards inserts without a grant on
+        # the destination, and `remote()` writes as another user.
+        ([Grant("CREATE TABLE", "elsewhere")], "holds CREATE TABLE on elsewhere.*"),
+        ([Grant("CREATE", "elsewhere")], "holds CREATE on elsewhere.*"),
+        ([Grant("CREATE VIEW", "elsewhere")], "holds CREATE VIEW on elsewhere.*"),
+        ([Grant("ALL", "elsewhere")], "holds ALL on elsewhere.*"),
+        ([Grant("REMOTE")], "holds REMOTE on *.*"),
+        ([Grant("SOURCES")], "holds SOURCES on *.*"),
+        ([Grant("WRITE")], "holds WRITE on *.*"),
+        (parse_show_grants(["GRANT READ ON REMOTE TO u"]), "holds REMOTE on *.*"),
     ],
 )
 def test_the_writer_predicate(grants: list[Grant], reason: str) -> None:
@@ -107,6 +117,32 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
         Grant("INSERT", "loom"),
         Grant("SELECT"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("query", "reason"),
+    [
+        ("AS SELECT org FROM loom.memory, side.extra", "database side"),
+        ("AS SELECT dictGet('side.orgs', 'org', id) AS org FROM loom.memory", "side.orgs"),
+        ("AS SELECT dictGet('orgs', 'org', id) AS org FROM loom.memory", "dictionary or table"),
+        ("AS SELECT joinGet('loom.j', 'org', id) AS org FROM loom.memory", ""),
+        ("AS SELECT m.org FROM loom.memory AS m", "database m"),
+        ("AS SELECT org FROM loom.memory WHERE note = 'side.x'", ""),
+        ("AS SELECT t.1 AS org FROM loom.memory", ""),
+        ("AS SELECT org FROM s3('http://x', CSV)", "the table function s3"),
+    ],
+)
+def test_any_outside_name_a_view_reads_counts(query: str, reason: str) -> None:
+    rows = [
+        {
+            "database": "loom",
+            "name": "v",
+            "engine": "MaterializedView",
+            "create_table_query": f"CREATE MATERIALIZED VIEW loom.v TO loom.t {query}",
+        }
+    ]
+    found = cell_writers.object_problems(rows, DBS).get("loom.v", "")
+    assert reason in found and bool(found) == bool(reason), found
 
 
 def test_objects_writing_the_configured_databases_without_a_grant() -> None:
@@ -247,7 +283,7 @@ async def test_a_narrow_own_user_refuses_before_any_other_read() -> None:
     )
     (refusal,) = await cell_writers.check_writers(ch, ONE, {}, Allowed())
     assert refusal.subject == "user attach" and "SELECT ON system.*" in refusal.reason
-    assert len(ch.calls) == 2
+    assert not [sql for _, sql, _ in ch.calls if "system." in sql]
 
 
 def _cluster(process_user: str = "attach") -> FakeCH:
@@ -308,8 +344,11 @@ def _cluster(process_user: str = "attach") -> FakeCH:
 
 async def test_a_cluster_reads_every_host_and_names_what_each_defines() -> None:
     ch = _cluster()
+    # Attach's own user reads through clusterAllReplicas (REMOTE), which writes too.
     refusals = await cell_writers.check_writers(ch, TWO, NAMES, Allowed())
     assert [str(r) for r in refusals] == [
+        "user attach: holds REMOTE on *.* on host ch-0: name it with --ch-allow-user",
+        "user attach: holds REMOTE on *.* on host ch-1: name it with --ch-allow-user",
         "user local: holds INSERT on loom.* on host ch-1: name it with --ch-allow-user",
         "user directory ldap: its type, ldap, defines users this check cannot read on host "
         "ch-0: name it with --ch-allow-user-directory",
@@ -320,7 +359,7 @@ async def test_a_cluster_reads_every_host_and_names_what_each_defines() -> None:
         and s.endswith("SETTINGS skip_unavailable_shards = 0, prefer_localhost_replica = 1")
         for s in reads
     )
-    allowed = Allowed(users=frozenset({"local"}), user_directories=frozenset({"ldap"}))
+    allowed = Allowed(users=frozenset({"attach", "local"}), user_directories=frozenset({"ldap"}))
     assert await cell_writers.check_writers(_cluster(), TWO, NAMES, allowed) == []
 
 

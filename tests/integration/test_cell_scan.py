@@ -23,6 +23,7 @@ from server.core import cell, ch_names, pg
 from server.core.ch import get_client
 from server.settings import settings
 from tests.integration._pg_database import own_database
+from tests.unit.test_cell_scan_tables import _LOGGED, closure
 
 
 @pytest.fixture
@@ -179,14 +180,18 @@ async def test_a_postgres_table_without_a_plain_org_index_refuses(own_pg: Any) -
         )
 
 
+_PASSWORD = "x{tag}"
+
+
 @pytest.fixture
 async def users(ch: Any) -> AsyncIterator[dict[str, str]]:
     tag = uuid.uuid4().hex[:8]
-    names = {k: f"loom_it_{k}_{tag}" for k in ("writer", "narrow", "remote")}
+    names = {k: f"loom_it_{k}_{tag}" for k in ("writer", "narrow", "remote", "creator")}
     try:
         for name in names.values():
-            await ch.execute(f"CREATE USER {name} IDENTIFIED WITH sha256_password BY 'x{tag}'")
-        yield names
+            password = _PASSWORD.format(tag=tag)
+            await ch.execute(f"CREATE USER {name} IDENTIFIED WITH sha256_password BY '{password}'")
+        yield {**names, "password": _PASSWORD.format(tag=tag)}
     finally:
         for name in names.values():
             await ch.execute(f"DROP USER IF EXISTS {name}")
@@ -226,6 +231,42 @@ async def test_the_writer_check_names_a_writer_and_an_object(
         await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
 
 
+async def test_a_user_that_creates_tables_anywhere_is_a_writer(
+    ch: Any, scratch: tuple[str, str], users: dict[str, str]
+) -> None:
+    """A Distributed table on another database forwards its inserts to a remote shard as the
+    cluster's configured user, unchecked against the destination, so CREATE TABLE anywhere
+    writes the configured databases. A Buffer table's destination is checked: the insert
+    through one refuses, which this pins for the day a server changes it."""
+    from tests.integration._resources import ch_client_from_env
+
+    schema, _ = scratch
+    side = f"{schema}_side"
+    creator = users["creator"]
+    await ch.execute(_mergetree(f"{schema}.memory"))
+    try:
+        await ch.execute(f"CREATE DATABASE {side}")
+        await ch.execute(f"GRANT CREATE TABLE, INSERT, SELECT ON {side}.* TO {creator}")
+        topology = await cell_scan.read_topology(ch)
+        refusals = await cell_writers.check_writers(ch, topology, {}, cell_writers.Allowed())
+        assert f"user {creator}: holds CREATE TABLE on {side}.*: name it with --ch-allow-user" in [
+            str(r) for r in refusals
+        ]
+        raw = ch_client_from_env(username=creator, password=users["password"])
+        try:
+            raw.command(
+                f"CREATE TABLE {side}.buf (org String, id UInt64) "
+                f"ENGINE = Buffer({schema}, memory, 1, 0, 1, 1, 1, 1, 1)"
+            )
+            with pytest.raises(Exception, match="ACCESS_DENIED|Not enough privileges"):
+                raw.command(f"INSERT INTO {side}.buf VALUES ('acme', 1)")
+        finally:
+            raw.close()
+        assert await ch.query_all(f"SELECT org FROM {schema}.memory") == []
+    finally:
+        await ch.execute(f"DROP DATABASE IF EXISTS {side} SYNC")
+
+
 async def test_a_per_table_grant_and_read_on_remote_as_show_grants_prints_them(
     ch: Any, scratch: tuple[str, str], users: dict[str, str]
 ) -> None:
@@ -251,16 +292,15 @@ async def test_every_table_a_view_fills_from_a_log_table_is_a_log_table(ch: Any)
         {"dbs": cell_scan.databases()},
     )
     assert views
-    fed = set()
+    edges = []
     for view in views:
         to = re.search(r"\bTO (\w+)\.(\w+)", str(view["create_table_query"]))
         assert to, view
         sources = re.findall(r"\b(?:FROM|JOIN)\s+(\w+)\.(\w+)", str(view["as_select"]))
-        if {f"{ch_names.logical(db)}.{name}" for db, name in sources} & cell_scan.LOG_TABLES:
-            fed.add(f"{ch_names.logical(to.group(1))}.{to.group(2)}")
-    assert fed == {
-        "loom.agent_cost_rollup_daily",
-        "loom.subject_last_seen",
-        "loom_telemetry.sli_minute",
-    }, fed
-    assert fed <= cell_scan.LOG_TABLES
+        edges.append(
+            (
+                {f"{ch_names.logical(db)}.{name}" for db, name in sources},
+                f"{ch_names.logical(to.group(1))}.{to.group(2)}",
+            )
+        )
+    assert closure(_LOGGED, edges) == cell_scan.LOG_TABLES

@@ -57,8 +57,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from server.auth.tenancy import ORG_FREE
 from server.core import cell as cell_state
+from server.core.cell import named_org
 from server.core.cell_probe import PATH as PROBE_PATH
 from server.router import directory, routing
 from server.router.limits import (
@@ -82,20 +82,6 @@ def _refused(
     # A client matches `code`, never the message.
     body = {"error": reason, **({"code": code} if code else {})}
     return JSONResponse(body, status_code=status, headers=headers)
-
-
-def named_org(value: Any) -> str | None:
-    """`value` as an org a request can name, or None (`loom cell attach`'s scan judges the
-    orgs it finds by the same rule)."""
-    # A name Postgres text cannot hold (a NUL, a lone surrogate) is malformed, never a
-    # directory outage.
-    if not isinstance(value, str) or value in ORG_FREE or "\x00" in value:
-        return None
-    try:
-        value.encode()
-    except UnicodeEncodeError:
-        return None
-    return value
 
 
 def _bearer(request: Request) -> str:
