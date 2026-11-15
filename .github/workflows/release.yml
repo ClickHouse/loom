@@ -18,7 +18,7 @@ name: release
 # architecture's own runner) -> docker-tag -> sign (keyless, the indexes
 # docker-tag made; every run verifies both images' X.Y.Z tag) and
 # docker-smoke (the quickstart and the installer rehearsal) -> github-release
-# -> release-check (tag push only), and pypi, npm, mcp-registry (dispatch
+# (each file signed keyless next to it) -> release-check (tag push only), and pypi, npm, mcp-registry (dispatch
 # only). A re-run after a partial publish is safe: the bundle keeps the
 # ClickHouse release it was first published with, the release is updated in
 # place, PyPI skips files it already has, npm and the MCP Registry skip a
@@ -767,6 +767,7 @@ jobs:
       latest: ${{ steps.latest.outputs.latest }}
     permissions:
       contents: write
+      id-token: write # each file's keyless signature names this workflow and tag
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -775,6 +776,7 @@ jobs:
         with:
           name: release-files
           path: release
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       # Asked when it is applied, so a re-run never moves Latest back (make_latest.py).
       - name: Is this the highest final version
         id: latest
@@ -814,6 +816,23 @@ jobs:
               ;;
             *) exit "$status" ;;
           esac
+      # Every file the release carries gets a Sigstore bundle, verified as users
+      # check it before anything is uploaded. A bundle and checksum the release
+      # keeps are signed from their published bytes.
+      - name: Sign each release file (keyless)
+        id: sign
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          files=(release/python/* release/npm/*.tgz release/plugins/*.zip release/stack/* release/agent/agent-setup.txt)
+          for name in loom-stack.tar.gz loom-stack.tar.gz.sha256; do
+            [ -e "release/stack/$name" ] || files+=("published/$name")
+          done
+          mkdir -p release/sigstore
+          for file in "${files[@]}"; do
+            cosign sign-blob --yes --bundle "release/sigstore/$(basename "$file").sigstore.json" "$file"
+          done
+          bash scripts/release/verify_release_files.sh "$VERSION" release/sigstore "${files[@]}"
       # Notes are generated only when this run creates the release: on an existing
       # one the action appends them again, under notes edited by hand.
       - name: Is there a release for this tag already
@@ -852,6 +871,7 @@ jobs:
             release/plugins/*.zip
             release/stack/*
             release/agent/agent-setup.txt
+            release/sigstore/*.sigstore.json
 
   # The published release as a user meets it, signed in to nothing. The SDKs are
   # checked by a dispatch of release-check after the registry dispatch.

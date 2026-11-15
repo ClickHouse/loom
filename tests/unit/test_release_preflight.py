@@ -435,12 +435,12 @@ def test_the_workflow_images_are_the_docker_matrix_images() -> None:
     assert workflow["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
 
 
-def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
+def test_only_the_signing_jobs_and_the_registries_get_an_oidc_token() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert "id-token" not in workflow["permissions"]
     jobs = workflow["jobs"]
     oidc = [name for name, job in jobs.items() if "id-token" in job.get("permissions", {})]
-    assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
+    assert set(oidc) == {"sign", "github-release", "pypi", "npm", "mcp-registry"}
 
 
 def test_npm_publishes_only_through_its_trusted_publisher() -> None:
@@ -494,9 +494,8 @@ def test_the_sign_step_signs_each_digest(
 
 def test_release_check_verifies_every_image_the_release_signs_with_the_same_script() -> None:
     check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
-    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if VERIFY in s.get("run", "")]
     release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert VERIFY in step["run"]
     assert step["env"]["VERSION"] == "${{ inputs.version }}"
     assert step["env"]["IMAGES"] == release["env"]["IMAGES"]
 
@@ -534,6 +533,168 @@ def test_an_image_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -
 @pytest.mark.parametrize("args", [[], ["1.2.0"]], ids=["nothing", "no image"])
 def test_a_missing_version_or_image_is_a_usage_error(args: list[str]) -> None:
     script = ROOT / "scripts/release/verify_signatures.sh"
+    result = subprocess.run(["bash", str(script), *args], capture_output=True, text=True)
+    assert result.returncode == 2 and "usage:" in result.stderr
+
+
+VERIFY_FILES = "bash scripts/release/verify_release_files.sh"
+IDENTITY = "https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/v1.2.0"
+ISSUER = "https://token.actions.githubusercontent.com"
+
+
+def _release_files(root: Path, stack: list[str]) -> None:
+    """The files the build job leaves under root/release, with `stack` in release/stack."""
+    for rel in [
+        "python/clickhouse_loom-1.2.0-py3-none-any.whl",
+        "python/clickhouse_loom-1.2.0.tar.gz",
+        "npm/clickhouse-loom-1.2.0.tgz",
+        "plugins/loom-codex-plugin-v1.2.0.zip",
+        "agent/agent-setup.txt",
+        *(f"stack/{name}" for name in stack),
+    ]:
+        (root / "release" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / "release" / rel).write_text(rel)
+
+
+def _run_sign_step(tmp_path: Path) -> list[str]:
+    """github-release's signing step, run in tmp_path/work with a stub cosign."""
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    (step,) = [s for s in jobs["github-release"]["steps"] if s.get("id") == "sign"]
+    assert step["env"]["VERSION"] == "${{ needs.version.outputs.version }}"
+    work = tmp_path / "work"
+    (work / "scripts").symlink_to(ROOT / "scripts")
+    # sign-blob writes the bundle --bundle names ($4); verify-blob passes.
+    env = {
+        **_stub_cosign(tmp_path, '[ "$1" = sign-blob ] && echo {} > "$4"; exit 0'),
+        "VERSION": "1.2.0",
+    }
+    subprocess.run(["bash", "-e", "-c", step["run"]], env=env, cwd=work, check=True)
+    return (tmp_path / "calls").read_text().splitlines()
+
+
+def _sign(file: str) -> str:
+    name = Path(file).name
+    return f"sign-blob --yes --bundle release/sigstore/{name}.sigstore.json {file}"
+
+
+def _verify_blob(file: str, bundle: str) -> str:
+    return (
+        f"verify-blob {file} --bundle {bundle} --certificate-identity {IDENTITY} "
+        f"--certificate-oidc-issuer {ISSUER}"
+    )
+
+
+def test_github_release_signs_and_verifies_every_file_it_uploads(tmp_path: Path) -> None:
+    (tmp_path / "work").mkdir()
+    _release_files(
+        tmp_path / "work", ["install.sh", "loom-stack.tar.gz", "loom-stack.tar.gz.sha256"]
+    )
+    (tmp_path / "work/release/npm/package.json").write_text("{}")  # not uploaded, not signed
+    calls = _run_sign_step(tmp_path)
+    files = [
+        "release/python/clickhouse_loom-1.2.0-py3-none-any.whl",
+        "release/python/clickhouse_loom-1.2.0.tar.gz",
+        "release/npm/clickhouse-loom-1.2.0.tgz",
+        "release/plugins/loom-codex-plugin-v1.2.0.zip",
+        "release/stack/install.sh",
+        "release/stack/loom-stack.tar.gz",
+        "release/stack/loom-stack.tar.gz.sha256",
+        "release/agent/agent-setup.txt",
+    ]
+    bundles = [f"release/sigstore/{Path(f).name}.sigstore.json" for f in files]
+    assert calls == [_sign(f) for f in files] + [
+        _verify_blob(f, b) for f, b in zip(files, bundles, strict=True)
+    ]
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    (upload,) = [s for s in jobs["github-release"]["steps"] if "softprops" in s.get("uses", "")]
+    assert "release/sigstore/*.sigstore.json" in upload["with"]["files"].split()
+
+
+def test_a_bundle_the_release_keeps_is_signed_from_its_published_bytes(tmp_path: Path) -> None:
+    """The bundle step removed release/stack's bundle and checksum: the release keeps its own."""
+    (tmp_path / "work").mkdir()
+    _release_files(tmp_path / "work", ["install.sh"])
+    (tmp_path / "work/published").mkdir()
+    for name in ["loom-stack.tar.gz", "loom-stack.tar.gz.sha256"]:
+        (tmp_path / "work/published" / name).write_text(name)
+    signed = [c for c in _run_sign_step(tmp_path) if c.startswith("sign-blob")]
+    assert signed[-2:] == [
+        _sign("published/loom-stack.tar.gz"),
+        _sign("published/loom-stack.tar.gz.sha256"),
+    ]
+
+
+def test_the_sign_step_verifies_what_it_signed_before_the_upload() -> None:
+    steps = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"][
+        "github-release"
+    ]["steps"]
+    sign = next(i for i, s in enumerate(steps) if s.get("id") == "sign")
+    upload = next(i for i, s in enumerate(steps) if "softprops" in s.get("uses", ""))
+    assert f'{VERIFY_FILES} "$VERSION" release/sigstore "${{files[@]}}"' in steps[sign]["run"]
+    assert sign < upload
+
+
+def test_release_check_verifies_every_published_file_with_the_same_script() -> None:
+    check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
+    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if VERIFY_FILES in s.get("run", "")]
+    assert step["env"]["VERSION"] == "${{ inputs.version }}"
+    assert "GH_TOKEN" not in step.get("env", {})  # signed in to nothing
+
+
+def _verify_files(
+    tmp_path: Path, cosign: str, files: list[str]
+) -> subprocess.CompletedProcess[str]:
+    script = ROOT / "scripts/release/verify_release_files.sh"
+    return subprocess.run(
+        ["bash", str(script), "1.2.0", str(tmp_path / "d"), *files],
+        env=_stub_cosign(tmp_path, cosign),
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_each_file_is_verified_against_the_release_workflows_identity(tmp_path: Path) -> None:
+    (tmp_path / "d").mkdir()
+    files = []
+    for name in ["install.sh", "loom-stack.tar.gz"]:
+        (tmp_path / "d" / name).write_text(name)
+        (tmp_path / "d" / f"{name}.sigstore.json").write_text("{}")
+        files.append(str(tmp_path / "d" / name))
+    result = _verify_files(tmp_path, "exit 0", files)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "calls").read_text().splitlines() == [
+        _verify_blob(f, f"{f}.sigstore.json") for f in files
+    ]
+
+
+def test_a_file_without_its_bundle_fails_before_cosign(tmp_path: Path) -> None:
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d/install.sh").write_text("x")
+    result = _verify_files(tmp_path, "exit 0", [str(tmp_path / "d/install.sh")])
+    assert result.returncode == 1
+    assert "install.sh has no signature bundle (install.sh.sigstore.json)" in result.stdout
+    assert not (tmp_path / "calls").exists()
+
+
+def test_a_file_that_does_not_verify_fails_with_the_recovery(tmp_path: Path) -> None:
+    (tmp_path / "d").mkdir()
+    files = []
+    for name in ["a", "b"]:
+        (tmp_path / "d" / name).write_text(name)
+        (tmp_path / "d" / f"{name}.sigstore.json").write_text("{}")
+        files.append(str(tmp_path / "d" / name))
+    result = _verify_files(tmp_path, "exit 1", files)
+    assert result.returncode == 1
+    assert "could not verify release.yml's signature on a" in result.stdout
+    assert "#a-failed-tag-or-signature" in result.stdout
+    assert len((tmp_path / "calls").read_text().splitlines()) == 1  # stops at the first
+
+
+@pytest.mark.parametrize(
+    "args", [[], ["1.2.0"], ["1.2.0", "d"]], ids=["nothing", "no dir", "no file"]
+)
+def test_a_missing_version_dir_or_file_is_a_usage_error(args: list[str]) -> None:
+    script = ROOT / "scripts/release/verify_release_files.sh"
     result = subprocess.run(["bash", str(script), *args], capture_output=True, text=True)
     assert result.returncode == 2 and "usage:" in result.stderr
 

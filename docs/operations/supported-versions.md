@@ -61,5 +61,6 @@ answers `404` (`NotFound`), which `ops.capabilities` tells apart from a missing 
 
 Every release image is built on the architecture it runs on, scanned for critical vulnerabilities
 with a fix, and published with its provenance and an SBOM. Each image's multi-arch index carries a
-keyless signature from the release workflow; [container images](./deployment.md#container-images)
-gives the `cosign verify` command.
+keyless signature from the release workflow, and so does each file on the GitHub Release, in a
+`<file>.sigstore.json` beside it; [container images](./deployment.md#container-images) gives the
+`cosign verify` and `cosign verify-blob` commands.

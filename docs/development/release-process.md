@@ -238,7 +238,10 @@ there costs a candidate number, not a final version.
 8. `github-release` creates the GitHub Release once both images exist and are verified, with notes
    generated from the commits since the previous final release (`prepare.py previous`, an
    output of `version`; a candidate's notes start there too), or updates it on a re-run, keeping
-   its notes as they are, and attaches the verified files. A bundle the release already
+   its notes as they are, and attaches the verified files. Before the upload it signs each file
+   keyless, as `sign` signs the images, into `<file>.sigstore.json` beside it, and verifies each
+   bundle as users do (`scripts/release/verify_release_files.sh`); a bundle and checksum the
+   release keeps are signed from their published bytes. A bundle the release already
    carries is kept, and so is its checksum (one the release lost is written again from
    it): replacing an asset deletes it first, and a failed upload would leave an installed
    version without its bundle. A new bundle never names an older ClickHouse release than
@@ -259,10 +262,12 @@ there costs a candidate number, not a final version.
    previous release on both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
 9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
    was just published, signed in to nothing: the one-liner from github.com in the same clean
-   containers, pulling both images anonymously, and verifies both images' signatures, which
-   must come from `release.yml` on that tag, as a user does
-   ([container images](../operations/deployment.md#container-images)). A release published
-   before the release workflow signed carries none, so a check of it fails its `signatures` job.
+   containers, pulling both images anonymously, and verifies the signatures of both images and
+   of every file the release carries, which must come from `release.yml` on that tag, as a user
+   does ([container images](../operations/deployment.md#container-images)); a file without its
+   `.sigstore.json` fails. A release published before the release workflow signed its images or
+   its files (1.2.0 and earlier) lacks those signatures, so a check of it fails its `signatures`
+   job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
@@ -335,6 +340,11 @@ the `digest=` line, then the `docker buildx imagetools create` command without t
 [ -n "$digest" ] && [ "$(docker buildx imagetools inspect ghcr.io/clickhouse/<image>:<tag> --format '{{json .Manifest}}' | jq -re .digest)" = "$digest" ] \
   || { echo "<tag> does not name $digest" >&2; false; }
 ```
+
+A release file that `github-release` cannot sign or verify stops that job before its upload, so
+the Release keeps the files and bundles it had. "Re-run failed jobs" signs every file again and
+replaces its bundles, as does a later dispatch on the tag; a `release-check` that finds a file
+without a valid bundle recovers the same way.
 
 ### When the clickhouse job stops
 
