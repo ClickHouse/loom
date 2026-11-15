@@ -62,8 +62,8 @@ log = logging.getLogger(__name__)
 # query text: plans and the normalised query hash are unaffected.
 query_tag_var: ContextVar[str] = ContextVar("ch_query_tag", default="")
 
-# Called with (table, rows) after every successful `CHClient.insert`: the
-# write marks and recent-write registries the domains keep. Registered by
+# Called with (table, rows) after every successful `CHClient.insert`, once the namespace
+# write marks are recorded: the domains' recent-write registries. Registered by
 # server/wiring.py; an observer that raises never fails the write.
 _INSERT_OBSERVERS: list[Callable[[str, list[dict[str, Any]]], None]] = []
 
@@ -1446,22 +1446,22 @@ class CHClient:
                 raise
             had_cache = type_names is not None or table in _COLUMN_TYPES
             _COLUMN_TYPES.pop(table, None)
+            reprojected = columns
             if project_onto_table:
                 # The cached column set may be stale (a migration ran, or the
                 # first describe failed): re-describe, re-project, and retry
                 # once with what the table has NOW.
                 reprojected = await self._project_columns(table, list(rows[0].keys()))
-                if reprojected != columns:
-                    columns = reprojected
-                    type_names = await self._column_type_names(table, columns)
-                    data = _insert_data(rows, columns, type_names)
-                    await _run()
-                    return
-            if not had_cache:
+            if reprojected != columns:
+                columns = reprojected
+                type_names = await self._column_type_names(table, columns)
+                data = _insert_data(rows, columns, type_names)
+            elif not had_cache:
                 raise
-            type_names = None
+            else:
+                type_names = None
             await _run()
-        # The write marks of the five plane tables are kept in-process and
+        # The write marks of the plane tables are kept in-process and
         # flushed every few seconds; then the domains' observers.
         try:
             from server.core import namespace_write_marks as _marks

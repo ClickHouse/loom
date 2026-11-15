@@ -116,7 +116,9 @@ reader:
   - the shared row whose `value` has the version's served hash (read from the version
     before the scrub, or, when an older build already scrubbed it, the `content_sha256`
     the redact keeps, so a redact run again still finds it): its text is scrubbed and its
-    embedding retired, which a redact does not reach today;
+    embedding retired, which a redact does not reach today. The redact then marks the
+    namespace's memory plane (`namespace_write_marks.bump`), since a mutation moves no
+    mark;
   - every `knowledge_gap` and `query_history` candidate whose drafted value has that hash,
     or that the version's `candidate-id:` tag names, promoted or not: its text is blanked,
     since `learnings.list` shows it to admins, and a blanked candidate is not promoted
@@ -276,15 +278,22 @@ and the generated operations reference.
 **Stored answers.** `memory.ask`'s ordinary precedent path reruns retrieval and reuses an
 answer only when its synthesis window is the same, so a governed hit entering or leaving
 the window already stops the reuse. Its fast path, which the ClickHouse authority runs,
-reuses an answer while the namespace's write mark has not moved, and that mark does not
-cover `loom.shared` today. So every write of a definition's shared row (promote, demote, a
-scrub, an embedding retired) moves the namespace's memory write mark, and no answer from
-before a promotion or demotion on N is reused after it; rolling upgrades below covers
-N-1's. A lapse with no write, a source passing its `expires_at` or `valid_to`, does not
-move the mark, and the precedent path's evidence check compares each cited row's live hash
-(catching a tombstone, a redaction or an edit), not its status or validity. An answer that
-quoted such a definition is reused for up to `memory_ask_precedents_fast_max_age_hours`
-(with no bound when it is 0), as for any row that expires today.
+reuses an answer while the namespace's write mark has not moved. Every insert into
+`loom.shared` (a promotion, a demotion) moves the namespace's memory write mark
+(`PLANE_BY_TABLE` in `server/core/namespace_write_marks.py`), so once the mark lands, no
+answer from before a promotion or demotion on N is reused after it. It lands at once in
+the process that wrote it, and in every other process once the writing process flushes its
+marks (`namespace_write_marks_flush_interval_s`). An answer retrieved between a
+promotion's shared row and its vector (including a vector the embedding worker fills in
+later) is still reused. A relabel to `medium` or `high` moves the mark through its new
+version of the source row in `loom.memory`, and the redact's scrub of a shared copy will
+move it (`namespace_write_marks.bump`, the redact change above). Rolling upgrades below
+covers N-1's. A lapse with no write, a source passing its `expires_at` or `valid_to`, does
+not move the mark, and the precedent path's evidence check compares each cited row's live
+hash (catching a tombstone, a redaction or an edit), not its status or validity. An answer
+that quoted such a definition is reused for up to
+`memory_ask_precedents_fast_max_age_hours` (with no bound when it is 0), as for any row
+that expires today.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired

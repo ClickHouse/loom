@@ -9,6 +9,7 @@ Covers the explicit promotion path:
   - source memory's private layer is unaffected by promote/demote
   - audit_log records both events
   - a definition is promoted from its namespace-wide row with the hash memory.get serves
+  - a promotion and a demotion move the namespace's memory write mark
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import asyncio
 import json
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -489,3 +491,58 @@ async def test_the_definitions_list_says_which_are_governed(
     ) as w:
         with pytest.raises(AuthInsufficient):
             await w.client.memory.definitions_list()
+
+
+@pytest.mark.asyncio
+async def test_a_promotion_and_a_demotion_move_the_memory_write_mark(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the server: the namespace's memory mark reaches each shared write's time."""
+    from loom import Agent
+
+    from server.core.datetimes import as_aware_utc
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("shared-write-mark"), f"wm-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="lead")
+    params = {"org": org, "ns": ns}
+
+    async def mark_reaches(at: datetime) -> None:
+        at = as_aware_utc(at)
+        at_ns = int(at.timestamp() * 1e9)
+        for _ in range(60):
+            mark = ch_client.query(
+                "SELECT max(last_write) FROM loom.namespace_write_marks"
+                " WHERE org = {org:String} AND namespace = {ns:String} AND plane = 'memory'",
+                parameters=params,
+            ).result_rows[0][0]
+            if as_aware_utc(mark) >= at:
+                # Nothing else moved it: the namespace's last memory row is older.
+                last_row = ch_client.query(
+                    "SELECT max(version) FROM loom.memory"
+                    " WHERE org = {org:String} AND namespace = {ns:String}",
+                    parameters=params,
+                ).result_rows[0][0]
+                assert last_row < at_ns
+                return
+            await asyncio.sleep(0.5)
+        raise AssertionError(f"the memory mark {mark} never reached {at}")
+
+    def shared(column: str) -> datetime:
+        return ch_client.query(
+            f"SELECT {column} FROM loom.shared FINAL"
+            " WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'note'",
+            parameters=params,
+        ).result_rows[0][0]
+
+    async with Agent(
+        org=org, namespace=ns, agent="bot", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set("note", "the build runs on Tuesdays", "semantic")
+        # Past the mark's second, so only the shared write can move it to the row's time.
+        await asyncio.sleep(1.5)
+        await a.memory.promote("note")
+        await mark_reaches(shared("promoted_at"))
+        await asyncio.sleep(1.5)
+        await a.memory.demote("note")
+        await mark_reaches(shared("tombstoned_at"))
