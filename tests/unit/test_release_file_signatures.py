@@ -186,21 +186,31 @@ def test_a_dispatch_signs_what_it_rebuilt_and_keeps_the_signed_stack_pair(tmp_pa
         "x.whl.sigstore.json": _bundle("tag run"),
         "loom-stack.tar.gz": "tag run",
         "loom-stack.tar.gz.sigstore.json": _bundle("tag run"),
+        "loom-stack.tar.gz.sha256": "tag run sum",
+        "loom-stack.tar.gz.sha256.sigstore.json": _bundle("tag run sum"),
     }
-    built = {"install.sh": "a", "x.whl": "rebuilt", "loom-stack.tar.gz": "rebuilt"}
+    built = {
+        "install.sh": "a",
+        "x.whl": "rebuilt",
+        "loom-stack.tar.gz": "rebuilt",
+        "loom-stack.tar.gz.sha256": "rebuilt sum",
+    }
     result = _sign(tmp_path, served, built)
     assert result.returncode == 0, result.stdout + result.stderr
     assert _signed(tmp_path) == [_sign_blob("files/install.sh"), _sign_blob("files/x.whl")]
     files = sorted((tmp_path / "work/files").glob("*.sigstore.json"))
     assert [f.name for f in files] == [
         "install.sh.sigstore.json",
+        "loom-stack.tar.gz.sha256.sigstore.json",
         "loom-stack.tar.gz.sigstore.json",
         "x.whl.sigstore.json",
     ]
     assert (tmp_path / "work/files/x.whl.sigstore.json").read_text() == _bundle("rebuilt")
+    kept = tmp_path / "work/files/loom-stack.tar.gz.sha256.sigstore.json"
+    assert kept.read_text() == _bundle("tag run sum")
 
 
-NO_BUNDLE = "has no Sigstore bundle: if no run ever signed it, release a new version"
+NO_BUNDLE = "has no Sigstore bundle: never signed, attached by hand, or changed"
 INCIDENT = "its Sigstore bundle does not verify (cosign's error above): unless Sigstore is down"
 
 
@@ -220,7 +230,7 @@ def test_a_file_that_is_not_this_runs_build_fails_before_anything_is_signed(
     result = _sign(tmp_path, served, {"install.sh": "a", "loom-stack.tar.gz": "rebuilt"})
     assert result.returncode == 1
     assert error in result.stdout
-    assert "SECURITY.md" in result.stdout
+    assert "#a-failed-tag-or-signature" in result.stdout
     assert _signed(tmp_path) == []
 
 

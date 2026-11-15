@@ -361,18 +361,15 @@ jobs" or a second push of the tag rebuilds the stack bundle and checksum but kee
 release carries, which then no run can sign. Past that, release a new version.
 
 A `release-check` that fails on a listing or a download: "Re-run failed jobs". One that finds a
-Sigstore bundle that does not verify after `sign-files` and `attach-signatures` passed: re-run
-`sign-files` alone, which re-runs the jobs after it and publishes nothing to a registry:
-
-```bash
-job=$(gh run view <run> -R ClickHouse/loom --json jobs --jq '.jobs[] | select(.name == "Sign the release files") | .databaseId')
-gh run rerun <run> -R ClickHouse/loom --job "$job"
-```
+Sigstore bundle that does not verify after `sign-files` and `attach-signatures` passed, with no
+dispatch running, means the release changed after it was signed: a security incident
+([SECURITY.md](../../SECURITY.md)).
 
 `sign-files` refuses a file that is not this run's build unless its Sigstore bundle verifies. One
 whose bundle does not verify, outside a Sigstore outage, was changed outside the workflow: a
-security incident ([SECURITY.md](../../SECURITY.md)), not a signing failure. One with no bundle is
-either a file its publishing run never signed (above) or one changed with its bundle removed.
+security incident, not a signing failure. One with no bundle is a file its publishing run never
+signed (above), a file attached to the release by hand, which is deleted from the release if the
+workflow does not make it, or one changed with its bundle removed.
 
 ### When the clickhouse job stops
 

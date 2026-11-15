@@ -27,14 +27,14 @@ for file in "$served"/*; do
   if [ -n "$ours" ] && cmp -s "$file" "$ours"; then
     sign+=("$file")
   elif [ ! -f "$file.sigstore.json" ]; then
-    echo "::error::$name is not this run's build and has no Sigstore bundle: if no run ever signed it, release a new version; otherwise report it as SECURITY.md describes ($recovery)"
+    echo "::error::$name is not this run's build and has no Sigstore bundle: never signed, attached by hand, or changed; $recovery"
     exit 1
   elif cosign verify-blob "$file" --bundle "$file.sigstore.json" \
     --certificate-identity "$identity" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null; then
     echo "$name: kept, its Sigstore bundle verifies"
   else
-    echo "::error::$name is not this run's build and its Sigstore bundle does not verify (cosign's error above): unless Sigstore is down, report it as SECURITY.md describes"
+    echo "::error::$name is not this run's build and its Sigstore bundle does not verify (cosign's error above): unless Sigstore is down, report it as SECURITY.md describes; $recovery"
     exit 1
   fi
 done
