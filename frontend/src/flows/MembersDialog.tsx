@@ -12,6 +12,7 @@ import {
   cancelNamespaceRequest,
   type GrantEntry,
   type GrantRole,
+  isAuthDisabled,
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
@@ -120,8 +121,6 @@ interface Props {
    *  its own members, read-only, since they are changed on the parent. Null while they are
    *  read: the dialog says nothing of an empty list until it knows who else can see it. */
   inherited?: InheritedAccess[] | null;
-  /** Sign-in is off: every request is served, so the grants say nothing of who can see it. */
-  signInOff?: boolean;
   /** Where the focus goes as the dialog closes; unset, back to the control that opened it. */
   onCloseAutoFocus?: (e: Event) => void;
 }
@@ -154,7 +153,6 @@ export function MembersDialog({
   onChanged,
   manage,
   inherited = [],
-  signInOff = false,
   onCloseAutoFocus,
 }: Props) {
   const whoami = useStore((s) => s.whoami);
@@ -289,6 +287,8 @@ export function MembersDialog({
   };
 
   const onRemove = async (subject: string) => {
+    // Sign-in off: every request is served, so revoking a grant narrows nothing.
+    const signInOff = isAuthDisabled();
     // Who still lets them in: a grant to everyone here, else a parent whose grants name them
     // under any spelling, or name everyone.
     const theirs = grantSpellings(rows?.find((r) => r.subject === subject) ?? { subject });
@@ -318,14 +318,13 @@ export function MembersDialog({
         title: toEveryone ? `Stop sharing ${name} with everyone in ${org}?` : `Remove ${who} from ${name}?`,
         message: toEveryone
           ? signInOff
-            ? // Every request is served, so revoking a grant narrows nothing.
-              "The grant here is revoked."
+            ? "The grant here is revoked."
             : through.length
               ? `The grant here is revoked.${still}`
               : unknownAbove
                 ? "The grant here is revoked. A collection it sits in may still let others in."
                 : "Only those named here or on a parent, and the members of groups named, keep access."
-          : `Their grant here is revoked.${still}${
+          : `Their grant here is revoked.${still || (unknownAbove ? " A collection it sits in may still let them in." : "")}${
               // A namespace's gate also admits a token's own roles; no claim reaches a collection.
               isCollectionName(namespace) ? "" : " A token of theirs may still carry roles that let them in."
             }`,
@@ -413,7 +412,7 @@ export function MembersDialog({
       onCloseAutoFocus={onCloseAutoFocus}
     >
       <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
-        {signInOff && (
+        {isAuthDisabled() && (
           <p className="mb-3 text-sm text-text-muted">
             Sign-in is off: everyone who can reach this server can see it, whoever is listed here.
           </p>

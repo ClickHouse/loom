@@ -15,7 +15,7 @@ vi.mock("../components/ConfirmDialog", async (importOriginal) => ({
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, listGrants: vi.fn() };
+  return { ...actual, listGrants: vi.fn(), isAuthDisabled: vi.fn(() => false) };
 });
 
 const at = "2026-09-17T14:50:28Z";
@@ -456,14 +456,31 @@ describe("MembersDialog paging", () => {
     );
   });
 
-  it("claims no narrowing on stopping sharing with sign-in off", async () => {
-    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
-    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" signInOff />);
-    expect(
-      await screen.findByText(/^Sign-in is off: everyone who can reach this server can see it/),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Stop sharing with everyone in acme" }));
+  it("says a member removed may still get in through a collection it sits in while its parents are unknown", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
+    render(
+      <MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" inherited={null} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
-    expect(confirm.mock.calls[0][0].message).toBe("The grant here is revoked.");
+    expect(confirm.mock.calls[0][0].message).toBe(
+      "Their grant here is revoked. A collection it sits in may still let them in.",
+    );
+  });
+
+  it("claims no narrowing on stopping sharing with sign-in off, in any dialog", async () => {
+    vi.mocked(api.isAuthDisabled).mockReturnValue(true);
+    try {
+      vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
+      render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" />);
+      expect(
+        await screen.findByText(/^Sign-in is off: everyone who can reach this server can see it/),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Stop sharing with everyone in acme" }));
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      expect(confirm.mock.calls[0][0].message).toBe("The grant here is revoked.");
+    } finally {
+      vi.mocked(api.isAuthDisabled).mockReturnValue(false);
+    }
   });
 });

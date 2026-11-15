@@ -23,8 +23,8 @@ import { focusViewHeading } from "../lib/place";
 const INHERIT_DEPTH = 8;
 
 /** The grants read on one collection of the way up: the one shown first, then its parents.
- *  `failed`: a parent's grants could not be read. `refused`: the reader may not read them
- *  (403), so they are not shown, rather than failed. */
+ *  `failed`: a parent's grants were not read; `refused`, among those: the read was refused
+ *  (403), so they are not shown. */
 export type ReadAt = GrantsAt & { failed?: boolean; refused?: boolean };
 
 /** What the header says about who can see a collection: one line naming them, and one
@@ -407,7 +407,6 @@ export function useCollectionSharing({
         e.preventDefault();
         focusViewHeading();
       }}
-      signInOff={signInOff}
     />
   );
   return { line, button, dialog };
