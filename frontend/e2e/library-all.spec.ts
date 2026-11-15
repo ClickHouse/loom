@@ -99,6 +99,8 @@ test.describe("1440 px", () => {
     await expect(row(page, "Drain a stalled ingest lane").getByRole("checkbox")).toHaveCount(1);
     await row(page, "Drain a stalled ingest lane").getByRole("link", { name: "Runbooks" }).click();
     await expect(page).toHaveURL(/collection=col-runbooks/);
+    // The collection is the place now: All documents leaves the address.
+    expect(new URL(page.url()).searchParams.get("place")).toBeNull();
     await page.goBack();
     await expect(page).toHaveURL(/place=all/);
   });

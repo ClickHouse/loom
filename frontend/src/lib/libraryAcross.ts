@@ -1,6 +1,7 @@
 /** The Library's read of several places at once (All documents, a search everywhere): one
  *  `knowledge.list` naming them all, and which of them it could not read. */
 import { listKnowledge, type KnowledgeEntry, type KnowledgeListResponse } from "../api";
+import { ApiError } from "./errors";
 
 /** `namespace` and the 100 `namespaces` beside it: the most places one read names. */
 export const MAX_PLACES_READ = 101;
@@ -33,7 +34,13 @@ function placed(page: KnowledgeListResponse, first: string): KnowledgeEntry[] {
   return (page.rows || []).map((r) => (r.namespace ? r : { ...r, namespace: first }));
 }
 
-/** One page of `places`' documents, newest first. A failed read finds the places that fail
+/** Whether a read was refused for a place in it (403, or 404 for one gone): the one failure
+ *  a place causes alone, so the only one worth finding the place for. */
+export function isRefusal(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 403 || e.status === 404);
+}
+
+/** One page of `places`' documents, newest first. A refused read finds the places that fail
  *  alone and reads the rest; it throws when all or none of them fail alone. */
 export async function listAcross(
   org: string,
@@ -59,7 +66,9 @@ export async function listAcross(
   try {
     return done(await read(places), places, []);
   } catch (e) {
-    if (signal.aborted || places.length < 2 || opts.cursor) throw e;
+    // Any other failure (a limit, a busy server) is the read's, not a place's: the page offers
+    // Retry rather than a call per place.
+    if (signal.aborted || places.length < 2 || opts.cursor || !isRefusal(e)) throw e;
     const failed = await failingPlaces(org, places, signal);
     if (failed.length === 0 || failed.length === places.length) throw e;
     const gone = new Set(failed.map((f) => f.namespace));

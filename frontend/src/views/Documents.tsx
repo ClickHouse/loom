@@ -83,7 +83,7 @@ import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
 import { ALL_DOCUMENTS, linkedAll, placeQuery } from "../lib/libraryPlace";
-import { listAcross, MAX_PLACES_READ, type PlaceFailure } from "../lib/libraryAcross";
+import { isRefusal, listAcross, MAX_PLACES_READ, type PlaceFailure } from "../lib/libraryAcross";
 import { PlaceTitleLink } from "./LibraryHierarchy";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
@@ -166,8 +166,10 @@ function rowKeyOf(r: KnowledgeEntry, across: boolean): string {
 /** A search reads the place shown, or every place the person reads. */
 type SearchScope = "here" | "everywhere";
 
-/** Why a write to a place is unavailable in All documents when none can take it. */
+/** Why All documents' Add is unavailable when no place it adds to is known. */
 const NO_PLACE_TO_ADD = "Open a collection or a memory namespace to add documents there.";
+const NO_LIST_TO_ADD =
+  "The collections could not be loaded, so My files is not known yet; load them again to add here.";
 
 // Why a restore left the document deleted (`knowledge.restore`'s `reason`).
 const RESTORE_REFUSED: Record<RestoreRefusal, string> = {
@@ -307,18 +309,23 @@ export function Documents() {
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
-  // The writes to `identity`: the collection shown, My files or the header's namespace.
+  // All documents without the header's namespace adds to My files, known once the list answers.
+  const addWaits = all && !ownShelf && !collections.kept;
+  // The writes to `identity` (Add, the empty state): the collection shown, My files or the
+  // header's namespace; each row's own are `reasonFor`'s.
   const writeReason = addsTo
     ? addsTo === shown
       ? viewerOfShown
       : null
     : all && !ownShelf
-      ? NO_PLACE_TO_ADD
+      ? addWaits
+        ? collections.error
+          ? NO_LIST_TO_ADD
+          : ROLE_LOADING
+        : NO_PLACE_TO_ADD
       : viewerHere;
-  // A role that cannot write, or not yet known to, gets no selection for a bulk delete.
-  const readOnly = writeReason !== null;
-  // Known to be below writer, rather than not known yet: the empty state's viewer words.
-  const knownReadOnly = readOnly && !roleLoading;
+  // Known to be unable to add, rather than not known yet: the empty state's words.
+  const knownReadOnly = writeReason !== null && writeReason !== ROLE_LOADING;
   // The place's admins manage its sources. An admin claim reaches no collection, so there
   // only the collection's own role decides.
   const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", roleRead.role, whoami);
@@ -451,9 +458,10 @@ export function Documents() {
   } | null>(null);
   // A Load more in flight: a new read stops it.
   const moreRead = useRef<AbortController | null>(null);
-  // The place whose list returned a document on this visit: a later filtered or failed
-  // read there keeps the passages (an unfiltered empty one is an empty library).
+  // The place (`place`) whose list returned a document on this visit: a later filtered, failed
+  // or rescoped read there keeps the passages (an unfiltered empty one is an empty library).
   const [listedScope, setListedScope] = useState("");
+  const listedFor = useRef("");
   // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
@@ -471,11 +479,16 @@ export function Documents() {
     // Blank only for new places; a new filter keeps the rows until the next land.
     const scope = readKey;
     const places = readPlaces;
+    const at = place;
     if (shownScope.current !== scope) {
       shownScope.current = scope;
       setRows(null);
       // The last place's failure is not this one's, nor its earlier load on another visit.
       setLoadError(null);
+    }
+    // Another place starts its passages over; another search scope in this one keeps them.
+    if (listedFor.current !== at) {
+      listedFor.current = at;
       setListedScope("");
     }
     setNextCursor(null);
@@ -502,7 +515,7 @@ export function Documents() {
           setReadOf({ key: scope, read: r.read, failed: r.failed, oneAtATime: r.oneAtATime });
           // A read that returned a document: the library holds one, whatever filter
           // narrows a later read. An unfiltered read that returned none: it holds none.
-          if (r.rows?.length) setListedScope(scope);
+          if (r.rows?.length) setListedScope(at);
           else if (!tags.length) setListedScope("");
           // A collection that answers again earns a fresh re-read if it is refused later.
           reReadFor.current = "";
@@ -588,7 +601,19 @@ export function Documents() {
       setRows((prev) => [...(prev || []), ...r.rows]);
       setNextCursor(r.next_cursor ?? null);
     } catch (e) {
-      if (scopeRef.current === scope && !ac.signal.aborted) toastError("Load more failed", e, { read: true });
+      if (scopeRef.current !== scope || ac.signal.aborted) return;
+      // A replica of the other build refuses the cursor this one wrote (a rolling upgrade):
+      // the list starts again from its first page, and says so.
+      if (e instanceof ApiError && e.code === "VALIDATION_FAILED") {
+        toastWithId(
+          "The list was read again from the top: the server that answered could not go on from there",
+          "info",
+          e,
+        );
+        reload();
+        return;
+      }
+      toastError("Load more failed", e, { read: true });
     } finally {
       // Always: a load for a scope the list has left must not leave the button spinning.
       setLoadingMore(false);
@@ -941,7 +966,7 @@ export function Documents() {
   // Finding a passage: once the place's list has returned a document on this visit, and
   // through a later filtered or failed read (it searches the whole namespace). A new place
   // folds it.
-  const canFindPassages = rows !== null && !emptyLibrary && listedScope === readKey;
+  const canFindPassages = !emptyLibrary && listedScope === place;
   // Taken away (a new place, or the library emptied), the panel comes back folded.
   useEffect(() => {
     if (!canFindPassages) setPassagesOpen(false);
@@ -1111,8 +1136,10 @@ export function Documents() {
     return out;
   }, [everyRead, placeLabel, byName]);
   const selectedPlaces = selected.size > 0 ? [...selectedByPlace().keys()] : [];
-  // A passage search reads the places the list does.
-  const passagePlaces = readPlaces;
+  // A passage search everywhere reads the places the list read (not one refused), and waits
+  // while the list reads them; here, the place shown.
+  const passagesIn = across ? (report?.read ?? null) : [identity.namespace];
+  const passagesLeftOut = across && report ? readPlaces.length + placesCut - report.read.length : 0;
   // All documents with nothing to read: no place listed, or the collections not read.
   const noneToRead = across && rows !== null && readPlaces.length === 0;
   // Every place the person reads was read, so "none anywhere" is true of the Library.
@@ -1509,10 +1536,11 @@ export function Documents() {
       {canFindPassages && passagesOpen && (
         <div ref={passagesBox}>
           <LibraryPassages
-            key={passagePlaces.join("\n")}
-            identity={{ org: identity.org, namespace: passagePlaces[0] ?? identity.namespace }}
-            namespaces={passagePlaces.slice(1)}
-            placeLabel={passagePlaces.length > 1 ? placeLabel : undefined}
+            identity={{ org: identity.org, namespace: passagesIn?.[0] ?? identity.namespace }}
+            namespaces={passagesIn?.slice(1) ?? []}
+            waiting={passagesIn === null}
+            notSearched={passagesLeftOut}
+            placeLabel={across ? placeLabel : undefined}
             navEnabled={!dialogOpen && keysIn === "passages"}
             onHitsShown={setPassageHitsShown}
             onOpen={openPassage}
@@ -1590,13 +1618,15 @@ export function Documents() {
                 : "Your library is empty"
           }
           description={
-            knownReadOnly
-              ? "Nothing has been added yet. Its members who write can add documents."
-              : all
-                ? `Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file to ${placeLabel(identity.namespace)}, or open a collection and add it there: the server extracts each, and your agents search them.`
-                : folderTree
-                  ? "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file, or a folder of them: the server extracts each, your agents search them, and you can download the originals back any time."
-                  : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
+            all && knownReadOnly
+              ? "Nothing has been added to the places you read yet. Open a collection you write to add documents there."
+              : knownReadOnly
+                ? "Nothing has been added yet. Its members who write can add documents."
+                : all
+                  ? `Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file to ${placeLabel(identity.namespace)}, or open a collection and add it there: the server extracts each, and your agents search them.`
+                  : folderTree
+                    ? "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file, or a folder of them: the server extracts each, your agents search them, and you can download the originals back any time."
+                    : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
           }
           // One Add, unavailable with why to a role that cannot add or is still loading, so it
           // keeps its focus as the role resolves.
@@ -1930,7 +1960,7 @@ function ReadNotes({
   label: (ns: string) => string;
   onRetry: () => void;
 }) {
-  const refused = failed.filter((f) => f.error instanceof ApiError && [403, 404].includes(f.error.status));
+  const refused = failed.filter((f) => isRefusal(f.error));
   const broken = failed.filter((f) => !refused.includes(f));
   const names = (list: PlaceFailure[]) => list.map((f) => label(f.namespace)).join(", ");
   const lines: string[] = [];

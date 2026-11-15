@@ -61,6 +61,8 @@ export const PASSAGES_PANEL_ID = "library-passages";
 export function LibraryPassages({
   identity,
   namespaces = [],
+  waiting = false,
+  notSearched = 0,
   placeLabel,
   navEnabled,
   onHitsShown,
@@ -69,6 +71,10 @@ export function LibraryPassages({
   identity: Pick<Identity, "org" | "namespace">;
   /** The other places searched beside `identity`'s, in a search everywhere. */
   namespaces?: string[];
+  /** The places to search are still being read: a search waits for them. */
+  waiting?: boolean;
+  /** Places a search everywhere leaves out (refused, past the most one read takes). */
+  notSearched?: number;
   /** A place's name, for the hits of a search of several: each says where it is. */
   placeLabel?: (namespace: string) => string;
   /** The arrows move through the hits (off while a dialog is open). */
@@ -87,6 +93,8 @@ export function LibraryPassages({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searching = useRef<AbortController | null>(null);
+  // The places the hits on screen were searched in.
+  const searchedFor = useRef("");
   // A search still running when the panel goes (another place) is dropped.
   useEffect(() => () => searching.current?.abort(), []);
   const shown = !!hits?.length;
@@ -110,13 +118,23 @@ export function LibraryPassages({
     return () => onHitsShown(false);
   }, [shown, onHitsShown]);
 
+  // The search last asked for: run again on the new places when they change, or once they
+  // are known, so the hits always answer the places named.
+  const want = useRef<{ q: string; topK: number } | null>(null);
+  // A search asked for while the places were still being read.
+  const parked = useRef(false);
+  const placesKey = [identity.org, identity.namespace, ...namespaces].join("\n");
   const search = async (q: string, topK: number) => {
     if (!q) return;
+    want.current = { q, topK };
     searching.current?.abort();
-    const ctrl = new AbortController();
-    searching.current = ctrl;
     setBusy(true);
     setError(null);
+    parked.current = waiting;
+    if (waiting) return;
+    searchedFor.current = placesKey;
+    const ctrl = new AbortController();
+    searching.current = ctrl;
     try {
       const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal, namespaces });
       if (!ctrl.signal.aborted) {
@@ -132,6 +150,13 @@ export function LibraryPassages({
       if (!ctrl.signal.aborted) setBusy(false);
     }
   };
+
+  // Runs when the places change or arrive (the search reads the latest render's).
+  useEffect(() => {
+    if (waiting || !want.current) return;
+    if (searchedFor.current === placesKey && !parked.current) return;
+    void search(want.current.q, TOP_K);
+  }, [placesKey, waiting]);
 
   // More may be behind any answer until asking for more adds none, up to the most the op
   // lists.
@@ -214,7 +239,9 @@ export function LibraryPassages({
       <div className="space-y-3">
         <p id={`${PASSAGES_PANEL_ID}-hint`} className="text-xs text-text-muted">
           {namespaces.length > 0
-            ? "Searches every document in every place you read, whatever the tag filter."
+            ? `Searches every document in ${namespaces.length + 1} places, whatever the tag filter${
+                notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : ""
+              }.`
             : "Searches every document in this library, whatever the tag filter."}{" "}
           Each passage is cited by the revision it was read from and its place.
         </p>
