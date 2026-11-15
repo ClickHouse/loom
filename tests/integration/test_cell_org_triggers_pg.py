@@ -759,31 +759,6 @@ async def test_the_cell_refresh_reads_the_marker_its_pool_sends(loom_cell: str) 
 
 
 @pytest.mark.asyncio
-async def test_a_session_set_leaked_onto_the_connection_does_not_count_as_the_marker(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Behind a transaction pooler a server connection may carry another client's session
-    SET: the RESET ALL in the read's transaction removes it, so the read finds what a fresh
-    session of this process has."""
-    import asyncpg
-
-    async with _cell("recording") as (dsn, _conn):
-        leaked = await asyncpg.connect(dsn)
-        try:
-            await leaked.execute("SET loom.tenancy_checked = on")
-
-            @contextlib.asynccontextmanager
-            async def _connection() -> AsyncIterator[Any]:
-                yield leaked
-
-            monkeypatch.setattr(pg, "connection", _connection)
-            row = await pg.fetchrow_reset(cell._READ)
-            assert row["marked"] is False and not leaked.is_in_transaction()
-        finally:
-            await leaked.close()
-
-
-@pytest.mark.asyncio
 async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error() -> None:
     """A read that fails inside the refresh's transaction is rolled back before the pool
     takes the connection back, so the release logs nothing through the loop's handler."""

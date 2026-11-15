@@ -334,7 +334,8 @@ class AuthSettings(BaseModel):
     # `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off.
     cell_probe_port: int = Field(default=0, ge=0, le=65535)
     # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
-    # default router; "" = none: in `enforced`, a new org answers 503.
+    # default router; "" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a
+    # value that is not an http(s) URL with a host refuses the boot.
     cell_router_url: str = ""
     # The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64`
     # (never the length of a SHA-256); any other form is refused at boot. "" = none.
@@ -4293,7 +4294,8 @@ def url_host(url: str) -> str:
 def is_http_url(url: str) -> bool:
     """Whether `url` is an http(s) base URL a client can append paths to: httpx parses it,
     with a host and a port at most 65535, and it holds no `?` or `#` (no query or fragment).
-    A setting holding one is refused at load, not on its first call."""
+    A setting holding any other value is refused before its first call (at load, or at boot
+    for LOOM_CELL_ROUTER_URL)."""
     try:
         parsed = httpx.URL(url)
         urlsplit(url).port  # noqa: B018 — over 65535 raises, which httpx lets by

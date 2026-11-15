@@ -715,7 +715,8 @@ settings:
   # cell_probe_port: 0
 
   # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
-  # default router; "" = none: in `enforced`, a new org answers 503. [restart]
+  # default router; "" = none: in `enforced`, a new org answers 503. With LOOM_CELL set,
+  # a value that is not an http(s) URL with a host refuses the boot. [restart]
   # cell_router_url: ""
 
   # Seconds a whole call to the router may take: a placement call, after which the
