@@ -809,3 +809,45 @@ def test_a_copy_another_writer_holds_keeps_its_list_and_no_listing_row_lands(
     _turn(world, _mirrored())
     assert mirror["rewrites"] == [] and len(mirror["listings"]) == listings
     assert _detail(world)["error"] == "permissions: a stored copy is not this source's to write"
+
+
+def test_a_source_removed_since_its_last_write_lands_no_listing_row(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
+    _turn(world, _mirrored())
+    listings = len(mirror["listings"])
+
+    async def _gone(src: Any) -> None:
+        raise source_sync.SourceGone("acme/team/decks")  # a namespace erasure ran meanwhile
+
+    monkeypatch.setattr(source_sync, "require_current", _gone)
+    _turn(world, _mirrored())  # nothing changed: the listing row is the turn's one write
+    assert len(mirror["listings"]) == listings
+
+
+def test_a_copy_another_writer_holds_does_not_stop_later_narrowings(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.files = [
+        _file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS),
+        _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
+    ]
+    _turn(world, _mirrored())
+    held = documents.get_many_by_uris
+
+    async def _first_taken(org: str, namespace: str, uris: list[str], **kw: Any) -> list[Any]:
+        docs = await held(org, namespace, uris)
+        return [
+            d.model_copy(update={"actor": "user:someone"}) if "/doc1/" in d.source_uri else d
+            for d in docs
+        ]
+
+    monkeypatch.setattr(source_sync_mirror, "_REWRITE_BATCH", 1)
+    monkeypatch.setattr(documents, "get_many_by_uris", _first_taken)
+    for f in world.files:
+        f["permissions"] = []
+    listings = len(mirror["listings"])
+    _turn(world, _mirrored())
+    [row] = mirror["rewrites"]
+    assert "/doc2/" in row["source_uri"] and len(mirror["listings"]) == listings

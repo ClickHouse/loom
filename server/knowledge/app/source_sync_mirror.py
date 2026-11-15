@@ -108,6 +108,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
             _note(result, "publication: a written list is not in ClickHouse yet")
             return result
         pass_context.check_stop()
+        await sync.require_current(src)  # an erasure since the last write lands no row
         await mirror_store.record_listing(src.org, src.mirror, src.source_id, src.name, started)
     return result
 
@@ -137,7 +138,8 @@ async def _refresh_lists(
 ) -> bool:
     """Rewrite each stored copy's list to the store's, compared with the one the
     storage authority holds and written a batch at a time. False when the deadline cut
-    it."""
+    it or a copy was not this source's to write."""
+    all_written = True
     for start in range(0, len(copies), _REWRITE_BATCH):
         batch = copies[start : start + _REWRITE_BATCH]
         held = {c["source_uri"]: c["access_json"] for c in batch}
@@ -167,10 +169,11 @@ async def _refresh_lists(
             # writes nothing (`_write_lists` checks).
             written = await _write_lists(src, changed)
         if not written:
-            # A copy another writer holds keeps its list: the listing vouches for nothing.
+            # A copy another writer holds keeps its list: the listing vouches for nothing,
+            # but the later batches' narrowings are still written.
             _note(result, "permissions: a stored copy is not this source's to write")
-            return False
-    return not result.cut
+            all_written = False
+    return all_written and not result.cut
 
 
 async def _file_access(
@@ -207,19 +210,18 @@ async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.Access
     with sequential_reads():  # a replica behind the last write would carry old content
         found = await documents.get_many_by_uris(src.org, src.mirror, list(lists))
     docs = [d for d in found if sync.ours(src, d)]
-    if not docs:
-        return len(found) == 0
-    await sync.require_current(src)
-    rows = [
-        documents.build_document_row(
-            d,
-            version=documents.version_past(d.version),
-            access_json=access_list.to_json(lists[d.source_uri]),
-        )
-        for d in docs
-    ]
-    with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
-        await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
+    if docs:
+        await sync.require_current(src)
+        rows = [
+            documents.build_document_row(
+                d,
+                version=documents.version_past(d.version),
+                access_json=access_list.to_json(lists[d.source_uri]),
+            )
+            for d in docs
+        ]
+        with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
+            await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
     return len(docs) == len(found)
 
 

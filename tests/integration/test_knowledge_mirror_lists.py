@@ -2,28 +2,25 @@
 storage authority the run uses: the row takes the new list and keeps its revision, so the
 copy still counts as searchable over the chunks it had, and nothing is embedded again.
 
-Skips cleanly when LOOM_CH_HOST is unset.
+The org is minted with `unique_org`, so the session purge removes its rows from both
+stores.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import uuid
 from typing import Any
 
 import pytest
 
-pytestmark = [
-    pytest.mark.asyncio,
-    pytest.mark.skipif(
-        not os.environ.get("LOOM_CH_HOST"),
-        reason="LOOM_CH_HOST not set — integration tests require a live CH",
-    ),
-]
+from tests.integration._resources import unique_org
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.MonkeyPatch) -> None:
+    os.environ.get("LOOM_CH_HOST") or pytest.skip("LOOM_CH_HOST not set")
     from server.core import pg
     from server.core.ch import get_client, sequential_reads
     from server.core.naming import new_mirror_name
@@ -40,7 +37,7 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
 
     ch = get_client()
     await ch.connect()
-    org, mirror, source_id = f"mirror-{uuid.uuid4().hex[:8]}", new_mirror_name(), "sid1"
+    org, mirror, source_id = unique_org("mirror"), new_mirror_name(), "sid1"
     uri = mirror_uri("https://docs.example.com/document/d/f1/edit", source_id)
     tag = source_id_tag(source_id)
     listed = access_list.AccessList(emails=("ann@example.com",))
@@ -93,12 +90,6 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
         assert copy["searchable"] == "1"  # its chunks still serve: nothing re-embedded
         assert copy["source_revision"] == "r1"
     finally:
-        for table in ("documents", "chunks"):
-            await ch.execute(
-                f"ALTER TABLE loom.{table} DELETE WHERE org = {{org:String}} "
-                "SETTINGS mutations_sync = 2",
-                {"org": org},
-            )
         await ch.disconnect()
         if pg.enabled():
             await pg.close_pool()
