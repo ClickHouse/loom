@@ -50,6 +50,20 @@ class AccessList:
 UNREAD = AccessList(unread=True)
 
 
+def common(a: AccessList, b: AccessList) -> AccessList:
+    """Who both lists admit, entry by entry: never wider than either, and `unread` if
+    either is."""
+    if a.unread or b.unread:
+        return UNREAD
+    return AccessList(
+        emails=tuple(set(a.emails) & set(b.emails)),
+        owner=a.owner if a.owner == b.owner else "",
+        groups=tuple(set(a.groups) & set(b.groups)),
+        domains=tuple(set(a.domains) & set(b.domains)),
+        anyone=a.anyone and b.anyone,
+    )
+
+
 def to_json(access: AccessList) -> str:
     """The stored form; `unread` is stored empty, as every other writer stores it."""
     if access.unread:
@@ -117,4 +131,4 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
     )
 
 
-__all__ = ["UNREAD", "AccessList", "from_drive_permissions", "from_json", "to_json"]
+__all__ = ["UNREAD", "AccessList", "common", "from_drive_permissions", "from_json", "to_json"]

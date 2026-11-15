@@ -773,3 +773,19 @@ def test_a_viewer_account_s_unread_lists_are_noted(
     _turn(world, _mirrored())
     assert all(d["access_json"] == "" for d in world.docs.values()) and len(world.docs) == 2
     assert _detail(world)["error"] == "permissions: the account may not read a file's sharing"
+
+
+def test_a_copy_behind_its_file_is_never_widened_by_the_store_s_new_list(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 100)
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="10", permissions=READERS)]
+    _turn(world, _mirrored())
+    [uri] = world.docs
+    # A paragraph is cut in a new revision past the size bound, then Bob is added.
+    bob = {"type": "user", "role": "reader", "emailAddress": "bob@example.com"}
+    world.files = [
+        _file("pdf1", PDF, "2026-01-02T00:00:00.000Z", size="101", permissions=[*READERS, bob])
+    ]
+    _turn(world, _mirrored())
+    assert access_list.from_json(world.docs[uri]["access_json"]).emails == ("ann@example.com",)

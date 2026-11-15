@@ -314,7 +314,7 @@ async def every_copy(
     """Every live document the sync wrote under `tag`, as `source_revisions` reads
     them, each with `searchable` ("1" or "") saying whether its chunks are live; one
     read where a mirrored turn needs both."""
-    return await _revisions(org, namespace, tag, chunks="flag", pictures=False, ch=ch)
+    return await _revisions(org, namespace, tag, searchable="flag", pictures=False, ch=ch)
 
 
 async def source_revisions(
@@ -344,8 +344,8 @@ async def source_revisions(
     version or of its revision, since a rewrite of the row alone (a new list, a
     metadata edit) keeps the revision and its chunks. Without it every live document
     counts, which is what removal needs."""
-    chunks: Literal["only", "any"] = "only" if searchable_only else "any"
-    return await _revisions(org, namespace, tag, chunks=chunks, pictures=pictures, ch=ch)
+    searchable: Literal["only", "ignore"] = "only" if searchable_only else "ignore"
+    return await _revisions(org, namespace, tag, searchable=searchable, pictures=pictures, ch=ch)
 
 
 async def _revisions(
@@ -353,12 +353,12 @@ async def _revisions(
     namespace: str,
     tag: str,
     *,
-    chunks: Literal["only", "flag", "any"],
+    searchable: Literal["only", "flag", "ignore"],
     pictures: bool,
     ch: _CHClient | None,
 ) -> list[dict[str, str]]:
     """`source_revisions` and `every_copy`: the copies whose chunks are live
-    (`only`), every copy flagged `searchable` (`flag`), or every copy (`any`)."""
+    (`only`), every copy flagged `searchable` (`flag`), or every copy (`ignore`)."""
     # One set of (address, kind, value) serves both tests, so ClickHouse reads the
     # chunks once; a chunk written before chunks recorded their revision has none.
     live = (
@@ -368,12 +368,12 @@ async def _revisions(
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}"
     )
-    searchable = (
+    has_live_chunks = (
         f"((source_uri, ('version', version)) IN ({live}) "
         f"OR (source_uri, ('revision', revision)) IN ({live}))"
     )
-    only = f"AND {searchable} " if chunks == "only" else ""
-    flag = f"{searchable} AS searchable, " if chunks == "flag" else ""
+    only = f"AND {has_live_chunks} " if searchable == "only" else ""
+    flag = f"{has_live_chunks} AS searchable, " if searchable == "flag" else ""
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
         "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
@@ -420,7 +420,7 @@ async def _revisions(
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
             "access_json": str(r.get("access_json") or ""),
         }
-        if chunks == "flag":
+        if searchable == "flag":
             doc["searchable"] = "1" if r.get("searchable") else ""
         found.append(doc)
     return found

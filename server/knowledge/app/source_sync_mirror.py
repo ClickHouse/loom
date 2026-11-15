@@ -5,8 +5,10 @@ Every complete listing reads the lists again).
 
 The turn first brings every stored copy's list to what the store says now: the list of
 the file listed at its address, or `unread` for a copy a whole listing does not have
-there. A changed list is written as a new row over the stored one that keeps its
-chunks, so nothing is embedded again, and the same list writes nothing. The reads are
+there. A copy behind its file's revision takes only the part of the new list its own
+admitted: its text was shared under that list, and the content write widens it. A
+changed list is written as a new row over the stored one that keeps its chunks, so
+nothing is embedded again, and the same list writes nothing. The reads are
 bounded by the pass's deadline only, never by its document bound, and what was read is
 written. Then each new or changed file is fetched and written with its list, as a
 folder turn writes, and at the full interval a copy whose file is gone is retired on
@@ -67,8 +69,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     if result.complete and not listing.walk_cut:
         listed_ids = {str(f["id"]) for f in files}
         result.waits = {k: v for k, v in result.waits.items() if k in listed_ids}
-    addressed = [(mirror_uri(sync.source_uri_of(f), src.source_id), f) for f in files]
-    listed = {uri: f for uri, f in addressed if uri.startswith("https://")}
+    # The listed files by the address their copy is stored at.
+    listed = {u: f for f in files if (u := _address(src, f)).startswith("https://")}
     whole = listing.whole and not listing.lost_item
     # A head whose row ClickHouse does not have yet is not among the copies read, so a
     # listing that began with one owed vouches for nothing.
@@ -82,9 +84,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         return result  # the store refused the account: nothing more is read or written
     stored = sync.stored_with_room(result, [c for c in copies if c["searchable"]])
     try:
-        for uri, f in addressed:
+        for f in files:
             read_access = functools.partial(_file_access, token, f, result)
             prior = stored.get(str(f["id"]))
+            uri = _address(src, f)
             if not await sync.sync_file(
                 src, token, f, uri, prior, run, result, read_access=read_access
             ):
@@ -95,8 +98,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # it does not have already reads `unread`, so waiting for the interval costs nothing.
     if result.full and result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
-        addresses = {str(f["id"]): uri for uri, f in listed.items()}
-        await sync.retire_absent(src, addresses, gone, run, result)
+        by_id = {str(f["id"]): uri for uri, f in listed.items()}
+        await sync.retire_absent(src, by_id, gone, run, result)
     # A listing that searched everything and reached every item vouches for the lists,
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
@@ -107,6 +110,10 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         pass_context.check_stop()
         await mirror_store.record_listing(src.org, src.mirror, src.source_id, src.name, started)
     return result
+
+
+def _address(src: KnowledgeSource, f: dict[str, Any]) -> str:
+    return mirror_uri(sync.source_uri_of(f), src.source_id)
 
 
 class _Refused(Exception):
@@ -128,16 +135,13 @@ async def _refresh_lists(
     run: sync.Pass,
     result: sync.TurnResult,
 ) -> bool:
-    """Rewrite every stored copy's list to what the store says now: the list of the file
-    `listed` at its address, or `unread` when a `whole` listing does not have it there.
-    Each list is compared with the one the storage authority holds, and changed lists
-    are written a batch at a time as they are read, so a turn the deadline or the
-    store cuts keeps what it read. Only a read from the store stops at the deadline:
-    a list the listing carried is compared and written all the same. False when the
-    deadline cut it."""
+    """Rewrite each stored copy's list to the store's, compared with the one the
+    storage authority holds and written a batch at a time. False when the deadline cut
+    it."""
     for start in range(0, len(copies), _REWRITE_BATCH):
         batch = copies[start : start + _REWRITE_BATCH]
         held = {c["source_uri"]: c["access_json"] for c in batch}
+        revision = {c["source_uri"]: c["source_revision"] for c in batch}
         held |= await documents.committed_lists(src.org, src.mirror, list(held))
         changed: dict[str, access_list.AccessList] = {}
         try:
@@ -151,10 +155,17 @@ async def _refresh_lists(
                     result.mark(sync.TurnMark.PASS_BOUND)
                     continue
                 access = access_list.UNREAD if f is None else await _file_access(token, f, result)
-                if access_list.from_json(held[uri]) != access:
+                stored = access_list.from_json(held[uri])
+                if f is not None and revision[uri] != str(f.get("modifiedTime") or ""):
+                    # The copy is behind the file: its text was shared under the old
+                    # list, so only a narrowing reaches it; the content write widens.
+                    access = access_list.common(stored, access)
+                if stored != access:
                     changed[uri] = access
         finally:
-            await _write_lists(src, changed)  # what was read is written, whatever stopped it
+            # A rate limit or the deadline still writes what was read; a stopped pass
+            # writes nothing (`_write_lists` checks).
+            await _write_lists(src, changed)
     return not result.cut
 
 

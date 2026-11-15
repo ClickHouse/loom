@@ -700,11 +700,14 @@ revision, permissions): the store does not change a file's modification time whe
 sharing changes, so an incremental listing would miss a permission removed. A listing
 that reads a list unlike the stored one rewrites the document's row with the same
 content and the new list, as `knowledge.update_metadata` without `reindex` does, so no
-chunk or embedding is rebuilt; an unchanged list costs no write. A stored document the
-complete listing no longer has is rewritten `unread`, with every entry cleared, then
-retired on positive evidence, as today. The listing row's start lands only once every
-changed list and every such `unread` rewrite of that listing is written, so a row is
-never newer than the lists it vouches for. These rewrites are outside the pass's
+chunk or embedding is rebuilt; an unchanged list costs no write. A stored copy behind
+its file's revision (a fetch deferred, given up or over the size bound) takes only the
+part of the new list its stored list already admitted, since its text was shared under
+that list; the content write that brings it up to date carries the wider one. A stored
+document the complete listing no longer has is rewritten `unread`, with every entry
+cleared, then retired on positive evidence, as today. The listing row's start lands only
+once every changed list and every such `unread` rewrite of that listing is written, so a
+row is never newer than the lists it vouches for. These rewrites are outside the pass's
 document cap, bounded only by the listings' share of the deadline. Content is fetched
 only for a file whose revision changed, and a content write carries the list of the
 latest listing that read the file, so a fetch the pass bound deferred never writes an

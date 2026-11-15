@@ -25,12 +25,9 @@ async def live_mirror(org: str, namespace: str) -> str:
 async def ensure_mirror(
     org: str, namespace: str, *, still_current: Callable[[], Awaitable[None]]
 ) -> str:
-    """The namespace's live mirror, made now if it has none, under the namespace's
-    sources lease, so two turns never make two mirrors. `still_current` runs under the
-    lease first and raises when the source asking was removed meanwhile (an erasure of
-    the namespace, which takes the same lease), so no mirror outlives its namespace. A
-    new name already in use is drawn again: no namespace of the form is ever taken for
-    a mirror (rolling-upgrade rule 51)."""
+    """The namespace's live mirror, made under its sources lease if it has none.
+    `still_current` raises under the lease when an erasure removed the asking source
+    meanwhile, so no mirror outlives its namespace (rolling-upgrade rule 51)."""
     if live := await live_mirror(org, namespace):
         return live
     async with sources_lease(org, namespace):
