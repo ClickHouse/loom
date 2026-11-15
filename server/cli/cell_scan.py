@@ -313,8 +313,8 @@ async def list_tables(
     ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
 ) -> TableList:
     """The scan's table list in both stores, with every refusal it found, attach's own
-    ClickHouse grants checked first. `names` is `host_names()` on a cluster of several
-    hosts, else empty."""
+    ClickHouse grants checked first. `names` is `cell_writers.host_names()` on a cluster of
+    several hosts, else empty."""
     with query_tag(TAG):
         return await _list_tables(ch, pg_conn, topology, names)
 

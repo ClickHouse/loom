@@ -19,8 +19,11 @@ TAG = "cell.scan"  # system.query_log's log_comment of the scan's statements
 # absent), and the initiator reads its own host locally, never a second time over a
 # connection as the cluster's configured user.
 _CLUSTER = "skip_unavailable_shards = 0, prefer_localhost_replica = 1"
-# Every read the scan and the checks make throws past a limit rather than return what it has
-# read so far: a profile's `break` would shorten a list or a scan silently.
+# Every read the scan and the checks make returns its whole result, whatever a profile sets:
+# it throws past a limit rather than return what it has read so far (a `break` would shorten
+# a list or a scan silently), and no setting cuts, filters or samples its rows (`limit`,
+# `offset`, the additional filters, `final` on a collapsing table, a parallel replica's
+# share of the parts, a cached result older than the rows).
 WHOLE = {
     "timeout_overflow_mode": "throw",
     "timeout_overflow_mode_leaf": "throw",
@@ -29,6 +32,15 @@ WHOLE = {
     "result_overflow_mode": "throw",
     "distinct_overflow_mode": "throw",
     "set_overflow_mode": "throw",
+    "limit": "0",
+    "offset": "0",
+    "additional_table_filters": "{}",
+    "additional_result_filter": "",
+    "final": "0",
+    "enable_parallel_replicas": "0",
+    "parallel_replicas_count": "0",
+    "parallel_replica_offset": "0",
+    "use_query_cache": "0",
 }
 _WHOLE = ", ".join(f"{k} = '{v}'" for k, v in WHOLE.items())
 WHOLE_SQL = f"SETTINGS {_WHOLE}"
@@ -131,57 +143,6 @@ async def read_topology(ch: Any) -> Topology:
     )
 
 
-async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
-    """Each answering host's OS hostname (an opaque group key) and the one configured name
-    it answers for in the cluster; Refused unless there is one group per listed host, each
-    with exactly one name, the names together the listing. The topology's own refusals (two
-    servers under one host name, several shards) come first, before any read."""
-    if refusals := topology.refusals():
-        raise Refused(refusals)
-    with query_tag(TAG):
-        rows = await ch.query_all(
-            "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
-            "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "
-            f"GROUP BY h {_CLUSTER_SQL}",
-            {"c": topology.cluster},
-        )
-    where = f"cluster {topology.cluster}"
-    refusals = []
-    out: dict[str, str] = {}
-    for r in rows:
-        names = sorted(str(n) for n in r["names"])
-        if not names:
-            refusals.append(
-                Refusal(
-                    f"host {r['h']}",
-                    f"this host's address in {where} does not resolve to a local interface",
-                )
-            )
-        elif len(names) > 1:
-            refusals.append(
-                Refusal(
-                    f"host {r['h']}",
-                    f"this host answers for several entries in {where} ({', '.join(names)}): "
-                    "two local entries, or two hosts with one OS hostname",
-                )
-            )
-        else:
-            out[str(r["h"])] = names[0]
-    named = sorted(out.values())
-    if not refusals and (len(named) != len(set(named)) or set(named) != topology.hosts):
-        missing = sorted(topology.hosts - set(named))
-        refusals.append(
-            Refusal(
-                where,
-                "the answering hosts are not the listed ones"
-                + (f" (no answer for {', '.join(missing)})" if missing else ""),
-            )
-        )
-    if refusals:
-        raise Refused(refusals)
-    return out
-
-
 async def per_host(
     ch: Any,
     topology: Topology,
@@ -192,7 +153,7 @@ async def per_host(
     """The rows of `sql`, which selects `hostName() AS h` from `{source:<table>}`, grouped
     by the configured name of the host each came from: system table `<table>` itself on one
     host (grouped under ''), through `clusterAllReplicas` on several (grouped by `names`,
-    from `host_names()`)."""
+    from `cell_writers.host_names()`)."""
     m = re.search(r"\{source:(\w+)\}", sql)
     assert m, sql
     table = f"system.{m.group(1)}"

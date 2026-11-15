@@ -63,7 +63,7 @@ def test_a_privilege_is_held_through_any_grant_implying_it() -> None:
 def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
     lines = [
         "GRANT SELECT, SHOW, SYSTEM ON *.* TO attach",
-        "GRANT SHOW USERS, SHOW ROLES ON *.* TO attach",
+        "GRANT SHOW USERS, SHOW ROLES, SHOW ROW POLICIES ON *.* TO attach",
         "REVOKE SHOW TABLES ON side.* FROM attach",
         "REVOKE SELECT ON loom.secret FROM attach",
         "REVOKE GRANT OPTION FOR SELECT ON other.* FROM attach",
@@ -75,7 +75,16 @@ def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
     # On several hosts the revokes come as `system.grants` rows.
     rows = [
         {"user_name": "attach", "access_type": a, "database": None}
-        for a in ("SELECT", "SHOW", "SHOW USERS", "SHOW ROLES", "SYSTEM", "REMOTE", "CLUSTER")
+        for a in (
+            "SELECT",
+            "SHOW",
+            "SHOW USERS",
+            "SHOW ROLES",
+            "SHOW ROW POLICIES",
+            "SYSTEM",
+            "REMOTE",
+            "CLUSTER",
+        )
     ]
     rows.append(
         {"user_name": "attach", "access_type": "SHOW", "database": "side", "is_partial_revoke": 1}
@@ -97,6 +106,7 @@ def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
     assert cell_writers.own_problems(narrow, Topology("", 0), DBS) == [
         "SHOW USERS ON *.*",
         "SHOW ROLES ON *.*",
+        "SHOW ROW POLICIES ON *.*",
         "SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
         "SELECT ON loom.*",
         "SELECT ON loom_telemetry.*",
@@ -463,7 +473,7 @@ def _row(user: str, access: str, database: str | None = None) -> dict[str, Any]:
 def _single_host() -> FakeCH:
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM ON *.* TO attach"},
-        {"g": "GRANT SHOW USERS, SHOW ROLES ON *.* TO attach"},
+        {"g": "GRANT SHOW USERS, SHOW ROLES, SHOW ROW POLICIES ON *.* TO attach"},
     ]
     return (
         FakeCH()
@@ -474,7 +484,14 @@ def _single_host() -> FakeCH:
             [
                 *(
                     _row("attach", a)
-                    for a in ("SELECT", "SHOW", "SHOW USERS", "SHOW ROLES", "SYSTEM")
+                    for a in (
+                        "SELECT",
+                        "SHOW",
+                        "SHOW USERS",
+                        "SHOW ROLES",
+                        "SHOW ROW POLICIES",
+                        "SYSTEM",
+                    )
                 ),
                 _row("server", "INSERT", "loom"),
                 _row("server", "SELECT", "loom"),
@@ -483,6 +500,7 @@ def _single_host() -> FakeCH:
         )
         .on("system.role_grants", [])
         .on("system.users", [{"h": "x", "name": n} for n in ("attach", "server", "analyst")])
+        .on("system.row_policies", [])
         .on("system.user_directories", [{"h": "x", "name": "users_xml", "type": "users_xml"}])
         .on(
             "system.table_functions",
@@ -523,7 +541,7 @@ def _cluster(
     `roles` extra `system.grants` and `system.role_grants` rows."""
     own = [
         {"g": "GRANT SELECT, SHOW, SYSTEM, CLUSTER ON *.* TO attach"},
-        {"g": "GRANT SHOW USERS, SHOW ROLES, REMOTE ON *.* TO attach"},
+        {"g": "GRANT SHOW USERS, SHOW ROLES, SHOW ROW POLICIES, REMOTE ON *.* TO attach"},
     ]
     attach_grants = [
         {
@@ -537,7 +555,16 @@ def _cluster(
             "is_partial_revoke": 0,
         }
         for h in ("os-0", "os-1")
-        for a in ("SELECT", "SHOW", "SHOW USERS", "SHOW ROLES", "SYSTEM", "REMOTE", "CLUSTER")
+        for a in (
+            "SELECT",
+            "SHOW",
+            "SHOW USERS",
+            "SHOW ROLES",
+            "SHOW ROW POLICIES",
+            "SYSTEM",
+            "REMOTE",
+            "CLUSTER",
+        )
         if not (h == lacking_on and a == "SHOW")
     ]
     local_writer = {
@@ -574,6 +601,7 @@ def _cluster(
                 *(roles or []),
             ],
         )
+        .on("system.row_policies", [])
         .on("system.user_directories", [{"h": "os-0", "name": "ldap", "type": "ldap"}])
         .on(
             "system.table_functions",
@@ -701,7 +729,8 @@ async def test_a_need_held_only_through_a_non_default_role_refuses_on_one_host()
     ch = _single_host()
     ch.routes = [r for r in ch.routes if r[0] not in ("system.grants", "system.role_grants")]
     rows = [
-        _row("attach", a) for a in ("SELECT", "SHOW USERS", "SHOW ROLES", "SYSTEM")
+        _row("attach", a)
+        for a in ("SELECT", "SHOW USERS", "SHOW ROLES", "SHOW ROW POLICIES", "SYSTEM")
     ] + _own_through_a_spare_role("x")
     ch.on("system.grants", rows)
     ch.on(
@@ -723,3 +752,79 @@ async def test_a_need_held_only_through_a_non_default_role_refuses_on_one_of_sev
     assert [str(r) for r in listed.refusals] == [
         "user attach: lacks SHOW TABLES ON *.*, SHOW COLUMNS ON *.* on host ch-1"
     ]
+
+
+def _policy(name: str, table: str = "memory", **row: Any) -> dict[str, Any]:
+    return {"short_name": name, "database": "loom", "table": table, "select_filter": "1",
+            "is_restrictive": 0, "apply_to_all": 0, "apply_to_list": [],
+            "apply_to_except": [], **row}  # fmt: skip
+
+
+def test_loom_s_own_row_policy_pair_lets_attach_read_every_row() -> None:
+    from server.insights.domain.analysis import OTHERS_POLICY_NAME, POLICY_NAME
+
+    rows = [
+        _policy(POLICY_NAME, select_filter="org = 'a'", apply_to_list=["loom_analyst"]),
+        _policy(OTHERS_POLICY_NAME, apply_to_all=1, apply_to_except=["loom_analyst"]),
+    ]
+    assert cell_writers.row_policy_problems(rows, "attach") == []
+
+
+@pytest.mark.parametrize(
+    ("rows", "reason"),
+    [
+        # Any other policy, even one for another user: once one exists, a user no policy
+        # covers reads no row.
+        ([_policy("theirs", apply_to_list=["bi"])], "a row policy hides rows"),
+        (
+            [_policy("loom_analyst_others", apply_to_all=1, apply_to_except=["attach"])],
+            "no permissive policy `USING 1` covers attach",
+        ),
+        (
+            [_policy("loom_analyst_others", apply_to_all=1, is_restrictive=1)],
+            "no permissive policy `USING 1` covers attach",
+        ),
+        (
+            [_policy("loom_analyst_others", apply_to_all=1, select_filter="org != ''")],
+            "no permissive policy `USING 1` covers attach",
+        ),
+        (
+            [
+                _policy("loom_analyst_scope", apply_to_list=["attach"]),
+                _policy("loom_analyst_others", apply_to_all=1),
+            ],
+            "the analyst's policy applies to attach",
+        ),
+    ],
+)
+def test_a_row_policy_hiding_rows_from_attach_refuses(
+    rows: list[dict[str, Any]], reason: str
+) -> None:
+    found = cell_writers.row_policy_problems(rows, "attach")
+    assert any(reason in why for _, why in found), found
+
+
+async def test_a_row_policy_on_a_configured_table_refuses_the_listing() -> None:
+    ch = _cluster()
+    ch.routes = [r for r in ch.routes if r[0] != "system.row_policies"]
+    ch.routes.insert(0, ("system.row_policies", [{"h": "os-1", **_policy("theirs")}]))
+    listed = await cell_scan.list_tables(ch, None, TWO, NAMES)
+    assert [str(r) for r in listed.refusals] == [
+        "row policy on loom.memory: theirs: a row policy hides rows from the scan on host ch-1",
+        "row policy on loom.memory: no permissive policy `USING 1` covers attach: it reads no "
+        "row on host ch-1",
+    ]
+
+
+async def test_a_refused_process_list_read_is_named() -> None:
+    ch = _cluster()
+    ch.routes.insert(
+        0, ("system.processes", _AccessDenied("Code: 497. DB::Exception: Not enough privileges"))
+    )
+    listed = await cell_scan.list_tables(ch, None, TWO, NAMES)
+    assert [r.subject for r in listed.refusals] == ["user attach"]
+    assert "cannot read what the checks read (Code: 497" in listed.refusals[0].reason
+
+
+class _AccessDenied(Exception):
+    """A server refusal as the driver words one."""

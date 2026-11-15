@@ -403,7 +403,7 @@ async def test_a_user_that_cannot_see_every_table_refuses_before_listing(
             assert "SHOW ROLES ON *.*" in found[0].reason
         assert listed.clickhouse == [] and listed.postgres == []
         # With every SHOW but SHOW ROLES, that alone is named.
-        await ch.execute(f"GRANT SHOW TABLES, SHOW COLUMNS ON *.* TO {narrow}")
+        await ch.execute(f"GRANT SHOW TABLES, SHOW COLUMNS, SHOW ROW POLICIES ON *.* TO {narrow}")
         raw = ch_client_from_env(username=narrow, password=users["password"])
         try:
             listed = await cell_scan.list_tables(_AsUser(raw), None, topology, {})
@@ -456,7 +456,7 @@ async def test_a_read_held_only_through_a_non_default_role_refuses(
     try:
         for grant in (
             "SELECT ON system.*",
-            "SHOW USERS, SHOW ROLES ON *.*",
+            "SHOW USERS, SHOW ROLES, SHOW ROW POLICIES ON *.*",
             f"SELECT ON {schema}.*",
             f"SELECT ON {telemetry}.*",
             "SYSTEM SYNC REPLICA, SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*",
@@ -477,3 +477,55 @@ async def test_a_read_held_only_through_a_non_default_role_refuses(
         ]
     finally:
         await ch.execute(f"DROP ROLE IF EXISTS {role}")
+
+
+async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pair(
+    ch: Any, scratch: tuple[str, str], users: dict[str, str]
+) -> None:
+    """Once a table has a row policy, a user no permissive policy covers reads none of its
+    rows: attach's scan would find no org there."""
+    from server.insights.domain.analysis import OTHERS_POLICY_NAME, POLICY_NAME
+
+    schema, _ = scratch
+    other = users["writer"]
+    await ch.execute(_mergetree(f"{schema}.memory"))
+    await ch.execute(
+        f"INSERT INTO {schema}.memory SETTINGS async_insert = 0 VALUES ({{o:String}}, 1)",
+        {"o": unique_org("scan")},
+    )
+    own = str((await ch.query_one("SELECT currentUser() AS u"))["u"])
+    topology = await cell_ch.read_topology(ch)
+    created = []
+    try:
+        theirs = f"theirs_{schema}"
+        await ch.execute(
+            f"CREATE ROW POLICY {theirs} ON {schema}.memory AS permissive FOR SELECT "
+            f"USING org = '' TO {other}"
+        )
+        created.append(theirs)
+        # The policy hides every row from attach's own user.
+        assert (await ch.query_one(f"SELECT count() AS n FROM {schema}.memory"))["n"] == 0
+        listed = await cell_scan.list_tables(ch, None, topology, {})
+        assert {r.subject for r in listed.refusals} == {
+            f"row policy on loom.memory: {theirs}",
+            "row policy on loom.memory",
+        }, listed.refusals
+        await ch.execute(f"DROP ROW POLICY {theirs} ON {schema}.memory")
+        created.remove(theirs)
+        # Loom's own pair: the analyst's scope, and every other user reading every row.
+        for name, using, to in (
+            (POLICY_NAME, "org = ''", other),
+            (OTHERS_POLICY_NAME, "1", f"ALL EXCEPT {other}"),
+        ):
+            await ch.execute(
+                f"CREATE ROW POLICY `{name}` ON {schema}.memory AS permissive FOR SELECT "
+                f"USING {using} TO {to}"
+            )
+            created.append(name)
+        assert (await ch.query_one(f"SELECT count() AS n FROM {schema}.memory"))["n"] == 1
+        refusals, _ = await cell_writers.own_refusals(ch, topology, {})
+        assert refusals == [], refusals
+        assert own != other
+    finally:
+        for name in created:
+            await ch.execute(f"DROP ROW POLICY IF EXISTS `{name}` ON {schema}.memory")

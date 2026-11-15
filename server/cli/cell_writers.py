@@ -30,9 +30,20 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from server.cli.cell_ch import WHOLE_SQL, Refusal, Topology, databases, per_host
+from server.cli.cell_ch import (
+    _CLUSTER_SQL,
+    TAG,
+    WHOLE_SQL,
+    Refusal,
+    Refused,
+    Topology,
+    databases,
+    per_host,
+)
+from server.core import ch_names
 from server.core.ch import query_tag
 from server.core.ch_errors import error_code, error_line
+from server.insights.domain.analysis import OTHERS_POLICY_NAME, POLICY_NAME
 
 _ACCESS_DENIED = 497  # ClickHouse's ACCESS_DENIED
 
@@ -41,6 +52,7 @@ _IMPLIED_BY: dict[str, tuple[str, ...]] = {
     "SELECT": ("ALL",),
     "SHOW USERS": ("SHOW ACCESS", "ACCESS MANAGEMENT", "ALL"),
     "SHOW ROLES": ("SHOW ACCESS", "ACCESS MANAGEMENT", "ALL"),
+    "SHOW ROW POLICIES": ("SHOW ACCESS", "ACCESS MANAGEMENT", "ALL"),
     "SHOW TABLES": ("SHOW", "ALL"),
     "SHOW COLUMNS": ("SHOW", "ALL"),
     "REMOTE": ("SOURCES", "ALL"),
@@ -319,6 +331,7 @@ def own_problems(grants: list[Grant], topology: Topology, dbs: list[str]) -> lis
         ("SELECT", "system"),
         ("SHOW USERS", None),
         ("SHOW ROLES", None),
+        ("SHOW ROW POLICIES", None),
         ("SHOW TABLES", None),
         ("SHOW COLUMNS", None),
         ("SYSTEM FLUSH ASYNC INSERT QUEUE", None),
@@ -666,6 +679,71 @@ async def _show_grants(ch: Any) -> list[Grant]:
 HostGrants = dict[str, dict[str, list[Grant]]]
 
 
+async def host_names(ch: Any, topology: Topology) -> dict[str, str]:
+    """Each answering host's OS hostname (an opaque group key) and the one configured name
+    it answers for in the cluster; Refused unless there is one group per listed host, each
+    with exactly one name, the names together the listing. The topology's own refusals (two
+    servers under one host name, several shards) come first, then what attach's own user
+    lacks by its own `SHOW GRANTS FINAL` (this read needs READ ON REMOTE), before any read
+    through `clusterAllReplicas`."""
+    if refusals := topology.refusals():
+        raise Refused(refusals)
+    if lacking := await first_refusals(ch, topology):
+        raise Refused(lacking)
+    with query_tag(TAG):
+        rows = await ch.query_all(
+            "SELECT hostName() AS h, groupArrayIf(host_name, is_local) AS names "
+            "FROM clusterAllReplicas({c:String}, system.clusters) WHERE cluster = {c:String} "
+            f"GROUP BY h {_CLUSTER_SQL}",
+            {"c": topology.cluster},
+        )
+    where = f"cluster {topology.cluster}"
+    refusals = []
+    out: dict[str, str] = {}
+    for r in rows:
+        names = sorted(str(n) for n in r["names"])
+        if not names:
+            refusals.append(
+                Refusal(
+                    f"host {r['h']}",
+                    f"this host's address in {where} does not resolve to a local interface",
+                )
+            )
+        elif len(names) > 1:
+            refusals.append(
+                Refusal(
+                    f"host {r['h']}",
+                    f"this host answers for several entries in {where} ({', '.join(names)}): "
+                    "two local entries, or two hosts with one OS hostname",
+                )
+            )
+        else:
+            out[str(r["h"])] = names[0]
+    named = sorted(out.values())
+    if not refusals and (len(named) != len(set(named)) or set(named) != topology.hosts):
+        missing = sorted(topology.hosts - set(named))
+        refusals.append(
+            Refusal(
+                where,
+                "the answering hosts are not the listed ones"
+                + (f" (no answer for {', '.join(missing)})" if missing else ""),
+            )
+        )
+    if refusals:
+        raise Refused(refusals)
+    return out
+
+
+async def first_refusals(ch: Any, topology: Topology) -> list[Refusal]:
+    """What attach's own user lacks by its own `SHOW GRANTS FINAL`, the one read that needs
+    no privilege. It prints the grants of every role the user holds, a role a session does
+    not have included: this first look names what is missing; the rows decide."""
+    if missing := own_problems(await _show_grants(ch), topology, databases()):
+        own = await _own_user(ch)
+        return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")]
+    return []
+
+
 async def own_refusals(
     ch: Any, topology: Topology, names: Mapping[str, str]
 ) -> tuple[list[Refusal], HostGrants]:
@@ -673,32 +751,85 @@ async def own_refusals(
     and `system.columns` would silently list less than there is), and every user's grants
     per host once they could be read. First its own `SHOW GRANTS FINAL`; then, on several
     hosts, that every host runs the reads as this user; then that user's grants as each host
-    keeps them."""
+    keeps them; then the row policies, which would hide rows from its scan."""
     dbs = databases()
+    if lacking := await first_refusals(ch, topology):
+        return lacking, {}
     own = await _own_user(ch)
-    # `SHOW GRANTS FINAL` prints the grants of every role the user holds, a role a session
-    # does not have included: this first look names what is missing; the rows decide.
-    if missing := own_problems(await _show_grants(ch), topology, dbs):
-        return [Refusal(f"user {own}", f"attach's own user lacks {', '.join(missing)}")], {}
-    if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
-        return wrong, {}
     try:
+        if topology.multi and (wrong := await _process_users(ch, topology, names, own)):
+            return wrong, {}
         per_user, own_grants = await _host_grants(ch, topology, names, own)
+        out = []
+        for host, grants in sorted(own_grants.items()):
+            # Each host keeps its own users: attach's must hold the same on every one,
+            # through its default roles alone, as its sessions have them.
+            if lacks := own_problems(grants, topology, dbs):
+                out.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
+        if not out:
+            out = await _row_policies(ch, topology, names, own, dbs)
     except Exception as e:  # only a refused read is judged here; the rest pass to the caller
         if error_code(e) != _ACCESS_DENIED:
             raise
         reason = (
-            f"attach's own user cannot read the grants ({error_line(e)}); a grant held only "
-            "through a role that is not a default role does not reach its sessions"
+            f"attach's own user cannot read what the checks read ({error_line(e)}); a grant "
+            "held only through a role that is not a default role does not reach its sessions"
         )
         return [Refusal(f"user {own}", reason)], {}
-    out = []
-    for host, grants in sorted(own_grants.items()):
-        # Each host keeps its own users: attach's must hold the same on every one, through
-        # its default roles alone, as its sessions have them.
-        if lacks := own_problems(grants, topology, dbs):
-            out.append(Refusal(f"user {own}", f"lacks {', '.join(lacks)}{_on(host)}"))
     return out, per_user
+
+
+async def _row_policies(
+    ch: Any, topology: Topology, names: Mapping[str, str], own: str, dbs: list[str]
+) -> list[Refusal]:
+    rows = await per_host(
+        ch,
+        topology,
+        names,
+        "SELECT hostName() AS h, short_name, database, table, select_filter, is_restrictive, "
+        "apply_to_all, apply_to_list, apply_to_except FROM {source:row_policies} "
+        "WHERE database IN {dbs:Array(String)}",
+        {"dbs": dbs},
+    )
+    out = []
+    for host, found in sorted(rows.items()):
+        for subject, why in row_policy_problems(found, own):
+            out.append(Refusal(subject, f"{why}{_on(host)}"))
+    return out
+
+
+def _applies(r: Mapping[str, Any], user: str) -> bool:
+    if r.get("apply_to_all"):
+        return user not in (r.get("apply_to_except") or [])
+    return user in (r.get("apply_to_list") or [])
+
+
+def row_policy_problems(rows: Iterable[Mapping[str, Any]], own: str) -> list[tuple[str, str]]:
+    """What hides rows from attach's own user, per row policy on a table of the configured
+    databases. Once a table has a row policy, a user that no permissive policy covers reads
+    none of its rows, and a restrictive one filters them: either shortens the scan silently.
+    Loom's own pair passes (`analysis.POLICY_NAME` for the analyst, and
+    `analysis.OTHERS_POLICY_NAME` letting every other user read every row) while it covers
+    attach's user as written; every other policy refuses."""
+    tables: dict[str, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        tables.setdefault(f"{ch_names.logical(str(r['database']))}.{r['table']}", []).append(r)
+    out = []
+    for table, policies in sorted(tables.items()):
+        subject = f"row policy on {table}"
+        others = [p for p in policies if p["short_name"] == OTHERS_POLICY_NAME]
+        for p in policies:
+            name = str(p["short_name"])
+            if name not in (POLICY_NAME, OTHERS_POLICY_NAME):
+                out.append((f"{subject}: {name}", "a row policy hides rows from the scan"))
+            elif name == POLICY_NAME and _applies(p, own):
+                out.append((f"{subject}: {name}", f"the analyst's policy applies to {own}"))
+        if not any(
+            not p.get("is_restrictive") and str(p.get("select_filter")) == "1" and _applies(p, own)
+            for p in others
+        ):
+            out.append((subject, f"no permissive policy `USING 1` covers {own}: it reads no row"))
+    return out
 
 
 async def _process_users(
@@ -758,7 +889,7 @@ async def check_writers(
     ch: Any, topology: Topology, names: Mapping[str, str], allowed: Allowed
 ) -> list[Refusal]:
     """Every ClickHouse writer of the configured databases the operator has not named.
-    `names` is `cell_ch.host_names()` on a cluster of several hosts, else empty. Raises
+    `names` is `host_names()` on a cluster of several hosts, else empty. Raises
     `cell_ch.Refused` when a host answers outside the cluster's names; every other refusal
     is returned."""
     dbs = databases()
