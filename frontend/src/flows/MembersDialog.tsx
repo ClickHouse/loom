@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
-import { Link } from "@clickhouse/click-ui/Link";
 import { IconButton as ClickIconButton } from "@clickhouse/click-ui/IconButton";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -31,6 +30,7 @@ import { allGrants, GRANTS_READ } from "../lib/grantPages";
 import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
 import { grantSpellings, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { PlaceLink } from "../views/LibraryHierarchy";
 
 /** What Remove's confirm says: who still gets in once the grant here goes. Sign-in off serves
  *  every request, so it says only that the grant is revoked. */
@@ -46,7 +46,7 @@ function removeConfirm(o: {
   through: string[];
   /** Parents being read, or not all read: they may let anyone in. */
   unknownAbove: boolean;
-  /** No token claim reaches a collection; a namespace's gate also admits a token's roles. */
+  /** A collection; a namespace's Remove keeps its own words. */
   collection: boolean;
 }): { title: string; message: string } {
   if (o.toEveryone) {
@@ -63,15 +63,20 @@ function removeConfirm(o: {
     };
   }
   const title = `Remove ${o.who} from ${o.name}?`;
+  // A namespace keeps its own words: no parent, and a token's roles may still let them in.
+  if (!o.collection) {
+    return {
+      title,
+      message:
+        "Their JWT keeps any org-level roles, but the namespace-specific grant is revoked. They can re-request access later.",
+    };
+  }
   const revoked = "Their grant here is revoked.";
   if (o.signInOff) return { title, message: revoked };
-  const token = o.collection ? "" : " A token of theirs may still carry roles that let them in.";
-  if (o.everyoneHere) return { title, message: `${revoked} Everyone in ${o.org} can still see it.${token}` };
-  if (o.through.length) {
-    return { title, message: `${revoked} They can still see it through ${joined(o.through)}.${token}` };
-  }
-  if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let them in.${token}` };
-  return { title, message: `${revoked}${token}` };
+  if (o.everyoneHere) return { title, message: `${revoked} Everyone in ${o.org} can still see it.` };
+  if (o.through.length) return { title, message: `${revoked} They can still see it through ${joined(o.through)}.` };
+  if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let them in.` };
+  return { title, message: revoked };
 }
 
 /** A row's Remove: the grant to everyone is no member, so removing it stops sharing. */
@@ -130,7 +135,7 @@ export interface InheritedAccess {
   /** Said in place of the rows when there are none to show; "Its members couldn't be read."
    *  when unset. */
   note?: string;
-  /** Shows the parent in the Library. */
+  /** Shows the parent (`namespace`) in the Library, on a plain click of its link. */
   onOpen?: () => void;
 }
 
@@ -730,9 +735,10 @@ function InheritedSection({ access, me, org }: { access: InheritedAccess; me: re
       <div className="mb-1 text-xs font-medium text-text-muted">
         {"Also can see it, through "}
         {access.onOpen ? (
-          <Link component="button" type="button" size="sm" onClick={access.onOpen}>
+          // A real link: a modified click opens it in a new tab, a plain one in place.
+          <PlaceLink collection={access.namespace} onOpen={access.onOpen}>
             {access.title}
-          </Link>
+          </PlaceLink>
         ) : (
           access.title
         )}

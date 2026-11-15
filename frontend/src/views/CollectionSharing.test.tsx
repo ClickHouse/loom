@@ -479,7 +479,12 @@ describe("the collection header", () => {
     expect(within(through).getByText("group:eng")).toBeInTheDocument();
     const hidden = within(dialog).getByRole("region", { name: "Also can see it, through a collection you can't open" });
     expect(hidden).toHaveTextContent("Who can see that collection isn't shown to you.");
-    fireEvent.click(within(through).getByRole("button", { name: "Engineering" }));
+    // A real link: its address opens the parent in a new tab on a modified click.
+    expect(within(through).getByRole("link", { name: "Engineering" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("collection=col-top"),
+    );
+    fireEvent.click(within(through).getByRole("link", { name: "Engineering" }));
     expect(onOpenPlace).toHaveBeenCalledWith("col-top");
   });
 
@@ -688,7 +693,7 @@ describe("the collection header", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() => expect(api.createGrant).toHaveBeenCalled());
     const through = await within(dialog).findByRole("region", { name: "Also can see it, through Engineering" });
-    fireEvent.click(within(through).getByRole("button", { name: "Engineering" }));
+    fireEvent.click(within(through).getByRole("link", { name: "Engineering" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await screen.findByText(/^Only you|^You/);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));

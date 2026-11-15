@@ -444,7 +444,7 @@ describe("the Library on a collection", () => {
     fireEvent.click(screen.getByRole("button", { name: "See who" }));
     const dialog = await screen.findByRole("dialog");
     const through = await within(dialog).findByRole("region", { name: "Also can see it, through col-q3" });
-    fireEvent.click(within(through).getByRole("button", { name: "col-q3" }));
+    fireEvent.click(within(through).getByRole("link", { name: "col-q3" }));
     await settle();
     expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

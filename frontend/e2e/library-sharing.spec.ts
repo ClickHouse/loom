@@ -81,7 +81,7 @@ test("a parent's link in the members dialog opens it, with the focus on the page
   await button(page, "Share").click();
   const dialog = page.getByRole("dialog", { name: "Members of Runbooks" });
   const through = dialog.getByRole("region", { name: "Also can see it, through Engineering" });
-  await through.getByRole("button", { name: "Engineering" }).click();
+  await through.getByRole("link", { name: "Engineering" }).click();
   await expect(page).toHaveURL(/collection=col-eng/);
   await expect(dialog).toHaveCount(0);
   // The arrival focuses the page's heading, not the body the dialog left behind.

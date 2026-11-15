@@ -416,13 +416,13 @@ describe("MembersDialog paging", () => {
     expect(screen.getByText("Read, add, move and delete documents, and add collections inside")).toBeInTheDocument();
   });
 
-  it("says a token may still let a member removed from a namespace in, and not on a collection", async () => {
+  it("keeps a namespace's own Remove words, and a collection's say the grant here is revoked", async () => {
     vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
     const { unmount } = render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
     fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     expect(confirm.mock.calls[0][0].message).toBe(
-      "Their grant here is revoked. A token of theirs may still carry roles that let them in.",
+      "Their JWT keeps any org-level roles, but the namespace-specific grant is revoked. They can re-request access later.",
     );
     unmount();
     render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" />);
@@ -496,11 +496,19 @@ describe("MembersDialog paging", () => {
     }
   });
 
-  it("says only that a member's grant is revoked on a namespace with sign-in off", async () => {
+  it("says only that a member's grant is revoked on a collection with sign-in off", async () => {
     vi.mocked(api.isAuthDisabled).mockReturnValue(true);
     try {
       vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
-      render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+      render(
+        <MembersDialog
+          open
+          onOpenChange={() => {}}
+          org="acme"
+          namespace="col-a"
+          inherited={[{ namespace: "col-top", title: "Engineering", rows: [grant("bob")] }]}
+        />,
+      );
       fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
       await waitFor(() => expect(confirm).toHaveBeenCalled());
       expect(confirm.mock.calls[0][0].message).toBe("Their grant here is revoked.");

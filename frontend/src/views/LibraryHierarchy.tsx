@@ -127,7 +127,7 @@ export interface Home {
 /** A link to a place in the Library: a plain click opens it here, a modified one (a new
  *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it.
  *  `plain`: a bare anchor its class draws (a tree row, a chip), not Click UI's Link. */
-const PlaceLink = forwardRef<
+export const PlaceLink = forwardRef<
   HTMLAnchorElement,
   { collection: string | null; onOpen: () => void; plain?: boolean; children: ReactNode } & Omit<
     ComponentPropsWithoutRef<"a">,
