@@ -67,6 +67,8 @@ export function useRowSelection(keys: readonly string[], { enabled = true }: { e
 
   const drop = useCallback((leaving: readonly string[]) => {
     const out = new Set(leaving);
+    // A range starts again from the next row toggled when its start left.
+    if (anchor.current !== null && out.has(anchor.current)) anchor.current = null;
     setPicked((prev) => new Set([...prev].filter((k) => !out.has(k))));
   }, []);
 

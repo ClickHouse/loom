@@ -107,7 +107,7 @@ test.describe("1440 px", () => {
 
   test("a place the read is refused is named, and the rest are shown", async ({ page }) => {
     await open(page, "/library?place=all", { refuse: ["col-legal"] });
-    await expect(page.getByText("Not shown, since you can no longer read it: Legal.")).toBeVisible();
+    await expect(page.getByText("Not shown, as you can't read it: Legal.")).toBeVisible();
     await expect(page.locator("main [data-doc-row]")).toHaveCount(4);
     await expect(page.getByText(/4 of 5 places/)).toBeVisible();
   });

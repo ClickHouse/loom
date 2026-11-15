@@ -21,6 +21,17 @@ const api = vi.hoisted(() => ({
   fetchKnowledgePreview: vi.fn(async () => null),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
+const collectionPlaces = vi.hoisted(() => ({ invalidate: vi.fn() }));
+vi.mock("../lib/collectionPlaces", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../lib/collectionPlaces")>();
+  return {
+    ...real,
+    invalidateSharedCollections: (...a: Parameters<typeof real.invalidateSharedCollections>) => {
+      collectionPlaces.invalidate(...a);
+      real.invalidateSharedCollections(...a);
+    },
+  };
+});
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 const toasts = vi.hoisted(() => ({ toast: vi.fn(), toastError: vi.fn(), toastWithId: vi.fn() }));
 vi.mock("../components/Toast", async (importOriginal) => ({
@@ -161,7 +172,7 @@ describe("All documents", () => {
     expect(within(row).getByRole("link", { name: "Namespace team" })).toBeInTheDocument();
   });
 
-  it("names a place it can no longer read and keeps the others", async () => {
+  it("names a place it cannot read and keeps the others", async () => {
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
       const places = [id.namespace, ...(opts.namespaces ?? [])];
       if (places.includes("col-legal")) throw REFUSED;
@@ -169,7 +180,7 @@ describe("All documents", () => {
     });
     render(<Documents />);
     await screen.findByText("Drain a lane");
-    expect(screen.getByText("Not shown, since you can no longer read it: Legal.")).toBeInTheDocument();
+    expect(screen.getByText("Not shown, as you can't read it: Legal.")).toBeInTheDocument();
     expect(screen.queryByText("Services agreement")).toBeNull();
     expect(screen.getByText(/3 of 4 places/)).toBeInTheDocument();
   });
@@ -186,7 +197,7 @@ describe("All documents", () => {
     });
     render(<Documents />);
     await screen.findByText("Team plan");
-    expect(screen.getByText("Not shown, since you can no longer read it: Legal.")).toBeInTheDocument();
+    expect(screen.getByText("Not shown, as you can't read it: Legal.")).toBeInTheDocument();
     expect(screen.getByText(/^Couldn't read Engineering; the other places are shown: /)).toBeInTheDocument();
     down = false;
     fireEvent.click(screen.getByRole("button", { name: "Read again" }));
@@ -243,7 +254,7 @@ describe("All documents", () => {
     render(<Documents />);
     const add = await screen.findByRole("button", { name: "Add document" });
     expect(add).toHaveAttribute("aria-disabled", "true");
-    expect(add).toHaveAccessibleDescription("Your role on this namespace is still loading.");
+    expect(add).toHaveAccessibleDescription("My files is not known until the collections are loaded.");
   });
 
   it("searches passages in every place the list read, each hit naming its place", async () => {
@@ -285,7 +296,7 @@ describe("All documents", () => {
     expect(screen.queryByText(/No documents/)).toBeNull();
   });
 
-  it("leaves a refused place out of later reads instead of reading every place alone again", async () => {
+  it("leaves a refused place out of later reads under one collections answer, reading the list once", async () => {
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
       const places = [id.namespace, ...(opts.namespaces ?? [])];
       if (places.includes("col-legal")) throw REFUSED;
@@ -293,15 +304,52 @@ describe("All documents", () => {
     });
     render(<Documents />);
     await screen.findByText("Drain a lane");
+    await settle();
     const probes = () => api.listKnowledge.mock.calls.filter((c) => (c[1] as ListOpts).limit === 1).length;
     expect(probes()).toBe(4);
-    // A tag asks the server again: one read, of the places not refused.
-    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:none" } });
+    // The refusal reads the collections again, once.
+    expect(collectionPlaces.invalidate).toHaveBeenCalledTimes(1);
+    expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Under the new answer the place is asked again (a grant may have caught up), once.
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:one" } });
+    await waitFor(() => expect(probes()).toBe(8));
+    // Then left out while that answer stands: one read, of the places it can read.
+    const before = api.listKnowledge.mock.calls.length;
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:two" } });
+    await waitFor(() => expect(api.listKnowledge.mock.calls.length).toBe(before + 1));
     await settle();
     const last = api.listKnowledge.mock.calls.at(-1) as unknown[];
     expect(placesOf(last)).toEqual(["team", "col-me", "col-eng"]);
-    expect(probes()).toBe(4);
-    expect(screen.getByText("Not shown, since you can no longer read it: Legal.")).toBeInTheDocument();
+    expect(probes()).toBe(8);
+    expect(collectionPlaces.invalidate).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Not shown, as you can't read it: Legal.")).toBeInTheDocument();
+  });
+
+  it("reads a refused place again once the collections answer again, as a lagging grant catches up", async () => {
+    let granted = false;
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (!granted && places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    await settle();
+    expect(screen.queryByText("Services agreement")).toBeNull();
+    granted = true;
+    // The next read, under the collections' new answer, asks for it again.
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "tag:one" } });
+    await waitFor(() =>
+      expect(placesOf(api.listKnowledge.mock.calls.at(-1) as unknown[])).toEqual([
+        "team",
+        "col-me",
+        "col-eng",
+        "col-legal",
+      ]),
+    );
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
+    expect(await screen.findByText("Services agreement")).toBeInTheDocument();
+    expect(screen.queryByText(/Not shown/)).toBeNull();
   });
 
   it("deletes the rows of the places that took the delete, and keeps a refused place's selected", async () => {
@@ -411,6 +459,21 @@ describe("The Library's search scope", () => {
     // An empty search lists the place shown again.
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
     await waitFor(() => expect(screen.queryByText("Team plan")).toBeNull());
+  });
+
+  it("says Load more failed when one place's cursor is refused, with no read from the top", async () => {
+    api.listKnowledge.mockImplementation(async (_id: unknown, opts: ListOpts) => {
+      if (opts.cursor) throw new ApiError({ status: 422, code: "VALIDATION_FAILED", message: "bad cursor" });
+      return { rows: EVERY.filter((r) => r.namespace === "col-eng"), next_cursor: "c-2" };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() =>
+      expect(toasts.toastError).toHaveBeenCalledWith("Load more failed", expect.any(ApiError), { read: true }),
+    );
+    expect(toasts.toastWithId).not.toHaveBeenCalled();
+    expect(api.listKnowledge.mock.calls.filter((c) => !(c[1] as ListOpts).cursor)).toHaveLength(1);
   });
 
   it("waits for the namespace's role before a row of it takes writes, in a search everywhere", async () => {

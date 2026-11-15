@@ -172,6 +172,7 @@ const NO_PLACE_TO_ADD = "Open a collection or a memory namespace to add document
 const NO_FAILURES: PlaceFailure[] = [];
 const NO_LIST_TO_ADD =
   "The collections could not be loaded, so My files is not known yet; load them again to add here.";
+const ADD_WAITS = "My files is not known until the collections are loaded.";
 
 // Why a restore left the document deleted (`knowledge.restore`'s `reason`).
 const RESTORE_REFUSED: Record<RestoreRefusal, string> = {
@@ -323,11 +324,11 @@ export function Documents() {
       ? addWaits
         ? collections.error
           ? NO_LIST_TO_ADD
-          : ROLE_LOADING
+          : ADD_WAITS
         : NO_PLACE_TO_ADD
       : viewerHere;
   // Known to be unable to add, rather than not known yet: the empty state's words.
-  const knownReadOnly = writeReason !== null && writeReason !== ROLE_LOADING;
+  const knownReadOnly = writeReason !== null && writeReason !== ROLE_LOADING && writeReason !== ADD_WAITS;
   // The place's admins manage its sources. An admin claim reaches no collection, so there
   // only the collection's own role decides.
   const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", roleRead.role, whoami);
@@ -413,13 +414,29 @@ export function Documents() {
     for (const { c } of treeOrder(collections.kept?.rows ?? [])) out.add(c.namespace);
     return [...out];
   }, [ownShelf, picked.namespace, collections.kept]);
-  // Places a read was refused on this visit, per org: later reads leave them out and name
-  // them again, so a reload does not read every place alone again.
-  const [refused, setRefused] = useState<{ org: string; failures: PlaceFailure[] }>({ org: "", failures: [] });
-  const refusedHere = refused.org === picked.org ? refused.failures : NO_FAILURES;
+  // Places a read was refused under the collections answer on screen: later reads leave them
+  // out and name them again, until the collections answer again (a grant may have caught up).
+  const [refused, setRefused] = useState<{ under: unknown; failures: PlaceFailure[] }>({
+    under: null,
+    failures: NO_FAILURES,
+  });
+  const refusedHere = refused.under === collections.kept ? refused.failures : NO_FAILURES;
   const placesWaiting = !collections.kept && !collections.error;
-  // One read names at most MAX_PLACES_READ places; the rest are said to be left out.
-  const everyRead = useMemo(() => everyPlace.slice(0, MAX_PLACES_READ), [everyPlace]);
+  // The places one read asks for: up to MAX_PLACES_READ it can read, a refused one not
+  // counted; the rest are said to be left out.
+  const everyRead = useMemo(() => {
+    const skip = new Set(refusedHere.map((f) => f.namespace));
+    const out: string[] = [];
+    let readable = 0;
+    for (const p of everyPlace) {
+      if (!skip.has(p)) {
+        if (readable === MAX_PLACES_READ) break;
+        readable += 1;
+      }
+      out.push(p);
+    }
+    return out;
+  }, [everyPlace, refusedHere]);
   const placesCut = everyPlace.length - everyRead.length;
   const readPlaces = across ? everyRead : [identity.namespace];
   // What the rows on screen were read for: the org and the places, in order.
@@ -583,30 +600,38 @@ export function Documents() {
   const readTags = JSON.parse(serverTags) as string[];
   // The read on screen's own report; one for other places is not this list's.
   const report = readOf?.key === readKey && rowsScope === readKey ? readOf : null;
-  // A place newly refused: remembered, and the collections read again once, so one revoked
-  // leaves the tree and the list of places.
+  // A place newly refused: remembered under this collections answer, and the collections read
+  // again the first time a place is refused, so one revoked leaves the tree.
+  const askedAgainFor = useRef(new Set<string>());
+  // Each read's refusals are taken once: a later collections answer does not take them again.
+  const tookFrom = useRef<unknown>(null);
   useEffect(() => {
+    if (!report || tookFrom.current === report) return;
+    tookFrom.current = report;
     const known = new Set(refusedHere.map((f) => f.namespace));
     const fresh = (report?.failed ?? []).filter((f) => isRefusal(f.error) && !known.has(f.namespace));
     if (fresh.length === 0) return;
-    setRefused({ org: picked.org, failures: [...refusedHere, ...fresh] });
-    invalidateSharedCollections();
-  }, [report, picked.org, refusedHere]);
+    setRefused({ under: collections.kept, failures: [...refusedHere, ...fresh] });
+    const first = fresh.filter((f) => !askedAgainFor.current.has(f.namespace));
+    for (const f of first) askedAgainFor.current.add(f.namespace);
+    if (first.length) invalidateSharedCollections();
+  }, [report, refusedHere, collections.kept]);
   const leftOut = report?.failed ?? [];
   // Whether every place the person reads is known: not while the collections failed or stop early.
   const placesKnown = !!collections.kept && !collections.kept.truncated;
   const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
+    // The cursor holds for the places its first page read, which the report names.
+    if (!nextCursor || loadingMore || !report) return;
+    const read = report;
     const scope = scopeRef.current;
     markShown(shownRows?.map((r) => rowKeyOf(r, across)) ?? []);
     setLoadingMore(true);
     const ac = new AbortController();
     moreRead.current = ac;
     try {
-      // The places the first page came from, so the cursor and the places agree.
       const r = await listAcross(
         identity.org,
-        report?.read.length ? report.read : readPlaces,
+        read.read,
         {
           cursor: nextCursor,
           fields: LIBRARY_LIST_FIELDS,
@@ -621,9 +646,9 @@ export function Documents() {
       setNextCursor(r.next_cursor ?? null);
     } catch (e) {
       if (scopeRef.current !== scope || ac.signal.aborted) return;
-      // A replica of the other build refuses the cursor this one wrote (a rolling upgrade):
-      // the list starts again from its first page, and says so.
-      if (e instanceof ApiError && e.code === "VALIDATION_FAILED") {
+      // A replica of the other build refuses the cursor this one wrote for a list of several
+      // places (a rolling upgrade): the list starts again from its first page, and says so.
+      if (e instanceof ApiError && e.code === "VALIDATION_FAILED" && (read.read.length > 1 || read.oneAtATime)) {
         toastWithId(
           "The list was read again from the top: the server that answered could not go on from there",
           "info",
@@ -942,30 +967,22 @@ export function Documents() {
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
   // Why a row's writes are unavailable: the place shown's reason, or, for a row of another
   // place, that place's role (a viewer of a collection; the server decides the rest).
-  const reasonFor = (r: KnowledgeEntry): string | null => {
-    const ns = placeOf(r).namespace;
-    if (ns === identity.namespace) return writeReason;
-    const c = byName.get(ns);
-    if (c) return c.role === "viewer" ? needsRole("writer", collectionTitle(c)) : null;
-    // With a collection shown, `viewerHere` does not wait for the namespace's role: this does.
-    if (ns === picked.namespace) return roleRead.loading || !whoami ? ROLE_LOADING : viewerHere;
-    return null;
-  };
+  const reasonFor = useCallback(
+    (r: KnowledgeEntry): string | null => {
+      const ns = r.namespace || identity.namespace;
+      if (ns === identity.namespace) return writeReason;
+      const c = byName.get(ns);
+      if (c) return c.role === "viewer" ? needsRole("writer", collectionTitle(c)) : null;
+      // With a collection shown, `viewerHere` does not wait for the namespace's role: this does.
+      if (ns === picked.namespace) return roleRead.loading || !whoami ? ROLE_LOADING : viewerHere;
+      return null;
+    },
+    [identity.namespace, writeReason, byName, picked.namespace, roleRead.loading, whoami, viewerHere],
+  );
   // Only rows whose place takes the writes can be selected: the selection holds bulk writes.
   const rowKeys = useMemo(
     () => (visibleRows ?? []).filter((r) => reasonFor(r) === null).map((r) => rowKeyOf(r, across)),
-    // What reasonFor reads: the roles and the places.
-    [
-      visibleRows,
-      across,
-      writeReason,
-      viewerHere,
-      roleRead.loading,
-      whoami,
-      byName,
-      identity.namespace,
-      picked.namespace,
-    ],
+    [visibleRows, across, reasonFor],
   );
   // A reason that appears while Edit details is open closes it. Add and Replace stay: they
   // hold an upload in flight, which the server refuses if the role no longer reaches it.
@@ -1045,8 +1062,9 @@ export function Documents() {
     // The keys sent in calls that went through: only those leave the selection.
     const gone: string[] = [];
     try {
-      for (const [ns, keys] of groups) {
-        const uris = keys.map((k) => rowByKey.get(k)?.source_uri ?? "");
+      for (const [ns, inPlace] of groups) {
+        const uris = inPlace.map((r) => r.source_uri);
+        const keys = inPlace.map((r) => rowKeyOf(r, across));
         try {
           const r = await bulkDeleteKnowledge({ org: identity.org, namespace: ns }, uris);
           deleted += r.total_tombstoned;
@@ -1062,21 +1080,20 @@ export function Documents() {
         toast(`Deleted ${deleted} document${deleted === 1 ? "" : "s"}`, "ok");
       }
       // A place that refused keeps its rows selected; the rest leave the selection.
-      if (gone.length === [...groups.values()].flat().length) clearSelection();
-      else selection.drop(gone);
+      selection.drop(gone);
       if (gone.length) reload();
     } finally {
       setBulkBusy(false);
     }
   };
-  // The selected rows' keys, by the place each is in, in the list's order.
+  // The selected rows, by the place each is in, in the list's order.
   const selectedByPlace = () => {
-    const out = new Map<string, string[]>();
+    const out = new Map<string, KnowledgeEntry[]>();
     for (const key of rowKeys) {
       const r = selected.has(key) ? rowByKey.get(key) : undefined;
       if (!r) continue;
       const ns = placeOf(r).namespace;
-      out.set(ns, [...(out.get(ns) ?? []), key]);
+      out.set(ns, [...(out.get(ns) ?? []), r]);
     }
     return out;
   };
@@ -1518,11 +1535,11 @@ export function Documents() {
                     reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
                     onClick: () => {
                       const [from] = selectedPlaces;
-                      const keys = from ? (selectedByPlace().get(from) ?? []) : [];
+                      const moved = from ? (selectedByPlace().get(from) ?? []) : [];
                       if (from)
                         openMove(
                           from,
-                          keys.map((k) => rowByKey.get(k)?.source_uri ?? ""),
+                          moved.map((r) => r.source_uri),
                         );
                     },
                   },
@@ -2022,7 +2039,7 @@ function ReadNotes({
     lines.push(`Only ${collectionsFailed} is shown: the collections could not be loaded.`);
   }
   if (refused.length)
-    lines.push(`Not shown, since you can no longer read ${refused.length === 1 ? "it" : "them"}: ${names(refused)}.`);
+    lines.push(`Not shown, as you can't read ${refused.length === 1 ? "it" : "them"}: ${names(refused)}.`);
   if (lines.length === 0 && broken.length === 0) return null;
   return (
     <div role="status" className="mb-3 space-y-1 text-xs text-text-muted">
