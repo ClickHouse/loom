@@ -483,4 +483,17 @@ describe("MembersDialog paging", () => {
       vi.mocked(api.isAuthDisabled).mockReturnValue(false);
     }
   });
+
+  it("says only that a member's grant is revoked on a namespace with sign-in off", async () => {
+    vi.mocked(api.isAuthDisabled).mockReturnValue(true);
+    try {
+      vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob")] });
+      render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="team" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Remove bob" }));
+      await waitFor(() => expect(confirm).toHaveBeenCalled());
+      expect(confirm.mock.calls[0][0].message).toBe("Their grant here is revoked.");
+    } finally {
+      vi.mocked(api.isAuthDisabled).mockReturnValue(false);
+    }
+  });
 });

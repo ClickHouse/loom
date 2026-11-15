@@ -32,6 +32,45 @@ import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
 import { grantSpellings, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 
+/** What Remove's confirm says: who still gets in once the grant here goes. Sign-in off serves
+ *  every request, so it says only that the grant is revoked. */
+function removeConfirm(o: {
+  toEveryone: boolean;
+  who: string;
+  name: string;
+  org: string;
+  signInOff: boolean;
+  /** Another grant here, to everyone. */
+  everyoneHere: boolean;
+  /** The parents whose grants still let them in. */
+  through: string[];
+  /** Parents being read, or not all read: they may let anyone in. */
+  unknownAbove: boolean;
+  /** No token claim reaches a collection; a namespace's gate also admits a token's roles. */
+  collection: boolean;
+}): { title: string; message: string } {
+  if (o.toEveryone) {
+    const title = `Stop sharing ${o.name} with everyone in ${o.org}?`;
+    const revoked = "The grant here is revoked.";
+    if (o.signInOff) return { title, message: revoked };
+    if (o.through.length) {
+      return { title, message: `${revoked} Everyone in ${o.org} can still see it through ${joined(o.through)}.` };
+    }
+    if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let others in.` };
+    return { title, message: "Only those named here or on a parent, and the members of groups named, keep access." };
+  }
+  const title = `Remove ${o.who} from ${o.name}?`;
+  const revoked = "Their grant here is revoked.";
+  if (o.signInOff) return { title, message: revoked };
+  const token = o.collection ? "" : " A token of theirs may still carry roles that let them in.";
+  if (o.everyoneHere) return { title, message: `${revoked} Everyone in ${o.org} can still see it.${token}` };
+  if (o.through.length) {
+    return { title, message: `${revoked} They can still see it through ${joined(o.through)}.${token}` };
+  }
+  if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let them in.${token}` };
+  return { title, message: `${revoked}${token}` };
+}
+
 /** A row's Remove: the grant to everyone is no member, so removing it stops sharing. */
 function removeLabel(subject: string, org: string): string {
   return subject === "everyone" ? `Stop sharing with everyone in ${org}` : `Remove ${subjectLabel(subject, org)}`;
@@ -287,7 +326,6 @@ export function MembersDialog({
   };
 
   const onRemove = async (subject: string) => {
-    // Sign-in off: every request is served, so revoking a grant narrows nothing.
     const signInOff = isAuthDisabled();
     // Who still lets them in: a grant to everyone here, else a parent whose grants name them
     // under any spelling, or name everyone.
@@ -308,26 +346,19 @@ export function MembersDialog({
     const who = subjectLabel(subject, org);
     // The grant to everyone is no member: removing it narrows the collection to who is named.
     const toEveryone = subject === "everyone";
-    const still = everyoneHere
-      ? ` Everyone in ${org} can still see it.`
-      : through.length
-        ? ` ${toEveryone ? `Everyone in ${org} can` : "They can"} still see it through ${joined(through)}.`
-        : "";
     if (
       !(await confirmAction({
-        title: toEveryone ? `Stop sharing ${name} with everyone in ${org}?` : `Remove ${who} from ${name}?`,
-        message: toEveryone
-          ? signInOff
-            ? "The grant here is revoked."
-            : through.length
-              ? `The grant here is revoked.${still}`
-              : unknownAbove
-                ? "The grant here is revoked. A collection it sits in may still let others in."
-                : "Only those named here or on a parent, and the members of groups named, keep access."
-          : `Their grant here is revoked.${still || (unknownAbove ? " A collection it sits in may still let them in." : "")}${
-              // A namespace's gate also admits a token's own roles; no claim reaches a collection.
-              isCollectionName(namespace) ? "" : " A token of theirs may still carry roles that let them in."
-            }`,
+        ...removeConfirm({
+          toEveryone,
+          who,
+          name,
+          org,
+          signInOff,
+          everyoneHere,
+          through,
+          unknownAbove,
+          collection: isCollectionName(namespace),
+        }),
         confirmLabel: toEveryone ? "Stop sharing" : "Remove",
         danger: true,
       }))
