@@ -21,6 +21,7 @@ We acknowledge within five business days. After triage we agree a disclosure win
 - Wire protocol surface (HTTP/JSON + MCP).
 - The dashboard (token handling, XSS, CSRF).
 - Default deployment artefacts in `dev/` and `Dockerfile`.
+- The release workflow and the images and files it publishes, including a release file that does not match its signature.
 
 ## What's out of scope
 

@@ -67,7 +67,7 @@ On the same commit as the last release candidate, after `prepare.py notes X.Y.Z`
 ```bash
 git tag vX.Y.Z <that commit>
 git push origin vX.Y.Z                                        # the owner's go-ahead first
-# watch it as in §3; after it passes, the registry dispatch (it reuses the tag run's images):
+# watch it as in §3; after it passes, release-check included, the registry dispatch (it reuses the tag run's images):
 gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-ahead first
 git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # X.Y.0 only: the line's patch branch; the owner's go-ahead first
 ```

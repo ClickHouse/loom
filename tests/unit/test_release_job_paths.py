@@ -169,11 +169,6 @@ def test_a_failed_release_step_signs_and_publishes_nothing() -> None:
 
 
 @pytest.mark.parametrize("failed", ["sign-files", "attach-signatures"])
-def test_a_failed_file_signature_skips_the_release_check(failed: str) -> None:
+def test_a_failed_file_signature_attaches_nothing_and_skips_the_release_check(failed: str) -> None:
     ran = run(event="push", dry_run=None, published=False, fail=frozenset({failed}))
-    assert "release-check" not in ran
-
-
-def test_a_failed_file_signature_attaches_no_bundle() -> None:
-    ran = run(event="push", dry_run=None, published=False, fail=frozenset({"sign-files"}))
-    assert "attach-signatures" not in ran
+    assert not ran & ({"attach-signatures", "release-check"} - {failed})
