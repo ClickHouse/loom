@@ -193,8 +193,9 @@ correct the call; the run goes on.
 
 `LoomSession` is the OpenAI Agents SDK's `Session` over Loom: a run given it reads and
 extends the conversation history of one session there. Every process whose Loom agent has
-the same name, and the TypeScript `LoomSession`, reads the same history for the same session
-id and user, and a handoff between agents of one run keeps it.
+the same name reads the same Python history for the same session id and user, and a
+handoff between agents of one run keeps it. Python and TypeScript histories are separate
+because the frameworks use different item formats.
 
 ```python
 from loom.integrations.openai_agents import LoomSession
@@ -213,7 +214,8 @@ result = await Runner.run(assistant, "Book my usual seat to Lisbon", session=ses
 An `episodic` memory is not embedded, so an item is never merged with or judged against
 another row, and a repeated item stays two items (one `memory.set` per item: a batch would
 fold a value identical to a live row). Items are stored under a Loom session derived from
-the user and the session id (`oai-` and a digest of the pair), and keys sort in the order
+the user and the session id (`oai-py-` and a digest of the pair in Python, `oai-ts-`
+in TypeScript), and keys sort in the order
 the items were added. A read without a limit (the SDK's default) and `clear_session` list the
 whole history. The history is the user's: unset, `user_id` writes the namespace's shared
 rows; an empty or `-` user raises `ValueError`. To keep what a conversation
@@ -244,7 +246,7 @@ const result = await run(assistant, "Book my usual seat to Lisbon");
 ```
 
 `new LoomSession(agent, sessionId, { userId, keyPrefix })` is the TypeScript `Session`, over
-the same rows as the Python one:
+its native item format and separate session rows:
 
 ```ts
 import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";

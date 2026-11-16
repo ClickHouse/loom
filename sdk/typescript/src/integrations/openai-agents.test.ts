@@ -1,3 +1,4 @@
+import type { AgentInputItem } from "@openai/agents";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../agent.js";
 import { LOOM_TOOL_SPECS } from "../tools.js";
@@ -135,14 +136,34 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     const sets = calls.filter((c) => c.op === "memory.set").map((c) => c.body);
     expect(new Set(sets.map((b) => b.memory_type))).toEqual(new Set(["episodic"]));
     expect(new Set(sets.map((b) => b.user_id))).toEqual(new Set(["alice"]));
-    expect(String(sets[0].session_id)).toMatch(/^oai-[0-9a-f]{20}$/);
+    expect(String(sets[0].session_id)).toMatch(/^oai-ts-[0-9a-f]{20}$/);
   });
 
-  it("names the same loom session as the Python LoomSession", async () => {
+  it("separates native TypeScript history from Python history", async () => {
     const { agent, calls } = rowsHarness();
     await new LoomSession(agent, "s1", { userId: "alice" }).addItems([msg("user", "x")]);
-    // sha256 of the compact JSON pair ["alice","s1"], which the Python LoomSession hashes too.
-    expect(calls[0].body.session_id).toBe("oai-65872b142b2cfb23bddc");
+    // The digest matches Python, but its oai-py- session stores a different item format.
+    expect(calls[0].body.session_id).toBe("oai-ts-65872b142b2cfb23bddc");
+  });
+
+  it("keeps native tool history separate from Python tool results", async () => {
+    const { agent, calls } = rowsHarness();
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    const items: AgentInputItem[] = [
+      { type: "function_call", callId: "c1", name: "recall", arguments: "{}" },
+      { type: "function_call_result", callId: "c1", name: "recall", output: "remembered", status: "completed" },
+    ];
+    await session.addItems(items);
+    await agent.call(
+      "memory.set",
+      {
+        memory_key: String(calls[0].body.memory_key),
+        value: JSON.stringify({ type: "function_call_output", call_id: "c1", output: "other" }),
+        memory_type: "episodic",
+      },
+      { userId: "alice", sessionId: "oai-py-65872b142b2cfb23bddc" },
+    );
+    expect(await session.getItems()).toEqual(items);
   });
 
   it("pops the latest item and clears only its own session", async () => {
@@ -195,10 +216,10 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     expect(await outer.getItems()).toEqual([]);
   });
 
-  it("hashes a non-ASCII id as the Python LoomSession does", async () => {
+  it("keeps non-ASCII user ids distinct", async () => {
     const { agent, calls } = rowsHarness();
     await new LoomSession(agent, "s1", { userId: "jos\u00e9" }).addItems([msg("user", "x")]);
-    expect(calls[0].body.session_id).toBe("oai-c10f2e9c4ca65c3f8b98");
+    expect(calls[0].body.session_id).toBe("oai-ts-c10f2e9c4ca65c3f8b98");
   });
 
   it("refuses a missing id, a user naming none and an empty prefix", () => {

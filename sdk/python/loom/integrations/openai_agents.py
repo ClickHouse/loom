@@ -33,7 +33,7 @@ import re
 import secrets
 import time
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     from agents import FunctionTool, TResponseInputItem
@@ -113,8 +113,8 @@ class LoomSession:
     Each item is one ``episodic`` memory (not embedded, so never merged with or
     judged against another row) under ``<key_prefix>/<nanoseconds>-<random>``; reads
     sort the items by key, the order they were added. Every process whose Loom agent
-    has the same name, and the TypeScript ``LoomSession``, reads the same history for
-    the same session id and user. The mapping is in
+    has the same name reads the same Python history for the same session id and user.
+    TypeScript sessions have a separate history because their item formats differ. The mapping is in
     ``docs/features/integrations/frameworks.md`` (OpenAI Agents SDK).
     """
 
@@ -138,10 +138,9 @@ class LoomSession:
         self._prefix = key_prefix.strip("/") + "/"
         if self._prefix == "/":
             raise ValueError("key_prefix must not be empty")
-        # A Loom session that two users choosing the same session id cannot share. Compact,
-        # unescaped JSON, as JavaScript writes it, so the TypeScript session names the same.
+        # Users and SDK languages have separate histories: their native item formats differ.
         pair = json.dumps([user_id or "-", session_id], separators=(",", ":"), ensure_ascii=False)
-        self._loom_session = f"oai-{hashlib.sha256(pair.encode()).hexdigest()[:20]}"
+        self._loom_session = f"oai-py-{hashlib.sha256(pair.encode()).hexdigest()[:20]}"
 
     def _scope(self) -> dict[str, Any]:
         return {"user_id": self._user_id, "session_id": self._loom_session}
@@ -218,4 +217,4 @@ class LoomSession:
 def _item(value: Any) -> TResponseInputItem:
     """A stored item: the JSON text it was written as, or the value Loom parsed from it."""
     parsed = json.loads(value) if isinstance(value, str) else value
-    return parsed
+    return cast(TResponseInputItem, parsed)

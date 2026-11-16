@@ -69,7 +69,8 @@ type ItemRow = { memory_key: string; value?: unknown; value_truncated?: boolean;
  * `LoomSession`): the conversation history of one session, as episodic memories of the
  * Loom agent and the user, keyed `<keyPrefix>/<nanoseconds>-<random>`; reads sort the
  * items by key, the order they were added. Every process whose Loom agent has the same
- * name, and the Python `LoomSession`, reads the same history for the same id and user.
+ * name reads the same TypeScript history for the same id and user. Python sessions
+ * have a separate history because their item formats differ.
  */
 export class LoomSession implements Session {
   private readonly prefix: string;
@@ -95,10 +96,9 @@ export class LoomSession implements Session {
   }
 
   private scope(): Promise<Scope> {
-    // A Loom session that two users choosing the same session id cannot share; the
-    // Python LoomSession hashes the same compact JSON.
+    // Users and SDK languages have separate histories: their native item formats differ.
     this.loomSession ??= sha256Hex(JSON.stringify([this.opts.userId ?? "-", this.sessionId])).then(
-      (hex) => `oai-${hex.slice(0, 20)}`,
+      (hex) => `oai-ts-${hex.slice(0, 20)}`,
     );
     return this.loomSession.then((sessionId) => ({ userId: this.opts.userId, sessionId }));
   }

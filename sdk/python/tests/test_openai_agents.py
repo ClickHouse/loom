@@ -235,6 +235,27 @@ def test_pop_item_removes_and_returns_the_latest_item() -> None:
     assert asyncio.run(session.pop_item()) is None
 
 
+def test_native_tool_history_does_not_read_typescript_items() -> None:
+    rows = _Rows()
+    session = _session(rows)
+    items = [
+        {"type": "function_call", "call_id": "c1", "name": "recall", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "remembered"},
+    ]
+    asyncio.run(session.add_items(items))
+    key = next(iter(rows.rows))[2]
+    asyncio.run(
+        rows.set(
+            key,
+            json.dumps({"type": "function_call_result", "callId": "c1", "output": "other"}),
+            "episodic",
+            user_id="alice",
+            session_id=session._loom_session.replace("oai-py-", "oai-ts-"),
+        )
+    )
+    assert asyncio.run(session.get_items()) == items
+
+
 def test_clear_session_deletes_only_this_sessions_items() -> None:
     rows = _Rows()
     mine, other, bobs = _session(rows), _session(rows, "s2"), _session(rows, user_id="bob")
@@ -261,13 +282,13 @@ def test_the_loom_session_is_per_user_and_unambiguous() -> None:
 
     assert loom_session("alice", "s1") != loom_session("bob", "s1")
     assert loom_session("a/b", "c") != loom_session("a", "b/c")
-    assert loom_session(None, "s1").startswith("oai-")
+    assert loom_session(None, "s1").startswith("oai-py-")
     assert loom_session("josé", "s1") != loom_session("jose", "s1")
     assert (
-        loom_session("josé", "s1") == "oai-c10f2e9c4ca65c3f8b98"
+        loom_session("josé", "s1") == "oai-py-c10f2e9c4ca65c3f8b98"
     )  # unescaped, as JavaScript writes it
-    # The TypeScript LoomSession names the same: sha256 of the compact JSON pair.
-    assert loom_session("alice", "s1") == "oai-65872b142b2cfb23bddc"
+    # TypeScript uses oai-ts- so native item formats never mix.
+    assert loom_session("alice", "s1") == "oai-py-65872b142b2cfb23bddc"
 
 
 def test_a_session_refuses_a_missing_id_a_user_naming_none_and_an_empty_prefix() -> None:
