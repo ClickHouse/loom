@@ -12,29 +12,27 @@ Sources a namespace's admin asked to sync (`sync_now`) go first, the rest from
 where the previous pass stopped. Each source's turn holds the source's own lease,
 so two copies of the worker never sync it at once.
 
-A turn lists the source's files: every file on its first turn, when asked
-(`full`) and once `knowledge_source_sync_full_interval_seconds` have passed
-since the last full listing; otherwise those changed after the stored stamp. A
-file whose stored copy has the listed revision, and whose chunks are those of its
-version or of its revision, is skipped without a fetch, unless
-a full listing finds a native document whose stored text still holds its
-pictures' bytes and that the sync state has not recorded as checked at this
-revision. A changed file is fetched, turned into Markdown and written with
-`knowledge.upsert` as `worker:knowledge-source-sync`, `imported`, tagged
-`source:<name>` (and, in a mirror, `source-id:<id>`). A native document is exported
-as Markdown, a presentation converted slide by slide, and a PDF, `.pptx` or `.docx`
-file sent to the extractor service its format is routed to (the server parses no
-original itself); the bytes are kept as the document's original. A file that cannot be
-stored is counted `unconverted` with its reason and not written. One the store
-or the extractor refuses, one over the size bound and one whose write is refused
-are also given up on their revision at once, so later passes skip them without a
-fetch; one with no https link or a format no extractor declares costs no fetch
-and is counted again each pass. A file whose fetch, extraction or write fails in
-a way that may pass (a 5xx or a timeout on that file, its extractor call, the
-write) waits: the turn stays incomplete for `_WAIT_PASSES` passes on the same
-revision, then the file is given up on. A given-up file is tried again when it
-changes, once after each completed full listing, and on a full sync request.
-What fails for every file stays the turn's: the token exchange, the listing, a
+A turn lists the source's files: every file on its first turn, when asked (`full`) and
+once `knowledge_source_sync_full_interval_seconds` have passed since the last full
+listing; otherwise those changed after the stored stamp. A file whose stored copy has
+the listed revision, and whose chunks are those of its version or of its revision, is
+skipped without a fetch, unless a full listing finds a native document whose stored text
+still holds its pictures' bytes and that the sync state has not recorded as checked at
+this revision. A changed file is fetched, turned into Markdown and written with
+`knowledge.upsert` as `worker:knowledge-source-sync`, `imported`, tagged `source:<name>`
+(and, in a mirror, `source-id:<id>`). A native document is exported as Markdown, a
+presentation converted slide by slide, and a PDF, `.pptx` or `.docx` file sent to the
+extractor service its format is routed to (the server parses no original itself); the
+bytes are kept as the document's original. A file that cannot be stored is counted
+`unconverted` with its reason and not written. One the store or the extractor refuses,
+one over the size bound and one whose write is refused are also given up on their
+revision at once, so later passes skip them without a fetch; one with no https link or a
+format no extractor declares costs no fetch and is counted again each pass. A file whose
+fetch, extraction or write fails in a way that may pass (a 5xx or a timeout on that
+file, its extractor call, the write) waits: the turn stays incomplete for `_WAIT_PASSES`
+passes on the same revision, then the file is given up on. A given-up file is tried
+again when it changes, once after each completed full listing, and on a full sync
+request. What fails for every file stays the turn's: the token exchange, the listing, a
 401, a rate limit, an extractor whose capabilities cannot be read.
 
 The source and the address are read again before each write. A source removed or
