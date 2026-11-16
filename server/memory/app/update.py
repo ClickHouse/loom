@@ -508,6 +508,7 @@ async def _update_conflict_check(
             memory_key=existing.memory_key,
             new_value=serialized_value,
             new_embedding=embedding,
+            new_user_id=existing.user_id,
             **(await cfg_task).check_kwargs(),
         )
     if conflict_result.verdict == "rejected":

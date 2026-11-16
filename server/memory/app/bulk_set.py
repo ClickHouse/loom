@@ -1550,6 +1550,7 @@ async def _bulk_conflict_verdicts(
                     new_value=serialized,
                     new_embedding=vec,
                     new_run_id=str(getattr(input, "run_id", "") or "-"),
+                    new_user_id=input.user_id,
                     new_valid_at=(
                         getattr(entry, "valid_at", None) or getattr(input, "valid_at", None)
                     ),

@@ -633,6 +633,7 @@ async def _set_conflict_verdict(
             new_value=serialized_value,
             new_embedding=embedding,
             new_run_id=input.run_id,
+            new_user_id=input.user_id,
             new_valid_at=getattr(input, "valid_at", None),
             **check_kwargs,
         )

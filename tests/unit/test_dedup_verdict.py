@@ -274,10 +274,11 @@ async def test_memory_set_output_carries_duplicate_of() -> None:
 # ----------------------------------------------------------------------
 
 
-def _restated_peer(run_id: str = "-") -> list[dict[str, Any]]:
+def _restated_peer(run_id: str = "-", user_id: str = "-") -> list[dict[str, Any]]:
     return [
         {
             "memory_id": "uuid-1",
+            "user_id": user_id,
             "memory_key": "k_existing",
             "value": '"User prefers Postgres."',
             "dist": 0.01,
@@ -287,7 +288,7 @@ def _restated_peer(run_id: str = "-") -> list[dict[str, Any]]:
     ]
 
 
-async def _write(run_id: str):
+async def _write(run_id: str, user_id: str = "-"):
     from server.memory.app.conflicts import check_on_commit
 
     return await check_on_commit(
@@ -299,6 +300,7 @@ async def _write(run_id: str):
         new_value='"user prefers postgres"',
         new_embedding=[0.1, 0.2],
         new_run_id=run_id,
+        new_user_id=user_id,
     )
 
 
@@ -323,6 +325,29 @@ async def test_same_run_restatement_still_merges(install_ch) -> None:
     install_ch(_FakeCH(peers=_restated_peer("run-7")))
     result = await _write("run-7")
     assert result.verdict == "merge" and result.existing_memory_id == "uuid-1"
+
+
+@pytest.mark.asyncio
+async def test_a_write_naming_its_user_is_judged_against_that_users_rows(install_ch) -> None:
+    """Merged into another user's row, the write would vanish from the writer's
+    user_id-scoped reads: another user's row is no peer of it."""
+    install_ch(_FakeCH(peers=_restated_peer(user_id="alice")))
+    result = await _write("-", user_id="bob")
+    assert result.verdict == "clear" and result.peers == []
+    result = await _write("-", user_id="alice")
+    assert result.verdict == "merge" and result.existing_memory_id == "uuid-1"
+    # A write that names no user is judged against every user's rows, as before.
+    result = await _write("-", user_id="-")
+    assert result.verdict == "merge"
+
+
+@pytest.mark.asyncio
+async def test_another_users_pinned_row_still_blocks_a_write(install_ch) -> None:
+    pinned = _restated_peer(user_id="alice")
+    pinned[0].update(pinned=1, value='"User prefers MySQL."', dist=0.04)
+    install_ch(_FakeCH(peers=pinned))
+    result = await _write("-", user_id="bob")
+    assert result.verdict == "rejected" and result.pinned_blocker_id == "uuid-1"
 
 
 @pytest.mark.asyncio

@@ -411,19 +411,21 @@ async def _foreign_pinned_rows(
 
 
 def _split_by_read_scope(
-    peers: list[ConflictPeer],
+    peers: list[ConflictPeer], new_user_id: str = "-"
 ) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
     """(peers inside the request's read scope, peers outside it). A writer
-    bounded to one user never merges into, reinforces, supersedes or marks
-    another user's row; only a pinned one still blocks it. A scope the
-    request cannot resolve keeps no peer inside."""
+    bounded to one user, or a write that names its user, never merges into,
+    reinforces, supersedes or marks another user's row; only a pinned one still
+    blocks it. A scope the request cannot resolve keeps no peer inside."""
     scope = _scope_or_none()
     if scope is None:
         return [], peers
     inside: list[ConflictPeer] = []
     outside: list[ConflictPeer] = []
     for p in peers:
-        (inside if row_in_read_scope(scope, p.user_id, p.session_id) else outside).append(p)
+        other_user = new_user_id not in ("", "-") and (p.user_id or "-") != new_user_id
+        in_scope = row_in_read_scope(scope, p.user_id, p.session_id)
+        (outside if other_user or not in_scope else inside).append(p)
     return inside, outside
 
 
@@ -490,6 +492,7 @@ async def check_on_commit(
     new_value: str,
     new_embedding: list[float],
     new_run_id: str = "-",
+    new_user_id: str = "-",
     new_valid_at: datetime | None = None,
     candidate_rows: list[dict[str, Any]] | None = None,
     resolved_threshold: float | None = None,
@@ -509,6 +512,9 @@ async def check_on_commit(
     is returned as `duplicate` (insert, status='duplicate', `duplicate_of`
     the peer) rather than `merge` (no insert), so the run's `run_id`-scoped
     reads find what the run wrote. Same-run restatements still merge.
+    `new_user_id`: a write that names its user is judged against that user's
+    rows only (another user's pinned row still blocks it), so a restatement
+    never folds into a row the writer's `user_id`-scoped reads cannot see.
 
     `new_valid_at`: the new row's validity date when the writer supplied one; it decides
     which side of a templated substitution `newest_wins` retires.
@@ -575,7 +581,7 @@ async def check_on_commit(
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
 
-    all_peers, foreign = _split_by_read_scope([_peer_of(r) for r in rows])
+    all_peers, foreign = _split_by_read_scope([_peer_of(r) for r in rows], new_user_id)
     peers = [p for p in all_peers if p.similarity >= threshold]
     if keyed:
         verdict = "conflict" if peers else "clear"

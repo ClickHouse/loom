@@ -118,11 +118,14 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     it. A `definition` row, also key-identified, answers `clear` with no peer read
     ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
 
-    Under a token bounded to one user (`read_user_id`), peers outside that user's rows are
-    treated as absent, with two exceptions that hold across the whole namespace by design: a
-    close pinned peer still rejects the write (409 `PINNED_CONFLICT`; a decision excepted),
-    and `proposed=true` still may not land on a key that holds any user's established fact
-    (409 `KEY_HOLDS_FACT`). A pin protects the namespace's fact from every writer, and a
+    Under a token bounded to one user (`read_user_id`), or for a write that names its
+    `user_id` under any token, peers outside that user's rows are treated as absent: a
+    service writing for many users through one namespace-wide token must not fold a
+    user's fact into another user's row, which the writer's `user_id`-scoped reads cannot
+    see. A write without a user is judged against every user's rows. Two exceptions hold
+    across the whole namespace by design: a close pinned peer still rejects the write (409
+    `PINNED_CONFLICT`; a decision excepted), and `proposed=true` still may not land on a
+    key that holds any user's established fact (409 `KEY_HOLDS_FACT`). A pin protects the namespace's fact from every writer, and a
     proposal must not retire anyone's fact. The refusal names no row, id or value, so the
     narrowed token learns only that its write was refused.
 
