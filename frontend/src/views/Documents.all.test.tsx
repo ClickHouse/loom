@@ -2,6 +2,7 @@
 // and taking its writes from its own place; what a read of several places left out (a
 // place refused or failed, a server that reads one place per call); and a search scoped to
 // the place shown or everywhere.
+import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -520,27 +521,64 @@ describe("All documents", () => {
     );
   });
 
-  it("reads the list once when the collections answer again without a refused place", async () => {
+  for (const strict of [false, true]) {
+    it(`reads the list once when the collections answer again without a refused place${strict ? ", in StrictMode" : ""}`, async () => {
+      let refused = false;
+      api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+        const places = [id.namespace, ...(opts.namespaces ?? [])];
+        if (places.includes("col-legal")) {
+          refused = true;
+          throw REFUSED;
+        }
+        return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+      });
+      // The refusal reads the collections again, and their new answer no longer lists Legal.
+      api.listCollections.mockImplementation(async () => ({
+        collections: refused ? COLLECTIONS.slice(0, 2) : COLLECTIONS,
+        next_cursor: null,
+      }));
+      render(
+        strict ? (
+          <StrictMode>
+            <Documents />
+          </StrictMode>
+        ) : (
+          <Documents />
+        ),
+      );
+      await screen.findByText("Drain a lane");
+      await waitFor(() => expect(screen.queryByText(/Not shown/)).toBeNull());
+      await settle();
+      const pages = api.listKnowledge.mock.calls.filter((c) => (c[1] as ListOpts).limit !== 1).map(placesOf);
+      // The refused read, the read of the rest, and one read under the new answer.
+      expect(pages).toEqual([
+        ["team", "col-me", "col-eng", "col-legal"],
+        ["team", "col-me", "col-eng"],
+        ["team", "col-me", "col-eng"],
+      ]);
+    });
+  }
+
+  it("reads a collection opened after its refusal in All documents, and leaves it as refused", async () => {
     api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
       const places = [id.namespace, ...(opts.namespaces ?? [])];
       if (places.includes("col-legal")) throw REFUSED;
       return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
     });
-    // The refusal reads the collections again, and their new answer no longer lists Legal.
-    api.listCollections
-      .mockResolvedValueOnce({ collections: COLLECTIONS, next_cursor: null })
-      .mockResolvedValue({ collections: COLLECTIONS.slice(0, 2), next_cursor: null });
     render(<Documents />);
-    await screen.findByText("Drain a lane");
-    await waitFor(() => expect(screen.queryByText(/Not shown/)).toBeNull());
+    await screen.findByText("Not shown, as you can't read it: Legal.");
     await settle();
-    const pages = api.listKnowledge.mock.calls.filter((c) => (c[1] as ListOpts).limit !== 1).map(placesOf);
-    // The refused read, the read of the rest, and one read under the new answer.
-    expect(pages).toEqual([
-      ["team", "col-me", "col-eng", "col-legal"],
-      ["team", "col-me", "col-eng"],
-      ["team", "col-me", "col-eng"],
-    ]);
+    act(() => {
+      history.pushState(null, "", "/library?collection=col-legal");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() =>
+      expect(toasts.toast).toHaveBeenCalledWith(
+        expect.stringMatching(/^col-legal is not among the collections/),
+        "info",
+      ),
+    );
+    expect(screen.queryByText("This collection is empty")).toBeNull();
   });
 
   it("says nothing is in any place only when every place was read and holds none", async () => {

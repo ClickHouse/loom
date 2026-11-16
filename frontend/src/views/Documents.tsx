@@ -396,9 +396,10 @@ export function Documents() {
   const parsedQuery = useMemo(() => parseSearchQuery(listQuery), [listQuery]);
   const filtering = listQuery.trim() !== "";
   // Where a search looks: the place shown, or every place. All documents reads every place
-  // whatever is typed; another place starts each visit here.
-  const [scope, setScope] = useState<SearchScope>("here");
-  useEffect(() => setScope("here"), [place]);
+  // whatever is typed; another place starts each visit here, from its first render, as the
+  // choice is kept with the place it was picked in.
+  const [scopeOf, setScopeOf] = useState<{ at: string; scope: SearchScope }>({ at: place, scope: "here" });
+  const scope = scopeOf.at === place ? scopeOf.scope : "here";
   const across = all || (scope === "everywhere" && filtering);
   // Every place the person reads in the Library, in the tree's order: the header's namespace,
   // then My files and the collections. Waits for the collections' first answer.
@@ -411,7 +412,18 @@ export function Documents() {
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
-  const refusals = useRefusedPlaces(collections.kept, picked.org, reload);
+  // What a read of several places read, keyed to what it was read for: the places the rows
+  // and the cursor come from, those that failed, and whether the server read only the first.
+  const [readOf, setReadOf] = useState<{
+    key: string;
+    read: string[];
+    failed: PlaceFailure[];
+    oneAtATime: boolean;
+  } | null>(null);
+  const refusals = useRefusedPlaces(collections.kept, picked.org, !!readOf?.failed.some((f) => isRefusal(f.error)));
+  // A new collections answer while a refused place is named reads the list again: a grant
+  // that lagged behind the list may have caught up.
+  if (refusals.reread) reload();
   const placesWaiting = !collections.kept && !collections.error;
   // The places one read asks for: up to MAX_PLACES_READ it can read, a refused one not
   // counted; the rest are said to be left out.
@@ -462,14 +474,6 @@ export function Documents() {
   const [loadErrorFor, setLoadErrorFor] = useState("");
   // The places (`readKey`) the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
-  // What a read of several places read, keyed to what it was read for: the places the rows
-  // and the cursor come from, those that failed, and whether the server read only the first.
-  const [readOf, setReadOf] = useState<{
-    key: string;
-    read: string[];
-    failed: PlaceFailure[];
-    oneAtATime: boolean;
-  } | null>(null);
   // A Load more in flight: a new read stops it.
   const moreRead = useRef<AbortController | null>(null);
   // The place (`place`) whose list returned a document on this visit: a later filtered, failed
@@ -516,7 +520,8 @@ export function Documents() {
       places,
       { fields: LIBRARY_LIST_FIELDS, limit: LIBRARY_PAGE, ...(tags.length ? { tags } : {}) },
       signal,
-      refusals.skip,
+      // One place is read whatever was refused: a refusal there is the page's own error.
+      across ? refusals.skip : [],
     )
       .then((r) => {
         if (live()) {
@@ -537,7 +542,6 @@ export function Documents() {
       })
       .catch((e) => {
         if (!live()) return;
-        refusals.record(under, null);
         // A failed read is said as a failure, never as an empty library.
         setLoadError(e);
         setLoadErrorFor(places.length === 1 ? places[0] : "");
@@ -1179,7 +1183,7 @@ export function Documents() {
       <ButtonGroup
         aria-label="Search in"
         selected={scope}
-        onClick={(v) => setScope(v === "everywhere" ? "everywhere" : "here")}
+        onClick={(v) => setScopeOf({ at: place, scope: v === "everywhere" ? "everywhere" : "here" })}
         options={[
           { value: "here", label: shown ? "This collection" : "This namespace" },
           { value: "everywhere", label: "Everywhere" },
@@ -1515,11 +1519,10 @@ export function Documents() {
                     reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
                     onClick: () => {
                       const [from] = selectedPlaces;
-                      const moved = from ? (selectedGroups?.get(from) ?? []) : [];
                       if (from)
                         openMove(
                           from,
-                          moved.map((r) => r.source_uri),
+                          (selectedGroups?.get(from) ?? []).map((r) => r.source_uri),
                         );
                     },
                   },
