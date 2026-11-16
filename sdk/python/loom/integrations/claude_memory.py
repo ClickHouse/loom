@@ -111,6 +111,8 @@ def _listing(shown: str, directory: str, paths: list[str]) -> str:
 
 def _numbered(path: str, text: str, view_range: list[int] | None) -> str:
     lines = text.split("\n")
+    if len(lines) > 999_999:
+        raise ToolError(f"File {path} exceeds maximum line limit of 999,999 lines.")
     start, shown = 1, lines
     if view_range and len(view_range) == 2:
         start = max(1, view_range[0])

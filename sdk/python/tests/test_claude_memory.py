@@ -195,6 +195,13 @@ def test_insert_keeps_the_reference_trailing_newline(
     assert docs.docs["loom-memory://default/memories/n.md"][0] == expected
 
 
+def test_view_refuses_the_reference_line_limit_before_slicing(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/n.md", "file_text": "\n" * 999_999})
+    with pytest.raises(ToolError, match="exceeds maximum line limit of 999,999 lines"):
+        run(docs, {"command": "view", "path": "/memories/n.md", "view_range": [1, 1]})
+
+
 def test_delete_a_file_or_a_directory(run: Runner) -> None:
     docs = _Docs()
     for path in ("/memories/a.md", "/memories/p/b.md", "/memories/p/c.md", "/memories/pq.md"):

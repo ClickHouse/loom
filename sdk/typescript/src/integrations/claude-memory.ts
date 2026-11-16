@@ -134,6 +134,9 @@ function ancestors(path: string): string[] {
 
 function numbered(path: string, text: string, range?: number[] | null): string {
   const lines = text.split("\n");
+  if (lines.length > 999_999) {
+    throw new ToolError(`File ${path} exceeds maximum line limit of 999,999 lines.`);
+  }
   let start = 1;
   let shown = lines;
   if (range && range.length === 2) {

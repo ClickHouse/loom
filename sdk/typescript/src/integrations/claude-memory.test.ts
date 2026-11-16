@@ -143,6 +143,14 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     expect(docs.get("loom-memory://default/memories/n.md")?.content).toBe(expected);
   });
 
+  it("refuses the reference line limit before slicing a view", async () => {
+    const h = loomMemoryHandlers(harness().agent);
+    await h.create({ command: "create", path: "/memories/n.md", file_text: "\n".repeat(999_999) });
+    await expect(h.view({ command: "view", path: "/memories/n.md", view_range: [1, 1] })).rejects.toThrow(
+      "exceeds maximum line limit of 999,999 lines",
+    );
+  });
+
   it("keeps every path under /memories and a store to its own files", async () => {
     const { agent, docs, ops } = harness();
     const h = loomMemoryHandlers(agent);
