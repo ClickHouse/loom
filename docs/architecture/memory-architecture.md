@@ -114,9 +114,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     - any other close peer: `conflict`.
 
     A `decision` row (`KEY_IDENTIFIED_TYPES`) is identified by its key: a close peer in
-    the writer's read scope answers `conflict`, pinned or not, and no pinned peer refuses
-    it. A `definition` row, also key-identified, answers `clear` with no peer read
-    ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
+    the writer's scope (`_writer_scope`, below) answers `conflict`, pinned or not, and no
+    pinned peer refuses it. A `definition` row, also key-identified, answers `clear` with
+    no peer read ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
 
     Under a token bounded to one user (`read_user_id`), or for a write that names its
     `user_id` under any token, the peer read is that user's rows (`_writer_scope`): a

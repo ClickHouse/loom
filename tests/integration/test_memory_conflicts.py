@@ -1,6 +1,6 @@
 """Semantic conflict detection on memory.set.
 
-Four scenarios pinned at the SDK level — exercises the full HTTP path
+Five scenarios pinned at the SDK level — exercises the full HTTP path
 through transport, auth, RBAC, embedding, conflict detection, and the
 conflicts.list / conflicts.resolve wire ops:
 
@@ -8,9 +8,11 @@ conflicts.list / conflicts.resolve wire ops:
      flagged status='conflicted', cross-linked via conflict_with.
   2. Canonical merge: a write whose canonical-normalized text matches
      an existing peer's returns that peer's memory_id (no INSERT).
-  3. Pinned short-circuit: a non-pinned write conflicting with a
+  3. Another user's restatement: written as that user's own row, and each
+     user's search finds their own.
+  4. Pinned short-circuit: a non-pinned write conflicting with a
      pinned peer is rejected with 409 PINNED_CONFLICT.
-  4. Resolve via revise: the chosen memory wins, peers tombstoned,
+  5. Resolve via revise: the chosen memory wins, peers tombstoned,
      conflicts.list returns empty.
 
 Each conflict-triggering write first waits until the prior write's embedding
