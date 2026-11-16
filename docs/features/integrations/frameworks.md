@@ -385,14 +385,14 @@ Extraction runs under a Loom session derived from the user and the Agent Framewo
 (`maf-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and
 a caller may choose its session ids.
 
-| `LoomContextProvider` argument | Default  | Effect                                                                                                                                              |
-| ------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`                        | required | the `loom.Agent` the provider calls; Agent Framework awaits its providers, so a `SyncAgent` is refused                                              |
-| `user_id`                      | none     | the end user the memories belong to; unset, the provider reads and writes the namespace's shared memories; an empty or `-` user raises `ValueError` |
-| `source_id`                    | `loom`   | the provider's id in Agent Framework's attribution                                                                                                  |
-| `top_k`                        | 5        | memories per run, from 1 to 500                                                                                                                     |
-| `honour_abstain`               | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                   |
-| `defer`                        | `True`   | queue the extraction on the server instead of waiting                                                                                               |
+| `LoomContextProvider` argument | Default  | Effect                                                                                                                                                                                      |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`                        | required | the `loom.Agent` the provider calls; Agent Framework awaits its providers, so a `SyncAgent` is refused                                                                                      |
+| `user_id`                      | none     | the end user the memories belong to; unset, recall reads all namespace memories the token permits and extraction writes shared rows; empty, `-` or whitespace-padded ids raise `ValueError` |
+| `source_id`                    | `loom`   | the provider's id in Agent Framework's attribution                                                                                                                                          |
+| `top_k`                        | 5        | memories per run, from 1 to 500                                                                                                                                                             |
+| `honour_abstain`               | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                                                           |
+| `defer`                        | `True`   | queue the extraction on the server instead of waiting                                                                                                                                       |
 
 ## Pydantic AI
 

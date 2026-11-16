@@ -13,8 +13,8 @@ this provider stores durable facts rather than replacing a history provider.
 ## Invariants
 
 The user and framework session id derive a Loom session, preventing two users'
-equally named sessions from sharing extracted chunks. An omitted user selects
-shared memories. Namespace grants authorize access; a user parameter is a filter.
+equally named sessions from sharing extracted chunks. An omitted user reads all namespace memories the token permits and writes
+shared rows. Explicit user ids cannot have surrounding whitespace. Namespace grants authorize access; a user parameter is a filter.
 The server supplies actor and source provenance and applies ordinary conflict,
 erasure and rolling-schema rules. No database, cache or local history is added.
 Errors propagate through the framework's provider hooks, including errors after
