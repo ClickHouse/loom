@@ -71,9 +71,11 @@ not a valid JSON object is refused, not overwritten.
 Zed reads `context_servers` from `settings.json`. On macOS that file is
 `~/.config/zed/settings.json`, the same path as on Linux. On Windows it is
 `%APPDATA%\Zed\settings.json`. The file may contain `//` comments, `/* */` comments
-and trailing commas. `loom install --client zed` inserts the `loom` entry. Comments and the other
-keys stay, and a member that had no trailing comma gains one. When the file cannot
-be merged, the command leaves it unchanged and prints the entry to add by hand.
+and trailing commas. `loom install --client zed` inserts the `loom` entry. Comments and keys
+outside the `loom` value stay, and a member that had no trailing comma gains one. An existing
+`loom` value is replaced as a whole, including a comment or a field inside it such as `timeout`
+or `enabled`. When the file cannot be merged, the command leaves it unchanged and prints the
+entry to add by hand.
 
 Cursor's CLI (`agent`) reads the same `mcp.json` as the editor, so the `cursor` entry
 serves both.

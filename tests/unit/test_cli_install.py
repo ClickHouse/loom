@@ -721,9 +721,8 @@ def test_zed_install_keeps_a_trailing_comma_beside_the_closing_brace(
     _assert_zed_loom(_jsonc_object(cfg.read_text()), theme="One Dark", other=None)
 
 
-# The inserter treated the line nearest a closing brace as a safe splice point.
-# A block comment can contain that newline, so the new member lands inside the
-# comment and a later parse does not see it.
+# A block comment can hold a newline. The splice follows a parsed token, so
+# the new member stays outside the comment.
 @pytest.mark.parametrize(
     ("original", "theme", "other"),
     [
