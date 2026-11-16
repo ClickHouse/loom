@@ -124,16 +124,6 @@ LANGUAGES = (
         "rápido, override sobrescritura, token token, namespace espacio de nombres, memory "
         "memoria, agent agente.",
     ),
-    Language(
-        "ru",
-        "Русский",
-        "Russian",
-        "Эта страница — машинный перевод [английской страницы]({url}); "
-        "при расхождениях верна английская версия.",
-        "Fixed terms: dashboard панель управления, compiler tier уровень компилятора, fast "
-        "tier быстрый уровень, token токен, namespace пространство имён, memory память, "
-        "agent агент.",
-    ),
 )
 
 # USD per million tokens (input, output). A model missing here is refused: the cost cap
