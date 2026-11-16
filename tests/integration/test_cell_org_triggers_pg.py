@@ -772,8 +772,8 @@ async def test_the_refresh_reads_marked_from_the_session_it_runs_on(
     monkeypatch: pytest.MonkeyPatch, marked: bool, leaked: bool, expected: bool
 ) -> None:
     """`cell.refresh` on one real session: a startup marker reads true; a session `SET` of
-    it, as another client may leave on a pooled server connection, is dropped by the RESET
-    ALL in the read's transaction and reads false, as no marker does."""
+    it, as a pooler that re-sends client parameters would make, is dropped by the RESET ALL
+    in the read's transaction and reads false, as no marker does."""
     from server.settings import settings
 
     async with _cell("recording") as (dsn, _conn):

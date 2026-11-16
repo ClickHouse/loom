@@ -488,6 +488,23 @@ def test_an_unscoped_refusal_without_router_settings_names_the_org_alone(
     assert str(raised.value) == "org 'new' is not held by this cell"
 
 
+def test_a_server_names_its_unset_router_settings_in_an_unscoped_refusal(
+    enforced: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server process (the background reader) with router settings unset answers every
+    unscoped call 503 for its life: the refusal names the unset setting."""
+    monkeypatch.setattr(cell_router, "_background", True)
+    monkeypatch.setattr(
+        cell_router, "directory_answer", AsyncMock(return_value=cell_router.UNKNOWN)
+    )
+    monkeypatch.setattr(cell_router, "unset", lambda: ["LOOM_CELL_ROUTER_TOKEN"])
+    with pytest.raises(errors.BackendUnavailableError) as raised:
+        asyncio.run(tenancy.ensure_held("new", None))
+    assert str(raised.value) == (
+        "org 'new' is not held by this cell, and LOOM_CELL_ROUTER_TOKEN unset"
+    )
+
+
 @pytest.mark.parametrize("answer", ["serving", "other"])
 def test_an_unscoped_caller_answers_wrong_cell_once_serving_or_on_a_later_cell(
     enforced: None, monkeypatch: pytest.MonkeyPatch, answer: str

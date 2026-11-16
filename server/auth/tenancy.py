@@ -237,9 +237,15 @@ async def _refuse_unscoped(org: str) -> None:
                 operation="tenancy",
             )
         if answer == cell_router.UNKNOWN:
-            # With router settings unset the org alone is named: past `recording` (the
-            # mode this path runs in) a CLI holds no router token (`_ch.check_orgs`).
-            text = "" if cell_router.unset() else ", and the directory is unreadable"
+            missing = cell_router.unset()
+            if not missing:
+                text = ", and the directory is unreadable"
+            elif cell_router.has_reader():
+                text = f", and {', '.join(missing)} unset"
+            else:
+                # Past `recording` (the mode this path runs in) a CLI holds no router
+                # token (`_ch.check_orgs`): the org alone is named.
+                text = ""
             raise BackendUnavailableError(
                 f"org {org!r} is not held by this cell{text}", operation="tenancy"
             )

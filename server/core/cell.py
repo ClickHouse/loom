@@ -475,8 +475,8 @@ _READ = (
     "(SELECT mode FROM loom.tenancy_mode) AS mode, "
     "(SELECT row_to_json(s) FROM (SELECT current_fp, next_fp FROM loom.cell_self) s) AS own, "
     "EXISTS (SELECT 1 FROM loom.tenancy) AS tenancy, "
-    # Read after RESET ALL (`refresh`): a startup value survives it, a session SET leaked
-    # onto a pooled server connection does not. A session without it reads false.
+    # Read after RESET ALL (`refresh`): a startup value survives it, a SET does not, so a
+    # pooler (a cell has none) reads false whether it strips or re-sends the marker.
     f"COALESCE(current_setting('{pg.TENANCY_MARKER}', true) = 'on', false) AS marked"
 )
 
@@ -532,9 +532,9 @@ async def read_state_if_present(conn: Any) -> tuple[str, str]:
 
 async def refresh() -> bool:
     """Read the state rows and the session's marker in one statement, after RESET ALL in
-    the same transaction (`pg.fetchrow_reset`), so behind a transaction pooler both run
-    on the server connection the process's statements run on. A failed read, or rows that
-    do not decode, keeps the last view and is retried on schedule."""
+    the same transaction (`pg.fetchrow_reset`), so the marker read is the startup value of
+    the server connection the read ran on. A failed read, or rows that do not decode,
+    keeps the last view and is retried on schedule."""
     global _view
     try:
         _view = _decoded(await pg.fetchrow_reset(_READ))

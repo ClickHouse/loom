@@ -614,9 +614,9 @@ async def fetchval(sql: str, *args: Any) -> Any:
 
 
 async def fetchrow_reset(sql: str) -> Any:
-    """`fetchrow` after RESET ALL, in one transaction, so behind a transaction pooler both
-    run on one server connection: the session's settings as its startup values leave them
-    (a session SET leaked onto that connection by another client is gone). Two round trips
+    """`fetchrow` after RESET ALL, in one transaction, so it reads the session's settings as
+    its startup values leave them: a SET is gone, and a pooler (which a cell must not
+    have) cannot swap the server connection between the reset and the read. Two round trips
     more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure
     rolls the transaction back before the connection returns to the pool; after a cancel
     the ROLLBACK is tried too, and where the connection refuses it while the cancel is

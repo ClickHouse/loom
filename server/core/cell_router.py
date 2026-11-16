@@ -72,6 +72,11 @@ def unset() -> list[str]:
     return [name for name, value in values if not value]
 
 
+def has_reader() -> bool:
+    """Whether this process runs the background reader (a server process, not a CLI)."""
+    return _background
+
+
 def period_s() -> float:
     """How often the background reader asks."""
     return min(float(settings.instance_heartbeat_seconds), float(settings.tenancy_mode_cache_s))

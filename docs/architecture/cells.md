@@ -516,18 +516,20 @@ that reports them; no generation key is added.
 - `serves`: `LOOM_SERVES_TRAFFIC`.
 - `marked`: whether this process's pooled Postgres sessions keep the tenancy marker
   (`loom.tenancy_checked`). The cell refresh reads it with the state rows, after `RESET ALL`
-  in the same transaction, so behind a transaction pooler both run on one server connection:
-  a startup value survives the reset, a session `SET` leaked onto a pooled server connection
-  does not. It costs two round trips per refresh (`BEGIN; RESET ALL` as one simple query,
-  then `COMMIT`), and every process reports a fresh value with no prober. A session the
-  pooler stripped, or a process with `LOOM_CELL` unset under the Postgres authority, reads
-  `false`; `null` means only that no read has landed (a boot with skipped Postgres
-  migrations whose first read failed, or the ClickHouse authority, where nothing is read).
-  The `cell_marker` readiness check of a process with `LOOM_CELL` set reads the same
-  value: it fails in `enforced` and `partial`, where the triggers refuse an unmarked
-  session's writes for an org the cell does not hold and the tenancy row of each newly
-  placed org, and passes with a warning in `recording`, so a first cell behind such a
-  pooler does not stall its rollout before attach, which refuses the process
+  in the same transaction: a startup value survives the reset, a `SET` does not, so a
+  pooler, which a cell must not have ([Postgres](../operations/postgres.md)), reads unmarked
+  whether it strips startup parameters or sends them again with `SET`, and the read runs on
+  the server connection the reset ran on. It costs two round trips per refresh
+  (`BEGIN; RESET ALL` as one simple query, then `COMMIT`), and every process reports a fresh
+  value with no prober. A session the pooler stripped, or a process with `LOOM_CELL` unset
+  under the Postgres authority, reads `false`; `null` means only that no read has landed (a
+  boot with skipped Postgres migrations whose first read failed, or the ClickHouse
+  authority, where nothing is read). The `cell_marker` readiness check of a process with
+  `LOOM_CELL` set reads the same value: it fails in `enforced` and `partial`, where the
+  triggers refuse an unmarked session's writes for an org the cell does not hold and the
+  tenancy row of each newly placed org, and passes with a warning in `recording`, so a first
+  cell behind such a pooler does not stall its rollout before attach, which refuses the
+  process
   ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
 - `router` and `router_why`: with `LOOM_CELL` set, present as `null` until the `first` row
   is read and then on a first cell only (a later cell's state route answers 404, so it
