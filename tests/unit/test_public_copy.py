@@ -219,6 +219,9 @@ SKIP_PREFIXES = ("schemas/migrations/", "schemas/schema.sql")
 # This lint holds the digests.
 SELF = "tests/unit/test_public_copy.py"
 
+# Generated dependency metadata carries upstream package names, not authored copy.
+DEPENDENCY_LOCKS = {"integrations/n8n/pnpm-lock.yaml"}
+
 # Files whose subject is text carrying a decision reference: parsers and
 # classifiers for pointers an agent's transcript or a repository's own ADR
 # folder contains (Loom indexes any repository's `docs/decisions/`).
@@ -254,7 +257,7 @@ def _scanned() -> list[tuple[str, list[str]]]:
     out = []
     for path in _iter_scan_files():
         rel = path.relative_to(ROOT).as_posix()
-        if rel == SELF or rel.startswith(SKIP_PREFIXES):
+        if rel == SELF or rel in DEPENDENCY_LOCKS or rel.startswith(SKIP_PREFIXES):
             continue
         try:
             out.append((rel, path.read_text(errors="ignore").splitlines()))

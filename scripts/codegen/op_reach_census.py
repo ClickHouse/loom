@@ -93,7 +93,8 @@ def _files(root: Path, rel: str, suffixes: tuple[str, ...]) -> list[Path]:
         if p.is_file()
         and p.suffix in suffixes
         and ".test." not in p.name
-        and not {"tests", "test", "__pycache__"} & set(p.relative_to(base).parts)
+        and not {"tests", "test", "__pycache__", "node_modules", "dist", ".venv"}
+        & set(p.relative_to(base).parts)
     )
 
 

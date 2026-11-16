@@ -78,3 +78,6 @@ file tree in Loom so agents in a namespace can share its contents.
 
 Keep [OpenAI Agents session history](../features/integrations/frameworks.md#openai-agents-sdk)
 in Loom across agent runs and handoffs.
+
+For a visual workflow, [n8n nodes](../features/integrations/frameworks.md#n8n) connect an
+AI Agent to Loom conversation history, durable memories and knowledge search.
