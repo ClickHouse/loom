@@ -260,13 +260,15 @@ export const LibraryTree = memo(function LibraryTree({
   const [over, setOver] = useState<string | null>(null);
   // A collection dropped on a place: the Move dialog, set to it.
   const [nesting, setNesting] = useState<{ entry: CollectionEntry; parent: string } | null>(null);
+  // Whether that dialog moved it: only then is its row drawn again elsewhere.
+  const nested = useRef(false);
   const parentOf = useMemo(() => new Map((rows ?? []).map((c) => [c.namespace, c.parent])), [rows]);
   const holding = documentDrop !== null || heldCollection !== null;
   useEffect(() => {
     if (!holding) setOver(null);
   }, [holding]);
   // A collection the person administers moves (collection.move): not their own files.
-  const collectionDrag = (c: CollectionEntry): HTMLAttributes<HTMLElement> & { draggable?: boolean } => {
+  const collectionDrag = (c: CollectionEntry): HTMLAttributes<HTMLElement> => {
     if (c.personal || c.role !== "admin") return {};
     return {
       draggable: true,
@@ -286,7 +288,11 @@ export const LibraryTree = memo(function LibraryTree({
         key === TOP_LEVEL
           ? held.parent !== ""
           : !!entry && canHold(entry) && entry.namespace !== held.parent && !isUnder(key, held.namespace, parentOf);
-      if (fits) land = () => setNesting({ entry: held, parent: key === TOP_LEVEL ? "" : key });
+      if (fits)
+        land = () => {
+          nested.current = false;
+          setNesting({ entry: held, parent: key === TOP_LEVEL ? "" : key });
+        };
     }
     if (!land) return {};
     const drop = land;
@@ -450,10 +456,15 @@ export const LibraryTree = memo(function LibraryTree({
           parents={(rows ?? []).filter(canHold)}
           all={rows ?? []}
           initialParent={nesting.parent}
+          onMoved={() => {
+            nested.current = true;
+          }}
           onClose={() => setNesting(null)}
-          // The row dragged is drawn again where it went, maybe inside a folded parent: focus
-          // goes to the place it was dropped on, or New collection for the top level.
+          // A move draws the row dragged again where it went, maybe inside a folded parent:
+          // focus goes to the place it was dropped on, or New collection for the top level.
+          // Closed without a move, the Modal hands focus back as it does.
           onCloseAutoFocus={(e) => {
+            if (!nested.current) return;
             e.preventDefault();
             const key = nesting.parent ? placeFocusKey(nesting.parent) : NEW_COLLECTION_FOCUS;
             document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
@@ -529,7 +540,7 @@ function PlaceRow({
   onToggle?: () => void;
   onPick: PickPlace;
   /** It can be dragged: a collection the person may move. */
-  drag?: HTMLAttributes<HTMLElement> & { draggable?: boolean };
+  drag?: HTMLAttributes<HTMLElement>;
   /** What is held may land on it. */
   drop?: DropProps;
 }) {

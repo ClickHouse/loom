@@ -138,6 +138,7 @@ test.describe("1440 px", () => {
     await expect(place(page, "Runbooks")).toBeVisible();
     await holdOver(page, place(page, "Runbooks"), place(page, "Operations"));
     await expect(place(page, "Engineering")).not.toHaveAttribute("data-drop");
+    await expect(place(page, "Runbooks")).not.toHaveAttribute("data-drop");
     await expect(tree(page).getByText("Drop here for the top level")).toHaveAttribute("data-drop", "ok");
     await page.mouse.up();
     const dialog = page.getByRole("dialog", { name: "Move Runbooks" });

@@ -20,6 +20,7 @@ export function MoveCollectionDialog({
   parents,
   all,
   initialParent,
+  onMoved,
   onClose,
   onCloseAutoFocus,
 }: {
@@ -32,6 +33,8 @@ export function MoveCollectionDialog({
   /** The parent it opens on, "" for the top level (a drop in the Library's tree); its
    *  current parent otherwise. */
   initialParent?: string;
+  /** After the move succeeded, before it closes. */
+  onMoved?: () => void;
   onClose: () => void;
   /** Where focus goes once it closes, as the Modal's. */
   onCloseAutoFocus?: (e: Event) => void;
@@ -56,6 +59,7 @@ export function MoveCollectionDialog({
       await moveCollection(org, collection.namespace, target);
       invalidateSharedCollections();
       toast(target ? `Moved ${self} into ${shown(target)}` : `${self} is top-level`, "ok");
+      onMoved?.();
       onClose();
     } catch (e) {
       setError(humanizeError(e));

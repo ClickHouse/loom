@@ -814,11 +814,7 @@ export function Documents() {
         if (!ac.signal.aborted) toastError("Open failed", e, { read: true });
       });
   };
-  // The deep-link effect, the rows and the passage panel call the latest render's handlers
-  // without re-firing on them or rendering every row again.
   const onMove = (r: KnowledgeEntry) => openMove(placeOf(r).namespace, [r.source_uri]);
-  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri, onMove });
-  handlers.current = { onOpen, onDownload, onDelete, openByUri, onMove };
   // Stable, so the passage list is not built again on each render of the page.
   const openPassage = useCallback(
     (uri: string, ns?: string) =>
@@ -1074,8 +1070,10 @@ export function Documents() {
     }
     holdDocs(e, held, r.source_uri);
   };
-  const dragHandler = useRef(startDrag);
-  dragHandler.current = startDrag;
+  // The deep-link effect, the rows and the passage panel call the latest render's handlers
+  // without re-firing on them or rendering every row again.
+  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri, onMove, startDrag });
+  handlers.current = { onOpen, onDownload, onDelete, openByUri, onMove, startDrag };
 
   const aggregateStats = useMemo(() => {
     if (!rows) return null;
@@ -1152,7 +1150,7 @@ export function Documents() {
       toggle: toggleRow,
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
       openPlace: (p) => goTo(p),
-      dragStart: (r, key, e) => dragHandler.current(r, key, e),
+      dragStart: (r, key, e) => handlers.current.startDrag(r, key, e),
       dragEnd: endDrag,
     }),
     [toggleRow, goTo, endDrag],

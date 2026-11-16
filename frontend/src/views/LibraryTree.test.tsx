@@ -7,6 +7,7 @@ import type { CollectionEntry } from "../api";
 import { axeViolations } from "../test/axe";
 import { act, cleanup, fireEvent, render, type RenderOptions, screen, waitFor, within } from "../test/rtl";
 import { repeatedTitles } from "../lib/collections";
+import { DRAG_TYPE } from "../lib/useDragHold";
 import { LibraryTree, NEW_COLLECTION_FOCUS, placeFocusKey, placeTree } from "./LibraryTree";
 
 const api = vi.hoisted(() => ({ createCollection: vi.fn(), moveCollection: vi.fn() }));
@@ -575,7 +576,7 @@ describe("LibraryTree's drops", () => {
     entry("col-ingest", { parent: "col-runbooks", title: "Ingest", role: "writer" }),
     entry("col-legal", { title: "Legal", role: "viewer" }),
   ];
-  const dataTransfer = () => ({ setData: vi.fn(), effectAllowed: "", dropEffect: "" });
+  const dataTransfer = () => ({ setData: vi.fn(), clearData: vi.fn(), effectAllowed: "", dropEffect: "" });
   /** The tree row of the place this link names. */
   const row = (name: string) => screen.getByRole("link", { name }).closest(".library-tree-row") as HTMLElement;
   /** Each listed place's drop state, by its name. */
@@ -645,6 +646,38 @@ describe("LibraryTree's drops", () => {
     cleanup();
     await hold("Engineering");
     expect(screen.queryByText("Drop here for the top level")).toBeNull();
+  });
+
+  it("holds nothing when the drag ends before the tick that holds it", async () => {
+    tree({ rows: NEST, current: "col-ingest" });
+    const dt = dataTransfer();
+    fireEvent.dragStart(row("Runbooks"), { dataTransfer: dt });
+    fireEvent.dragEnd(row("Runbooks"), { dataTransfer: dt });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(Object.values(drops()).filter(Boolean)).toEqual([]);
+    expect(screen.queryByText("Drop here for the top level")).toBeNull();
+  });
+
+  it("carries its name as Loom's own drag type, never as text a field would take", async () => {
+    const dt = await hold("Runbooks");
+    // The link's own address and text are cleared first.
+    expect(dt.clearData).toHaveBeenCalled();
+    expect(dt.setData).toHaveBeenCalledWith(DRAG_TYPE, "col-runbooks");
+    expect(dt.setData).not.toHaveBeenCalledWith("text/plain", expect.anything());
+  });
+
+  it("leaves the focus where the Modal hands it when Move is closed without moving", async () => {
+    const dt = await hold("Runbooks");
+    fireEvent.dragOver(row("Ops"), { dataTransfer: dt });
+    fireEvent.drop(row("Ops"), { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.moveCollection).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Ops" })).not.toHaveFocus();
+    expect(screen.getByRole("button", { name: "New collection" })).not.toHaveFocus();
   });
 
   it("drags only a collection the person administers, and not their own files", () => {

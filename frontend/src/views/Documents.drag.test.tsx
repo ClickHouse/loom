@@ -75,7 +75,7 @@ function main(width = TREE_PAGE_MIN): HTMLElement {
   return el;
 }
 
-const dataTransfer = () => ({ setData: vi.fn(), effectAllowed: "", dropEffect: "" });
+const dataTransfer = () => ({ setData: vi.fn(), clearData: vi.fn(), effectAllowed: "", dropEffect: "" });
 const docRow = (title: string) => screen.getByText(title).closest("[data-doc-row]") as HTMLElement;
 const tree = () => screen.getByRole("navigation", { name: "Library places" });
 const place = (name: string) => within(tree()).getByRole("link", { name }).closest(".library-tree-row") as HTMLElement;
