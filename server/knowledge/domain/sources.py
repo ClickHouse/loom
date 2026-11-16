@@ -202,9 +202,12 @@ def mirror_uri_suffix(source_id: str) -> str:
 def home(src: KnowledgeSource) -> tuple[str, str]:
     """Where the source's documents live and the tag that marks them its own: the
     namespace and `source:<name>`, or for a mirrored source its mirror and
-    `source-id:<id>`."""
-    if src.access != MIRRORED_ACCESS:
+    `source-id:<id>`. ValueError for an `access` this build does not know, or a
+    mirrored source whose mirror is not known."""
+    if src.access == NAMESPACE_ACCESS:
         return src.namespace, source_tag(src.name)
+    if src.access != MIRRORED_ACCESS:
+        raise ValueError("a source's access is not one this build knows")
     if not src.mirror:
         raise ValueError("a mirrored source's mirror is not known")
     return src.mirror, source_id_tag(src.source_id)

@@ -20,7 +20,7 @@ from server.core.secrets_at_rest import seal
 from server.knowledge.app import mirrors, source_sync, source_sync_mirror
 from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.domain import access_list
-from server.knowledge.domain.sources import MIRRORED_ACCESS, mirror_uri
+from server.knowledge.domain.sources import MIRRORED_ACCESS, home, mirror_uri
 from server.knowledge.store import documents
 from server.knowledge.store import mirrors as mirror_store
 from server.settings import settings
@@ -79,7 +79,10 @@ def _turn(world: Any, src: Any) -> Any:
     return asyncio.run(source_sync.run_sync())
 
 
-def test_a_mirrored_file_lands_in_the_mirror_with_its_list(world: Any, mirror: Any) -> None:
+def test_a_mirrored_file_lands_in_the_mirror_with_its_list(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(source_sync, "_repo_tag", lambda src: "repo:abc")  # a trunk namespace
     src = _mirrored()
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     result = _turn(world, src)
@@ -88,7 +91,8 @@ def test_a_mirrored_file_lands_in_the_mirror_with_its_list(world: Any, mirror: A
     address = source_sync.source_uri_of(world.files[0])
     assert written.namespace == MIRROR
     assert written.source_uri == mirror_uri(address, src.source_id)
-    assert f"source-id:{src.source_id}" in written.tags
+    # No repository tag: a repository's document reads must never reach a mirror.
+    assert written.tags == ["source-kind:design_doc", "source:decks", f"source-id:{src.source_id}"]
     stored = access_list.from_json(world.docs[written.source_uri]["access_json"])
     assert stored.emails == ("ann@example.com",)
     assert mirror["listings"] == [(MIRROR, src.source_id, src.name)]
@@ -938,3 +942,11 @@ def test_a_parked_publication_is_logged_with_its_source(
         _turn(world, _mirrored())
     # No reader sees a mirror's sync state yet, so the operator learns it from the log.
     assert any("decks" in r.getMessage() and "parked" in r.getMessage() for r in caplog.records)
+
+
+def test_home_refuses_an_access_this_build_does_not_know() -> None:
+    assert home(_source()) == ("code-acme-app", "source:decks")
+    with pytest.raises(ValueError, match="access"):
+        home(_source(access="shared"))
+    with pytest.raises(ValueError, match="mirror"):
+        home(_mirrored())
