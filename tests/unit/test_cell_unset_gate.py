@@ -129,7 +129,7 @@ def test_a_failed_read_keeps_the_unset_verdict(monkeypatch: pytest.MonkeyPatch) 
     from server.core import pg
 
     _rows(monkeypatch, "enforced")
-    monkeypatch.setattr(pg, "fetchrow_reset", AsyncMock(side_effect=OSError("down")))
+    monkeypatch.setattr(pg, "fetchrow", AsyncMock(side_effect=OSError("down")))
     assert asyncio.run(cell.refresh()) is False
     assert "enforced" in cell.gate_reason()
 
@@ -141,9 +141,11 @@ def test_the_read_asks_whether_a_tenancy_row_exists(monkeypatch: pytest.MonkeyPa
 
     async def _row(sql: str, *_a):
         seen.append(sql)
-        return {"first": None, "mode": None, "own": None, "tenancy": True, "marked": True}
+        return {"first": None, "mode": None, "own": None, "tenancy": True, "marked": False}
 
-    monkeypatch.setattr(pg, "fetchrow_reset", _row)
+    # With LOOM_CELL unset the refresh is a plain read: the reset is a cell's alone.
+    monkeypatch.setattr(pg, "fetchrow", _row)
+    monkeypatch.setattr(pg, "fetchrow_reset", AsyncMock(side_effect=AssertionError("reset")))
     assert asyncio.run(cell.refresh()) is True
     assert "EXISTS (SELECT 1 FROM loom.tenancy)" in seen[0]
     assert cell._view.state() == "partial"

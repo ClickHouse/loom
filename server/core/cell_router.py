@@ -18,9 +18,9 @@ waiting sharing one call.
 The reader also keeps what the heartbeat's `router` key reports (`router_key`): `null` until
 the first answer, `true` once a 200 named this cell, `false` for a configuration that never
 works (a router setting unset, a URL that cannot be requested, a 404, an answer for another
-cell, a 401 that persists past `LOOM_ROUTER_DIRECTORY_CACHE_S`, the router replicas'
-credential cache), with `router_why` naming which; a transient failure keeps the last value,
-and while the key is `null` `router_why` names the last transient cause.
+cell, or a 401 that persists past `LOOM_ROUTER_DIRECTORY_CACHE_S`, the lifetime of the router
+replicas' credential cache), with `router_why` naming which; a transient failure keeps the
+last value, and while the key is `null` `router_why` names the last transient cause.
 """
 
 from __future__ import annotations
@@ -240,7 +240,9 @@ def start_reader() -> asyncio.Task[None]:
                 if first is False:
                     return
                 if first:
-                    client = client or httpx.AsyncClient()
+                    # A router setting unset: `read_once` asks nothing and needs no client.
+                    if client is None and not unset():
+                        client = httpx.AsyncClient()
                     try:
                         await read_once(client)
                     except Exception as e:  # noqa: BLE001 — a failed read must not stop the reader

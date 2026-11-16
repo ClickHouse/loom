@@ -225,8 +225,9 @@ def test_an_on_demand_answer_is_never_late_within_its_window(
 
 def test_a_new_org_records_at_default_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """At the default settings the reader asks every period and a read takes at most the
-    timeout, so its answer is never late between two reads: a new org on a recording
-    first cell records."""
+    timeout, so with an exact sleep its answer is never late between two reads: a new org
+    on a recording first cell records. (A sleep a busy loop overruns can make it late for
+    that overrun, answering a retryable 503.)"""
     for name in ("instance_heartbeat_seconds", "tenancy_mode_cache_s", "cell_router_timeout_s"):
         monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
     clock = _clock(monkeypatch)
