@@ -81,8 +81,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # The listed files by the address their copy is stored at.
     listed = {u: f for f in files if (u := _address(src, f)).startswith("https://")}
     whole = listing.whole and not listing.lost_item
-    # A head whose row ClickHouse does not have yet is not among the copies read, so a
-    # listing that began with one owed vouches for nothing.
+    # A head whose row ClickHouse does not have yet is not among the copies read, so one
+    # owed when they are read leaves the listing vouching for nothing.
     suffix = mirror_uri_suffix(src.source_id)
     owed = await documents.publications_owed(src.org, src.mirror, suffix)
     with sequential_reads():  # a replica behind the last turn would show an older list
