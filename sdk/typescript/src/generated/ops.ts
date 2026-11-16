@@ -1920,6 +1920,8 @@ export interface CollectionListInput {
   org: string;
   /** Collections per page. */
   limit?: number;
+  /** Include the live document count directly in each collection; default false. */
+  include_document_counts?: boolean;
   /** The `next_cursor` of the previous page; none for the first. */
   cursor?: string | null;
 }
@@ -1931,6 +1933,8 @@ export interface CollectionEntry {
   role: string;
   description?: string;
   title?: string;
+  /** Live documents directly in this collection, excluding children; null unless requested. */
+  document_count?: number | null;
 }
 
 export interface CollectionListOutput {

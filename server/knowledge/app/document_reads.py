@@ -46,6 +46,15 @@ async def document_tally(org: str, namespace: str) -> tuple[int, datetime | None
     return await documents_repo.current_document_tally(org, namespace)
 
 
+async def document_counts(org: str, namespaces: list[str]) -> dict[str, int]:
+    """Current document metadata counts for namespaces the caller already authorized."""
+    from server.core.ch import own_write_reads
+    from server.knowledge.store import documents as documents_repo
+
+    with own_write_reads():
+        return await documents_repo.current_document_counts(org, namespaces)
+
+
 # ============================================================
 # knowledge.list — paginated curation listing
 # ============================================================

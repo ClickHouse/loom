@@ -8043,6 +8043,7 @@ class CollectionListInput(TypedDict, total=False):
 
     org: Required[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -8051,6 +8052,7 @@ class CollectionListBody(TypedDict, total=False):
 
     org: NotRequired[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -8066,6 +8068,7 @@ class CollectionEntry(TypedDict, total=False):
     role: Required[str]
     description: NotRequired[str]
     title: NotRequired[str]
+    document_count: NotRequired[Optional[int]]
 
 
 class CollectionMoveInput(TypedDict, total=False):

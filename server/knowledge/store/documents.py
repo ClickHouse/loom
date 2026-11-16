@@ -183,6 +183,22 @@ async def current_document_tally(
     return (int(row["n"]), row["latest"]) if row else (0, None)
 
 
+async def current_document_counts(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """Live documents directly in each requested namespace, including empty ones."""
+    if not namespaces:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT namespace, count() AS n FROM loom.documents FINAL "
+        "WHERE org = {org:String} AND namespace IN {ns:Array(String)} "
+        "AND superseded_at IS NULL GROUP BY namespace LIMIT {lim:UInt32}",
+        params={"org": org, "ns": namespaces, "lim": len(namespaces)},
+    )
+    return dict.fromkeys(namespaces, 0) | {str(r["namespace"]): int(r["n"]) for r in rows}
+
+
 async def get_many_by_uris(
     org: str,
     namespace: str,

@@ -104,6 +104,24 @@ describe("placeTree", () => {
 });
 
 describe("LibraryTree", () => {
+  it("shows direct document counts, including zero, and marks omitted counts unknown", () => {
+    const { update } = tree({
+      rows: [
+        entry("col-me-1a2b", { personal: true, document_count: 0 }),
+        entry("col-eng", { title: "Engineering", document_count: 12 }),
+        entry("col-legal", { title: "Legal" }),
+      ],
+    });
+    expect(screen.getByText("0 documents directly in My files").parentElement).toHaveTextContent("0");
+    expect(screen.getByText("12 documents directly in Engineering").parentElement).toHaveTextContent("12");
+    expect(screen.getByText("Document count unavailable for Legal").parentElement).toHaveTextContent("—");
+    update({ busy: true });
+    expect(screen.getByText("Updating document count for Engineering").parentElement).toHaveTextContent("…");
+    expect(screen.queryByText("12 documents directly in Engineering")).toBeNull();
+    update({ busy: false, failed: true });
+    expect(screen.getByText("Document count unavailable for Engineering").parentElement).toHaveTextContent("—");
+  });
+
   it("lists All documents, the namespace, My files and the roots, the children hidden until shown", async () => {
     tree();
     expect(places()).toEqual(["All documents", "Namespace bench", "My files", "Engineering", "Legal"]);

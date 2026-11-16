@@ -1937,6 +1937,7 @@ e0f90e7e0243	ALTER TABLE loom.memory_embeddings UPDATE tombstoned_at = {now:Date
 e107d944ecff	SELECT n.namespace AS namespace, n.description AS description, n.kind AS kind, n.owner_email AS owner_email, n.requires_approval AS requires_approval, toString(n.visibility) AS visibility, toString(n.
 e10df0e1e1d9	SELECT count() AS n FROM loom.memory_chunk_sources FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}
 e1357e7c3edf	DELETE FROM loom.memory_chunks WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String} AND user_id = {u:String} AND parent_memory_key = {k:String} AND content_sha256 NOT IN {live:A
+e1458e7f082a	SELECT namespace, count() AS n FROM loom.documents FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND superseded_at IS NULL GROUP BY namespace LIMIT {lim:UInt32}
 e1515912d3bd	SELECT DISTINCT qualified_name, symbol_id FROM loom.code_symbols WHERE org = {org:String} AND namespace = {ns:String} AND tier = {tier:String} AND path IN {paths:Array(String)}
 e161ba77e1ea	SELECT count() AS n FROM loom.memory_record_fields FINAL WHERE org = {org:String} AND namespace = {ns:String}
 e164289cbcf4	SELECT agent, count() AS rows, count() OVER () AS total FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String} AND superseded_at IS NULL GROUP BY agent ORDER BY rows DESC, agen
