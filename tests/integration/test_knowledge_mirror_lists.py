@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -18,6 +19,11 @@ import pytest
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
+
+
+def _seconds(at: datetime) -> int:
+    """One instant whichever store decoded it: a naive time is UTC."""
+    return int(at.replace(tzinfo=at.tzinfo or UTC).timestamp())
 
 
 async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,6 +105,7 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
         # The rewrite is a new version of the same row; only the list differs.
         kept = {"version", "ingested_at", "access_json"}
         assert after.model_dump(exclude=kept) == before.model_dump(exclude=kept)
+        assert _seconds(after.ingested_at) == _seconds(before.ingested_at)
     finally:
         await ch.disconnect()
         if pg.enabled():

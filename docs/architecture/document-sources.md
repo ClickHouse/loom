@@ -702,18 +702,19 @@ that reads a list unlike the stored one rewrites the document's row with the sam
 content and the new list, as `knowledge.update_metadata` without `reindex` does, so no
 chunk or embedding is rebuilt; an unchanged list costs no write. A stored copy behind
 its file's revision (a fetch deferred, given up or over the size bound) takes only the
-part of the new list its stored list already admitted, since its text was shared under
-that list; the content write that brings it up to date carries the wider one. A behind
-copy that once reads `unread` stays so until that write, which fails closed. A stored
-document the complete listing no longer has is rewritten `unread`, with every entry
-cleared, then retired on positive evidence, as today. The listing row's start lands only
-once every changed list and every such `unread` rewrite of that listing is written, so a
-row is never newer than the lists it vouches for. These rewrites are outside the pass's
-document cap, bounded only by the listings' share of the deadline. Content is fetched
-only for a file whose revision changed, and a content write carries the list of the
-latest listing that read the file, so a fetch the pass bound deferred never writes an
-older list; a listing row lands only once every document written during that listing
-carries a list it read.
+entries both its stored list and the new one hold, since its text was shared under that
+list (entry by entry, so a person the stored list admitted only through a domain or
+`anyone` is dropped, which fails closed); the content write that brings it up to date
+carries the wider one. A behind copy that once reads `unread` stays so until that write,
+which fails closed. A stored document the complete listing no longer has is rewritten
+`unread`, with every entry cleared, then retired on positive evidence, as today. The
+listing row's start lands only once every changed list and every such `unread` rewrite
+of that listing is written, so a row is never newer than the lists it vouches for. These
+rewrites are outside the pass's document cap, bounded only by the listings' share of the
+deadline. Content is fetched only for a file whose revision changed, and a content write
+carries the list of the latest listing that read the file, so a fetch the pass bound
+deferred never writes an older list; a listing row lands only once every document
+written during that listing carries a list it read.
 
 A pass runs the listings first, rotating across the mirrored sources, and gives them at
 most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`), while the
