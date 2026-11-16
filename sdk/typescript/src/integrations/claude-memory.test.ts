@@ -132,6 +132,17 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     await expect(h.delete({ command: "delete", path: "/memories" })).rejects.toThrow("itself");
   });
 
+  it.each([
+    { text: "a\n", line: 1, insert: "", expected: "a\n" },
+    { text: "a\n\n", line: 0, insert: "x", expected: "x\na\n" },
+  ])("keeps the reference trailing newline on insert: $text", async ({ text, line, insert, expected }) => {
+    const { agent, docs } = harness();
+    const h = loomMemoryHandlers(agent);
+    await h.create({ command: "create", path: "/memories/n.md", file_text: text });
+    await h.insert({ command: "insert", path: "/memories/n.md", insert_line: line, insert_text: insert });
+    expect(docs.get("loom-memory://default/memories/n.md")?.content).toBe(expected);
+  });
+
   it("keeps every path under /memories and a store to its own files", async () => {
     const { agent, docs, ops } = harness();
     const h = loomMemoryHandlers(agent);

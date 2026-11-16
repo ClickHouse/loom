@@ -164,7 +164,8 @@ def _inserted(text: str, line: int, insert: str) -> str:
             f"It should be within the range [0, {len(lines)}]."
         )
     lines.insert(line, insert.rstrip("\n"))
-    return "\n".join(lines) + "\n"
+    updated = "\n".join(lines)
+    return updated if updated.endswith("\n") else updated + "\n"
 
 
 def _missing(path: str) -> ToolError:

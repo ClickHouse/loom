@@ -187,7 +187,8 @@ function inserted(text: string, line: number, insert: string): string {
     );
   }
   lines.splice(line, 0, trimEnd(insert, "\n"));
-  return `${lines.join("\n")}\n`;
+  const updated = lines.join("\n");
+  return updated.endsWith("\n") ? updated : `${updated}\n`;
 }
 
 const missing = (path: string) => new ToolError(`The path ${path} does not exist. Please provide a valid path.`);

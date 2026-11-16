@@ -179,6 +179,22 @@ def test_insert_adds_a_line_and_checks_its_range(run: Runner) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("text", "line", "insert", "expected"),
+    [("a\n", 1, "", "a\n"), ("a\n\n", 0, "x", "x\na\n")],
+)
+def test_insert_keeps_the_reference_trailing_newline(
+    run: Runner, text: str, line: int, insert: str, expected: str
+) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/n.md", "file_text": text})
+    run(
+        docs,
+        {"command": "insert", "path": "/memories/n.md", "insert_line": line, "insert_text": insert},
+    )
+    assert docs.docs["loom-memory://default/memories/n.md"][0] == expected
+
+
 def test_delete_a_file_or_a_directory(run: Runner) -> None:
     docs = _Docs()
     for path in ("/memories/a.md", "/memories/p/b.md", "/memories/p/c.md", "/memories/pq.md"):
