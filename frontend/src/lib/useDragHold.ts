@@ -14,10 +14,11 @@ export const DRAG_TYPE = "application/x-loom-move";
 export function useDragHold<T>() {
   const [held, setHeld] = useState<T | null>(null);
   const dragging = useRef(false);
-  const start = useCallback((e: DragEvent, value: T, data: string) => {
+  const start = useCallback((e: DragEvent, value: T) => {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.clearData();
-    e.dataTransfer.setData(DRAG_TYPE, data);
+    // Not empty: an empty value is not known to start a drag in every browser.
+    e.dataTransfer.setData(DRAG_TYPE, "move");
     dragging.current = true;
     window.setTimeout(() => {
       if (dragging.current) setHeld(() => value);

@@ -660,11 +660,11 @@ describe("LibraryTree's drops", () => {
     expect(screen.queryByText("Drop here for the top level")).toBeNull();
   });
 
-  it("carries its name as Loom's own drag type, never as text a field would take", async () => {
+  it("carries Loom's own drag type, never text a field would take", async () => {
     const dt = await hold("Runbooks");
     // The link's own address and text are cleared first.
     expect(dt.clearData).toHaveBeenCalled();
-    expect(dt.setData).toHaveBeenCalledWith(DRAG_TYPE, "col-runbooks");
+    expect(dt.setData).toHaveBeenCalledWith(DRAG_TYPE, "move");
     expect(dt.setData).not.toHaveBeenCalledWith("text/plain", expect.anything());
   });
 
@@ -684,10 +684,11 @@ describe("LibraryTree's drops", () => {
 
   it("hands focus back to New collection's open form after a move to the top level", async () => {
     api.moveCollection.mockResolvedValue({ namespace: "col-runbooks", parent: "", moved: true });
-    tree({ rows: NEST, current: "col-ingest" });
+    const { update } = tree({ rows: NEST, current: "col-ingest" });
     await userEvent.click(screen.getByRole("button", { name: "New collection" }));
     const field = screen.getByRole("textbox", { name: /^New collection/ });
-    expect(field).toHaveFocus();
+    // A press on the row's link focuses it before the drag starts.
+    screen.getByRole("link", { name: "Runbooks" }).focus();
     const dt = dataTransfer();
     fireEvent.dragStart(row("Runbooks"), { dataTransfer: dt });
     const top = await screen.findByText("Drop here for the top level");
@@ -697,6 +698,8 @@ describe("LibraryTree's drops", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
     await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "col-runbooks", ""));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The list read again draws Runbooks at the top: its old row is gone.
+    update({ rows: NEST.map((c) => (c.namespace === "col-runbooks" ? { ...c, parent: "" } : c)) });
     await waitFor(() => expect(field).toHaveFocus());
   });
 

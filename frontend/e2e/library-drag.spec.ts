@@ -44,7 +44,8 @@ async function serve(page: Page) {
   ];
   const moves: unknown[] = [];
   const nests: unknown[] = [];
-  await installApi(page, { knowledgeRows: 1, collections: COLLECTIONS });
+  const collections = COLLECTIONS.map((c) => ({ ...c }));
+  await installApi(page, { knowledgeRows: 1, collections });
   await page.route("**/v1/knowledge.list", async (route: Route) => {
     const body = route.request().postDataJSON() as { namespace: string; namespaces?: string[] };
     const places = [body.namespace, ...(body.namespaces ?? [])];
@@ -61,6 +62,8 @@ async function serve(page: Page) {
   await page.route("**/v1/collection.move", async (route: Route) => {
     const body = route.request().postDataJSON() as { namespace: string; parent: string };
     nests.push(body);
+    const collection = collections.find((c) => c.namespace === body.namespace);
+    if (collection) collection.parent = body.parent;
     await route.fulfill({ json: { namespace: body.namespace, parent: body.parent, moved: true } });
   });
   return { moves, nests };
@@ -146,5 +149,23 @@ test.describe("1440 px", () => {
     await dialog.getByRole("button", { name: "Move", exact: true }).click();
     await expect(page.getByText("Moved Runbooks into Operations")).toBeVisible();
     expect(nests).toEqual([expect.objectContaining({ namespace: "col-runbooks", parent: "col-ops" })]);
+  });
+
+  test("a collection moved to the top level with New collection's form open hands focus to its title", async ({
+    page,
+  }) => {
+    await serve(page);
+    await page.goto("/library?collection=col-runbooks");
+    await tree(page).getByRole("button", { name: "New collection" }).click();
+    const title = tree(page).getByRole("textbox", { name: /^New collection/ });
+    await expect(title).toBeFocused();
+    await holdOver(page, place(page, "Runbooks"), tree(page).getByText("Drop here for the top level"));
+    await page.mouse.up();
+    const dialog = page.getByRole("dialog", { name: "Move Runbooks" });
+    await dialog.getByRole("button", { name: "Move", exact: true }).click();
+    await expect(page.getByText("Runbooks is top-level")).toBeVisible();
+    await expect(tree(page).locator('[data-collection="col-eng"] [data-collection="col-runbooks"]')).toHaveCount(0);
+    await expect(place(page, "Runbooks")).toBeVisible();
+    await expect(title).toBeFocused();
   });
 });

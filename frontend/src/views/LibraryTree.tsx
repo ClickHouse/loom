@@ -272,30 +272,23 @@ export const LibraryTree = memo(function LibraryTree({
     if (c.personal || c.role !== "admin") return {};
     return {
       draggable: true,
-      onDragStart: (e: DragEvent) => holdCollection(e, c, c.namespace),
+      onDragStart: (e: DragEvent) => holdCollection(e, c),
       onDragEnd: endCollectionDrag,
     };
   };
   // Where what is held may land: documents on a place their Move to… lists; a collection
-  // inside one the person writes that is not itself or under it, or at the top level.
+  // inside one the person writes that is not itself, under it nor its own parent, or at the
+  // top level.
   const dropAt = (key: string, entry: CollectionEntry | null): DropProps => {
-    let land: (() => void) | null = null;
-    if (documentDrop) {
-      if (documentDrop.targets.has(key)) land = () => documentDrop.onDrop(key);
-    } else if (heldCollection) {
-      const held = heldCollection;
-      const fits =
-        key === TOP_LEVEL
+    const held = heldCollection;
+    const parent = key === TOP_LEVEL ? "" : key;
+    const fits = documentDrop
+      ? documentDrop.targets.has(key)
+      : !!held &&
+        (key === TOP_LEVEL
           ? held.parent !== ""
-          : !!entry && canHold(entry) && entry.namespace !== held.parent && !isUnder(key, held.namespace, parentOf);
-      if (fits)
-        land = () => {
-          nested.current = false;
-          setNesting({ entry: held, parent: key === TOP_LEVEL ? "" : key });
-        };
-    }
-    if (!land) return {};
-    const drop = land;
+          : !!entry && canHold(entry) && parent !== held.parent && !isUnder(parent, held.namespace, parentOf));
+    if (!fits) return {};
     return {
       "data-drop": over === key ? "over" : "ok",
       onDragOver: (e: DragEvent) => {
@@ -310,7 +303,12 @@ export const LibraryTree = memo(function LibraryTree({
         e.preventDefault();
         setOver(null);
         endCollectionDrag();
-        drop();
+        if (documentDrop) {
+          documentDrop.onDrop(key);
+        } else if (held) {
+          nested.current = false;
+          setNesting({ entry: held, parent });
+        }
       },
     };
   };
@@ -460,15 +458,14 @@ export const LibraryTree = memo(function LibraryTree({
             nested.current = true;
           }}
           onClose={() => setNesting(null)}
-          // A move draws the row dragged again where it went, maybe inside a folded parent:
-          // focus goes to the place it was dropped on, or New collection for the top level.
-          // Closed without a move, the Modal hands focus back as it does.
+          // A move draws the dragged row again elsewhere: focus goes to the parent it was dropped
+          // on, or for the top level to New collection (its form's title while that is open).
           onCloseAutoFocus={(e) => {
             if (!nested.current) return;
             const key = nesting.parent ? placeFocusKey(nesting.parent) : NEW_COLLECTION_FOCUS;
-            const to = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
-            // Not drawn (New collection's form stands in its button's place): the Modal hands
-            // focus back as it does.
+            const to =
+              document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`) ??
+              (nesting.parent ? null : document.getElementById("library-tree-title"));
             if (!to) return;
             e.preventDefault();
             to.focus();

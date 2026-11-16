@@ -1072,7 +1072,7 @@ export function Documents() {
       }
       held = { from: only[0], uris: only[1].map((x) => x.source_uri) };
     }
-    holdDocs(e, held, r.source_uri);
+    holdDocs(e, held);
   };
   // The deep-link effect, the rows and the passage panel call the latest render's handlers
   // without re-firing on them or rendering every row again.

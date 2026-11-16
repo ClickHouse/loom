@@ -20,7 +20,7 @@ export function useTaskDrag(canWrite: boolean, onDrop: (r: TaskListRow, to: Grou
 
   const source = (r: TaskListRow): HTMLAttributes<HTMLElement> & { draggable: boolean } => ({
     draggable: canWrite,
-    onDragStart: (e: DragEvent) => start(e, r, r.task_id),
+    onDragStart: (e: DragEvent) => start(e, r),
     onDragEnd: release,
   });
 
