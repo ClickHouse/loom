@@ -396,9 +396,9 @@ async def _promote_via_memory_set(
     as a new memory via handle_memory_set so check_on_commit enforces the same
     pinned-reject / dedup / canonical-merge verdicts a regular write would get. A
     seeder candidate lands under the approver's `user_id`, judged against that user's
-    rows as any write naming its user is; a bot rule
-    (`assistant_turn`) as its agent's namespace-wide row (`user_id` '-'), which
-    reads bounded to one user do not serve, with the supporters' mean confidence."""
+    rows as any write naming its user is; a bot rule (`assistant_turn`) as its agent's
+    namespace-wide row (`user_id` '-'), which reads bounded to one user do not serve,
+    with the supporters' mean confidence."""
     from server.memory.app.write import handle_memory_set
 
     deserialized = _proposed_value(candidate_row)

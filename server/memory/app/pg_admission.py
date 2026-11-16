@@ -182,7 +182,7 @@ def set_gap_check(
     embedding: list[float],
     reach: float,
     peer_ids: set[str],
-    user_id: str = "-",
+    user_id: str,
 ) -> Callable[[list[dict[str, Any]]], bool]:
     """For `memory.set`'s commit (`Admission.gap_check`): a gap clears when no row of it
     is one of the verdict's peers, and every row that could be one (it counts as a
@@ -230,7 +230,7 @@ async def absorb(
     embedding: list[float],
     max_distance: float,
     peers: list[dict[str, Any]],
-    user_id: str = "-",
+    user_id: str,
 ) -> tuple[dict[tuple[str, str], int], list[dict[str, Any]]] | None:
     """The generations and peer rows a `memory.set` verdict is reached again at: each
     key the gap committed replaces what `peers` held for it, and joins them when it is

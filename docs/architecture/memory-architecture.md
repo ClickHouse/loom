@@ -122,14 +122,17 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     `user_id` under any token, the peer read is that user's rows (`_writer_scope`): a
     service writing for many users through one namespace-wide token must not fold a
     user's fact into another user's row, which the writer's `user_id`-scoped reads cannot
-    see, and other users' rows must not take the read's places. A write without a user
-    is judged against every user's rows. Two exceptions hold across the whole namespace
-    by design: a close pinned peer still rejects the write (409 `PINNED_CONFLICT`; a
-    decision and a restatement of the pinned value excepted), and `proposed=true` still
-    may not land on a key that holds any user's established fact (409 `KEY_HOLDS_FACT`).
-    A pin protects the namespace's fact from every writer, and a proposal must not retire
-    anyone's fact. The refusal names no row, id or value, so the narrowed token learns
-    only that its write was refused.
+    see, and other users' rows must not take the read's places. Such a write also runs
+    the separate pinned read a narrowed token runs, about one more namespace-wide read
+    (`tests/integration/test_conflict_read_cost.py` bounds the pair at two). A write
+    without a user is judged against every user's rows. Two exceptions hold across the
+    whole namespace by design: a close pinned peer still rejects the write (409
+    `PINNED_CONFLICT`; a decision excepted, and a restatement of the pinned value under
+    a namespace-wide token), and `proposed=true` still may not land on a key that holds
+    any user's established fact (409 `KEY_HOLDS_FACT`). A pin protects the namespace's
+    fact from every writer, and a proposal must not retire anyone's fact. The refusal
+    names no row, id or value, so the narrowed token learns only that its write was
+    refused.
 
     No verdict on the write calls an LLM. With the conflict resolver on, the peer read
     reaches down to `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60), and a write

@@ -67,7 +67,9 @@ async def test_candidate_rows_many_chunks_by_batch_and_maps_rows_back_by_qidx() 
         [],
         [{"qidx": 0, "memory_id": "q", "memory_key": "peer_of_k4", "dist": 0.2}],
     ]
-    out = await conflicts.candidate_rows_many(org="o", namespace="ns", items=items, batch=2, ch=ch)
+    out = await conflicts.candidate_rows_many(
+        user_id="-", org="o", namespace="ns", items=items, batch=2, ch=ch
+    )
     assert len(ch.query_all_calls) == 3
     sizes = [len([k for k in p if k.startswith("emb")]) for _, p in ch.query_all_calls]
     assert sorted(sizes) == [1, 2, 2]
@@ -305,7 +307,9 @@ async def test_no_parameter_of_a_full_batch_reaches_the_128_kib_field_cap() -> N
     ch = StubCH()
     vec = [0.123456789] * 3072
     items = [("semantic", f"k{i}", vec, 0.3) for i in range(6)]
-    await conflicts.candidate_rows_many(org="o", namespace="ns", items=items, batch=6, ch=ch)
+    await conflicts.candidate_rows_many(
+        user_id="-", org="o", namespace="ns", items=items, batch=6, ch=ch
+    )
     ((sql, params),) = ch.query_all_calls
     sizes = {k: len(str(format_query_value(v))) for k, v in params.items()}
     assert max(sizes.values()) < 128 * 1024, sizes

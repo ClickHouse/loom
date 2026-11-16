@@ -750,8 +750,8 @@ def test_a_foreign_pinned_decision_leaves_a_clear_write_marked_for_review(monkey
     }
     monkeypatch.setattr(
         conflicts,
-        "_scope_or_none",
-        lambda: ReadFilters(scope="own_user", user_id="u1", session_id=None),
+        "_writer_scope",
+        lambda _user_id: ReadFilters(scope="own_user", user_id="u1", session_id=None),
     )
     out = asyncio.run(
         check_on_commit(

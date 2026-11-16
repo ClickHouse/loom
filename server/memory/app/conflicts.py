@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from server.core.ch import get_client
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
 from server.core.naming import is_anonymous_user
-from server.identity.app.request_scope import request_scope
+from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
     ReadFilters,
@@ -193,9 +193,9 @@ async def candidate_rows_many(
     org: str,
     namespace: str,
     items: list[tuple[str, str, list[float], float]],
+    user_id: str,
     batch: int | None = None,
     ch: Any = None,
-    user_id: str = "-",
 ) -> dict[int, list[dict[str, Any]]]:
     """Peer rows for many facts at once, keyed by the fact's index in `items`
     (each `(memory_type, memory_key, embedding, max_distance)`). Facts are
@@ -380,7 +380,7 @@ async def _peer_rows_joined(
     return rows
 
 
-def _writer_scope(user_id: str = "-") -> ReadFilters | None:
+def _writer_scope(user_id: str) -> ReadFilters | None:
     """The rows a write is judged against: the request's read scope, narrowed to the
     write's user when the write names one and the token reads the whole namespace (a
     service writes for many users through one token, and folding a user's fact into
@@ -420,7 +420,7 @@ async def _foreign_pinned_rows(
 
 
 def _split_by_writer_scope(
-    peers: list[ConflictPeer], user_id: str = "-"
+    peers: list[ConflictPeer], user_id: str
 ) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
     """(peers inside the writer's scope (`_writer_scope`), peers outside it). A writer
     bounded to one user, or a write that names its user, never merges into,
@@ -594,13 +594,17 @@ async def check_on_commit(
         verdict = "conflict" if peers else "clear"
         return ConflictResult(verdict=verdict, peers=peers, review=bool(all_peers))
     new_canonical = canonical(new_value)
-    # A pinned row outside the writer's scope still blocks it, unless the write restates
-    # it: that write contradicts nothing.
+    # A pinned row outside the writer's scope still blocks it. A restatement of it
+    # contradicts nothing and is written, except under a token bounded to one user,
+    # whose answer must not tell which value another user pinned.
+    restates_ok = not request_narrowed()
     foreign_blocker = next(
         (
             p
             for p in foreign
-            if p.pinned and p.similarity >= threshold and p.canonical != new_canonical
+            if p.pinned
+            and p.similarity >= threshold
+            and not (restates_ok and p.canonical == new_canonical)
         ),
         None,
     )
@@ -1097,12 +1101,12 @@ async def peer_rows(
     memory_key: str,
     embedding: list[float],
     max_distance: float,
-    user_id: str = "-",
+    user_id: str,
 ) -> list[dict[str, Any]]:
     """The rows `check_on_commit` would read for this write, fetched by the caller so it
     can pass them back (`candidate_rows`) and add what commits next: the writer's peers
-    in its scope (`_writer_scope`) and every pinned peer (a scope that does not resolve sees only
-    pinned ones), with their distances."""
+    in its scope (`_writer_scope`) and every pinned peer (a scope that does not resolve
+    sees only pinned ones), with their distances."""
     ch = get_client()
     params: dict[str, Any] = {
         "org": org,
@@ -1133,7 +1137,7 @@ async def _without_erased(
     return [r for r in rows if str(r["memory_id"]) not in gone]
 
 
-def trim_peers(rows: list[dict[str, Any]], user_id: str = "-") -> list[dict[str, Any]]:
+def trim_peers(rows: list[dict[str, Any]], user_id: str) -> list[dict[str, Any]]:
     """Nearest first, the shape `peer_rows` returns: at most `PEER_LIMIT` rows inside the
     writer's scope, and the pinned rows outside it among the `PEER_LIMIT` nearest
     pinned ones (`PINNED_PEERS_SQL`)."""
@@ -1148,7 +1152,7 @@ def trim_peers(rows: list[dict[str, Any]], user_id: str = "-") -> list[dict[str,
     return near + [r for r in pinned if not inside(r)]
 
 
-def could_be_peer(row: Mapping[str, Any], user_id: str = "-") -> bool:
+def could_be_peer(row: Mapping[str, Any], user_id: str) -> bool:
     """Whether a committed row is a peer `peer_rows` would return for this writer, its
     type, key and distance aside: live, active or conflicted, and inside the writer's
     scope or pinned."""

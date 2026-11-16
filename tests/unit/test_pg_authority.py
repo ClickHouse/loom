@@ -223,8 +223,43 @@ def test_a_set_gap_never_clears_a_change_to_one_of_its_peers() -> None:
         embedding=[1.0, 0.0],
         reach=0.3,
         peer_ids={str(far["memory_id"])},
+        user_id="-",
     )
     assert not check([far])
+
+
+def test_a_set_gap_for_a_named_user_ignores_another_users_unpinned_row() -> None:
+    """Another user's row is no peer of the write, so committing it inside the reach
+    leaves the verdict standing; the same row is a peer of a write with no user."""
+    near = _row("near", user_id="alice")
+    pg_admission.remember(identity_key(near), 1, [1.0, 0.1])
+
+    def check(user: str) -> bool:
+        gap = pg_admission.set_gap_check(
+            memory_type="semantic",
+            memory_key="mine",
+            embedding=[1.0, 0.0],
+            reach=0.3,
+            peer_ids=set(),
+            user_id=user,
+        )
+        return gap([near])
+
+    assert check("bob")
+    assert not check("-")
+
+
+def test_a_named_users_peers_keep_only_its_rows_and_every_pinned_one() -> None:
+    from server.memory.app.conflicts import could_be_peer, trim_peers
+
+    alices = {**_row("a1", user_id="alice"), "dist": 0.1}
+    alices_pin = {**_row("a2", user_id="alice", pinned=1), "dist": 0.2}
+    bobs = {**_row("b1", user_id="bob"), "dist": 0.3}
+    assert not could_be_peer(alices, "bob") and could_be_peer(alices, "-")
+    assert could_be_peer(alices_pin, "bob") and could_be_peer(bobs, "bob")
+    kept = trim_peers([alices, alices_pin, bobs], "bob")
+    assert [r["memory_key"] for r in kept] == ["b1", "a2"]
+    assert len(trim_peers([alices, alices_pin, bobs], "-")) == 3  # a write with no user: every row
 
 
 def test_every_postgres_table_is_classified_for_erasure() -> None:

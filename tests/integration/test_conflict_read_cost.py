@@ -128,7 +128,9 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     wide = await measured("wide", lambda: conflicts.nearest_peer_rows(ch, params))
     wide_bulk = await measured(
         "wide_bulk",
-        lambda: conflicts.candidate_rows_many(org=org, namespace=_NS, items=items, batch=4, ch=ch),
+        lambda: conflicts.candidate_rows_many(
+            user_id="-", org=org, namespace=_NS, items=items, batch=4, ch=ch
+        ),
     )
     set_current_auth(
         AuthInfo(
@@ -141,7 +143,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         )
     )
     try:
-        scope = conflicts._scope_or_none()
+        scope = conflicts._writer_scope("-")
         own = await measured("scoped", lambda: conflicts.nearest_peer_rows(ch, params, scope))
         pinned = await measured(
             "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
@@ -149,7 +151,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
         bulk = await measured(
             "bulk",
             lambda: conflicts.candidate_rows_many(
-                org=org, namespace=_NS, items=items, batch=4, ch=ch
+                user_id="-", org=org, namespace=_NS, items=items, batch=4, ch=ch
             ),
         )
     finally:
@@ -254,7 +256,7 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
     try:
         single = await check(None)
         rows = await conflicts.candidate_rows_many(
-            org=org, namespace=_NS, items=[("semantic", "new", emb, 0.3)], ch=ch
+            user_id="-", org=org, namespace=_NS, items=[("semantic", "new", emb, 0.3)], ch=ch
         )
         batched = await check(rows[0])
     finally:
