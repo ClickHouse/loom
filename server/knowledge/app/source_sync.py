@@ -1240,7 +1240,6 @@ async def retire(src: KnowledgeSource, uri: str) -> bool:
         deleted = out.deleted
     except PublicationPending:  # the delete is committed; the worker publishes it
         deleted = True
-    # The audit log outlives an erasure, so a mirror's addresses never go in it.
     if deleted and served(src):
         await audit.emit(
             "knowledge.delete",
