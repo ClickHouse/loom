@@ -1074,8 +1074,8 @@ cosign 3 or later:
 
 ```bash
 url=https://github.com/ClickHouse/loom/releases/download/vX.Y.Z
-curl -fsSLO "$url/install.sh" -O "$url/install.sh.sigstore.json"
-cosign verify-blob install.sh --bundle install.sh.sigstore.json \
+curl -fsSLO "$url/loom-stack.tar.gz" -O "$url/loom-stack.tar.gz.sigstore.json"
+cosign verify-blob loom-stack.tar.gz --bundle loom-stack.tar.gz.sigstore.json \
   --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
