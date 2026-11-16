@@ -327,15 +327,15 @@ async def source_revisions(
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
     """Each live document the sync wrote under `tag` (`domain.home`): its address, the
-    store's file id it came from, the revision stamp of the ingested copy, and for a
-    kind that keeps them (else "") when the copy was read (`read_at`) and the exact hash
-    of what was written (`text_sha256`). With `pictures`, also whether the stored text still
-    holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
-    ""), as a native document stored by an earlier conversion does, and the SHA-256
-    of the stored text (`stored_content_sha256`): that reads every document's text,
-    so only a full listing asks; the hash is computed only for a flagged copy. A tag
-    filter over the namespace's key prefix like `source_documents`, read in pages of
-    `REVISIONS_PAGE` by address, so no document is left out.
+    store's file id it came from, the revision stamp of the ingested copy, and for a kind
+    that keeps them (else "") when the copy was read (`read_at`) and the exact hash of what
+    was written (`text_sha256`). With `pictures`, also whether the stored text still holds a
+    picture's bytes as a reference definition (`inline_pictures`, "1" or ""), as a native
+    document stored by an earlier conversion does, and the SHA-256 of the stored text
+    (`stored_content_sha256`): that reads every document's text, so only a full listing
+    asks; the hash is computed only for a flagged copy. A tag filter over the namespace's
+    key prefix like `source_documents`, read in pages of `REVISIONS_PAGE` by address, so no
+    document is left out.
 
     With `searchable_only`, only a document whose chunks are live counts: a write cut
     between its document row and its chunks leaves a version nobody can search, and
