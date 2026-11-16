@@ -397,7 +397,11 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     async def _profiles(org, namespace, user_id, memory_id):
         return []
 
+    async def _no_shared_copies(org, namespace, source):
+        return []
+
     monkeypatch.setattr(memory_repo, "profile_keys_built_from", _profiles)
+    monkeypatch.setattr(memory_repo, "shared_copies", _no_shared_copies)
     monkeypatch.setattr(memory_repo, "redact_versions", _redact_versions)
     monkeypatch.setattr(memory_repo, "next_version", _stamp)
     announced: list[tuple[str, int]] = []

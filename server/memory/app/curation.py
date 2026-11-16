@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from server.core import namespace_write_marks
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
@@ -58,6 +59,8 @@ from server.memory.api.models_temporal import (
 )
 from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.promotion_source import promotion_source
+from server.memory.domain.redaction_lineage import REDACTED_VALUE
 from server.memory.domain.sensitivity import listed_text, value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.domain.webhook_events import memory_change
@@ -718,15 +721,18 @@ async def redact_version(
         ),
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
+    shared_keys = await _scrub_shared_copies(org, target, head_now)
     await _scrub_profile_derivatives(org, target, profiles, through=through)
     # A redacted value may already be quoted in a cached answer (7-day TTL), a precedent
     # (30 days) or a cached code.ask answer; each carries the keys of the memory it was
     # shown, so the text leaves with the row it quoted. A failure here is reported, not
     # swallowed: an ADMIN scrub that left the quote in place is not a completed redaction.
-    # A scrubbed profile key may be the only row of a window that quoted the text. Windows
-    # hold bare keys and every user's profile shares its key, so this reach is org-wide.
+    # A scrubbed profile key may be the only row of a window that quoted the text, and so
+    # may a shared copy's key, when the copy was promoted under another key. Windows hold
+    # bare keys and every user's profile shares its key, so this reach is org-wide.
     cache_rows = precedent_rows = 0
-    for key in [target.memory_key, *sorted({p.memory_key for p in profiles})]:
+    quoted = {*shared_keys, *(p.memory_key for p in profiles)} - {target.memory_key}
+    for key in [target.memory_key, *sorted(quoted)]:
         cache_rows += await memory_repo.delete_llm_response_cache_by_key(org, key)
         cache_rows += await memory_repo.delete_code_answers_by_key(org, key)
         precedent_rows += await memory_repo.delete_ask_precedents_by_key(org, key)
@@ -853,6 +859,31 @@ async def _scrub_profile_derivatives(
             ),
         )
         await memory_repo.run_scrubs(scrubs, apply=True)
+
+
+async def _scrub_shared_copies(
+    org: str, target: HistoryTarget, head_now: MemoryRow | None
+) -> set[str]:
+    """Scrub the shared copies promoted from the key that hold the redacted text, or that
+    an earlier run scrubbed, and their search rows; return the copies' keys."""
+    import server.memory.store as memory_repo
+
+    if head_now is not None and head_now.content_sha256 == target.content_sha256:
+        return set()
+    source = promotion_source(
+        org, target.namespace, target.agent, target.user_id, target.session_id, target.memory_key
+    )
+    shared = [
+        c
+        for c in await memory_repo.shared_copies(org, target.namespace, source)
+        if c.value == REDACTED_VALUE or _content_sha256_of_stored(c.value) == target.content_sha256
+    ]
+    if not shared:
+        return set()
+    await memory_repo.scrub_shared_copies(org, target.namespace, source, shared)
+    # A mutation moves no write mark: an answer from before the scrub is not reused.
+    await namespace_write_marks.bump(org, target.namespace, "memory")
+    return {c.memory_key for c in shared}
 
 
 def _live_sha(head: MemoryRow | None) -> str:

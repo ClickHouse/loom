@@ -1353,24 +1353,24 @@ A redaction (`memory.redact`) scrubs the version it names, that key's derived ro
 every version of the user's profiles whose trace names the memory: the structured profile
 and the free-text fold's `consolidated_profile` name the memories they read in their trace
 (`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
-memory is scrubbed with its key's derived rows, the live one included. The trace names
-the memory and not its version, so a profile built from another version of it is scrubbed
-too. The named version and every profile version reached are scrubbed in one statement
-per version table, so the redaction issues two mutations however many profile versions
-name the memory. The cached
-answers and ask precedents whose window held a scrubbed profile key are deleted with those
-of the memory's own key. A window records bare keys, and every user's profile has the same
-key, so this reach is org-wide: one redaction clears every cached answer and precedent in
-the org that rendered any user's profile, in every namespace, and each profile key reached
-adds one deletion per table. A profile version whose trace names no memory ids
-(`profile.fold:<label>` alone, as a build that does not record its sources writes it,
-including an older build during a rolling upgrade) is not reached and keeps the text until
-the user is erased. A lock on a profile key reached refuses the redaction
-before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
-profile is left out of `profile.render`, `profile.structured` and profile search, and so
-of every pack and primer, until the worker rebuilds it from the user's current facts; the
-fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
-its minimum memory count or in a namespace that has turned the fold off.
+memory is scrubbed with its key's derived rows, the live one included. The trace names the
+memory and not its version, so a profile built from another version of it is scrubbed too.
+The named version and every profile version reached are scrubbed in one statement per
+version table, so the redaction issues two mutations however many profile versions name the
+memory, and a third when a shared copy promoted from the key holds the text. The cached
+answers and ask precedents whose window held a scrubbed profile key or a shared copy's key
+are deleted with those of the memory's own key. A window records bare keys, and every user's
+profile has the same key, so this reach is org-wide: one redaction clears every cached
+answer and precedent in the org that rendered any user's profile, in every namespace, and
+each profile key reached adds one deletion per table. A profile version whose trace names no
+memory ids (`profile.fold:<label>` alone, as a build that does not record its sources writes
+it, including an older build during a rolling upgrade) is not reached and keeps the text
+until the user is erased. A lock on a profile key reached refuses the redaction before
+anything is scrubbed, as a lock on the memory's own key does. A scrubbed live profile is
+left out of `profile.render`, `profile.structured` and profile search, and so of every pack
+and primer, until the worker rebuilds it from the user's current facts; the fold rebuilds
+`consolidated_profile` only on its own schedule, and never for a user below its minimum
+memory count or in a namespace that has turned the fold off.
 
 A structured profile is served only from a row written as `worker:structured-profile`, an
 actor kind no token maps to, so a caller cannot forge one
