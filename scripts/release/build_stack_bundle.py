@@ -29,6 +29,7 @@ FILES = {
     f"{CONFIG}/nlp_user_settings.xml": f"{CONFIG}/nlp_user_settings.xml",
     f"{CONFIG}/keeper.xml": f"{CONFIG}/keeper.xml",
     f"{CONFIG}/access_control.xml": f"{CONFIG}/access_control.xml",
+    f"{CONFIG}/system_logs.xml": f"{CONFIG}/system_logs.xml",
     f"{CONFIG}/named_collections.xml.template": f"{CONFIG}/named_collections.xml",
     "deploy/lemmagen3/en.bin": "deploy/lemmagen3/en.bin",
     "deploy/lemmagen3/LICENSE": "deploy/lemmagen3/LICENSE",

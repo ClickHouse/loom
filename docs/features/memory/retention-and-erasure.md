@@ -342,7 +342,9 @@ The erased id stays where the proof of erasure needs it: in the ledger row (unti
 table's TTL drops it, 90 days after the request), in audit, in `loom.erasure_reversals`, and
 in the deployment's own logs of the statements that named it (the ClickHouse mutation log,
 `system.query_log` and `system.text_log` for a statement that wrote it, and Postgres
-statement logs with `log_statement` or `log_min_duration_statement` on).
+statement logs with `log_statement` or `log_min_duration_statement` on). The bundled
+ClickHouse keeps `system.query_log` and `system.text_log` for 30 days
+([log retention](../../operations/deployment.md#log-retention)).
 
 ### Abandoned sagas
 

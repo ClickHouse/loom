@@ -97,6 +97,8 @@ switches an install back to the bundled container.
   a server Loom shares, a self-managed admin can keep both to Loom's own:
   `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
+- **Log retention.** A self-managed server keeps `system.query_log` and
+  `system.text_log` rows until you set a TTL on them ([log retention](#log-retention)).
 - **Switching.** Run the install command again with `--clickhouse` (the table above) to
   move an install to your own server; Loom starts on an empty `loom` database there. The
   bundled container keeps running on its old volume until you stop it (the installer
@@ -149,6 +151,7 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 | `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer for ad-hoc `lemmatize('en', …)` queries. Loom lemmatizes in Python.                              |
 | `nlp_user_settings.xml`                 | The `loom_reader` user and profile (below), the per-tenant quota, and the experimental NLP and AI SQL flags.            |
 | `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` tables work.                                                         |
+| `system_logs.xml`                       | `system.query_log` and `system.text_log` keep 30 days of rows ([log retention](#log-retention)).                        |
 | `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
 
 - **Read-only user.** Loom runs the reads a caller shapes (`code.grep`, a patterned
@@ -607,6 +610,39 @@ directory. When `next` starts `not swapped`, drop the twin with
 inspect both tables by hand.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
+
+### Log retention
+
+ClickHouse records each statement in `system.query_log` and its server log in
+`system.text_log`. A refused statement's error can quote the value it failed on, such as
+a memory key, a title or a user id, and [erasure](../features/memory/retention-and-erasure.md)
+reaches neither log. ClickHouse's default configuration keeps both logs' rows with no TTL.
+
+The bundled ClickHouse and the Helm chart's dev ClickHouse keep 30 days of each, from
+`deploy/clickhouse-config/system_logs.xml`. On a self-managed server, put the same file
+in `/etc/clickhouse-server/config.d/` and restart the server:
+
+```xml
+<clickhouse>
+    <query_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </query_log>
+    <text_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </text_log>
+</clickhouse>
+```
+
+When a log's definition changes, ClickHouse renames the existing table on the next start
+to the first free name of `query_log_0`, `query_log_1` and so on (`text_log_0` for the
+server log), keeps it with its rows and its old TTL, and creates the log again. A server
+that ran with no TTL keeps those rows in `query_log_0` and `text_log_0` until you drop
+them. Read what you need from the old tables, then drop them:
+
+```sql
+DROP TABLE IF EXISTS system.query_log_0;
+DROP TABLE IF EXISTS system.text_log_0;
+```
 
 ## Providers
 

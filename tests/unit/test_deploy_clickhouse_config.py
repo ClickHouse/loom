@@ -3,6 +3,7 @@ parses, and none grants or carries more than Loom needs."""
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -74,3 +75,28 @@ def test_the_reader_profile_caps_equal_the_caller_shaped_defaults(
     assert float(profile.findtext(ch_setting) or "nan") == default
     min_ = STATEMENT_FLOOR_S if ch_setting == "max_execution_time" else 1
     assert float(profile.findtext(f"constraints/{ch_setting}/min") or "nan") == min_
+
+
+SYSTEM_LOGS = ("query_log", "text_log")
+
+
+def _log_ttls(root: ET.Element) -> dict[str, str | None]:
+    return {log: root.findtext(f"{log}/ttl") for log in SYSTEM_LOGS}
+
+
+def test_query_and_text_logs_keep_30_days() -> None:
+    """A refused statement's error can quote a metadata value, and erasure reaches
+    neither log, so the bundled server bounds both."""
+    ttls = _log_ttls(ET.parse(CFG / "system_logs.xml").getroot())
+    assert ttls == dict.fromkeys(SYSTEM_LOGS, "event_date + INTERVAL 30 DAY DELETE")
+
+
+def test_the_helm_dev_clickhouse_keeps_the_same_log_retention() -> None:
+    template = CFG.parents[1] / "deploy" / "helm" / "loom" / "templates" / "dev-clickhouse.yaml"
+    text = template.read_text(encoding="utf-8")
+    block = re.search(r"^  system_logs\.xml: \|\n((?:    .*\n)+)", text, re.M)
+    assert block, "the dev ClickHouse ConfigMap has no system_logs.xml"
+    assert "mountPath: /etc/clickhouse-server/config.d/system_logs.xml" in text
+    assert "subPath: system_logs.xml" in text
+    helm = ET.fromstring(block.group(1))
+    assert _log_ttls(helm) == _log_ttls(ET.parse(CFG / "system_logs.xml").getroot())
