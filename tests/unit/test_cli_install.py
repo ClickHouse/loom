@@ -437,14 +437,14 @@ def test_install_gives_each_client_the_toolset_the_server_setup_gives(
 
 
 _ZED_SETTINGS = """\
-// loom-709-repo-marker: this comment identifies the settings file Zed should open
+// settings-file-marker: this comment identifies the settings file Zed should open
 
 {
   "theme": "One Dark",
   "context_servers": {
     "marker-existing-server": {
       "command": "true",
-      "args": ["loom-709-marker"]
+      "args": ["existing-server-marker"]
     }
   }
 }
@@ -494,11 +494,11 @@ def test_zed_install_merges_jsonc_and_repeats_without_rewriting(
     )
     text = cfg.read_text()
     assert text.startswith(
-        "// loom-709-repo-marker: this comment identifies the settings file Zed should open\n"
+        "// settings-file-marker: this comment identifies the settings file Zed should open\n"
     )
     assert '"theme": "One Dark"' in text
     assert '"marker-existing-server"' in text
-    assert '"args": ["loom-709-marker"]' in text
+    assert '"args": ["existing-server-marker"]' in text
     assert '"url": "http://localhost:7777/mcp"' in text
     assert f'"Authorization": "Bearer {_ZED_TOKEN}"' in text
     assert "mcp-remote" not in text
@@ -559,8 +559,8 @@ def test_zed_install_replaces_only_the_loom_entry(
     text = cfg.read_text()
     assert "old-token" not in text
     assert "Bearer new-token" in text
-    assert "// loom-709-repo-marker" in text
-    assert '"args": ["loom-709-marker"]' in text
+    assert "// settings-file-marker" in text
+    assert '"args": ["existing-server-marker"]' in text
     assert text != once
 
 
