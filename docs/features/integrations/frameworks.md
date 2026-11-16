@@ -20,6 +20,7 @@ or needs another database, vector store or cache.
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                                   |
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`                             |
 | AG2                            | `LoomRecallPolicy`, `loom_tools`                | Python, `loom.integrations.ag2`                           | `ag2.assembly.AssemblyPolicy`, `tool()` from `ag2.tools` |
+| Microsoft Agent Framework      | `LoomContextProvider`                           | Python, `loom.integrations.agent_framework`               | `agent_framework.ContextProvider`                        |
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                                        |
 | Mastra                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool` from `@mastra/core`                         |
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                                       |
@@ -342,6 +343,51 @@ trimming policy (`SlidingWindowPolicy`, `TokenBudgetPolicy`), which can cut the 
 request out of the events the policy reads. Those policies trim events, not the prompt, so
 `top_k` is what bounds the memory block.
 
+## Microsoft Agent Framework
+
+`LoomContextProvider` implements Agent Framework's `ContextProvider`, which an `Agent`
+takes in `context_providers=[...]`: before each run it adds the Loom memories that match
+the user's input to the run's instructions, and after the run it sends the turn's text to
+Loom, which extracts the facts. Install with `pip install 'clickhouse-loom[agent-framework]'`
+(`agent-framework-core` 1.26 or later 1.x). Agent Framework succeeds AutoGen; a new project
+uses this provider, and the [AutoGen](#autogen) memory stays for AutoGen projects.
+
+```python
+from agent_framework import Agent
+from loom import Agent as LoomAgent
+from loom.integrations.agent_framework import LoomContextProvider
+
+async with LoomAgent(org="acme", namespace="support") as loom_agent:
+    agent = Agent(
+        client=chat_client,
+        instructions="You are a helpful assistant.",
+        context_providers=[LoomContextProvider(loom_agent, user_id="alice")],
+    )
+    session = agent.create_session()
+    await agent.run("I prefer aisle seats", session=session)
+```
+
+The agent keeps its own conversation history: with no history provider configured, it adds
+its in-memory one beside Loom's provider, and Loom holds the memories across sessions.
+
+| Agent Framework | Loom                                                                                                                                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `before_run`    | `memory.search` with the text of the run's user messages; with `honour_abstain`, leaves out memories below Loom's floor and adds nothing when Loom abstains; the matches are added as one block of instructions                                        |
+| `after_run`     | the user and assistant text of the run's input and response messages, sent to `memory.set_from_messages` (400 messages a call, the op's cap), where Loom extracts the facts and resolves duplicates and conflicts; tool calls and results are not sent |
+
+Extraction runs under a Loom session derived from the user and the Agent Framework session
+(`maf-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and
+a caller may choose its session ids.
+
+| `LoomContextProvider` argument | Default  | Effect                                                                                                                                              |
+| ------------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`                        | required | the `loom.Agent` the provider calls; Agent Framework awaits its providers, so a `SyncAgent` is refused                                              |
+| `user_id`                      | none     | the end user the memories belong to; unset, the provider reads and writes the namespace's shared memories; an empty or `-` user raises `ValueError` |
+| `source_id`                    | `loom`   | the provider's id in Agent Framework's attribution                                                                                                  |
+| `top_k`                        | 5        | memories per run, from 1 to 500                                                                                                                     |
+| `honour_abstain`               | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                   |
+| `defer`                        | `True`   | queue the extraction on the server instead of waiting                                                                                               |
+
 ## Pydantic AI
 
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
@@ -550,6 +596,8 @@ client can speak for several agents.
   silent.
 - **An AG2 turn fails when Loom is unreachable.** `LoomRecallPolicy` runs before each
   model call of the turn, and `AssemblerMiddleware` does not catch a policy's error.
+- **An Agent Framework run fails when Loom is unreachable.** The `Agent` does not catch a
+  provider's error, before the run or after it.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.

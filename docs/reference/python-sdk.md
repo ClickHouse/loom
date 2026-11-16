@@ -255,6 +255,11 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   assembly policy that adds the memories `memory.search` finds for the latest
   user message to the prompt, and `loom_tools(agent, user_id=...)` returns
   `AgentTools` as AG2 tools; install the `[ag2]` extra.
+- `loom.integrations.agent_framework.LoomContextProvider(agent, user_id=...)` is a
+  Microsoft Agent Framework `ContextProvider`: before each run it adds the
+  `memory.search` matches of the user's input to the instructions, and after the run
+  it sends the turn to `memory.set_from_messages`; install the `[agent-framework]`
+  extra.
 - `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
   `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
   extra.
