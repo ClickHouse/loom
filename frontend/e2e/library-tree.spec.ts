@@ -246,13 +246,27 @@ test.describe("1440 px under a reload bar", () => {
     await installApi(page, { knowledgeRows: 2, collections: many });
     // The server's build changes after the page booted: the reload bar shows above the header.
     let build = "aaaaaaaaa1";
-    await page.route("**/v1/health", (route) => route.fulfill({ json: { status: "ok", build_commit: build } }));
+    let finishJump!: () => void;
+    const jumped = new Promise<void>((resolve) => {
+      finishJump = resolve;
+    });
+    await page.route("**/v1/health", async (route) => {
+      const atRequest = build;
+      if (atRequest === "bbbbbbbbb2") await jumped;
+      await route.fulfill({ json: { status: "ok", build_commit: atRequest } });
+    });
+    const initialHealth = page.waitForResponse("**/v1/health");
     await page.goto("/library");
+    await (await initialHealth).finished();
     const tree = page.getByRole("navigation", { name: "Library places" });
     await expect(tree.getByRole("link", { name: "Collection 0", exact: true })).toBeAttached();
     await page.clock.runFor(10_000);
     build = "bbbbbbbbb2";
-    await page.clock.runFor(6 * 60_000);
+    const changedHealth = page.waitForResponse("**/v1/health");
+    // Start the poll after the jump, so its request deadline cannot race the mocked response.
+    await page.clock.fastForward(6 * 60_000);
+    finishJump();
+    await (await changedHealth).finished();
     await expect(page.getByTestId("reload-bar")).toBeVisible();
     await tree.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
