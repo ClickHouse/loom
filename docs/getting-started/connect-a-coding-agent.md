@@ -97,7 +97,7 @@ use the [Cursor](../features/integrations/cursor.md#mcp-tools) or
 [VS Code](../features/integrations/vscode.md#local-single-user-server) install link. Otherwise, in the dashboard,
 open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
 token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
-Windsurf, Zed or Claude Desktop) under **Connect**: the dialog shows the entry for its
+Windsurf, Zed, Gemini CLI or Claude Desktop) under **Connect**: the dialog shows the entry for its
 config file, with the token in it. For any other MCP client, copy the entry from
 [MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed
 (`pip install -e .` from a clone of the repository), one command writes the entry instead:
@@ -107,7 +107,7 @@ loom install --client cursor --server-url https://loom.example.com --token "$LOO
 ```
 
 Restart the client afterwards. `--client` also takes `claude-desktop`, `vscode`, `cline`,
-`windsurf` and `zed`; without it, `loom install` wires every client it finds. These clients
+`windsurf`, `zed` and `gemini`; without it, `loom install` wires every client it finds. These clients
 get the tools; transcript capture needs a hook, which [Cursor](../features/integrations/cursor.md)
 has and the others take from a [transcript template](../features/integrations/index.md#transcript-capture-hooks).
 [MCP clients](../features/integrations/mcp-clients.md) covers toolsets and the entry the
