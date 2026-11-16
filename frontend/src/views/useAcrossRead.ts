@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react";
-import type { ReadableCollections } from "../views/LibraryCollections";
-import { treeOrder } from "../views/LibraryCollections";
-import { isRefusal, MAX_PLACES_READ, type PlaceFailure } from "./libraryAcross";
-import { useRefusedPlaces } from "./useRefusedPlaces";
+import { isRefusal, MAX_PLACES_READ, type PlaceFailure } from "../lib/libraryAcross";
+import { useRefusedPlaces } from "../lib/useRefusedPlaces";
+import { type ReadableCollections, treeOrder } from "./LibraryCollections";
 
 /** What a read of several places read: the places the rows and the cursor come from, those
  *  that failed, and whether the server read only the first. `key` is what it was read for. */
@@ -16,14 +15,12 @@ export interface AcrossReport {
 /** The Library's places to read and what the read on screen made of them. `across`: the
  *  list reads every place (All documents, or a search everywhere), else `namespace` alone.
  *  `rowsScope`: the `readKey` the rows on screen were read for. `reload` is called while
- *  rendering, when a new collections answer lands while a refused place is named: it must
- *  set the caller's own state, so a read that answer starts anyway is the only one. */
+ *  rendering when a new collections answer lands while a refused place is named; it must
+ *  only set this component's state, so that render starts one read. */
 export function useAcrossRead({
   org,
   namespace,
-  ownShelf,
   shelf,
-  pickedOrg,
   collections,
   across,
   rowsScope,
@@ -31,10 +28,8 @@ export function useAcrossRead({
 }: {
   org: string;
   namespace: string;
-  /** The header's namespace holds documents, as `shelf`. */
-  ownShelf: boolean;
-  shelf: string;
-  pickedOrg: string;
+  /** The header's namespace when it holds documents, else null. */
+  shelf: string | null;
   collections: ReadableCollections;
   across: boolean;
   rowsScope: string;
@@ -43,16 +38,12 @@ export function useAcrossRead({
   // Every place the person reads in the Library, in the tree's order: the header's namespace,
   // then My files and the collections. Waits for the collections' first answer.
   const everyPlace = useMemo(() => {
-    const out = new Set<string>(ownShelf ? [shelf] : []);
+    const out = new Set<string>(shelf ? [shelf] : []);
     for (const { c } of treeOrder(collections.kept?.rows ?? [])) out.add(c.namespace);
     return [...out];
-  }, [ownShelf, shelf, collections.kept]);
+  }, [shelf, collections.kept]);
   const [readOf, setReadOf] = useState<AcrossReport | null>(null);
-  const refusals = useRefusedPlaces(
-    collections.kept,
-    pickedOrg,
-    across && !!readOf?.failed.some((f) => isRefusal(f.error)),
-  );
+  const refusals = useRefusedPlaces(collections.kept, org, across && !!readOf?.failed.some((f) => isRefusal(f.error)));
   // A new collections answer while a refused place is named reads the list again: a grant
   // that lagged behind the list may have caught up.
   if (refusals.reread) reload();

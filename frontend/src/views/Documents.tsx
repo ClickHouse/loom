@@ -76,6 +76,7 @@ import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog"
 import { PageContainer } from "../layout/PageContainer";
 import { EmptyState } from "../components/EmptyState";
 import { KnowledgeGaps } from "./KnowledgeGaps";
+import { useAcrossRead } from "./useAcrossRead";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
@@ -84,7 +85,6 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
-import { useAcrossRead } from "../lib/useAcrossRead";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -427,9 +427,7 @@ export function Documents() {
   } = useAcrossRead({
     org: identity.org,
     namespace: identity.namespace,
-    ownShelf,
-    shelf: picked.namespace,
-    pickedOrg: picked.org,
+    shelf: ownShelf ? picked.namespace : null,
     collections,
     across,
     rowsScope,
