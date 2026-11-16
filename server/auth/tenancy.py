@@ -31,7 +31,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from server.core import cell_router
+from server.core import cell, cell_router
 from server.core.cell import ORG_FREE
 from server.core.errors import (
     BackendUnavailableError,
@@ -137,7 +137,7 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
         return
     if org in _elsewhere:
         raise WrongCellError(org, cell=_elsewhere[org])
-    from server.core import cell, pg
+    from server.core import pg
 
     try:
         held = bool(await pg.fetchval(_HOLDS, org))
@@ -226,8 +226,6 @@ async def _refuse_unscoped(org: str) -> None:
     """Refuse an unheld org for a principal that places none: 409 `WRONG_CELL`, or 503 on a
     first cell whose directory answers `attaching` or cannot be read before it has read
     `serving`, since the org's data may be in this cell until attach places it."""
-    from server.core import cell
-
     if cell.is_first():
         missing = cell_router.unset()
         if missing and not cell_router.has_reader():
@@ -280,8 +278,6 @@ async def _place(org: str) -> tuple[str, str]:
     """Ask the router to place `org` in this cell; the (cell, deployment id) that holds
     it. The router inserts the placement if absent and reads the winner back, so a
     retry is safe."""
-    from server.core import cell
-
     url = cell_router.router_url()
     if missing := cell_router.unset():
         raise BackendUnavailableError(
