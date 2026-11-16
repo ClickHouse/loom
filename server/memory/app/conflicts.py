@@ -201,8 +201,9 @@ async def candidate_rows_many(
     (each `(memory_type, memory_key, embedding, max_distance)`). Facts are
     grouped by embedding dimension, cut into chunks of `batch`
     (`memory_write_candidate_batch`), and the chunks run concurrently — the
-    same concurrency as the per-fact path, at one namespace read per chunk
-    instead of per fact. A fact with no embedding gets no entry. Fail-open per
+    same concurrency as the per-fact path, at one candidate statement per chunk
+    instead of one per fact, run together with the pinned statement when the
+    writer's scope is below the namespace. A fact with no embedding gets no entry. Fail-open per
     chunk: a failed chunk's facts fall back to the per-fact statement in the
     caller by getting no entry here — callers treat a missing key as "fetch
     yourself", not as "no peers"."""
