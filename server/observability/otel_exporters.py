@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import UTC
-from typing import Any
+from typing import Any, TypedDict
 
 from server.core.ch_names import NamedClient, otel_database, otel_table
 from server.settings import settings
@@ -152,18 +152,45 @@ def _make_clickhouse_span_exporter(service_name: str) -> Any:
 _SPAN_SCHEDULE_DELAY_MS = 3000
 
 
-def _metric_reader_kwargs() -> dict[str, int]:
-    """`PeriodicExportingMetricReader` cadence from settings.
+class _MetricReaderKwargs(TypedDict):
+    export_interval_millis: int
+    export_timeout_millis: int
+    cardinality_limits: dict[Any, int]
+
+
+def _metric_reader_kwargs() -> _MetricReaderKwargs:
+    """`PeriodicExportingMetricReader` cadence and series limit from settings.
 
     The export timeout is half the interval, capped at 10 s: the reader runs
     every gauge callback inside collect(), and the probes behind them are
     cached, so a collect that needs longer is stuck, not
-    slow.
+    slow. The SDK's own limit (2000 series per metric) is below what the
+    request metrics' operation, namespace and outcome labels reach.
     """
+    # Loom creates no synchronous gauge, so the SDK's private _Gauge class stays out.
+    from opentelemetry.sdk.metrics import (
+        Counter,
+        Histogram,
+        ObservableCounter,
+        ObservableGauge,
+        ObservableUpDownCounter,
+        UpDownCounter,
+    )
+
     interval_ms = max(1, int(settings.otel_metrics_export_interval_s)) * 1000
+    limit = int(settings.otel_metrics_cardinality_limit)
+    instruments = (
+        Counter,
+        UpDownCounter,
+        Histogram,
+        ObservableCounter,
+        ObservableUpDownCounter,
+        ObservableGauge,
+    )
     return {
         "export_interval_millis": interval_ms,
         "export_timeout_millis": max(500, min(interval_ms // 2, 10_000)),
+        "cardinality_limits": dict.fromkeys(instruments, limit),
     }
 
 

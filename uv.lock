@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -883,12 +883,12 @@ requires-dist = [
     { name = "lemmagen3", marker = "extra == 'lemma'", specifier = ">=3.3" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.3.1" },
     { name = "numpy", marker = "extra == 'code'", specifier = ">=1.26" },
-    { name = "opentelemetry-api", specifier = ">=1.27" },
+    { name = "opentelemetry-api", specifier = ">=1.45.2" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.48b0" },
     { name = "opentelemetry-instrumentation-logging", specifier = ">=0.48b0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.27" },
+    { name = "opentelemetry-sdk", specifier = ">=1.45.2" },
     { name = "protobuf", marker = "extra == 'scip'", specifier = ">=7.35.1" },
     { name = "pyarrow", marker = "extra == 'extractor'", specifier = ">=26,<27" },
     { name = "pydantic", specifier = ">=2.9" },

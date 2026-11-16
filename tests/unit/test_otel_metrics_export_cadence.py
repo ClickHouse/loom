@@ -57,10 +57,32 @@ def test_default_cadence_is_one_minute_and_spans_keep_three_seconds() -> None:
     assert otel_exporters._SPAN_SCHEDULE_DELAY_MS == 3000
 
 
+def test_a_metric_keeps_series_up_to_the_setting_then_overflows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The SDK alone stops at 2000 series a metric; the setting is what the reader gets.
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    assert Settings.model_fields["otel_metrics_cardinality_limit"].default == 20_000
+    monkeypatch.setattr(settings, "otel_metrics_cardinality_limit", 3)
+    kw = otel_exporters._metric_reader_kwargs()
+    reader = InMemoryMetricReader(cardinality_limits=kw["cardinality_limits"])
+    counter = MeterProvider(metric_readers=[reader]).get_meter("t").create_counter("loom.requests")
+    for i in range(5):
+        counter.add(1, {"loom.operation": f"op{i}"})
+    data = reader.get_metrics_data()
+    assert data is not None
+    points = data.resource_metrics[0].scope_metrics[0].metrics[0].data.data_points
+    named = [p for p in points if "loom.operation" in p.attributes]
+    overflow = [p for p in points if p.attributes.get("otel.metric.overflow") is True]
+    assert len(named) == 3 and len(overflow) == 1 and overflow[0].value == 2
+
+
 def test_reader_kwargs_follow_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "otel_metrics_export_interval_s", 60)
     kw = otel_exporters._metric_reader_kwargs()
-    assert kw == {"export_interval_millis": 60_000, "export_timeout_millis": 10_000}
+    assert kw["export_interval_millis"] == 60_000 and kw["export_timeout_millis"] == 10_000
     monkeypatch.setattr(settings, "otel_metrics_export_interval_s", 3)
     kw = otel_exporters._metric_reader_kwargs()
     assert kw["export_interval_millis"] == 3_000 and kw["export_timeout_millis"] == 1_500

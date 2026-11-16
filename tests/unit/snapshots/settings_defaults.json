@@ -982,6 +982,7 @@
  "otel_exporter_otlp_endpoint": "",
  "otel_gauge_heartbeat_s": 0,
  "otel_invariants_probe_s": 3600,
+ "otel_metrics_cardinality_limit": 20000,
  "otel_metrics_delta_temporality": false,
  "otel_metrics_export_interval_s": 60,
  "otel_retention_census_s": 3600,

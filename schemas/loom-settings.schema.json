@@ -5558,6 +5558,12 @@
           "type": "integer",
           "description": "Seconds between the state probe's whole-table readings (embed backlog, integrity invariants), taken on the lease holder only. The invariants read 0 and exist to catch drift, so an hour is enough; each reading is one FINAL pass over memory, memory_embeddings and entity_vectors."
         },
+        "otel_metrics_cardinality_limit": {
+          "default": 20000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Series each metric keeps per process; past it, a new attribute set adds to one series marked `otel.metric.overflow`. Sized above the request metrics' labels."
+        },
         "otel_metrics_delta_temporality": {
           "default": false,
           "type": "boolean",
