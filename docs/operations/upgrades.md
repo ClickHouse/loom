@@ -314,9 +314,10 @@ checkout.
     a timer: every router replica (`loom router serve`) runs this build before any cell's
     processes do. Each process of a prepared first cell asks the router's state route from
     its first cell-state read until it reads `serving`, and a router of an earlier build
-    reads the directory on every such call, so a large cell would cost the directory up to
-    about 1,600 reads a second; a router of this build answers them from one read per
-    replica per `LOOM_ROUTER_DIRECTORY_CACHE_S`
+    reads the directory on every such call: about one read per server process per
+    `min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)`, so 1,600 reads a
+    second for a thousand pods of eight workers at the defaults; a router of this build
+    answers them from one read per replica per `LOOM_ROUTER_DIRECTORY_CACHE_S`
     ([cells](../architecture/cells.md#the-heartbeats-keys)).
 
 While a migration applies, the old build keeps serving: every migration is additive.

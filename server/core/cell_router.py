@@ -44,8 +44,6 @@ ATTACHING, SERVING, OTHER, UNKNOWN = "attaching", "serving", "other", "unknown"
 _answer: tuple[str, float] | None = None
 # Read `serving` once: kept for the process's life.
 _serving = False
-# The cause `_ask` gives a 401, which `_keep_router` tells from every other cause.
-_UNAUTHORIZED = "401: the router does not accept LOOM_CELL_ROUTER_TOKEN"
 # The background reader's wait between reads; tests replace it.
 _sleep = asyncio.sleep
 # The heartbeat's `router` key and its cause, and when a run of 401 answers began.
@@ -140,14 +138,14 @@ async def read_once(client: httpx.AsyncClient | None = None) -> None:
     global _answer, _serving, _logged_why
     router: bool | None
     if missing := unset():
-        state, router, why = UNKNOWN, False, f"{', '.join(missing)} unset"
+        state, router, why, unauthorized = UNKNOWN, False, f"{', '.join(missing)} unset", False
     elif client is None:
         import httpx
 
         async with httpx.AsyncClient() as own:
-            state, router, why = await _ask(own)
+            state, router, why, unauthorized = await _ask(own)
     else:
-        state, router, why = await _ask(client)
+        state, router, why, unauthorized = await _ask(client)
     if why != _logged_why:
         if why:
             log.warning("cell state: the router read: %s", why)
@@ -156,15 +154,15 @@ async def read_once(client: httpx.AsyncClient | None = None) -> None:
     _answer = (state, now)
     if state == SERVING:
         _serving = True
-    _keep_router(router, why, now)
+    _keep_router(router, why, now, unauthorized=unauthorized)
 
 
-def _keep_router(router: bool | None, why: str, now: float) -> None:
+def _keep_router(router: bool | None, why: str, now: float, *, unauthorized: bool) -> None:
     """Update the `router` key from one read: `router` None is a transient failure, which
-    keeps the last value; a 401 (`why` is `_UNAUTHORIZED`) turns it false only past one
+    keeps the last value; a 401 (`unauthorized`) turns it false only past one
     LOOM_ROUTER_DIRECTORY_CACHE_S of 401s."""
     global _router, _router_why, _unauthorized_since
-    if why == _UNAUTHORIZED:
+    if unauthorized:
         if _unauthorized_since is None:
             _unauthorized_since = now
         if now - _unauthorized_since <= float(settings.router_directory_cache_s):
@@ -181,9 +179,10 @@ def _keep_router(router: bool | None, why: str, now: float) -> None:
         _router_why = why
 
 
-async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str]:
+async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str, bool]:
     """(the answer for the tenancy check, the `router` value it proves or None for a
-    transient failure, its cause); the router settings are set (`read_once`)."""
+    transient failure, its cause, whether the router answered 401); the router settings
+    are set (`read_once`)."""
     import httpx
 
     limit = float(settings.cell_router_timeout_s)
@@ -196,27 +195,32 @@ async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str]:
             )
     except (httpx.InvalidURL, httpx.UnsupportedProtocol) as e:
         # Never fixes itself; the boot refuses most such URLs (`cell.settings_problem`).
-        return UNKNOWN, False, f"LOOM_CELL_ROUTER_URL cannot be requested ({type(e).__name__})"
+        return (
+            UNKNOWN,
+            False,
+            f"LOOM_CELL_ROUTER_URL cannot be requested ({type(e).__name__})",
+            False,
+        )
     except TimeoutError:
-        return UNKNOWN, None, f"no answer within {limit:g} s"
+        return UNKNOWN, None, f"no answer within {limit:g} s", False
     except httpx.HTTPError as e:
-        return UNKNOWN, None, f"the router did not answer ({type(e).__name__})"
+        return UNKNOWN, None, f"the router did not answer ({type(e).__name__})", False
     if r.status_code == 401:
-        return UNKNOWN, None, _UNAUTHORIZED
+        return UNKNOWN, None, "401: the router does not accept LOOM_CELL_ROUTER_TOKEN", True
     if r.status_code == 404:
-        return UNKNOWN, False, f"404: the router holds no first cell named {settings.cell!r}"
+        return UNKNOWN, False, f"404: the router holds no first cell named {settings.cell!r}", False
     if r.status_code != 200:
-        return UNKNOWN, None, f"the router answered {r.status_code}"
+        return UNKNOWN, None, f"the router answered {r.status_code}", False
     try:
         answer = r.json()
     except ValueError:
         answer = None
     if not isinstance(answer, dict) or not isinstance(answer.get("cell"), str):
-        return UNKNOWN, None, "the router's 200 is not a JSON object naming the cell"
+        return UNKNOWN, None, "the router's 200 is not a JSON object naming the cell", False
     if answer["cell"] != settings.cell:
-        return UNKNOWN, False, f"the router answered for cell {answer['cell'][:64]!r}"
+        return UNKNOWN, False, f"the router answered for cell {answer['cell'][:64]!r}", False
     state = answer.get("state")
-    return (state if state in (ATTACHING, SERVING) else OTHER), True, ""
+    return (state if state in (ATTACHING, SERVING) else OTHER), True, "", False
 
 
 def start_reader() -> asyncio.Task[None]:

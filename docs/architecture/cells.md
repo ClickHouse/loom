@@ -684,9 +684,9 @@ primary alone. The attach command fixes those timeouts, and its tests cover each
 these cases. The mode cache reads the mode with a plain `SELECT`, which takes no row
 lock and never waits on attach. An insert that finds `enforced` (a process whose cache
 still reads `recording`) writes nothing: the request goes on to the placement call as in
-`enforced`, and a CLI command refuses as in `enforced`, naming the org (`loom cell place`
-places it). A process whose cache still reads `enforced` after step 3 or step 4 returns
-the cell to `recording` places through the router's gate until its cache expires.
+`enforced`, and a CLI command refuses as in `enforced`, naming the org. A process whose
+cache still reads `enforced` after step 3 or step 4 returns the cell to `recording` places
+through the router's gate until its cache expires.
 `loom doctor` lists any tenancy row the directory does not place.
 
 - **It runs after verification, before anything is written for the org.** The op gate
