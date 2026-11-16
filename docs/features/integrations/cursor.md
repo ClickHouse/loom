@@ -1,11 +1,11 @@
 # Cursor
 
-Cursor gets Loom in three independent pieces:
+Cursor gets Loom in three pieces:
 
 | Piece              | What it gives                                      | How                                                                                                                                                     |
 | ------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MCP tools          | the `loom_*` tools in Cursor's agent               | the [plugin](#plugin), the [install link](#mcp-tools) for a local single-user server, or `loom install --client cursor` ([MCP clients](mcp-clients.md)) |
-| Skills             | the `loom` and `loom-code` skills                  | the [plugin](#plugin)                                                                                                                                   |
+| Skills             | the `loom` and `loom-code` skills                  | the [plugin](#plugin), or `npx skills add ClickHouse/loom --skill loom loom-code`                                                                       |
 | Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh`                                                                                      |
 
 The Cursor plugin carries the MCP entry and the `loom` and `loom-code` skills, and has no
@@ -21,7 +21,7 @@ Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs → A
 Marketplace → Import from Repo** with `https://github.com/ClickHouse/loom`.
 
 The plugin has one variable, **Loom MCP URL**. A team admin sets it in Cursor's
-dashboard under **Plugins**, for every member.
+dashboard under **Plugins & MCPs**, for every member.
 
 | Server                                     | Loom MCP URL                                             | Sign-in             |
 | ------------------------------------------ | -------------------------------------------------------- | ------------------- |

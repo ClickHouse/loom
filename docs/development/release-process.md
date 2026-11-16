@@ -4,7 +4,7 @@ Loom follows SemVer: the server, both SDKs, the web app, the root skills (`loom-
 
 ## Where the version lives
 
-`.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the plugins, and writes the [release notes](#release-notes):
+`.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the Claude Code and Codex plugins, and writes the [release notes](#release-notes):
 
 | Component                     | Files                                                                                                                                                                                                                                                                                   |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -62,7 +62,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 - [Claude Code plugin](docs/features/integrations/claude-code.md): The `loom` plugin for Claude Code does three things in one install:
 - [ClickStack and HyperDX](docs/features/integrations/clickstack.md): Loom always emits OpenTelemetry; the HyperDX sources, dashboards and the erasure step need configuring.
 - [Codex plugin](docs/features/integrations/codex.md): The Codex plugin gives Codex the same Loom integration as Claude Code: MCP tools, hooks that capture the session and load a primer, and the code shunt.
-- [Cursor](docs/features/integrations/cursor.md): Cursor gets Loom in three independent pieces:
+- [Cursor](docs/features/integrations/cursor.md): Cursor gets Loom in three pieces:
 - [Agent frameworks and orchestrators](docs/features/integrations/frameworks.md): The SDKs ship adapters that present Loom through a framework's own memory or retrieval interface.
 - [The grep shim](docs/features/integrations/grep-shim.md): Needs Node 18 or later, a viewer token, and a repository in the code index.
 - [Integrations](docs/features/integrations/index.md): Loom on a bare ClickHouse service is a complete deployment.
