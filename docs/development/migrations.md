@@ -101,6 +101,13 @@ creates every view under the user running the migration
 (`DEFINER = CURRENT_USER`: the dump names its own user, which another server may not have), and waits for every mutation a file issues before
 recording it (`LOOM_MIGRATE_MUTATION_WAIT_S`).
 
+**Pre-checks.** A file that must not run while the data holds something the file alone
+cannot see registers a check in `server/core/schema/prechecks.py`, keyed by its name
+without the number, so a renumbered file keeps it. The runner runs the check before the
+file, a dry run included; a check that refuses stops the run with its message and runs
+nothing of the file. `097_mirror_names_reserved.sql` uses one: it refuses while a
+namespace of the reserved mirror form is registered or holds live rows.
+
 ## Changing a sort key or a partition key
 
 ClickHouse changes neither in place, so a migration declares the target and the table is

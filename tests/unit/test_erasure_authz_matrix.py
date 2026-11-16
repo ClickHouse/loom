@@ -17,6 +17,8 @@ restricted, so only the token decides. CH-free.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -26,6 +28,7 @@ from server.auth import authz
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
 from server.core.errors import LoomServerError
+from server.core.naming import not_mirror_sql
 from server.erasure.api.erasure import (
     ErasureExportInput,
     ErasureListInput,
@@ -33,9 +36,11 @@ from server.erasure.api.erasure import (
     ErasureStatusInput,
 )
 from server.erasure.app import handlers
+from server.erasure.domain.scopes import shown_scope
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.operations.base import Role
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH
 
 
 def _flat(role: Role, *, org: str = "o", namespaces: tuple[str, ...] = ("A",)) -> AuthInfo:
@@ -202,7 +207,8 @@ async def _list(ch: _ListCH) -> str:
     sql, params = ch.calls[-1]
     if "nslist" in params:
         return f"ns:{params['nslist']}"
-    return "ns:*" if "scope_type = 'namespace'" in sql else "org"
+    # The wildcard view adds the bare term; NOT_ONLY_MIRRORS names it inside a NOT.
+    return "ns:*" if " AND scope_type = 'namespace'" in sql else "org"
 
 
 # A namespace erasure needs admin on the target; user_id and namespace_list
@@ -315,3 +321,164 @@ async def test_no_auth_context_passes_every_handler(
     assert {s: await _export(s) for s in ("ns_own", "user_id")} == {"ns_own": "ok", "user_id": "ok"}
     assert await _status("user_id", monkeypatch) == "ok"
     assert await _list(world) == "org"
+
+
+MIRROR = "acl-0123456789abcdef01234567"
+
+
+@pytest.mark.parametrize(
+    ("scope_type", "scope_value"),
+    [("namespace", MIRROR), ("namespace_list", json.dumps(["A", MIRROR]))],
+)
+async def test_only_a_platform_admin_names_a_mirror_in_an_erasure(
+    world: Any, scope_type: str, scope_value: str
+) -> None:
+    async def _request_as(auth: AuthInfo | None) -> str:
+        set_current_auth(auth)
+        return await _outcome(
+            handlers.handle_erasure_request(
+                ErasureRequestInput(
+                    org="o", scope_type=scope_type, scope_value=scope_value, requester="r"
+                )
+            )
+        )
+
+    assert await _request_as(None) == "403"
+    assert await _request_as(PRINCIPALS["org_admin"]) == "403"
+    assert await _request_as(PRINCIPALS["scoped"]) == "403"
+    assert await _request_as(PRINCIPALS["platform_admin"]) == "ok"
+
+
+@pytest.mark.parametrize("scope_type", ["namespace", "namespace_list"])
+@pytest.mark.parametrize("principal", [None, "org_admin", "platform_admin"])
+async def test_no_export_names_a_mirror(world: Any, principal: str | None, scope_type: str) -> None:
+    # The export reads every scope but a user id as one namespace's name.
+    set_current_auth(PRINCIPALS[principal] if principal else None)
+    export = handlers.handle_erasure_export(
+        ErasureExportInput(org="o", scope_type=scope_type, scope_value=MIRROR, requester="r")
+    )
+    assert await _outcome(export) == "403"
+
+
+def test_an_export_never_shows_a_mirror() -> None:
+    sql, _ = erasure_exports.Shown(hidden=("x",)).clause()
+    assert not_mirror_sql() in sql
+
+
+@pytest.mark.parametrize("scope", [("namespace", MIRROR), ("namespace_list", f'["{MIRROR}"]')])
+async def test_a_saga_naming_only_mirrors_shows_only_to_a_platform_admin(
+    world: Any, monkeypatch: pytest.MonkeyPatch, scope: tuple[str, str]
+) -> None:
+    monkeypatch.setitem(SCOPES, "mirror", scope)
+    for who, shown in ((None, "hidden"), ("org_admin", "hidden"), ("platform_admin", "ok")):
+        set_current_auth(PRINCIPALS[who] if who else None)
+        assert await _status("mirror", monkeypatch) == shown, who
+    # The one reader of such a saga gets its scope whole.
+    out = await handlers.handle_erasure_status(ErasureStatusInput(erasure_id="e1"))
+    assert out.scope_value == scope[1]
+
+
+async def test_an_org_admin_reads_a_mixed_saga_s_status_without_its_mirror(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mixed = json.dumps({"namespaces": ["A", MIRROR], "purge": False, "external": True})
+    monkeypatch.setitem(SCOPES, "mixed", ("namespace_list", mixed))
+    set_current_auth(PRINCIPALS["org_admin"])
+    assert await _status("mixed", monkeypatch) == "ok"
+    out = await handlers.handle_erasure_status(ErasureStatusInput(erasure_id="e1"))
+    assert json.loads(out.scope_value or "")["namespaces"] == ["A"]
+
+
+def test_a_scope_is_answered_without_its_mirrors() -> None:
+    mixed = json.dumps({"namespaces": ["A", MIRROR], "purge": True})
+    assert json.loads(shown_scope("namespace_list", mixed)) == {"namespaces": ["A"], "purge": True}
+    assert shown_scope("namespace_list", json.dumps(["A", MIRROR])) == '["A"]'
+    assert shown_scope("namespace", "A") == "A"
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_the_list_leaves_out_exactly_the_sagas_naming_only_mirrors() -> None:
+    def listed(*names: str) -> str:  # as `begin_erasure` stores a list scope
+        return json.dumps({"namespaces": list(names), "purge": False, "external": True})
+
+    sagas = [
+        ("namespace", MIRROR, False),
+        ("namespace", "A", True),
+        ("namespace_list", listed(MIRROR), False),
+        ("namespace_list", listed("A", MIRROR), True),  # shown, without the mirror
+        ("namespace_list", listed("A", "acl-short"), True),
+        ("user_id", "u1", True),
+    ]
+    rows = await LocalCH().query_all(
+        "SELECT scope_value FROM (SELECT tupleElement(s, 1) AS scope_type,"
+        " tupleElement(s, 2) AS scope_value"
+        " FROM (SELECT arrayJoin({sagas:Array(Tuple(String, String))}) AS s))"
+        f" WHERE 1 {erasure_ledger.NOT_ONLY_MIRRORS}",
+        {"sagas": [(t, v) for t, v, _ in sagas]},
+    )
+    assert sorted(r["scope_value"] for r in rows) == sorted(v for _, v, kept in sagas if kept)
+
+
+async def test_a_listed_saga_is_answered_without_its_mirrors_but_to_a_platform_admin(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored = json.dumps({"namespaces": ["A", MIRROR], "purge": False, "external": True})
+
+    async def _rows(org: str, **kw: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "e1",
+                "scope_type": "namespace_list",
+                "scope_value": stored,
+                "requester": "r",
+                "status": "completed",
+                "requested_at": datetime(2026, 1, 2),
+                "completed_at": None,
+                "failure_reason": "",
+            }
+        ]
+
+    monkeypatch.setattr(erasure_ledger, "list_requests", _rows)
+    for who, names in (("org_admin", ["A"]), ("platform_admin", ["A", MIRROR])):
+        set_current_auth(PRINCIPALS[who])
+        [row] = (await handlers.handle_erasure_list(ErasureListInput(org="o"))).rows
+        assert json.loads(row.scope_value)["namespaces"] == names, who
+
+
+@pytest.mark.parametrize(
+    ("who", "filtered"),
+    [(None, True), ("org_admin", True), ("wildcard_viewer", True), ("platform_admin", False)],
+)
+async def test_the_list_leaves_out_mirror_only_sagas_but_for_a_platform_admin(
+    world: Any, who: str | None, filtered: bool
+) -> None:
+    set_current_auth(PRINCIPALS[who] if who else None)
+    await handlers.handle_erasure_list(ErasureListInput(org="o"))
+    sql, _ = world.calls[-1]
+    assert (erasure_ledger.NOT_ONLY_MIRRORS in sql) is filtered
+
+
+# A platform-admin role on a scoped token: its authority is its namespaces, so it is no
+# reader of a mirror's saga.
+SCOPED_PLATFORM_ADMIN = AuthInfo(
+    subject="sa:root",
+    org="o",
+    namespaces=("A",),
+    roles=(Role.PLATFORM_ADMIN,),
+    is_service_account=True,
+    ns_roles=(("A", "admin"),),
+)
+
+
+async def test_a_scoped_platform_admin_token_neither_names_nor_reads_a_mirror_s_saga(
+    world: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_current_auth(SCOPED_PLATFORM_ADMIN)
+    request = handlers.handle_erasure_request(
+        ErasureRequestInput(org="o", scope_type="namespace", scope_value=MIRROR, requester="r")
+    )
+    assert await _outcome(request) == "403"
+    monkeypatch.setitem(SCOPES, "mirror", ("namespace", MIRROR))
+    assert await _status("mirror", monkeypatch) == "hidden"
+    # Its list is its own namespaces' sagas, and that list holds no mirror.
+    assert await _list(world) == "ns:['A']"

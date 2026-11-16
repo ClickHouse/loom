@@ -5,11 +5,12 @@ and whether `loom.tenancy` holds a row) whether `LOOM_CELL` is set or not, and i
 gated until its first read lands. With `LOOM_CELL` unset the process serves as a
 single deployment while the deployment is no cell (`open`) or a first cell still
 `recording`, and is gated in any other state (`state`); it keeps its verdict through
-failed reads. A process that reads nothing with `LOOM_CELL` unset (a CLI, the workers
-child) and every process under the ClickHouse authority read as `open`. With
-`LOOM_CELL` set, a process serves only while three rows of its cell's Postgres are
-read and agree with its configuration (docs/architecture/cells.md, "The cell's own
-row"):
+failed reads. A process whose view is never read with `LOOM_CELL` unset (a CLI, the
+workers child) and every process under the ClickHouse authority read as `open`; a CLI
+command that declares an org judges the state on a session of its own instead
+(`server.cli._ch.check_unset_cell`). With `LOOM_CELL` set, a process serves only while
+three rows of its cell's Postgres are read and agree with its configuration
+(docs/architecture/cells.md, "The cell's own row"):
 
 - `loom.cell_first`: whether this cell is the deployment's first, and its name;
 - `loom.tenancy_mode`: `recording` or `enforced`;
@@ -56,6 +57,41 @@ NAME = re.compile(r"[a-z0-9-]{1,32}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 # The largest placement quota: the directory keeps it in a bigint.
 PLACEMENTS_MAX = 2**63 - 1  # not a setting: the bigint column bounds it
+# The longest org name, in UTF-8 bytes, a cell records and the router places: below
+# Postgres's btree entry limit (about 2.7 KB), so every org a cell records has a
+# placement the directory can index.
+ORG_MAX_BYTES = 2048  # not a setting: cells and the router judge one limit
+# The advisory lock on a cell's Postgres that attach will hold, and prepare and update once
+# they take it, and that the troubleshooting page's full-state cleanup takes before the
+# migration lock. Positive: the page's holder query splits it into two `oid` halves.
+ATTACH_LOCK_KEY = 0x6C6F6F6D_61746368  # "loomatch"
+
+
+# Orgs that name no tenant: deployment-wide rows and the token defaults.
+ORG_FREE = frozenset({"", "-", "*"})
+
+
+def named_org(value: Any) -> str | None:
+    """`value` as an org a request can name, or None: the router's rule, by which the first
+    attach's org scan (`server/cli/cell_scan.py`) judges the orgs it finds too."""
+    # A name Postgres text cannot hold (a NUL, a lone surrogate) is malformed, never a
+    # directory outage.
+    if not isinstance(value, str) or value in ORG_FREE or "\x00" in value:
+        return None
+    try:
+        value.encode()
+    except UnicodeEncodeError:
+        return None
+    return value
+
+
+def org_name_refusal(org: str) -> str:
+    """Why a cell neither records nor places `org` ('' when its name fits)."""
+    size = len(org.encode())
+    if size <= ORG_MAX_BYTES:
+        return ""
+    return f"org name is {size} bytes, longer than the {ORG_MAX_BYTES} bytes an org name may have"
+
 
 FINGERPRINT_VERSION = 1
 # Every field and the value it has when a configuration does not set it. A value
@@ -352,7 +388,31 @@ def _unset_reason(view: _View) -> str:
     )
 
 
-def _judge(view: _View) -> str:
+# The fingerprint fields a CLI's gate judges: the stores it would write. A CLI verifies
+# no token and its fingerprint never reaches the router, so the rest of the servers'
+# fingerprint is not its to match (docs/architecture/cells.md, "The CLI declares its
+# orgs").
+_STORE_FIELDS = ("deployment_id", "bucket", "bucket_prefix")
+
+
+def cli_gate_reason() -> str:
+    """Why a CLI with `LOOM_CELL` set must refuse an org-declaring command ('' when it
+    may), on the rows it has just read: the first row naming `LOOM_CELL`, and its stores
+    matching a value of the cell's own row."""
+    if reason := _rows_reason(_view):
+        return reason
+    fields = mine()
+    stores = {name: fields[name] for name in _STORE_FIELDS}
+    if matches(stores, _view.current) or matches(stores, _view.next):
+        return ""
+    return (
+        f"this CLI's stores ({', '.join(stores)}) match neither value of its cell's own "
+        "row: point it at the cell's Postgres, ClickHouse and document bucket"
+    )
+
+
+def _rows_reason(view: _View) -> str:
+    """Why the rows read do not make a cell this process can belong to ('' when they do)."""
     if view.read_at is None:
         return "the cell's rows are not read yet" + (f" ({view.error})" if view.error else "")
     if view.first is None:
@@ -363,6 +423,12 @@ def _judge(view: _View) -> str:
         return "this cell's tenancy mode row is absent: run loom cell prepare"
     if view.current is None:
         return "this cell's own row is absent: run loom cell prepare"
+    return ""
+
+
+def _judge(view: _View) -> str:
+    if reason := _rows_reason(view):
+        return reason
     fields = mine()
     if not (matches(fields, view.current) or matches(fields, view.next)):
         return (
@@ -385,8 +451,9 @@ _READ = (
 )
 
 
-# The state rows as plain columns, for `ensure` and `loom doctor`: the state verdict needs
-# no fingerprint, so a `loom.cell_self` value that does not decode fails neither a boot's
+# The state rows as plain columns, for `ensure`, `loom doctor` and an org-declaring CLI with
+# `LOOM_CELL` unset (whose role holds column grants only): the state verdict needs no
+# fingerprint, so a `loom.cell_self` value that does not decode fails neither a boot's
 # trigger pass nor a doctor run.
 _STATE = (
     "SELECT (SELECT is_first FROM loom.cell_first) AS is_first, "
@@ -399,14 +466,38 @@ _STATE = (
 
 async def read_state(conn: Any) -> str:
     """The cell state on `conn` (`state`); raises when it cannot read."""
+    return (await _read_named_state(conn))[0]
+
+
+async def _read_named_state(conn: Any) -> tuple[str, str]:
+    """The cell state on `conn` and the cell its first row names ('' without one)."""
     row = await conn.fetchrow(_STATE)
     first = None if row["is_first"] is None else (bool(row["is_first"]), str(row["cell"]))
-    return state(
+    found = state(
         first=first,
         mode=str(row["mode"] or ""),
         has_own=bool(row["has_own"]),
         has_tenancy=bool(row["has_tenancy"]),
     )
+    return found, first[1] if first else ""
+
+
+_STATE_TABLES = ("loom.cell_first", "loom.tenancy_mode", "loom.cell_self", "loom.tenancy")
+
+
+async def read_state_if_present(conn: Any) -> tuple[str, str]:
+    """`_read_named_state`, with every state table absent read as `open`: a schema that
+    predates them cannot be a cell. Judged by `to_regclass`, never by matching a
+    privilege error, so a role missing a grant still raises; some tables absent is
+    `partial`."""
+    present = await conn.fetchval(
+        "SELECT count(to_regclass(t)) FROM unnest($1::text[]) AS t", list(_STATE_TABLES)
+    )
+    if present == 0:
+        return "open", ""
+    if present < len(_STATE_TABLES):
+        return "partial", ""
+    return await _read_named_state(conn)
 
 
 async def refresh() -> bool:

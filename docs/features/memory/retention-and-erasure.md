@@ -167,12 +167,15 @@ flowchart TD
   hosts with Keeper, within one process without it. It waits up to 15 minutes for a pass
   to finish; past that the step fails with `LeaseBusy` and `erasure_recovery` retries it.
 - **Tombstone or purge.** By default the soft-delete tables (memory, embeddings, chunks,
-  summaries, links) are tombstoned, and `memory.restore` can still revive them inside the
-  window; `erasure.list` reports such revivals as `reversals_count`. `purge=true` deletes
-  the rows instead (a lightweight `DELETE FROM` on the wide tables). A user erasure
-  finds what the user's memories fed through their keys, so in a purge its `loom.memory`
-  rows, and the consolidated summaries built from them, are tombstoned first and deleted
-  in `memory.retire`, after every step that reads those keys; until then `memory.restore`
+  summaries, links) are tombstoned, and `memory.restore` can still revive them inside
+  the window; `erasure.list` reports such revivals as `reversals_count`. `purge=true`
+  deletes the rows instead (a lightweight `DELETE FROM` on the wide tables). A scope
+  that holds a namespace that has ever had a mirror is purged whole, every namespace in
+  it, so none of them has such a window ([document
+  sources](../../architecture/document-sources.md#the-mirror)). A user erasure finds
+  what the user's memories fed through their keys, so in a purge its `loom.memory` rows,
+  and the consolidated summaries built from them, are tombstoned first and deleted in
+  `memory.retire`, after every step that reads those keys; until then `memory.restore`
   can revive them (the user's own rows count as a reversal, the summaries do not), and
   `memory.retire` deletes what `memory.restore` revived.
 - **Uploaded originals** of knowledge documents: the namespace's rows of
@@ -263,10 +266,12 @@ written by a build that keeps no census. The receipt's fields:
   every row when the saga purges or the table keeps no tombstone ([the census
   rules](../../architecture/memory-architecture.md#erasure-saga)).
   `objects.document_originals` counts a first listing page, so it reads as "at least".
-- `purge`: whether the saga deletes rows or tombstones them, as it runs. A single
-  namespace's saga never purges. Without purge a tombstoned row keeps its bytes in its part
-  until the table merges; with purge the rows are deleted, and their bytes stay on disk
-  until a merge or the reclaim worker removes them.
+- `purge`: the scope's delete-or-tombstone mode (a single namespace's is tombstone
+  whatever was asked); a scope that holds a mirror ([document
+  sources](../../architecture/document-sources.md#the-mirror)) is deleted whatever this
+  says. Without purge a tombstoned row keeps its bytes in its part until the table
+  merges; with purge the rows are deleted, and their bytes stay on disk until a merge or
+  the reclaim worker removes them.
 - The subject and the time are the status's `org`, `scope_type`, `scope_value` and
   `verified_at`.
 

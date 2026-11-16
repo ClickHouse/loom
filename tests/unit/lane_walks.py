@@ -6,6 +6,7 @@ per-lane timing (`registry_cost`) and the shapes still over linear (`KNOWN_SLOW`
 
 from __future__ import annotations
 
+import functools
 import time
 from collections.abc import Callable
 
@@ -618,11 +619,12 @@ class _Names:
         }
 
 
-def _extract(path: str, source: bytes) -> object:
+def _extract(path: str, source: bytes) -> tuple[object, bool]:
     """What the ingest derives from one file without the store: the parse, its chunks
     and facets, its call edges, and a tree-less lane's own edges against a name table,
-    under the recursion limit the edge stage retries with. A walk that raises costs what
-    it ran; running out of memory fails."""
+    under the recursion limit the edge stage retries with. A parse that fails or a walk
+    that raises costs what it ran and is reported as not finished; running out of memory
+    fails."""
     import asyncio
     import sys
 
@@ -640,7 +642,7 @@ def _extract(path: str, source: bytes) -> object:
     if err.startswith("parse: MemoryError"):
         raise MemoryError(err)  # the parse reports it as a failed file
     if pf is None:
-        return err
+        return None, False
     repo = _Names()
     steps = [
         lambda: _chunks_for(pf, path, source, 6000),
@@ -652,6 +654,7 @@ def _extract(path: str, source: bytes) -> object:
         steps.append(lambda: asyncio.run(ingest_edges._lane_site_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
     if pf.lang == "prisma":
         steps.append(lambda: prisma_edges(pf))
+    finished = True
     before = sys.getrecursionlimit()
     sys.setrecursionlimit(ingest_edges._DEEP_RECURSION_LIMIT)
     try:
@@ -661,46 +664,100 @@ def _extract(path: str, source: bytes) -> object:
             except MemoryError:
                 raise
             except Exception:  # noqa: BLE001 — the guard times walks; a crash is another test's
-                pass
+                finished = False
     finally:
         sys.setrecursionlimit(before)
-    return pf
+    return pf, finished and not err
 
 
 _REGISTRY_N = 5_000
+# Shared with test_code_regex_cost.py: RATIO and BOUND_S judge every timing test there,
+# LANE_FLOOR_S the class guard (`_lane_over`).
+RATIO = 8.0
+LANE_FLOOR_S = 0.05
+BOUND_S = 2.0
+# A shape over this at 4N is not timed at 16N: a quadratic walk there takes seconds.
+STEP_MAX_S = 0.25
+# A shape over this at N is not timed at 4N: it is over any linear budget already.
+N_MAX_S = 1.0
+# An unlisted shape over this at 4N and over RATIO times its N time is timed again
+# before it is judged; it sits under LANE_FLOOR_S so a shape near the floor is not
+# failed on one slow run.
+RETRY_FLOOR_S = 0.02
 
 
-def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
-    """(shape, the time at N, the time at 4N, the bytes tree-sitter parsed at N and at 4N)
-    per shape the lane reads as its own (a manifest shape can read as a template), the
-    best of three for a listed shape that looks linear or an unlisted one that looks over
-    linear. The parses' time is not counted, since each has its own CPU deadline
-    (`bounded_parse`); the bytes they read are returned, so a walk that parses the file
-    again per block is still seen."""
+def judged_step(
+    cost: Callable[[int], tuple[float, int, bool, bool]], n: int, listed: bool
+) -> tuple[str, float, float, int, int] | None:
+    """(the step judged: `N`, `4N` or `N, 16N unread` when the 16N text stopped early or
+    read as another lane; the time at its two sizes; the bytes tree-sitter parsed at each)
+    of one shape, or None when its text at `n` does not read as the lane. `cost(n)` is
+    (the time, the bytes parsed, whether the text read as the lane, whether every parse and
+    walk finished). An unlisted shape still over linear after the best of three, from
+    LANE_FLOOR_S to STEP_MAX_S at 4N and under 16 times its N time (pure quadratic growth,
+    which no cache step reaches), is judged from 4N to 16N instead."""
+    small, bs, lane, _ = cost(n)
+    if not lane:
+        return None
+    if small > N_MAX_S:
+        return "N", small, float("inf"), bs, bs
+    big, bb, _, _ = cost(4 * n)
+    if (listed and big < LANE_FLOOR_S) or (
+        not listed and big > RETRY_FLOOR_S and big > RATIO * small
+    ):
+        small = min(small, cost(n)[0], cost(n)[0])
+        big = min(big, cost(4 * n)[0], cost(4 * n)[0])
+    in_window = LANE_FLOOR_S < big < STEP_MAX_S
+    in_band = RATIO * small < big < 16 * small
+    if listed or not (in_window and in_band):
+        return "N", small, big, bs, bb
+    # The N walk can fit in the CPU cache and the 4N one not, so that step can grow over 8
+    # times on a busy host; from 4N to 16N only a walk over linear does, unless a per-file
+    # count cap falls between its 4N and 16N items, which also bounds its real cost.
+    huge, bh, lane, finished = cost(16 * n)
+    if not (lane and finished):  # a parse or walk that stopped early looks cheap
+        return "N, 16N unread", small, big, bs, bb
+    if RATIO * big < huge < BOUND_S:  # timed twice more when it looks over linear
+        again = (cost(16 * n), cost(16 * n))
+        huge = min([huge] + [t for t, _, read, done in again if read and done])
+    return "4N", big, huge, bb, bh
+
+
+def registry_cost(lang: str) -> list[tuple[str, str, float, float, int, int]]:
+    """`judged_step` per shape the lane reads as its own (a manifest shape can read as a
+    template), with the shape's name first. The parses' time is not counted, since each
+    has its own CPU deadline (`bounded_parse`); the bytes they read are returned, so a walk
+    that parses the file again per block is still seen."""
     from server.code.domain.extract import bounded_parse
 
     path, head, as_lang = SAMPLES[lang]
     real = bounded_parse.parse
-    parsed = [0.0, 0]
+    # the tree-sitter parses of one file: their time, the bytes they read, whether one raised
+    parse_s, parse_bytes, parse_raised = 0.0, 0, False
 
     def timed(parser: object, source: bytes) -> object:
+        nonlocal parse_s, parse_bytes, parse_raised
         t0 = time.process_time()
         try:
             return real(parser, source)
+        except BaseException:
+            parse_raised = True
+            raise
         finally:
-            parsed[0] += time.process_time() - t0
-            parsed[1] += len(source)
+            parse_s += time.process_time() - t0
+            parse_bytes += len(source)
 
     bounded_parse.parse = timed  # type: ignore[assignment]
 
-    def cost(text: Callable[[int], str], n: int) -> tuple[float, int, str]:
+    def cost(text: Callable[[int], str], n: int) -> tuple[float, int, bool, bool]:
+        nonlocal parse_s, parse_bytes, parse_raised
         source = (head + text(n)).encode()
-        parsed[:] = [0.0, 0]
+        parse_s, parse_bytes, parse_raised = 0.0, 0, False
         with untraced():
             t0 = time.process_time()  # CPU time, as in `walk_cost`
-            pf = _extract(path, source)
-            took = time.process_time() - t0 - parsed[0]
-        return took, int(parsed[1]), str(getattr(pf, "lang", ""))
+            pf, walked = _extract(path, source)
+            took = time.process_time() - t0 - parse_s
+        return took, parse_bytes, getattr(pf, "lang", "") == as_lang, walked and not parse_raised
 
     cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports
     out = []
@@ -708,18 +765,10 @@ def registry_cost(lang: str) -> list[tuple[str, float, float, int, int]]:
         # distinct names run 4 times larger: a dedupe by a list's `in` is quadratic at C
         # speed, under the timer's floor at 20,000 characters
         n = 4 * _REGISTRY_N if name.startswith("numbered") else _REGISTRY_N
-        small, bs, read_as = cost(text, n)
-        if read_as != as_lang:
-            continue
-        if small > 1.0:  # already over any linear budget: 4N would only spend the deadline
-            out.append((name, small, float("inf"), bs, bs))
-            continue
-        big, bb, _ = cost(text, 4 * n)
         listed = name in KNOWN_SLOW.get(lang, ())
-        if (listed and big < 0.05) or (not listed and big > 0.02 and big > 8 * small):
-            small = min(small, cost(text, n)[0], cost(text, n)[0])
-            big = min(big, cost(text, 4 * n)[0], cost(text, 4 * n)[0])
-        out.append((name, small, big, bs, bb))
+        got = judged_step(functools.partial(cost, text), n, listed)
+        if got is not None:
+            out.append((name, *got))
     return out
 
 

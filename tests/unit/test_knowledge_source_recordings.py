@@ -486,6 +486,21 @@ def test_unrecorded_instances_ahead_of_a_recorded_one_do_not_hold_it_back(
     assert world.states["calls"]["state_value"]  # the turn completed: the stamp moved
 
 
+def test_a_recording_source_at_its_bound_holds_new_ones_and_unrecorded_take_no_room(
+    world: _World,  # noqa: F811
+    stores: _Stores,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_sync.settings, "knowledge_source_max_documents", 1)
+    world.sources = [_source("zoom", [MEETING], ZOOM_KEY)]
+    stores.instances = [{"uuid": "none0", "start_time": _ago(3)}]
+    stores.instances += [{"uuid": f"rec{i}", "start_time": _ago(4 + i)} for i in (1, 2)]
+    stores.recordings = {"rec1": _zoom_recording(), "rec2": _zoom_recording()}
+    asyncio.run(source_sync.run_sync())
+    assert len(world.docs) == 1
+    assert _detail(world, "calls")["error"] == "too_many_documents: 1 new files past 1"
+
+
 def test_a_recording_the_store_no_longer_lists_is_kept(
     world: _World,  # noqa: F811
     stores: _Stores,

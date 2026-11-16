@@ -9,6 +9,7 @@ does for that need and where to start.
 | Knowledge and document search for agents (RAG)                                   | [Document search](document-search.md)                      |
 | A code index and code intelligence for coding agents                             | [Code index](code-intelligence.md)                         |
 | What the code index gives per language (C++, Python, TypeScript, Go, Rust, Java) | [Code index by language](code-intelligence-by-language.md) |
+| Memory linked to the code it is about, flagged when the code changes             | [Memory linked to code](memory-linked-to-code.md)          |
 | Lower model cost for coding agents                                               | [Coding-agent cost](coding-agent-cost.md)                  |
 | Shared context between agents in a multi-agent workflow                          | [Multi-agent](multi-agent.md)                              |
 | Memory, recall, audit and erasure for autonomous agents                          | [Autonomous agents](autonomous-agents.md)                  |

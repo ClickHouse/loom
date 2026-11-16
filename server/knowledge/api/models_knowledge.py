@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core.naming import NAMESPACE_MAX_LEN
 from server.knowledge.api.models_query import (
     MAX_DATASETS,
     KnowledgeQueryOutput,
@@ -613,6 +614,46 @@ class KnowledgeDeleteOutput(BaseModel):
     # orphan age; already deleted, those up to its tombstone. A write committing beside
     # the delete keeps its own chunks.
     chunks_tombstoned: int
+
+
+class KnowledgeMoveInput(BaseModel):
+    """Move documents to another namespace of the org: a collection, `@me` (an end user's
+    own collection), or a namespace.
+
+    Each keeps its chunks and their vectors, its original file, its tables, its title,
+    description and tags, its author and its date, and takes the sharing of the place it
+    goes to. Where it was, it is deleted as `knowledge.delete` leaves it, so
+    `knowledge.restore` there brings it back. Needs writer on both namespaces."""
+
+    org: str
+    # Where the documents are.
+    namespace: str
+    # Where they go: a collection, `@me` (an end user's own collection) or a namespace of
+    # the same org.
+    to_namespace: str = Field(min_length=1, max_length=NAMESPACE_MAX_LEN)
+    # The documents to move, by source, at most 50 a call; a source named twice moves once.
+    source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=50)
+
+
+# Why a document did not move; "" once it moved.
+MoveReason = Literal["", "not_found", "exists", "synced", "busy", "erased"]
+
+
+class _KnowledgeMoveResult(BaseModel):
+    source_uri: str
+    moved: bool = False
+    # Why it did not move: not_found, exists, synced, busy (call again shortly) or erased;
+    # each is described in docs/features/knowledge.md#moving-documents.
+    reason: MoveReason = ""
+
+
+class KnowledgeMoveOutput(BaseModel):
+    # False when the caller cannot write to `to_namespace`: nothing moved.
+    found: bool
+    # Where the documents went (`@me` resolved to the end user's own collection).
+    to_namespace: str = ""
+    # One per distinct source asked for, in the order first asked.
+    results: list[_KnowledgeMoveResult] = Field(default_factory=list)
 
 
 class KnowledgeRestoreInput(BaseModel):

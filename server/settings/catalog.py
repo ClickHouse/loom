@@ -169,8 +169,8 @@ class AuthSettings(BaseModel):
     # identity. identity_provider=single-user forces auth off regardless.
     auth_required: bool = True
     # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap,
-    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is
-    # reserved and rejected.
+    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a
+    # mirror's name (`acl-` and 24 hex digits) are reserved and rejected.
     default_namespace: str = "local"
 
     @field_validator("default_namespace")
@@ -192,13 +192,14 @@ class AuthSettings(BaseModel):
         `namespace.register` and the create dialog accept). `personal-*` is
         additionally reserved for per-subject auto-provisioning: reusing it
         collides with that scheme and skews the `NOT LIKE 'personal-%'`
-        analytics split in the dashboard.
+        analytics split in the dashboard. A mirror's name (`acl-` and 24 hex
+        digits) is refused too: the gate refuses every request that names one.
 
         Auth-ON deployments never read the setting, so a stale value left in
         a shared .env must not crash-loop the server/CLI/migrations for a
         mode that ignores it — warn and carry on instead.
         """
-        from server.core.naming import validate_namespace_name
+        from server.core.naming import is_mirror_name, validate_namespace_name
 
         v = self.default_namespace
         error: str | None = None
@@ -207,6 +208,11 @@ class AuthSettings(BaseModel):
                 f"LOOM_DEFAULT_NAMESPACE={v!r} uses the reserved 'personal-' "
                 "prefix, which belongs to per-subject auto-provisioning. "
                 "Pick a name that doesn't start with 'personal-'."
+            )
+        elif is_mirror_name(v):
+            error = (
+                f"LOOM_DEFAULT_NAMESPACE={v!r} has the form 'acl-' and 24 hex digits, which "
+                "is reserved for mirrors and refused on every request. Pick another name."
             )
         else:
             try:
@@ -2314,6 +2320,10 @@ class KnowledgeSettings(BaseModel):
     # Documents one pass fetches, writes, retires or mines for decisions across all
     # sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
+    # turn tries no new file, notes how many as `too_many_documents`, and still updates
+    # and retires. At most 200,000: each read of the stored copies grows with its square.
+    knowledge_source_max_documents: Annotated[int, LIVE] = Field(default=50_000, ge=1, le=200_000)
     # Seconds after which a source's next pass lists every file, not only those
     # changed since the last one: what finds a file trashed or moved out of a folder.
     knowledge_source_sync_full_interval_seconds: Annotated[int, LIVE] = Field(default=86400, ge=900)
@@ -2484,6 +2494,11 @@ class McpSettings(BaseModel):
 
 class MemorySettings(BaseModel):
     """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
+
+    # ---- governed definitions ----
+    # Most shared definitions a namespace holds; a promotion past it is refused
+    # (docs/concepts/identities-and-namespaces.md).
+    memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
 
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
@@ -6053,6 +6068,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # At most 50 documents, four at a time, in server/knowledge/app/move.py: the clock once
+    # a call, then per document about 30 statements (the erasure ledger for both namespaces
+    # twice, its claim in both namespaces, not waited for, its rows by (org, namespace,
+    # source_uri), its chunks and tables copied inside ClickHouse, its row, its delete, its
+    # tables' cleanup), its original copied inside ClickHouse or read and stored again. 50
+    # documents took 3.7-3.9 s on a development ClickHouse.
+    "knowledge.move": 8000,
     # The reads and writes in server/knowledge/app/restore.py: the document's rows by (org,
     # namespace, source_uri) (the chunk and supersession reads range over the namespace's key
     # prefix), the erasure ledger twice (every namespace list of the org's last 90 days is
@@ -6134,6 +6156,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.dedup_list": 300,
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
+    # A namespace at the ceiling of 500 definitions: one shared read, one bulk head read
+    # and a grade of each value (p95 225 ms on one server).
+    "memory.definitions.list": 400,
     "memory.delete": 30,
     # memory.delete's work plus two committed check inserts and the read after the
     # tombstone: about 2.6x memory.delete's p99 on one server.
@@ -6419,8 +6444,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
-    # The batched-insert shapes below are the base + the default
-    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
+    # The batched-insert shapes below (audited, webhook, undo, rewrite) are the base +
+    # the default ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
     # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
     # "undo": memory.restore's Undo, + its audit-record wait.
@@ -6430,10 +6455,14 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
     "memory.delete_version": {"webhook": 130},
+    # "definition": the namespace's claim around a definition's strong read and writes.
+    "memory.demote": {"definition": 150},
     "memory.evidence": {"audited": 200},
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
+    # "definition": the namespace's claim around the name check and the writes.
+    "memory.promote": {"definition": 150},
     "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 220},
     "memory.update_by_id": {"webhook": 180},

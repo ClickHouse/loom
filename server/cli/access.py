@@ -12,7 +12,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, reads, revokes, run_connected, writes
 from server.cli._client import token_path
 from server.core.pg import AuthorityMismatch
 
@@ -39,7 +39,7 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
             return None
         return str(row.get("owner_email") or "") or "(unknown)"
 
-    owner = run_connected(_lookup_owner, org_free="reads")
+    owner = run_connected(_lookup_owner, org_free=reads("reads"))
     if owner is None:
         print(
             f"no claim found for {args.org}/{args.namespace}",
@@ -130,7 +130,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
         return 1
     try:
         keyring.load_for_offline_mint(
-            run=lambda work: run_connected(work, org_free="reads the signing keyring")
+            run=lambda work: run_connected(work, org_free=reads("reads the signing keyring"))
         )
     except ValueError as e:  # another root: no server would accept the token
         print(f"  ✗ {e}", file=sys.stderr)
@@ -277,7 +277,9 @@ def _platform_admin_rollout_ready() -> bool:
 
     try:
         return bool(
-            run_connected(machines.platform_admin_tokens_ready, org_free="reads the live instances")
+            run_connected(
+                machines.platform_admin_tokens_ready, org_free=reads("reads the live instances")
+            )
         )
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
@@ -445,6 +447,17 @@ async def _scim_give_back(
         return None, 1
 
 
+def _revoke_kind(args: argparse.Namespace, *, expires_at: Any, issued_before: Any) -> OrgFree:
+    """What a `loom revoke-token` run does to the cell's stores. Only a plain revocation
+    runs through a Postgres outage: narrowing SCIM's revocation, or one that lapses or
+    covers only older tokens, can give access back, so it is gated as a write."""
+    if args.list:
+        return reads("lists the unexpired revocations")
+    if args.scim or expires_at is not None or issued_before is not None:
+        return writes("revises a revocation: no org's rows")
+    return revokes("revokes a token or subject by id: no org's rows")
+
+
 def _cmd_revoke_token(args: argparse.Namespace) -> int:
     """Revoke one token through `server.auth.revocation`, the
     same path the `/v1/me/service_accounts.revoke` handler and the refresh
@@ -535,7 +548,10 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        return run_connected(_run, org_free="revokes a token or subject by id: no org's rows")
+        return run_connected(
+            _run,
+            org_free=_revoke_kind(args, expires_at=expires_at, issued_before=issued_before),
+        )
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so

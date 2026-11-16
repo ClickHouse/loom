@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from server.auth.directory import ClassificationUnavailable, directory
 from server.auth.fail_closed import note_answered_unverified, refused_unverified, reset
 from server.core.ch import set_quota_key
+from server.core.naming import is_mirror_name, not_mirror_sql
 from server.core.principals import COLLECTION_PREFIX
 
 if TYPE_CHECKING:
@@ -136,7 +137,8 @@ async def resolve_my_namespaces(org: str, subject: str | None = None) -> list[st
 
     candidates = jwt_namespaces | grant_namespaces
     if auth is None:
-        return sorted(candidates)
+        # No gate runs to refuse a mirror here, so its name is left out by hand.
+        return sorted(ns for ns in candidates if not is_mirror_name(ns))
     # Collections come from their own resolver (grants of every principal of
     # the request, inherited down the tree), already decided by the gate's rule.
     from server.auth import sharing
@@ -151,14 +153,11 @@ def named_claims(auth: AuthInfo) -> list[str]:
     return list(dict.fromkeys(ns for ns in auth.namespaces if ns and ns != "*"))
 
 
-async def _gate_readable(auth: AuthInfo | None, org: str, namespaces: list[str]) -> list[str]:
-    """Those of `namespaces`, in order, the gate lets `auth` read; all of them
-    with auth disabled."""
+async def _gate_readable(auth: AuthInfo, org: str, namespaces: list[str]) -> list[str]:
+    """Those of `namespaces`, in order, the gate lets `auth` read."""
     from server.auth.authz import CachedGate
     from server.operations.base import Role
 
-    if auth is None:
-        return namespaces
     gate = CachedGate(auth, org)
     return [ns for ns in namespaces if await gate.admits(ns, Role.VIEWER)]
 
@@ -284,7 +283,8 @@ class OrgScopeFilter:
 
     ``accessible=False`` → the caller may read none of the org's namespaces
     (none in scope, or classification unreadable); return empty.
-    Otherwise append ``where`` + ``params`` (both empty = see everything).
+    Otherwise append ``where`` + ``params``; every filter `resolve_org_scope`
+    returns, the widest included, leaves out the mirrors.
     """
 
     accessible: bool
@@ -307,8 +307,8 @@ async def every_namespace_scope(org: str, *, column: str = "namespace") -> OrgSc
     """WHERE fragment for a caller that reads every namespace of `org` (an org
     admin, or a flat `*` claim): all of them EXCEPT the restricted namespaces
     it holds no grant + claim for, the namespaces its claim names that the
-    gate refuses (a claim capped at a revoked grant), and the collections it
-    cannot read. Empty with auth disabled."""
+    gate refuses (a claim capped at a revoked grant), the collections it
+    cannot read, and every mirror."""
     hidden = await restricted_namespaces_hidden_from(org)
     if hidden == ["*"]:
         return OrgScopeFilter(accessible=False, where="", params={})
@@ -318,6 +318,7 @@ async def every_namespace_scope(org: str, *, column: str = "namespace") -> OrgSc
         refused = set(named) - set(await readable_named_claims(auth, org))
         hidden = sorted(set(hidden) | refused)
     where, params = await collection_clause(org, column)
+    where += f" AND {not_mirror_sql(column)}"
     if hidden:
         where += f" AND {column} NOT IN {{ns_hidden:Array(String)}}"
         params["ns_hidden"] = hidden
@@ -327,9 +328,10 @@ async def every_namespace_scope(org: str, *, column: str = "namespace") -> OrgSc
 async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeFilter:
     """WHERE fragment scoping an org-wide read to the namespaces the caller
     may see. Platform admins and org admins whose claim is `*` get
-    `every_namespace_scope`'s exclusions, the auth-off path an empty filter;
-    everyone else is constrained to `resolve_my_namespaces`, and a caller with
-    no accessible namespaces yields ``accessible=False`` to short-circuit.
+    `every_namespace_scope`'s exclusions, the auth-off path every namespace
+    but the mirrors; everyone else is constrained to `resolve_my_namespaces`,
+    and a caller with no accessible namespaces yields ``accessible=False`` to
+    short-circuit.
 
     Single source of truth for the privacy filter shared by the org-wide
     rollup ops — a bug here leaks one tenant's data to another. The
@@ -340,7 +342,7 @@ async def resolve_org_scope(org: str, *, column: str = "namespace") -> OrgScopeF
 
     auth = current_auth()
     if auth is None or not auth.subject:
-        return OrgScopeFilter(accessible=True, where="", params={})
+        return OrgScopeFilter(accessible=True, where=f" AND {not_mirror_sql(column)}", params={})
     # An org admin administers its own org; only a platform admin spans orgs.
     # An org admin whose token lists namespaces reads as a member does: the
     # gate admits it to no other namespace by name. A platform admin reads

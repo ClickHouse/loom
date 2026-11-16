@@ -238,12 +238,13 @@ export function BatchUpload({
   closeWith?: (close: () => void) => void;
   /** The collections the person reads and the one shown (null for a namespace), for
    *  picked folders to become collections; none means folders keep only their paths. */
-  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null; onMade: (first: string) => void };
+  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null };
   onClose: () => void;
 }) {
-  // Where the files go, as it was when the dialog opened: the Library reloads its list
-  // after an upload, and the place it shows meanwhile is not where these files go.
+  // Where the files go, as it was when the dialog opened: the Library reads its list
+  // again after an upload, and the place it shows meanwhile is not where these files go.
   const [identity] = useState(identityProp);
+  const { org, namespace } = identity;
   const [place] = useState(placeProp);
   const [tree] = useState(treeProp);
   // Folders become collections inside the collection shown; on "My files" or a namespace,
@@ -298,16 +299,18 @@ export function BatchUpload({
   const [stopping, setStopping] = useState(false);
   const [status, setStatus] = useState("");
   const ctrl = useRef<AbortController | null>(null);
-  // The collections this dialog's uploads made, for the Library to list once it closes.
+  // The collections this dialog's uploads made: a later upload finds them, and the Library's
+  // read after closing waits for the first to be listed.
   const madeHere = useRef<string[]>([]);
-  // A folder upload ran: the Library lists its collections again once the dialog closes,
-  // whatever it made, titled, or a Stop cut short.
+  // A folder upload ran: closing has the Library read its collections again, whatever it made.
   const foldersSent = useRef(false);
   // What the check read of each collection, whole or cut at its limit, for the upload to start from.
   const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());
   const leave = () => {
-    const first = madeHere.current[0];
-    if (first || foldersSent.current) tree?.onMade(first ?? "");
+    if (foldersSent.current) {
+      const first = madeHere.current[0];
+      invalidateSharedCollections(first ? { name: first, org } : undefined);
+    }
     onClose();
   };
   const cancelling = useRef(false);
@@ -333,7 +336,6 @@ export function BatchUpload({
   // rest is not looked for, and a file whose source exists is skipped (a new source
   // publishes only while none is live). The upload waits for a check that succeeds. A
   // folder's collection that is new holds nothing yet; one it already is is read.
-  const { org, namespace } = identity;
   // The place itself only when some file goes there (a loose one, or one kept by its path).
   const toPlace = rows.some((r) => r.state !== "skipped" && !r.folder);
   // A folder that holds only folders gets no file: its collection is not read.
@@ -515,7 +517,9 @@ export function BatchUpload({
       const folders = new FolderCollections(org, byFolder, root, quietRetry(c.signal), madeHere.current);
       const placed = await placeFolders(start, folders, sourcesOf, wentTo, c.signal);
       madeHere.current.push(...folders.created);
-      invalidateSharedCollections(); // collections were made or titled: other views read again
+      // Collections were made or titled: other views read again, waiting for the first made.
+      const made = folders.created[0];
+      invalidateSharedCollections(made ? { name: made, org } : undefined);
       const cutHere = new Set<string>();
       for (const p of placed) {
         if (!p.placed) continue;

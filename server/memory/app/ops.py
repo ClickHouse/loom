@@ -51,8 +51,8 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
     Positive appends an evidence usage event (feeds ranking + promote gate).
     Negative is audit-logged and counted; once the negative count crosses
     LOOM_MEMORY_NEGATIVE_DEMOTE_THRESHOLD (>0) the memory is auto-quarantined
-    (status -> 'rejected') unless it is locked. The evidence count is read back
-    from the totals table and is eventually consistent.
+    (status -> 'rejected') unless it is locked or a definition's namespace-wide row. The
+    evidence count is read back from the totals table and is eventually consistent.
     """
     import server.memory.store as memory_repo
     from server.core.ch import get_client
@@ -145,7 +145,8 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                 "AND memory_id = {mid:String} AND event_type = 'rejection'",
                 params={"org": input.org, "ns": input.namespace, "mid": memory_id},
             )
-            # A locked memory is not quarantined; the reject skips any locked copy.
+            # A locked memory, or a definition's namespace-wide row, is not quarantined; the
+            # reject skips every copy that is either.
             if int((cnt or {}).get("n") or 0) >= threshold and not refuses_retirement(row):
                 # The row resolved above, as the authority holds it.
                 try:

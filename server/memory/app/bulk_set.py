@@ -67,8 +67,8 @@ from server.memory.app.set_commit import set_next
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
-from server.memory.domain.conflicts import APPEND_ONLY_POLICY, kept_versions
-from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.conflicts import APPEND_ONLY_POLICY, ConflictResult, kept_versions
+from server.memory.domain.memory_types import is_definition, is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import identity_key, pg_memory, pg_publish
@@ -153,7 +153,8 @@ async def _bulk_existing_lookup(ch: Any, input: MemoryBulkSetInput, state: _Bulk
 async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, tuple[str, str]]:
     """Phase 2: content hash -> (keeper key, keeper memory_id) of the keys under
     this identity (any session, any key) whose current version is live and holds
-    an entry's exact bytes. Empty when the scope is not `identity` or the read failed."""
+    an entry's exact bytes; a definition is never a keeper. Empty when the scope is not
+    `identity` or the read failed."""
     # Identity-scoped exact dedup. The gate above is session-scoped, so the same fact
     # re-observed in a later session, or extracted under a key variant, would land as a new
     # active row (~9% of active rows in real namespaces were exact copies). A key in
@@ -206,7 +207,8 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
             _rows = await ch.query_all(
                 f"""
                 SELECT argMax(content_sha256, version) AS head_sha, session_id, memory_key,
-                       toString(argMax(memory_id, version)) AS memory_id
+                       toString(argMax(memory_id, version)) AS memory_id,
+                       argMax(memory_type, version) AS memory_type
                 FROM loom.memory
                 WHERE {identity}
                   AND (session_id, memory_key) IN (
@@ -233,6 +235,8 @@ async def _bulk_identity_dupes(ch: Any, input: MemoryBulkSetInput) -> dict[str, 
                     ),
                 )
             for _r in _rows:
+                if is_definition(_r):
+                    continue  # a definition's key is its identity: no other entry folds into it
                 identity_dupes.setdefault(
                     hash_text(_r["head_sha"]), (str(_r["memory_key"]), str(_r["memory_id"]))
                 )
@@ -260,7 +264,8 @@ async def _keepers_on_the_authority(
     ]
     heads = await pg_memory.heads_by_keys(keys)
     return [
-        r | {"memory_id": str(h["memory_id"])}  # the authority's id
+        # The authority's id and type.
+        r | {"memory_id": str(h["memory_id"]), "memory_type": h["memory_type"]}
         for k, r in zip(keys, rows, strict=True)
         if (h := heads.get(k)) is not None
         and str(h.get("status") or "active") in LIVE_STATUSES
@@ -334,7 +339,8 @@ async def _bulk_verdicts(
     # Conflict surfacing, the same four verdicts memory.set produces. Runs before the insert
     # so a merge or a pinned rejection never lands a row; duplicate / conflicted are stamped
     # on the rows.
-    if pg.enabled() and state.pending:
+    # A definition's verdict reads no peer, so a batch of definitions waits for no search.
+    if pg.enabled() and any(not is_definition(state.memory_rows[i]) for i, *_ in state.pending):
         state.generations = await pg_admission.catch_up(
             input.org, input.namespace, state.generations
         )
@@ -402,7 +408,8 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
     earlier row of the batch of its type sits at the resolver floor (the verdicts
     never compare siblings), or when another session of the same subject holds its
     key live (outside `newest_wins`, which retires the older row itself after the
-    insert; `keys_held_elsewhere`). Not under `append_only`. Fail-open."""
+    insert; `keys_held_elsewhere`). Not under `append_only`, and never for a definition,
+    whose key is its identity. Fail-open."""
     from server.memory.app.conflicts import namespace_conflict_policy
     from server.memory.app.key_supersession import keys_held_elsewhere
     from server.memory.domain.conflict_resolution import later_close_siblings
@@ -424,14 +431,16 @@ async def _bulk_mark_same_key(ch: Any, input: MemoryBulkSetInput, state: _BulkWr
             rows[i]["conflict_checked_at"] = OWED_MARK
         if policy == "newest_wins":
             return
+        # A definition's key is its identity: another session's row of it is not judged.
+        judged = [r for r in state.memory_rows if not is_definition(r)]
         held = await keys_held_elsewhere(
-            org=input.org, namespace=input.namespace, memory_rows=state.memory_rows, ch=ch
+            org=input.org, namespace=input.namespace, memory_rows=judged, ch=ch
         )
     except Exception as e:  # noqa: BLE001 — the rows land unmarked; the write stands
         log.warning("bulk_set: same-key mark skipped (non-fatal): %s", e)
         return
     for row in state.embedding_rows:
-        if str(row.get("memory_key") or "") in held:
+        if not is_definition(row) and str(row.get("memory_key") or "") in held:
             row["conflict_checked_at"] = OWED_MARK
 
 
@@ -645,7 +654,7 @@ async def _commit_batch(
     entries = await _reach_of(state)
     if not entries:
         # No verdict to keep: only the heads and the policy the guards ran under, so a
-        # batch of unsearchable rows never waits on search.
+        # batch of unsearchable rows, or only definitions, never waits on search.
         generations = pg_memory.policy_part(state.generations, state.memory_rows[0]["org"])
         admission = Admission(generations=generations, recheck=heads_unchanged(read))
     else:
@@ -684,11 +693,14 @@ async def _commit_batch(
 
 async def _reach_of(state: _BulkWriteState) -> list[tuple[str, str, list[float], float]]:
     """Each embedded entry's (type, key, vector, how far its conflict check reaches),
-    the reach the verdict phase read for its type, else read here."""
+    the reach the verdict phase read for its type, else read here; none for a definition,
+    whose verdict reads no peer."""
     from server.memory.app.conflicts import resolve_conflict_floor
 
     out = []
     for r in state.embedding_rows:
+        if is_definition(r):
+            continue
         mt = str(r["memory_type"])
         if mt not in state.floors:
             state.floors[mt] = await resolve_conflict_floor(str(r["org"]), str(r["namespace"]), mt)
@@ -1268,8 +1280,7 @@ async def _bulk_set_once(
         reinforce=reinforce,
     )
     if pg.enabled():
-        # The verdicts below must see every commit through these generations; only a
-        # batch with a verdict to reach waits for search (`catch_up`, below).
+        # The verdicts below must see every commit through these generations (`catch_up`, below).
         state.generations = await pg_memory.capture(input.org, input.namespace)
     await _bulk_existing_lookup(ch, input, state)
 
@@ -1475,9 +1486,10 @@ async def _bulk_conflict_verdicts(
     floors: dict[str, tuple[float, float]],
     cap: int | None = None,
 ) -> dict[int, Any]:
-    """check_on_commit for every searchable entry, concurrency-bounded. Keys are
-    indexes into memory_rows; values are ConflictResults. A bulk past the cap (`cap`,
-    else bulk_conflict_check_max_entries) checks the first N and writes the rest
+    """check_on_commit for every searchable entry but a definition, which is clear without
+    a check, concurrency-bounded. Keys are indexes into memory_rows; values are
+    ConflictResults. A bulk past the cap (`cap`, else bulk_conflict_check_max_entries)
+    checks the first N entries that are not definitions and writes the rest
     unchecked (the caller counts them); a check that errors counts as clear — the write
     must not fail because the check could not run — except one the model-call switch
     holds (`customer.HOLDS`), which the write answers as its own embeds would."""
@@ -1491,20 +1503,31 @@ async def _bulk_conflict_verdicts(
     if cap is None:
         cap = int(_settings.bulk_conflict_check_max_entries)
     cap = max(cap, 0)
+    if not cap:
+        return {}  # nothing checked: `unchecked` stays 0 (`apply_bulk_verdicts`)
     sem = asyncio.Semaphore(int(_settings.bulk_conflict_check_concurrency))
     out: dict[int, Any] = {}
-    if not pending[:cap]:
+    # A definition is clear without a check (`check_on_commit`), so it takes no place
+    # under the cap.
+    pairs = []
+    for item, vec in zip(pending, value_vectors, strict=False):
+        idx = item[0]
+        if is_definition(memory_rows[idx]):
+            out[idx] = ConflictResult(verdict="clear", peers=[])
+        else:
+            pairs.append((item, vec))
+    pairs = pairs[:cap]
+    if not pairs:
         return out
     # The namespace's policy and each type's (threshold, reach), read once for the batch
     # (`floors` stays on the call's state for the Postgres gap check); one that cannot be
     # read is left to each fact's check, which reads it again.
     policy = await _namespace_policy(input.org, input.namespace)
-    pairs = list(zip(pending, value_vectors, strict=False))[:cap]
     prefetched: dict[int, list[dict[str, Any]]] = {}
     # Under append_only no fact reads peers (`check_on_commit` answers clear first), and
     # the Postgres gap check reads its own reach.
     if policy != APPEND_ONLY_POLICY:
-        types = dict.fromkeys(str(entry_metas[idx][0].memory_type) for idx, *_ in pending[:cap])
+        types = dict.fromkeys(str(entry_metas[idx][0].memory_type) for (idx, *_), _v in pairs)
         for mt in types:
             if mt not in floors and (floor := await _type_floor(input.org, input.namespace, mt)):
                 floors[mt] = floor
@@ -1536,7 +1559,7 @@ async def _bulk_conflict_verdicts(
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
-    jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, _t, _x, _k), vec) in enumerate(pairs)]
+    jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, *_), vec) in enumerate(pairs)]
     await asyncio.gather(*jobs)
     return out
 

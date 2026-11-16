@@ -180,6 +180,7 @@ OpName = Literal[
     "knowledge.ingest_status",
     "knowledge.inspect",
     "knowledge.list",
+    "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
     "knowledge.reads",
@@ -217,6 +218,7 @@ OpName = Literal[
     "memory.dedup_collapse",
     "memory.dedup_list",
     "memory.dedup_resolve",
+    "memory.definitions.list",
     "memory.delete",
     "memory.delete_version",
     "memory.demonstrate",
@@ -547,6 +549,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.ingest_status",
     "knowledge.inspect",
     "knowledge.list",
+    "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
     "knowledge.reads",
@@ -584,6 +587,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.dedup_collapse",
     "memory.dedup_list",
     "memory.dedup_resolve",
+    "memory.definitions.list",
     "memory.delete",
     "memory.delete_version",
     "memory.demonstrate",
@@ -2465,6 +2469,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "knowledge.move": OpSpec(
+        "knowledge.move",
+        "KnowledgeMoveInput",
+        "KnowledgeMoveBody",
+        "KnowledgeMoveOutput",
+        True,
+        "writer",
+        "experimental",
+        8000,
+        True,
+        False,
+    ),
     "knowledge.outline": OpSpec(
         "knowledge.outline",
         "KnowledgeOutlineInput",
@@ -2907,6 +2923,18 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         True,
+        False,
+    ),
+    "memory.definitions.list": OpSpec(
+        "memory.definitions.list",
+        "MemoryDefinitionsListInput",
+        "MemoryDefinitionsListBody",
+        "MemoryDefinitionsListOutput",
+        True,
+        "admin",
+        "experimental",
+        400,
+        False,
         False,
     ),
     "memory.delete": OpSpec(
@@ -11065,6 +11093,36 @@ class KnowledgeListEntry(TypedDict, total=False):
     content_preview: NotRequired[str]
 
 
+class KnowledgeMoveInput(TypedDict, total=False):
+    "Move documents to another namespace of the org: a collection, `@me` (an end user's"
+
+    org: Required[str]
+    namespace: Required[str]
+    to_namespace: Required[str]
+    source_uris: Required[list[str]]
+
+
+class KnowledgeMoveBody(TypedDict, total=False):
+    "Move documents to another namespace of the org: a collection, `@me` (an end user's"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    to_namespace: Required[str]
+    source_uris: Required[list[str]]
+
+
+class KnowledgeMoveOutput(TypedDict, total=False):
+    found: Required[bool]
+    to_namespace: NotRequired[str]
+    results: NotRequired[list["KnowledgeMoveResult"]]
+
+
+class KnowledgeMoveResult(TypedDict, total=False):
+    source_uri: Required[str]
+    moved: NotRequired[bool]
+    reason: NotRequired[Literal["", "not_found", "exists", "synced", "busy", "erased"]]
+
+
 class KnowledgeOutlineInput(TypedDict, total=False):
     "A document's table of contents, as recorded on its chunks at ingest,"
 
@@ -12957,6 +13015,58 @@ class MemoryDedupResolveOutput(TypedDict, total=False):
     ignored_args: NotRequired[list[str]]
 
 
+class MemoryDefinitionsListInput(TypedDict, total=False):
+    "The namespace's shared definitions and whether each is governed."
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class MemoryDefinitionsListBody(TypedDict, total=False):
+    "The namespace's shared definitions and whether each is governed."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class MemoryDefinitionsListOutput(TypedDict, total=False):
+    count: Required[int]
+    ceiling: Required[int]
+    definitions: Required[list["DefinitionEntry"]]
+
+
+class DefinitionEntry(TypedDict, total=False):
+    memory_key: Required[str]
+    promoted_at: Required[str]  # date-time as ISO-8601 text
+    capped: NotRequired[bool]
+    term: NotRequired[Optional[str]]
+    aliases: NotRequired[list[str]]
+    verdict: NotRequired[Optional[Literal["governed", "lapsed"]]]
+    lapse_reason: NotRequired[
+        Optional[
+            Literal[
+                "not_namespace_wide",
+                "no_term",
+                "gone",
+                "superseded",
+                "conflicted",
+                "duplicate",
+                "not_active",
+                "expired",
+                "ended",
+                "changed",
+                "sensitive",
+            ]
+        ]
+    ]
+    lost: NotRequired[list["LostName"]]
+
+
+class LostName(TypedDict, total=False):
+    name: Required[str]
+    winner: Required[str]
+
+
 class MemoryDeleteInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
@@ -14517,6 +14627,7 @@ class MemoryPromoteInput(TypedDict, total=False):
     approver: NotRequired[Optional[str]]
     reversible_for_days: NotRequired[int]
     promoted_from_candidate_id: NotRequired[Optional[str]]
+    approved_sha256: NotRequired[Optional[str]]
 
 
 class MemoryPromoteBody(TypedDict, total=False):
@@ -14533,12 +14644,14 @@ class MemoryPromoteBody(TypedDict, total=False):
     approver: NotRequired[Optional[str]]
     reversible_for_days: NotRequired[int]
     promoted_from_candidate_id: NotRequired[Optional[str]]
+    approved_sha256: NotRequired[Optional[str]]
 
 
 class MemoryPromoteOutput(TypedDict, total=False):
     shared_memory_key: Required[str]
     promotion_event: Required[str]
     reversible_until: Required[str]  # date-time as ISO-8601 text
+    ignored_args: NotRequired[list[str]]
 
 
 class MemoryProposalDecideInput(TypedDict, total=False):

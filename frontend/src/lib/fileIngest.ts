@@ -14,6 +14,7 @@ import {
   knowledgeIngestStatus,
   uploadKnowledgeFile,
 } from "../api";
+import { wait } from "./wait";
 
 /** The states an ingest job ends in. */
 const INGEST_DONE = new Set(["ready", "partial", "failed", "cancelled"]);
@@ -133,20 +134,7 @@ export class FollowLost extends Error {
 
 /** The pause between polls; tests replace it to follow a job without waiting. */
 export const ingestClock = {
-  /** Waits `ms`; a `signal` that aborts ends the wait at once, rejecting. */
-  sleep: (ms: number, signal?: AbortSignal): Promise<void> =>
-    new Promise((resolve, reject) => {
-      if (signal?.aborted) return reject(signal.reason);
-      const onAbort = () => {
-        clearTimeout(t);
-        reject(signal?.reason);
-      };
-      const t = setTimeout(() => {
-        signal?.removeEventListener("abort", onAbort);
-        resolve();
-      }, ms);
-      signal?.addEventListener("abort", onAbort, { once: true });
-    }),
+  sleep: wait,
 };
 
 /** Where a file is: its bytes on their way (cancellable: nothing is queued yet), the

@@ -533,7 +533,7 @@ describe("a link's namespace", () => {
     expect(screen.queryByText(/can reach no namespace yet/)).toBeNull();
     // The namespace picker holds nothing for this account: the page sends no one there.
     expect(
-      await screen.findByText(/^Collections are shared document libraries\. Pick a collection above\.$/),
+      await screen.findByText(/^Collections are shared document libraries\. Pick a collection\.$/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open the namespace picker" })).toBeNull();
   });

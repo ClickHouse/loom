@@ -53,8 +53,10 @@ from server.erasure.app.saga_steps import (
     PG_ONLY_STEPS,
     USER_STEPS,
     ErasureStepError,
+    with_mirrors,
 )
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
+from server.erasure.domain.scopes import shown_scope
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import pg_ledger
 from server.erasure.store.rows import RequestRow
@@ -168,7 +170,7 @@ async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) 
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
+            "scope_value": shown_scope(input.scope_type, input.scope_value),
             "requester": input.requester,
             "replayed": True,
         },
@@ -193,8 +195,10 @@ async def _run_steps(
         scope = parse_namespace_list(input.scope_value)
     if input.scope_type == "user_id":
         await marks.bump(input.org, marks.ORG_WIDE, "erasure")
+    # A namespace scope's steps cover its mirrors, as the saga runs them.
+    runs = steps if input.scope_type == "user_id" else [(n, with_mirrors(f)) for n, f in steps]
     with erasure_mutations.saga_scope(erasure_id), erasure_mutations.purge_scope(purge):
-        for name, step in steps:
+        for name, step in runs:
             with erasure_mutations.step_scope(name):
                 try:
                     await step(input.org, scope)

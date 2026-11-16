@@ -30,8 +30,6 @@ from server.knowledge.store import restore as restore_repo
 from server.knowledge.store.documents import DocumentRow
 from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
 
-_NO_ORIGINAL = {"blob_path": "", "blob_size": 0, "blob_content_type": "", "original_filename": ""}
-
 # Besides the stamps, restore reads the erasure ledger, which keeps a request 90 days
 # (`TTL requested_at + toIntervalDay(90)` on loom.erasure_requests): a delete older than
 # the ledger reaches is past restoring. A day short of it, for clock skew.
@@ -115,7 +113,7 @@ async def _write_back(
     signed = bool(versions)
     # Reads before any write: the undo covers everything from the first write to the answer.
     original = await _original(doc)
-    dropped = _NO_ORIGINAL if original == "gone" else {}
+    dropped = documents_repo.NO_ORIGINAL if original == "gone" else {}
     if doc.artifact_sha256 and await blobs.locate(org, ns, doc.artifact_sha256) is None:
         dropped = {**dropped, "artifact_sha256": ""}  # the sweep took it too
     if caller_gone.is_set():

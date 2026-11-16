@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 188 tables + 5 views + 19 materialized views.
+-- Counts: 189 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (188)
+-- Tables (189)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1625,6 +1625,7 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `parser` String DEFAULT '',
     `coverage` String DEFAULT '',
     `ingestion_id` String DEFAULT '',
+    `access_json` String DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)
@@ -2136,6 +2137,19 @@ ORDER BY (org, namespace, ingestion_id)
 TTL toDateTime(updated_at) + toIntervalDay(30)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
 
+-- loom.knowledge_mirrors
+CREATE TABLE IF NOT EXISTS loom.knowledge_mirrors
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `mirror` String,
+    `deleted` Bool DEFAULT false,
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, mirror)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.knowledge_sources
 CREATE TABLE IF NOT EXISTS loom.knowledge_sources
 (
@@ -2154,7 +2168,8 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     `source_kind` LowCardinality(String) DEFAULT '',
     `items_json` String DEFAULT '[]',
-    `secret_enc` String DEFAULT ''
+    `secret_enc` String DEFAULT '',
+    `access` LowCardinality(String) DEFAULT 'namespace'
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
@@ -4412,7 +4427,7 @@ WHERE (((org, namespace) IN (
         org,
         namespace
     FROM restricted
-)) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)));
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)));
 
 -- loom.sql_v1_conversations
 CREATE VIEW IF NOT EXISTS loom.sql_v1_conversations
@@ -4487,7 +4502,7 @@ WHERE (((org, namespace) IN (
         org,
         namespace
     FROM restricted
-))
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     namespace,
@@ -4599,7 +4614,7 @@ WHERE (tombstoned_at IS NULL) AND (status NOT IN ('rejected', 'tombstoned')) AND
         org,
         namespace
     FROM restricted
-));
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'));
 
 -- loom.sql_v1_memory_history
 CREATE VIEW IF NOT EXISTS loom.sql_v1_memory_history
@@ -4704,7 +4719,7 @@ FROM
             org,
             namespace
         FROM restricted
-    ))
+    )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 )
 WHERE status != 'rejected';
 
@@ -4793,7 +4808,7 @@ WHERE (((org, namespace) IN (
         org,
         namespace
     FROM restricted
-)) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
 GROUP BY
     day,
     org,

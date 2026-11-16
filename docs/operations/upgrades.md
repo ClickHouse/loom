@@ -281,6 +281,35 @@ checkout.
     before the ledger's 90 days is not listed, and the promoted rows it left cannot be told
     apart from a live namespace's; they stay as the older build left them.
 
+15. Moving to a build where every CLI command declaring an org (a code-index command, an
+    import) checks its deployment: under either authority its ClickHouse user needs
+    `SELECT` on `loom.storage_authority`, and the command refuses against a deployment that
+    records another authority. Under the Postgres authority it also needs `LOOM_PG_DSN`
+    and reads the cell state (with `LOOM_CELL` unset, on a session of its own). With
+    `LOOM_CELL` set, a command that writes for no org but changes the cell's stores
+    (`loom settings set`, `loom secrets reseal`, `loom code compact` and the rest) or
+    revokes access checks its deployment the same way and reads the cell's `first` row on
+    a session of its own. Grant the Postgres role it connects as:
+    - with `LOOM_CELL` unset, `USAGE` on schema `loom`, `SELECT` on `loom.cell_first`,
+      `loom.tenancy_mode` and `loom.authority`, `SELECT (updated_at)` on `loom.cell_self`
+      and `SELECT (since)` on `loom.tenancy` (the column grants keep the fingerprints and
+      the orgs out of its reach), and a `CONNECTION LIMIT` at least `LOOM_PG_POOL_MAX_SIZE`
+      times the number of such commands that run at once, since each opens its own pool for
+      its writes (the state read retries a full limit briefly, then refuses);
+    - with `LOOM_CELL` set, the same with `SELECT` on `loom.cell_self` and `loom.tenancy`
+      in full, and, to record a new org while the first cell is `recording`, `INSERT` on
+      `loom.tenancy` and `UPDATE (since)` on `loom.tenancy_mode`; revoke both with
+      `LOOM_CELL_ROUTER_TOKEN` when the cell attaches. Its document bucket settings
+      (`LOOM_DOCUMENT_S3_BUCKET`, `LOOM_DOCUMENT_S3_PREFIX`) equal the servers'.
+
+    A write that a role holding only the column grants makes on a cell past `recording` is
+    refused as a permission error (SQLSTATE 42501) rather than `LT001`.
+
+16. Before a first cell's attach, every CLI and CI image runs a build with that state read,
+    and every CLI that writes for an org has `LOOM_CELL` set. No CLI sends a heartbeat, so
+    attach cannot check either, and a CLI of an older build is not refused on an `enforced`
+    cell ([cells](../architecture/cells.md#failure-modes)).
+
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
 [rolling upgrades](../architecture/rolling-upgrades.md).
@@ -339,9 +368,10 @@ build, then run only the trigger drop of
 [A process with LOOM_CELL unset is gated](troubleshooting.md#a-process-with-loom_cell-unset-is-gated),
 not its state transaction (the cell stays prepared), and run it again if a newer pod
 boots with migrations on before the rollback ends: the older build's sessions send no
-tenancy marker, so once the newer build has created the triggers each of its writes for
-an org the cell holds no tenancy row for is refused (on a later cell before attach,
-every tenant org), and its other writes pay the triggers' state read.
+tenancy marker, so once the newer build has created the triggers and the `loom.tenancy`
+guard, each of its writes for an org the cell holds no tenancy row for is refused (on a
+later cell before attach, every tenant org), as is its tenancy row for each newly placed
+org, and its other writes pay the triggers' state read.
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know

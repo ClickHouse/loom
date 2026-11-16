@@ -22,8 +22,11 @@ for (const width of [1400, 375]) {
         // Each page titles the document after itself (WCAG 2.4.2), naming its tab when a
         // page has several, so no two routes share a title.
         const h1 = (await page.locator(PAGE).locator("h1").first().textContent())?.trim();
-        // A page's tab is a link (aria-current) or a Click UI tab (aria-selected).
-        const current = page.locator("main [aria-current='page'], main [role='tab'][aria-selected='true']");
+        // A page's tab is a link (aria-current) or a Click UI tab (aria-selected); the Library
+        // names its place, which a select shows where the tree is not drawn.
+        const current = page.locator(
+          "main [aria-current='page'], main [role='tab'][aria-selected='true'], main [aria-label='Show the documents of']",
+        );
         const tab = (await current.count()) > 0 ? (await current.first().textContent())?.trim() : undefined;
         await expect(page).toHaveTitle(tab && tab !== h1 ? `${tab} · ${h1} · Loom` : `${h1} · Loom`);
         // Click UI draws an icon, a badge and an ellipsis as a <div>: none sits in a <p>.

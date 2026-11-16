@@ -111,6 +111,9 @@ export class LoomMemoryRetriever extends BaseRetriever {
     this.body = {
       ...opts.scope,
       top_k: this.k,
+      // Unpinned, a large top_k serves excerpts (above 15 by default) and drops each hit's explanation.
+      bodies: "full",
+      explain: false,
       ...(opts.searchTags?.length ? { tags: [...opts.searchTags] } : {}),
       ...(opts.memoryType ? { memory_type: opts.memoryType } : {}),
     };

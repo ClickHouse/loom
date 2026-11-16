@@ -22,7 +22,12 @@ from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import PreconditionFailedError, ValidationError
-from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
+from server.core.naming import (
+    MIRROR_REFUSED,
+    SSO_NAMESPACE_PREFIX,
+    is_mirror_name,
+    reserved_for_sso,
+)
 from server.core.principals import COLLECTION_PREFIX
 from server.identity.api.models import (
     NamespaceBrowseInput,
@@ -346,12 +351,14 @@ def refuse_sso_name(namespace: str) -> None:
         )
 
 
-def refuse_collection_name(namespace: str) -> None:
+def refuse_unwritable_name(namespace: str) -> None:
     """A collection, an end user's personal one included, is reached only through its
     grants; no namespace operation writes its rows. `@me` names one only once the gate
-    maps it, so the literal name is refused too."""
+    maps it, so the literal name is refused too. A mirror's name is the sync's alone."""
     if is_collection(namespace) or namespace == PERSONAL_ALIAS:
         raise ValidationError("a collection is changed with the collection operations only")
+    if is_mirror_name(namespace):
+        raise ValidationError(MIRROR_REFUSED)
 
 
 async def handle_namespace_register(
@@ -359,7 +366,7 @@ async def handle_namespace_register(
 ) -> NamespaceRegisterOutput:
     ch = get_client()
     caller = resolve_subject()
-    refuse_collection_name(input.namespace)
+    refuse_unwritable_name(input.namespace)
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the

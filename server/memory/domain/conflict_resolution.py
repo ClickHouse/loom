@@ -18,6 +18,8 @@ from typing import Any
 
 import numpy as np
 
+from server.memory.domain.memory_types import DEFINITION
+
 UPDATE = "update"
 CONTRADICTION = "contradiction"
 ELABORATION = "elaboration"
@@ -323,10 +325,10 @@ def later_close_siblings(vectors: list[list[float]], types: list[str], floor: fl
     """The indexes of a batch's rows that have an EARLIER row of the same type at
     cosine >= `floor`. The verdicts compare each row with the store only, so an
     update inside one batch is marked here; the later row is the newer statement
-    (the batch keeps reading order). Rows without a vector never pair."""
+    (the batch keeps reading order). Rows without a vector, and definitions, never pair."""
     groups: dict[tuple[str, int], list[int]] = {}
     for i, (vec, kind) in enumerate(zip(vectors, types, strict=True)):
-        if vec:
+        if vec and kind != DEFINITION:
             groups.setdefault((kind, len(vec)), []).append(i)
     out: set[int] = set()
     for idx in groups.values():

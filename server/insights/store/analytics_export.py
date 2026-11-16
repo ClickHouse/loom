@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date
 
 from server.core.ch import CHClient
+from server.core.naming import not_mirror_sql
 
 # One row per (org, namespace, agent, operation, kind, transport, traffic
 # class) of UTC day {day:Date}. `kind` is 'request', 'worker' (a worker pass),
@@ -61,19 +62,20 @@ SELECT
 FROM (SELECT * REPLACE (if(startsWith(operation, 'me.'), 'me', operation) AS operation)
       FROM loom.agent_events
       WHERE ts >= toDateTime64({{day:Date}}, 3, 'UTC')
-        AND ts < toDateTime64({{day:Date}} + 1, 3, 'UTC'))
+        AND ts < toDateTime64({{day:Date}} + 1, 3, 'UTC')
+        AND {not_mirror_sql()})
 GROUP BY {USAGE_KEY}
 """
 
-# One row per (org, namespace) that is registered or holds a live memory row:
-# the registry's description of it and its live memory count, as of
+# One row per (org, namespace) other than a mirror that is registered or holds a live
+# memory row: the registry's description of it and its live memory count, as of
 # `snapshot_at` whatever {day:Date} is. An unregistered namespace has
 # `registered = false` and NULL registry columns. Times leave as days: a
 # millisecond beside a hashed personal namespace could be matched to the
 # person who signed up or wrote then. The `ifNull`s give the same
 # answer whether the FULL JOIN fills a missing side with defaults or with NULLs
 # (`join_use_nulls`).
-NAMESPACES_SQL = """
+NAMESPACES_SQL = f"""
 SELECT
     org, namespace,
     ifNull(n.registered, false) AS registered,
@@ -83,14 +85,15 @@ SELECT
     if(registered, toDate(n.created_at, 'UTC'), NULL) AS created_on,
     ifNull(m.live_memories, 0) AS live_memories,
     if(live_memories > 0, toDate(m.last_memory_at, 'UTC'), NULL) AS last_memory_on,
-    {day:Date} AS day,
+    {{day:Date}} AS day,
     now64(3, 'UTC') AS snapshot_at
 FROM (SELECT org, namespace, true AS registered, kind, visibility, active, created_at
-      FROM loom.namespaces FINAL) AS n
+      FROM loom.namespaces FINAL
+      WHERE {not_mirror_sql()}) AS n
 FULL OUTER JOIN (SELECT org, namespace, count() AS live_memories,
                         max(created_at) AS last_memory_at
                  FROM loom.memory FINAL
-                 WHERE tombstoned_at IS NULL
+                 WHERE tombstoned_at IS NULL AND {not_mirror_sql()}
                  GROUP BY org, namespace) AS m
   USING (org, namespace)
 """

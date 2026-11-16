@@ -542,6 +542,23 @@ Resolve one duplicate pair.
 | `duplicate_tombstoned` | `bool` | True when `keep_canonical` tombstoned the duplicate row. |
 | `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys and the removed key fields. |
 
+## `memory.definitions.list`
+
+The namespace's shared definitions and whether each is governed.
+
+`POST /v1/memory.definitions.list` · MCP `loom_memory_definitions_list` · role `admin` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `count` | `int` | How many live shared definitions the namespace holds, capped ones included. |
+| `ceiling` | `int` | `memory_shared_definitions_max`. |
+| `definitions` | `list[DefinitionEntry]` | At most twice the ceiling, the most recently promoted first. |
+
 ## `memory.delete`
 
 WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
@@ -1318,7 +1335,7 @@ External outcome signal for a memory row.
 | --- | --- | --- |
 | `recorded` | `bool` | False when the row was not found or the usage write failed. |
 | `evidence_count_after` | `int` | evidence_count after the bump (0 if unknown) |
-| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a locked memory is not. |
+| `quarantined` | `bool` | Set when a negative outcome crossed memory_negative_demote_threshold and the memory was auto-quarantined (status -> 'rejected'); a locked memory, or a definition's namespace-wide row, is not. |
 
 ## `memory.outcome_run`
 
@@ -1469,15 +1486,17 @@ Promote a single source memory to the namespace's shared layer.
 | `memory_key` | `str` | required | source key in loom.memory |
 | `target_key` | `str \| None` | `None` | default = memory_key |
 | `rationale` | `str` | `''` | Why it was promoted; stored on the shared row and returned by memory.lineage. |
-| `approver` | `str \| None` | `None` | Stored as the shared row's `promoted_by`; None records `explicit`. |
+| `approver` | `str \| None` | `None` | Stored as the shared row's `promoted_by` (None records `explicit`); ignored for a definition, whose promoter is the token's actor, and named in `ignored_args`. |
 | `reversible_for_days` | `int` | `7` | Days (0–90) the promotion counts as reversible; memory.demote reports it. |
-| `promoted_from_candidate_id` | `str \| None` | `None` | On learnings.review-driven promotions, written to loom.shared.promoted_from_candidate_id so memory.lineage resolves via an FK-style lookup. |
+| `promoted_from_candidate_id` | `str \| None` | `None` | On learnings.review-driven promotions (not for a definition, where it is named in `ignored_args`), written to loom.shared.promoted_from_candidate_id so memory.lineage resolves via an FK-style lookup. |
+| `approved_sha256` | `str \| None` | `None` | For a definition, the content hash it approves (the row's `content_sha256` as memory.get serves it), required and checked; for any other row it is ignored and named in `ignored_args`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `shared_memory_key` | `str` | The key the shared row was written under (`target_key`, else the source key). |
 | `promotion_event` | `str` | UUID, also the audit_log request_id |
 | `reversible_until` | `datetime` | End of the reversal window: now plus `reversible_for_days`. |
+| `ignored_args` | `list[str]` | Fields the call sent that this promotion does not use: for a definition `approver` and `promoted_from_candidate_id`, for any other row `approved_sha256`. |
 
 ## `memory.proposal_decide`
 

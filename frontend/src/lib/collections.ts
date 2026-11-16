@@ -1,6 +1,7 @@
 /**
- * What a collection is called on screen, the name a title derives, the order collections are
- * listed in, and how many the Library reads.
+ * What a collection and the namespace are called on screen, how long a title may be and the name
+ * it derives, the order collections are listed in, how many the Library reads, and what a new
+ * one may sit in.
  *
  * A collection's name (`col-…`) is its address: grants, search scope and audit key on it,
  * and it is never used again once deleted. People see its title, which may repeat; the
@@ -38,6 +39,11 @@ export function collectionOrder(a: CollectionEntry, b: CollectionEntry): number 
 export function collectionTitle(c: Pick<CollectionEntry, "namespace" | "personal" | "title">): string {
   if (c.personal) return "My files";
   return c.title?.trim() || c.namespace;
+}
+
+/** How the Library names the header's namespace among its places. */
+export function namespaceLabel(namespace: string): string {
+  return `Namespace ${namespace}`;
 }
 
 /** What makes two titles the same title, as on the server (collection_names.py
@@ -119,4 +125,18 @@ export function plainName(title: string): string {
     .replace(/-+$/, "");
   if (!slug) return "";
   return `${PREFIX}${slug}-`.startsWith(PERSONAL_PREFIX) ? `${PREFIX}c-${slug}` : `${PREFIX}${slug}`;
+}
+
+/** server/identity/api/models_collections.py: the title field's max_length. */
+export const MAX_TITLE = 200;
+
+/** Whether a trimmed title is over MAX_TITLE, counted by code point after the NFC the server
+ *  applies, as its max_length counts. */
+export function titleTooLong(title: string): boolean {
+  return Array.from(title.normalize("NFC")).length > MAX_TITLE;
+}
+
+/** Whether a new collection can go inside `c`: one the person writes, not their own files. */
+export function canHold(c: CollectionEntry): boolean {
+  return !c.personal && c.role !== "viewer";
 }

@@ -220,7 +220,8 @@ namespace has conversation logging off, the session warns once, sets
 `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as
 `definitions("openai" | "anthropic" | "generic")`, and
 one `execute(name, args)` dispatcher that returns the string the model reads,
-validates required arguments, and truncates past `maxResultChars`. The schemas
+validates required arguments, and truncates past `maxResultChars` (`loom_recall` leaves
+out its lowest-ranked memories whole to fit, counted in `omitted`). The schemas
 match the Python SDK's.
 
 ```ts

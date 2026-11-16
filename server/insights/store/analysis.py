@@ -149,11 +149,11 @@ async def stored_caps_digest(names: boundary.SettingNames, *, ch: _CHClient | No
 
 
 def foreign_policies_sql(db: str) -> str:
-    """Permissive row policies on the allowlisted tables that Loom did not
-    write, in the database the SQL expression `db` names. ClickHouse ORs
-    permissive policies, so Loom's `USING 1` policy for every other user
-    would widen what each of them lets its users read."""
-    tables = ", ".join(sql_string(t) for t in boundary.allowlisted_tables())
+    """Permissive row policies Loom did not write on the tables it writes its policy for
+    every other user on, in the database the SQL expression `db` names. ClickHouse ORs
+    permissive policies, so Loom's `USING 1` policy for every other user would widen what
+    each of them lets its users read."""
+    tables = ", ".join(sql_string(t) for t in boundary.others_policy_tables())
     ours = ", ".join(sql_string(n) for n in (boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME))
     return (
         f"SELECT short_name, table FROM system.row_policies WHERE database = {db} "

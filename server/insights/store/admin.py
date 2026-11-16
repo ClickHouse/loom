@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.ch_names import SCHEMA, database, logical, telemetry_database
+from server.core.naming import not_mirror_sql
 from server.core.repo_base import _CHClient, _default_client
 
 # ----------------------------------------------------------------------
@@ -48,6 +49,7 @@ async def audit_summary(
     ch = ch or _default_client()
     where = [
         "ts >= toDateTime64(now() - INTERVAL {since:UInt32} SECOND, 3, 'UTC')",
+        not_mirror_sql(),
     ]
     params: dict[str, Any] = {"since": int(since_seconds)}
     if org:
@@ -105,6 +107,7 @@ async def events_tail(
     ch = ch or _default_client()
     where = [
         "ts >= toDateTime64(now() - INTERVAL {since:UInt32} SECOND, 3, 'UTC')",
+        not_mirror_sql(),
     ]
     params: dict[str, Any] = {"since": int(since_seconds), "lim": int(limit)}
     filters = filters or {}
@@ -167,6 +170,7 @@ def budget_violations_sql(extra_where: str = "") -> str:
         FROM loom.events
         WHERE kind = 'budget_violation'
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY namespace, operation
         ORDER BY violations DESC
@@ -221,6 +225,7 @@ async def consumers(
         FROM loom.agent_events
         WHERE kind = 'request'
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY consumer_key
         ORDER BY calls DESC
@@ -269,6 +274,7 @@ async def consumer_tagging(
         FROM loom.agent_events
         WHERE kind = 'request'
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY org, agent
         ORDER BY calls DESC
@@ -304,6 +310,7 @@ async def consumer_outcomes(
                sum(tokens_saved)                                    AS tokens_saved
         FROM loom.code_search_outcome
         WHERE ts >= toDateTime(now() - INTERVAL {{since:UInt32}} SECOND, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY source
         ORDER BY outcome_rows DESC
@@ -339,7 +346,7 @@ async def fleet_cost(
             uniqExact(operation)   AS ops_distinct
             {namespaces_select}
         FROM loom.agent_events
-        WHERE ts >= now() - INTERVAL {{since:UInt32}} SECOND
+        WHERE ts >= now() - INTERVAL {{since:UInt32}} SECOND AND {not_mirror_sql()}
         GROUP BY {group_by}
         ORDER BY total_cost_usd DESC
         LIMIT {{top_n:UInt32}}

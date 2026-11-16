@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 from server import __version__
-from server.cli._ch import connect_declared, disconnect
+from server.cli._ch import connect_declared, disconnect, reads
 from server.core.ch_names import database, qualify, quote
 
 
@@ -475,7 +475,7 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
     async def read() -> tuple[Any, ...] | None:
         client = get_client()
         try:
-            await connect_declared(client, org_free="reads")
+            await connect_declared(client, org_free=reads("reads"))
             if not repo_registry.registry_read():
                 return None  # which entries are configured is unknown: say nothing
             await settings_overrides.refresh()  # the thresholds `/v1/health` grades with
@@ -506,7 +506,7 @@ def _read_code_registry() -> None:
     async def read() -> None:
         client = get_client()
         try:
-            await connect_declared(client, org_free="reads")
+            await connect_declared(client, org_free=reads("reads"))
             await repo_registry.refresh_db_repos(force=True)
         finally:
             await disconnect(client)

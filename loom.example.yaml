@@ -637,8 +637,8 @@ settings:
   # auth_required: true
 
   # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK
-  # caller defaults). Ignored when auth is required; `personal-*` is reserved and
-  # rejected. [restart]
+  # caller defaults). Ignored when auth is required; `personal-*` and a mirror's name
+  # (`acl-` and 24 hex digits) are reserved and rejected. [restart]
   # default_namespace: "local"
 
   # MCP one-click connect: dynamic client registration and /oauth/authorize on top of
@@ -2817,6 +2817,12 @@ settings:
   # sources; the rest wait for the next pass. [live]
   # knowledge_source_sync_documents_per_pass: 40
 
+  # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
+  # turn tries no new file, notes how many as `too_many_documents`, and still updates
+  # and retires. At most 200,000: each read of the stored copies grows with its square.
+  # [live]
+  # knowledge_source_max_documents: 50000
+
   # Seconds after which a source's next pass lists every file, not only those changed
   # since the last one: what finds a file trashed or moved out of a folder. [live]
   # knowledge_source_sync_full_interval_seconds: 86400
@@ -2920,6 +2926,12 @@ settings:
   # mcp_code_tools: false
 
   # ===== The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers =====
+
+  # --- governed definitions ---
+
+  # Most shared definitions a namespace holds; a promotion past it is refused
+  # (docs/concepts/identities-and-namespaces.md). [live]
+  # memory_shared_definitions_max: 500
 
   # --- prompt safety and search priors ---
 

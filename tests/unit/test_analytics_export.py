@@ -20,6 +20,8 @@ from server.insights.store.analytics_export import (
     STATEMENT_SETTINGS,
 )
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH
+from tests.unit.clickhouse_local import ddl as local_ddl
 
 
 def test_object_keys_are_one_per_entity_and_day() -> None:
@@ -374,3 +376,32 @@ async def test_a_body_that_is_not_a_whole_parquet_file_is_never_uploaded() -> No
     with pytest.raises(ValueError, match="not a whole Parquet file"):
         await export_day(date(2026, 10, 9), prefix="", put=put, name_key=(1, 2), ch=_CutOff())  # type: ignore[arg-type]
     assert uploaded == []
+
+
+_MIRROR = "acl-0123456789abcdef01234567"
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+async def test_an_export_leaves_out_a_mirror(entity: str) -> None:
+    day = date(2026, 1, 2)
+    rows = [
+        f"INSERT INTO loom.{table} (org, namespace{cols}) VALUES ('o', '{ns}'{vals})"
+        for ns in ("team", _MIRROR)
+        for table, cols, vals in (
+            ("namespaces", "", ""),
+            (
+                "memory",
+                ", agent, user_id, session_id, memory_key, value",
+                ", 'a', '-', '-', 'k', 'v'",
+            ),
+            (
+                "agent_events",
+                ", ts, operation, kind",
+                ", '2026-01-02 10:00:00', 'memory.get', 'request'",
+            ),
+        )
+    ]
+    ch = LocalCH(local_ddl("namespaces"), local_ddl("memory"), local_ddl("agent_events"), *rows)
+    out = await ch.query_all(ENTITIES[entity], {"day": day})
+    assert {r["namespace"] for r in out} == {"team"}

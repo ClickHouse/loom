@@ -70,7 +70,7 @@ Authentication, tokens and identity providers.
 | --- | --- | --- | --- | --- |
 | `LOOM_PLATFORM_ADMINS` | `str` | `''` |  | Comma-separated login handles and emails promoted to platform_admin (org-wide visibility). A handle matches a password account's subject; an email matches only an IdP-verified (OIDC) email, never the unverified self-signup address. Empty = no platform admins. |
 | `LOOM_AUTH_REQUIRED` | `bool` | `True` |  | True: every operation requires a valid bearer JWT. False (laptop demos only): missing tokens are not rejected and the SPA synthesizes a local identity. identity_provider=single-user forces auth off regardless. |
-| `LOOM_DEFAULT_NAMESPACE` | `str` | `'local'` |  | The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is reserved and rejected. |
+| `LOOM_DEFAULT_NAMESPACE` | `str` | `'local'` |  | The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a mirror's name (`acl-` and 24 hex digits) are reserved and rejected. |
 | `LOOM_OAUTH_ENABLED` | `bool` | `False` |  | MCP one-click connect: dynamic client registration and /oauth/authorize on top of the sign-in routes (device grant, token, revoke) every auth-on deployment serves. Opt-in: anyone can register a client. |
 | `LOOM_OAUTH_ISSUER` | `str` | `''` |  | Public base URL used in OAuth discovery and redirects; empty derives it from each request. Required when `oauth_login_provider` is "oidc" (the IdP callback URL is built from it). |
 | `LOOM_OAUTH_LOGIN_PROVIDER` | `'password' \| 'oidc'` | `'password'` |  | How people sign in (dashboard, `loom login`, MCP connect): "password" (Loom's own form) or "oidc" (the external IdP; loom maps the verified email to an account and still mints its own token). "oidc" closes password sign-in and self-signup, and requires `oauth_issuer` and the three oidc_* values. |
@@ -959,6 +959,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` | `int` | `50000` | live | Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE` | `float` | `0.25` | live | The share of a namespace's daily LLM cost cap the sync may spend mining changed documents for decisions, counted over its own calls; the rest stays for requests. |
@@ -989,6 +990,12 @@ The MCP transport: tool listing, lean results, session runs.
 
 The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers.
 
+
+### Governed definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_SHARED_DEFINITIONS_MAX` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 

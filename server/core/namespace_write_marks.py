@@ -26,9 +26,11 @@ log = logging.getLogger("loom.namespace_write_marks")
 TABLE = "loom.namespace_write_marks"
 ORG_WIDE = "*"
 
-# The plane each source table marks.
+# The plane each source table marks. A shared row is the memory plane's: a promotion or
+# demotion changes what a memory read serves.
 PLANE_BY_TABLE: dict[str, str] = {
     "loom.memory": "memory",
+    "loom.shared": "memory",
     "loom.memory_chunks": "chunk",
     "loom.memory_evidence": "evidence",
     "loom.memory_records": "record",
@@ -51,7 +53,7 @@ def _interval_s() -> float:
 def observe_insert(table: str, rows: list[dict[str, Any]]) -> None:
     """Called by the client after a successful INSERT: one mark per distinct
     (org, namespace) in the batch for the table's plane. Tables outside the
-    five planes, and the buffer's own flush, are ignored."""
+    planes, and the buffer's own flush, are ignored."""
     plane = PLANE_BY_TABLE.get(table)
     if plane is None or not rows:
         return

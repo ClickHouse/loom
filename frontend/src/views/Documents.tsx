@@ -7,10 +7,12 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -33,10 +35,10 @@ import {
   type KnowledgeEntry,
   type KnowledgeDocument,
   type InlinePreview,
+  type CollectionEntry,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
-import { collectionTitle } from "../lib/collections";
 import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
@@ -55,12 +57,17 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
-import { distinctTitle, repeatedTitles } from "../lib/collections";
+import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "../lib/collections";
 import { formatBytesShort } from "../lib/format";
-import { useAbortableEffect } from "../lib/hooks";
+import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
-import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
-import { CollectionsInside } from "./LibraryHierarchy";
+import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
+import { useCollectionSharing } from "./CollectionSharing";
+import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
+import { TopLevelPlaces } from "./LibraryHierarchy";
+import { expandedKey, LibraryTree } from "./LibraryTree";
+import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
+import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -73,6 +80,7 @@ import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
+import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -122,11 +130,27 @@ async function findDocument(
   return null;
 }
 
+/** What the browser tab names: the collection shown, else the namespace shown (`shelf`), else
+ *  nothing (a linked collection still read). My files without its address, even when another
+ *  collection is titled so, as the tree's row shows it. */
+function placeTitle(shown: CollectionEntry | null, repeated: Set<string>, shelf: string | null): string | undefined {
+  if (shown) return shown.personal ? collectionTitle(shown) : distinctTitle(shown, repeated);
+  if (shelf !== null) return namespaceLabel(shelf);
+  return undefined;
+}
+
 /** The collection a Library link names (`?collection=`), or null for the header's namespace. */
 function linkedCollection(): string | null {
   const name = new URLSearchParams(window.location.search).get("collection");
   // The page never prints text a link made up: only a collection's name counts.
   return isCollectionName(name) ? name : null;
+}
+
+/** A move is a new history entry, so Back steps through the places picked. `arriveFocus` and
+ *  `note` are the arrival's focus and words (a tree pick keeps the person on its row). */
+function moveTo(c: string | null, arriveFocus?: string, note?: string): void {
+  useStore.getState().clearPendingDoc();
+  useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
 }
 
 // Why a restore left the document deleted (`knowledge.restore`'s `reason`).
@@ -160,18 +184,53 @@ export function Documents() {
     useStore.getState().clearPendingDoc();
     setPicks((n) => n + 1);
   }, []);
-  // A person's pick is a new history entry, so Back steps through the places they picked;
-  // the page's own corrections (leaving a collection it cannot show) replace the entry.
-  const goTo = (c: string | null) => {
-    if (c === collection) return; // the place already shown: nothing moves
-    useStore.getState().clearPendingDoc();
-    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {} });
-  };
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
-  const collections = useReadableCollections(picked.org);
+  const collections = useReadableCollections(picked.org, collection);
+  const { error: listFailed, retry: retryList, reload: reloadCollections } = collections;
+  const goTo = useCallback(
+    (c: string | null, arriveFocus?: string, note?: string) => {
+      // A collection is opened only once the list names it: a list that failed reads again.
+      if (c && listFailed) retryList();
+      if (c !== linkedCollection()) moveTo(c, arriveFocus, note);
+    },
+    [listFailed, retryList],
+  );
+  const mounted = useMounted();
+  // Bumped whenever the place shown changes (a pick, Back, a correction, another namespace or
+  // org), and by each create sent (tree or dialog), so only the latest opens what it made; a
+  // failed read leaves it.
+  const placeVersion = useRef(0);
+  useLayoutEffect(() => {
+    placeVersion.current += 1;
+  }, [picked.org, picked.namespace, collection]);
+  const claimCreateVersion = useCallback<ClaimCreateVersion>(() => {
+    placeVersion.current += 1;
+    return placeVersion.current;
+  }, []);
+  const openCreated = useCallback(
+    (name: string, version: number, arriveFocus?: string) => {
+      if (!mounted.current || version !== placeVersion.current) return;
+      // The answer named the collection already shown: the create's refresh is enough.
+      if (name === linkedCollection()) return;
+      // The read starts before the move so the old list never says it is missing.
+      flushSync(() => reloadCollections(name));
+      moveTo(name, arriveFocus);
+    },
+    [reloadCollections],
+  );
   const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
-  const resolving = !!collection && collections.rows === null && !collections.error;
+  // Read once for every list of places on the page, over the last answer (kept while it is
+  // read again): titles two collections share show their address too.
+  const repeated = useMemo(() => repeatedTitles(collections.kept?.rows ?? []), [collections.kept]);
+  const byName = useMemo(
+    () => new Map((collections.kept?.rows ?? []).map((c) => [c.namespace, c])),
+    [collections.kept],
+  );
+  const resolving = !!collection && collections.rows === null && !listFailed;
+  // Taken from the kept list, so the header holds steady while the list is read again.
+  const headerCollection = collection ? (byName.get(collection) ?? null) : null;
+  const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
   const mine = useStore((s) => s.myNamespaces);
@@ -218,6 +277,9 @@ export function Documents() {
   // the server decides.
   const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
+  // Who the tree remembers folds for. App draws no page before whoami answers (with auth off
+  // it answers "local"), so it is "" only for a token that names no subject.
+  const subject = whoami?.subject ?? "";
   const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
   const roleLoading = !shown && (roleRead.loading || !whoami);
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
@@ -233,6 +295,11 @@ export function Documents() {
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
   const phone = useMedia(PHONE_QUERY);
+  // The places are a tree beside the documents where <main> has room for both; narrower, or
+  // not measured yet, the select stands in.
+  const treeHeight = useTreeHeight();
+  const besideTree = treeHeight !== null;
+  useTreeFocusHandoff(besideTree);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -266,6 +333,15 @@ export function Documents() {
   const [tablesFor, setTablesFor] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
+  // The documents Move to… was opened for; another place shown closes it.
+  const [moving, setMoving] = useState<string[] | null>(null);
+  // Whether the open Move to… dialog moved any document: focus then goes to the search.
+  const movedSome = useRef(false);
+  const openMove = useCallback((uris: string[]) => {
+    movedSome.current = false;
+    setMoving(uris);
+  }, []);
+  useEffect(() => setMoving(null), [identity.org, identity.namespace]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
   // A reason that appears while Edit details is open closes it. Add and Replace stay: they
   // hold an upload in flight, which the server refuses if the role no longer reaches it.
@@ -381,7 +457,6 @@ export function Documents() {
     [403, 404].includes(loadError.status);
   // Once per collection: replicas can disagree for a moment (one has the revoke, another
   // not yet), so when the list still names it after a re-read the page leaves it.
-  const reloadCollections = collections.reload;
   const reReadFor = useRef("");
   useEffect(() => {
     if (!refusedShown || !shown) return;
@@ -399,6 +474,16 @@ export function Documents() {
 
   // The library is empty only when nothing narrowed the read and the read worked.
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
+  const share = useCollectionSharing({
+    org: picked.org,
+    collection: headerCollection,
+    byName,
+    repeated,
+    truncated: collections.kept?.truncated ?? false,
+    empty: emptyLibrary,
+    place: collection ?? picked.namespace,
+    onOpenPlace: goTo,
+  });
   const readTags = JSON.parse(serverTags) as string[];
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
@@ -459,7 +544,8 @@ export function Documents() {
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
   }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
-  // After a row's delete, the read that drops the row hands focus to the search field.
+  // After a row's delete, the read that drops the row hands focus to the search field (a
+  // move's dialog hands it there itself as it closes).
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
     focusSearchOnRead.current = false;
@@ -726,7 +812,7 @@ export function Documents() {
   // dialog is up (each owns its Escape).
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
   const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
-  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
+  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry || !!moving;
   const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
   const { selected } = selection;
   const clearSelection = selection.clear;
@@ -873,6 +959,7 @@ export function Documents() {
       replace: setReplaceEntry,
       edit: setEditEntry,
       remove: (uri) => void handlers.current.onDelete(uri),
+      move: (uri) => openMove([uri]),
       writeReason,
       ...(readOnly ? {} : { toggle: toggleRow }),
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
@@ -880,14 +967,16 @@ export function Documents() {
     [toggleRow, readOnly, writeReason],
   );
 
-  // Below the documents, so they start where the list rules want them; on a phone the
-  // select, a tree, lists the collections inside.
-  const inside = !phone && collections.rows && (
-    <CollectionsInside
+  // The top level's collections, below the documents so they start where the list rules
+  // want them. Inside a collection the chips on its path's line list them; on a phone the
+  // select, a tree, does.
+  const topLevel = !phone && !besideTree && collections.rows && (!shown || shown.personal) && (
+    <TopLevelPlaces
       key={shown?.namespace ?? ""}
       rows={collections.rows}
+      repeated={repeated}
+      byName={byName}
       truncated={collections.truncated}
-      current={shown}
       onPick={goTo}
       className="mt-6"
     />
@@ -897,6 +986,8 @@ export function Documents() {
       org={picked.org}
       namespace={ownShelf ? picked.namespace : null}
       collections={collections}
+      repeated={repeated}
+      byName={byName}
       current={shown}
       opening={resolving ? collection : null}
       place={collection ?? picked.namespace}
@@ -904,6 +995,29 @@ export function Documents() {
       onLeave={pickCollection}
       creating={creatingCollection}
       onCreatingChange={setCreatingCollection}
+      claimCreateVersion={claimCreateVersion}
+      onCreated={openCreated}
+      besideTree={besideTree}
+    />
+  );
+  const placesTree = treeHeight !== null && (
+    <LibraryTree
+      // One per person and org: nothing read or opened in one shows in, or is saved for, another.
+      key={expandedKey(subject, picked.org)}
+      subject={subject}
+      org={picked.org}
+      rows={collections.kept?.rows ?? null}
+      repeated={repeated}
+      byName={byName}
+      truncated={collections.kept?.truncated}
+      viewHeight={treeHeight}
+      failed={!!listFailed}
+      busy={collections.refreshing}
+      namespace={ownShelf ? picked.namespace : null}
+      current={treeCurrent}
+      onPick={goTo}
+      claimCreateVersion={claimCreateVersion}
+      onCreated={openCreated}
     />
   );
 
@@ -911,8 +1025,51 @@ export function Documents() {
   // folder be placed where the person looks, so the dialog takes one.
   const folderTree =
     collections.rows && !collections.truncated && (!collection || shown)
-      ? { rows: collections.rows, shown, onMade: (first: string) => collections.reload(first) }
+      ? { rows: collections.rows, shown }
       : undefined;
+  // Where documents can go from here: the header's namespace when the person adds there, and
+  // the collections they write, in tree order; not the place shown.
+  const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
+  const movePlaces = useMemo<MovePlace[]>(() => {
+    const out: MovePlace[] = [];
+    if (addsToHeader && identity.namespace !== picked.namespace) {
+      out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
+    }
+    for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
+      if (c.role === "viewer" || c.namespace === identity.namespace) continue;
+      out.push({
+        namespace: c.namespace,
+        label: c.personal ? collectionTitle(c) : distinctTitle(c, repeated),
+        depth: c.personal ? 0 : depth,
+        kind: c.personal ? "personal" : "collection",
+      });
+    }
+    return out;
+  }, [collections.kept, repeated, identity.namespace, addsToHeader, picked.namespace]);
+  const moveDialog = moving && (
+    <MoveDocumentsDialog
+      org={identity.org}
+      from={identity.namespace}
+      fromLabel={shown ? collectionTitle(shown) : `Namespace ${identity.namespace}`}
+      sourceUris={moving}
+      places={movePlaces}
+      placesReading={
+        collections.kept ? (collections.kept.truncated ? "truncated" : null) : collections.error ? "failed" : "loading"
+      }
+      onMoved={(moved) => {
+        // Any answer may have changed the list, a failed call's too.
+        if (moved.length) movedSome.current = true;
+        reload();
+      }}
+      onClose={() => setMoving(null)}
+      onCloseAutoFocus={(e) => {
+        if (!movedSome.current) return;
+        // The rows, the menu or the selection bar that opened it may have left.
+        e.preventDefault();
+        searchRef.current?.focus();
+      }}
+    />
+  );
   // Mounted while open, beside either page, so a batch outlives a page move.
   const addDialog = addOpen && (
     <AddDocumentDialog
@@ -925,7 +1082,7 @@ export function Documents() {
         batchStarted.current = v;
       }}
       identity={{ org: identity.org, namespace: identity.namespace }}
-      place={shown ? distinctTitle(shown, repeatedTitles(collections.rows ?? [])) : identity.namespace}
+      place={shown ? distinctTitle(shown, repeated) : identity.namespace}
       tree={folderTree}
       // Folders wait for a list still being read (or read again after it failed), or one too
       // long to show; a collection not in a whole list takes none.
@@ -933,11 +1090,17 @@ export function Documents() {
       onAdded={reload}
     />
   );
-  // The dialog keeps one place in the tree whichever page shows, so React keeps it.
-  const withDialog = (page: ReactNode) => (
+  // Either page beside the places tree, when there is room for one. The dialog keeps one
+  // place in React's tree whichever page shows, so React keeps it.
+  const libraryPage = (page: ReactNode) => (
     <>
-      {page}
+      <div className={besideTree ? "library-layout" : undefined}>
+        {placesTree}
+        {page}
+      </div>
       {addDialog}
+      {moveDialog}
+      {share.dialog}
     </>
   );
 
@@ -948,7 +1111,7 @@ export function Documents() {
     // The list's answer decides: none while it is read, and a failure is not "none".
     const listed = collections.rows;
     // Nothing said while the list is read, or while one's own files open by themselves.
-    const unknown = !picked.namespace && ((listed === null && !collections.error) || !!opensFirst);
+    const unknown = !picked.namespace && ((listed === null && !listFailed) || !!opensFirst);
     // No namespace, but collections to pick: the page asks only for the pick.
     const picking = !picked.namespace && !!listed?.length;
     const action = picking
@@ -961,7 +1124,8 @@ export function Documents() {
             ? { label: "Open repositories", onClick: () => go.setView("code") }
             : undefined;
     const none = listed !== null && listed.length === 0;
-    const pick = none ? "Create a collection" : "Pick a collection above";
+    // Width-neutral: the places are a select above the page, or the tree beside it.
+    const pick = none ? "Create a collection" : "Pick a collection";
     const orNamespace = !picked.namespace
       ? ""
       : none
@@ -1003,16 +1167,17 @@ export function Documents() {
             </Link>
           </p>
         )}
-        {inside}
+        {topLevel}
       </PageContainer>
     );
-    return withDialog(page);
+    return libraryPage(page);
   }
 
-  return withDialog(
+  return libraryPage(
     <PageContainer>
       <PageHeader
         title="Library"
+        tab={placeTitle(shown, repeated, ownShelf && !resolving ? picked.namespace : null)}
         actions={
           <>
             {!resolving && !shown?.personal && (
@@ -1034,6 +1199,7 @@ export function Documents() {
                 />
               </Suspense>
             )}
+            {share.button}
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && !resolving && (
               <Unavailable reason={writeReason}>
@@ -1047,31 +1213,36 @@ export function Documents() {
       >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
-          {/* On a collection the select below names where the documents are. */}
+          {/* On a collection the select or the path below names where the documents are. */}
           {!shown && !resolving && <ScopeBadge kind="namespace" value={picked.namespace} />}
         </span>
       </PageHeader>
       {picker}
       {seesGaps && !resolving && <KnowledgeGaps org={identity.org} namespace={identity.namespace} />}
-      {/* One line: the library's figures once they are read, what the library is behind the tip.
-          A phone, with the place picker above the list, has no room for it: the bar's count
-          says how many are shown. */}
-      <div className="mb-4 hidden min-h-6 items-center gap-1 text-sm text-text-muted tabular sm:flex">
-        <span className="min-w-0 truncate">
-          {docCount && aggregateStats && rows && rows.length > 0
-            ? [
-                `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
-                `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
-                ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
-              ].join(" · ")
-            : "Reference docs your agents can read."}
+      {/* One line: who can see the collection shown, the library's figures once they are read,
+          what the library is behind the tip. A phone, with the place picker above the list, has
+          room for who can see it only: the bar's count says how many are shown. */}
+      <div
+        className={`mb-4 min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted tabular ${headerCollection ? "flex" : "hidden sm:flex"}`}
+      >
+        {share.line}
+        <span className={`min-w-0 items-center gap-1 ${headerCollection ? "hidden shrink-0 sm:flex" : "flex"}`}>
+          <span className="min-w-0 truncate">
+            {docCount && aggregateStats && rows && rows.length > 0
+              ? [
+                  `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
+                  `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
+                  ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
+                ].join(" · ")
+              : "Reference docs your agents can read."}
+          </span>
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About the library"
+            tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
+          />
         </span>
-        <IconButton
-          icon="info-in-circle"
-          size="xs"
-          label="About the library"
-          tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
-        />
       </div>
 
       {/* The Sources button opens the place's sources here, so a closed list costs the rows
@@ -1091,7 +1262,10 @@ export function Documents() {
                 count: selected.size,
                 onClear: clearSelection,
                 all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
-                actions: [{ label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete }],
+                actions: [
+                  { label: "Move to…", icon: "arrow-right", onClick: () => openMove(Array.from(selected)) },
+                  { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
+                ],
               }
             : null
         }
@@ -1101,8 +1275,11 @@ export function Documents() {
             ref={searchRef}
             value={query}
             onChange={(value) => setQuery(value)}
-            // A phone's field holds the short form only.
-            placeholder={phone ? "Search, or tag:specs" : "Search title, filename, description, or tag — try tag:specs"}
+            // The short form on a phone and beside the tree, whose column leaves the field
+            // narrow.
+            placeholder={
+              phone || besideTree ? "Search, or tag:specs" : "Search title, filename, description, or tag (tag:specs)"
+            }
             aria-label="Search library"
           />
         </ListToolbarSearch>
@@ -1247,7 +1424,7 @@ export function Documents() {
         </div>
       )}
 
-      {inside}
+      {topLevel}
 
       <Modal
         open={!!previewEntry}
@@ -1488,6 +1665,7 @@ interface DocRowActions {
   replace: (r: KnowledgeEntry) => void;
   edit: (r: KnowledgeEntry) => void;
   remove: (sourceUri: string) => void;
+  move: (sourceUri: string) => void;
   /** Why the writes are unavailable, or null: a viewer of the collection shown, a role on
    *  the namespace known to be below writer, or the role still loading. The writes stay in
    *  the menu, unavailable, with it. */
@@ -1512,13 +1690,14 @@ interface DocRowProps {
 const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
-  const { replace, edit, remove, toggle, writeReason } = actions;
+  const { replace, edit, remove, move, toggle, writeReason } = actions;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
     // Uploading a file into a text-only document is the same replace flow.
     { label: "Replace content", icon: "refresh", reason: writeReason, onSelect: () => replace(r) },
     { label: "Edit details", icon: "pencil", reason: writeReason, onSelect: () => edit(r) },
+    { label: "Move to…", icon: "arrow-right", reason: writeReason, onSelect: () => move(r.source_uri) },
     {
       label: "Copy URI",
       icon: "copy",

@@ -251,6 +251,10 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 - `loom.integrations.autogen.LoomMemory(agent, user_id=...)` implements
   AutoGen's `Memory` protocol over `memory.set` and `memory.search`; install
   the `[autogen]` extra.
+- `loom.integrations.ag2.LoomRecallPolicy(agent, user_id=...)` is an AG2
+  assembly policy that adds the memories `memory.search` finds for the latest
+  user message to the prompt, and `loom_tools(agent, user_id=...)` returns
+  `AgentTools` as AG2 tools; install the `[ag2]` extra.
 - `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
   `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
   extra.

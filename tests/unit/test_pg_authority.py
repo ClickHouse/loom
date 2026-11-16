@@ -1694,7 +1694,10 @@ def test_a_page_parked_under_clickhouse_carries_no_postgres_fields() -> None:
 
     hit = _hit("k1")
     hit._row_version, hit._row_chunk = 42, ("a", "u", 3, "sha")
-    assert not {"row_identity", "row_chunk", "row_version"} & set(_parked(hit))
+    parked = _parked(hit)
+    assert not {"row_chunk", "row_version"} & set(parked)
+    # The row's identity is kept: a later page tells a shared definition by it.
+    assert "row_identity" in parked
 
 
 @pytest.mark.asyncio

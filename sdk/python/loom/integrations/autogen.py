@@ -115,7 +115,8 @@ class LoomMemory(Memory):
             user_id=self._user_id,
             # Read the namespace this memory writes to, whatever the deployment's default.
             namespace_scope="this",
-            # Above top_k 15 an unpinned search serves 200-character excerpts.
+            # Unpinned, a large top_k serves excerpts (above 15 by default)
+            # and drops each hit's explanation.
             bodies="full",
             explain=False,
         )

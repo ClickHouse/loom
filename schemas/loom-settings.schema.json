@@ -2362,7 +2362,7 @@
         "default_namespace": {
           "default": "local",
           "type": "string",
-          "description": "The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is reserved and rejected."
+          "description": "The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a mirror's name (`acl-` and 24 hex digits) are reserved and rejected."
         },
         "delete_version_check_batch_size": {
           "default": 200,
@@ -3177,6 +3177,13 @@
           "minimum": 2,
           "type": "integer",
           "description": "How many fused hits a rerank reads (the legs fetch at least this many)."
+        },
+        "knowledge_source_max_documents": {
+          "default": 50000,
+          "maximum": 200000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square."
         },
         "knowledge_source_probe_timeout_s": {
           "default": 20.0,
@@ -5001,6 +5008,12 @@
           "default": 48,
           "type": "integer",
           "description": "Max chunks per memory.set value (48 ≈ 34 KB); the tail is recorded in loom.memory_drops as chunk.split/truncated."
+        },
+        "memory_shared_definitions_max": {
+          "default": 500,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md)."
         },
         "memory_structured_answer_excerpt_limit": {
           "default": 4096,

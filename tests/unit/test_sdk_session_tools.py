@@ -294,7 +294,10 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
         and calls[0][1]["user_id"] == "u1"
         and calls[0][1]["session_id"] == "s1"
     )
-    assert json.loads(await tools.execute("loom_recall", '{"query":"seat","top_k":3}')) == {
+    recalled = json.loads(await tools.execute("loom_recall", '{"query":"seat","top_k":3}'))
+    (sent,) = [b for op, b in calls if op == "memory.search"]
+    assert (sent["bodies"], sent["explain"]) == ("full", False)  # the stored clip at any top_k
+    assert recalled == {
         "memories": [
             {"memory_key": "seat", "content": "Prefers an aisle seat", "similarity": 0.512}
         ]
@@ -379,3 +382,40 @@ def test_sync_session_is_a_with_block_and_task_stream_iterates() -> None:
             if len(got) == 3:
                 break
         assert got == ["t1", "t2", "t3"]
+
+
+async def test_recall_over_the_cap_drops_whole_memories_and_stays_json() -> None:
+    hits = [
+        {"memory_key": f"m{i}", "content_excerpt": "x" * 400, "similarity": 0.9 - i / 100}
+        for i in range(5)
+    ]
+    a, _ = _agent({"memory.search": {"results": hits}})
+    tools = a.tools(only=["loom_recall"], max_result_chars=1_000)
+    out = json.loads(await tools.execute("loom_recall", {"query": "seat", "top_k": 5}))
+    assert [m["memory_key"] for m in out["memories"]] == ["m0", "m1"]  # the best ranked, whole
+    assert out["omitted"] == 3
+    await a.close()
+
+
+async def test_tools_refuse_an_integer_outside_the_schema() -> None:
+    a, calls = _agent({"memory.search": {"results": []}})
+    tools = a.tools(only=["loom_recall"])
+    with pytest.raises(LoomError, match="top_k must be within 1..20, got 500"):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": 500})
+    fetch = a.tools(only=["loom_fetch"])
+    with pytest.raises(LoomError, match="offset must be within 0.., got -3"):
+        await fetch.execute("loom_fetch", {"blob_key": "b", "offset": -3})
+    assert calls == []
+    await a.close()
+
+
+async def test_recall_whose_best_memory_alone_is_over_the_cap_is_cut() -> None:
+    hits = [
+        {"memory_key": f"m{i}", "content_excerpt": "x" * 900, "similarity": 0.9} for i in range(2)
+    ]
+    a, _ = _agent({"memory.search": {"results": hits}})
+    tools = a.tools(only=["loom_recall"], max_result_chars=500)
+    out = await tools.execute("loom_recall", {"query": "seat"})
+    assert out.endswith("…[truncated]")  # one memory is kept, and cut as before
+    assert out.startswith('{"memories": [{"memory_key": "m0"')
+    await a.close()

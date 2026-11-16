@@ -22,7 +22,7 @@ from server.core.ch import sequential_reads
 from server.memory.app.pg_admission import ProjectionBehindError, wait_searchable
 from server.memory.app.search.telemetry import record_page
 from server.memory.app.set_chunks import set_chunk_identities
-from server.memory.domain.search_types import hit_row_key
+from server.memory.domain.search_types import hit_row_key, is_shared_row
 from server.memory.store import pg_memory
 from server.observability import pg_pipeline
 from server.settings import settings
@@ -117,8 +117,7 @@ async def published_reads(
 def _judged_by_authority(hit: Any) -> bool:
     """A hit the Postgres authority can judge: a fact or anchor row of `loom.memory`, not
     a promoted `_shared` row."""
-    identity = hit._row_identity
-    return hit.source in ("fact", "anchor") and not (identity and identity[0] == "_shared")
+    return hit.source in ("fact", "anchor") and not is_shared_row(hit)
 
 
 def doc_key(h: Any, namespace: str) -> tuple[str, str, str, str, str]:

@@ -128,6 +128,34 @@ async def _record_upload(org: str, namespace: str, sha: str, uploader: str, ch: 
         )
 
 
+async def copy_held(
+    org: str,
+    namespace: str,
+    sha: str,
+    to_namespace: str,
+    *,
+    size: int,
+    uploader: str = "-",
+    ch: _CHClient | None = None,
+) -> bool:
+    """Store again in `to_namespace` an original whose bytes are a ClickHouse row of
+    `namespace` (`Stored.location` empty), copied inside ClickHouse, as a fresh upload
+    there (`put`). Whether a whole copy landed."""
+    ch = ch or _default_client()
+    await _record_upload(org, to_namespace, sha, uploader, ch)
+    params = {"org": org, "ns": namespace, "sha": sha, "to_ns": to_namespace}
+    # Picked in an inner query: an outer WHERE would read the replaced `namespace`.
+    await ch.execute(
+        f"INSERT INTO {TABLE} SELECT * REPLACE ({{to_ns:String}} AS namespace,"
+        f" now64(3) AS created_at) FROM (SELECT * FROM {TABLE} WHERE {_KEY}"
+        " AND location = '' LIMIT 1)",
+        params=params,
+        settings={"async_insert": 0},
+    )
+    copied = await locate(org, to_namespace, sha, ch=ch)
+    return copied is not None and not copied.location and copied.size == size
+
+
 @dataclass(frozen=True)
 class Stored:
     """Where the latest row of an original says its bytes are."""

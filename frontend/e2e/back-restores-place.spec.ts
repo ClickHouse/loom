@@ -177,7 +177,8 @@ test("a sidebar jump focuses the new page's h1 and says where it went", async ({
   await expect(page).toHaveURL(new RegExp(`/library\\?namespace=${NAMESPACE}$`));
   await expect(page.getByRole("heading", { level: 1, name: "Library" })).toBeFocused();
   await expect(page.locator("#loom-nav-status")).toHaveText("Library");
-  await expect(page).toHaveTitle("Library · Loom");
+  // The tab names the place shown too.
+  await expect(page).toHaveTitle(`Namespace ${NAMESPACE} · Library · Loom`);
   // Back is not a new navigation: the Memories h1 takes the focus, the list at its top.
   await page.goBack();
   await expect(page.getByRole("heading", { level: 1, name: "Memories" })).toBeFocused();

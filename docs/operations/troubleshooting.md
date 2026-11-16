@@ -264,7 +264,12 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 - **Symptom:** every request but the health probes answers 503, `/v1/health/ready`
   fails its `cell` check, no worker runs, and the reason says the deployment "is a cell
   in enforced mode and LOOM_CELL is unset", "holds a partial cell state (... present)"
-  or that its "cell state is not read yet".
+  or that its "cell state is not read yet". A CLI command that declares an org refuses
+  with "this deployment is a cell in enforced mode (cell ...) and LOOM_CELL is unset",
+  "holds a partial cell state and LOOM_CELL is unset", or "cell state could not be read
+  (...)"; for the first, set `LOOM_CELL` on the CLI, and for the last, act on the reason
+  it names: a missing grant ([upgrade step 15](upgrades.md#upgrade-procedure)) or a
+  Postgres that does not answer.
 - **Cause:** under the Postgres authority every server process reads the deployment's
   cell state (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`).
   With `LOOM_CELL` unset it serves only while none of them holds a row, or while they
@@ -284,23 +289,25 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   (`/v1/health` names them) or restore the connection, and the next read, within a
   second, opens or gates it as below.
 - **Fix** otherwise, by what the check shows:
-  - **The deployment is a cell** (the directory holds its row and it is not an
-    unattached later cell, below): set `LOOM_CELL` to the cell's name; for a partial
-    state, run `loom cell prepare` again, which completes it.
+  - **The deployment is a cell** (the directory holds its row, and it is neither an
+    unattached later cell nor a first cell being backed out, below): set `LOOM_CELL` to the
+    cell's name; for a partial state, run `loom cell prepare` again, which completes it.
   - **The deployment is not meant to be a cell** (no directory row, or no router), or
     **an unattached later cell** (its row reads `is_first = false`,
     `state = 'attaching'` and `placed = 0`) that you are turning back into a single
     deployment: clear the state in one transaction, in a psql session on `LOOM_PG_DSN`
     (`\connect` back to it after the check) as the role that owns schema `loom`'s tables
     (the role that migrates; altering a trigger needs the table's owner). The
-    deployment is then `open`. An unattached later cell's directory row stays live;
-    making the deployment a cell again needs that row removed and a new prepare. On a
-    lock failure, `ROLLBACK` if psql is still open, then rerun the whole step.
+    deployment is then `open`. An unattached later cell's directory row stays live until
+    `loom cell remove --cell <cell>` removes it, which a new prepare of the deployment
+    needs. On a lock failure, `ROLLBACK` if psql is still open, then rerun the whole step.
 
     ```sql
     \set ON_ERROR_STOP on
     BEGIN;
     SET LOCAL lock_timeout = '100ms';
+    -- the attach lock: held by a running attach, prepare or update
+    SELECT pg_advisory_xact_lock(7813586394088235880);
     SELECT pg_advisory_xact_lock(7813586394288842610);  -- the migration lock
     ALTER TABLE loom.cell_first DISABLE TRIGGER cell_first_immutable;
     DELETE FROM loom.cell_first;
@@ -312,9 +319,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     COMMIT;
     ```
 
-    Then drop the org triggers, in the same session and as the same role, after the
-    state transaction (so a migrating boot's `ensure` does not create them again); on a
-    lock failure, `ROLLBACK` if psql is still open, then rerun the step:
+    Then drop the org triggers and the `loom.tenancy` guard, in the same session and as the
+    same role, after the state transaction (so a migrating boot's `ensure` does not create
+    them again); on a lock failure, `ROLLBACK` if psql is still open, then rerun the step:
 
     ```sql
     \set ON_ERROR_STOP on
@@ -324,30 +331,79 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     SELECT format('DROP TRIGGER %I ON loom.%I', t.tgname, c.relname)
     FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'loom' AND t.tgname IN ('tenancy_insert', 'tenancy_update') \gexec
+    WHERE n.nspname = 'loom'
+      AND t.tgname IN ('tenancy_insert', 'tenancy_update', 'tenancy_record') \gexec
     COMMIT;
     ```
+
+    A lock failure at the state transaction's attach lock means an attach, a prepare or an
+    update is running against this Postgres, which can take hours: rerunning the step
+    meanwhile fails the same way. This names the session that holds the lock:
+
+    ```sql
+    SELECT a.pid, a.usename, a.application_name, a.client_addr, a.backend_start
+    FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+    WHERE l.locktype = 'advisory' AND l.granted
+      AND l.classid = (7813586394088235880 >> 32)::oid
+      AND l.objid = (7813586394088235880 & 4294967295)::oid AND l.objsubid = 1
+      AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database());
+    ```
+
+  - **A first cell being backed out** (its row reads `is_first = true`,
+    `state = 'attaching'` and `placed = 0`, whatever its `mode`, since an attach refused at
+    its step-3 lock leaves it `enforced`; and `SELECT mode FROM loom.tenancy_mode` on its
+    Postgres reads `recording`): back it out in this order. Unset `LOOM_CELL` on every
+    process, each of which then serves as in `recording`; run the state transaction and the
+    drop step above; then run `loom cell remove --cell <cell>` with the router's operator
+    credential and the cell's `LOOM_PG_DSN`, which refuses until that Postgres reads `open`
+    and records the row's deployment id. Removing the row first would answer every new org
+    503, and clearing the state first would gate every process with `LOOM_CELL` set. The
+    router cannot read the cell's Postgres, so a `DELETE` of the row called on the router
+    directly skips that check, and leaves a still prepared cell answering its new orgs 503
+    and unable to register again until the steps above run. The cleared stores keep no cell
+    state, and the deployment is prepared again from `loom cell prepare`. A first cell whose
+    row reads `placed > 0` goes forward, never back: run its attach again (the removal
+    refuses it).
 
   - **A restored copy of a cell's Postgres** on another deployment carries the source
     cell's deployment id, so the check returns the live source cell's row. Do not clear
     it, and do not serve it beside the source.
 
+### A CLI with LOOM_CELL set refuses a command that writes for no org
+
+- **Symptom:** a command that writes for no org or revokes (`loom secrets reseal`,
+  `loom settings set`, `loom ch-setup`, `loom revoke-token` and the rest) exits with
+  "refusing: this Postgres's first row names cell ..., not LOOM_CELL=...", "refusing:
+  this cell's state could not be read (...)" or "refusing: this ClickHouse could not be
+  read for the cell check (...)".
+- **Cause:** with `LOOM_CELL` set such a command reads the cell's `first` row from its
+  `LOOM_PG_DSN`, and checks its ClickHouse against that Postgres, before it changes
+  anything ([cells](../architecture/cells.md#the-tenancy-check-and-placement)). A first
+  row naming another cell means the CLI is pointed at that cell's stores. A revocation
+  that cannot give access back runs through a Postgres outage instead, printing that the
+  cell was not checked.
+- **Fix:** never clear the state the refusal names: it is another cell's. Point
+  `LOOM_PG_DSN` and the ClickHouse settings at this cell's own stores, or set `LOOM_CELL`
+  to the cell the first row names if that is the cell you meant. For a state that could
+  not be read, act on the reason it names: a missing grant
+  ([upgrade step 15](upgrades.md#upgrade-procedure)) or a Postgres or ClickHouse that does
+  not answer.
+
 ### A boot logs "cell triggers: not applied"
 
 - **Symptom:** a boot of a cell in any state but `open` logs
   `cell triggers: not applied on loom.<table> (...)`, and `loom doctor` names the table's
-  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's in
-  `enforced`).
-- **Cause:** the boot creates a cell's org triggers, and sets `loom.cell_first`'s back to
-  always, with a lock wait of 100 ms a try, three tries a second apart, and serves past a
-  table in two cases. The log names the sessions that held or queued a conflicting lock
-  when the table was still busy: a long transaction or a bulk write on it, or an
+  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's trigger
+  or the `loom.tenancy` guard in `enforced`).
+- **Cause:** the boot creates a cell's org triggers and guard, and sets `loom.cell_first`'s
+  back to always, with a lock wait of 100 ms a try, three tries a second apart, and serves
+  past a table in two cases. The log names the sessions that held or queued a conflicting
+  lock when the table was still busy: a long transaction or a bulk write on it, or an
   autovacuum, which the short tries do not make yield and which is left to finish (a wait
   long enough to cancel it would queue every writer of the table behind the boot). It says
   `this role cannot alter it` when the migrating role does not own the table, which
-  `loom doctor` names as an `owner` defect. Until a later boot finishes the table, a
-  writer that runs no tenancy check is not refused there; Loom's own writes are
-  unaffected.
+  `loom doctor` names as an `owner` defect. Until a later boot finishes the table, a writer
+  that runs no tenancy check is not refused there; Loom's own writes are unaffected.
 - **Fix:** for a busy table, end the transaction the log names if it is stale, or wait for
   the autovacuum to finish (`pg_stat_progress_vacuum`); for a table the role cannot alter,
   run the boot as the role that owns schema `loom`'s tables, or give the table to that
@@ -355,20 +411,40 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `LOOM_BOOT_MIGRATE` on, and repeat until `loom doctor` names no missing or disabled
   trigger.
 
+### A boot fails with "function loom.tenancy_refuse_… does not exist"
+
+- **Symptom:** a migrating boot of an `enforced` cell fails creating a cell trigger with
+  `function loom.tenancy_refuse_unheld() does not exist` (or `…_unmarked()`), and
+  `loom doctor` names the function absent in any state.
+- **Cause:** the function was dropped by hand after its migration ran (011 for the org
+  triggers, 012 for the `loom.tenancy` guard; a `DROP FUNCTION … CASCADE` drops its triggers
+  with it). The migration ledger already lists the file, so no boot creates the function
+  again, and until it is back, unchecked writers are not refused. A `loom doctor` of a new
+  release that names the function absent before the release's first migrating boot needs no
+  fix: that boot runs the file.
+- **Fix:** run the migration file (`schemas/pg_migrations/011_tenancy_triggers.sql` or
+  `012_tenancy_guard.sql`) with `psql` as the role that owns schema `loom`'s tables, then,
+  on an `enforced` cell, restart one pod with `LOOM_BOOT_MIGRATE` on: its boot creates the
+  triggers (on any other cell, attach creates them later).
+
 ### Writes are slow, or a script is refused, on a deployment that is not a cell
 
-- **Symptom:** on a deployment whose cell state is `open` (every process serves), Loom's
-  own writes, and any script's or bulk loader's, take longer per row, or a role without
-  `SELECT` on `loom.cell_first` gets "permission denied for table cell_first".
-- **Cause:** the org triggers are still on its tables: a schema-only restore of a
-  prepared cell, or a cleanup that skipped the step that drops them. In `open` they let
-  every row through, but each unmarked write still reads the state.
+- **Symptom:** on a deployment whose cell state is `open` (every process serves), Loom's own
+  writes, and any script's or bulk loader's, take longer per row, a role without `SELECT` on
+  `loom.cell_first` gets "permission denied for table cell_first", or a script's
+  `loom.tenancy` insert fails with SQLSTATE `LT001`.
+- **Cause:** the org triggers are still on its tables: a schema-only restore of a prepared
+  cell, or a cleanup that skipped the step that drops them. In `open` they let every row
+  through, but each unmarked write still reads the state. The `loom.tenancy` guard,
+  `tenancy_record`, refuses a script's tenancy row with SQLSTATE `LT001`: the row itself
+  makes the state `partial`.
 - **Check:**
 
   ```sql
   SELECT c.relname, t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'loom' AND t.tgname IN ('tenancy_insert', 'tenancy_update');
+  WHERE n.nspname = 'loom'
+    AND t.tgname IN ('tenancy_insert', 'tenancy_update', 'tenancy_record');
   ```
 
 - **Fix:** run the drop step of

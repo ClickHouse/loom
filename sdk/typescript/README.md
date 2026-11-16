@@ -341,7 +341,7 @@ for (const call of completion.choices[0].message.tool_calls ?? []) {
 // Anthropic: tools.definitions("anthropic"); anything that takes JSON schema: tools.definitions()
 ```
 
-`execute()` returns the string the model reads (compact JSON, or a line it can act on: "no parked text under blob_key=…"), validates required arguments with messages a model can correct, and truncates past `maxResultChars`. [`examples/session-resume`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/) is the two-process run with a real `gpt-4o-mini` tool-use turn.
+`execute()` returns the string the model reads (compact JSON, or a line it can act on: "no parked text under blob_key=…"), validates required arguments with messages a model can correct, and truncates past `maxResultChars` (`loom_recall` leaves out its lowest-ranked memories whole to fit, counted in `omitted`). [`examples/session-resume`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/) is the two-process run with a real `gpt-4o-mini` tool-use turn.
 
 ## Probe before you rely
 

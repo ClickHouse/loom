@@ -321,6 +321,15 @@ def test_doctor_names_a_partial_state_and_an_unmarked_session() -> None:
     assert grades["cell_marker_everywhere"][0] == "WARN"
 
 
+@pytest.mark.parametrize("state", ["enforced", "partial", "recording"])
+def test_doctors_marker_warnings_name_the_tenancy_guard(state: str) -> None:
+    from server.cli import doctor_cell
+
+    grades = {n: d for n, _g, d in doctor_cell._grades(state, False, True, [])}
+    assert "tenancy row" in grades["cell_marker"]
+    assert "the loom.tenancy guard pass every writer" in grades["cell_marker_everywhere"]
+
+
 @pytest.mark.parametrize("state,named", [("enforced", True), ("recording", False), ("open", False)])
 def test_doctor_names_an_absent_org_trigger_only_on_an_enforced_cell(
     state: str, named: bool
@@ -511,16 +520,18 @@ def test_missing_names_a_table_this_role_cannot_alter() -> None:
     class _Catalog:
         async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
             if "pg_attribute" in sql:
-                return [{"relname": "memory_current", "relkind": "r", "owned": False}]
+                return [
+                    {"relname": "memory_current", "relkind": "r", "owned": False},
+                    {"relname": "tenancy", "relkind": "r", "owned": False},
+                ]
             return []
 
         async def fetchrow(self, _sql: str, *_a: Any) -> None:
             return None  # no function: nothing to compare the triggers with
 
-    defects = asyncio.run(cell_triggers.missing(_Catalog()))
-    assert ("owner", "loom.memory_current: this role cannot alter it") in {
-        (d.kind, d.text) for d in defects
-    }
+    defects = {(d.kind, d.text) for d in asyncio.run(cell_triggers.missing(_Catalog()))}
+    assert ("owner", "loom.memory_current: this role cannot alter it") in defects
+    assert ("owner", "loom.tenancy: this role cannot alter it") in defects
 
 
 def test_missing_keeps_its_other_defects_when_it_cannot_compare_definitions() -> None:
@@ -544,8 +555,8 @@ def test_missing_keeps_its_other_defects_when_it_cannot_compare_definitions() ->
                 return [{"relname": "memory_current", "relkind": "r", "owned": True}]
             return []
 
-        async def fetchrow(self, _sql: str, *_a: Any) -> dict[str, Any]:
-            body, config = cell_triggers.expected_functions()[-1]
+        async def fetchrow(self, _sql: str, function: str) -> dict[str, Any]:
+            body, config = cell_triggers.expected_functions(function.removesuffix("()"))[-1]
             return {"volatile": "v", "definer": False, "body": body, "config": config}
 
     kinds = {d.kind: d.text for d in asyncio.run(cell_triggers.missing(_NoTemp()))}
@@ -569,7 +580,7 @@ def test_the_expected_functions_are_read_only_from_the_files_that_define_it(
     altered = tmp_path / "901_alter.sql"
     altered.write_text("ALTER FUNCTION loom.tenancy_refuse_unheld() OWNER TO loom;\n")
     monkeypatch.setattr(pg_migrate, "migration_files", lambda: [*shipped, helper, altered])
-    found = cell_triggers.expected_functions()
+    found = cell_triggers.expected_functions(cell_triggers.FUNCTION)
     assert len(found) == 1 and "cell holds no tenancy row" in found[0][0]
 
 
@@ -581,7 +592,7 @@ def test_a_bound_that_ran_out_is_named_on_a_not_read_line() -> None:
 
 
 def test_the_expected_function_is_read_from_its_migration() -> None:
-    body, config = cell_triggers.expected_functions()[-1]
+    body, config = cell_triggers.expected_functions(cell_triggers.FUNCTION)[-1]
     assert "RAISE EXCEPTION 'cell holds no tenancy row for org %'" in body
     assert not body.lstrip().startswith("AS") and "$$" not in body
     assert config == ["search_path=pg_catalog, loom, pg_temp"]
@@ -688,3 +699,39 @@ def test_doctor_runs_the_cell_checks_only_with_loom_cell(
     )
     names = [n for n, _g, _d in doctor._run_live_checks()]
     assert called == ([True] if runs else []) and ("cell_state" in names) == runs
+
+
+@pytest.mark.parametrize(
+    "found,ran",
+    [
+        (None, 'CREATE TRIGGER tenancy_record AFTER INSERT OR UPDATE OF org ON loom."tenancy"'),
+        ("D", 'ALTER TABLE loom."tenancy" ENABLE TRIGGER tenancy_record'),
+        ("O", None),
+    ],
+)
+def test_ensure_creates_enables_or_leaves_the_guard(
+    monkeypatch: pytest.MonkeyPatch, found: str | None, ran: str | None
+) -> None:
+    class _Enforced(_Cell):
+        async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
+            if "pg_attribute" in sql:
+                return [{"relname": "tenancy", "relkind": "r", "owned": True}]  # the guard alone
+            if found is None:
+                return []
+            return [{"relname": "tenancy", "tgname": "tenancy_record", "enabled": found}]
+
+    statements: list[tuple[str, str]] = []
+
+    async def _run(_c: Any, table: str, sqls: list[str]) -> None:
+        statements.extend((table, s.split(" FOR EACH ROW")[0]) for s in sqls)
+
+    monkeypatch.setattr(cell_triggers, "_run_ddl", _run)
+    asyncio.run(cell_triggers.ensure(_Enforced(RuntimeError("unused"))))
+    assert statements == ([("tenancy", ran)] if ran else [])
+
+
+def test_the_guards_function_is_read_from_its_migration() -> None:
+    (body, config), *rest = cell_triggers.expected_functions(cell_triggers.TENANCY_FUNCTION)
+    assert not rest and "IF TG_OP = 'UPDATE' AND OLD.org = NEW.org" in body
+    assert "from a session that ran no tenancy check" in body and "$$" not in body
+    assert config == ["search_path=pg_catalog, loom, pg_temp"]

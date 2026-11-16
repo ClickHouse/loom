@@ -28,6 +28,7 @@ One page per need, each saying what Loom does for it and where to start:
 [document search and RAG](use-cases/document-search.md) ·
 [code index for coding agents](use-cases/code-intelligence.md) ·
 [code index by language](use-cases/code-intelligence-by-language.md) ·
+[memory linked to code](use-cases/memory-linked-to-code.md) ·
 [coding-agent model cost](use-cases/coding-agent-cost.md) ·
 [multi-agent shared context](use-cases/multi-agent.md) ·
 [autonomous agents: recall, audit, erasure](use-cases/autonomous-agents.md) ·
@@ -116,7 +117,8 @@ client sees one the server no longer reads.
 [Investigation-agent memory](guides/investigation-agent-memory.md) ·
 [Extraction pipelines](guides/extraction-pipeline.md) ·
 [Performance tuning](guides/performance-tuning.md) · [Debugging](guides/debugging.md) ·
-[Query Loom from Postgres](guides/query-from-postgres.md)
+[Query Loom from Postgres](guides/query-from-postgres.md) ·
+[Teaching with Loom](guides/teaching.md)
 
 ## Features
 

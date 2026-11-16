@@ -55,7 +55,14 @@ describe("LoomMemoryStore (Strands adapter)", () => {
     });
     const store = new LoomMemoryStore(agent, { tags: ["customer"], memoryType: "preference" });
     const hits = await store.search("seat", { maxSearchResults: 1 });
-    expect(calls[0].body).toMatchObject({ query: "seat", top_k: 1, tags: ["customer"], memory_type: "preference" });
+    expect(calls[0].body).toMatchObject({
+      query: "seat",
+      top_k: 1,
+      bodies: "full", // the stored clip whatever the top_k
+      explain: false,
+      tags: ["customer"],
+      memory_type: "preference",
+    });
     expect(hits).toEqual([
       {
         content: "aisle seat",

@@ -63,6 +63,7 @@ from server.core.schema.migrate_lease import (
     LeaseConfig,
     bootstrap_keeper_lock,
 )
+from server.core.schema.prechecks import PRECHECKS
 from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL, NO_CODEC, CodecSettings
 
 if TYPE_CHECKING:
@@ -814,6 +815,8 @@ def _apply_pending(
         else:
             print(f"  → {f.name}")
         try:
+            if precheck := PRECHECKS.get(_unnumbered(f.name)):
+                precheck(ch)
             if dry:
                 _apply_file(
                     ch, f, dry=True, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim, codec=codec

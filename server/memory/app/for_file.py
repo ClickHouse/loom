@@ -406,8 +406,8 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     older row's key, author and kind) and `supersedes_ids` (the memory_id of every older row
     it is linked to: another writer may hold a row under the same key). No new state: both
     stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
-    typed decisions never pair: a decision's key is its identity, so one cross-linked to
-    another is a second decision, not a newer version."""
+    key-identified rows (decisions, definitions) never pair: such a row's key is its identity,
+    so one cross-linked to another is a second row, not a newer version."""
     by_id = {str(r.get("memory_id")): r for r in rows if r.get("memory_id")}
     newer_of: dict[int, list[dict[str, Any]]] = {}
     for r in rows:

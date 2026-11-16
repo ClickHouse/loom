@@ -158,6 +158,61 @@ timeout); a refused, failed or late answer counts as unreadable.
 With the directory unreachable, rules 1 to 4 route from the router's cached cells; a
 lookup of an org it has not cached and a placement answer 503.
 
+The operator's routes, each with the router's operator credential, are under
+`/cells/v1/operator/cells/<cell>`: `limit`, `credential` and `register` (prepare's), the row
+itself (`GET`, with the name of any other row, which attach reads for its refusals, its done
+check and its resume), the first cell's attach (`attach/begin`, `attach/place`,
+`attach/enforced` and `attach/serving`, in that order), and `DELETE`. Each but `register`
+answers a cell the directory does not hold 404 with the code `NO_SUCH_CELL`, so a 404
+without it is a router replica of an earlier build. Every call that succeeds, the read
+included, is written to the audit log (a registration rerun, which changes nothing, writes
+none), and every call runs a fixed number of statements, each bounded by the directory's
+statement timeout (enforced on the directory's server too); the read and the removal carry
+the derived bounds `loom cell` waits for. Every change takes the directory lock and then the
+cell's row lock (the order registration, the operator changes and the removal take). Every
+router replica runs a build with these routes before a first cell's attach starts: an
+earlier build's placement collides with an attach batch's as a transient 503, and its
+registration can add a later cell mid-attach, which every attach call then refuses until it
+is removed. Each attach call refuses unless the row is the first cell's, `attaching`, and
+records the deployment id the call names, and while any other row exists (registration
+refuses a later cell until the first is `serving`, and a router replica of an earlier build
+could still register one):
+
+- `attach/begin` carries the cell's fingerprints exactly as `loom.cell_self` stores them,
+  its root-secret fingerprint, the allow lists attach judged the stores by, and fresh
+  nonces. It refuses a fingerprint whose deployment id, bucket, prefix, public host or
+  issuer host differ from the row's (an issuer host other than the cell's own is refused),
+  and one whose live placement body, with an org name at its longest, would pass the
+  router's body bound, naming the largest fields. Outside any directory transaction it runs
+  registration's probe at the row's `probe_url` and asks the row's `upstream_url` for the
+  deployment id, so the stores attach reads are the ones the live cell serves from. Then,
+  under the locks, it writes `attach_started_at` once, the fingerprints only while the row
+  has none (other fingerprints there answer 409: they change with `loom cell update`), and
+  `keys_fp` on every call, and audits the allow lists. It is idempotent. Its body has its
+  own bound, 256 KiB, past which it answers 413.
+- `attach/place` places a batch of at most 500 orgs (within the 64 KiB body bound) once
+  `begin` has run and the directory mode is `enforced`, past the cell's closed mark and
+  quota. It runs a fixed number of statements: one insert of the batch that skips an org
+  placed already, one read refusing the batch (rolled back, naming the org) when an org is
+  placed in another cell, one count, and one audit row per org it placed and one for the
+  call. A live placement of the same org runs beside it once the mode is `enforced`; both
+  hold the cell's row lock, a live placement reads the winner again once it holds it, and
+  every insert skips an org placed already and counts only what it wrote, so the org is
+  placed and counted once.
+- `attach/enforced` records the directory mode `enforced`, after which the first cell places
+  new orgs live; it is idempotent.
+- `attach/serving` runs the probe and the upstream check again, then, under the locks,
+  computes the row's issuers from its fingerprints (`bearer_issuers` of `current` and
+  `next`) and marks the cell `serving`; on a `serving` cell it answers at once, audited.
+  `begin`, `place` and `enforced` on a `serving` cell answer 409.
+
+`DELETE` removes the row of a cell that is `attaching` with no placement, whatever its
+directory mode, with its host rows, audited: a first cell is backed out until its first
+placement, and a later cell registered by an earlier build stops blocking the first attach.
+A placement in flight either commits first, and the removal refuses, or finds no row. The
+router cannot read the cell's stores, so `loom cell remove`, which calls it, checks a first
+cell's Postgres first ([Operations](#operations)).
+
 ## SCIM and sign-in across cells
 
 Each cell is its own application at the identity provider: an OIDC client for sign-in at
@@ -260,7 +315,8 @@ prepare's arguments: the router reads it there at every prepare and rerun, and r
 an answer with another deployment id or none. The router also asks its pass-through
 upstream's main port (`LOOM_ROUTER_UPSTREAM_URL`, which registration copies into the
 row) and refuses one that reports another deployment id, so the row never names two
-deployments. Prepare refuses every other cell until the first is registered.
+deployments. Prepare refuses every other cell until the first is registered and `serving`,
+under the directory lock, so no later cell appears while the first attaches.
 
 **The stores are the live ones.** Before writing anything, prepare writes a random nonce
 into the target Postgres, under a reserved key of the target ClickHouse's
@@ -449,33 +505,33 @@ cells.
 ## The tenancy check and placement
 
 A process with `LOOM_CELL` unset runs no tenancy check. Under the Postgres authority
-(`LOOM_STORAGE_AUTHORITY=postgres`, the only one a cell runs) a server process still
-reads, in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
-`loom.cell_self` row exists, with the mode cache's rules (below), and so does a CLI
-command that declares an org (the CLI's read ships with attach); an org-free command,
-such as a token revocation, `loom migrate` or `loom doctor`, is not gated by the mode
-and runs as it does today, Postgres outage included. Both rows absent with no tenancy or
-own row, as on a deployment never prepared, or the first cell in `recording`, leave the
-process serving as a single deployment; every state the `first` row's rule (above)
-counts as `enforced`, or as a `partial` state, gates it as `enforced` does. `enforced`
-(which attach sets on the first cell once every live process has `LOOM_CELL` set, and
-prepare on a later cell, whose processes run with it from their first boot) makes a
-server process unready, run no worker and answer nothing but its health probes and the
-probe route (so a prepare rerun can reach it), and makes the CLI command refuse; the
-readiness reason and the refusal name `LOOM_CELL`. So a pod or an operator's CLI that
-loses `LOOM_CELL` on an `enforced` cell writes for no org; one that also loses
-`LOOM_PG_DSN` or `LOOM_STORAGE_AUTHORITY` is refused by the authority check the
-deployment already runs (ClickHouse's `loom.storage_authority` record). The `loom cell`
-commands that connect to a cell's stores (prepare, attach, place, restore, update)
-refuse without `LOOM_CELL`, and, once the directory has a row for `LOOM_CELL`, refuse
-stores whose deployment id is not the one that row records. A deployment started with
-`LOOM_CELL` unset is a single deployment until prepared, and pointing it at another
-deployment's bucket prefix is the misconfiguration it is for any deployment. On the
-first cell, `loom cell prepare` runs before `LOOM_CELL` is rolled out; a later cell runs
-with `LOOM_CELL` set from its first boot, so its processes are gated and stand aside
-from the workers (its blob sweep included) until prepare writes its row, and prepare
-refuses a later cell while any live process's heartbeat lacks `LOOM_CELL` or names
-another cell. Prepare does three things, in order:
+(`LOOM_STORAGE_AUTHORITY=postgres`, the only one a cell runs) a server process still reads,
+in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
+`loom.cell_self` row exists, with the mode cache's rules (below). A CLI command that
+declares an org reads the same on a bounded session of its own: every state table absent
+(judged by `to_regclass`, so a role missing a grant still refuses) reads as `open`, and a
+failed read refuses. An org-free command, such as a token revocation, `loom migrate` or
+`loom doctor`, is not gated by the mode and runs, a Postgres outage included. Both rows
+absent with no tenancy or own row, as on a deployment never prepared, or the first cell in
+`recording`, leave the process serving as a single deployment; every state the `first` row's
+rule (above) counts as `enforced`, or as a `partial` state, gates it as `enforced` does.
+`enforced` (which attach sets on the first cell once every live process has `LOOM_CELL` set,
+and prepare on a later cell, whose processes run with it from their first boot) makes a
+server process unready, run no worker and answer nothing but its health probes and the probe
+route (so a prepare rerun can reach it), and makes the CLI command refuse; the readiness
+reason and the refusal name `LOOM_CELL`. So a pod or an operator's CLI that loses
+`LOOM_CELL` on an `enforced` cell writes for no org; one that also loses `LOOM_PG_DSN` or
+`LOOM_STORAGE_AUTHORITY` is refused by the authority check the deployment already runs
+(ClickHouse's `loom.storage_authority` record). The `loom cell` commands that connect to a
+cell's stores (prepare, attach, place, restore, update) refuse without `LOOM_CELL`, and,
+once the directory has a row for `LOOM_CELL`, refuse stores whose deployment id is not the
+one that row records. A deployment started with `LOOM_CELL` unset is a single deployment
+until prepared, and pointing it at another deployment's bucket prefix is the
+misconfiguration it is for any deployment. On the first cell, `loom cell prepare` runs
+before `LOOM_CELL` is rolled out; a later cell runs with `LOOM_CELL` set from its first
+boot, so its processes are gated and stand aside from the workers (its blob sweep included)
+until prepare writes its row, and prepare refuses a later cell while any live process's
+heartbeat lacks `LOOM_CELL` or names another cell. Prepare does three things, in order:
 
 1. **It refuses a cell whose stores already carry another cell's identity**: a
    deployment id the directory records, or state the directory has not placed there.
@@ -580,43 +636,60 @@ lists any tenancy row the directory does not place.
   or code trace. A unit test lists every route of the app and fails unless it is marked
   tenancy-checked or org-free.
 - **The CLI declares its orgs.** Every CLI command that connects goes through
-  `run_connected`, `connect_checked` or `connect_declared` (`server/cli/_ch.py`), which
-  take the orgs the command writes, or why it writes for none. On a cell, before
-  checking a declared org, they read the cell's rows and refuse the command wherever the
-  transports would serve nothing (rows unread, or not this process's cell). An org the
-  cell does not hold is recorded on the first cell in `recording`, as a request's org is
-  (reading the cell's state with the cell's router credential, `LOOM_CELL_ROUTER_TOKEN`,
-  in the first cell's CLI configuration while its mode is `recording`, and only while
-  the directory answers `attaching`), and refused in `enforced`; it is never placed. A
-  code-index command declares the org it writes: its `--org`, else `LOOM_CODE_ORG`. A
-  pass over every configured repository declares none, since attach, or the
-  `loom cell update` that changes one, places configured orgs, and a read-only command
-  or a dry run declares none, since a read records nothing. A census test fails on a
-  connect that declares neither, on a connect under `server/cli/` outside `_ch.py`, and
-  on a `loom code` command that resolves its org without connecting for it. A holder of
-  the cell's router credential can place orgs for the cell, within the cell's rate and
+  `run_connected`, `connect_checked` or `connect_declared` (`server/cli/_ch.py`), which take
+  the orgs the command writes, or why it writes for none. A command that declares an org
+  first checks its deployment (`check_configured`), so under the Postgres authority it needs
+  `LOOM_PG_DSN`. On a cell, before checking a declared org, they read the cell's rows and
+  refuse the command unless the `first` row names its cell and its stores (`deployment_id`,
+  `bucket`, `bucket_prefix`) match a value of the cell's own row: a CLI verifies no token
+  and its fingerprint never reaches the router, so it may run where the transports refuse on
+  another fingerprint field. With `LOOM_CELL` unset the command is refused on a cell past
+  `recording` (above). An org the cell does not hold is recorded on the first cell in
+  `recording`, as a request's org is (reading the cell's state with the cell's router
+  credential, `LOOM_CELL_ROUTER_TOKEN`, in the first cell's CLI configuration while its mode
+  is `recording`, and only while the directory answers `attaching`), and refused in
+  `enforced`; it is never placed. A code-index command declares the org it writes: its
+  `--org`, else `LOOM_CODE_ORG`. A pass over every configured repository declares none,
+  since attach, or the `loom cell update` that changes one, places configured orgs, and a
+  read-only command or a dry run declares none, since a read records nothing. An org-free
+  command says what it does to the stores: it reads, writes (`loom ch-setup`, `secrets`, a
+  settings change, prepare and the rest; a dry run reads) or revokes (`loom revoke-token`, a
+  SQL user's revocation, `loom signing-key retire`, `loom bot disable`, `loom sso unlink`;
+  one that can give access back is a write), per subcommand where one connect serves several
+  (`loom signing-key`: `list` reads, `retire` revokes, `rotate` and `record-root` write).
+  With `LOOM_CELL` set, a write or a revocation checks its ClickHouse against its Postgres
+  (`check_configured`), reads the `first` row on a bounded session of its own and refuses
+  when it names another cell, which a CLI pointed at another cell's stores always finds, or
+  when the read fails; an absent row, or state tables not migrated yet, passes, so a later
+  cell runs these before it is prepared. A revocation runs through an outage (the fourth
+  exception under Invariants); a write refuses during one; a read is not gated.
+  `loom ch-setup`, which sets ClickHouse up on a client of its own, runs the same gate
+  before it writes, a ClickHouse with no record yet passing; `loom migrate` and
+  `loom provider-lock clear` write through the schema runner's own client and are not gated.
+  A census test fails on a connect that declares neither, on an org-free one that does not
+  say which kind it is, on a connect under `server/cli/` outside `_ch.py`, and on a
+  `loom code` command that resolves its org without connecting for it. A holder of the
+  cell's router credential can place orgs for the cell, within the cell's rate and
   `placements_max`, as the operator credential `loom cell place` uses can for any cell
-  within its `placements_max` (an operator's call is not rate-limited, nor counted
-  toward the cell's rate), and a placement is permanent, so an org name it takes is lost
-  to every other cell: a power over the shared directory that the cell's store
-  credentials lack. So the pods hold it, and a CLI only for the one read that needs it,
-  while the first cell's mode is `recording`: a CLI command that declares an org refuses
-  to run with it set, naming it, unless the cell is the first and its mode reads
-  `recording`, and an org-free command never uses it; a leaked one is stopped by
-  `loom cell limit --closed`, which needs none of the cell's stores, and replaced by
-  `loom cell credential` (below). `loom cell place --org <org>` (declared org-free: it
-  writes the org's placement and tenancy row, which is how an org comes to be held),
-  with the router's operator credential, places an org for a command that writes a new
-  one (a bot, an import), through the router's placement API and in its order, as
-  attach's placement of configured orgs does: it inserts the placement and reads back
-  the winner, writes the cell's tenancy row only if the winner is this cell (otherwise
-  it refuses and writes nothing), and reports success only once the row is written, so a
-  rerun is idempotent. For an org the directory does not place yet it passes the
-  placement API's gate (below): refused while the directory is unavailable, for a cell
-  the gate does not accept, closed, or when the fingerprint of the CLI's own
+  within its `placements_max` (an operator's call is not rate-limited, nor counted toward
+  the cell's rate), and a placement is permanent, so an org name it takes is lost to every
+  other cell: a power over the shared directory that the cell's store credentials lack. So
+  the pods hold it, and a CLI only for the one read that needs it, while the first cell's
+  mode is `recording`: a CLI command that declares an org refuses to run with it set, naming
+  it, unless the cell is the first and its mode reads `recording`, and an org-free command
+  never uses it; a leaked one is stopped by `loom cell limit --closed`, which needs none of
+  the cell's stores, and replaced by `loom cell credential` (below).
+  `loom cell place --org <org>` (declared org-free: it writes the org's placement and
+  tenancy row, which is how an org comes to be held), with the router's operator credential,
+  places an org for a command that writes a new one (a bot, an import), through the router's
+  placement API and in its order, as attach's placement of configured orgs does: it inserts
+  the placement and reads back the winner, writes the cell's tenancy row only if the winner
+  is this cell (otherwise it refuses and writes nothing), and reports success only once the
+  row is written, so a rerun is idempotent. For an org the directory does not place yet it
+  passes the placement API's gate (below): refused while the directory is unavailable, for a
+  cell the gate does not accept, closed, or when the fingerprint of the CLI's own
   configuration of the cell (with the deployment id read from the stores it connects to)
-  matches neither value of the cell's row, or past `placements_max`, and counted toward
-  it.
+  matches neither value of the cell's row, or past `placements_max`, and counted toward it.
 - **Writers older than the check are refused by the stores they write.** A session that
   ran the tenancy check marks itself with `loom.tenancy_checked = 'on'`: every session of
   a process with `LOOM_CELL` set sends it as a startup parameter (so the pool's
@@ -652,29 +725,37 @@ lists any tenancy row the directory does not place.
   no privilege boundary: a writer that sets it on purpose passes; the triggers stop
   writers that do not know it, an older CLI, a pod downgraded past the check, or a script,
   from adding a row for an org the cell does not hold or moving a row to one; an update
-  that keeps a row's org, and a delete, are not refused. Their cost is one setting lookup
-  per marked row, and one read of the state and a `loom.tenancy` lookup per unmarked row;
-  the gate they ship under is a `memory.set` p99 rise of at most 10 ms and a delivery
-  pass's rows per second at `LOOM_PG_DELIVERY_BATCH_ROWS` at most 10% lower, in `enforced`
-  with the orgs held. Every Loom write on a cell is marked, so it pays the setting lookup
-  alone, measured on the statements with the triggers on and off (no cost distinguishable
-  from zero: six rounds range from −0.36 to 0.49 µs a row, [benchmark
+  that keeps a row's org, and a delete, are not refused. The org triggers' cost is one
+  setting lookup per marked row, and one read of the state and a `loom.tenancy` lookup per
+  unmarked row; the gate they ship under is a `memory.set` p99 rise of at most 10 ms and a
+  delivery pass's rows per second at `LOOM_PG_DELIVERY_BATCH_ROWS` at most 10% lower, in
+  `enforced` with the orgs held. Every Loom write on a cell is marked, so it pays the
+  setting lookup alone, measured on the statements with the triggers on and off (no cost
+  distinguishable from zero: six rounds range from −0.36 to 0.49 µs a row, [benchmark
   results](../benchmarks/results.md)), which predicts the gate holds by a wide margin. The
   gate itself is an end-to-end `memory.set` and delivery-pass measurement on a cell, which
-  needs attach and is checked with it; until then the triggers, which a later cell gets
-  from prepare's next migrating boot, ship on the statement-level measurement. With
-  attach, `loom doctor` also lists any tenancy row the directory does not place and any
-  org in an org-keyed Postgres table with no tenancy row, which names a script that writes
-  `loom.tenancy` itself. Before the first attach the operator rotates the cell's
-  ClickHouse writer credentials (create the new user, roll it out to configurations of
-  builds that check, drop the old one), and attach refuses while any ClickHouse user with
-  `INSERT` on `loom.*` (`system.grants`, with database, global and role grants followed
-  through `system.role_grants`, and users from configuration files or with implicit `ALL`
-  counted) is not one a live process of a checking build or the CLI's configured user
-  reports, so only holders of the rotated credential write ClickHouse; an older CLI given
-  that credential still writes unchecked, and with attach `loom doctor` lists what it
-  wrote: any org found in an org-keyed ClickHouse table with no tenancy row, from the same
-  schema list as attach step 2.
+  needs attach and is checked with it; until then the triggers, which a later cell gets from
+  prepare's next migrating boot, ship on the statement-level measurement. `loom.tenancy`
+  itself has its own guard, since a tenancy row makes an org held: `tenancy_record`, a
+  row-level `AFTER INSERT OR UPDATE OF org` origin trigger with the same marker `WHEN`,
+  calls `loom.tenancy_refuse_unmarked()` (migration 012), which refuses, `LT001`, an
+  unmarked session's tenancy row, or an update that moves one to another org, in every state
+  but a first cell still recording (`open` too, since the row itself would make the state
+  `partial`), so a script cannot make an org held that the directory does not place. Boots
+  and attach create and repair it as they do the org triggers. With attach, `loom doctor`
+  also lists any tenancy row the directory does not place, which names one written before
+  the guard or by a writer that set the marker, and any org in an org-keyed Postgres table
+  with no tenancy row, which names rows written before the org triggers, by a writer that
+  set the marker, or left behind by a deleted tenancy row. Before the first attach the
+  operator rotates the cell's ClickHouse writer credentials (create the new user, roll it
+  out to configurations of builds that check, drop the old one), and attach refuses while
+  any ClickHouse user with `INSERT` on `loom.*` (`system.grants`, with database, global and
+  role grants followed through `system.role_grants`, and users from configuration files or
+  with implicit `ALL` counted) is not one a live process of a checking build or the CLI's
+  configured user reports, so only holders of the rotated credential write ClickHouse; an
+  older CLI given that credential still writes unchecked, and with attach `loom doctor`
+  lists what it wrote: any org found in an org-keyed ClickHouse table with no tenancy row,
+  from the same schema list as attach step 2.
 - **An org the cell does not hold is placed there or refused.** For a verified principal
   scoped to the org (a token of that org, or an issuer's or bot's principal whose org it
   is), the cell calls the router's placement API (`POST /cells/v1/placements` at
@@ -718,13 +799,13 @@ lists any tenancy row the directory does not place.
   yet answers 503 as for a closed cell (an operator's `loom cell place` is exempt from
   the rate, as above); and each cell's placements are reported in
   `/v1/health?include=capacity` and by `loom doctor`, which names a cell with no quota.
-  Every org the first cell's attach places (step 2's snapshot, its configured orgs
-  included, and step 4's) is counted but never refused, since the cell already serves it
-  and refusing it would strand its data; every other placement of an org the directory
-  does not place yet, a later cell's configured orgs at attach and a changed one at
-  `loom cell update` included, passes the gate, a closed cell and `placements_max`
-  included, so a later cell closed or full before attach refuses the attach, naming the
-  org.
+  Every org the first cell's attach places (step 2's snapshot, its configured orgs included,
+  and step 4's) is counted but never refused by quota or a closed cell, since the cell
+  already serves it and refusing it would strand its data (one past `ORG_MAX_BYTES` the
+  directory refuses, below); every other placement of an org the directory does not place
+  yet, a later cell's configured orgs at attach and a changed one at `loom cell update`
+  included, passes the gate, a closed cell and `placements_max` included, so a later cell
+  closed or full before attach refuses the attach, naming the org.
 - **The first cell records until `enforced` as a single deployment does.** In
   `recording`, which lasts until step 3 writes `enforced` to the cell's mode (and again
   whenever step 3 or step 4 returns the cell to it), a verified request for a new org
@@ -740,24 +821,31 @@ lists any tenancy row the directory does not place.
   cell's before it is marked `serving`. JIT and self-signup pass the tenancy check as
   any request does, and nothing refuses at boot: in the first cell's `recording` they
   record their org while the directory answers `attaching`, and elsewhere a configured
-  org the cell does not hold answers 503 until it is placed, which `loom doctor` names;
-  every attach, first or later, new or resumed, runs the overlap refusals on and places
-  the configured orgs of both values of `loom.cell_self`, so one an update put in `next`
-  before attach is placed with the rest; once attach has written the cell's directory
-  row, `loom cell update` places a changed one in the directory transaction that writes
-  `next`, through the placement API's gate for an org the directory does not place yet
-  (closed cells and `placements_max` included), refusing, naming it, when another cell
-  holds it, and then writes its tenancy row in the cell; for a later cell still
-  `attaching` after its directory transaction, `loom cell update` refuses a
-  configured-org change until the cell is `serving`. In `enforced`, a worker writes for
-  an org only once the cell holds it (the tenancy check with no principal), so a later
-  cell indexes, imports and sweeps nothing under its configured orgs before attach
-  places them; in `recording`, workers run as before, and step 2's snapshot and step 4's
-  second read find every org they write under.
+  org the cell does not hold answers 503 until it is placed (422 for one past
+  `ORG_MAX_BYTES`, which the directory refuses), which `loom doctor` names; every attach,
+  first or later, new or resumed, runs the overlap refusals on and places the configured
+  orgs of both values of `loom.cell_self`, so one an update put in `next` before attach is
+  placed with the rest; once attach has written the cell's directory row, `loom cell update`
+  places a changed one in the directory transaction that writes `next`, through the
+  placement API's gate for an org the directory does not place yet (closed cells and
+  `placements_max` included), refusing, naming it, when another cell holds it, and then
+  writes its tenancy row in the cell; for a later cell still `attaching` after its directory
+  transaction, `loom cell update` refuses a configured-org change until the cell is
+  `serving`. In `enforced`, a worker writes for an org only once the cell holds it (the
+  tenancy check with no principal), so a later cell indexes, imports and sweeps nothing
+  under its configured orgs before attach places them; in `recording`, workers run as
+  before, and step 2's snapshot and step 4's second read find every org they write under.
 - **Rows are never deleted.** A tenancy row and a placement name an org, not its memory:
   both are classified for erasure as holding no memory content, as a namespace's claim
   is, and stay after any erasure, so an org name never comes free for another cell. A
   process keeps the orgs it has seen held, and a kept org is never wrong to serve.
+- **One org name limit.** A cell records or places no new org longer than
+  `ORG_MAX_BYTES` (2048 UTF-8 bytes, `server/core/cell.py`, below Postgres's index entry
+  limit): a recording cell's tenancy check refuses one with 422 and writes nothing, and
+  the directory refuses one with 400 (`ORG_TOO_LONG`) before it writes a placement, for
+  every route that places, which a cell's placement turns into the same 422 (over MCP, a
+  tool error counted as the caller's). So every org a cell records can be placed, and an
+  org held or placed before the limit keeps its cell.
 - **A placed org with no row** (a restore to before its placement) gets its row back
   from `loom cell restore`, before the restored cell starts ([What each cell
   runs](#what-each-cell-runs)).
@@ -964,6 +1052,17 @@ the directory row.
 - `loom cell limit --cell <cell> --closed` closes a cell to new orgs, `--open` reopens
   it, and `--placements-max <n>` sets its placement quota (`--placements-max none`
   clears it).
+- `loom cell remove --cell <cell>` removes the directory row of a cell that is `attaching`
+  with no placement (`--cell` is the cell's `LOOM_CELL`, unset by then). For the first cell
+  it reads the cell's Postgres alone, on one session from `LOOM_PG_DSN` with no ClickHouse,
+  and refuses unless it reads `open` and records the row's deployment id, which enforces the
+  back-out order: unset `LOOM_CELL` on every process (each serves as in `recording`), then
+  the full-state cleanup, then the removal
+  ([troubleshooting](../operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated)).
+  Removing the row first answers every new org 503; clearing the state first gates every
+  process with `LOOM_CELL` set. A first cell with a placement goes forward, never back. A
+  removed cell's stores keep whatever state rows they hold, so the full-state cleanup runs
+  before they are prepared again.
 - The router's operator credential is `lco_` and 128 lowercase hex (a router with no
   `LOOM_ROUTER_OPERATOR_SHA256` answers the operator API 503 with
   `NO_OPERATOR_CREDENTIAL`), which `loom cell credential new --operator` makes; the
@@ -1045,6 +1144,8 @@ the directory row.
 | A recording insert held open during first attach                         | attach stops trying once too little of `--wait` is left for the wait, reporting the mode it reads back; a rerun resumes                                                                                                                                                                                                                                                                                                              |
 | Attach stalls while it holds the mode table's lock                       | Postgres ends its session within seconds and releases the lock; new orgs answer within their deadline                                                                                                                                                                                                                                                                                                                                |
 | A transaction open since before step 4's snapshot                        | attach refuses once `--wait` runs out (a prepared one at once), naming what it waited on, and leaves `enforced`                                                                                                                                                                                                                                                                                                                      |
+| A CLI command with `LOOM_CELL` unset, started before attach's step 3     | it read the state while the first cell was `recording` and keeps writing ClickHouse after `serving`; the runbook sets `LOOM_CELL` on every CLI before attach                                                                                                                                                                                                                                                                         |
+| A CLI of a build before the state read                                   | it is not refused on an `enforced` cell; every CLI and CI image runs a build with the read before attach ([upgrades](../operations/upgrades.md#upgrade-procedure))                                                                                                                                                                                                                                                                   |
 
 ## Rolling upgrades
 
@@ -1078,7 +1179,7 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   no worker.
 - No bearer-token issuer, host, OIDC client, org pattern or bucket prefix is accepted by
   two cells, and no deployment id or router credential is held by two.
-- Every security path fails closed, with three exceptions. First, a server process with
+- Every security path fails closed, with four exceptions. First, a server process with
   `LOOM_CELL` unset keeps its verdict through failed reads of the state rows with no
   stale bound: open in `open` and `recording`, as a single deployment's partial outage
   is, and gated in every other state; a failed first read fails its boot, or with
@@ -1090,11 +1191,17 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   directory unreachable, placements, uncached lookups, the `loom cell` commands that
   read or write it and the recording cells' state reads refuse while each cell keeps
   serving the orgs it holds. Third, a migrating boot that cannot create or enable an org
-  trigger on a table, or set `loom.cell_first`'s triggers back to always (its lock not
-  taken in three tries of 100 ms, or a table the role cannot alter), logs it and serves,
-  leaving that table unguarded until a later boot succeeds: the triggers are a backstop
-  only against writers that send no marker, refusing the boot would take a cell down for a
-  backstop, and attach refuses a missing trigger.
+  trigger or the `loom.tenancy` guard on a table, or set `loom.cell_first`'s triggers back
+  to always (its lock not taken in three tries of 100 ms, or a table the role cannot alter),
+  logs it and serves, leaving that table unguarded until a later boot succeeds: the triggers
+  are a backstop only against writers that send no marker, refusing the boot would take a
+  cell down for a backstop, and attach refuses a missing trigger. Fourth, an org-free
+  revocation command that cannot give access back (a plain `loom revoke-token`, not one that
+  narrows or lapses, a SQL user's revocation, `loom signing-key retire`, `loom bot disable`,
+  `loom sso unlink`) with `LOOM_CELL` set whose read of the cell's `first` row fails for a
+  Postgres that does not answer runs and prints that the cell was not checked, since a
+  revocation must work through an outage; any other failed read, a missing grant among them,
+  refuses.
 
 ## Source entry points
 
@@ -1108,9 +1215,16 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   workers' lease and the heartbeat read; `server/boot.py`'s `start_cell_gate` is a
   server process's boot read;
 - `server/core/cell_triggers.py`: the org triggers' marker, `ensure` (a migrating boot's
-  creation and repair of the triggers) and `missing` (what `loom doctor` names), with
-  their function in `schemas/pg_migrations/011_tenancy_triggers.sql`;
+  creation and repair of the triggers and the `loom.tenancy` guard) and `missing` (what
+  `loom doctor` names), with their functions in
+  `schemas/pg_migrations/011_tenancy_triggers.sql` and `012_tenancy_guard.sql`;
   `server/cli/doctor_cell.py`: `loom doctor`'s cell checks;
+- `server/cli/cell_scan.py`: the first attach's org scan, a library no command calls: the
+  tables of both stores with an `org` column, judged by engine and against erasure's
+  classification, every host of a cluster listing the same, and the distinct orgs of each
+  table outside `LOG_TABLES`; `server/cli/cell_writers.py`: the ClickHouse writer check (the
+  users, user directories, objects and replicas outside the operator's allow lists);
+  `server/cli/cell_ch.py`: what both share (the cluster's hosts, the per-host reads);
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
@@ -1123,12 +1237,12 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   `recording`), routing by rules 1 to 4 (`server/router/routing.py`, which decides, and
   the forward), the org lookup with its cache of placed orgs (which `loom login --org`,
   `loom.credentials.org_server`, asks), their rate limits (`server/router/limits.py`)
-  and the checks a placement passes; its operator API, which `loom cell limit` and
-  `loom cell credential` (`server/cli/cell.py`, with `loom cell which`) call with the
-  router's operator credential (`LOOM_ROUTER_OPERATOR_TOKEN`; the router keeps only
-  `LOOM_ROUTER_OPERATOR_SHA256`); `server/router/directory.py` and
-  `schemas/router_migrations/`: the directory, in the router's own Postgres database
-  (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
+  and the checks a placement passes; its operator API, with the first cell's attach routes,
+  which `loom cell limit`, `loom cell credential` and `loom cell remove`
+  (`server/cli/cell.py`, with `loom cell which`) call with the router's operator credential
+  (`LOOM_ROUTER_OPERATOR_TOKEN`; the router keeps only `LOOM_ROUTER_OPERATOR_SHA256`);
+  `server/router/directory.py` and `schemas/router_migrations/`: the directory, in the
+  router's own Postgres database (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
 
 The rest of the cell code is added by the pull requests that implement this page. It
 builds on:
@@ -1193,7 +1307,7 @@ An integration test with two cells and a router in CI's Postgres job:
   attached cell and on a later cell between prepare and attach, keeps serving on a first
   cell in `recording`, and keeps the last mode it read through a failed read,
   `recording` included after step 3 or step 4 returned the cell to it; a CLI command
-  declaring an org with it unset is refused on an `enforced` cell (with attach), an
+  declaring an org with it unset is refused on an `enforced` or `partial` cell, an
   org-free one (a token revocation) runs, also with Postgres down on a deployment never
   prepared, and a `loom cell` store command refuses; `loom cell limit --closed` succeeds
   with the cell's Postgres down; after `loom cell credential --cell <cell> --next` both
@@ -1248,7 +1362,7 @@ An integration test with two cells and a router in CI's Postgres job:
   and named by `loom doctor`, a write for an unheld org on an `enforced` cell whose mode
   row was deleted is refused and the state named by `loom doctor`; on that cell a pod
   with `LOOM_CELL` unset is unready and runs no worker, and a CLI command declaring an
-  org with it unset is refused (with attach); updating, deleting or truncating the
+  org with it unset is refused, as a pod is; updating, deleting or truncating the
   `first` row on an `enforced` cell is refused, also under
   `session_replication_role = replica`, and a missing or disabled `first`-row trigger is
   refused by attach and named by `loom doctor`; a running process with `LOOM_CELL` set

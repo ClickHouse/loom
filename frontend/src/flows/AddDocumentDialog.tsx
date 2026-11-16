@@ -34,7 +34,7 @@ interface Props {
   /** What the place the files go to is called on screen; its namespace when unset. */
   place?: string;
   /** The Library's collections and the one shown, so a folder becomes collections. */
-  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null; onMade: (first: string) => void };
+  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null };
   /** The Library has not listed all its collections yet (or holds too many to list): a
    *  folder is taken once it has. Without it and without `tree`, folders are not taken here. */
   foldersLater?: boolean;

@@ -1,26 +1,34 @@
 """The router's own answers (docs/architecture/cells.md, "The router"):
 
 - `POST /cells/v1/placements`: a cell places a new org, with its own credential
-  (`LOOM_CELL_ROUTER_TOKEN` there, its SHA-256 in the directory) and its
-  configuration fingerprint, and gets back the cell and deployment id that hold it;
+  (`LOOM_CELL_ROUTER_TOKEN` there, its SHA-256 in the directory) and its configuration
+  fingerprint, and gets back the cell and deployment id that hold it;
 - `GET /cells/v1/cells/<cell>`: the first cell's state (`attaching`, `serving`), for that
   cell's own credential only, which it reads while its mode is `recording`;
-- `GET /cells/lookup?org=`: which cell, and at which host, an org lives in
-  (unauthenticated, rate-limited per client address); a placed org's answer is cached
-  and given while the directory cannot be read, and before any cell is registered the
-  lookup answers 503 with the code `NO_CELL`;
-- `POST /cells/v1/operator/cells/<cell>/limit` and `.../credential`: the operator's
-  changes to a cell's row (`loom cell limit`, `loom cell credential`), with the router's
-  operator credential;
+- `GET /cells/lookup?org=`: which cell, and at which host, an org lives in (unauthenticated,
+  rate-limited per client address); a placed org's answer is cached and given while the
+  directory cannot be read, and before any cell is registered the lookup answers 503 with
+  the code `NO_CELL`;
+- `POST /cells/v1/operator/cells/<cell>/limit` and `.../credential`: the operator's changes
+  to a cell's row (`loom cell limit`, `loom cell credential`), with the router's operator
+  credential;
 - `POST /cells/v1/operator/cells/<cell>/register`: `loom cell prepare` registers a cell,
   once the probe listener (the first cell's at LOOM_ROUTER_UPSTREAM_PROBE_URL, a later
-  cell's at its `probe_url`) answers its deployment id, prepare's nonces and the bucket
-  and prefix it stores under;
+  cell's at its `probe_url`) answers its deployment id, prepare's nonces and the bucket and
+  prefix it stores under;
+- `GET /cells/v1/operator/cells/<cell>`: the cell's row as attach reads it;
+- `POST /cells/v1/operator/cells/<cell>/attach/begin`, `.../attach/place`,
+  `.../attach/enforced` and `.../attach/serving`: the first cell's attach, in that order;
+- `DELETE /cells/v1/operator/cells/<cell>`: `loom cell remove` removes the row of a cell
+  that is `attaching` with no placement;
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
 
-Every refusal of a placement answers 503 and writes nothing, so the cell's request
-answers 503 and its retry is safe; a credential that names no cell, or not this
-one, answers 401.
+Every refusal of a placement writes nothing. A malformed placement body answers 400; the
+directory's refusals answer 503, so the cell's request answers 503 and its retry is safe,
+except a new org longer than `cell.ORG_MAX_BYTES`, which answers 400 `ORG_TOO_LONG` and no
+retry places; a credential that names no cell, or not this one, answers 401. An operator
+route answers a cell the directory does not hold 404 with the code `NO_SUCH_CELL`, so a 404
+without it is a router of an earlier build.
 """
 
 from __future__ import annotations
@@ -39,7 +47,7 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Protocol
 from urllib.parse import parse_qs
 
 import httpx
@@ -49,17 +57,20 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from server.auth.tenancy import ORG_FREE
 from server.core import cell as cell_state
 from server.core.cell_probe import PATH as PROBE_PATH
 from server.router import directory, routing
-from server.router.limits import MAX_KEYS, Limiter
+from server.router.limits import (
+    ATTACH_BATCH,
+    ATTACH_BEGIN_MAX_BYTES,
+    MAX_BODY_BYTES,
+    MAX_KEYS,
+    Limiter,
+)
 from server.settings import settings
 
 log = logging.getLogger("loom.router")
 
-# A placement or operator call's body is a few short fields: anything larger is refused unread.
-MAX_BODY_BYTES = 64 * 1024  # not a setting: the request's own shape bounds it
 # How long a readiness answer stands: a probe every second reads the directory once.
 READY_TTL_S = 1.0  # not a setting: the probe's own cadence bounds it
 
@@ -72,43 +83,34 @@ def _refused(
     return JSONResponse(body, status_code=status, headers=headers)
 
 
-def _org(value: Any) -> str | None:
-    # A name Postgres text cannot hold (a NUL, a lone surrogate) is malformed, never a
-    # directory outage.
-    if not isinstance(value, str) or value in ORG_FREE or "\x00" in value:
-        return None
-    try:
-        value.encode()
-    except UnicodeEncodeError:
-        return None
-    return value
-
-
 def _bearer(request: Request) -> str:
     return routing.bearer(request.headers.get("authorization", ""))
 
 
-async def _bounded(request: Request) -> bytes | None:
-    """The request body, or None past MAX_BODY_BYTES (refused without reading it all)."""
+async def _bounded(request: Request, limit: int = MAX_BODY_BYTES) -> bytes | None:
+    """The request body, or None past `limit` bytes (refused without reading it all)."""
     size = request.headers.get("content-length")
-    if size is not None and (not size.isdigit() or int(size) > MAX_BODY_BYTES):
+    if size is not None and (not size.isdigit() or int(size) > limit):
         return None
     raw = b""
     async for chunk in request.stream():
         raw += chunk
-        if len(raw) > MAX_BODY_BYTES:
+        if len(raw) > limit:
             return None
     return raw
 
 
-async def _body(request: Request) -> Any:
-    raw = await _bounded(request)
+def _parsed(raw: bytes | None) -> Any:
     if raw is None:
         return None
     try:
         return json.loads(raw)
     except (ValueError, RecursionError):  # not JSON, or nested past the parser's depth
         return None
+
+
+async def _body(request: Request) -> Any:
+    return _parsed(await _bounded(request))
 
 
 def placement_refusal(row: directory.Cell) -> str:
@@ -253,7 +255,7 @@ class Router:
         body = await _body(request)
         if not isinstance(body, dict):
             return _refused(400, "a placement is a JSON object: org, cell, fingerprint")
-        org, name = _org(body.get("org")), body.get("cell")
+        org, name = cell_state.named_org(body.get("org")), body.get("cell")
         if org is None or not isinstance(name, str) or not cell_state.NAME.fullmatch(name):
             return _refused(400, "a placement names an org and a cell")
         presented = await self._authenticated(request, name)
@@ -282,6 +284,8 @@ class Router:
 
         try:
             winner, deployment_id = await directory.place(org, name, refusal)
+        except directory.OrgTooLong as e:
+            return _refused(400, e.reason, code="ORG_TOO_LONG")
         except (directory.PlacementRefused, directory.DirectoryUnavailable) as e:
             if replaced:
                 # The cached hash is older than the row: read the directory again on
@@ -316,7 +320,7 @@ class Router:
         if not self.lookups.admit(client):
             wait = str(self.lookups.wait_s(client))
             return _refused(429, "too many lookups", {"Retry-After": wait})
-        org = _org(request.query_params.get("org"))
+        org = cell_state.named_org(request.query_params.get("org"))
         if org is None:
             return _refused(400, "a lookup names an org: ?org=")
         cached = self._placed.get(org)
@@ -586,6 +590,160 @@ class Router:
             }
         )
 
+    async def _operator_body(
+        self, request: Request, limit: int = MAX_BODY_BYTES
+    ) -> dict[str, Any] | JSONResponse:
+        """The operator call's JSON object, or its refusal: the credential, then the cell's
+        name, then the body (413 past `limit`, 400 when it is no JSON object)."""
+        if refusal := self._operator(request):
+            return refusal
+        if refusal := _malformed_cell_refusal(request):
+            return refusal
+        raw = await _bounded(request, limit)
+        if raw is None:
+            return _refused(413, f"this call's body is at most {limit} bytes")
+        body = _parsed(raw)
+        if not isinstance(body, dict):
+            return _refused(400, "this call's body is a JSON object")
+        return body
+
+    async def operator_cell(self, request: Request) -> JSONResponse:
+        """`GET /cells/v1/operator/cells/<cell>`: the cell's row as attach reads it (its
+        refusals, its done check and its resume)."""
+        if refusal := self._operator(request):
+            return refusal
+        if refusal := _malformed_cell_refusal(request):
+            return refusal
+        return await _answered(
+            lambda: directory.attach_read(request.path_params["cell"], audited=True),
+            lambda found: {**_attach_answer(found), "other": found.other},
+        )
+
+    async def attach_begin(self, request: Request) -> JSONResponse:
+        """`attach/begin`: once the probe listener echoes attach's nonces from the stores
+        the row names and the upstream reports the row's deployment id, write when attach
+        began, the fingerprints and the root-secret fingerprint
+        (`directory.attach_begin`)."""
+        body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        name = request.path_params["cell"]
+        parsed = _begin(body)
+        if isinstance(parsed, JSONResponse):
+            return parsed
+        begin, nonces = parsed
+        found = await _read_attaching(name)
+        if isinstance(found, JSONResponse):
+            return found
+        if reason := directory.begin_refusal(found, begin):
+            return _refused(409, reason)
+        if refusal := await self._stores_check(found, nonces):
+            return refusal
+        return await _answered(lambda: directory.attach_begin(name, begin), _attach_answer)
+
+    async def attach_place(self, request: Request) -> JSONResponse:
+        """`attach/place {deployment_id, orgs}`: a batch of at most ATTACH_BATCH orgs."""
+        body = await self._operator_body(request)
+        if isinstance(body, JSONResponse):
+            return body
+        orgs = body.get("orgs")
+        deployment_id = _text(body, "deployment_id", needed=True)
+        if (
+            set(body) != {"deployment_id", "orgs"}
+            or deployment_id is None
+            or not isinstance(orgs, list)
+            or not 0 < len(orgs) <= ATTACH_BATCH
+        ):
+            return _refused(
+                400, f"a batch is a JSON object of deployment_id and 1 to {ATTACH_BATCH} orgs"
+            )
+        named = [cell_state.named_org(o) for o in orgs]
+        if None in named:
+            return _refused(400, "each org of a batch is a name an org can have")
+        name = request.path_params["cell"]
+        batch = [o for o in named if o is not None]
+        return await _answered(
+            lambda: directory.attach_place(name, deployment_id, batch),
+            lambda counts: {"cell": name, "placed": counts[0], "placed_orgs": counts[1]},
+        )
+
+    async def attach_enforced(self, request: Request) -> JSONResponse:
+        """`attach/enforced {deployment_id}`: record the directory mode `enforced`."""
+        body = await self._operator_body(request)
+        if isinstance(body, JSONResponse):
+            return body
+        deployment_id = _text(body, "deployment_id", needed=True)
+        if set(body) != {"deployment_id"} or deployment_id is None:
+            return _refused(400, "attach/enforced is a JSON object of deployment_id")
+        name = request.path_params["cell"]
+        return await _answered(
+            lambda: directory.attach_enforced(name, deployment_id), _attach_answer
+        )
+
+    async def attach_serving(self, request: Request) -> JSONResponse:
+        """`attach/serving {deployment_id, nonces}`: once the probe and the upstream check
+        pass again, mark the first cell `serving` with the issuers its fingerprints accept;
+        a `serving` cell answers 200 at once."""
+        body = await self._operator_body(request)
+        if isinstance(body, JSONResponse):
+            return body
+        deployment_id = _text(body, "deployment_id", needed=True)
+        nonces: Any = body.get("nonces")
+        if set(body) != {"deployment_id", "nonces"} or deployment_id is None:
+            return _refused(400, "attach/serving is a JSON object of deployment_id and nonces")
+        if not _nonces_shaped(nonces):
+            return _refused(400, _NONCES_REFUSAL)
+        name = request.path_params["cell"]
+        found = await _read_attaching(name)
+        if isinstance(found, JSONResponse):
+            return found
+        if not found.served(deployment_id):
+            if reason := directory.attach_refusal(found, deployment_id, enforced=True):
+                return _refused(409, reason)
+            if refusal := await self._stores_check(found, nonces):
+                return refusal
+        response = await _answered(
+            lambda: directory.attach_serving(name, deployment_id), _attach_answer
+        )
+        # A 503's change may have committed: this replica reads the cell's issuers on its
+        # next request either way.
+        if response.status_code in (200, 503):
+            self._table_at = None
+        return response
+
+    async def remove(self, request: Request) -> JSONResponse:
+        """`DELETE /cells/v1/operator/cells/<cell>` (`loom cell remove`): remove the row of
+        a cell `attaching` with no placement (`directory.remove`). The router cannot read
+        the cell's Postgres: `loom cell remove` checks that a first cell's reads `open`, and
+        a direct call skips that check."""
+        if refusal := self._operator(request):
+            return refusal
+        if refusal := _malformed_cell_refusal(request):
+            return refusal
+        name = request.path_params["cell"]
+        response = await _answered(
+            lambda: directory.remove(name), lambda row: {"cell": row.cell, "removed": True}
+        )
+        # A 503 is included: the removal may have committed (BACKEND_UNAVAILABLE).
+        if response.status_code in (200, 503):
+            self._forget_credentials()
+            self._table_at = None
+        return response
+
+    async def _stores_check(
+        self, found: directory.Attaching, nonces: dict[str, str | None]
+    ) -> JSONResponse | None:
+        """The registration probe at the row's `probe_url` and the upstream check at its
+        `upstream_url`, outside any directory transaction: the stores attach reads are the
+        ones the live cell serves from, and routing reaches that deployment. A bucket nonce
+        is named exactly when the row records a bucket: the probe answers a bucket without
+        one as null, so a null for a bucketed cell would prove nothing."""
+        if (nonces["bucket"] is None) != (not found.bucket):
+            return _refused(400, _NONCES_REFUSAL)
+        if refusal := await _probe(found, nonces, self._probe_transport, writer="attach"):
+            return refusal
+        return await _upstream_check(found, self._probe_transport, names=_ATTACHING)
+
     async def livez(self, _request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
@@ -656,7 +814,7 @@ def proxy_client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.Asy
 def _malformed_cell_refusal(request: Request) -> JSONResponse | None:
     """The refusal of a cell name no cell can have, before the directory is asked."""
     if not cell_state.NAME.fullmatch(request.path_params["cell"]):
-        return _refused(404, "no cell has that name")
+        return _refused(404, "no cell has that name", code="NO_SUCH_CELL")
     return None
 
 
@@ -678,19 +836,128 @@ PROBE_ANSWER_MAX = 6 * (3 * _TEXT_MAX + 3 * _NONCE_MAX) + 4096  # not a setting:
 _NONCES = ("postgres", "clickhouse", "bucket")
 
 
+def _storable(value: Any) -> bool:
+    """Text of at most _TEXT_MAX characters that Postgres can store (no NUL, no lone
+    surrogate): malformed otherwise, never a directory outage."""
+    if not isinstance(value, str) or len(value) > _TEXT_MAX or "\x00" in value:
+        return False
+    try:
+        value.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _text(body: dict[str, Any], key: str, *, needed: bool = False) -> str | None:
     value = body.get(key, "")
-    if not isinstance(value, str) or len(value) > _TEXT_MAX or "\x00" in value:
+    if not _storable(value) or (needed and not value):
         return None
+    return str(value)
+
+
+async def _read_attaching(name: str) -> directory.Attaching | JSONResponse:
+    """The row `begin` and `serving` judge before their probe, or the answer for an unknown
+    cell or an unreachable directory."""
     try:
-        value.encode()  # a lone surrogate: malformed, never a directory outage
-    except UnicodeEncodeError:
-        return None
-    return value if value or not needed else None
+        return await directory.attach_read(name)
+    except directory.NoSuchCell as e:
+        return _refused(404, e.reason, code="NO_SUCH_CELL")
+    except directory.DirectoryUnavailable as e:
+        return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
 
 
 def _nonce(value: Any) -> bool:
     return isinstance(value, str) and 0 < len(value) <= _NONCE_MAX and value.isascii()
+
+
+def _nonces_shaped(nonces: Any) -> bool:
+    """Prepare's and attach's nonces: postgres, clickhouse and bucket (null when the cell
+    has no bucket, which each caller checks against the bucket it knows)."""
+    return (
+        isinstance(nonces, dict)
+        and set(nonces) == set(_NONCES)
+        and _nonce(nonces["postgres"])
+        and _nonce(nonces["clickhouse"])
+        and (nonces["bucket"] is None or _nonce(nonces["bucket"]))
+    )
+
+
+_NONCES_REFUSAL = (
+    "nonces names postgres, clickhouse and bucket (null with no bucket), each ASCII text of 1 "
+    f"to {_NONCE_MAX} characters"
+)
+
+# The allow lists `attach/begin` audits: what attach judged the cell's stores by.
+_ALLOW_LISTS = (
+    "ch_allow_users",
+    "ch_allow_user_directories",
+    "ch_allow_objects",
+    "ch_allow_replicas",
+    "pg_allow_roles",
+)
+
+
+def _fingerprint_shaped(value: Any) -> bool:
+    """A fingerprint of this version (`v`) with a `fields` object, every value of which
+    Postgres's jsonb stores: no NaN or infinity, no lone surrogate, no NUL (malformed, never
+    a directory outage)."""
+    if not (isinstance(value, dict) and isinstance(value.get("fields"), dict)):
+        return False
+    if type(value.get("v")) is not int or value["v"] != cell_state.FINGERPRINT_VERSION:
+        return False
+    try:
+        json.dumps(value, allow_nan=False, ensure_ascii=False).encode()
+    except (ValueError, UnicodeEncodeError, RecursionError):
+        return False
+    return not _holds_nul(value)
+
+
+def _holds_nul(value: Any) -> bool:
+    """Whether a NUL is in any string or key of a decoded JSON value: walked with a stack,
+    so a value nested past Python's recursion limit is judged too."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if "\x00" in item:
+                return True
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return False
+
+
+def _begin(body: dict[str, Any]) -> tuple[directory.Begin, dict[str, str | None]] | JSONResponse:
+    known = {"deployment_id", "current_fp", "next_fp", "keys_fp", "nonces", *_ALLOW_LISTS}
+    if set(body) != known:
+        return _refused(400, "attach/begin is a JSON object of " + ", ".join(sorted(known)))
+    deployment_id = _text(body, "deployment_id", needed=True)
+    keys_fp = _text(body, "keys_fp", needed=True)
+    if deployment_id is None or keys_fp is None:
+        return _refused(
+            400, f"deployment_id and keys_fp are text of 1 to {_TEXT_MAX} characters, no NUL"
+        )
+    current, nxt = body["current_fp"], body["next_fp"]
+    if not _fingerprint_shaped(current) or not (nxt is None or _fingerprint_shaped(nxt)):
+        return _refused(400, "current_fp is a fingerprint, and next_fp one or null")
+    allowed: dict[str, list[str]] = {}
+    for key in _ALLOW_LISTS:
+        listed = body[key]
+        if not isinstance(listed, list) or not all(_storable(i) and i for i in listed):
+            return _refused(400, f"{key} is a list of text of 1 to {_TEXT_MAX} characters")
+        allowed[key] = list(listed)
+    if not _nonces_shaped(body["nonces"]):
+        return _refused(400, _NONCES_REFUSAL)
+    begin = directory.Begin(
+        deployment_id=deployment_id,
+        current_fp=current,
+        next_fp=nxt,
+        keys_fp=keys_fp,
+        allowed=allowed,
+    )
+    return begin, dict(body["nonces"])
 
 
 _OPERATOR_HASH_REFUSAL = (
@@ -766,19 +1033,9 @@ def _registration(
         and all(type(held[k]) is int and 0 <= held[k] < 2**31 for k in counts)
     ):
         return _refused(400, "held counts the cell's " + ", ".join(counts))
-    nonces = body.get("nonces")
-    if not (
-        isinstance(nonces, dict)
-        and set(nonces) == set(_NONCES)
-        and _nonce(nonces["postgres"])
-        and _nonce(nonces["clickhouse"])
-        and (nonces["bucket"] is None if not bucket else _nonce(nonces["bucket"]))
-    ):
-        return _refused(
-            400,
-            "nonces names postgres, clickhouse and bucket (null with no bucket), each ASCII "
-            f"text of 1 to {_NONCE_MAX} characters",
-        )
+    nonces: Any = body.get("nonces")
+    if not (_nonces_shaped(nonces) and (nonces["bucket"] is None) == (not bucket)):
+        return _refused(400, _NONCES_REFUSAL)
     if prefix and not bucket:
         return _refused(400, "a bucket_prefix is named with its bucket")
     if bucket and (not prefix or prefix != prefix.strip("/")):
@@ -884,15 +1141,33 @@ async def _fetch(
     return status, retry_after, answer
 
 
+class _Stores(Protocol):
+    """What the probe and the upstream check compare: a registration, or a cell's row."""
+
+    @property
+    def deployment_id(self) -> str: ...
+    @property
+    def bucket(self) -> str: ...
+    @property
+    def bucket_prefix(self) -> str: ...
+    @property
+    def probe_url(self) -> str: ...
+    @property
+    def upstream_url(self) -> str: ...
+
+
 async def _probe(
-    reg: directory.Registration,
+    reg: _Stores,
     nonces: dict[str, str | None],
     transport: httpx.AsyncBaseTransport | None,
+    *,
+    writer: str = "prepare",
 ) -> JSONResponse | None:
-    """None when the probe listener at the cell's probe address answers its deployment
-    id, the nonces prepare wrote and the bucket and prefix it names, else the refusal. A
-    busy listener answers 503 `PROBE_BUSY` with its Retry-After; an unreachable one, or
-    one that cannot read a store, 503 `PROBE_UNREACHABLE`: prepare waits and asks again."""
+    """None when the probe listener at the cell's probe address answers its deployment id,
+    the nonces `writer` (prepare, or attach) wrote and the bucket and prefix it names, else
+    the refusal. A busy listener answers 503 `PROBE_BUSY` with its Retry-After; an
+    unreachable one, or one that cannot read a store, 503 `PROBE_UNREACHABLE`: the caller
+    waits and asks again."""
     fetched = await _fetch(reg.probe_url + PROBE_PATH, transport)
     if fetched is None:
         return _refused(503, "the probe address could not be reached", code="PROBE_UNREACHABLE")
@@ -927,69 +1202,105 @@ async def _probe(
     if answer.get("bucket") != {"name": reg.bucket, "prefix": reg.bucket_prefix}:
         return _refused(409, "the probe listener stores under another bucket or prefix")
     if answer.get("nonces") != nonces:
-        return _refused(409, "the probe listener does not read the stores prepare wrote to")
+        return _refused(409, f"the probe listener does not read the stores {writer} wrote to")
     return None
 
 
+# What registration's upstream check names: the router's own settings, which it copies.
+_REGISTERING = ("LOOM_ROUTER_UPSTREAM_URL", "LOOM_ROUTER_UPSTREAM_PROBE_URL")
+# What attach's names: the addresses the directory row records.
+_ATTACHING = ("the directory row's upstream_url", "its probe_url")
+
+
 async def _upstream_check(
-    reg: directory.Registration, transport: httpx.AsyncBaseTransport | None
+    reg: _Stores,
+    transport: httpx.AsyncBaseTransport | None,
+    *,
+    names: tuple[str, str] = _REGISTERING,
 ) -> JSONResponse | None:
     """None when the first cell's upstream (the deployment the shared host forwards to)
-    reports the deployment id its probe listener did, else the refusal: registration
-    copies the upstream into the row, so it must be the same deployment. The main port
-    answers the id from memory and sets no rate of its own: a 429, 502, 503 or 504 there
-    is a proxy's in front of it, and is asked again."""
+    reports the deployment id its probe listener did, else the refusal, naming the upstream
+    and probe addresses as `names` does: the row's upstream must be the deployment probed.
+    The main port answers the id from memory and sets no rate of its own: a 429, 502, 503 or
+    504 there is a proxy's in front of it, and is asked again."""
+    upstream, probe = names
     fetched = await _fetch(reg.upstream_url + PROBE_PATH, transport)
     if fetched is None or fetched[0] in (429, 502, 503, 504):
-        return _refused(
-            503, "LOOM_ROUTER_UPSTREAM_URL could not be reached", code="PROBE_UNREACHABLE"
-        )
+        return _refused(503, f"{upstream} could not be reached", code="PROBE_UNREACHABLE")
     status, _retry_after, answer = fetched
     if status != 200 or not isinstance(answer, dict):
-        return _refused(409, f"LOOM_ROUTER_UPSTREAM_URL did not answer as Loom ({status})")
+        return _refused(409, f"{upstream} did not answer as Loom ({status})")
     if "nonces" in answer:
         # The probe listener answers the same path with its nonces.
         return _refused(
             409,
-            "LOOM_ROUTER_UPSTREAM_URL answered as the probe listener, not the main port",
+            f"{upstream} answered as the probe listener, not the main port",
         )
     if answer.get("deployment_id") == "":
         # A serving process has verified its deployment at boot, so '' never changes: it
         # runs without the Postgres authority, which a cell needs.
         return _refused(
             409,
-            "LOOM_ROUTER_UPSTREAM_URL reports no deployment id: it runs without the "
+            f"{upstream} reports no deployment id: it runs without the "
             "Postgres authority (LOOM_STORAGE_AUTHORITY=postgres), which a cell needs",
         )
     if answer.get("deployment_id") != reg.deployment_id:
         return _refused(
             409,
-            "LOOM_ROUTER_UPSTREAM_URL reports another deployment id than "
-            "LOOM_ROUTER_UPSTREAM_PROBE_URL: they must name one deployment",
+            f"{upstream} reports another deployment id than {probe}: they must name one deployment",
         )
     return None
 
 
-async def _operator_answer(change: Callable[[], Awaitable[directory.Cell]]) -> JSONResponse:
+async def _answered[T](
+    call: Callable[[], Awaitable[T]], render: Callable[[T], dict[str, Any]]
+) -> JSONResponse:
+    """An operator call's answer: `render` of its result, or its refusal."""
     try:
-        row = await change()
+        result = await call()
     except directory.NoSuchCell as e:
-        return _refused(404, e.reason)
+        return _refused(404, e.reason, code="NO_SUCH_CELL")
     except directory.OperatorRefused as e:
         return _refused(409, e.reason)
+    except directory.OrgTooLong as e:
+        return _refused(400, e.reason, code="ORG_TOO_LONG")
     except directory.DirectoryUnavailable as e:
         # The change may have committed before the answer was lost (a COMMIT that waited
         # past its bound on the standby): the CLI matches this code.
         return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
-    return JSONResponse(
-        {
-            "cell": row.cell,
-            "closed": row.closed,
-            "placements_max": row.placements_max,
-            "placed_orgs": row.placed,
-            "next_credential_pending": bool(row.credential_next_sha256),
-        }
-    )
+    return JSONResponse(render(result))
+
+
+def _limits(row: directory.Cell) -> dict[str, Any]:
+    return {
+        "cell": row.cell,
+        "closed": row.closed,
+        "placements_max": row.placements_max,
+        "placed_orgs": row.placed,
+        "next_credential_pending": bool(row.credential_next_sha256),
+    }
+
+
+async def _operator_answer(change: Callable[[], Awaitable[directory.Cell]]) -> JSONResponse:
+    return await _answered(change, _limits)
+
+
+def _attach_answer(found: directory.Attaching) -> dict[str, Any]:
+    """A cell's row as the operator's read and the attach calls answer it."""
+    row = found.row
+    started = found.attach_started_at
+    return {
+        "cell": row.cell,
+        "is_first": row.is_first,
+        "host": row.host,
+        "state": row.state,
+        "mode": row.mode,
+        "deployment_id": row.deployment_id,
+        "placed_orgs": row.placed,
+        "attach_started_at": started.isoformat() if started else None,
+        "current_fp": row.current_fp,
+        "next_fp": row.next_fp,
+    }
 
 
 async def _not_found(_request: Request) -> JSONResponse:
@@ -1016,6 +1327,28 @@ def build_app(router: Router | None = None) -> Starlette:
             Route(
                 "/cells/v1/operator/cells/{cell}/credential",
                 router.rotate_credential,
+                methods=["POST"],
+            ),
+            Route("/cells/v1/operator/cells/{cell}", router.operator_cell, methods=["GET"]),
+            Route("/cells/v1/operator/cells/{cell}", router.remove, methods=["DELETE"]),
+            Route(
+                "/cells/v1/operator/cells/{cell}/attach/begin",
+                router.attach_begin,
+                methods=["POST"],
+            ),
+            Route(
+                "/cells/v1/operator/cells/{cell}/attach/place",
+                router.attach_place,
+                methods=["POST"],
+            ),
+            Route(
+                "/cells/v1/operator/cells/{cell}/attach/enforced",
+                router.attach_enforced,
+                methods=["POST"],
+            ),
+            Route(
+                "/cells/v1/operator/cells/{cell}/attach/serving",
+                router.attach_serving,
                 methods=["POST"],
             ),
             Route("/cells/lookup", router.lookup, methods=["GET"]),

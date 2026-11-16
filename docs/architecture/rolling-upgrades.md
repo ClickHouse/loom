@@ -21,6 +21,12 @@ schema. These rules keep that safe. The operator procedure is in
    tombstone keeps the values N wrote to N's new columns. This costs a cached lookup
    while every build agrees with the schema, and one extra keyed read per insert while a
    newer column exists.
+   A moved document's row is a new key (its new namespace). A move N-1 makes after N's
+   migration added a `loom.documents` column fills that column from the new key's newest row
+   (a document deleted there, or the column's default), not from the source's: the copy
+   lacks that value for good, and a restore of the source, whose deleted row keeps it,
+   brings it back there. A move N makes builds the row with every column; its chunks and
+   table rows are copied with `SELECT *` and keep every column.
    - Each process checks `loom._migrations` and the carried tables' metadata time
      every 2 s in the background and then re-reads the column lists.
    - A write that took the lists before the `ALTER` would still drop the column. So
@@ -646,32 +652,32 @@ schema. These rules keep that safe. The operator procedure is in
     `frontend/e2e/assistant-launch.spec.ts` ("an entry an earlier build pushed opens the
     assistant on Back after a reload") does.
 
-47. **A cell's org triggers keep their names and shape** ([cells](cells.md)). The
-    session marker `loom.tenancy_checked`, the function `loom.tenancy_refuse_unheld()`,
-    the trigger names `tenancy_insert` and `tenancy_update`, and their shape (AFTER, row
-    level, on INSERT and on UPDATE) do not change, since builds N-1 and N create and
-    read them on one cell. The function body changes only through a numbered migration
-    (`CREATE OR REPLACE FUNCTION`), and `missing` accepts the body and settings any
-    shipped file writes. A changed body ships in two releases: release K adds the new
-    body to `missing` as an accepted value beside the shipped files', and the migration
-    that writes it ships no earlier than K+1, so an N-1 `loom doctor` or attach on a
-    migrated cell names no defect. The `WHEN` text lives in the code that creates the
-    triggers (`server/core/cell_triggers.py`), so a changed `WHEN` ships in three
-    releases, in the body's order: release K adds the new `WHEN` to `missing` (which
-    `loom doctor` and attach read) as an accepted value beside the one it creates; K+1
-    creates the new `WHEN` and keeps the old one accepted, so a K pod that creates a
-    trigger on a skipped table, and a K `missing` reading one K+1 created, both name no
-    defect; and the migration that drops the triggers, which the same boot then creates
-    with the new `WHEN`, ships no earlier than K+2, so the N-1 that could create a
-    skipped table's trigger already carries the new text. The gate on processes with
-    `LOOM_CELL` unset, the marker and the triggers ship in one release: a release that
-    carried the triggers without the marker would refuse Loom's own writes on a cell,
-    and one with the gate alone would leave its unchecked writers unguarded. It breaks
-    side-by-side serving in one place: on a later cell already prepared, the release's
-    first migrating boot creates the triggers, and an older pod still serving there has
-    its inserts of a tenant org's rows refused, so such a cell is rolled out in one step
-    ([upgrades](../operations/upgrades.md), step 2). The mixed-version gate does not
-    check this rule.
+47. **A cell's org triggers and `loom.tenancy` guard keep their names and shape**
+    ([cells](cells.md)). The session marker `loom.tenancy_checked`, the functions
+    `loom.tenancy_refuse_unheld()` and `loom.tenancy_refuse_unmarked()`, the trigger names
+    `tenancy_insert`, `tenancy_update` and `tenancy_record`, and their shape (AFTER, row
+    level, on their events) do not change, since builds N-1 and N create and read them on
+    one cell. Each function's body changes only through a numbered migration
+    (`CREATE OR REPLACE FUNCTION`), and `missing` accepts the body and settings any shipped
+    file writes. A changed body ships in two releases: release K adds the new body to
+    `missing` as an accepted value beside the shipped files', and the migration that writes
+    it ships no earlier than K+1, so an N-1 `loom doctor` or attach on a migrated cell names
+    no defect. The `WHEN` text lives in the code that creates the triggers
+    (`server/core/cell_triggers.py`), so a changed `WHEN` ships in three releases, in the
+    body's order: release K adds the new `WHEN` to `missing` (which `loom doctor` and attach
+    read) as an accepted value beside the one it creates; K+1 creates the new `WHEN` and
+    keeps the old one accepted, so a K pod that creates a trigger on a skipped table, and a
+    K `missing` reading one K+1 created, both name no defect; and the migration that drops
+    the triggers, which the same boot then creates with the new `WHEN`, ships no earlier
+    than K+2, so the N-1 that could create a skipped table's trigger already carries the new
+    text. The gate on processes with `LOOM_CELL` unset, the marker and the triggers ship in
+    one release: a release that carried the triggers without the marker would refuse Loom's
+    own writes on a cell, and one with the gate alone would leave its unchecked writers
+    unguarded. It breaks side-by-side serving in one place: on a later cell already
+    prepared, the release's first migrating boot creates the triggers, and an older pod
+    still serving there has its inserts of a tenant org's rows refused, so such a cell is
+    rolled out in one step ([upgrades](../operations/upgrades.md), step 2). The
+    mixed-version gate does not check this rule.
 48. **Knowledge gaps** (`loom.search_misses` and `loom.knowledge_gaps`, migration 95):
     N-1's erasure saga has no step for either table. So while any live replica's schema
     version is below 95, or no heartbeat has been read, no miss is recorded, the
@@ -713,14 +719,77 @@ schema. These rules keep that safe. The operator procedure is in
     `tests/unit/test_knowledge_source_sync.py` that a folder turn over such a row ends
     before any request; N-1's `check` and `rotate` failing is read from its code, and
     the mixed-version gate does not check this rule.
+50. **A source's document bound** (`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`): N reads a
+    source's stored copies in pages and holds back new files past the setting, for
+    every kind. N-1 reads at most 50,001 of them: its `gdrive` turn holds back new files
+    past 50,000 and ends `failed` with `too_many_documents` over it, retiring nothing;
+    its `linear`, `notion` and `recording` turns check no bound, so past the cut a
+    stored copy reads as new and is fetched again each turn, and the cut read retires
+    less. Both rewrite and retire under the same source lease. While N-1 serves, a
+    setting at or below 50,000 is safe; raise it only once every replica runs N. The
+    bound tests in `tests/unit/test_knowledge_source_sync.py`,
+    `test_knowledge_source_sync_linear.py`, `test_notion_source_sync.py` and
+    `test_knowledge_source_recordings.py` check N's side; N-1's is read from its code,
+    and the mixed-version gate does not check this rule.
+
+51. **Mirror names are reserved** (migration `097_mirror_names_reserved.sql`): N's gate
+    refuses every request that names a namespace of the form `acl-` and 24 hex digits
+    (only a platform admin's `erasure.request` may name one), with auth on or off.
+    `namespace.register` and `namespace.restore` refuse the form, and N's org-wide
+    scopes, the `sql_v1_` views and the analytics export leave it out. N-1 admits the
+    form as any other name. The migration refuses to run while any namespace of the form
+    is registered or holds live rows in ClickHouse (the registry, memory, documents,
+    conversations, threads, sources and code repositories), naming up to ten as
+    `org/namespace` with their tables and counting the rest. Since N refuses every
+    request naming such a namespace, the operator clears it with N-1: an erasure of what
+    it holds, `code.repo.remove` for a repository and `namespace.delete`. The build that
+    writes mirrors comes after this one, so the build beside it already refuses the
+    form; the one gap is a name an N-1 process registers or writes after the migration
+    ran. This build writes no mirror, so no namespace of the form is taken for one; the
+    build that first writes a mirror must run the same check
+    (`server/core/schema/prechecks.py`) before that write.
+    `tests/unit/test_mirror_names_refused.py` checks N's side, and the mixed-version
+    gate does not check this rule.
+52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
+    `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
+    default (`namespace`) is what every row N-1 writes means. N stores a source whose
+    `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
+    credential for it. N serves none either: its sync pass skips one, its retire pass
+    leaves its delete request alone, and `check`, `rotate`, `update`, `sync_now` and an
+    `add` of a removed one's name refuse with `SOURCE_NOT_SERVED`. So beside the build
+    that writes mirrors, N never syncs a mirrored source into the named namespace or
+    orphans its documents.
+
+    On N, each namespace erasure step reads the registry, which keeps every mirror the
+    named namespaces have had, so every run of the step, a resume's or a replay's
+    included, covers them: a scope that holds a mirror is erased as a purge, in one pass
+    over the named namespaces and their mirrors, and the census counts it the same way.
+    The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a
+    live one keeps the name in use. N-1 runs no mirror pass and counts no registry row;
+    this build writes no mirror, so N-1 meets an empty registry.
+    `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
+    `tests/unit/test_knowledge_sources.py` and
+    `tests/unit/test_knowledge_source_sync.py` check N's side.
+
+53. **A document's permission list** (migration `099_document_access_lists.sql`): N adds
+    `loom.documents.access_json`, the permission list of a mirrored document ([document
+    sources](document-sources.md#the-permission-list)); under the Postgres authority it
+    rides in the head's `row`, with no Postgres migration. No writer in N passes a list,
+    and the row builder carries none forward: every row N builds, a tombstone included,
+    has the column empty, so it reads `unread` and admits nobody; an erasure purges a
+    mirror's rows outright (rule 52). N-1 never meets a list: N writes none, and the
+    first build that writes one runs beside N, never beside N-1, which matters because
+    N-1 would carry a list through its rewrites (rule 2). No op's input or output has
+    the field. `tests/unit/test_access_list.py` and
+    `tests/unit/test_document_row_builder.py` check N's side.
 
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
 once with a Keeper and once without) boots the base build on an empty ClickHouse, then
-this build, which applies its migrations, then the base again on the newer schema, and
-a third process of this build with a changed dashboard bundle and one no-op migration
-more (N+1). It checks:
+this build, which applies its migrations, then the base again on the newer schema, and a
+third process of this build with a changed dashboard bundle and one no-op migration more
+(N+1). It checks:
 
 - each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict

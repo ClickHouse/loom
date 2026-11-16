@@ -489,7 +489,7 @@ def decisions(
     document whose ingest this run did not finish (`states`, by system and
     file) is not mined, and is counted `unread`: an earlier run's revision may
     still serve it."""
-    from server.cli._ch import run_connected
+    from server.cli._ch import run_connected, writes
     from server.memory.app import decision_extract as app
     from server.memory.domain import decision_extract as dx
 
@@ -531,7 +531,7 @@ def decisions(
 
     dx.ground = counted  # the extractor reads it off the module at each call
     try:
-        run_connected(_run, org_free="a benchmark against its own disposable stack")
+        run_connected(_run, org_free=writes("a benchmark against its own disposable stack"))
     finally:
         dx.ground = real
     out: dict[str, dict[str, Any]] = {}

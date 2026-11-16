@@ -34,6 +34,7 @@ from typing import Any
 import httpx
 
 from server.cli import cell as cell_cli
+from server.cli._ch import writes
 from server.core import cell
 from server.settings import settings
 
@@ -524,7 +525,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             )
             return 1
 
-    return run_connected(_run, org_free="registers the cell; writes no org's rows")
+    return run_connected(_run, org_free=writes("registers the cell; writes no org's rows"))
 
 
 def add_prepare_parser(csub: Any) -> None:

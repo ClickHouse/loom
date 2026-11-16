@@ -17,6 +17,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.ch import set_query_tag
+from server.core.errors import AuthInsufficientError
+from server.core.naming import MIRROR_REFUSED, is_mirror_name
 from server.core.paths import MIGRATIONS_DIR
 from server.erasure.app.backends import ErasureBackendError, LangfuseBackend
 from server.insights.app.admin_models import (
@@ -201,9 +203,17 @@ async def admin_workers_status() -> WorkersStatusOutput:
 # ============================================================
 
 
+def _refuse_mirror(namespace: str | None) -> None:
+    """These reads run outside the gate (with auth off, for anyone), so they refuse a
+    mirror's name themselves; their statements leave mirrors out besides."""
+    if namespace and is_mirror_name(namespace):
+        raise AuthInsufficientError(MIRROR_REFUSED)
+
+
 @admin_router.post("/v1/admin/audit.summary")
 async def admin_audit_summary(input: AuditSummaryInput) -> AuditSummaryOutput:
     """Aggregate audit_log by event_type in a window."""
+    _refuse_mirror(input.namespace)
     rows = await admin_repo.audit_summary(
         input.since_seconds,
         org=input.org,
@@ -230,6 +240,7 @@ async def admin_audit_summary(input: AuditSummaryInput) -> AuditSummaryOutput:
 @admin_router.post("/v1/admin/events.tail")
 async def admin_events_tail(input: EventsTailInput) -> EventsTailOutput:
     """Recent rows from `loom.agent_events` for live debugging."""
+    _refuse_mirror(input.namespace)
     filters: dict[str, str | bool] = {}
     for key in ("org", "namespace", "agent", "operation"):
         val = getattr(input, key)

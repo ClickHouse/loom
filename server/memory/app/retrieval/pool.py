@@ -17,6 +17,7 @@ from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_sql import _build_where
 from server.memory.domain.search_types import (
+    SHARED_AGENT,
     ChunkRef,
     RowIdentity,
     RowKey,
@@ -28,7 +29,6 @@ from server.memory.domain.search_types import (
     row_key_of,
 )
 from server.memory.store.rows import parse_memory_value
-from server.memory.store.shared import SHARED_AGENT
 from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")

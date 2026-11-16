@@ -33,9 +33,9 @@ class ErasureRequestInput(BaseModel):
     # What `scope_value` names: `user_id` (one user across the org's namespaces, org admin only),
     # `namespace` (one namespace, admin on it) or `namespace_list` (several, org admin only).
     scope_type: ScopeType
-    # For `namespace_list`: a JSON array of namespace names (1–500), or a JSON
-    # object {"namespaces": [...], "purge": bool}. One saga, one mutation per
-    # table for the whole list.
+    # The user id, namespace or (for `namespace_list`) a JSON array of 1–500 names or
+    # {"namespaces": [...], "purge": bool}; only a platform admin with auth on may name a
+    # mirror (`acl-` and 24 hex digits). A list is one saga, one mutation per table.
     scope_value: str
     requester: str = Field(..., description="email or service account that requested the erasure")
     # `normal` or `urgent`; recorded on the saga's ledger row, the saga runs the same either way.
@@ -114,7 +114,8 @@ class ErasureRequestOutput(BaseModel):
     # The receipt: every count of this run's census, zeros included; `None` when no census
     # counted every store (none ran, or one left a store uncounted).
     census: dict[str, int] | None = None
-    # Whether the saga deletes rows (true) or tombstones them; a single namespace's never does.
+    # The scope's delete-or-tombstone mode (a single namespace's is tombstone whatever
+    # was asked); a scope that holds a mirror is deleted whatever this says.
     purge: bool = False
     # Why a failed saga failed, `""` otherwise: `<step>: <error>` or a bare `<error>`
     # outside a step, where `<error>` is the exception's kind or a Loom error's
@@ -143,7 +144,8 @@ class ErasureStatusOutput(BaseModel):
     org: str | None = None
     # The saga's scope kind (`user_id`, `namespace` or `namespace_list`); `None` when not found.
     scope_type: str | None = None
-    # The saga's scope as requested (user id, namespace, or the JSON list).
+    # The saga's scope (user id, namespace, or the JSON list); a list leaves out any
+    # mirror's name but for a platform admin.
     scope_value: str | None = None
     # Who asked for the erasure, as given in the request.
     requester: str | None = None
@@ -173,7 +175,8 @@ class ErasureStatusOutput(BaseModel):
     # latest row holds no census that counted every store (a run in progress, none ran, one
     # left a store uncounted, or a build that keeps no census wrote the row).
     census: dict[str, int] | None = None
-    # Whether the saga deletes rows (true) or tombstones them; a single namespace's never does.
+    # The scope's delete-or-tombstone mode (a single namespace's is tombstone whatever
+    # was asked); a scope that holds a mirror is deleted whatever this says.
     purge: bool = False
 
 
@@ -187,7 +190,7 @@ class ErasureExportInput(BaseModel):
     # `user_id` exports one user's rows across the org (org admin only); `namespace` exports
     # one namespace (admin on it). Any other value is read as a namespace name.
     scope_type: ScopeType
-    # The user id or namespace to export.
+    # The user id or namespace to export; never a mirror's name (`acl-` and 24 hex digits).
     scope_value: str
     requester: str = Field(..., description="email or service account requesting the export")
     include_tombstoned: bool = Field(
@@ -254,6 +257,8 @@ class ErasureListInput(BaseModel):
 class ErasureListRow(BaseModel):
     erasure_id: str
     scope_type: str
+    # As `erasure.status` answers it: a list leaves out any mirror's name but for a
+    # platform admin.
     scope_value: str
     requester: str
     status: ErasureStatus

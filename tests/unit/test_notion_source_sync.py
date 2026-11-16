@@ -132,7 +132,7 @@ class _Store:
         return next((s for s in self.sources if s.name == name and s.active), None)
 
     async def source_revisions(
-        self, org: str, ns: str, name: str, *, searchable_only: bool = True
+        self, org: str, ns: str, name: str, *, searchable_only: bool = True, pictures: bool = False
     ) -> list[dict[str, str]]:
         return [
             {
@@ -318,6 +318,15 @@ def test_a_first_turn_writes_every_listed_page_and_database_page(world: _Store) 
     assert "filter" not in json.loads(query.content)
     assert world.states["wiki"]["state_value"] == "2026-01-03T00:00:00.000Z"
     assert _detail(world)["status"] == "ok" and _detail(world)["documents_seen"] == 3
+
+
+def test_a_page_source_at_its_bound_writes_no_new_page(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 2)
+    out = _run()
+    assert out.changed == 2 and not out.cut
+    assert _detail(world)["error"] == "too_many_documents: 1 new files past 2"
 
 
 def test_a_later_turn_asks_for_edits_after_the_stamp_and_skips_unchanged_pages(
@@ -637,6 +646,21 @@ def test_an_edit_within_90_s_of_a_read_is_read_again(world: _Store) -> None:
     world.requests.clear()
     _run()
     assert not [r for r in world.requests if r.url.path.startswith("/v1/blocks/")]
+
+
+def test_a_page_read_too_soon_is_read_again_at_the_bound(
+    world: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _only_the_page(world)
+    world.now = datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+    _run()
+    # Stored and at the bound: the re-read is of a stored page, so it takes no room.
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 1)
+    world.blocks[PAGE] = [_para("Edited 20 s after the read.")]
+    world.now = datetime(2026, 1, 1, 0, 0, 50, tzinfo=UTC)
+    _run()
+    assert world.docs[_uri(world, PAGE)]["input"].content == "Edited 20 s after the read."
+    assert _detail(world)["error"] == ""
 
 
 def test_a_child_page_is_a_document_of_its_own(world: _Store) -> None:

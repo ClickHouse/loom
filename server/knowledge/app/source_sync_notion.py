@@ -124,9 +124,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         for k, v in (stored_children if isinstance(stored_children, dict) else {}).items()
         if notion.valid_id(str(k))
     }
-    stored = {
-        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
-    }
+    stored = await sync.stored_copies_with_room(src, result)
     t = _Turn(src, token, result, known=known, stored=stored)
     result.kind_state["child_pages"] = t.known
     listed_at = _now()
@@ -427,17 +425,18 @@ async def _sync_page(
 ) -> bool:
     """Handle one listed page; False when the turn must stop listing."""
     uri = sync.source_uri_of(f)
-    if (
+    # Read too soon after its revision: a later edit may share the stamp, so the page is
+    # read and written again, with the new read time; once that is past the margin, the
+    # stored copy lets the page be skipped.
+    unsettled = bool(
         prior
         and prior["source_uri"] == uri
         and not _settled(f["modifiedTime"], prior.get("read_at", ""))
-    ):
-        # Read too soon after its revision: a later edit may share the stamp, so the
-        # page is read and written again, with the new read time; once that is past
-        # the margin, the stored copy lets the page be skipped.
-        prior = None
+    )
     fetch_and_write = functools.partial(_fetch_and_write, t, f, uri)
-    if not await sync.sync_item(t.src, f, uri, prior, run, t.result, fetch_and_write):
+    if not await sync.sync_item(
+        t.src, f, uri, prior, run, t.result, fetch_and_write, refetch=unsettled
+    ):
         return False
     # A rate limit or a refused token while listing the page's new children.
     return t.result.status not in ("rate_limited", "credential_invalid")

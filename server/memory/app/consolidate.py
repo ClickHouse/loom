@@ -28,7 +28,8 @@ from server.memory.api.models_admin import (
 )
 from server.memory.app.drops import record_drop
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.lock import refuses_retirement
+from server.memory.domain.lock import refuses_cross_key_retirement
+from server.memory.domain.memory_types import DEFINITION
 from server.memory.domain.sensitivity import (
     Sensitivity,
     inherited_sensitivity,
@@ -364,6 +365,8 @@ WHERE m.org = {org:String}
   -- since this read is left by `_held_since`.
   AND m.pinned = 0
   AND (m.lock_mode = '' OR (m.lock_until IS NOT NULL AND m.lock_until <= now()))
+  -- a definition under another key is another term, never a revision to merge
+  AND m.memory_type != {definition:String}
   -- a live vector only: a retired copy or a high write's fence is not a candidate
   AND e.tombstoned_at IS NULL
   AND e.embedding_dim > 0
@@ -518,12 +521,13 @@ def _canonical_member(cluster: list[dict[str, Any]], canonical_key: str) -> dict
 
 def _held_since(row: memory_repo.MemoryRow, read_sha: str) -> bool:
     """Whether `row`, a head the merge read as holding `read_sha`, holds other text now,
-    is redacted (a redaction keeps the hash) or is pinned or locked against a merge."""
+    is redacted (a redaction keeps the hash), is pinned or locked against a merge, or is a
+    definition now (a type-only rewrite keeps the hash too)."""
     return (
         hash_text(row.content_sha256) != read_sha
         or row.redacted_at is not None
         or bool(row.pinned)
-        or refuses_retirement(row)
+        or refuses_cross_key_retirement(row)
     )
 
 
@@ -871,6 +875,7 @@ async def handle_memory_consolidate(
             "age_cutoff": age_cutoff.replace(tzinfo=None),
             "limit": int(input.limit),
             "model": embedder.model_name,
+            "definition": DEFINITION,
         },
     )
     # A row whose value reads as high, whatever its label (unset after copy_to or an import,

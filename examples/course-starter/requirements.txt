@@ -1,0 +1,1 @@
+clickhouse-loom>=1.2,<2

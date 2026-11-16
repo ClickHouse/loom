@@ -58,7 +58,7 @@ def test_a_version_names_one_set_of_grants_and_policies() -> None:
     # Changing a grant, a policy, a live predicate or a retired table changes
     # this digest: bump ENTITY_VERSION and record the new digest here.
     assert {boundary.ENTITY_VERSION: boundary.structure_digest()} == {
-        2: "890ee33aa6395fddc60ab584ac8c9a98"
+        3: "3952974042653382ca11f607559494f5"
     }
 
 
@@ -128,16 +128,16 @@ def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants
 
 
 def test_every_other_users_policy_is_written_before_the_analysts() -> None:
-    for t in boundary.TABLES:
+    for name in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
         others = next(
             i
             for i, s in enumerate(SQL)
-            if f"`{boundary.OTHERS_POLICY_NAME}` ON `loom`.{t.name} " in s
+            if f"`{boundary.OTHERS_POLICY_NAME}` ON `loom`.{name} " in s
         )
         scoped = next(
-            i for i, s in enumerate(SQL) if f"`{boundary.POLICY_NAME}` ON `loom`.{t.name} " in s
+            i for i, s in enumerate(SQL) if f"`{boundary.POLICY_NAME}` ON `loom`.{name} " in s
         )
-        assert others < scoped, t.name
+        assert others < scoped, name
 
 
 def test_the_caps_profile_carries_its_own_digest() -> None:
@@ -158,6 +158,14 @@ def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
         "CREATE ROW POLICY OR REPLACE `loom_analyst_scope` ON `loom`.old_table "
         "AS permissive FOR SELECT USING 0 TO `loom_analyst`"
     ) in sql
+    others = (
+        "CREATE ROW POLICY OR REPLACE `loom_analyst_others` ON `loom`.old_table "
+        "AS permissive FOR SELECT USING 1 TO ALL EXCEPT `loom_analyst`"
+    )
+    assert sql.index(others) < sql.index(
+        "CREATE ROW POLICY OR REPLACE `loom_analyst_scope` ON `loom`.old_table "
+        "AS permissive FOR SELECT USING 0 TO `loom_analyst`"
+    )
     assert not any("ON `loom`.old_table TO" in s for s in sql if s.startswith("GRANT"))
 
 
@@ -171,9 +179,25 @@ def test_every_table_policy_carries_scope_signature_and_live_predicate() -> None
 
 
 def test_other_users_keep_reading_every_table() -> None:
+    # The canary too: once it has the analyst's policy, every other user would read none of
+    # its rows.
     others = _policies(boundary.OTHERS_POLICY_NAME)
-    assert set(others) == {t.name for t in boundary.TABLES}
+    assert set(others) == {t.name for t in boundary.TABLES} | {boundary.CANARY_TABLE}
     assert set(others.values()) == {"AS permissive FOR SELECT USING 1 TO ALL EXCEPT `loom_analyst`"}
+
+
+def test_the_foreign_policy_check_looks_on_every_table_the_others_policy_widens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
+    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS)
+    head = rf"CREATE ROW POLICY OR REPLACE `{boundary.OTHERS_POLICY_NAME}` ON `loom`\.(\w+) "
+    widened = {m.group(1) for s in sql if (m := re.match(head, s))}
+    assert widened == set(boundary.others_policy_tables())
+    assert {"old_table", boundary.CANARY_TABLE} <= widened
+    check = store.foreign_policies_sql("'loom'")
+    for table in widened:
+        assert sql_string(table) in check, table
 
 
 def test_tombstoning_tables_are_read_live() -> None:

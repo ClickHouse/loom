@@ -66,6 +66,7 @@ from server.memory.api.ops_inspect import memory_inspect
 from server.memory.api.ops_lifecycle import (
     memory_copy_to,
     memory_cross_promote,
+    memory_definitions_list,
     memory_demote,
     memory_evidence,
     memory_promote,
@@ -121,6 +122,7 @@ OPERATIONS: list[Operation] = [
     memory_ask,
     memory_promote,
     memory_demote,
+    memory_definitions_list,
     memory_bulk_set,
     memory_set_from_messages,
     memory_bulk_get,

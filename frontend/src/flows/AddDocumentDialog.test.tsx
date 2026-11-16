@@ -604,7 +604,7 @@ describe("AddDocumentDialog", () => {
         onOpenChange={() => {}}
         identity={{ org: "o", namespace: "col-team" }}
         place="Team"
-        tree={{ rows: [team], shown: team, onMade: () => {} }}
+        tree={{ rows: [team], shown: team }}
         onAdded={() => {}}
       />,
     );
@@ -661,7 +661,7 @@ describe("AddDocumentDialog", () => {
           onOpenChange={() => {}}
           identity={{ org: "o", namespace: "col-team" }}
           place="Team"
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
           onAdded={() => {}}
         />,
       );
@@ -677,9 +677,7 @@ describe("AddDocumentDialog", () => {
         place: "Team",
         onAdded: () => {},
       };
-      const { rerender } = render(
-        <AddDocumentDialog {...props} tree={{ rows: [team], shown: team, onMade: () => {} }} />,
-      );
+      const { rerender } = render(<AddDocumentDialog {...props} tree={{ rows: [team], shown: team }} />);
       await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
       let release: () => void = () => {};
       const later = new Promise<void>((r) => {
@@ -710,7 +708,7 @@ describe("AddDocumentDialog", () => {
           onOpenChange={() => {}}
           identity={{ org: "o", namespace: "col-team" }}
           place="Team"
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
           onAdded={() => {}}
         />,
       );
@@ -747,7 +745,7 @@ describe("AddDocumentDialog", () => {
           onOpenChange={() => {}}
           identity={{ org: "o", namespace: "col-team" }}
           place="Team"
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
           onAdded={() => {}}
         />,
       );
@@ -834,7 +832,7 @@ describe("AddDocumentDialog", () => {
         },
       });
       expect(await screen.findByText(/^1 folder was not read/)).toBeInTheDocument();
-      rerender(<AddDocumentDialog {...props} tree={{ rows: [team], shown: team, onMade: () => {} }} />);
+      rerender(<AddDocumentDialog {...props} tree={{ rows: [team], shown: team }} />);
       dropFolder(dir(".notes", [file("a.md")]));
       expect(await screen.findByText(/^The folder holds no files the Library could take/)).toBeInTheDocument();
       expect(screen.queryByText(/^1 folder was not read/)).not.toBeInTheDocument();

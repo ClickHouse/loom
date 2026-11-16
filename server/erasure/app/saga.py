@@ -40,12 +40,15 @@ from server.erasure.app.saga_steps import (
     _step_verify_residue,
     authority_steps,
     census_spellings,
+    erased_scope,
+    with_mirrors,
 )
 from server.erasure.domain.scopes import (
     applied_purge,
     parse_external_flag,
     parse_namespace_list,
     parse_purge_flag,
+    shown_scope,
 )
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
@@ -71,8 +74,8 @@ _TRANSIENT_FAILURES = (
 
 def audit_namespace(scope_type: str, scope_value: str) -> str:
     """The namespace an erasure's audit rows carry: the scope's own for a
-    single-namespace scope, `-` for one that spans namespaces."""
-    return scope_value if scope_type == "namespace" else "-"
+    single-namespace scope, `-` for one that spans namespaces or is a mirror."""
+    return shown_scope(scope_type, scope_value) if scope_type == "namespace" else "-"
 
 
 # ============================================================
@@ -123,7 +126,8 @@ def request_row_template(
         "requester": input.requester,
         "actor": actor,
         "urgency": input.urgency,
-        # The purge the saga applies: a single namespace's never purges, whatever was asked.
+        # The scope's mode (a single namespace's: tombstone, whatever was asked); a scope
+        # that holds a mirror is purged anyway (`saga_steps.with_mirrors`).
         "purge": applied_purge(input.scope_type, input.scope_value, bool(input.purge)),
         "attempts": attempts,
         "requested_at": requested_at,
@@ -226,7 +230,7 @@ async def begin_erasure(
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
+            "scope_value": shown_scope(input.scope_type, input.scope_value),
             "requester": input.requester,
         },
         request_id=erasure_id,
@@ -471,7 +475,7 @@ async def run_saga(
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
+            "scope_value": shown_scope(input.scope_type, input.scope_value),
             "requester": input.requester,
             "steps": [s.model_dump() for s in steps],
             # Counts only: a copy of the receipt that outlives the ledger row.
@@ -544,9 +548,10 @@ async def _census_tail(
     try:
         spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            per_table, unread = await erasure_census.evidence_census(
-                org, scope_type, scope_value, spellings=spellings
-            )
+            async with erased_scope(org, scope_type, scope_value) as scope:
+                per_table, unread = await erasure_census.evidence_census(
+                    org, scope_type, scope, spellings=spellings
+                )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
         log.warning("erasure: census tail failed after a step failure: %s", error_summary(e))
         return
@@ -718,7 +723,7 @@ async def _saga_namespace(
         )
 
     for name, fn in authority_steps(NAMESPACE_STEPS):
-        await _step(name, fn, org, namespace)
+        await _step(name, with_mirrors(fn), org, namespace)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse

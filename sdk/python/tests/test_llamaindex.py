@@ -249,6 +249,8 @@ def test_memory_block_reads_with_the_latest_user_message() -> None:
             "query": "Lisbon, and pick my usual seat",
             "top_k": 1,
             "namespace_scope": "this",
+            "bodies": "full",  # the stored clip whatever the top_k
+            "explain": False,
             "tags": ["customer"],
             "user_id": "alice",
         }
@@ -422,10 +424,13 @@ def test_the_block_posts_memory_search_and_extraction_through_the_sdk() -> None:
     )
     (search, extract) = wire.posts
     assert search[0] == "/v1/memory.search"
-    assert {k: search[1][k] for k in ("query", "top_k", "namespace_scope", "tags", "user_id")} == {
+    keys = ("query", "top_k", "namespace_scope", "bodies", "explain", "tags", "user_id")
+    assert {k: search[1][k] for k in keys} == {
         "query": "seat?",
         "top_k": 2,
         "namespace_scope": "this",
+        "bodies": "full",
+        "explain": False,
         "tags": ["customer"],
         "user_id": "alice",
     }

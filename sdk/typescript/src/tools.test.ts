@@ -98,7 +98,7 @@ describe("AgentTools.execute", () => {
     expect(JSON.parse(await tools.execute("loom_recall", '{"query":"seat","top_k":3}'))).toEqual({
       memories: [{ memory_key: "seat", content: "Prefers an aisle seat", similarity: 0.512 }],
     });
-    expect(calls[1].body).toMatchObject({ query: "seat", top_k: 3 });
+    expect(calls[1].body).toMatchObject({ query: "seat", top_k: 3, bodies: "full", explain: false });
 
     expect(JSON.parse(await tools.execute("loom_ask", { query: "which seat?" }))).toEqual({
       answer: "An aisle seat.",
@@ -159,5 +159,27 @@ describe("AgentTools argument checks", () => {
     await tools.execute("loom_recall", { query: "q", top_k: "3", unknown_extra: true });
     expect(calls.at(-1)?.body).toMatchObject({ query: "q", top_k: 3 });
     expect(calls.at(-1)?.body).not.toHaveProperty("unknown_extra");
+  });
+
+  it("drops whole recalled memories over the cap, so the result stays JSON", async () => {
+    const results = [0, 1, 2, 3, 4].map((i) => ({
+      memory_key: `m${i}`,
+      content_excerpt: "x".repeat(400),
+      similarity: 0.9 - i / 100,
+    }));
+    const { bot } = harness({ "memory.search": { results } });
+    const tools = bot.tools({}, { only: ["loom_recall"], maxResultChars: 1_000 });
+    const out = JSON.parse(await tools.execute("loom_recall", { query: "seat", top_k: 5 }));
+    expect(out.memories.map((m: { memory_key: string }) => m.memory_key)).toEqual(["m0", "m1"]);
+    expect(out.omitted).toBe(3);
+  });
+
+  it("keeps the best recalled memory when it alone is over the cap, and cuts it", async () => {
+    const results = [0, 1].map((i) => ({ memory_key: `m${i}`, content_excerpt: "x".repeat(900), similarity: 0.9 }));
+    const { bot } = harness({ "memory.search": { results } });
+    const tools = bot.tools({}, { only: ["loom_recall"], maxResultChars: 500 });
+    const out = await tools.execute("loom_recall", { query: "seat" });
+    expect(out.endsWith("…[truncated]")).toBe(true);
+    expect(out.startsWith('{"memories":[{"memory_key":"m0"')).toBe(true);
   });
 });

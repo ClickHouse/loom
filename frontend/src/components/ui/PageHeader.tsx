@@ -7,8 +7,8 @@ import { useEffect, type ReactNode } from "react";
  */
 export interface PageHeaderProps {
   title: string;
-  /** The tab this route shows, when one page has several (Memories: Recall), so the
-   *  document title names the route. */
+  /** What the route shows inside the page (a tab, as Memories' Recall, or the Library's
+   *  place), so the document title names it. */
   tab?: string;
   /** Beside the title: the scope badge, a status badge, a filter that belongs to it. */
   children?: ReactNode;

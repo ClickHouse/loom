@@ -64,6 +64,21 @@ async def earlier_open(job: dict[str, Any]) -> bool:
     return bool(set(earlier) - await pg_jobs.held_ids(job["org"], job["namespace"], earlier))
 
 
+async def open_for_source(org: str, namespace: str, source_uri: str) -> bool:
+    """Whether a job of the source is still to run or running. Under Postgres both stores
+    are read, as `earlier_open` reads them: a job an older build queued is held only in
+    ClickHouse."""
+    if not pg.enabled():
+        return bool(await ingestions.open_for_source(org, namespace, source_uri, limit=1))
+    if await pg_jobs.open_for_source(org, namespace, source_uri):
+        return True
+    with sequential_reads():
+        open_ids = await ingestions.open_for_source(org, namespace, source_uri, limit=_EARLIER_PAGE)
+    if len(open_ids) == _EARLIER_PAGE:
+        return True
+    return bool(set(open_ids) - await pg_jobs.held_ids(org, namespace, open_ids))
+
+
 async def unprojected(org: str, namespace: str) -> tuple[int, bool]:
     """Under Postgres, of the namespace's open jobs and most recently saved non-pending
     ones (at most `UNPROJECTED_PAGE` each), how many ClickHouse holds at an older

@@ -183,7 +183,14 @@ class LoomMemoryBlock(BaseMemoryBlock[str]):
             return ""
         # Read the namespace the block writes to, whatever the deployment's default;
         # with no agent_id the search reads every agent's memories there.
-        kwargs: dict[str, Any] = {"top_k": self.top_k, "namespace_scope": "this"}
+        kwargs: dict[str, Any] = {
+            "top_k": self.top_k,
+            "namespace_scope": "this",
+            # Unpinned, a large top_k serves excerpts (above 15 by default)
+            # and drops each hit's explanation.
+            "bodies": "full",
+            "explain": False,
+        }
         if self.tags:
             kwargs["tags"] = list(self.tags)
         if self.user_id:

@@ -110,6 +110,15 @@ def test_retirement_victims_retire_the_closed_carrier_and_name_the_survivor() ->
     )
 
 
+def test_retirement_victims_never_retire_a_definition() -> None:
+    links = [{"subject": "g", "relation": "r", "object": "old", "memory_key": "definition/g"}]
+    row = _mem("definition/g", "m1")  # a session copy: the path retires no definition
+    definition = {**row, "memory_type": "definition"}
+    repair = [_repair("g", "r", "old", "new")]
+    assert proj.retirement_victims(repair, links, [definition], new_keys=set()) == []
+    assert len(proj.retirement_victims(repair, links, [row], new_keys=set())) == 1
+
+
 def test_retirement_victims_never_retire_the_batch_or_unknown_rows() -> None:
     links = [
         {"subject": "g", "relation": "r", "object": "old", "memory_key": "fresh"},
@@ -149,8 +158,11 @@ async def test_retire_behind_repairs_honours_the_policy_and_writes_through_super
     # newest_wins: links → memories → supersede
     captured: list[Any] = []
 
+    skips: list[Any] = []
+
     async def fake_supersede(org, victims, *, ch=None, skip=None, **_kw):
         captured.append((org, victims))
+        skips.append(skip)
         return len(victims)
 
     monkeypatch.setattr(memory_repo, "supersede_duplicates", fake_supersede)
@@ -177,6 +189,29 @@ async def test_retire_behind_repairs_honours_the_policy_and_writes_through_super
     assert "select_sequential_consistency = 1" in links_sql
     assert "select_sequential_consistency = 1" in mem_sql
     assert "status IN ('active', 'duplicate', 'conflicted')" in mem_sql
+    assert "memory_type" in mem_sql
+
+    # A definition the read returns stays live; the same row of another type retires.
+    async def retired(memory_type: str) -> int:
+        ch = StubCH()
+        ch.one.append({"default_conflict_policy": "newest_wins"})
+        ch.all.append([{"subject": "g", "relation": "r", "object": "old", "memory_key": "k_old"}])
+        ch.all.append([{**_mem("k_old", "m-old"), "memory_type": memory_type}])
+        return await proj._retire_memories_behind_repairs(
+            inp, [_repair("g", "r", "old", "new")], tm, ch=ch
+        )
+
+    captured.clear()
+    assert await retired("definition") == 0 and captured == []
+    assert await retired("semantic") == 1
+
+    # The row the read saw as a fact is refused once its current version is a definition.
+    def current(memory_type: str) -> Any:
+        row = {**_mem("k_old", "m-old"), "memory_type": memory_type}  # a session copy
+        return SimpleNamespace(**row, status="active", lock_mode="")
+
+    skip = skips[-1]
+    assert skip(current("definition")) and not skip(current("semantic"))
 
     # no repairs → nothing, not even the policy read
     ch = StubCH()

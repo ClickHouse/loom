@@ -293,7 +293,7 @@ async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unrea
 
     from server.knowledge.app import source_sync
 
-    src = SimpleNamespace(org="o", namespace="code-x", name="docs")
+    src = SimpleNamespace(org="o", namespace="code-x", name="docs", access="namespace")
     retired: list[str] = []
 
     async def active() -> list[object]:

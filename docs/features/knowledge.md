@@ -416,16 +416,22 @@ one slow source never holds the others back.
 
 What fails for every file is the turn's: the token exchange, the listing, a `401` on any
 request (`credential_invalid`), a rate limit, and an extractor whose capabilities cannot
-be read. Such a turn keeps the stamp, so the next pass lists the same files again. A
-folder source holds at most 50,000 documents (not a setting): at that bound a turn
-writes no new file and notes `too_many_documents`, and goes on updating and retiring the
-stored ones, so removing an item brings the source back under it; a held file comes in
-with the next full listing once there is room (the periodic one, or `sync_now` with
-`full`), and only a turn that lists it notes the bound, so a clean status between full
-listings does not mean every file is in; a read of the stored copies that finds more
-than the bound ends the turn `failed` with `too_many_documents`, since past it a stored
-file would read as new; such a source retires nothing, so only `remove` with
-`delete_documents` brings it back. Trouble with one file is that file's:
+be read. Such a turn keeps the stamp, so the next pass lists the same files again.
+
+A source of any kind holds at most `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents
+(default 50,000, at most 200,000), its stored ones plus the new ones a turn writes. At
+that bound a turn tries no new file and notes `too_many_documents` with how many it held
+back, and goes on updating and retiring the stored ones. Removing an item or raising the
+setting brings a source back under it; a `recording` source, which retires nothing,
+comes back only by raising the setting or by `knowledge.delete` of some of its
+documents. A held file comes in with the next full listing once there is room (the
+periodic one, or `sync_now` with `full`). The count is of the new files the turn did not
+try, so it includes any that might never be written (a format no extractor reads), and
+only a turn that lists them notes it, so a clean status between full listings does not
+mean every file is in. The turn reads the stored copies in pages by address, so a source
+over the bound (a lowered setting) still compares every file and retires as usual.
+
+Trouble with one file is that file's:
 
 - A file the store refuses on its own (a `403` or `404` on its export, download or deck
   read: an export over the store's limit, downloads turned off), one over
@@ -623,7 +629,9 @@ A recording its store no longer lists retires nothing: both stores delete record
 and transcripts on their own retention schedule (a conference record after 30 days), so
 absence is not the writer asking. A recording's document goes with
 `remove(delete_documents=true)` or `knowledge.delete`; while the store still lists it, a
-full listing writes it again.
+full listing writes it again. So a recording source only grows, and at
+`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` it holds back every new recording until the
+setting is raised or some of its documents are deleted.
 
 Speaker names are text of the transcript like any other, under the same rules as every
 document: the document is written as the sync worker with `user_id` `-`, so a
@@ -1005,6 +1013,7 @@ that scope, and `memory_findings` is skipped, since the audit reads every user's
 | Rename a document                      | `knowledge.delete`, then `knowledge.add` at the new URI | `source_uri` is the identity agents cite, so it is not editable.                                      |
 | Remove a document                      | `knowledge.delete`                                      | Chunks and the document row are superseded; searches stop returning them at once.                     |
 | Bring a deleted document back          | `knowledge.restore`                                     | The deleted version and its chunks are live again ([below](#restoring-a-deleted-document)).           |
+| Move documents to another collection   | `knowledge.move`                                        | Each is written in the new place whole and deleted where it was ([below](#moving-documents)).         |
 | Erase a person's or a namespace's data | [`erasure.request`](./memory/retention-and-erasure.md)  | The erasure saga deletes documents, chunks and stored originals, and cascades to external systems.    |
 
 Under the ClickHouse authority `knowledge.add` does not retire an earlier version at
@@ -1107,6 +1116,47 @@ again brings both back. A document a source sync retired is retired again by the
 sync if the source no longer lists it. How restore orders its reads and writes against
 erasures, other writes and the sweep, and the cases it cannot take back: [failure and
 recovery](../architecture/failure-and-recovery.md#knowledge-restore).
+
+### Moving documents
+
+`knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the
+same org: a collection, `@me` (an end user's own collection) or a namespace. The caller
+needs writer on both; one it cannot write answers `found: false` and moves nothing, so the
+answer never says whether a collection it cannot reach exists. Each document is written in
+the new place with its chunks and their vectors (nothing is embedded again), its original
+file and its extraction artifact (stored again there: an original belongs to its namespace's
+sweep and erasure), its tables, its title, description, tags, author and date, as the next
+revision of its source there. It then takes the sharing of the place it went to. Where it
+was, it is deleted as `knowledge.delete` leaves it, so `knowledge.restore` there brings it
+back (beside the moved copy).
+
+Each source answers on its own: `moved: true`, or a `reason`:
+
+| `reason`    | Meaning                                                                                                                                                                                                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_found` | No live document has this source in `namespace` (one already moved answers this on a retry).                                                                                                                                                                                                                     |
+| `exists`    | Another document with this source is live in `to_namespace`; nothing is overwritten.                                                                                                                                                                                                                             |
+| `synced`    | A [document source](#document-sources) wrote it, and its next sync would write it back.                                                                                                                                                                                                                          |
+| `busy`      | Another write of the source or the place holds it or took it since it was read, a publication or an ingest of it is still to land, its original was refused by the object store, its claim was cut off, or its copy did not finish and was taken back; a cut-off can leave it in both places; try again shortly. |
+| `erased`    | An erasure that has not finished may reach the document or the place it goes; the document stays where it was.                                                                                                                                                                                                   |
+
+A move takes the source's claim in both namespaces, as a restore does in one. It writes the
+new place first and deletes the old one last, so a move cut off between the two leaves the
+document in both places, never in neither; moving it again finds its copy there (the same
+text, title, description, tags, metadata, author, ingest time and tables) and only deletes
+the old one (after writing the copy again if it lacks chunks or tables), while an edit of
+either since makes the copy another document, which answers `exists`, as does a copy with
+its tables gone that serves more chunks than the source (writing over it would serve less).
+A source whose own move fails (its claim held or cut off, a write of it meanwhile, its
+original refused by the object store) answers `busy`, and the others still move; a failure
+of the call itself is answered once every source has. An erasure registered while a move
+runs takes the copy back before the delete and answers `erased`: an `erased` document is
+always still where it was. The SDKs retry `knowledge.move` after a lost answer with the same
+Idempotency-Key, and the server replays the first answer; a retry without the key, or one
+the replay cache cannot answer under the ClickHouse authority, runs the move again, and a
+document that moved the first time answers `not_found`. Under the Postgres authority each of
+the two writes is its own commit. The ordering and what a cut-off move leaves are in
+[failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
 
 ## Ingesting files
 
@@ -1292,8 +1342,7 @@ read, and not while it holds too many to list.
   an empty folder. Sibling folders whose names differ only in case or spacing become one
   collection; a file whose path then repeats is skipped and listed.
 
-A document stays in the collection it was added to: to move one, add it again where it
-belongs and delete the old one, which leaves its earlier revisions behind.
+[Moving documents](#moving-documents) puts one in another collection later.
 
 ## Datasets
 

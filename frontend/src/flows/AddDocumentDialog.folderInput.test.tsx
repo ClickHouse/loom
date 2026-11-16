@@ -34,7 +34,7 @@ describe("Choose a folder", () => {
         onOpenChange={() => {}}
         identity={{ org: "o", namespace: "col-team" }}
         place="Team"
-        tree={{ rows: [team], shown: team, onMade: () => {} }}
+        tree={{ rows: [team], shown: team }}
         onAdded={() => {}}
       />,
     );
