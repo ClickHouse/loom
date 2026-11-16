@@ -10,7 +10,6 @@ import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { type ClaimCreateVersion, CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
-import { MembersDialog } from "../flows/MembersDialog";
 import { CollectionBack, CollectionChips, CollectionPath, cycleStart } from "./LibraryHierarchy";
 import {
   COLLECTIONS_LISTED,
@@ -198,7 +197,8 @@ export function useReadableCollections(org: string, showing: string | null = nul
 }
 
 /** The Library's place line: the place picker (where no tree is shown), the path, the chips
- *  and the collection's menu (Members, Move, Delete). */
+ *  and the collection's menu (Move, Delete). The header says who can see the collection and
+ *  offers Share (CollectionSharing). */
 export function LibraryCollections({
   org,
   namespace,
@@ -248,16 +248,12 @@ export function LibraryCollections({
   besideTree?: boolean;
 }) {
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
-  // The collection Members was opened for: the dialog shows only while that one is shown, so
-  // Back to another never lands a grant on it.
-  const [members, setMembers] = useState<string | null>(null);
   const { rows, error } = collections;
-  // New collection and Members belong to the place they opened in: a move to another
+  // New collection and Move belong to the place they opened in: a move to another
   // closes them, and coming back does not reopen them. The list answering (or read again)
   // moves nothing, so what was typed stays.
   useEffect(() => {
     setCreating(false);
-    setMembers(null);
     setMoving(null);
   }, [place]);
   // The select's order; beside the tree there is no select.
@@ -332,7 +328,6 @@ export function LibraryCollections({
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
   if (collection) {
-    items.push({ label: "Members", icon: "users", onSelect: () => setMembers(collection.namespace) });
     if (collection.role === "admin") {
       items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(collection) });
       items.push({
@@ -408,7 +403,7 @@ export function LibraryCollections({
             {about}
           </Popover.Content>
         </Popover>
-        {collection && <RowMenu name={collectionTitle(collection)} items={items} />}
+        {collection && items.length > 0 && <RowMenu name={collectionTitle(collection)} items={items} />}
         {/* The collections inside, after the path; a phone's select lists them. */}
         {!phone && (
           // One per place, so Show more starts again in the next.
@@ -472,17 +467,6 @@ export function LibraryCollections({
           initialParent={current && parents.includes(current) ? current.namespace : ""}
           claimCreateVersion={claimCreateVersion}
           onCreated={onCreated}
-        />
-      )}
-      {members && current && members === current.namespace && (
-        <MembersDialog
-          open
-          onOpenChange={(v) => {
-            if (!v) setMembers(null);
-          }}
-          org={org}
-          namespace={current.namespace}
-          admin={current.role === "admin"}
         />
       )}
     </div>

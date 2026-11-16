@@ -20,6 +20,8 @@ from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_graph as graph_steps
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
 
 class _CH:
     """Records every statement; counts come from `count`, mutations poll done."""

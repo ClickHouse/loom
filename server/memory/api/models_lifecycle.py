@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from server.memory.api.models_common import _Identity
+from server.memory.domain.definition_check import LapseReason
 
 # ============================================================
 # memory.promote / memory.demote — shared memory plane
@@ -32,14 +33,19 @@ class MemoryPromoteInput(BaseModel):
     target_key: str | None = None  # default = memory_key
     # Why it was promoted; stored on the shared row and returned by memory.lineage.
     rationale: str = ""
-    # Stored as the shared row's `promoted_by`; None records `explicit`.
+    # Stored as the shared row's `promoted_by` (None records `explicit`); ignored for a
+    # definition, whose promoter is the token's actor, and named in `ignored_args`.
     approver: str | None = None
     # Days (0–90) the promotion counts as reversible; memory.demote reports it.
     reversible_for_days: int = Field(default=7, ge=0, le=90)
-    # On learnings.review-driven promotions, written to
-    # loom.shared.promoted_from_candidate_id so memory.lineage resolves via an
-    # FK-style lookup. NULL for auto-promote / direct callers (time-window fallback).
+    # On learnings.review-driven promotions (not for a definition, where it is named in
+    # `ignored_args`), written to loom.shared.promoted_from_candidate_id so memory.lineage
+    # resolves via an FK-style lookup. NULL for a direct caller.
     promoted_from_candidate_id: str | None = None
+    # For a definition, the content hash it approves (the row's `content_sha256` as
+    # memory.get serves it), required and checked; for any other row it is ignored and
+    # named in `ignored_args`.
+    approved_sha256: str | None = None
 
 
 class MemoryPromoteOutput(BaseModel):
@@ -48,6 +54,9 @@ class MemoryPromoteOutput(BaseModel):
     promotion_event: str  # UUID, also the audit_log request_id
     # End of the reversal window: now plus `reversible_for_days`.
     reversible_until: datetime
+    # Fields the call sent that this promotion does not use: for a definition `approver`
+    # and `promoted_from_candidate_id`, for any other row `approved_sha256`.
+    ignored_args: list[str] = Field(default_factory=list)
 
 
 class MemoryDemoteInput(BaseModel):
@@ -65,6 +74,51 @@ class MemoryDemoteOutput(BaseModel):
     was_reversible: bool  # whether within the reversal window
     # When the shared row and its embedding were tombstoned; None when nothing was demoted.
     tombstoned_at: datetime | None = None
+
+
+# ============================================================
+# memory.definitions.list — the shared definitions and whether each is governed
+# ============================================================
+
+
+class MemoryDefinitionsListInput(BaseModel):
+    """The namespace's shared definitions and whether each is governed.
+
+    The most recently promoted come first, with why a lapsed one lapsed and the names a
+    governed one loses."""
+
+    org: str
+    namespace: str
+
+
+class LostName(BaseModel):
+    name: str  # as the definition writes it
+    winner: str  # the key of the definition that holds it
+
+
+class DefinitionEntry(BaseModel):
+    memory_key: str
+    promoted_at: datetime
+    # Beyond the ceiling's most recently promoted: its source is not read and the fields
+    # below stay empty.
+    capped: bool = False
+    term: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    # None for a capped entry.
+    verdict: Literal["governed", "lapsed"] | None = None
+    # Why a lapsed definition lapsed (docs/concepts/identities-and-namespaces.md).
+    lapse_reason: LapseReason | None = None
+    # The names a governed definition loses to another that holds them.
+    lost: list[LostName] = Field(default_factory=list)
+
+
+class MemoryDefinitionsListOutput(BaseModel):
+    # How many live shared definitions the namespace holds, capped ones included.
+    count: int
+    # `memory_shared_definitions_max`.
+    ceiling: int
+    # At most twice the ceiling, the most recently promoted first.
+    definitions: list[DefinitionEntry]
 
 
 # ============================================================

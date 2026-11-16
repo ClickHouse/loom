@@ -61,7 +61,9 @@ import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
-import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
+import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
+import { useCollectionSharing } from "./CollectionSharing";
+import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
 import { TopLevelPlaces } from "./LibraryHierarchy";
 import { expandedKey, LibraryTree } from "./LibraryTree";
 import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
@@ -226,6 +228,8 @@ export function Documents() {
     [collections.kept],
   );
   const resolving = !!collection && collections.rows === null && !listFailed;
+  // Taken from the kept list, so the header holds steady while the list is read again.
+  const headerCollection = collection ? (byName.get(collection) ?? null) : null;
   const treeCurrent = shown?.namespace ?? (resolving ? collection : null);
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
@@ -329,6 +333,15 @@ export function Documents() {
   const [tablesFor, setTablesFor] = useState<string | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
+  // The documents Move to… was opened for; another place shown closes it.
+  const [moving, setMoving] = useState<string[] | null>(null);
+  // Whether the open Move to… dialog moved any document: focus then goes to the search.
+  const movedSome = useRef(false);
+  const openMove = useCallback((uris: string[]) => {
+    movedSome.current = false;
+    setMoving(uris);
+  }, []);
+  useEffect(() => setMoving(null), [identity.org, identity.namespace]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
   // A reason that appears while Edit details is open closes it. Add and Replace stay: they
   // hold an upload in flight, which the server refuses if the role no longer reaches it.
@@ -461,6 +474,16 @@ export function Documents() {
 
   // The library is empty only when nothing narrowed the read and the read worked.
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
+  const share = useCollectionSharing({
+    org: picked.org,
+    collection: headerCollection,
+    byName,
+    repeated,
+    truncated: collections.kept?.truncated ?? false,
+    empty: emptyLibrary,
+    place: collection ?? picked.namespace,
+    onOpenPlace: goTo,
+  });
   const readTags = JSON.parse(serverTags) as string[];
   const loadMore = async () => {
     if (!nextCursor || loadingMore) return;
@@ -521,7 +544,8 @@ export function Documents() {
     // naming it; a failed read says so and keeps the link.
     handlers.current.openByUri(uri, () => setViewParam("doc", null));
   }, [pendingDocSourceUri, rows, rowsScope, collection, shown, clearPendingDoc, identity.org, identity.namespace]);
-  // After a row's delete, the read that drops the row hands focus to the search field.
+  // After a row's delete, the read that drops the row hands focus to the search field (a
+  // move's dialog hands it there itself as it closes).
   useEffect(() => {
     if (!focusSearchOnRead.current) return;
     focusSearchOnRead.current = false;
@@ -788,7 +812,7 @@ export function Documents() {
   // dialog is up (each owns its Escape).
   const shownRows = firstScreenOnly ? visibleRows?.slice(0, FIRST_SCREEN_ROWS) : visibleRows;
   const rowKeys = useMemo(() => (visibleRows ?? []).map((r) => r.source_uri), [visibleRows]);
-  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry;
+  const dialogOpen = !!previewEntry || addOpen || !!replaceEntry || !!editEntry || !!moving;
   const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
   const { selected } = selection;
   const clearSelection = selection.clear;
@@ -935,6 +959,7 @@ export function Documents() {
       replace: setReplaceEntry,
       edit: setEditEntry,
       remove: (uri) => void handlers.current.onDelete(uri),
+      move: (uri) => openMove([uri]),
       writeReason,
       ...(readOnly ? {} : { toggle: toggleRow }),
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
@@ -1002,6 +1027,49 @@ export function Documents() {
     collections.rows && !collections.truncated && (!collection || shown)
       ? { rows: collections.rows, shown }
       : undefined;
+  // Where documents can go from here: the header's namespace when the person adds there, and
+  // the collections they write, in tree order; not the place shown.
+  const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
+  const movePlaces = useMemo<MovePlace[]>(() => {
+    const out: MovePlace[] = [];
+    if (addsToHeader && identity.namespace !== picked.namespace) {
+      out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
+    }
+    for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
+      if (c.role === "viewer" || c.namespace === identity.namespace) continue;
+      out.push({
+        namespace: c.namespace,
+        label: c.personal ? collectionTitle(c) : distinctTitle(c, repeated),
+        depth: c.personal ? 0 : depth,
+        kind: c.personal ? "personal" : "collection",
+      });
+    }
+    return out;
+  }, [collections.kept, repeated, identity.namespace, addsToHeader, picked.namespace]);
+  const moveDialog = moving && (
+    <MoveDocumentsDialog
+      org={identity.org}
+      from={identity.namespace}
+      fromLabel={shown ? collectionTitle(shown) : `Namespace ${identity.namespace}`}
+      sourceUris={moving}
+      places={movePlaces}
+      placesReading={
+        collections.kept ? (collections.kept.truncated ? "truncated" : null) : collections.error ? "failed" : "loading"
+      }
+      onMoved={(moved) => {
+        // Any answer may have changed the list, a failed call's too.
+        if (moved.length) movedSome.current = true;
+        reload();
+      }}
+      onClose={() => setMoving(null)}
+      onCloseAutoFocus={(e) => {
+        if (!movedSome.current) return;
+        // The rows, the menu or the selection bar that opened it may have left.
+        e.preventDefault();
+        searchRef.current?.focus();
+      }}
+    />
+  );
   // Mounted while open, beside either page, so a batch outlives a page move.
   const addDialog = addOpen && (
     <AddDocumentDialog
@@ -1031,6 +1099,8 @@ export function Documents() {
         {page}
       </div>
       {addDialog}
+      {moveDialog}
+      {share.dialog}
     </>
   );
 
@@ -1129,6 +1199,7 @@ export function Documents() {
                 />
               </Suspense>
             )}
+            {share.button}
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && !resolving && (
               <Unavailable reason={writeReason}>
@@ -1148,25 +1219,30 @@ export function Documents() {
       </PageHeader>
       {picker}
       {seesGaps && !resolving && <KnowledgeGaps org={identity.org} namespace={identity.namespace} />}
-      {/* One line: the library's figures once they are read, what the library is behind the tip.
-          A phone, with the place picker above the list, has no room for it: the bar's count
-          says how many are shown. */}
-      <div className="mb-4 hidden min-h-6 items-center gap-1 text-sm text-text-muted tabular sm:flex">
-        <span className="min-w-0 truncate">
-          {docCount && aggregateStats && rows && rows.length > 0
-            ? [
-                `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
-                `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
-                ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
-              ].join(" · ")
-            : "Reference docs your agents can read."}
+      {/* One line: who can see the collection shown, the library's figures once they are read,
+          what the library is behind the tip. A phone, with the place picker above the list, has
+          room for who can see it only: the bar's count says how many are shown. */}
+      <div
+        className={`mb-4 min-h-6 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-muted tabular ${headerCollection ? "flex" : "hidden sm:flex"}`}
+      >
+        {share.line}
+        <span className={`min-w-0 items-center gap-1 ${headerCollection ? "hidden shrink-0 sm:flex" : "flex"}`}>
+          <span className="min-w-0 truncate">
+            {docCount && aggregateStats && rows && rows.length > 0
+              ? [
+                  `${docCount} document${rows.length === 1 && !nextCursor ? "" : "s"}`,
+                  `${aggregateStats.chunks.toLocaleString()} chunk${aggregateStats.chunks === 1 ? "" : "s"}`,
+                  ...(aggregateStats.withBlob > 0 ? [formatBytesShort(aggregateStats.bytes)] : []),
+                ].join(" · ")
+              : "Reference docs your agents can read."}
+          </span>
+          <IconButton
+            icon="info-in-circle"
+            size="xs"
+            label="About the library"
+            tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
+          />
         </span>
-        <IconButton
-          icon="info-in-circle"
-          size="xs"
-          label="About the library"
-          tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
-        />
       </div>
 
       {/* The Sources button opens the place's sources here, so a closed list costs the rows
@@ -1186,7 +1262,10 @@ export function Documents() {
                 count: selected.size,
                 onClear: clearSelection,
                 all: { total: rowKeys.length, checked: selection.allSelected, onToggle: selection.toggleAll },
-                actions: [{ label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete }],
+                actions: [
+                  { label: "Move to…", icon: "arrow-right", onClick: () => openMove(Array.from(selected)) },
+                  { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
+                ],
               }
             : null
         }
@@ -1586,6 +1665,7 @@ interface DocRowActions {
   replace: (r: KnowledgeEntry) => void;
   edit: (r: KnowledgeEntry) => void;
   remove: (sourceUri: string) => void;
+  move: (sourceUri: string) => void;
   /** Why the writes are unavailable, or null: a viewer of the collection shown, a role on
    *  the namespace known to be below writer, or the role still loading. The writes stay in
    *  the menu, unavailable, with it. */
@@ -1610,13 +1690,14 @@ interface DocRowProps {
 const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
-  const { replace, edit, remove, toggle, writeReason } = actions;
+  const { replace, edit, remove, move, toggle, writeReason } = actions;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
     // Uploading a file into a text-only document is the same replace flow.
     { label: "Replace content", icon: "refresh", reason: writeReason, onSelect: () => replace(r) },
     { label: "Edit details", icon: "pencil", reason: writeReason, onSelect: () => edit(r) },
+    { label: "Move to…", icon: "arrow-right", reason: writeReason, onSelect: () => move(r.source_uri) },
     {
       label: "Copy URI",
       icon: "copy",

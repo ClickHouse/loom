@@ -14,8 +14,8 @@ from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
 from server.memory.domain.decision_schema import is_whole_row
+from server.memory.domain.search_types import SHARED_AGENT
 from server.memory.domain.sensitivity import reads_high
-from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__package__)
 

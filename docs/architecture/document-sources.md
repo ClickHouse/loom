@@ -403,12 +403,13 @@ for everyone. So no token searches, reads or exports a mirror, and the threat mo
 rows hold for every token. A mirror has no directory row and appears in no namespace
 listing or usage view; a deleted name keeps its mirror and counts as in use
 (`namespace_census.in_use`, with the same code as any other reason, whatever the mirror
-holds) until a namespace erasure, or the mirror-erase command, deletes the
-`loom.knowledge_mirrors` row. A namespace erasure deletes that row last, after the
-mirror's rows (the table is classified as holding no memory content), so an erased name
-can be registered again and gets a new mirror. The migration that enables the refusal
-first looks for namespaces of the reserved form, registered or holding rows, and refuses
-to run, naming them, if it finds any.
+holds) until a namespace erasure, or the mirror-erase command, writes its
+`loom.knowledge_mirrors` row `deleted`. A namespace erasure does that last, after the
+mirror's rows (the row holds names only), so an erased name can be registered again and
+gets a new mirror. A name that has ever had a mirror is always erased as a purge, a new
+owner's erasure included, since the registry keeps every mirror it had. The migration
+that enables the refusal first looks for namespaces of the reserved form, registered or
+holding rows, and refuses to run, naming them, if it finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below, while the namespace's source list holds an active mirrored source (a fact
@@ -596,7 +597,8 @@ Each mirrored document carries its permission list in an `access_json` column of
 (`loom.documents`; under the Postgres authority it rides in the head's `row` jsonb, with
 no Postgres migration), written by the turn of the source that owns the document:
 
-- `emails`: the people the store grants any role, lower-cased, and, by credential mode:
+- `emails`: the people the store grants any role on the whole file, lower-cased, and, by
+  credential mode:
   - `connected`: the owner, whose account listed the file in that turn, entered as the
     source's `owner_subject` (an `owner` entry, never an email, and never the
     connection's store email), since the owner chose the item and can open it. When the
@@ -616,8 +618,8 @@ no Postgres migration), written by the turn of the source that owns the document
 - `domains` and `anyone`: a domain or public permission the store marks discoverable. A
   link-only share (one the store marks not discoverable) is left out: it lets someone
   who holds the link open the file, not find it.
-- `unread`: no current list is known; such a list carries no `emails`, `groups`,
-  `domains` or `anyone`, and admits nobody.
+- `unread`: no current list is known; such a list carries no `owner`, `emails`,
+  `groups`, `domains` or `anyone`, and admits nobody.
 
 For `gdrive` the list is the file's `permissions`, read with the listing, or with
 `permissions.list` when the listing leaves it out; for `linear`, the active members of
@@ -669,27 +671,27 @@ A token reads as one person, for both the `owner` entry and the emails, or as no
   (`X-Loom-On-Behalf-Of`) reads as nobody, so it sees only `anyone` documents.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
-a link-only permission, a permission the store marks deleted or pending (its address may
-now belong to someone else) and a permission type the sync does not know admit nobody. A
-missing registry or listing row admits nobody. A leg whose per-request reads (the
-statements it issues whatever matched, the reader's canonical subject and verified
-emails among them) fail shows no mirrored document and marks the answer
-`degraded: mirror_unread`; a read it issues only for candidates (the lists, the members
-rows, the heads) that fails drops every mirrored result without the marker, so the
-marker says nothing about what matched. Each leg reads the registry row and the listing
-row first and then the members rows and the lists, under `sequential_reads()`, so a
-lagging replica cannot pair a fresh listing row with an older list. It computes the
-addresses the reader may see before its `LIMIT`, so a page is never cut short by the
-check, and caches no admitted set. No score depends on a document the reader may not
-see: a mirror's chunks add nothing to any corpus statistic (the lexical leg's document
-counts, lengths and term frequencies), and a mirror leg scores its lexical hits with
-fixed corpus constants, which depend on no document, so a namespace fed only by mirrored
-sources still ranks by both legs. Under the Postgres authority each leg judges the
-addresses it is about to answer by their heads, so a narrowing or a retirement committed
-and not yet published already applies, and a missing head drops the address; a leg that
-cannot read the heads shows no mirrored document. The implementing pull request measures
-the leg on a mirror of a million documents under both storage authorities and puts the
-figures here.
+a link-only permission, a permission the store marks deleted (its address may now belong
+to someone else), a grant to one view of the file only (`view`), and a permission type
+or role the sync does not know admit nobody. A missing registry or listing row admits
+nobody. A leg whose per-request reads (the statements it issues whatever matched, the
+reader's canonical subject and verified emails among them) fail shows no mirrored
+document and marks the answer `degraded: mirror_unread`; a read it issues only for
+candidates (the lists, the members rows, the heads) that fails drops every mirrored
+result without the marker, so the marker says nothing about what matched. Each leg reads
+the registry row and the listing row first and then the members rows and the lists,
+under `sequential_reads()`, so a lagging replica cannot pair a fresh listing row with an
+older list. It computes the addresses the reader may see before its `LIMIT`, so a page
+is never cut short by the check, and caches no admitted set. No score depends on a
+document the reader may not see: a mirror's chunks add nothing to any corpus statistic
+(the lexical leg's document counts, lengths and term frequencies), and a mirror leg
+scores its lexical hits with fixed corpus constants, which depend on no document, so a
+namespace fed only by mirrored sources still ranks by both legs. Under the Postgres
+authority each leg judges the addresses it is about to answer by their heads, so a
+narrowing or a retirement committed and not yet published already applies, and a missing
+head drops the address; a leg that cannot read the heads shows no mirrored document. The
+implementing pull request measures the leg on a mirror of a million documents under both
+storage authorities and puts the figures here.
 
 ### Every complete listing reads the lists again
 
@@ -847,7 +849,7 @@ ClickHouse, additive migrations:
 | Table                              | Key                                                           | Holds                                                                                                                                                                                                             |
 | ---------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom.knowledge_sources` (columns) | `(org, namespace, name)`                                      | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`                   |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                                            | `mirror`, `created_at`                                                                                                                                                                                            |
+| `loom.knowledge_mirrors`           | `(org, namespace, mirror)`                                    | `deleted` (written once a namespace erasure or the mirror-erase command has erased the mirror); at most one live mirror per namespace                                                                             |
 | `loom.knowledge_mirror_latch`      | one row                                                       | `set_at`: the deployment once had the switch on; the mirror-erase command deletes it last. It stays in ClickHouse and holds no memory content.                                                                    |
 | `loom.documents` (column)          | as today; in a mirror `source_uri` is `<address>#<source id>` | `access_json`: a mirrored document's permission list (`emails`, `owner`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id)`                                 | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                                      |
@@ -884,10 +886,13 @@ statements and census keys against these, and its tests pin each one:
 - A namespace erasure, `namespace.delete`, `collection.delete` and `code.repo.remove`
   retire the namespace's sources first, clearing their credentials, so no turn writes
   back what the erasure took. A `namespace` or `namespace_list` erasure covers each
-  named namespace's mirror as one more name of the same erasure, through its resume,
-  replay and re-verify. A mirror's rows are deleted in either mode: no token reads or
-  restores an `acl-` name. A `user_id` erasure touches no mirror row (the sync writes
-  them as `-`), and its census and export name none.
+  named namespace's mirrors as more names of the same erasure: a scope that holds a
+  mirror is erased as a purge, in one pass over the named namespaces and their mirrors,
+  since no token reads or restores an `acl-` name, and the census counts it the same
+  way. The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, so
+  the name registered again gets a new mirror; the registry keeps them, so a resume or a
+  replay after a restore still reaches them. A `user_id` erasure touches no mirror row
+  (the sync writes them as `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once
@@ -922,16 +927,18 @@ statements and census keys against these, and its tests pin each one:
   token that names a mirror, its org-wide reads (insights, usage, cost, the analytics
   export) include `acl-` rows, and nothing on N-1 ages the lists. N reports the
   condition (`loom doctor`, and the schema heartbeat check above) when a process below
-  the mirror migration heartbeats while `loom.knowledge_mirrors` holds a mirror, as a
-  rolling rollback (a Helm rollback included) would start one. So the rollback procedure
-  ([upgrades](../operations/upgrades.md)) stops every replica, stops every mirrored
-  source and erases every mirror (`loom knowledge mirror erase --all`) before any N-1
-  replica starts. A restore of either store runs the same command before the deployment
-  starts, since a restored copy cannot be trusted to say who may read; owners connect
-  and add their sources again. The implementing pull request adds both steps and
-  specifies the command.
+  the mirror migration heartbeats while `loom.knowledge_mirrors` holds a live mirror
+  (one not written `deleted`), as a rolling rollback (a Helm rollback included) would
+  start one. So the rollback procedure ([upgrades](../operations/upgrades.md)) stops
+  every replica, stops every mirrored source and erases every mirror
+  (`loom knowledge mirror erase --all`) before any N-1 replica starts. A restore of
+  either store runs the same command before the deployment starts, since a restored copy
+  cannot be trusted to say who may read; owners connect and add their sources again. The
+  implementing pull request adds both steps and specifies the command.
 - **Ownership.** In a namespace, one owner per address, found by its tag, is today's
   model, so N-1 and N agree on whose a document is; N-1 has no mirror leg.
+- **Lists.** N-1 never meets a list: the build that adds the column writes none and
+  carries none forward, and the first build that writes one runs beside it (rule 53).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.
@@ -998,8 +1005,8 @@ The redirect URI to register with each store is
   token reads or exports a mirror, and `erasure.request` takes a mirror's name only from
   a platform admin, with auth on.
 - Every `crawl` and `connected` source is mirrored.
-- A stale, unexpanded or link-only permission, an `unread` list and a permission type
-  the sync does not know admit nobody.
+- Every permission the sync cannot trust admits nobody, and so does an `unread` list
+  ([who may read](#who-may-read)).
 - Every complete listing of a mirrored source reads every file's list again, and only a
   complete listing's start vouches for the lists.
 - No caller-supplied host or query string reaches a store.

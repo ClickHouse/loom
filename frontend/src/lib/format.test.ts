@@ -13,6 +13,7 @@ import {
   timeOfDay,
   truncate,
   sentenceCase,
+  andList,
 } from "./format";
 
 describe("displaySubject", () => {
@@ -220,5 +221,14 @@ describe("restoreText", () => {
     expect(restoreText("2026-10-05 11:00:00")).toBe("1 day left to restore");
     expect(restoreText("2026-10-17 06:00:00")).toBe("13 days left to restore");
     expect(restoreText(null)).toBe("in grace window");
+  });
+});
+
+describe("andList", () => {
+  it("joins one, two or more parts as a sentence does", () => {
+    expect(andList([])).toBe("");
+    expect(andList(["a"])).toBe("a");
+    expect(andList(["a", "b"])).toBe("a and b");
+    expect(andList(["a", "b", "c"])).toBe("a, b and c");
   });
 });

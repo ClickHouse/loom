@@ -12686,6 +12686,83 @@
           }
          ]
         },
+        "remove": {
+         "prog": "loom cell remove",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_remove"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The cell to remove (its LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
         "prepare": {
          "prog": "loom cell prepare",
          "usage": null,
@@ -12832,6 +12909,7 @@
         "credential": "loom cell credential",
         "limit": "loom cell limit",
         "which": "loom cell which",
+        "remove": "loom cell remove",
         "prepare": "loom cell prepare"
        },
        "choices_help": [
@@ -12849,6 +12927,11 @@
          "dest": "which",
          "help": "Print the lookup's cell and host for an org (the first cell if not placed).",
          "metavar": "which"
+        },
+        {
+         "dest": "remove",
+         "help": "Remove the directory row of a cell attaching with no placement.",
+         "metavar": "remove"
         },
         {
          "dest": "prepare",

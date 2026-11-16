@@ -124,6 +124,7 @@ from server.knowledge.domain.sources import (
     KnowledgeSource,
     include_in,
     json_object,
+    served,
     source_key,
     source_tag,
     turn_lease_name,
@@ -378,9 +379,11 @@ async def run_sync(
 
 
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
-    """The sources a pass syncs: those whose namespace is active."""
-    inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in found}))
-    return [s for s in found if (s.org, s.namespace) not in inactive]
+    """The sources a pass syncs: those whose namespace is active, of the sources this
+    build serves (a mirrored one is a later build's)."""
+    syncable = [s for s in found if served(s)]
+    inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in syncable}))
+    return [s for s in syncable if (s.org, s.namespace) not in inactive]
 
 
 async def _states(found: list[KnowledgeSource]) -> dict[str, dict[str, str]]:
@@ -1038,10 +1041,10 @@ async def _servable(f: dict[str, Any], run: Pass) -> bool:
                 run.formats[fmt] = fmt in (await extractors.capabilities(url)).formats
             except extractors.ExtractorUnavailable:
                 run.formats[fmt] = None
-    served = run.formats[fmt]
-    if served is None:
+    supported = run.formats[fmt]
+    if supported is None:
         raise extractors.ExtractorUnavailable(f"the extractor for {fmt} could not be read")
-    return served
+    return supported
 
 
 async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
@@ -1233,6 +1236,8 @@ async def _retire_removed_sources(
             continue
         if only and src.name != only:
             continue
+        if not served(src):
+            continue  # its documents are in a mirror, which a later build retires
         if run.spent():
             result.cut = True
             return

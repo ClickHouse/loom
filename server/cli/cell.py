@@ -1,23 +1,27 @@
-"""`loom cell credential | limit | which`: the operator's commands that touch the router's
-directory alone (docs/architecture/cells.md, "Operations"). None of them connects to a
-cell's stores, so they run while a cell is down. `loom cell prepare`, which does, is
+"""`loom cell credential | limit | which | remove`: the operator's commands that touch the
+router's directory (docs/architecture/cells.md, "Operations"). Only `remove` reads a cell's
+stores, a first cell's Postgres; the others run while a cell is down. `loom cell prepare` is
 `server/cli/cell_prepare.py`.
 
 - `credential new` makes a router credential offline and prints it with its SHA-256;
   `credential --cell <cell> --next <sha256> | --finish | --revert` rotates a cell's.
-- `limit --cell <cell> [--closed | --open] [--placements-max (<n> | none)]` closes,
-  reopens or bounds a cell to new orgs.
-- `which --org <org>` prints the cell and host the router's lookup answers for an org
-  (the first cell's for an org with no placement, which it cannot tell apart).
+- `limit --cell <cell> [--closed | --open] [--placements-max (<n> | none)]` closes, reopens
+  or bounds a cell to new orgs.
+- `which --org <org>` prints the cell and host the router's lookup answers for an org (the
+  first cell's for an org with no placement, which it cannot tell apart).
+- `remove --cell <cell>` removes the directory row of a cell that is `attaching` with no
+  placement; for the first cell, only once its Postgres reads `open` and records the row's
+  deployment id (the troubleshooting page's back-out runs first).
 
-`credential` (except `new`) and `limit` call the router's operator API with
-`LOOM_ROUTER_OPERATOR_TOKEN`; `which` asks the public lookup. The router is `--router`,
-else `LOOM_CELL_ROUTER_URL`.
+`credential` (except `new`), `limit` and `remove` call the router's operator API with
+`LOOM_ROUTER_OPERATOR_TOKEN`; `which` asks the public lookup. The router is `--router`, else
+`LOOM_CELL_ROUTER_URL`.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import secrets
@@ -27,15 +31,21 @@ from typing import Any
 import httpx
 
 from server.auth.public_url import is_loopback_host
-from server.core.cell import NAME, PLACEMENTS_MAX, SHA256
-from server.router.directory import OPERATOR_CHANGE_MAX_S, STATEMENT_TIMEOUT_S
+from server.core.cell import NAME, PLACEMENTS_MAX, SHA256, TROUBLESHOOTING
+from server.router.directory import (
+    OPERATOR_CHANGE_MAX_S,
+    OPERATOR_READ_MAX_S,
+    REMOVE_MAX_S,
+    STATEMENT_TIMEOUT_S,
+    remove_refusal,
+)
 from server.settings import settings
 
-# An operator call's read waits past the router's longest operator change. A lookup makes
-# up to two directory reads (the org, then the first cell), each a slot-and-connection wait
-# and a statement. A connect fails fast.
+# An operator call's read waits past the router's longest operator change, read or removal.
+# A lookup makes up to two directory reads (the org, then the first cell), each a
+# slot-and-connection wait and a statement. A connect fails fast.
 _OPERATOR_TIMEOUT = httpx.Timeout(  # not a setting: derived
-    OPERATOR_CHANGE_MAX_S + 10.0, connect=5.0
+    max(OPERATOR_CHANGE_MAX_S, OPERATOR_READ_MAX_S, REMOVE_MAX_S) + 10.0, connect=5.0
 )
 _LOOKUP_TIMEOUT = httpx.Timeout(  # not a setting: derived
     2 * (2 * STATEMENT_TIMEOUT_S + 1) + 10.0, connect=5.0
@@ -96,11 +106,9 @@ def operator_router(args: argparse.Namespace) -> httpx.URL | str:
     return router
 
 
-def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], retry: str) -> int:
-    """The outcome is known only when the connection never opened, or the router itself
-    answered, other than with the code `BACKEND_UNAVAILABLE`; after anything else (a
-    timeout, a dropped connection, a gateway's page) the change may have been made, and
-    `retry` says what a retry then shows."""
+def _cell_router(args: argparse.Namespace) -> httpx.URL | int:
+    """The router an operator command on `--cell` calls, or its exit code (2) once the
+    refusal is printed."""
     if not NAME.fullmatch(args.cell or ""):
         print(f"loom cell: {args.cell!r} is no cell name (1 to 32 of a-z, 0-9, -)", file=sys.stderr)
         return 2
@@ -108,17 +116,47 @@ def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], re
     if isinstance(router, str):
         print(f"loom cell: {router}", file=sys.stderr)
         return 2
-    token = settings.router_operator_token
-    url = at(router, f"/cells/v1/operator/cells/{args.cell}/{path}")
-    try:
-        # No proxy from the environment: plain http on loopback must not reach one.
-        r = httpx.post(
-            url,
-            json=body,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=_OPERATOR_TIMEOUT,
-            trust_env=router.scheme == "https",
+    return router
+
+
+def _send(
+    router: httpx.URL, method: str, cell: str, path: str, body: dict[str, Any] | None
+) -> httpx.Response:
+    url = at(router, f"/cells/v1/operator/cells/{cell}" + (f"/{path}" if path else ""))
+    headers = {"Authorization": f"Bearer {settings.router_operator_token}"}
+    # No proxy from the environment: plain http on loopback must not reach one.
+    trust_env = router.scheme == "https"
+    if method == "POST":
+        return httpx.post(
+            url, json=body, headers=headers, timeout=_OPERATOR_TIMEOUT, trust_env=trust_env
         )
+    send = httpx.get if method == "GET" else httpx.delete
+    return send(url, headers=headers, timeout=_OPERATOR_TIMEOUT, trust_env=trust_env)
+
+
+def _operator_call(
+    args: argparse.Namespace,
+    path: str,
+    body: dict[str, Any] | None,
+    retry: str,
+    *,
+    method: str = "POST",
+    router: httpx.URL | None = None,
+    coded_404: bool = False,
+) -> int:
+    """The outcome is known only when the connection never opened, or the router itself
+    answered, other than with the code `BACKEND_UNAVAILABLE`; after anything else (a
+    timeout, a dropped connection, a gateway's page) the change may have been made, and
+    `retry` says what a retry then shows. On a route that names an unknown cell with
+    `NO_SUCH_CELL` (`coded_404`), a 404 without it is a router replica that does not answer
+    the route: nothing was done."""
+    if router is None:
+        found = _cell_router(args)
+        if isinstance(found, int):
+            return found
+        router = found
+    try:
+        r = _send(router, method, args.cell, path, body)
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError) as e:
         print(f"loom cell: the router could not be reached: {type(e).__name__}", file=sys.stderr)
         return 1
@@ -130,10 +168,19 @@ def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], re
             print(f"loom cell: {not_the_router(r)}", file=sys.stderr)
         elif answer.get("code") == "BACKEND_UNAVAILABLE":
             print(f"loom cell: the directory did not answer: {answer['error']}", file=sys.stderr)
+        elif coded_404 and _older_router(r, answer):
+            print(f"loom cell: a router replica is not upgraded: {r.url}", file=sys.stderr)
+            return 1
         else:
             return _said(r, answer)
     print(f"loom cell: the change may have been made: {retry}", file=sys.stderr)
     return 1
+
+
+def _older_router(r: httpx.Response, answer: dict[str, Any]) -> bool:
+    """A 404 without `NO_SUCH_CELL`: a router replica of an earlier build, which does not
+    answer the route."""
+    return r.status_code == 404 and answer.get("code") != "NO_SUCH_CELL"
 
 
 def router_answer(
@@ -242,6 +289,107 @@ def _cmd_limit(args: argparse.Namespace) -> int:
     return _operator_call(args, "limit", body, "run it again, a limit is safe to repeat")
 
 
+def _read_row(router: httpx.URL, cell: str) -> dict[str, Any] | str:
+    """The cell's directory row (`GET /cells/v1/operator/cells/<cell>`), or why it could not
+    be read."""
+    try:
+        r = _send(router, "GET", cell, "", None)
+    except httpx.HTTPError as e:
+        return f"the router could not be read: {type(e).__name__}"
+    answer = router_answer(r, {"cell": cell}, OPERATOR_REFUSALS)
+    if answer is None:
+        return not_the_router(r)
+    if _older_router(r, answer):
+        return f"a router replica is not upgraded: it does not answer {r.url}"
+    if r.status_code != 200:
+        return f"the router refused ({r.status_code}): {answer['error']}"
+    return answer
+
+
+# The first cell's check: one Postgres session, its statements and the whole read bounded.
+_CHECK_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
+_CHECK_S = 10.0  # not a setting: a bound on one CLI read, not on serving
+
+
+async def _read_first_cell() -> tuple[str, str]:
+    """The cell state and the deployment id the cell's Postgres records ('' when none), on
+    one session of its own: no ClickHouse and no pool."""
+    from server.core import cell, pg
+
+    async with pg.dedicated(statement_timeout_ms=_CHECK_STATEMENT_MS) as conn:
+        state, _first = await cell.read_state_if_present(conn)
+        recorded = await conn.fetchval("SELECT deployment_id FROM loom.authority")
+    return state, str(recorded or "")
+
+
+async def _first_cell_refusal(deployment_id: str) -> str:
+    """Why the first cell's row may not be removed yet ('' when it may): its Postgres still
+    holds a cell state, or is another deployment's. It reads `LOOM_PG_DSN` alone."""
+    if not settings.pg_dsn:
+        return "the first cell keeps its state in Postgres: set LOOM_PG_DSN to the cell's"
+    state, recorded = await asyncio.wait_for(_read_first_cell(), timeout=_CHECK_S)
+    if state != "open":
+        return (
+            f"the first cell's Postgres reads `{state}`: unset LOOM_CELL on every process, run "
+            f"the full-state cleanup ({TROUBLESHOOTING}), then remove the row"
+        )
+    if not recorded:
+        return "this Postgres records no deployment id: point LOOM_PG_DSN at the cell's own"
+    if recorded != deployment_id:
+        return (
+            f"this Postgres records deployment id {recorded!r}, and the directory's row "
+            f"{deployment_id!r}: point LOOM_PG_DSN at the cell's own Postgres"
+        )
+    return ""
+
+
+def _cmd_remove(args: argparse.Namespace) -> int:
+    router = _cell_router(args)
+    if isinstance(router, int):
+        return router
+    row = _read_row(router, args.cell)
+    if isinstance(row, str):
+        print(f"loom cell remove: {row}", file=sys.stderr)
+        return 1
+    # Judged before any store is read: a live or placed cell is never told to clear its
+    # state. The router judges the row again under its lock.
+    state, placed = row.get("state"), row.get("placed_orgs")
+    if (
+        not isinstance(state, str)
+        or type(placed) is not int
+        or type(row.get("is_first")) is not bool
+        or not isinstance(row.get("deployment_id"), str)
+        or not row["deployment_id"]
+    ):
+        print(
+            "loom cell remove: the router's answer names no state, placement count, "
+            "first-cell flag or deployment id",
+            file=sys.stderr,
+        )
+        return 1
+    if reason := remove_refusal(args.cell, state, placed):
+        print(f"loom cell remove: refusing: {reason}", file=sys.stderr)
+        return 1
+    if row["is_first"]:
+        try:
+            refusal = asyncio.run(_first_cell_refusal(row["deployment_id"]))
+        except Exception as e:  # noqa: BLE001 — an unread state refuses the removal
+            reason = f"no answer within {_CHECK_S:g} s" if isinstance(e, TimeoutError) else str(e)
+            refusal = f"the first cell's Postgres could not be read ({type(e).__name__}: {reason})"
+        if refusal:
+            print(f"loom cell remove: refusing: {refusal}", file=sys.stderr)
+            return 1
+    return _operator_call(
+        args,
+        "",
+        None,
+        "a retry refused as not in the directory (NO_SUCH_CELL) means the row was removed",
+        method="DELETE",
+        router=router,
+        coded_404=True,
+    )
+
+
 def _cmd_which(args: argparse.Namespace) -> int:
     router = parse_router(args)
     if isinstance(router, str):
@@ -303,6 +451,13 @@ def _add_cell_parser(sub: Any) -> None:
     which.add_argument("--org", required=True, help="The org")
     which.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
     which.set_defaults(func=_cmd_which)
+
+    remove = csub.add_parser(
+        "remove", help="Remove the directory row of a cell attaching with no placement."
+    )
+    remove.add_argument("--cell", required=True, help="The cell to remove (its LOOM_CELL)")
+    remove.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
+    remove.set_defaults(func=_cmd_remove)
 
     from server.cli.cell_prepare import add_prepare_parser
 

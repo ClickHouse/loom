@@ -60,6 +60,7 @@ SOURCES = (
     "docs/use-cases/code-intelligence-by-language.md",
     "docs/use-cases/coding-agent-cost.md",
     "docs/use-cases/document-search.md",
+    "docs/use-cases/memory-linked-to-code.md",
     "docs/use-cases/multi-agent.md",
     "docs/use-cases/runs-and-pr-history.md",
     "docs/use-cases/self-hosted-clickhouse.md",

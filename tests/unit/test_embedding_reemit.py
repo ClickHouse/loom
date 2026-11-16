@@ -865,6 +865,7 @@ async def _site_demote(ch, mp):
             "promoted_by": "",
             "rationale": "",
             "promoted_at": datetime.now(),
+            "version": 1,
         }
 
     async def no_insert(*_a, **_k):

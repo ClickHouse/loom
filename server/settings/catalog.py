@@ -2495,6 +2495,11 @@ class McpSettings(BaseModel):
 class MemorySettings(BaseModel):
     """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
 
+    # ---- governed definitions ----
+    # Most shared definitions a namespace holds; a promotion past it is refused
+    # (docs/concepts/identities-and-namespaces.md).
+    memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
+
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
     # they break ties instead of re-ranking. 0.0 = uncapped; a request's
@@ -6063,6 +6068,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # At most 50 documents, four at a time, in server/knowledge/app/move.py: the clock once
+    # a call, then per document about 30 statements (the erasure ledger for both namespaces
+    # twice, its claim in both namespaces, not waited for, its rows by (org, namespace,
+    # source_uri), its chunks and tables copied inside ClickHouse, its row, its delete, its
+    # tables' cleanup), its original copied inside ClickHouse or read and stored again. 50
+    # documents took 3.7-3.9 s on a development ClickHouse.
+    "knowledge.move": 8000,
     # The reads and writes in server/knowledge/app/restore.py: the document's rows by (org,
     # namespace, source_uri) (the chunk and supersession reads range over the namespace's key
     # prefix), the erasure ledger twice (every namespace list of the org's last 90 days is
@@ -6144,6 +6156,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.dedup_list": 300,
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
+    # A namespace at the ceiling of 500 definitions: one shared read, one bulk head read
+    # and a grade of each value (p95 225 ms on one server).
+    "memory.definitions.list": 400,
     "memory.delete": 30,
     # memory.delete's work plus two committed check inserts and the read after the
     # tombstone: about 2.6x memory.delete's p99 on one server.
@@ -6429,8 +6444,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
-    # The batched-insert shapes below are the base + the default
-    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
+    # The batched-insert shapes below (audited, webhook, undo, rewrite) are the base +
+    # the default ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
     # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
     # "undo": memory.restore's Undo, + its audit-record wait.
@@ -6440,10 +6455,14 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
     "memory.delete_version": {"webhook": 130},
+    # "definition": the namespace's claim around a definition's strong read and writes.
+    "memory.demote": {"definition": 150},
     "memory.evidence": {"audited": 200},
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
+    # "definition": the namespace's claim around the name check and the writes.
+    "memory.promote": {"definition": 150},
     "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 220},
     "memory.update_by_id": {"webhook": 180},

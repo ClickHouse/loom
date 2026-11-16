@@ -392,6 +392,7 @@ async def _start_actual_work(input: MemorySearchInput) -> tuple[dict[str, Any], 
         "namespace_count": 0,
         "pool_top_k": 0,
         "candidates_before_final": 0,
+        "shared_definitions_withheld": 0,
         "external_rerank_used": False,
         "intent_parser_used": False,
     }

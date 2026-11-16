@@ -907,13 +907,15 @@ class Versioned(Protocol):
     version: int
 
 
-def version_over(head: Versioned, drawn: int | None = None) -> int:
-    """The version of a copy of `head`: `drawn` (by default the next one), or two above
-    the head's when the head's writer's clock runs ahead, so the copy becomes the head
-    and its vector retire reaches a vector-only copy of the head (`reemit_version`'s
-    read + 1). With a version drawn before the read, the copy outranks every head the
-    read found, and a write drawing a version above the copy's outranks it."""
-    return max(next_version() if drawn is None else drawn, head.version + 2)
+def version_over(head: Versioned | int, drawn: int | None = None) -> int:
+    """The version of a copy of `head` (a row, or its version): `drawn` (by default the
+    next one), or two above the head's when the head's writer's clock runs ahead, so the
+    copy becomes the head and its vector retire reaches a vector-only copy of the head
+    (`reemit_version`'s read + 1). With a version drawn before the read, the copy
+    outranks every head the read found, and a write drawing a version above the copy's
+    outranks it."""
+    head_version = head if isinstance(head, int) else head.version
+    return max(next_version() if drawn is None else drawn, head_version + 2)
 
 
 def version_time(version: int) -> datetime:

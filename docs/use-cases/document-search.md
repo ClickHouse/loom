@@ -18,6 +18,10 @@ model writes the answer from the passages Loom returns.
 - **Document sources.** A namespace's admins can register sources Loom pulls documents
   from; the sync worker needs `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`.
   [Document sources](../features/knowledge.md#document-sources)
+- **Documents beside the code.** Documents from a source on a repository's trunk code
+  namespace carry its `repo:<id>` tag, so that repository's searches read them with its
+  code. [Document sources](../features/knowledge.md#document-sources) ·
+  [Memory linked to code](memory-linked-to-code.md)
 - **A similarity floor.** `loom_search` drops knowledge hits below a similarity floor
   instead of handing the model a weak passage. [`loom_search`](../features/unified-search.md#loom_search)
 - **Access control on every passage.** Documents live in namespaces with viewer, writer and

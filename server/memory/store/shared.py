@@ -17,9 +17,10 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
-
-# The agent of a promoted row's embedding: shared rows are not agent-scoped.
-SHARED_AGENT = "_shared"
+from server.memory.domain.definitions import DEFINITION_KEY_PREFIX
+from server.memory.domain.memory_types import DEFINITION
+from server.memory.domain.search_types import SHARED_AGENT
+from server.memory.store.sql import _SEQUENTIAL
 
 # Every persisted column of loom.shared, in DDL order. `ch.insert` takes its
 # column list from the row, and FINAL serves the DDL default of a column the
@@ -97,11 +98,13 @@ async def fetch_shared(
     namespace: str,
     memory_key: str,
     *,
+    strong: bool = False,
     ch: _CHClient | None = None,
 ) -> dict[str, Any] | None:
     """Get the latest shared row for (org, ns, memory_key). FINAL
     collapses earlier promotions/demotes. Returns the row dict; the
-    caller checks `tombstoned_at` for liveness.
+    caller checks `tombstoned_at` for liveness. `strong` reads every
+    acknowledged write, a write another replica made just before included.
 
     `promoted_from_candidate_id` is NULL for the auto-promote path;
     populated by learnings.review so memory.lineage resolves the
@@ -112,12 +115,13 @@ async def fetch_shared(
         """
         SELECT value, memory_type, confidence, promoted_from, promotion_event,
                promoted_from_candidate_id,
-               promoted_by, rationale, promoted_at, reversible_until, tombstoned_at
+               promoted_by, rationale, promoted_at, reversible_until, tombstoned_at, version
         FROM loom.shared FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND memory_key = {memory_key:String}
         LIMIT 1
-        """,
+        """
+        + (_SEQUENTIAL if strong else ""),
         params={"org": org, "ns": namespace, "memory_key": memory_key},
     )
 
@@ -176,6 +180,7 @@ async def tombstone_shared_embedding(
     when: datetime,
     *,
     version: int,
+    strong: bool = False,
     ch: _CHClient | None = None,
 ) -> None:
     """Mark the scope='shared' embedding tombstoned so memory.search
@@ -185,10 +190,100 @@ async def tombstone_shared_embedding(
     an ALTER UPDATE: a mutation rewrites parts through Keeper, and any
     UPDATE on the vector table costs the fact leg its codes-first read. The
     insert is committed, so demote's contract holds: a read after demote sees
-    the absence."""
+    the absence. `strong` reads the live vectors strongly."""
     import server.memory.store as memory_repo
 
     ch = ch or _default_client()
     await memory_repo.reemit_shared_embedding_rows(
-        org, namespace, memory_key, ch=ch, tombstoned_at=when, version=int(version)
+        org, namespace, memory_key, ch=ch, strong=strong, tombstoned_at=when, version=int(version)
+    )
+
+
+async def newest_shared_vector_version(
+    org: str, namespace: str, memory_key: str, *, ch: _CHClient | None = None
+) -> int:
+    """The newest version among the key's scope='shared' vectors, a retired one included,
+    read strongly; 0 when it has none."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT max(version) AS version FROM loom.memory_embeddings
+        WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
+          AND user_id = '-' AND session_id = '-' AND scope = 'shared'
+          AND memory_key = {memory_key:String}
+        """
+        + _SEQUENTIAL,
+        params={"org": org, "ns": namespace, "agent": SHARED_AGENT, "memory_key": memory_key},
+    )
+    return int(row["version"]) if row else 0
+
+
+async def definition_rows(
+    org: str, namespace: str, ceiling: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live shared definitions' key, `value`, `promoted_from`, `promoted_at`,
+    `promotion_event` and `total` (the count of every live shared definition), the most
+    recently promoted first (`promoted_at`, then `promotion_event` as text), at most twice
+    `ceiling`, read strongly. Past the first `ceiling` the value is ''."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT memory_key, if(rn <= {ceiling:UInt32}, value, '') AS value, promoted_from,
+               promoted_at, promotion_event, total
+        FROM (
+            SELECT memory_key, value, promoted_from, promoted_at, promotion_event,
+                   row_number() OVER (
+                       ORDER BY promoted_at DESC, toString(promotion_event) DESC
+                   ) AS rn,
+                   count() OVER () AS total
+            FROM loom.shared FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
+              AND tombstoned_at IS NULL
+        )
+        ORDER BY rn
+        LIMIT {lim:UInt32}
+        """
+        + _SEQUENTIAL,
+        params={
+            "org": org,
+            "ns": namespace,
+            "ceiling": ceiling,
+            "lim": 2 * ceiling,
+            "type": DEFINITION,
+            "prefix": DEFINITION_KEY_PREFIX,
+        },
+    )
+
+
+async def shared_definitions(
+    org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live shared definitions' keys with the `term` and `aliases` their values hold, at
+    most `limit`, read strongly; only those two fields leave the store, whatever a value's
+    size.
+
+    A term that is not a string reads as '', aliases that are not an array as [], and an
+    alias that is not a string as its JSON text."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT memory_key,
+               if(JSONType(value, 'term') = 'String', JSONExtractString(value, 'term'), '') AS term,
+               JSONExtract(value, 'aliases', 'Array(String)') AS aliases
+        FROM loom.shared FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
+          AND tombstoned_at IS NULL
+        ORDER BY memory_key
+        LIMIT {lim:UInt32}
+        """
+        + _SEQUENTIAL,
+        params={
+            "org": org,
+            "ns": namespace,
+            "lim": limit,
+            "type": DEFINITION,
+            "prefix": DEFINITION_KEY_PREFIX,
+        },
     )

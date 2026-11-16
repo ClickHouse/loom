@@ -368,9 +368,10 @@ build, then run only the trigger drop of
 [A process with LOOM_CELL unset is gated](troubleshooting.md#a-process-with-loom_cell-unset-is-gated),
 not its state transaction (the cell stays prepared), and run it again if a newer pod
 boots with migrations on before the rollback ends: the older build's sessions send no
-tenancy marker, so once the newer build has created the triggers each of its writes for
-an org the cell holds no tenancy row for is refused (on a later cell before attach,
-every tenant org), and its other writes pay the triggers' state read.
+tenancy marker, so once the newer build has created the triggers and the `loom.tenancy`
+guard, each of its writes for an org the cell holds no tenancy row for is refused (on a
+later cell before attach, every tenant org), as is its tenancy row for each newly placed
+org, and its other writes pay the triggers' state read.
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know

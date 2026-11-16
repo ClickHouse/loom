@@ -337,6 +337,58 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
+A `definition` is promoted only:
+
+- From its live namespace-wide row (agent, user and session `'-'`, `active`, not retired
+  by a supersession and not past its `expires_at` or `valid_to`) under a `definition/`
+  key, to that same key; a row of another type is never promoted under a `definition/`
+  key. Else 422 `DEFINITION_PROMOTION_REFUSED`.
+- With the hash it approves (`approved_sha256`, the row's `content_sha256`): refused
+  without it (422 `VALIDATION_FAILED`), and with 409 `PRECONDITION_FAILED` when the text
+  no longer has it.
+- With a value that is a JSON object holding a non-empty string `term` and, optionally,
+  a list of string `aliases`; else 422 `VALIDATION_FAILED`.
+- Not labelled `medium` and not reading as `medium` or `high` (422
+  `SENSITIVE_DEFINITION_REFUSED`; a `high` label answers
+  `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row).
+- Within `memory_shared_definitions_max`: a new key at the ceiling, or any promotion
+  while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
+- Under a name no other live shared definition holds as its term or an alias (409
+  `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format
+  characters dropped, NFKC, whitespace collapsed, case-folded, then NFKC again.
+
+One namespace's definition promotions, with their ceiling and name checks, and its
+definition demotes run one at a time, the last to run deciding whether the definition is
+shared (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a
+definition gives back its name and its place. The token's actor is its `promoted_by`:
+`approver` and `promoted_from_candidate_id` are ignored and named in `ignored_args`, and
+no close shared row under another key refuses it. `learnings.review` promotes no candidate
+of type `definition` to memory.
+
+A shared definition is **governed** while it was promoted from exactly one row, the
+namespace-wide row under its key, and that row is `active`, not retired by a supersession,
+not past its `expires_at` or `valid_to`, neither labelled nor graded `medium` or `high`,
+and holds the text the shared copy holds (the served hash of both, so a store that orders
+an object's keys differently is no change). An edit, a relabel to `medium` or `high` or a
+tombstone of the source ends it; reverting the edit to the approved text makes it governed
+again with no new promotion. `memory.search` leaves out a shared definition whose
+namespace-wide source is gone (deleted, or tombstoned by the expiry sweep) or labelled
+`medium` or `high`, since the shared layer has no label of its own. When a source cannot
+be read, it leaves out every shared definition. A copy promoted from a row other than the
+namespace-wide one is judged by the namespace-wide row under its key: withheld when there
+is none, served on that row's label otherwise. The copy itself stays: a relabel back, or
+the source written again, serves it again, and `memory.demote` retires it.
+`memory.definitions.list` (admin) lists the namespace's live shared definitions, the most
+recently promoted first and at most twice `memory_shared_definitions_max`, with `count` of
+them all. Each entry carries its key and `promoted_at`; one within the ceiling also
+carries its term and aliases, its `verdict` (`governed` or `lapsed`), the `lapse_reason`
+(`not_namespace_wide`, `no_term`, `gone`, `superseded`, `conflicted`, `duplicate`,
+`not_active` for any other status, `expired`, `ended` past its `valid_to`, `changed` or
+`sensitive`) and, for a governed one, `lost`: each name it loses to another governed
+definition that holds it, as `name` and the `winner`'s key (the latest promotion wins, a
+tie settled by its promotion event). One past the ceiling is `capped`, and its source is
+not read.
+
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an
 owner's decision and an audit trail. Promotion is that decision.

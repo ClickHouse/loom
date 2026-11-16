@@ -1,0 +1,7 @@
+-- Lab 4: memory as a database.
+-- The lab: https://github.com/ClickHouse/loom/blob/main/docs/guides/teaching.md#lab-4-memory-as-a-database
+-- The views: https://github.com/ClickHouse/loom/blob/main/docs/reference/sql-surface.md
+--
+-- TODO: one query over loom.sql_v1_memories: how many facts each agent created in the
+-- last hour (by `created_at`, which a revision keeps, and whatever their status), with
+-- the agent in a column named `agent`.

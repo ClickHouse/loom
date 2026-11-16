@@ -1005,6 +1005,14 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    side legs and digest descent (`digest_descent.py`), which adds the best facts of the
    top digests' sessions.
 
+   After the key-match arm, a shared definition hit whose namespace-wide source is gone or
+   labelled `medium` or `high` leaves the pool before fusion and the external reranker read
+   it (`shared_definitions.py`): `loom.shared` has no label of its own. Digest descent and
+   the side legs, which the assembler folds in later, find no shared row. A pool with no
+   shared definition reads nothing more; one whose source cannot be read loses every shared
+   definition, noted on `memory.search`'s `degraded`. A parked next page applies the same
+   check, and so does `memory.search_trace`, whose response has no `degraded`.
+
 6. **Fuse and rank** (`fusion.py`, `ranking.py`). The per-mode rank expression
    (`fact_rank.py`, `_fact_mode_rank_score`) adds the capped prior group (confidence,
    soft tags, categories) and the correctness tail (demotions, reinforcement,
@@ -1270,7 +1278,10 @@ names the resuming process); the body's `requester` goes in their subject.
 `erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
 are steps too and fail the saga closed. A namespace erasure tombstones the namespace's
 promoted rows in `loom.shared` (`shared.tombstone`); a user erasure matches them by
-provenance.
+provenance. A namespace scope that holds a document mirror is erased as a purge, in one
+pass over the named namespaces and their mirrors, whatever the request asked, and its
+last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted` ([document
+sources](document-sources.md#the-mirror)).
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces

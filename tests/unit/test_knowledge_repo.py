@@ -220,19 +220,23 @@ async def test_retire_versions_writes_its_rows_from_the_pairs_not_from_the_chunk
 
     ch = StubCH()
     when = datetime(2026, 5, 17, 12, 0, tzinfo=UTC)
-    await retire_versions("o", "ns", [("kb://a.md", 7)], embedding_model="m", when=when, ch=ch)
+    await retire_versions(
+        "o", "ns", [("kb://a.md", 7)], embedding_models=["m", "n"], when=when, ch=ch
+    )
     assert ch.execute_calls == []
     table, rows, _ = ch.insert_calls[0]
     assert table == "loom.chunk_supersessions"
+    # One statement, a row per embedding model.
     assert rows == [
         {
             "org": "o",
             "namespace": "ns",
-            "embedding_model": "m",
+            "embedding_model": model,
             "source_uri": "kb://a.md",
             "doc_version": 7,
             "superseded_at": when,
         }
+        for model in ("m", "n")
     ]
 
 

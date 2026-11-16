@@ -806,6 +806,7 @@ async def test_stage_timings_ride_retrieval_work(search_env) -> None:
         "set_expansion",
         "anchor_pool",
         "key_match",
+        "shared_definitions",
         "digest_descent",
         "assemble",
         "computed",

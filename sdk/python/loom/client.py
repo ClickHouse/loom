@@ -1406,6 +1406,14 @@ class KnowledgeOps:
             "_ops.KnowledgeListOutput", await self._agent.call("knowledge.list", body, **options)
         )
 
+    async def move(
+        self, body: _ops.KnowledgeMoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeMoveOutput:
+        """`knowledge.move`."""
+        return cast(
+            "_ops.KnowledgeMoveOutput", await self._agent.call("knowledge.move", body, **options)
+        )
+
     async def outline(
         self, body: _ops.KnowledgeOutlineBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeOutlineOutput:
@@ -1745,6 +1753,15 @@ class MemoryOps:
         return cast(
             "_ops.MemoryDedupResolveOutput",
             await self._agent.call("memory.dedup_resolve", body, **options),
+        )
+
+    async def definitions_list(
+        self, body: _ops.MemoryDefinitionsListBody | None = None, /, **options: Any
+    ) -> _ops.MemoryDefinitionsListOutput:
+        """`memory.definitions.list`."""
+        return cast(
+            "_ops.MemoryDefinitionsListOutput",
+            await self._agent.call("memory.definitions.list", body, **options),
         )
 
     async def delete(

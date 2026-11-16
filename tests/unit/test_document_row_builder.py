@@ -16,6 +16,7 @@ import pytest
 from server.knowledge.app import ingest_run
 from server.knowledge.app import writes as kh
 from server.knowledge.app.writes import _content_sha256
+from server.knowledge.domain import access_list
 from server.knowledge.store import chunks as knowledge_repo
 from server.knowledge.store import datasets as datasets_repo
 from server.knowledge.store import documents as documents_repo
@@ -24,6 +25,8 @@ from tests.unit.schema_ddl import column_names
 
 ERASED = datetime(2026, 5, 1, 12, 0, 0)
 INGESTED = datetime(2026, 4, 1, 9, 0, 0)
+LISTED_ACCESS = access_list.AccessList(emails=("a@example.com",))
+LISTED = access_list.to_json(LISTED_ACCESS)
 
 
 def _doc(**over: Any) -> DocumentRow:
@@ -79,7 +82,35 @@ def test_builder_refuses_unknown_and_hash_fields() -> None:
         documents_repo.build_document_row(_doc(), version=2, content_sha256="x")
 
 
-def test_the_repo_reads_select_the_hash_and_the_erasure_stamp() -> None:
+_STORED = {
+    "org": "o",
+    "namespace": "n",
+    "source_uri": "u",
+    "doc_id": "d",
+    "content": "c",
+    "version": 1,
+    "ingested_at": INGESTED,
+    "access_json": LISTED,
+}
+
+
+def test_a_read_keeps_the_permission_list() -> None:
+    class _CH:
+        async def query_all(self, sql, params=None):
+            return [_STORED]
+
+    [doc] = asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
+    assert doc.access_json == LISTED
+
+
+def test_a_postgres_head_keeps_the_permission_list() -> None:
+    from server.knowledge.store import pg_documents
+
+    stored = pg_documents.decode_row(pg_documents.encode_row(_STORED))
+    assert documents_repo._hydrate(stored).access_json == LISTED
+
+
+def test_the_repo_reads_select_the_hash_the_erasure_stamp_and_the_permission_list() -> None:
     seen: list[str] = []
 
     class _CH:
@@ -95,7 +126,9 @@ def test_the_repo_reads_select_the_hash_and_the_erasure_stamp() -> None:
     asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
     assert len(seen) == 2, seen
     for sql in seen:
-        assert "content_sha256" in sql and "blob_erased_at" in sql
+        assert "content_sha256" in sql, sql
+        assert "blob_erased_at" in sql, sql
+        assert "access_json" in sql, sql
 
 
 def _capture_inserts(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
@@ -935,3 +968,97 @@ def test_a_delete_left_to_the_delivery_worker_forgets_its_datasets(monkeypatch) 
             )
         )
     assert forgotten == [{"doc-a": doc.version}] * 2
+
+
+def test_a_permission_list_is_written_only_by_the_writer_that_passes_it() -> None:
+    doc = _doc(access_json=LISTED)
+    assert documents_repo.build_document_row(doc, version=2)["access_json"] == ""
+    kept = documents_repo.build_document_row(doc, version=2, access_json=LISTED)
+    assert kept["access_json"] == LISTED
+    retired = documents_repo.build_document_row(doc, version=3, superseded_at=ERASED)
+    assert retired["access_json"] == ""
+    with pytest.raises(ValueError, match="tombstone"):
+        documents_repo.build_document_row(doc, version=3, superseded_at=ERASED, access_json=LISTED)
+
+
+def test_a_metadata_edit_and_a_delete_write_no_permission_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_knowledge import (
+        KnowledgeDeleteInput,
+        KnowledgeUpdateMetadataInput,
+    )
+
+    rows = _capture_inserts(monkeypatch)
+
+    async def _get_one(*a: Any, **kw: Any) -> DocumentRow:
+        return _doc(access_json=LISTED)
+
+    async def _one_chunk(*a: Any, **kw: Any) -> int:
+        return 1
+
+    async def _noop(*a: Any, **kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(documents_repo, "get_one", _get_one)
+    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _one_chunk)
+    monkeypatch.setattr(datasets_repo, "forget_published", _noop)
+    asyncio.run(
+        kh.handle_knowledge_update_metadata(
+            KnowledgeUpdateMetadataInput(org="o", namespace="n", source_uri="doc-a", title="New")
+        )
+    )
+    asyncio.run(
+        kh.handle_knowledge_delete(KnowledgeDeleteInput(org="o", namespace="n", source_uri="doc-a"))
+    )
+    assert [r["access_json"] for r in rows] == ["", ""]
+
+
+def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _prior(*a: Any, **kw: Any) -> DocumentRow:
+        return _doc(access_json=LISTED)
+
+    async def _none(*a: Any, **kw: Any) -> None:
+        return None
+
+    async def _zero(*a: Any, **kw: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(kh, "get_embedder", lambda: _FakeEmbedder())
+    monkeypatch.setattr(documents_repo, "get_one", _prior)
+    monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", _none)
+    monkeypatch.setattr(knowledge_repo, "count_active_for_doc", _zero)
+    monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", _zero)
+    monkeypatch.setattr(knowledge_repo, "insert_chunks", _zero)
+
+
+@pytest.mark.parametrize(
+    ("passed", "written"),
+    [({"permissions": LISTED_ACCESS}, LISTED), ({}, "")],
+)
+def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
+    monkeypatch: pytest.MonkeyPatch, passed: dict[str, Any], written: str
+) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
+
+    rows = _capture_inserts(monkeypatch)
+    _stub_upsert_over_a_listed_row(monkeypatch)
+    body = KnowledgeUpsertInput(org="o", namespace="n", source_uri="doc-a", content="new body")
+    asyncio.run(kh.handle_knowledge_upsert(body, **passed))
+    # Over a listed prior row too: a list is never carried, only passed.
+    assert [r["access_json"] for r in rows] == [written]
+
+
+def test_a_metadata_edit_that_reindexes_writes_no_permission_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
+
+    rows = _capture_inserts(monkeypatch)
+    _stub_upsert_over_a_listed_row(monkeypatch)
+    body = KnowledgeUpdateMetadataInput(
+        org="o", namespace="n", source_uri="doc-a", title="New", reindex=True
+    )
+    asyncio.run(kh.handle_knowledge_update_metadata(body))
+    assert rows
+    assert [r["access_json"] for r in rows] == [""] * len(rows)

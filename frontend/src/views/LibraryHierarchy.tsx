@@ -7,22 +7,13 @@
  * server's (`collection.list` gives each collection's parent); in the path, a parent the
  * caller cannot read is a dots button, never a link, and gives its address when tapped.
  */
-import {
-  type ComponentProps,
-  type ComponentPropsWithoutRef,
-  forwardRef,
-  type MouseEvent,
-  type MutableRefObject,
-  type ReactNode,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ComponentProps, type ComponentPropsWithoutRef, useMemo, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
-import { Link } from "@clickhouse/click-ui/Link";
+import { PlaceLink } from "../components/ui/PlaceLink";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import type { CollectionEntry } from "../api";
+import { type ShowMoreRows, useShowMore } from "../lib/useShowMore";
 import { IconButton } from "../components/IconButton";
 import { PopoverTrigger } from "../components/ui/Menu";
 import { CHIP_OUTLINE_CLASS } from "../components/ui/Chip";
@@ -31,16 +22,12 @@ import { TextClamp, useClamped } from "../components/ui/TextClamp";
 import { Tip } from "../components/ui/Tooltip";
 import { COLLECTIONS_LISTED, collectionOrder, collectionTitle, distinctTitle, roleLabel } from "../lib/collections";
 import { fmtInt } from "../lib/format";
-import { useLastPageFocus } from "../lib/useLastPageFocus";
-import { isModifiedClick } from "../lib/graphLink";
-import { navigationHref } from "../lib/state";
 
 const HEADING_ID = "library-top-level";
 const SHARED_HEADING_ID = "library-collections-shared";
 
 /** Places listed at first, and how many more each "Show more" adds. */
 const FIRST_SHOWN = 6;
-export const MORE_SHOWN = 50;
 
 /** An ancestor missing from the list: its address, all `collection.list` says of it. */
 export interface HiddenPart {
@@ -127,32 +114,6 @@ export interface Home {
   open: () => void;
 }
 
-/** A link to a place in the Library: a plain click opens it here, a modified one (a new
- *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it.
- *  `plain`: a bare anchor its class draws (a tree row, a chip), not Click UI's Link. */
-const PlaceLink = forwardRef<
-  HTMLAnchorElement,
-  { collection: string | null; onOpen: () => void; plain?: boolean; children: ReactNode } & Omit<
-    ComponentPropsWithoutRef<"a">,
-    "href" | "children"
-  >
->(function PlaceLink({ collection, onOpen, plain = false, children, onClick, ...rest }, ref) {
-  const props = {
-    ...rest,
-    ref,
-    href: navigationHref("knowledge", collection ? { collection } : {}),
-    onClick: (e: MouseEvent<HTMLAnchorElement>) => {
-      // A wrapping tooltip trigger's handler runs first (it closes the tip): it does nothing
-      // once the click's default is prevented.
-      onClick?.(e);
-      if (isModifiedClick(e)) return;
-      e.preventDefault();
-      onOpen();
-    },
-  };
-  return plain ? <a {...props}>{children}</a> : <Link {...props}>{children}</Link>;
-});
-
 /** A place's link by its title (in the tree, the chips and the path), the title cut to its
  *  box: when cut, the whole title is a tooltip on the link (a keyboard focus opens it too);
  *  the whole title is the link's name either way. */
@@ -192,7 +153,7 @@ export function PlaceTitleLink({
 const PATH_TITLE = "inline-block max-w-48 truncate align-bottom";
 
 /** A parent missing from the list, in words: past the list's end, or one the caller cannot read. */
-function hiddenWhat(truncated: boolean): string {
+export function hiddenWhat(truncated: boolean): string {
   return truncated ? "a collection not listed here" : "a collection you can't open";
 }
 
@@ -412,57 +373,8 @@ function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]>
   });
 }
 
-/** A list of places drawn a step at a time (`useShowMore`). */
-export interface ShowMore {
-  /** The places drawn now. */
-  shown: CollectionEntry[];
-  /** The list's element, where the focus goes after a press. */
-  list: MutableRefObject<HTMLUListElement | null>;
-  /** Show more's label (what a press adds), or null once all are shown. */
-  moreLabel: string | null;
-  showMore: () => void;
-  /** More than the first are shown: Show fewer goes back to them. */
-  fewer: boolean;
-  showFewer: () => void;
-}
-
-/** The first `first` places, each Show more adding MORE_SHOWN; `extra` (one of `items`, on the
- *  way to the place shown) is drawn past them wherever it sits. `moreLabel` is the button's label,
- *  null once all are shown. The last press removes its button: the focus goes to the first
- *  place it added, else the last row shown, else `fallback`. */
-export function useShowMore(
-  items: CollectionEntry[],
-  first: number,
-  extra: CollectionEntry | null = null,
-  fallback: () => HTMLElement | null = () => null,
-): ShowMore {
-  const [count, setCount] = useState(first);
-  const list = useRef<HTMLUListElement | null>(null);
-  const shownAt = (n: number) => {
-    const head = items.slice(0, n);
-    return extra && !head.includes(extra) ? [...head, extra] : head;
-  };
-  const shown = shownAt(count);
-  // What the next press adds: `extra` may already be drawn among it.
-  const adds = shownAt(count + MORE_SHOWN).length - shown.length;
-  const markShown = useLastPageFocus({
-    loading: false,
-    more: adds > 0,
-    rows: () => placeLinks(list.current),
-    fallback,
-  });
-  return {
-    shown,
-    list,
-    moreLabel: adds > 0 ? `Show ${adds} more` : null,
-    showMore: () => {
-      markShown(shown.map((c) => c.namespace));
-      setCount(count + MORE_SHOWN);
-    },
-    fewer: count > first,
-    showFewer: () => setCount(first),
-  };
-}
+/** How a list of places is drawn a step at a time: by name, each row's link taking the focus. */
+export const PLACE_ROWS: ShowMoreRows<CollectionEntry> = { key: (c) => c.namespace, rows: placeLinks };
 
 /** One list of places to open, revealed a step at a time, each saying where it sits. */
 function PlaceList({
@@ -483,7 +395,7 @@ function PlaceList({
   onPick: (collection: string) => void;
   truncated: boolean;
 }) {
-  const { shown, list, moreLabel, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, null, () =>
+  const { shown, list, moreLabel, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, PLACE_ROWS, null, () =>
     document.getElementById(id),
   );
   if (items.length === 0) return null;
@@ -550,7 +462,7 @@ export function CollectionChips({
   onPick: (collection: string) => void;
 }) {
   const inside = useMemo(() => (rows && collection ? childrenOf(rows, collection) : []), [rows, collection]);
-  const { shown, list, moreLabel, showMore } = useShowMore(inside, FIRST_SHOWN);
+  const { shown, list, moreLabel, showMore } = useShowMore(inside, FIRST_SHOWN, PLACE_ROWS);
   if (!collection || inside.length === 0) return null;
   return (
     <nav aria-label={`Inside ${distinctTitle(collection, repeated)}`} className="library-chips">

@@ -533,3 +533,32 @@ async def test_operation_registered_with_viewer_role() -> None:
     assert op.required_role == Role.VIEWER
     assert op.idempotent is True
     assert op.audit is False
+
+
+@pytest.mark.asyncio
+async def test_a_supporter_whose_key_holds_a_slash_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.insights.store import audit as audit_repo
+    from server.memory.api.models_graph import MemoryLineageInput
+    from server.memory.app.dedup import handle_memory_lineage
+    from server.memory.store import shared as shared_repo
+
+    row = _shared_row(promoted_from=["clickhouse/finance/-/-/-/definition/arr"])
+    row["memory_type"] = "definition"
+
+    async def fake_fetch_shared(*_a, **_kw):
+        return row
+
+    async def no_audit(*_a, **_kw):
+        return []
+
+    monkeypatch.setattr(shared_repo, "fetch_shared", fake_fetch_shared)
+    monkeypatch.setattr(audit_repo, "list_by_request_id", no_audit)
+    out = await handle_memory_lineage(
+        MemoryLineageInput(
+            org="clickhouse", namespace="finance", agent="reviewer", memory_key="definition/arr"
+        )
+    )
+    (supporter,) = out.supporters
+    assert (supporter.agent, supporter.memory_key) == ("-", "definition/arr")

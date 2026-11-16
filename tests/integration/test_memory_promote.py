@@ -8,12 +8,17 @@ Covers the explicit promotion path:
   - demote of a non-existent shared key is an idempotent no-op
   - source memory's private layer is unaffected by promote/demote
   - audit_log records both events
+  - a definition is promoted from its namespace-wide row with the hash memory.get serves
+  - a promotion and a demotion move the namespace's memory write mark
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -241,3 +246,356 @@ async def test_promote_and_demote_emit_audit_rows(detector, ch_client) -> None:
     event_types = {r[0] for r in rows}
     assert "memory.promote" in event_types
     assert "memory.demote" in event_types
+
+
+@pytest.mark.asyncio
+async def test_a_definition_is_promoted_with_the_hash_get_serves(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the SDK: the namespace-wide row written as agent '-', refused without a
+    hash, promoted with the `content_sha256` memory.get serves, by the token's actor."""
+    from loom import Agent
+    from loom.errors import ValidationError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    value = {"term": "ARR", "aliases": ["annual recurring revenue"], "body": "Yearly revenue."}
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set("definition/arr", value, "definition", agent_id="-")
+        got = await a.memory.get("definition/arr", agent_id="-")
+        with pytest.raises(ValidationError) as e:  # no approved hash
+            await a.memory.promote("definition/arr", agent_id="-")
+        assert e.value.code == "VALIDATION_FAILED"
+        shared_rows = "SELECT count() FROM loom.shared WHERE org = {org:String}"
+        assert ch_client.query(shared_rows, parameters={"org": org}).result_rows == [(0,)]
+        out = await a.memory.share(
+            "definition/arr",
+            agent_id="-",
+            approved_sha256=got["content_sha256"],
+            approver="lead",
+            rationale="the finance glossary",
+        )
+    assert out["shared_memory_key"] == "definition/arr" and out["ignored_args"] == ["approver"]
+    rows = ch_client.query(
+        """
+        SELECT memory_type, value, promoted_by, promoted_from, promoted_from_candidate_id,
+               promotion_event, rationale, confidence
+        FROM loom.shared FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'definition/arr'
+        """,
+        parameters={"org": org, "ns": ns},
+    ).result_rows
+    (
+        (memory_type, stored, promoted_by, promoted_from, candidate, event, rationale, confidence),
+    ) = rows
+    assert memory_type == "definition" and json.loads(stored) == value
+    assert promoted_by == "process:definer"  # the token's actor, not the body's approver
+    assert promoted_from == [f"{org}/{ns}/-/-/-/definition/arr"]
+    assert candidate is None and str(event) == out["promotion_event"]
+    assert rationale == "the finance glossary" and confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_name_is_held_until_its_definition_is_demoted(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through the server: a name another definition holds is refused, the definition's
+    own revision is not, and demoting it gives the name back."""
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-names"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+
+        async def promote(key: str, value: dict) -> dict:
+            await a.memory.set(key, value, "definition", agent_id="-")
+            got = await a.memory.get(key, agent_id="-")
+            return await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+
+        await promote("definition/arr", {"term": "ARR", "body": "Annual recurring revenue."})
+        revenue = {"term": "Revenue", "aliases": ["arr"], "body": "Yearly income."}
+        with pytest.raises(LoomError) as e:
+            await promote("definition/revenue", revenue)
+        assert e.value.code == "DEFINITION_NAME_TAKEN"
+        assert e.value.detail["conflicting_keys"] == ["definition/arr"]
+        assert e.value.detail["names"] == ["arr"]
+        # Its own revision holds the name already.
+        await promote("definition/arr", {"term": "ARR", "body": "Yearly recurring revenue."})
+        await a.memory.demote("definition/arr")
+        out = await promote("definition/revenue", revenue)
+    assert out["shared_memory_key"] == "definition/revenue"
+
+
+@pytest.mark.asyncio
+async def test_promotions_racing_for_one_name_leave_one_holder(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the server: three definitions sharing a term, promoted at once, leave one
+    shared row; the others are refused by name or by the namespace's claim."""
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-race"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    keys = [f"definition/arr-{i}" for i in range(3)]
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        hashes = {}
+        for key in keys:
+            await a.memory.set(key, {"term": "ARR", "body": key}, "definition", agent_id="-")
+            hashes[key] = (await a.memory.get(key, agent_id="-"))["content_sha256"]
+        results = await asyncio.gather(
+            *(a.memory.promote(k, agent_id="-", approved_sha256=hashes[k]) for k in keys),
+            return_exceptions=True,
+        )
+    refused = [r.code for r in results if isinstance(r, LoomError)]
+    assert len(refused) == 2, results
+    assert set(refused) <= {"DEFINITION_NAME_TAKEN", "OVERLOADED"}
+    count = ch_client.query(
+        "SELECT count() FROM loom.shared FINAL WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": org, "ns": ns},
+    ).result_rows[0][0]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_agent_promotes_a_definition_as_its_description_says(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through MCP: memory.get of the namespace-wide row serves the hash, and
+    memory.promote with agent='-' and that hash shares it."""
+    import httpx
+    from loom import Agent
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-mcp"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set(
+            "definition/arr", {"term": "ARR", "body": "x"}, "definition", agent_id="-"
+        )
+
+    async def call(tool: str, arguments: dict) -> dict:
+        rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+        rpc["params"] = {"name": tool, "arguments": {"namespace": ns, **arguments}}
+        headers = {"Authorization": f"Bearer {tok}", "Accept": "application/json"}
+        async with httpx.AsyncClient(base_url=control_plane_url, timeout=60.0) as c:
+            r = await c.post("/mcp", json=rpc, headers=headers)
+        assert r.status_code == 200, r.text[:400]
+        result = r.json()["result"]
+        assert not result.get("isError"), result
+        return result["structuredContent"]
+
+    row = {"memory_key": "definition/arr", "agent": "-"}
+    got = await call("loom_memory_get", row)
+    out = await call("loom_memory_promote", {**row, "approved_sha256": got["content_sha256"]})
+    assert out["shared_memory_key"] == "definition/arr"
+
+
+@pytest.mark.asyncio
+async def test_a_promotion_racing_a_demote_leaves_the_row_and_its_vector_agreeing(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the server: a definition's revision and its demote sent at once leave its
+    shared row and its shared vector both live or both retired."""
+    from loom import Agent
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-demote-race"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="definer")
+    key = "definition/arr"
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+
+        async def approved(body: str) -> str:
+            await a.memory.set(key, {"term": "ARR", "body": body}, "definition", agent_id="-")
+            return (await a.memory.get(key, agent_id="-"))["content_sha256"]
+
+        first = await approved("Annual recurring revenue.")
+        await a.memory.promote(key, agent_id="-", approved_sha256=first)
+        revision = await approved("Yearly recurring revenue.")
+        results = await asyncio.gather(
+            a.memory.promote(key, agent_id="-", approved_sha256=revision),
+            a.memory.demote(key),
+            return_exceptions=True,
+        )
+    # Each answered, or found the other holding the namespace.
+    for r in results:
+        assert not isinstance(r, Exception) or getattr(r, "code", "") == "OVERLOADED", r
+    params = {"org": org, "ns": ns, "k": key}
+    live_row = ch_client.query(
+        "SELECT tombstoned_at IS NULL FROM loom.shared FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = {k:String}",
+        parameters=params,
+    ).result_rows[0][0]
+    vectors = ch_client.query(
+        "SELECT countIf(tombstoned_at IS NULL), count() FROM loom.memory_embeddings FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String} AND scope = 'shared'"
+        " AND memory_key = {k:String}",
+        parameters=params,
+    ).result_rows[0]
+    assert vectors[1] and bool(vectors[0]) == bool(live_row), (live_row, vectors)
+
+
+@pytest.mark.asyncio
+async def test_the_definitions_list_says_which_are_governed(
+    control_plane_url: str, mint_test_token
+) -> None:
+    """Through the server: a promoted definition is governed until its source is edited,
+    and governed again when the edit is reverted; a writer may not list."""
+    from loom import Agent
+    from loom.errors import AuthInsufficient
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-list"), f"def-{uuid.uuid4().hex[:8]}"
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="lead")
+    writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"], subject="bot")
+    key, value = "definition/arr", {"term": "ARR", "body": "Annual recurring revenue."}
+
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=admin
+    ) as a:
+
+        async def verdict() -> tuple[str, str | None]:
+            (entry,) = (await a.client.memory.definitions_list())["definitions"]
+            return entry["verdict"], entry["lapse_reason"]
+
+        await a.memory.set(key, value, "definition", agent_id="-")
+        got = await a.memory.get(key, agent_id="-")
+        await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+        assert await verdict() == ("governed", None)
+        await a.memory.set(key, {**value, "body": "Edited."}, "definition", agent_id="-")
+        assert await verdict() == ("lapsed", "changed")
+        await a.memory.set(key, value, "definition", agent_id="-")
+        assert await verdict() == ("governed", None)
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=writer
+    ) as w:
+        with pytest.raises(AuthInsufficient):
+            await w.client.memory.definitions_list()
+
+
+@pytest.mark.asyncio
+async def test_a_promotion_and_a_demotion_move_the_memory_write_mark(
+    control_plane_url: str, mint_test_token, ch_client
+) -> None:
+    """Through the server: the namespace's memory mark reaches each shared write's time."""
+    from loom import Agent
+
+    from server.core.datetimes import as_aware_utc
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("shared-write-mark"), f"wm-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="lead")
+    params = {"org": org, "ns": ns}
+
+    async def mark_reaches(at: datetime) -> None:
+        at = as_aware_utc(at)
+        at_ns = int(at.timestamp() * 1e9)
+        for _ in range(60):
+            mark = ch_client.query(
+                "SELECT max(last_write) FROM loom.namespace_write_marks"
+                " WHERE org = {org:String} AND namespace = {ns:String} AND plane = 'memory'",
+                parameters=params,
+            ).result_rows[0][0]
+            if as_aware_utc(mark) >= at:
+                # Nothing else moved it: the namespace's last memory row is older.
+                last_row = ch_client.query(
+                    "SELECT max(version) FROM loom.memory"
+                    " WHERE org = {org:String} AND namespace = {ns:String}",
+                    parameters=params,
+                ).result_rows[0][0]
+                assert last_row < at_ns
+                return
+            await asyncio.sleep(0.5)
+        raise AssertionError(f"the memory mark {mark} never reached {at}")
+
+    def shared(column: str) -> datetime:
+        return ch_client.query(
+            f"SELECT {column} FROM loom.shared FINAL"
+            " WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'note'",
+            parameters=params,
+        ).result_rows[0][0]
+
+    async with Agent(
+        org=org, namespace=ns, agent="bot", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set("note", "the build runs on Tuesdays", "semantic")
+        # Past the mark's second, so only the shared write can move it to the row's time.
+        await asyncio.sleep(1.5)
+        await a.memory.promote("note")
+        await mark_reaches(shared("promoted_at"))
+        await asyncio.sleep(1.5)
+        await a.memory.demote("note")
+        await mark_reaches(shared("tombstoned_at"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])
+async def test_a_definition_is_searched_only_while_its_source_exists_and_is_not_sensitive(
+    control_plane_url: str, mint_test_token, op: str
+) -> None:
+    """Through the server: a promoted definition is found under scope='shared' by
+    memory.search and memory.search_trace until its source is written again with its text
+    under a `medium` label, again once it is `low`, and no longer once it is deleted."""
+    from loom import Agent
+
+    from tests.integration._resources import unique_org
+
+    org, ns = unique_org("definition-relabel"), f"def-{uuid.uuid4().hex[:8]}"
+    tok = mint_test_token(org=org, namespaces=["*"], roles=["admin", "writer"], subject="lead")
+    key, value = "definition/arr", {"term": "ARR", "body": "Annual recurring revenue."}
+    async with Agent(
+        org=org, namespace=ns, agent="detector", base_url=control_plane_url, api_key=tok
+    ) as a:
+
+        async def found() -> tuple[bool, bool]:
+            shared = await a.memory.search("annual recurring revenue", scope="shared", top_k=5)
+            trace = await a.call(
+                "memory.search_trace",
+                {"namespace": ns, "query": "annual recurring revenue", "scope": "shared"},
+            )
+            # A withheld definition is not one the authority stopped serving.
+            assert trace["stale_dropped"] == 0
+            return (
+                key in {h.memory_key for h in shared},
+                key in {h["memory_key"] for h in trace["results"]},
+            )
+
+        async def relabel(level: str) -> None:
+            entry = {"memory_key": key, "value": value, "memory_type": "definition"}
+            if op == "memory.set":
+                body = {"namespace": ns, "agent": "-", "sensitivity": level, **entry}
+            else:
+                body = {"namespace": ns, "agent": "-", "entries": [{**entry, "sensitivity": level}]}
+            await a.call(op, body)
+
+        await a.memory.set(key, value, "definition", agent_id="-")
+        got = await a.memory.get(key, agent_id="-")
+        await a.memory.promote(key, agent_id="-", approved_sha256=got["content_sha256"])
+        assert await found() == (True, True)
+        await relabel("medium")
+        assert await found() == (False, False)
+        await relabel("low")
+        assert await found() == (True, True)
+        # Its source deleted, no label says the copy may be served.
+        await a.call("memory.delete", {"namespace": ns, "agent": "-", "memory_key": key})
+        assert await found() == (False, False)

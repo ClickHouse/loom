@@ -47,8 +47,7 @@ from server.memory.domain.context_layout import (
 from server.memory.domain.decision_statement import states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
-from server.memory.domain.search_types import hit_row, hit_row_key, names_row
-from server.memory.store.shared import SHARED_AGENT
+from server.memory.domain.search_types import SHARED_AGENT, hit_row, hit_row_key, names_row
 
 log = logging.getLogger(__name__)
 

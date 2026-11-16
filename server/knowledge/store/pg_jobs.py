@@ -251,6 +251,20 @@ async def earlier_open(row: dict[str, Any]) -> bool:
     return hit is not None
 
 
+async def open_for_source(org: str, namespace: str, source_uri: str) -> bool:
+    """Whether a job of the source held here is still to run or running."""
+    if pg.unstorable([org, namespace, source_uri]):
+        return False
+    hit = await pg.fetchval(
+        "SELECT 1 FROM loom.knowledge_jobs WHERE org = $1 AND namespace = $2"
+        f" AND source_uri = $3 AND {OPEN_JOB} AND {_LIVE} LIMIT 1",
+        org,
+        namespace,
+        source_uri,
+    )
+    return hit is not None
+
+
 async def held_ids(org: str, namespace: str, ids: list[str]) -> set[str]:
     """Which of `ids` are jobs held here."""
     if not ids or not _storable(org, namespace):

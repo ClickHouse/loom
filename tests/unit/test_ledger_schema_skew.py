@@ -177,8 +177,12 @@ async def test_a_stale_column_set_is_reprojected_after_a_failed_insert(
     await c.insert("loom.agent_events", _rows(1))
     assert "build_commit" in fake.inserts[-1]["columns"]
     fake.live = list(_LIVE)  # the column is gone; the cache still lists it
+    observed: list[str] = []
+    monkeypatch.setattr(ch_mod, "_INSERT_OBSERVERS", [lambda table, _: observed.append(table)])
     await c.insert("loom.agent_events", _rows(4))
     assert fake.inserts[-1]["rows"] == 4 and "build_commit" not in fake.inserts[-1]["columns"]
+    # The retried batch reaches the observers, as a first-try one does.
+    assert observed == ["loom.agent_events"]
 
 
 def test_every_ledger_row_carries_instance_build_and_label(monkeypatch: pytest.MonkeyPatch) -> None:

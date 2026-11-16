@@ -434,8 +434,8 @@
   "options: -h, --help show this help message and exit"
  ],
  "loom cell": [
-  "usage: loom cell [-h] {credential,limit,which,prepare} ...",
-  "positional arguments: {credential,limit,which,prepare} credential Make a router credential, or rotate a cell's. limit Close, reopen or bound a cell to new orgs. which Print the lookup's cell and host for an org (the first cell if not placed). prepare Register this cell in the router's directory and write its rows.",
+  "usage: loom cell [-h] {credential,limit,which,remove,prepare} ...",
+  "positional arguments: {credential,limit,which,remove,prepare} credential Make a router credential, or rotate a cell's. limit Close, reopen or bound a cell to new orgs. which Print the lookup's cell and host for an org (the first cell if not placed). remove Remove the directory row of a cell attaching with no placement. prepare Register this cell in the router's directory and write its rows.",
   "options: -h, --help show this help message and exit"
  ],
  "loom cell credential": [
@@ -450,6 +450,10 @@
  "loom cell which": [
   "usage: loom cell which [-h] --org ORG [--router ROUTER]",
   "options: -h, --help show this help message and exit --org ORG The org --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
+ ],
+ "loom cell remove": [
+  "usage: loom cell remove [-h] --cell CELL [--router ROUTER]",
+  "options: -h, --help show this help message and exit --cell CELL The cell to remove (its LOOM_CELL) --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
  ],
  "loom cell prepare": [
   "usage: loom cell prepare [-h] --cell CELL --host HOST --credential-sha256 SHA256 [--probe-url PROBE_URL] [--wait WAIT] [--router ROUTER]",
