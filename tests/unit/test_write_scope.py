@@ -684,7 +684,7 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
     ch = _PinnedV()
     out = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, ch, user_id="U"))
     stage_a = [s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]
-    # The writer's own stage A, then the namespace's pinned rows, unscoped.
+    # The writer's own stage A and, beside it, the namespace's pinned rows, unscoped.
     assert ["scope_uid" in s for s in stage_a] == [True]
     pinned = [s for s, _ in ch.sql if "m.pinned = 1" in s]
     assert len(pinned) == 1 and "scope_uid" not in pinned[0]
@@ -692,7 +692,9 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
     assert all(p.memory_id != "v1" for p in out.peers), "the foreign row is never named"
 
 
-def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) -> None:
+def test_a_namespace_wide_write_naming_no_user_runs_no_separate_pinned_statement(
+    monkeypatch,
+) -> None:
     ch = _PinnedV()
     out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch))
     assert len([s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]) == 1
@@ -702,9 +704,9 @@ def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) 
 def test_a_write_naming_its_user_reads_its_rows_and_is_still_blocked_by_a_pin(
     monkeypatch,
 ) -> None:
-    """A namespace-wide token writing for U reads U's rows, then the namespace's pinned
-    ones: V's pin still refuses a close different value, and a restatement of it is
-    written as U's row."""
+    """A namespace-wide token writing for U reads U's rows and, beside them, the
+    namespace's pinned ones: V's pin still refuses a close different value, and a
+    restatement of it is written as U's row."""
     ch = _PinnedV()
     out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch, user_id="U"))
     stage_a = [s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]
@@ -754,7 +756,7 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
     assert "LIMIT 10 BY qidx" in pinned[0]
 
 
-def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
+def test_a_namespace_wide_bulk_write_naming_no_user_runs_no_pinned_statement() -> None:
     from server.memory.app.conflicts import candidate_rows_many
 
     ch = _SqlCH()
