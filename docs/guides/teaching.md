@@ -40,6 +40,49 @@ The `docker compose` commands in the labs run in that same terminal, act on the 
 containers, and name its install directory as `<dir>`: `~/.loom` on a laptop and
 `/workspaces/.loom` in a codespace.
 
+## Hand out the labs as an assignment
+
+The [course starter](../../examples/course-starter/README.md) is a repository for each
+student: the code of Labs 1 and 2 and the Lab 4 query, with their gaps marked `TODO`, an
+answers page for the written exercises, a dev container that installs the latest release
+in a codespace with the Python SDK and Claude Code, and a grading workflow. Copy it into a
+new repository under your account or your school's organization, and mark that
+repository as a template (it needs `curl`, `tar`, `git` and the
+[GitHub CLI](https://cli.github.com/), signed in):
+
+```bash
+mkdir loom-labs && cd loom-labs
+curl -fsSL https://github.com/ClickHouse/loom/archive/refs/heads/main.tar.gz \
+  | tar -xz --strip-components=3 loom-main/examples/course-starter
+git init -b main && git add . && git commit -m "Loom labs"
+gh repo create <owner>/loom-labs --public --source . --push
+gh repo edit <owner>/loom-labs --template
+```
+
+The push runs the grading workflow once, before the repository is a template, and that run
+fails by design: each check's line names the part of the starter still to be written. The
+copy is the starter on `main`, tested against `main`, while every run installs the latest
+release, so a failure for any other reason means the two differ: copy the starter again
+after the next release. Later pushes to the template are not graded.
+
+Each student then works in a repository made from that template, with **Use this
+template** on its page or with the tool that hands out your assignments, and opens it in
+a codespace or clones it to a laptop. A student needs read access to the template to use
+it: a public one holds no answers, and a private one works for the members of its
+organization or the collaborators you add.
+
+`python grading/grade.py` runs the lab code against the student's running stack and checks
+what it wrote and returned, not how it got there, so read the code too. The `Grade` workflow
+runs the same checks on every push, against a fresh stack on a GitHub Actions runner, and
+writes the table of checks to the run's summary; the run fails while any check fails. Each
+check fails on the untouched starter and needs no API key. Lab 3 and the answers page are
+graded by hand: their exercises ask for explanations.
+
+A grading run takes about two minutes, most of it starting the stack. In a private
+repository those minutes count against the Actions quota of the account or organization
+that owns it ([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions));
+codespaces cost what [Setup](#setup) says.
+
 ## Lab 1: an agent that remembers
 
 Build a small agent with the Python SDK: an identity, facts it saves and reads back, a
@@ -73,7 +116,9 @@ docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.m
 
 Then search the namespace's documents with `knowledge.search` over HTTP (with no
 `Authorization` header on the single-user stack) or the SDK
-([knowledge documents](../features/knowledge.md)).
+([knowledge documents](../features/knowledge.md)). The SDK's `knowledge.ingest_file`
+publishes a local file without copying it into the container; the course starter's
+`labs/lab2.py` asks for it.
 
 Exercises:
 
@@ -125,8 +170,8 @@ docker compose --project-directory <dir> exec clickhouse clickhouse-client --use
 
 Exercises:
 
-- Write a query over `loom.sql_v1_memories` for the facts saved in the last hour, by
-  agent.
+- Write a query over `loom.sql_v1_memories` that counts the facts each agent created in
+  the last hour (by `created_at`, which a revision keeps).
 - Compare a `memory.search` result with a SQL query over the same rows and explain what
   ranking adds.
 

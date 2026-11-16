@@ -531,8 +531,9 @@ class _CountingConnection:
     """A directory connection that counts the statements sent through it: one each
     query, and the transaction's begin and commit."""
 
-    def __init__(self, first: str | None) -> None:
+    def __init__(self, first: str | None, first_state: str = "serving") -> None:
         self.first, self.statements, self.inserted = first, 0, False
+        self.first_state = first_state
 
     async def execute(self, sql: str, *_a: Any) -> str:
         self.statements += 1
@@ -541,10 +542,12 @@ class _CountingConnection:
 
     async def fetchval(self, sql: str, *_a: Any) -> Any:
         self.statements += 1
-        return self.first if "WHERE is_first" in sql else None
+        return None
 
     async def fetchrow(self, sql: str, *_a: Any) -> Any:
         self.statements += 1
+        if "WHERE is_first" in sql:  # the first cell, `serving` unless told otherwise
+            return {"cell": self.first, "state": self.first_state} if self.first else None
         if not self.inserted:
             return None  # a new registration: no row until it inserts one
         return {
@@ -614,6 +617,14 @@ def test_the_registration_bounds_count_the_statements_the_code_sends(monkeypatch
     _connected(write)
     asyncio.run(directory.register(later))
     assert write.statements == directory.REGISTER_STATEMENTS
+    # Under the directory lock too: a first cell still attaching refuses a later one, and
+    # nothing is inserted.
+    attaching = _CountingConnection(first="eu-1", first_state="attaching")
+    _connected(attaching)
+    assert "is not serving yet" in asyncio.run(directory.refusal_before_probe(later))
+    with pytest.raises(directory.OperatorRefused, match="is not serving yet"):
+        asyncio.run(directory.register(later))
+    assert not attaching.inserted
 
 
 def test_a_lone_surrogate_is_malformed_never_an_outage(router) -> None:

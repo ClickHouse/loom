@@ -273,10 +273,10 @@ def is_outage(e: BaseException) -> bool:
 def _raise_if_unavailable(
     e: Exception, *, outcome_unknown: bool = False, lost: bool = False
 ) -> None:
-    """503 TENANCY_REFUSED for a cell's org triggers' refusal (SQLSTATE LT001); 503
-    POSTGRES_UNAVAILABLE for an error a retry may clear, or any error once the
-    connection was `lost` (the driver's error then depends on when it noticed); a data
-    or constraint error, whose text quotes the row or the argument, as
+    """503 TENANCY_REFUSED for a refusal by a cell's org triggers or its `loom.tenancy`
+    guard (SQLSTATE LT001); 503 POSTGRES_UNAVAILABLE for an error a retry may clear, or any
+    error once the connection was `lost` (the driver's error then depends on when it
+    noticed); a data or constraint error, whose text quotes the row or the argument, as
     PostgresRefusedError; otherwise the caller re-raises `e` as it is."""
     # The driver's own argument error lives in its private module: the public
     # `asyncpg.exceptions.DataError` is the server's SQLSTATE 22000.
@@ -296,7 +296,8 @@ def _raise_if_unavailable(
         raise PostgresRefusedError(e) from None
 
 
-# The org triggers' SQLSTATE (schemas/pg_migrations/011_tenancy_triggers.sql).
+# The SQLSTATE of the org triggers and the `loom.tenancy` guard (migrations
+# schemas/pg_migrations/011_tenancy_triggers.sql and 012_tenancy_guard.sql).
 TENANCY_REFUSED_SQLSTATE = "LT001"
 
 
@@ -304,8 +305,9 @@ def _raise_if_tenancy_refused(e: BaseException) -> None:
     if getattr(e, "sqlstate", None) == TENANCY_REFUSED_SQLSTATE:
         from server.core.errors import TenancyRefusedError
 
-        # The function's text names the refused row's org, seldom the caller's, and holds
-        # nothing else a row carries: logged with its table, never answered.
+        # The function's text names the refused row's org (for the `loom.tenancy` guard, the
+        # org the call acts in) and nothing else a row carries: logged with its table, never
+        # answered.
         log.warning(
             "Postgres refused a row of loom.%s from an unmarked session: %s",
             getattr(e, "table_name", None) or "?",
@@ -317,9 +319,9 @@ def _raise_if_tenancy_refused(e: BaseException) -> None:
         ) from None
 
 
-# The setting that marks a session as one that ran the tenancy check: the org triggers'
-# WHEN skips such a session (`server.core.cell_triggers`; its name never changes,
-# rolling-upgrades rule 47).
+# The setting that marks a session as one that ran the tenancy check: the WHEN of the org
+# triggers and the `loom.tenancy` guard skips such a session (`server.core.cell_triggers`;
+# its name never changes, rolling-upgrades rule 47).
 TENANCY_MARKER = "loom.tenancy_checked"
 
 

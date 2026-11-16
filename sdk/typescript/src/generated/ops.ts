@@ -3950,6 +3950,25 @@ export interface KnowledgeListOutput {
   next_cursor?: string | null;
 }
 
+export interface KnowledgeMoveInput {
+  org: string;
+  namespace: string;
+  to_namespace: string;
+  source_uris: string[];
+}
+
+export interface KnowledgeMoveResult {
+  source_uri: string;
+  moved?: boolean;
+  reason?: "" | "not_found" | "exists" | "synced" | "busy" | "erased";
+}
+
+export interface KnowledgeMoveOutput {
+  found: boolean;
+  to_namespace?: string;
+  results?: KnowledgeMoveResult[];
+}
+
 export interface KnowledgeOutlineInput {
   org: string;
   namespace: string;
@@ -5295,6 +5314,33 @@ export interface MemoryDedupResolveOutput {
   ignored_args?: string[];
 }
 
+export interface MemoryDefinitionsListInput {
+  org: string;
+  namespace: string;
+}
+
+export interface DefinitionEntry {
+  memory_key: string;
+  promoted_at: string; // date-time
+  capped?: boolean;
+  term?: string | null;
+  aliases?: string[];
+  verdict?: "governed" | "lapsed" | null;
+  lapse_reason?: "not_namespace_wide" | "no_term" | "gone" | "superseded" | "conflicted" | "duplicate" | "not_active" | "expired" | "ended" | "changed" | "sensitive" | null;
+  lost?: LostName[];
+}
+
+export interface LostName {
+  name: string;
+  winner: string;
+}
+
+export interface MemoryDefinitionsListOutput {
+  count: number;
+  ceiling: number;
+  definitions: DefinitionEntry[];
+}
+
 export interface MemoryDeleteInput {
   org: string;
   namespace: string;
@@ -6369,12 +6415,14 @@ export interface MemoryPromoteInput {
   approver?: string | null;
   reversible_for_days?: number;
   promoted_from_candidate_id?: string | null;
+  approved_sha256?: string | null;
 }
 
 export interface MemoryPromoteOutput {
   shared_memory_key: string;
   promotion_event: string;
   reversible_until: string; // date-time
+  ignored_args?: string[];
 }
 
 export interface MemoryProposalDecideInput {
@@ -10366,6 +10414,7 @@ export type OpName =
   | "knowledge.ingest_status"
   | "knowledge.inspect"
   | "knowledge.list"
+  | "knowledge.move"
   | "knowledge.outline"
   | "knowledge.query"
   | "knowledge.reads"
@@ -10403,6 +10452,7 @@ export type OpName =
   | "memory.dedup_collapse"
   | "memory.dedup_list"
   | "memory.dedup_resolve"
+  | "memory.definitions.list"
   | "memory.delete"
   | "memory.delete_version"
   | "memory.demonstrate"
@@ -10733,6 +10783,7 @@ export interface OpMap {
   "knowledge.ingest_status": { input: KnowledgeIngestStatusInput; output: KnowledgeIngestStatusOutput };
   "knowledge.inspect": { input: KnowledgeInspectInput; output: KnowledgeInspectOutput };
   "knowledge.list": { input: KnowledgeListInput; output: KnowledgeListOutput };
+  "knowledge.move": { input: KnowledgeMoveInput; output: KnowledgeMoveOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.query": { input: KnowledgeQueryInput; output: KnowledgeQueryOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
@@ -10770,6 +10821,7 @@ export interface OpMap {
   "memory.dedup_collapse": { input: MemoryDedupCollapseInput; output: MemoryDedupCollapseOutput };
   "memory.dedup_list": { input: MemoryDedupListInput; output: MemoryDedupListOutput };
   "memory.dedup_resolve": { input: MemoryDedupResolveInput; output: MemoryDedupResolveOutput };
+  "memory.definitions.list": { input: MemoryDefinitionsListInput; output: MemoryDefinitionsListOutput };
   "memory.delete": { input: MemoryDeleteInput; output: MemoryDeleteOutput };
   "memory.delete_version": { input: MemoryDeleteVersionInput; output: MemoryDeleteVersionOutput };
   "memory.demonstrate": { input: MemoryDemonstrateInput; output: MemoryDemonstrateOutput };
@@ -11100,6 +11152,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.ingest_status", group: "knowledge", method: "ingestStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
   { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
+  { name: "knowledge.move", group: "knowledge", method: "move", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 8000, audit: true, readOnly: false },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
@@ -11137,6 +11190,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.dedup_collapse", group: "memory", method: "dedupCollapse", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "memory.dedup_list", group: "memory", method: "dedupList", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.dedup_resolve", group: "memory", method: "dedupResolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 400, audit: true, readOnly: false },
+  { name: "memory.definitions.list", group: "memory", method: "definitionsList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
   { name: "memory.delete", group: "memory", method: "delete", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 30, audit: true, readOnly: false },
   { name: "memory.delete_version", group: "memory", method: "deleteVersion", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "memory.demonstrate", group: "memory", method: "demonstrate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
@@ -11329,4 +11383,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 364;
+export const GENERATED_OP_COUNT = 366;

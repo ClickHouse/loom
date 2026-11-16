@@ -862,16 +862,23 @@ export interface GrantEntry {
   also?: string[];
 }
 
+/** One page of a namespace's grants, newest first; `next_cursor` reads the next. */
+export interface GrantsPage {
+  rows: GrantEntry[];
+  next_cursor?: string | null;
+}
+
 export async function listGrants(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { limit?: number } & RequestOpts = {},
-): Promise<{ rows: GrantEntry[] }> {
-  return post<{ rows: GrantEntry[] }>(
+  opts: { limit?: number; cursor?: string | null } & RequestOpts = {},
+): Promise<GrantsPage> {
+  return post<GrantsPage>(
     "/v1/grants.list",
     {
       org: id.org,
       namespace: id.namespace,
       limit: opts.limit ?? 100,
+      ...(opts.cursor ? { cursor: opts.cursor } : {}),
     },
     opts.signal,
   );

@@ -3,11 +3,12 @@ name: release-check
 # A published release, checked from outside as a user meets it, signed in to
 # nothing: the one-line installer from github.com in clean Debian, Ubuntu and
 # Alpine containers on amd64 and arm64 (install, round trip, re-run, a refused
-# downgrade, an upgrade from the previous release), both images' signatures, and
-# the SDKs from PyPI and npm. The release workflow calls it after publishing,
-# with neither the upgrade nor the SDKs (they publish later, from the registry
-# dispatch); a maintainer dispatches it for any release, with `previous_version`
-# and `sdks` (docs/development/release-process.md).
+# downgrade, an upgrade from the previous release), the signatures of both
+# images and of every release file, and the SDKs from PyPI and npm. The release
+# workflow calls it after publishing, with neither the upgrade nor the SDKs
+# (they publish later, from the registry dispatch); a maintainer dispatches it
+# for any release, with `previous_version` and `sdks`
+# (docs/development/release-process.md).
 
 on:
   workflow_call:
@@ -79,7 +80,7 @@ jobs:
           python3 scripts/gates/installer_rehearsal.py "${args[@]}"
 
   signatures:
-    name: Image signatures
+    name: Image and release file signatures
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -94,6 +95,13 @@ jobs:
         run: |
           # shellcheck disable=SC2086 # one argument per image
           bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
+      - name: Every release file carries the release workflow's keyless signature
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
+        run: |
+          bash scripts/release/download_release_files.sh "$VERSION" "$RUNNER_TEMP/files"
+          bash scripts/release/verify_release_files.sh "$VERSION" "$RUNNER_TEMP/files"
 
   sdks:
     name: SDKs from PyPI and npm

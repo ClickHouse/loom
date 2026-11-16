@@ -397,6 +397,52 @@ async def forget_published(
     )
 
 
+async def copy_snapshot(
+    catalog: dict[str, Any],
+    *,
+    namespace: str,
+    snapshot_id: int,
+    doc_version: int,
+    actor: str,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Copy the rows of `catalog`'s snapshot into `namespace` as `snapshot_id`, at
+    `doc_version`, written by `actor`: a moved document's table. Whether every row
+    landed."""
+    ch = ch or _default_client()
+    params = {
+        "org": catalog["org"],
+        "ns": catalog["namespace"],
+        "ds": catalog["dataset_id"],
+        "snap": catalog["snapshot_id"],
+        "to_ns": namespace,
+        "to_snap": snapshot_id,
+        "v": doc_version,
+        "actor": actor,
+    }
+    # The source rows are picked in an inner query: an outer WHERE would read the
+    # replaced columns, not the stored ones. `SELECT *` keeps a column a newer build added.
+    await ch.execute(
+        f"INSERT INTO {ROWS} SELECT * REPLACE ({{to_ns:String}} AS namespace,"
+        " {to_snap:UInt64} AS snapshot_id, {v:UInt64} AS doc_version, {actor:String} AS actor)"
+        f" FROM (SELECT * FROM {ROWS} WHERE org = {{org:String}} AND namespace = {{ns:String}}"
+        " AND dataset_id = {ds:String} AND snapshot_id = {snap:UInt64})",
+        params=params,
+        settings={"async_insert": 0},
+    )
+    counts = await ch.query_all(
+        f"SELECT namespace = {{ns:String}} AS source, count() AS n FROM {ROWS}"
+        " WHERE org = {org:String} AND namespace IN ({ns:String}, {to_ns:String})"
+        " AND dataset_id = {ds:String}"
+        " AND ((namespace = {ns:String} AND snapshot_id = {snap:UInt64})"
+        " OR (namespace = {to_ns:String} AND snapshot_id = {to_snap:UInt64}))"
+        " GROUP BY source",
+        params=params,
+    )
+    n = {bool(r["source"]): int(r["n"]) for r in counts}
+    return n.get(True, 0) == n.get(False, 0)
+
+
 async def forget_snapshot(catalog: dict[str, Any], *, ch: _CHClient | None = None) -> None:
     """Delete the rows of `catalog`'s snapshot: one an approval replaced, or
     wrote and then did not switch to."""

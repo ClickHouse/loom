@@ -982,12 +982,11 @@ jobs:
         run: |
           uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      # On a push the base is the previous commit (HEAD~1); on a pull request, the
-      # branch it targets (main, or a release/X.Y line).
+      # The base is HEAD~1: the previous commit on a push, and on a pull request the
+      # first parent of its merge commit, the target branch as the merge was made. The
+      # target branch's tip can carry a newer migration by the time the run starts.
       - name: Mixed-version gate
-        run: >-
-          python scripts/gates/mixed_version.py --require
-          --base ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+        run: python scripts/gates/mixed_version.py --require --base HEAD~1
 
   sdk-typescript:
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)

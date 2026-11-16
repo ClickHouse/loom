@@ -2,6 +2,7 @@ import type { MyNamespaceEntry, NamespaceInfo, WhoAmI } from "../api";
 import { RANK } from "./canCall";
 import { hasAdminClaim, hasWriterClaim, isNamespaceAdmin } from "./role";
 import { loadingLine, rolesUnseen, serverDecides, unreadLine } from "./callReason";
+import { andList } from "./format";
 
 // Apart from role.ts, which the boot chunk holds: only lazy pages ask (the settings dialog,
 // Spending, a repository's Access tab and Refresh now).
@@ -77,11 +78,6 @@ function restrictedLine(
       ? `To change ${what}, your token must ${andList(tokenMisses)}, and you need a direct ${adminWord} grant on ${name}.`
       : `Changing ${what} needs a direct ${adminWord} grant on ${name}.`;
   return tokenMisses.length ? `To change ${what}, your token must ${andList(tokenMisses)}.` : serverDecides(name);
-}
-
-/** "a", "a and b", "a, b and c". */
-function andList(parts: string[]): string {
-  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
 }
 
 /**

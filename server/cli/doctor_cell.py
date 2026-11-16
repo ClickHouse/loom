@@ -1,6 +1,7 @@
 """`loom doctor`'s cell checks, run only with LOOM_CELL set (docs/architecture/cells.md):
 the deployment check, a partial cell state, the tenancy marker on this process's
-sessions and on every session, and the org triggers' defects (`cell_triggers.missing`).
+sessions and on every session, and the defects of the org triggers and the `loom.tenancy`
+guard (`cell_triggers.missing`).
 
 A refusal (ClickHouse access denied, no LOOM_PG_DSN, another recorded authority or a
 Postgres of another deployment) fails the doctor's exit and reads no cell state;
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from server.cli._ch import reads
 from server.cli.doctor import FAIL, PASS, WARN
 
 # A doctor run never hangs on a cell's stores: each statement, and each session's connect
@@ -106,11 +108,20 @@ def _grades(
         out.append(("cell_marker", PASS, "this process's sessions are marked"))
     else:
         if state == "enforced":
-            effect = "Loom's own writes for a stray org are refused"
+            effect = (
+                "Loom's own writes for a stray org, and its tenancy row for each newly "
+                "placed org, are refused"
+            )
         elif state == "partial":
-            effect = "Loom's own writes for a stray org are refused where the org triggers exist"
+            effect = (
+                "Loom's own writes for a stray org, and its tenancy rows, are refused where "
+                "the org triggers and the loom.tenancy guard exist"
+            )
         else:
-            effect = "once the cell is enforced, Loom's own writes for a stray org will be refused"
+            effect = (
+                "once the cell is enforced, Loom's own writes for a stray org, and its "
+                "tenancy row for each newly placed org, will be refused"
+            )
         out.append(
             (
                 "cell_marker",
@@ -127,7 +138,7 @@ def _grades(
                 WARN,
                 "a session that sends no marker is marked, or its session_replication_role is "
                 "replica (a role, database, ALTER SYSTEM or options setting): the org "
-                "triggers pass every writer",
+                "triggers and the loom.tenancy guard pass every writer",
             )
         )
     named = [d.text for d in defects if d.kind != "absent"]
@@ -166,7 +177,7 @@ def cell_checks() -> list[tuple[str, str, str]]:
         ch = get_client()
         try:
             await asyncio.wait_for(
-                connect_declared(ch, org_free="loom doctor reads a cell's state"),
+                connect_declared(ch, org_free=reads("loom doctor reads a cell's state")),
                 timeout=_SESSION_S,
             )
             return await _checks(ch)

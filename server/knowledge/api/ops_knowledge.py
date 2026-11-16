@@ -32,6 +32,8 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusOutput,
     KnowledgeListInput,
     KnowledgeListOutput,
+    KnowledgeMoveInput,
+    KnowledgeMoveOutput,
     KnowledgeOutlineInput,
     KnowledgeOutlineOutput,
     KnowledgeReadsInput,
@@ -66,6 +68,7 @@ from server.knowledge.app.ingest import (
 )
 from server.knowledge.app.inspect import handle_knowledge_inspect
 from server.knowledge.app.knowledge_search import handle_knowledge_search
+from server.knowledge.app.move import handle_knowledge_move
 from server.knowledge.app.query import handle_knowledge_query
 from server.knowledge.app.reads import handle_knowledge_reads
 from server.knowledge.app.restore import handle_knowledge_restore
@@ -118,6 +121,17 @@ knowledge_delete = Operation(
     output_model=KnowledgeDeleteOutput,
     handler=handle_knowledge_delete,
     idempotent=True,  # re-deleting an already-deleted doc is a no-op
+    required_role=Role.WRITER,
+    audit=True,
+)
+
+knowledge_move = Operation(
+    name="knowledge.move",
+    maturity="experimental",
+    input_model=KnowledgeMoveInput,
+    output_model=KnowledgeMoveOutput,
+    handler=handle_knowledge_move,
+    idempotent=True,  # a moved document is gone from where it was: a retry finds nothing
     required_role=Role.WRITER,
     audit=True,
 )
@@ -341,6 +355,7 @@ OPERATIONS: list[Operation] = [
     knowledge_search,
     knowledge_delete,
     knowledge_restore,
+    knowledge_move,
     knowledge_update_metadata,
     knowledge_list,
     knowledge_get,

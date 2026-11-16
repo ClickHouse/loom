@@ -91,17 +91,13 @@ def run(
 
 BUILD = {"version", "preflight", "clickhouse", "build", "verify"}
 REGISTRIES = {"pypi", "npm", "mcp-registry"}
+RELEASE = {"github-release", "sign-files", "attach-signatures"}
 
 
 def test_a_tag_push_builds_tags_smokes_and_releases() -> None:
     ran = run(event="push", dry_run=None, published=False)
-    assert ran == BUILD | {
-        "docker",
-        "docker-tag",
-        "sign",
-        "docker-smoke",
-        "github-release",
-        "release-check",
+    assert ran == BUILD | {"docker", "docker-tag", "sign", "docker-smoke"} | RELEASE | {
+        "release-check"
     }
 
 
@@ -109,19 +105,17 @@ def test_the_registry_dispatch_on_the_published_tag_reaches_every_registry() -> 
     """No image is built, tagged or signed again: their signatures are verified,
     and the registries still publish."""
     ran = run(event="workflow_dispatch", dry_run=False, published=True)
-    assert ran == BUILD | {"sign", "docker-smoke", "github-release"} | REGISTRIES
+    assert ran == BUILD | {"sign", "docker-smoke"} | RELEASE | REGISTRIES
 
 
 def test_a_dispatch_on_a_tag_whose_images_are_not_out_builds_them_and_publishes() -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=False)
-    assert ran == (
-        BUILD | {"docker", "docker-tag", "sign", "docker-smoke", "github-release"} | REGISTRIES
-    )
+    assert ran == BUILD | {"docker", "docker-tag", "sign", "docker-smoke"} | RELEASE | REGISTRIES
 
 
 def test_a_prerelease_dispatch_skips_only_the_mcp_registry_listing() -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=True, prerelease=True)
-    assert ran == BUILD | {"sign", "docker-smoke", "github-release", "pypi", "npm"}
+    assert ran == BUILD | {"sign", "docker-smoke"} | RELEASE | {"pypi", "npm"}
 
 
 def test_a_dry_run_builds_and_smokes_and_publishes_nothing() -> None:
@@ -137,20 +131,20 @@ def test_a_failure_before_the_release_publishes_nothing(
     failed: str, event: str, dry_run: bool | None
 ) -> None:
     ran = run(event=event, dry_run=dry_run, published=False, fail=frozenset({failed}))
-    assert not ran & ({"github-release", "release-check"} | REGISTRIES)
+    assert not ran & (RELEASE | {"release-check"} | REGISTRIES)
 
 
 @pytest.mark.parametrize("failed", ["verify", "clickhouse", "preflight"])
 def test_a_failure_on_the_published_tag_smokes_and_publishes_nothing(failed: str) -> None:
     ran = run(event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({failed}))
-    assert not ran & ({"docker-smoke", "github-release", "release-check"} | REGISTRIES)
+    assert not ran & ({"docker-smoke"} | RELEASE | {"release-check"} | REGISTRIES)
 
 
 def test_a_tag_push_whose_images_are_published_builds_and_tags_none() -> None:
     """A re-run of every job, or the tag pushed again at the same commit: what is
     out is verified, not signed."""
     ran = run(event="push", dry_run=None, published=True)
-    assert ran == BUILD | {"sign", "docker-smoke", "github-release", "release-check"}
+    assert ran == BUILD | {"sign", "docker-smoke"} | RELEASE | {"release-check"}
 
 
 @pytest.mark.parametrize(("event", "dry_run"), [("push", None), ("workflow_dispatch", False)])
@@ -159,7 +153,7 @@ def test_a_failed_smoke_or_signature_on_the_published_tag_publishes_nothing(
     failed: str, event: str, dry_run: bool | None
 ) -> None:
     ran = run(event=event, dry_run=dry_run, published=True, fail=frozenset({failed}))
-    assert not ran & ({"github-release", "release-check"} | REGISTRIES)
+    assert not ran & (RELEASE | {"release-check"} | REGISTRIES)
 
 
 def test_a_dry_run_whose_build_fails_smokes_nothing() -> None:
@@ -167,8 +161,14 @@ def test_a_dry_run_whose_build_fails_smokes_nothing() -> None:
     assert "docker-smoke" not in ran
 
 
-def test_a_failed_release_step_publishes_no_registry() -> None:
+def test_a_failed_release_step_signs_and_publishes_nothing() -> None:
     ran = run(
         event="workflow_dispatch", dry_run=False, published=True, fail=frozenset({"github-release"})
     )
-    assert not ran & REGISTRIES
+    assert not ran & ((RELEASE - {"github-release"}) | {"release-check"} | REGISTRIES)
+
+
+@pytest.mark.parametrize("failed", ["sign-files", "attach-signatures"])
+def test_a_failed_file_signature_attaches_nothing_and_skips_the_release_check(failed: str) -> None:
+    ran = run(event="push", dry_run=None, published=False, fail=frozenset({failed}))
+    assert not ran & ({"attach-signatures", "release-check"} - {failed})

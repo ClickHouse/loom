@@ -15,7 +15,7 @@ it is:
    new chunk version (`doc_version`) on the job and insert its chunks, each
    naming that revision; then, under the source's claim (which other ingests
    of the source, a dataset approval, a metadata edit of an ingested document,
-   a restore and a delete's retirement of a deleted source's leftovers take;
+   a restore, a move and a delete's retirement of a deleted source's leftovers take;
    every other write does not), check a cancel and refuse the
    publish when the source changed since the revision was decided, write the
    document row (the switch: revision, format, artifact, parser, coverage) and
@@ -157,15 +157,17 @@ class Parsed:
     original_size: int  # the stored original's bytes, for the document row
 
 
-def claim_source(org: str, namespace: str, source_uri: str) -> AbstractAsyncContextManager[bool]:
+def claim_source(
+    org: str, namespace: str, source_uri: str, *, wait_s: float = 10
+) -> AbstractAsyncContextManager[bool]:
     """The source's claim, which an ingest's publish, a dataset approval, a metadata
-    edit of an ingested document, a restore and a delete's retirement of a deleted
+    edit of an ingested document, a restore, a move and a delete's retirement of a deleted
     source's leftovers take (text writes and a live document's delete do not):
-    `async with` it yields whether it is held."""
+    `async with` it yields whether it is held, waiting up to `wait_s` for another holder."""
     from server.core import leases
 
     return leases.holding(
-        f"knowledge-source:{org}:{namespace}:{source_uri}", ttl_s=_SOURCE_CLAIM_S, wait_s=10
+        f"knowledge-source:{org}:{namespace}:{source_uri}", ttl_s=_SOURCE_CLAIM_S, wait_s=wait_s
     )
 
 

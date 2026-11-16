@@ -62,6 +62,9 @@ class DocumentRow(BaseModel):
     parser: str = ""
     coverage: str = ""
     ingestion_id: str = ""
+    # A mirrored document's permission list (`domain.access_list`); "" elsewhere. No read
+    # op returns it.
+    access_json: str = ""
 
 
 def _hydrate(row: dict[str, Any]) -> DocumentRow:
@@ -95,6 +98,7 @@ def _hydrate(row: dict[str, Any]) -> DocumentRow:
         parser=row.get("parser") or "",
         coverage=row.get("coverage") or "",
         ingestion_id=row.get("ingestion_id") or "",
+        access_json=row.get("access_json") or "",
     )
 
 
@@ -149,6 +153,9 @@ async def revision_by_ingestion(
 # A document that still serves its original: a write without fresh bytes carries
 # such a row's original forward, and the sweep keeps every original one names.
 LIVE_ORIGINAL_SQL = "blob_path != '' AND superseded_at IS NULL AND blob_erased_at IS NULL"
+
+# The columns of a row whose original the sweep took: a restore or a move writes them.
+NO_ORIGINAL = {"blob_path": "", "blob_size": 0, "blob_content_type": "", "original_filename": ""}
 
 
 def serves_original(row: DocumentRow | None) -> bool:
@@ -264,7 +271,7 @@ async def _read(
                original_filename, content_sha256, blob_erased_at,
                agent, user_id, session_id, actor, toString(source_class) AS source_class,
                revision, toString(format) AS format, artifact_sha256, parser, coverage,
-               ingestion_id
+               ingestion_id, access_json
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,
@@ -434,9 +441,13 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "parser",
     "coverage",
     "ingestion_id",
+    "access_json",
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
+# What a rewrite takes from the row it read: not the hash, which is recomputed, nor the
+# permission list, which only the owning source's turn writes.
+_CARRIED = tuple(c for c in DOCUMENT_COLUMNS if c not in ("content_sha256", "access_json"))
 
 # A version row carries any column of the live table this build does not write
 # (server/core/rmt_carry.py): a later build's columns survive this build's
@@ -476,6 +487,7 @@ class DocumentInsertRow(TypedDict):
     parser: str
     coverage: str
     ingestion_id: str
+    access_json: str
 
 
 def version_of(doc: DocumentRow | None) -> int:
@@ -495,9 +507,10 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
 
     loom.documents is ReplacingMergeTree(version): a version row that omits a
     column resets it for every FINAL reader. The row starts from the schema
-    defaults, then takes every column of `existing` (carry-forward), then
-    `fields`. `content_sha256` is not settable: it is recomputed from the
-    row's final title + content, the hash knowledge.add / upsert dedup on.
+    defaults, then takes the columns of `existing` in `_CARRIED` (carry-forward),
+    then `fields`. `content_sha256` is not settable: it is recomputed from the
+    row's final title + content, the hash knowledge.add / upsert dedup on. A tombstone
+    takes no permission list: one passed `access_json` is refused.
     """
     unknown = set(fields) - (set(DOCUMENT_COLUMNS) - {"content_sha256"})
     if unknown:
@@ -526,10 +539,13 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "parser": "",
         "coverage": "",
         "ingestion_id": "",
+        "access_json": "",
     }
     if existing is not None:
-        row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})
+        row.update({c: getattr(existing, c) for c in _CARRIED})
     row.update(fields)
+    if row["superseded_at"] is not None and row["access_json"]:
+        raise ValueError("build_document_row: a tombstone carries no permission list")
     missing = [c for c in _REQUIRED_DOCUMENT_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"build_document_row: missing {missing}")

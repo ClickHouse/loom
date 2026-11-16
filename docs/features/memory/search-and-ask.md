@@ -341,6 +341,9 @@ Per namespace, `namespace.register` sets `retrieval_defaults` (`search_mode`, `t
   readable by key only), and `chunk` and `summary` hits whose text reads as high (a
   credential, card number, SSN or stated PIN). A `chunk:` key still reads by
   `memory.get`, with an audit row ([sensitivity](../../architecture/security.md#sensitivity)).
+  A shared definition whose namespace-wide source is gone or labelled `medium` or `high`
+  is withheld too ([the shared
+  layer](../../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
 - **Degraded providers are reported** in `degraded` (a reranker timeout, a skipped HyDE
   call).
 - **Off-model vectors are invisible** until `loom reembed` runs.

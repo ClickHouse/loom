@@ -181,7 +181,7 @@ resend are in each page's Errors section. Each op's kind is in the
 | `PINNED_CONFLICT`                   | 409  | `memory.set` on a key, or close to a fact, that is pinned. A write that does not pin never replaces a pinned memory. `detail.pinned_blocker_id` names the blocking row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Change it with `memory.update` (keeps the pin) or `memory.pin` (re-pins), or store the new fact under its own key.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `IDEMPOTENT_CONFLICT`               | 409  | An `Idempotency-Key` (or MCP `_idempotency_key`) reused with a different body for the same op and caller.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Use a new key per distinct request. Resending the original body with the old key replays the stored answer.                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `READS_LLM_FREE`                    | 409  | `memory.ask` or `code.ask` asked for a model's answer while `LOOM_READS_LLM_FREE` is on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Not retried: resending the same request is refused again. Ask with `allow_synthesis=false` / `synthesize=false` for the recalled evidence.                                                                                                                                                                                                                                                                                                                                                                                             |
-| `TENANCY_REFUSED`                   | 503  | This [cell](../architecture/cells.md)'s Postgres refused a row for an org the cell holds no tenancy row for (its org triggers), from a session not marked as one that ran the tenancy check; nothing was written.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | If a served request meets it, this process's sessions lost the marker: point `LOOM_PG_DSN` straight at Postgres, past any pooler (`loom doctor` names it); otherwise run the writer as a current Loom with `LOOM_CELL` set.                                                                                                                                                                                                                                                                                                            |
+| `TENANCY_REFUSED`                   | 503  | This [cell](../architecture/cells.md)'s Postgres refused a row for an org the cell holds no tenancy row for (its org triggers), or a tenancy row (its `loom.tenancy` guard), from a session not marked as one that ran the tenancy check; nothing was written.                                                                                                                                                                                                                                                                                                                                                                                                                                   | If a served request meets it, this process's sessions lost the marker: point `LOOM_PG_DSN` straight at Postgres, past any pooler (`loom doctor` names it); otherwise run the writer as a current Loom with `LOOM_CELL` set.                                                                                                                                                                                                                                                                                                            |
 | `IDEMPOTENT_IN_PROGRESS`            | 503  | The first request with this `Idempotency-Key` still runs (on any replica).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Retry after `Retry-After` with the same key and body; the SDKs do. The retry gets the first request's answer.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `BLACKLISTED`                       | 422  | The value matches a refuse pattern registered with `blacklist.add` (`pattern_id`, `scope`, `reason`), or, with an empty `pattern_id`, the request's values are too long to check against the regexes that apply (a short value can be refused once earlier entries spent the budget): send less in one request, or remove regex patterns.                                                                                                                                                                                                                                                                                                                                                        | Do not retry the value. If the pattern is wrong, an admin removes it (`blacklist.remove`). With an empty `pattern_id`, send the value in a smaller request; when the message says to shorten the value, it is too long to check even alone.                                                                                                                                                                                                                                                                                            |
 | `LOCKED`                            | 423  | The row carries a `memory.lock` that refuses this write.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Wait for `lock_until` to pass, or have a namespace admin release it with `memory.unlock`.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -456,6 +456,18 @@ Raised in `server/memory/app/dedup.py`.
 
 Raised in `server/code/domain/index/repos.py`.
 
+#### `DEFINITION_CEILING`
+
+HTTP 409, raised as `server.core.errors.DefinitionCeilingError`. 409 — the promotion would leave the namespace past `memory_shared_definitions_max` shared definitions: at the ceiling, demote one to add a new key; past it, demote until at most that many remain. Category `input`, retryable: no.
+
+#### `DEFINITION_NAME_TAKEN`
+
+HTTP 409, raised as `server.core.errors.DefinitionNameTakenError`. 409 — another shared definition holds this term or an alias; `conflicting_keys` names those definitions and `names` the folded names they hold. Category `input`, retryable: no.
+
+#### `DEFINITION_PROMOTION_REFUSED`
+
+HTTP 422, raised as `server.core.errors.DefinitionPromotionRefusedError`. 422 — a definition is promoted only from its live namespace-wide row under a `definition/` key, to that same key, and a row of another type is never promoted under a `definition/` key. Category `input`, retryable: no.
+
 #### `DUPLICATE_FIELD`
 
 Raised in `server/memory/app/records.py`.
@@ -680,6 +692,10 @@ Raised in `server/knowledge/app/sources.py`.
 
 HTTP 503, raised as `server.auth.keyring.NoSigningKey`. Kid `default` is retired (or the root secret signs neither HS256 nor RS256) and no keyring key is active here: nothing can be signed until an operator acts, so it carries no Retry-After. Category `configuration`, retryable: no.
 
+#### `NO_SUCH_CELL`
+
+Raised in `server/router/app.py`. Category `input`, retryable: no.
+
 #### `OP_NOT_ON_MCP`
 
 Raised in `server/transport/mcp_call.py`, `server/transport/mcp_op.py`.
@@ -694,7 +710,7 @@ Raised in `server/router/app.py`. Category `input`, retryable: no.
 
 #### `OVERLOADED`
 
-HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, the… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease or… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `OVERRIDE_NOT_STORED`
 
@@ -726,7 +742,7 @@ HTTP 503, raised as `server.core.pg.PostgresUnavailableError`. 503 — Postgres,
 
 #### `PRECONDITION_FAILED`
 
-HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, an `approved_sha256` that no longer matches the definition's text, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `PROBE_BUSY`
 
@@ -832,6 +848,10 @@ Raised in `server/auth/self_signup.py`.
 
 Raised in `server/auth/self_signup.py`.
 
+#### `SENSITIVE_DEFINITION_REFUSED`
+
+HTTP 422, raised as `server.core.errors.SensitiveDefinitionRefusedError`. 422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is not promoted: the shared layer serves it to every reader of the namespace. Category `input`, retryable: no.
+
 #### `SHARED_CONFLICT`
 
 Raised in `server/memory/app/promote.py`.
@@ -865,6 +885,10 @@ Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 Raised in `server/tracker/app/sources.py`.
 
 #### `SOURCE_NOT_FOUND`
+
+Raised in `server/knowledge/app/sources.py`.
+
+#### `SOURCE_NOT_SERVED`
 
 Raised in `server/knowledge/app/sources.py`.
 
@@ -902,7 +926,7 @@ Raised in `server/code/app/member_writes.py`.
 
 #### `TENANCY_REFUSED`
 
-HTTP 503, raised as `server.core.errors.TenancyRefusedError`. 503 — this cell's Postgres refused a row for an org the cell holds no tenancy row for (its org triggers, docs/architecture/cells.md): the session that wrote it is not marked as one that ran the… Category `configuration`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+HTTP 503, raised as `server.core.errors.TenancyRefusedError`. 503 — this cell's Postgres refused a row for an org the cell holds no tenancy row for (its org triggers), or a tenancy row (its `loom.tenancy` guard; docs/architecture/cells.md): the session that… Category `configuration`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `TIMELINE_REQUIRES_FILTER`
 

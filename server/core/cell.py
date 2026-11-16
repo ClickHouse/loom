@@ -61,6 +61,28 @@ PLACEMENTS_MAX = 2**63 - 1  # not a setting: the bigint column bounds it
 # Postgres's btree entry limit (about 2.7 KB), so every org a cell records has a
 # placement the directory can index.
 ORG_MAX_BYTES = 2048  # not a setting: cells and the router judge one limit
+# The advisory lock on a cell's Postgres that attach will hold, and prepare and update once
+# they take it, and that the troubleshooting page's full-state cleanup takes before the
+# migration lock. Positive: the page's holder query splits it into two `oid` halves.
+ATTACH_LOCK_KEY = 0x6C6F6F6D_61746368  # "loomatch"
+
+
+# Orgs that name no tenant: deployment-wide rows and the token defaults.
+ORG_FREE = frozenset({"", "-", "*"})
+
+
+def named_org(value: Any) -> str | None:
+    """`value` as an org a request can name, or None: the router's rule, by which the first
+    attach's org scan (`server/cli/cell_scan.py`) judges the orgs it finds too."""
+    # A name Postgres text cannot hold (a NUL, a lone surrogate) is malformed, never a
+    # directory outage.
+    if not isinstance(value, str) or value in ORG_FREE or "\x00" in value:
+        return None
+    try:
+        value.encode()
+    except UnicodeEncodeError:
+        return None
+    return value
 
 
 def org_name_refusal(org: str) -> str:

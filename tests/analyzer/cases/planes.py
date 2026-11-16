@@ -585,6 +585,7 @@ async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.knowledge.store import chunks as K
     from server.knowledge.store import documents as D
+    from server.knowledge.store import mirrors as M
 
     f = c["filters"]
     await K.count_active_by_uri(ORG, NS, ["doc://a"], ch=ch)
@@ -593,6 +594,8 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, ["h1"], excluding_source_uri="doc://b" if f else "", ch=ch
     )
     await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
+    await M.mirrors_of(ORG, [NS], ch=ch)
+    await M.mirrors_of(ORG, [NS], live_only=True, ch=ch)
     await K.find_doc_by_content_sha256(
         ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
     )
@@ -602,7 +605,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, "doc://a", embedding_model="m" if f else None, when=_DT, ch=ch
     )
     await K.mark_docs_superseded(ORG, NS, {"doc://a": 5}, when=_DT, ch=ch)
-    await K.retire_versions(ORG, NS, [("doc://a", 5)], embedding_model="m", when=_DT, ch=ch)
+    await K.retire_versions(ORG, NS, [("doc://a", 5)], embedding_models=["m"], when=_DT, ch=ch)
     await K.delete_versions(ORG, NS, [("doc://a", 5)], ch=ch)
     await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
@@ -699,6 +702,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import projection_failures as PF
     from server.memory.app.curation import fetch_timeline
     from server.memory.store import conflict_candidates as conflict_candidates
+    from server.memory.store import shared as SH
 
     f = c["filters"]
     await PF.list_projection_failures(
@@ -797,6 +801,10 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )
     await CF.resolve_conflict_floor(ORG, NS, "preference")
+    await SH.shared_definitions(ORG, NS, 10, ch=ch)
+    await SH.definition_rows(ORG, NS, 10, ch=ch)
+    await SH.fetch_shared(ORG, NS, "definition/arr", strong=True, ch=ch)
+    await SH.newest_shared_vector_version(ORG, NS, "definition/arr", ch=ch)
     RD.clear_cache()
     await RD.resolve(ORG, NS, ch=ch)
     await CF.prefetch_write_config(ORG, NS, "preference", "k1")
@@ -927,6 +935,14 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
             scope=scope,
             ch=ch,
         )
+
+
+async def _namespace_in_use(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The check a name registration makes: a grant, a source, a mirror or any census
+    row of the name."""
+    from server.identity.store import namespace_census
+
+    await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
 
 
 async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -1093,6 +1109,9 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case("namespace_in_use", "server.identity.store.namespace_census", _namespace_in_use, {})
+    )
     out.append(
         Case(
             "namespace_tune",

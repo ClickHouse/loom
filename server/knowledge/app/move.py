@@ -1,0 +1,542 @@
+"""knowledge.move: documents moved to another namespace of the org, each with its chunks
+and their vectors, its original file, its tables and its metadata. The source keeps the
+document deleted, as `knowledge.delete` leaves it, so `knowledge.restore` there brings it
+back. The ordering, a cut-off move and an erasure meanwhile are in
+docs/architecture/failure-and-recovery.md, "Knowledge move"."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass
+from datetime import UTC
+from typing import Any, Literal, TypeGuard
+
+from server.auth.context import current_auth
+from server.auth.gateway import personal_namespace
+from server.core.ch import own_write_reads
+from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
+from server.core.leases import LeaseUnavailable
+from server.core.logging_config import request_id_var
+from server.core.naming import present
+from server.core.object_store import ObjectStoreError
+from server.core.pg_lease import PublicationPending
+from server.core.shielded import to_its_end
+from server.erasure.app import ledger_reads
+from server.erasure.domain.scopes import may_cover
+from server.identity.app.namespace_autoregister import maybe_autoregister
+from server.knowledge.api.models_knowledge import (
+    KnowledgeMoveInput,
+    KnowledgeMoveOutput,
+    MoveReason,
+    _KnowledgeMoveResult,
+)
+from server.knowledge.app import ingest_jobs, ingest_run, writes
+from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
+from server.knowledge.store import blobs
+from server.knowledge.store import chunks as chunks_repo
+from server.knowledge.store import datasets as datasets_repo
+from server.knowledge.store import documents as documents_repo
+from server.knowledge.store import restore as restore_repo
+from server.knowledge.store.documents import DocumentRow
+from server.knowledge.store.pg_documents import DocumentErased, HeadMoved
+from server.memory.app.provenance import writer_actor
+
+log = logging.getLogger(__name__)
+
+
+class _TakenBack(Exception):
+    """A copy that did not land whole, or a write of either place since it was read: what
+    this move wrote is taken back, and the source answers busy."""
+
+
+class _ServesMore(Exception):
+    """The copy where it goes serves more chunks than the source: a copy written over it
+    would serve less. Nothing is written under the claims (an original already stored is
+    the sweep's), and the source answers exists."""
+
+
+# A source whose move raised one of these answers busy; the others still move. An original
+# the object store did not take is one of them.
+_BUSY = (LeaseUnavailable, HeadMoved, ObjectStoreError, _TakenBack)
+_CLAIM_WAIT_S = 0.0  # not a setting: a held source answers busy at once, never waited for
+
+_AT_ONCE = 4  # not a setting: one request's fan-out; the ClickHouse pool bounds the total
+
+
+@dataclass(frozen=True)
+class _Copy:
+    """What a move wrote where it goes: the document at `version`, and its tables."""
+
+    doc: DocumentRow
+    dst: str
+    version: int
+    tables: list[dict[str, Any]]
+    # The embedding models of the chunks it copied: its take-back retires each.
+    models: list[str]
+
+
+async def handle_knowledge_move(input: KnowledgeMoveInput) -> KnowledgeMoveOutput:
+    """Move each document of `source_uris` from `namespace` to `to_namespace`. The
+    transport checked writer on `namespace`; `to_namespace` is checked here, and one the
+    caller cannot write answers found=False, never a 403 that says it exists. It never
+    answers PUBLICATION_PENDING: a row committed under the Postgres authority counts as
+    written."""
+    from server.auth.authz import Role, row_in_scope
+
+    named = present(input.to_namespace)
+    if named is None or named == "*":
+        raise ValidationError("to_namespace names no one namespace")
+    auth = current_auth()
+    try:
+        to = personal_namespace(auth, input.org, named)
+    except ValueError:
+        raise ValidationError("to_namespace @me names an end user's own files") from None
+    if to == input.namespace:
+        raise ValidationError("to_namespace is the namespace the documents are in")
+    if not await row_in_scope(input.org, to, Role.WRITER):
+        return KnowledgeMoveOutput(found=False)
+    # The transport registers the request's namespace; the one written to is this call's,
+    # under the transport's own rule (`should_autoregister`).
+    from server.knowledge.api.ops_knowledge import knowledge_move
+
+    await maybe_autoregister(knowledge_move, org=input.org, namespace=to, auth=auth)
+    uris = list(dict.fromkeys(input.source_uris))
+    with own_write_reads():  # a document written a call ago moves too
+        started = await blobs.ch_now_s()
+        read = await documents_repo.get_many_by_uris(input.org, input.namespace, uris)
+        docs = {d.source_uri: d for d in read}
+        # A few sources at a time, each under its own claims. A failure that is not one
+        # source's (`_BUSY`) is raised once every source has answered, so the moves that
+        # finished are audited.
+        slots = asyncio.Semaphore(_AT_ONCE)
+
+        reasons: dict[str, MoveReason] = {}
+        failures: list[Exception] = []
+        # Each source is added the moment its tombstone is in, under its claims: what
+        # follows (their release, the table cleanup) may be cancelled.
+        moved: set[str] = set()
+
+        async def one(uri: str) -> None:
+            async with slots:
+                try:
+                    reasons[uri] = await _move(docs.get(uri), to, started, moved)
+                except Exception as e:  # noqa: BLE001 — raised below, after the others
+                    failures.append(e)
+
+        try:
+            await asyncio.gather(*(one(u) for u in uris))
+        finally:
+            # A cancel of the request too: the moves that were made are audited.
+            await _audit_moved(input, to, [u for u in uris if u in moved])
+    if failures:
+        for e in failures[1:]:
+            log.warning("knowledge.move: another source failed too", exc_info=e)
+        raise failures[0]
+    return KnowledgeMoveOutput(
+        found=True,
+        to_namespace=to,
+        results=[
+            # Moved once its tombstone is in, even when a cut-off as its claims were given up
+            # made `_move` answer busy.
+            _KnowledgeMoveResult(source_uri=u, moved=True, reason="")
+            if u in moved
+            else _KnowledgeMoveResult(source_uri=u, reason=reasons[u])
+            for u in uris
+        ],
+    )
+
+
+async def _audit_moved(input: KnowledgeMoveInput, to: str, moved: list[str]) -> None:
+    """The row where they went, run to its end however the request ends: the transport
+    writes its row under the source only for a call that answers."""
+    if not moved:
+        return
+    from server.observability import audit
+
+    await to_its_end(
+        audit.emit(
+            event_type="knowledge.move",
+            org=input.org,
+            namespace=to,
+            actor=writer_actor(),
+            subject={"from_namespace": input.namespace, "source_uris": moved},
+            request_id=request_id_var.get() or "",
+        ),
+        name=f"knowledge.move audit {to}",
+    )
+
+
+async def _move(doc: DocumentRow | None, dst: str, started: int, moved: set[str]) -> MoveReason:
+    """One document: its reason, "" once moved, and its source added to `moved` once its
+    tombstone is in. Its originals are stored first, outside the claims, once no whole copy
+    is found where it goes; the checks, its chunks, tables and row, and its delete where it
+    was run under the source's claim in both namespaces, taken in one order so two moves
+    between the same places do not each hold one and give up on the other."""
+    if doc is None:
+        return "not_found"
+    org, src, uri = doc.org, doc.namespace, doc.source_uri
+    reason: MoveReason = "busy"
+    try:
+        # A source sync owns it: its next pass would write it back where it was.
+        if doc.actor == SYNC_WORKER_ACTOR:
+            return "synced"
+        arrived = await _arrived_s(doc)
+        there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
+        # A copy is written over a deleted document, none, or a copy an earlier move left
+        # incomplete (a cut-off row insert can land after its take-back, with no chunks
+        # and no tables).
+        copying = True
+        if _live(there):
+            state = await _earlier_copy(doc, there)
+            if state == "other":
+                return "exists"
+            copying = state == "incomplete"
+        # Just before the original is stored: an erasure's originals step that runs
+        # before the store does not see it, and an original no row names is the sweep's
+        # only once it is old enough.
+        if await _erasing(doc, arrived, dst, started):
+            return "erased"
+        originals = await _store_originals(doc, dst) if copying else {}
+        first, second = sorted((src, dst))
+        async with ingest_run.claim_source(org, first, uri, wait_s=_CLAIM_WAIT_S) as held_first:
+            if held_first:
+                async with ingest_run.claim_source(
+                    org, second, uri, wait_s=_CLAIM_WAIT_S
+                ) as held_second:
+                    if held_second:
+                        reason = await _claimed(
+                            doc, there, copying, dst, originals, arrived, started, moved
+                        )
+    except _BUSY:
+        reason = "busy"
+    except _ServesMore:
+        reason = "exists"
+    except DocumentErased:  # under the Postgres authority: an erasure removed it meanwhile
+        reason = "erased"
+    finally:
+        if uri in moved:
+            # Its tombstone is in: the move is made, whatever ends this call. Outside the
+            # claims, as a delete's, and run to its end; a failure is only logged.
+            await to_its_end(_forget_tables(doc), name=f"knowledge.move tables {uri}")
+    return reason
+
+
+def _live(doc: DocumentRow | None) -> TypeGuard[DocumentRow]:
+    return doc is not None and doc.superseded_at is None
+
+
+async def _claimed(
+    doc: DocumentRow,
+    there: DocumentRow | None,
+    copying: bool,
+    dst: str,
+    originals: dict[str, Any],
+    arrived: int,
+    started: int,
+    moved: set[str],
+) -> MoveReason:
+    """The move under the claims, of `doc` over `there`, both as read before them; with
+    `copying` false, `there` is an earlier move's whole copy and only the delete is left."""
+    org, src, uri = doc.org, doc.namespace, doc.source_uri
+    # Written since they were read: the originals or the copy found may be others.
+    now_doc = await documents_repo.get_one(org, src, uri)
+    if now_doc is None:
+        return "not_found"
+    now_there = await documents_repo.get_one(org, dst, uri, include_superseded=True)
+    if now_doc.version != doc.version or documents_repo.version_of(
+        now_there
+    ) != documents_repo.version_of(there):
+        return "busy"
+    for ns in (src, dst):
+        if await documents_repo.publication_may_land(org, ns, uri):
+            return "busy"
+        # An ingest still to publish would write it back where it was, or over the copy.
+        if await ingest_jobs.open_for_source(org, ns, uri):
+            return "busy"
+    # An earlier move's copy, read whole before the claims: that move's take-back, if one
+    # still runs, retired its chunks first, within that move's claims, so it reads short
+    # now and is written again on a later call.
+    if not copying and (now_there is None or await _earlier_copy(doc, now_there) != "whole"):
+        return "busy"
+    copy = await _copy(doc, dst, there, originals) if copying else None
+    try:
+        # An erasure registered since the call's first read may have passed the copy, this
+        # one or an earlier move's, already: read again before the source goes.
+        erased = await _erasing(doc, arrived, dst, started)
+        unchanged = not erased and await _head_is(doc)
+    except BaseException:  # a cancel too: a copy whose source stays live goes
+        if copy is not None:
+            await _take_back_held(copy)
+        raise
+    if erased or not unchanged:
+        # Taken back before the delete: the document stays where it was.
+        if copy is not None:
+            await _take_back_held(copy)
+        return "erased" if erased else "busy"
+    # Run to its end, with what it settles, however the request or the claims end
+    # meanwhile: a tombstone that lands is a move made, and a refused one takes the copy
+    # back.
+    await to_its_end(_delete_and_record(doc, moved, copy), name=f"knowledge.move delete {uri}")
+    # Any other failure of the delete may follow its tombstone: the document is left in
+    # both places, and a retry finds the copy and only deletes the source.
+    return ""
+
+
+async def _earlier_copy(
+    doc: DocumentRow, there: DocumentRow
+) -> Literal["whole", "incomplete", "other"]:
+    """Whether the live row where it goes is this document's copy left by a move that
+    stopped before its delete, whole or incomplete, or another document: the rules are in
+    docs/architecture/failure-and-recovery.md, "Knowledge move"."""
+    fields = ("content_sha256", "title", "description", "tags", "metadata", "user_id")
+    if any(getattr(there, f) != getattr(doc, f) for f in fields):
+        return "other"
+    if there.ingested_at != doc.ingested_at:
+        return "other"
+    mine = _table_shapes(
+        await datasets_repo.at_version(doc.org, doc.namespace, doc.source_uri, doc.version)
+    )
+    copied = _table_shapes(
+        await datasets_repo.at_version(there.org, there.namespace, there.source_uri, there.version)
+    )
+    if copied and copied != mine:
+        return "other"
+    chunks_there, chunks_here = await _serves(there), await _serves(doc)
+    if chunks_there < chunks_here:
+        return "incomplete"
+    if copied == mine:
+        # More there than here: a cut-off delete retired the source's chunks before its
+        # tombstone (it retires them first), so only the delete is left.
+        return "whole"
+    # Its tables are gone, but it serves more than the source: written over, it would
+    # serve less.
+    return "other" if chunks_there > chunks_here else "incomplete"
+
+
+async def _serves(doc: DocumentRow) -> int:
+    """The live chunks of the document's revision that its row serves."""
+    return await chunks_repo.count_revision(
+        doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
+    )
+
+
+def _table_shapes(catalogs: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    """What a copy keeps of each table: an approval or a clarification changes it."""
+    return [
+        (c["dataset_id"], c["schema"], c["schema_state"], c["clarifications"], c["row_count"])
+        for c in catalogs
+    ]
+
+
+async def _copy(
+    doc: DocumentRow, dst: str, there: DocumentRow | None, originals: dict[str, Any]
+) -> _Copy:
+    """Write `doc` into `dst` over `there` (a deleted document at its source, an earlier
+    move's incomplete copy, or none): its chunks and table rows copied inside ClickHouse,
+    then its catalog rows and its document row built and inserted. Anything that does not
+    land whole is taken back before the error answers."""
+    if _live(there) and await _serves(there) > await _serves(doc):
+        raise _ServesMore
+    over = documents_repo.version_of(there)
+    version = documents_repo.version_past(max(doc.version, over))
+    revision = writes.next_revision(there)
+    catalogs = await datasets_repo.at_version(doc.org, doc.namespace, doc.source_uri, doc.version)
+    models = await chunks_repo.embedding_models(doc.org, doc.namespace, doc.source_uri)
+    copy = _Copy(doc, dst, version, _tables_of(catalogs, dst, version), models)
+    # The mover is the actor of every row the move writes; the author, the content's
+    # class and the ingest time stay, as the move rewrites no content.
+    row = documents_repo.build_document_row(
+        doc,
+        namespace=dst,
+        doc_id=str(uuid.uuid4()),
+        version=version,
+        revision=revision,
+        actor=writer_actor(),
+        **originals,
+    )
+    try:
+        landed = await chunks_repo.copy_revision(
+            doc.org,
+            doc.namespace,
+            doc.source_uri,
+            revision=doc.revision,
+            upto_version=doc.version,
+            to_namespace=dst,
+            to_version=version,
+            to_revision=revision,
+        )
+        if not landed:
+            raise _TakenBack
+        for catalog, table in zip(catalogs, copy.tables, strict=True):
+            if not await datasets_repo.copy_snapshot(
+                catalog,
+                namespace=dst,
+                snapshot_id=table["snapshot_id"],
+                doc_version=version,
+                actor=table["actor"],
+            ):
+                raise _TakenBack
+        await datasets_repo.insert_catalog(copy.tables)
+        try:
+            await documents_repo.insert_one(row, over=over, retire_older=True, chunked=True)
+        except PublicationPending:
+            pass  # committed: the delivery worker publishes it
+        # Under the ClickHouse authority `over` is not checked: a write there since
+        # `there` was read (a text write takes no claim) with a later version wins.
+        head = await documents_repo.get_one(doc.org, dst, doc.source_uri, include_superseded=True)
+        if documents_repo.version_of(head) != version:
+            raise _TakenBack
+    except BaseException as e:  # a cancel too: what this copy wrote must not serve
+        if not writes.published_anyway(e):
+            await _take_back_held(copy)
+        raise
+    return copy
+
+
+def _tables_of(catalogs: list[dict[str, Any]], dst: str, version: int) -> list[dict[str, Any]]:
+    """The catalog rows of the document's tables in `dst` at `version`, each a new
+    snapshot."""
+    first = time.time_ns()
+    return [
+        datasets_repo.dataset_row(
+            c, namespace=dst, doc_version=version, snapshot_id=first + i, actor=writer_actor()
+        )
+        for i, c in enumerate(catalogs)
+    ]
+
+
+async def _head_is(doc: DocumentRow) -> bool:
+    """Whether the source's head is still `doc`: a text write takes no claim, and `over`
+    is not checked under the ClickHouse authority."""
+    head = await documents_repo.get_one(
+        doc.org, doc.namespace, doc.source_uri, include_superseded=True
+    )
+    return documents_repo.version_of(head) == doc.version
+
+
+async def _delete_source(doc: DocumentRow) -> None:
+    """Delete `doc` where it was, as `knowledge.delete` does, over its own version (under
+    the Postgres authority, HeadMoved when a write took the source since); its tables go
+    after the claims (`_forget_tables`)."""
+    try:
+        await documents_repo.insert_one(
+            documents_repo.build_document_row(
+                doc, version=documents_repo.version_past(doc.version), superseded_at=naive_utc_now()
+            ),
+            over=doc.version,
+            retire_older=True,
+        )
+    except PublicationPending:
+        pass  # committed: the delivery worker publishes it
+
+
+async def _delete_and_record(doc: DocumentRow, moved: set[str], copy: _Copy | None) -> None:
+    try:
+        await _delete_source(doc)
+    except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
+        if copy is not None:
+            await _remove_copy(copy)
+        raise
+    moved.add(doc.source_uri)
+
+
+async def _forget_tables(doc: DocumentRow) -> None:
+    """The tables of `doc`, deleted where it was: a failure is logged, as the document is
+    deleted and the move made; a later delete of the source settles them."""
+    try:
+        await datasets_repo.forget_published(doc.org, doc.namespace, {doc.source_uri: doc.version})
+    except Exception as e:  # the move is made: its tables' cleanup must not fail it
+        log.warning(
+            "knowledge.move: the tables of a moved %s stay where it was", doc.source_uri, exc_info=e
+        )
+
+
+async def _take_back_held(copy: _Copy) -> None:
+    """`_remove_copy` run to its end, held under the caller's claims: a cancellation, even a
+    repeated one, is raised only once it is done, so no retry finds a half-removed copy."""
+    await to_its_end(_remove_copy(copy), name=f"knowledge.move take-back {copy.doc.source_uri}")
+
+
+async def _remove_copy(copy: _Copy) -> None:
+    """Remove what a move wrote where it goes: its row (and under the Postgres authority
+    its commit), its chunks and its tables. Its originals stay for the sweep."""
+    org, dst, uri, version = copy.doc.org, copy.dst, copy.doc.source_uri, copy.version
+    # The chunks are retired first, in one statement that ends inside the claims' TTL, so
+    # a later move reads the copy short (failure-and-recovery.md, "Knowledge move").
+    await chunks_repo.retire_versions(
+        org, dst, [(uri, version)], embedding_models=copy.models, when=naive_utc_now()
+    )
+    await documents_repo.drop_committed(org, dst, uri, version)
+    await restore_repo.delete_row(org, dst, uri, version)
+    await chunks_repo.delete_versions(org, dst, [(uri, version)])
+    await datasets_repo.forget(org, dst, [uri], only=version)
+    for t in copy.tables:
+        await datasets_repo.forget_snapshot(t)
+
+
+async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
+    """The document's original and its extraction artifact stored again in `dst` (an
+    original belongs to its namespace: its sweep and erasure go by it). Answers the
+    columns to clear for one the source no longer holds."""
+    cleared: dict[str, Any] = {}
+    # An erasure took its original (`blob_erased_at`): bytes of the same sha another
+    # upload keeps are not this document's to copy.
+    if doc.blob_erased_at is not None or (
+        doc.blob_path and not await _store_one(doc, doc.blob_path, dst)
+    ):
+        cleared.update(documents_repo.NO_ORIGINAL)
+    if doc.artifact_sha256 and not await _store_one(doc, doc.artifact_sha256, dst):
+        cleared["artifact_sha256"] = ""
+    return cleared
+
+
+async def _store_one(doc: DocumentRow, sha: str, dst: str) -> bool:
+    """Store one of the document's originals again in `dst`: a ClickHouse row copied
+    inside ClickHouse, an object read and written again. False when the source no longer
+    holds it."""
+    held = await blobs.locate(doc.org, doc.namespace, sha)
+    if held is not None and not held.location:
+        if await blobs.copy_held(
+            doc.org, doc.namespace, sha, dst, size=held.size, uploader=doc.user_id
+        ):
+            return True
+        # Not copied whole: read it again where it is now (still a row, or moved to the
+        # bucket) and store its bytes; gone only when no row holds it.
+        held = await blobs.locate(doc.org, doc.namespace, sha)
+    data = await blobs.read(doc.org, doc.namespace, sha, stored=held) if held else None
+    if data is None:
+        return False
+    await blobs.put(doc.org, dst, data, uploader=doc.user_id)
+    return True
+
+
+def _written_s(doc: DocumentRow) -> int:
+    return int(doc.ingested_at.replace(tzinfo=UTC).timestamp())
+
+
+async def _arrived_s(doc: DocumentRow) -> int:
+    """When the document's text was written where it is: its first live chunk's
+    `created_at`, which a move sets to when it copied them (a moved row keeps its
+    ingest time) and a metadata edit leaves alone; its ingest time when it has no
+    chunks."""
+    first = await chunks_repo.first_written_s(
+        doc.org, doc.namespace, doc.source_uri, revision=doc.revision, upto_version=doc.version
+    )
+    return _written_s(doc) if first is None else first
+
+
+async def _erasing(doc: DocumentRow, arrived: int, dst: str, started: int) -> bool:
+    """Whether an unfinished erasure may reach the document where it is (unfinished when
+    its text was written there, `arrived`) or the place it goes (unfinished when the move
+    `started`), as `knowledge.restore` reads the ledger."""
+    for ns, since in ((doc.namespace, arrived), (dst, started)):
+        rows = await ledger_reads.unfinished_reaching(
+            doc.org, ns, doc.user_id, since, ledger_reads.LEDGER_CLOCK_MARGIN_S
+        )
+        if any(may_cover(str(r["scope_type"]), str(r["scope_value"]), ns) for r in rows):
+            return True
+    return False

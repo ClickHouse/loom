@@ -1,8 +1,8 @@
 // The place picker (a select, or the tree beside the page), the path and chips, the
 // collection's menu, New collection, and how the list is read again after a write.
-import { useState, type ComponentProps } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
+import { entry, matchOnly, Picker, read, ROWS, settle } from "../test/libraryCollections";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { TREE_PAGE_MIN } from "../lib/useTreeHeight";
@@ -18,7 +18,6 @@ import { Documents } from "./Documents";
 import {
   REFRESH_TRIES,
   REFRESH_WAIT_MS,
-  LibraryCollections,
   collectionLabel,
   treeOrder,
   useReadableCollections,
@@ -37,6 +36,7 @@ const api = vi.hoisted(() => ({
   ingestKnowledge: vi.fn(),
   knowledgeIngestStatus: vi.fn(),
   deleteKnowledge: vi.fn(),
+  listGrants: vi.fn(async (): Promise<{ rows: unknown[] }> => ({ rows: [] })),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const confirm = vi.hoisted(() => ({ next: false }));
@@ -49,49 +49,6 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast,
 }));
-
-const entry = (namespace: string, over: Partial<CollectionEntry> = {}): CollectionEntry => ({
-  namespace,
-  parent: "",
-  personal: false,
-  role: "admin",
-  description: "",
-  ...over,
-});
-
-const ROWS = [
-  entry("col-plans", { parent: "col-q3", role: "viewer" }),
-  entry("col-q3", { description: "Quarter plans" }),
-  entry("col-me-1a2b", { personal: true }),
-];
-
-const read = (rows: CollectionEntry[] | null, over: Partial<ReadableCollections> = {}): ReadableCollections => ({
-  rows,
-  truncated: false,
-  kept: rows && { rows, truncated: false },
-  refreshing: false,
-  error: null,
-  reload: vi.fn(),
-  retry: vi.fn(),
-  expected: "",
-  ...over,
-});
-
-/** A window where only `query` matches. */
-function matchOnly(query: string) {
-  vi.stubGlobal("matchMedia", (q: string) => ({
-    matches: q === query,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
-}
-
-async function settle() {
-  for (let i = 0; i < 3; i++)
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
-    });
-}
 
 describe("collection names and order", () => {
   it("shows a title in place of the name, and both where two collections share the title", () => {
@@ -160,28 +117,6 @@ describe("collection names and order", () => {
   });
 });
 
-/** The picker as Documents mounts it: the New collection dialog's open state is the page's. */
-function Picker(
-  props: Omit<
-    ComponentProps<typeof LibraryCollections>,
-    "creating" | "onCreatingChange" | "onCreated" | "claimCreateVersion" | "repeated" | "byName"
-  >,
-) {
-  const [creating, setCreating] = useState(false);
-  const rows = props.collections.rows ?? [];
-  return (
-    <LibraryCollections
-      {...props}
-      repeated={repeatedTitles(rows)}
-      byName={new Map(rows.map((c) => [c.namespace, c]))}
-      creating={creating}
-      onCreatingChange={setCreating}
-      claimCreateVersion={() => 0}
-      onCreated={vi.fn()}
-    />
-  );
-}
-
 describe("LibraryCollections", () => {
   afterEach(() => {
     cleanup();
@@ -206,42 +141,9 @@ describe("LibraryCollections", () => {
     expect(screen.getByRole("button", { name: "Actions for col-q3" })).toBeInTheDocument();
   });
 
-  it("gives a viewer Members and no Delete", async () => {
+  it("gives a viewer no menu: its members are behind See who in the header", async () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-plans" }), { button: 0, ctrlKey: false });
-    await settle();
-    expect(screen.getByRole("menuitem", { name: "Members" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Delete collection" })).not.toBeInTheDocument();
-    // What the place is, and the role, behind the info button beside the select: a press
-    // (a tap on a phone) opens it.
-    await userEvent.click(screen.getByRole("button", { name: "About this place" }));
-    expect(await screen.findByText(/^Viewer of a collection: .*everyone who reaches col-q3/)).toBeInTheDocument();
-  });
-
-  it("closes Members when another collection is shown, so a grant never lands on it", async () => {
-    const view = (current: CollectionEntry) => (
-      <Picker
-        org="acme"
-        namespace="team"
-        collections={read(ROWS)}
-        current={current}
-        place={current.namespace}
-        onPick={() => undefined}
-      />
-    );
-    const { rerender } = render(view(ROWS[1]));
-    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-q3" }), { button: 0, ctrlKey: false });
-    await settle();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Members" }));
-    await settle();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    rerender(view(ROWS[0]));
-    await settle();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    // Back to the first does not open it again by itself.
-    rerender(view(ROWS[1]));
-    await settle();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
   });
 
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
@@ -477,6 +379,85 @@ describe("the Library on a collection", () => {
     const next = screen.getByRole("navigation", { name: "Inside col-q3 kid 0" });
     expect(within(next).getAllByRole("link")).toHaveLength(6);
     expect(within(next).getByRole("button", { name: "Show 4 more" })).toBeInTheDocument();
+  });
+
+  it("says who can see the collection in its header, and Share opens the members dialog in place", async () => {
+    // Signed in as someone other than bob, whoever an earlier test left signed in.
+    useStore.setState({ whoami: { authenticated: true, subject: "ada", org: "acme", roles: [] } });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listGrants.mockResolvedValue({
+      rows: [
+        { subject: "bob", role: "writer", status: "active", granted_at: "2026-09-17T14:50:28Z", granted_by: "ada" },
+      ],
+    });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />, { container: inMain() });
+    await settle();
+    const line = screen.getByRole("group", { name: "Who can see it" });
+    expect(line).toHaveTextContent("bob · 1 person");
+    const reads = api.listGrants.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    // Untitled: named by its address once, with no second copy of it beneath.
+    const dialog = await screen.findByRole("dialog", { name: "Members of col-q3" });
+    expect(within(dialog).queryByText("col-q3")).not.toBeInTheDocument();
+    await settle();
+    expect(await axeViolations(dialog)).toEqual([]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await settle();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+    // The dialog's own read; closing it unchanged reads nothing again.
+    expect(api.listGrants.mock.calls.length - reads).toBe(1);
+  });
+
+  it("closes the members dialog when another collection is shown, so a grant never lands on it", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />, { container: inMain() });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await settle();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // A move the dialog does not see (Back, a link): the page under it, hidden while it shows.
+    const chips = screen.getByRole("navigation", { name: "Inside col-q3", hidden: true });
+    fireEvent.click(within(chips).getByRole("link", { name: "col-plans", hidden: true }));
+    await settle();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // A viewer of the other gets See who, not Share.
+    expect(screen.getByRole("button", { name: "See who" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+    // Back to the first does not open it again by itself.
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Collection path" })).getByRole("link", { name: "col-q3" }),
+    );
+    await settle();
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+    expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens a parent from the members dialog's link, closing the dialog", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-plans");
+    render(<Documents />, { container: inMain() });
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "See who" }));
+    const dialog = await screen.findByRole("dialog");
+    const through = await within(dialog).findByRole("region", { name: "Also can see it, through col-q3" });
+    fireEvent.click(within(through).getByRole("link", { name: "col-q3" }));
+    await settle();
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("says My files are the person's alone, with no Share", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-me-1a2b");
+    render(<Documents />, { container: inMain() });
+    await settle();
+    expect(screen.getByRole("group", { name: "Who can see it" })).toHaveTextContent(/^Only you/);
+    expect(screen.queryByRole("button", { name: "Share" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "See who" })).not.toBeInTheDocument();
   });
 
   it("lists no collections inside on a phone, where the select lists them", async () => {

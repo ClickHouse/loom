@@ -268,3 +268,8 @@ export function refreshDetail(detail: string): string {
 export const SENSITIVE_LABEL = "Sensitive: open it to read";
 /** The same, where the view cannot open the row itself. */
 export const SENSITIVE_READ_BY_KEY = "Sensitive: read it by key in Memories";
+
+/** "a", "a and b", "a, b and c"; "" for none. */
+export function andList(parts: readonly string[]): string {
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
+}

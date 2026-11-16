@@ -39,6 +39,7 @@ def _clean():
 def test_every_plane_table_is_mapped() -> None:
     assert m.PLANE_BY_TABLE == {
         "loom.memory": "memory",
+        "loom.shared": "memory",
         "loom.memory_chunks": "chunk",
         "loom.memory_evidence": "evidence",
         "loom.memory_records": "record",

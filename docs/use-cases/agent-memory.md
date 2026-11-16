@@ -26,6 +26,9 @@ agent, or by a person at the dashboard. This page shows how that works and where
   other agents saved there.
   [Connect a coding agent](../getting-started/connect-a-coding-agent.md) ·
   [MCP clients](../features/integrations/mcp-clients.md)
+- **Memories linked to the code they are about.** A coding agent's lessons follow the
+  definitions they name through renames and edits, and appear when an agent reads that
+  code. [Memory linked to code](memory-linked-to-code.md)
 - **Per-user memory for your own agent.** The Python and TypeScript SDKs write and read
   memory per end user. [Your first agent](../getting-started/first-agent.md)
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, run_connected
+from server.cli._ch import OrgFree, dry_run_orgs, reads, run_connected, writes
 from server.core.error_summary import error_summary
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 
@@ -95,7 +95,7 @@ def _cmd_drops(args: argparse.Namespace) -> int:
         print(_format_drops(rows, namespace=args.namespace, hours=int(args.hours)))
         return 0
 
-    return run_connected(_run, org_free="reads")
+    return run_connected(_run, org_free=reads("reads"))
 
 
 # ----------------------------------------------------------------------
@@ -496,7 +496,7 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         return await _re_verify_run(ch, args)
 
     # --erase files purges for rows already in this cell, which stay erasable.
-    return run_connected(_run, org_free="re-verifies and files erasures of this cell's rows")
+    return run_connected(_run, org_free=_re_verify_org_free(args))
 
 
 def _utc_instant(text: str) -> datetime:
@@ -567,6 +567,7 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     been written after it finished. Only the row links an older build's erasure
     did not know, and whose memory has no live row and no row written since the
     census, are counted (and with `resume`, deleted). 1 while any are left, else 0."""
+    from server.erasure.app.saga_steps import erased_scope
     from server.erasure.store import steps_graph
 
     org = str(row["org"])
@@ -574,27 +575,30 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     # Memories written since the census are not the saga's, even soft-deleted.
     cut = row["verified_at"]
     print(f"  {row['id']} {org}/{row['scope_type']} completed")
-    orphans = await steps_graph.count_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
-    found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
-    print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
-    if not found:
-        return 0
-    if not resume:
-        return 1
-    deleted = await steps_graph.delete_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
-    left = await steps_graph.count_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
+    # With the scope's mirrors, as the saga erased them; the orphan-link count and delete
+    # do not depend on the purge mode.
+    async with erased_scope(org, scope_type, scope_value, ch=ch) as scope:
+        orphans = await steps_graph.count_orphan_row_links(
+            org, scope_type, scope, verified_at=cut, ch=ch
+        )
+        found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
+        print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
+        if not found:
+            return 0
+        if not resume:
+            return 1
+        deleted = await steps_graph.delete_orphan_row_links(
+            org, scope_type, scope, verified_at=cut, ch=ch
+        )
+        left = await steps_graph.count_orphan_row_links(
+            org, scope_type, scope, verified_at=cut, ch=ch
+        )
     print(f"    deleted {deleted}; left {sum(left.values())}")
     return 1 if any(left.values()) else 0
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
-    from server.erasure.app.saga_steps import census_spellings
+    from server.erasure.app.saga_steps import census_spellings, erased_scope
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
@@ -633,7 +637,6 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             rc = 1
             continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
-        names = scope_value if isinstance(scope_value, list) else [scope_value]
         try:
             spellings = await census_spellings(str(row["org"]), scope_type, scope_value)
         except Exception as e:  # noqa: BLE001 — one saga's unread directory must not end the run
@@ -642,14 +645,17 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             rc = 1
             continue
         with erasure_mutations.purge_scope(purge):
-            census, unread = await erasure_census.evidence_census(
-                str(row["org"]), scope_type, scope_value, ch=ch, spellings=spellings
-            )
+            async with erased_scope(str(row["org"]), scope_type, scope_value, ch=ch) as scope:
+                census, unread = await erasure_census.evidence_census(
+                    str(row["org"]), scope_type, scope, ch=ch, spellings=spellings
+                )
+                scope_purge = erasure_mutations.purge_mode()
+                scope_names = len(erasure_mutations.namespaces_of(scope))
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])
         print(
             f"  {row['id']} {row['org']}/{row['scope_type']} attempts={row['attempts']} "
-            f"steps_done={len(done)} scope={len(names)} name(s) purge={purge}"
+            f"steps_done={len(done)} scope={scope_names} name(s) purge={scope_purge}"
         )
         print(f"    last: {str(row.get('failure_reason') or '')[:160]}")
         print(f"    residue now: {sum(residue.values())} {json.dumps(residue, sort_keys=True)}")
@@ -898,3 +904,10 @@ def _add_namespaces_adopt_parser(sub: Any) -> None:
     add_apply_flags(p_adopt, writes="write the rows")
     p_adopt.add_argument("--show", type=int, default=30, help="Namespaces to print (default 30)")
     p_adopt.set_defaults(func=_cmd_namespaces_adopt)
+
+
+def _re_verify_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.resume or args.erase:
+        return writes("re-verifies and files erasures of this cell's rows")
+    return reads("re-verifies erasures of this cell's rows")

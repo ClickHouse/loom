@@ -902,6 +902,10 @@
               "body",
               "options"
             ],
+            "move": [
+              "body",
+              "options"
+            ],
             "outline": [
               "body",
               "options"
@@ -1057,6 +1061,10 @@
               "options"
             ],
             "dedup_resolve": [
+              "body",
+              "options"
+            ],
+            "definitions_list": [
               "body",
               "options"
             ],
@@ -2920,7 +2928,9 @@
           "approver",
           "reversible_for_days",
           "user_id",
-          "session_id"
+          "session_id",
+          "approved_sha256",
+          "agent_id"
         ],
         "provenance": [
           "memory_key"
@@ -3069,7 +3079,9 @@
           "reversible_for_days",
           "approver",
           "user_id",
-          "session_id"
+          "session_id",
+          "approved_sha256",
+          "agent_id"
         ],
         "timeline": [
           "entity",

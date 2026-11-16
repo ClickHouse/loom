@@ -332,6 +332,9 @@ Each line:
 
 ## Memories linked to code
 
+What this gives a coding agent, and where to start:
+[memory linked to code](../use-cases/memory-linked-to-code.md).
+
 A memory about code is linked to the definitions and files it names, and the links
 follow the code. The `memory_code_links` worker links each memory tagged `repo:<id>`
 (the coding plugins tag their sessions) or written in a repository's code namespace

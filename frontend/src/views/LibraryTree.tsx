@@ -29,14 +29,14 @@ import {
   titleTooLong,
 } from "../lib/collections";
 import { LIBRARY_PLACES_LABEL } from "../lib/useTreeFocusHandoff";
+import { MORE_SHOWN, useShowMore } from "../lib/useShowMore";
 import {
   collectionPath,
   cycleStart,
   isSharedWithMe,
-  MORE_SHOWN,
+  PLACE_ROWS,
   PlaceTitleLink,
   topLevelCollections,
-  useShowMore,
 } from "./LibraryHierarchy";
 
 /** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
@@ -366,7 +366,7 @@ function PlaceBranches({
   label?: { id: string; text: string };
 }) {
   const extra = items.find((c) => onPath.has(c.namespace)) ?? null;
-  const { shown, list, moreLabel, showMore } = useShowMore(items, MORE_SHOWN, extra);
+  const { shown, list, moreLabel, showMore } = useShowMore(items, MORE_SHOWN, PLACE_ROWS, extra);
   if (items.length === 0) return null;
   return (
     <>

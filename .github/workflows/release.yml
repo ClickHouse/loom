@@ -18,12 +18,15 @@ name: release
 # architecture's own runner) -> docker-tag -> sign (keyless, the indexes
 # docker-tag made; every run verifies both images' X.Y.Z tag) and
 # docker-smoke (the quickstart and the installer rehearsal) -> github-release
+# -> sign-files (keyless, each file the release serves) -> attach-signatures
 # -> release-check (tag push only), and pypi, npm, mcp-registry (dispatch
-# only). A re-run after a partial publish is safe: the bundle keeps the
+# only). A re-run after a partial publish is safe: the stack bundle keeps the
 # ClickHouse release it was first published with, the release is updated in
 # place, PyPI skips files it already has, npm and the MCP Registry skip a
 # version they already have, a re-run of failed jobs tags the same build again,
-# and a run on a tag whose images are published builds and tags none.
+# and a run on a tag whose images are published builds and tags none. A tag
+# run whose file signing failed is the exception: re-run its failed jobs
+# before any dispatch (docs/development/release-process.md).
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the
@@ -853,12 +856,69 @@ jobs:
             release/stack/*
             release/agent/agent-setup.txt
 
+  # Signs the files the release serves, downloaded as users download them, when
+  # they are the bytes this run built (sign_release_files.sh). Its own job, so
+  # no step that can write to the release can also request the OIDC token;
+  # attach-signatures uploads the Sigstore bundles.
+  sign-files:
+    name: Sign the release files
+    if: ${{ !cancelled() && needs.github-release.result == 'success' }}
+    needs: [version, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # each file's keyless signature names this workflow and tag
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: built
+      - name: Sign and verify each file
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
+        run: |
+          bash scripts/release/download_release_files.sh "$VERSION" files
+          bash scripts/release/sign_release_files.sh "$VERSION" files built signed
+          cp signed/*.sigstore.json files/
+          bash scripts/release/verify_release_files.sh "$VERSION" files
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signatures
+          path: signed/*.sigstore.json # only the new ones: a kept bundle is left in place
+          if-no-files-found: error
+          overwrite: true # a re-run of this job replaces the earlier attempt's
+          retention-days: 30 # as long as the run can be re-run
+
+  attach-signatures:
+    name: Attach the Sigstore bundles to the release
+    if: ${{ !cancelled() && needs.sign-files.result == 'success' }}
+    needs: sign-files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-signatures
+          path: sigstore
+      - name: Upload the Sigstore bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" sigstore/*.sigstore.json --clobber --repo "$GITHUB_REPOSITORY"
+
   # The published release as a user meets it, signed in to nothing. The SDKs are
   # checked by a dispatch of release-check after the registry dispatch.
   release-check:
     name: Published release from outside
-    if: ${{ !cancelled() && needs.github-release.result == 'success' && github.event_name == 'push' }}
-    needs: [version, github-release]
+    if: ${{ !cancelled() && needs.attach-signatures.result == 'success' && github.event_name == 'push' }}
+    needs: [version, attach-signatures]
     uses: ./.github/workflows/release-check.yml
     with:
       version: ${{ needs.version.outputs.version }}

@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import dry_run_orgs, run_connected
+from server.cli._ch import dry_run_orgs, reads, run_connected
 from server.cli._client import refused_for_agent, resolve_token
 
 
@@ -226,7 +226,7 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
     async def _go() -> int:
         ch = get_client()
         await connect_declared(
-            ch, org_free="reads; the replay writes through the server at --base-url"
+            ch, org_free=reads("reads; the replay writes through the server at --base-url")
         )
         try:
             sessions = await load_sessions(ch, org=args.org, namespace=args.namespace)

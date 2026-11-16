@@ -29,8 +29,10 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from server.core.cell import ORG_FREE
 from server.core.errors import (
     BackendUnavailableError,
+    TenancyRefusedError,
     ValidationError,
     WrongCellError,
     caller_text,
@@ -42,8 +44,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Orgs that name no tenant: deployment-wide rows and the token defaults.
-ORG_FREE = frozenset({"", "-", "*"})
 
 # Orgs this process has seen held. Only grows: a tenancy row is never deleted.
 _held: set[str] = set()
@@ -122,7 +122,9 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     Raise `PermissionError` (403) first for a principal that may not act in the org,
     `WrongCellError` (409) for another cell's org, `ValidationError` (422) for a new org
     longer than `cell.ORG_MAX_BYTES`, `BackendUnavailableError` (503) when the cell
-    cannot tell. Nothing is written for an org refused."""
+    cannot tell, `TenancyRefusedError` (503, not retried) when the `loom.tenancy` guard
+    refuses its row because this process's sessions lost the marker. Nothing is written for
+    an org refused."""
     if not settings.cell or org is None or org in ORG_FREE:
         return
     # A principal that may not act in the org is refused first, as the gate would, so
@@ -196,6 +198,8 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
         )
     try:
         await pg.execute(_ADD, org)
+    except TenancyRefusedError:
+        raise  # the `loom.tenancy` guard: this process's sessions lost the marker; no retry
     except Exception as e:  # re-raised as 503: the placement stands; the row lands on retry
         log.warning("tenancy: %s placed here, row unwritten: %s", org, e)
         raise BackendUnavailableError(

@@ -9,12 +9,13 @@ path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/
 
 ## Plugin or plain MCP
 
-| You run                                               | Use                                                                        | You get                                                                                                          |
-| ----------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Claude Code                                           | the [Claude Code plugin](claude-code.md)                                   | tools, capture hooks, code shunt, skills, the code-scope header                                                  |
-| Codex                                                 | the [Codex plugin](codex.md)                                               | the same, with Codex wiring                                                                                      |
-| Claude Desktop, Cursor, VS Code, Cline, Windsurf, Zed | `loom install --client <name>` ([below](#wire-a-client-with-loom-install)) | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks) ([Cursor](cursor.md)) |
-| an orchestrator running several agents                | one MCP mount per agent ([frameworks.md](frameworks.md))                   | shared memory across the agents                                                                                  |
+| You run                                       | Use                                                                                          | You get                                                                                                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code                                   | the [Claude Code plugin](claude-code.md)                                                     | tools, capture hooks, code shunt, skills, the code-scope header                                                                                  |
+| Codex                                         | the [Codex plugin](codex.md)                                                                 | the same, with Codex wiring                                                                                                                      |
+| Cursor                                        | the [Cursor plugin](cursor.md#plugin) (untested in Cursor) or `loom install --client cursor` | the tools; the `loom` and `loom-code` skills from the plugin; capture through the [`sessionEnd` hook](cursor.md#transcript-capture) you register |
+| Claude Desktop, VS Code, Cline, Windsurf, Zed | `loom install --client <name>` ([below](#wire-a-client-with-loom-install))                   | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks)                                                       |
+| an orchestrator running several agents        | one MCP mount per agent ([frameworks.md](frameworks.md))                                     | shared memory across the agents                                                                                                                  |
 
 A plain MCP entry gives the tools only: no session capture, primer or code shunt. Loom
 still records an implicit run per MCP session and names the agent after the client's
