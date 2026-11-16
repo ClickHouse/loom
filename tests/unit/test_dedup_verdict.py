@@ -348,6 +348,17 @@ async def test_a_write_naming_its_user_is_judged_against_that_users_rows(install
 
 
 @pytest.mark.asyncio
+async def test_a_write_naming_its_user_is_not_judged_against_a_shared_row(install_ch) -> None:
+    """A shared row (`user_id` '-') is outside the user's reads, so it is no peer of a
+    write that names its user; a write without a user still merges into it."""
+    install_ch(_FakeCH(peers=_restated_peer(user_id="-")))
+    result = await _write("-", user_id="alice")
+    assert result.verdict == "clear" and result.peers == []
+    result = await _write("-", user_id="-")
+    assert result.verdict == "merge"
+
+
+@pytest.mark.asyncio
 async def test_a_restatement_of_another_users_pinned_row_is_written(install_ch) -> None:
     """A restatement contradicts nothing, so another user's pin does not refuse it."""
     pinned = _restated_peer(user_id="alice")
