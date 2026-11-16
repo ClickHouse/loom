@@ -220,10 +220,12 @@ history is loaded. The bisect settings are listed in the
 [configuration reference](../../reference/configuration.md#code).
 
 The example below ranks the merged PRs that landed between a good release and a bad one
-and touched the files of a crashing function. `bad_version` is the first release where the bug was
-seen and `good_version` the newest release seen clean; Loom tests neither. It needs
-merged-PR history in the namespace, so enable `LOOM_CODE_PR_HISTORY_ENABLED` or run
-`loom code backfill-prs` first ([first index](../../operations/code-index-operations.md#first-index)).
+and touched the files of a crashing function. `bad_version` is the first release where the
+bug was seen and `good_version` the newest release seen clean; Loom tests neither.
+
+The version window needs a tracker namespace linked to the repository whose PRs carry release labels. With merged-PR history alone
+(`LOOM_CODE_PR_HISTORY_ENABLED` or `loom code backfill-prs`; see [first index](../../operations/code-index-operations.md#first-index)), the versions
+do not bound the scan: the op reads the last `LOOM_CODE_BISECT_HISTORY_DAYS` (90 by default) instead.
 
 ```python
 from loom import Agent
