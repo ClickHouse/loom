@@ -209,7 +209,6 @@ export function LibraryCollections({
   repeated,
   byName,
   current,
-  all = false,
   quietError = false,
   opening = null,
   place = "",
@@ -232,8 +231,6 @@ export function LibraryCollections({
   byName: Map<string, CollectionEntry>;
   /** The collection shown, or null for the header's namespace and for All documents. */
   current: CollectionEntry | null;
-  /** All documents is shown. */
-  all?: boolean;
   /** The page says the collections' failure itself: no note here. */
   quietError?: boolean;
   /** A collection the URL names that the list has not confirmed yet. */
@@ -257,6 +254,7 @@ export function LibraryCollections({
    *  collection button step aside, and the path names where the page is. */
   besideTree?: boolean;
 }) {
+  const all = place === ALL_DOCUMENTS;
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
   const { rows, error } = collections;
   // New collection and Move belong to the place they opened in: a move to another

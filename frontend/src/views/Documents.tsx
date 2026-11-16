@@ -61,11 +61,13 @@ import { Modal } from "../components/ui/Modal";
 import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "../lib/collections";
 import { fmtInt, formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
+import { ALL_DOCUMENTS, linkedAll, placeQuery } from "../lib/libraryPlace";
+import { isRefusal, listAcross, MAX_PLACES_READ, type PlaceFailure } from "../lib/libraryAcross";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
 import { useCollectionSharing } from "./CollectionSharing";
 import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
-import { TopLevelPlaces } from "./LibraryHierarchy";
+import { PlaceTitleLink, TopLevelPlaces } from "./LibraryHierarchy";
 import { expandedKey, LibraryTree } from "./LibraryTree";
 import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
 import { useTreeHeight } from "../lib/useTreeHeight";
@@ -82,10 +84,7 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
-import { ALL_DOCUMENTS, linkedAll, placeQuery } from "../lib/libraryPlace";
-import { isRefusal, listAcross, MAX_PLACES_READ, type PlaceFailure } from "../lib/libraryAcross";
-import { invalidateSharedCollections } from "../lib/collectionPlaces";
-import { PlaceTitleLink } from "./LibraryHierarchy";
+import { useRefusedPlaces } from "../lib/useRefusedPlaces";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -408,33 +407,16 @@ export function Documents() {
     for (const { c } of treeOrder(collections.kept?.rows ?? [])) out.add(c.namespace);
     return [...out];
   }, [ownShelf, picked.namespace, collections.kept]);
-  // Places a read was refused under the collections answer on screen: later reads leave them
-  // out and name them again, until the collections answer again (a grant may have caught up).
-  const [refused, setRefused] = useState<{ under: unknown; failures: PlaceFailure[] }>({ under: null, failures: [] });
-  const refusedHere = useMemo(
-    () => (refused.under === collections.kept ? refused.failures : []),
-    [refused, collections.kept],
-  );
-  // The collections answer on screen, for a read that lands after it was started.
-  const keptNow = useRef(collections.kept);
-  keptNow.current = collections.kept;
-  // The places ("org/namespace") whose refusal read the collections again, once each until a
-  // read finds none refused (a place revoked again then reads them again).
-  const askedAgainFor = useRef(new Set<string>());
-  // What a read found refused, kept under the answer it was started under, while that answer
-  // is still the one on screen (a later one may name a grant that caught up).
-  const recordRefused = (under: unknown, found: PlaceFailure[]) => {
-    if (found.length === 0 || keptNow.current !== under) return;
-    setRefused((prev) => ({ under, failures: [...(prev.under === under ? prev.failures : []), ...found] }));
-    const first = found.filter((f) => !askedAgainFor.current.has(`${picked.org}/${f.namespace}`));
-    for (const f of first) askedAgainFor.current.add(`${picked.org}/${f.namespace}`);
-    if (first.length) invalidateSharedCollections();
-  };
+  // Every reload (Retry, a delete, an add, an edit) goes through the load effect below, so an
+  // answer for a namespace the page has left is aborted and dropped.
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
+  const refusals = useRefusedPlaces(collections.kept, picked.org, reload);
   const placesWaiting = !collections.kept && !collections.error;
   // The places one read asks for: up to MAX_PLACES_READ it can read, a refused one not
   // counted; the rest are said to be left out.
   const everyRead = useMemo(() => {
-    const skip = new Set(refusedHere.map((f) => f.namespace));
+    const skip = new Set(refusals.skip.map((f) => f.namespace));
     const out: string[] = [];
     let readable = 0;
     for (const p of everyPlace) {
@@ -445,7 +427,7 @@ export function Documents() {
       out.push(p);
     }
     return out;
-  }, [everyPlace, refusedHere]);
+  }, [everyPlace, refusals.skip]);
   const placesCut = everyPlace.length - everyRead.length;
   const readPlaces = across ? everyRead : [identity.namespace];
   // What the rows on screen were read for: the org and the places, in order.
@@ -494,11 +476,6 @@ export function Documents() {
   // or rescoped read there keeps the passages (an unfiltered empty one is an empty library).
   const [listedScope, setListedScope] = useState("");
   const listedFor = useRef("");
-  // Every reload (Retry, a delete, an add, an edit) goes through the effect below, so an
-  // answer for a namespace the page has left is aborted and dropped.
-  const [reloads, setReloads] = useState(0);
-  const reload = () => setReloads((n) => n + 1);
-
   const load = (signal: AbortSignal, live: () => boolean) => {
     scopeRef.current += 1;
     moreRead.current?.abort();
@@ -539,7 +516,7 @@ export function Documents() {
       places,
       { fields: LIBRARY_LIST_FIELDS, limit: LIBRARY_PAGE, ...(tags.length ? { tags } : {}) },
       signal,
-      refusedHere,
+      refusals.skip,
     )
       .then((r) => {
         if (live()) {
@@ -547,8 +524,7 @@ export function Documents() {
           setRows(r.rows);
           setRowsScope(scope);
           setReadOf({ key: scope, read: r.read, failed: r.failed, oneAtATime: r.oneAtATime });
-          recordRefused(under, r.refused);
-          if (!r.failed.some((f) => isRefusal(f.error))) askedAgainFor.current.clear();
+          refusals.record(under, r);
           // A read that returned a document: the library holds one, whatever filter
           // narrows a later read. An unfiltered read that returned none: it holds none.
           if (r.rows?.length) setListedScope(at);
@@ -561,6 +537,7 @@ export function Documents() {
       })
       .catch((e) => {
         if (!live()) return;
+        refusals.record(under, null);
         // A failed read is said as a failure, never as an empty library.
         setLoadError(e);
         setLoadErrorFor(places.length === 1 ? places[0] : "");
@@ -599,30 +576,25 @@ export function Documents() {
 
   // The library is empty only when nothing narrowed the read and the read worked.
   const emptyLibrary = rows !== null && rows.length === 0 && !loadError && serverTags === "[]" && tagKey === serverTags;
+  // Where the page is, as the URL names it: a collection, All documents, else the namespace.
+  const urlPlace = all ? ALL_DOCUMENTS : (collection ?? picked.namespace);
   const share = useCollectionSharing({
     org: picked.org,
     collection: headerCollection,
     byName,
     repeated,
     truncated: collections.kept?.truncated ?? false,
-    empty: emptyLibrary,
-    place: all ? ALL_DOCUMENTS : (collection ?? picked.namespace),
+    // Of the collection's own read: one of every place says nothing of what it holds.
+    empty: emptyLibrary && !across,
+    place: urlPlace,
     onOpenPlace: goTo,
   });
   const readTags = JSON.parse(serverTags) as string[];
   // The read on screen's own report; one for other places is not this list's.
   const report = readOf?.key === readKey && rowsScope === readKey ? readOf : null;
-  // A new collections answer while places are refused reads them again: a grant that lagged
-  // behind the list is read as soon as the list answers again.
-  const refusedUnder = useRef(collections.kept);
-  useEffect(() => {
-    if (refusedUnder.current === collections.kept) return;
-    refusedUnder.current = collections.kept;
-    if (report?.failed.some((f) => isRefusal(f.error))) reload();
-  }, [collections.kept, report]);
   const leftOut = report?.failed ?? [];
   // Whether every place the person reads is known: not while the collections failed or stop early.
-  const placesKnown = !!collections.kept && !collections.kept.truncated;
+  const placesKnown = !!collections.kept && !collections.kept.truncated && !collections.error;
   const loadMore = async () => {
     // The cursor holds for the places its first page read, which the report names.
     if (!nextCursor || loadingMore || !report) return;
@@ -1188,7 +1160,8 @@ export function Documents() {
     }
     return out;
   }, [everyRead, placeLabel, byName]);
-  const selectedPlaces = selected.size > 0 ? [...selectedByPlace().keys()] : [];
+  const selectedGroups = selected.size > 0 ? selectedByPlace() : null;
+  const selectedPlaces = selectedGroups ? [...selectedGroups.keys()] : [];
   // A passage search everywhere reads the places the list read (not one refused), and waits
   // while the list reads them; here, the place shown.
   const passagesIn = across ? (report?.read ?? null) : [identity.namespace];
@@ -1196,13 +1169,9 @@ export function Documents() {
   // All documents with nothing to read: no place listed, or the collections not read.
   const noneToRead = across && rows !== null && readPlaces.length === 0;
   // Every place the person reads was read, so "none anywhere" is true of the Library.
-  const wholeRead =
-    !!report &&
-    leftOut.length === 0 &&
-    !report.oneAtATime &&
-    placesCut === 0 &&
-    !collections.error &&
-    !collections.kept?.truncated;
+  const wholeRead = !!report && leftOut.length === 0 && !report.oneAtATime && placesCut === 0 && placesKnown;
+  // A filter over a read of several places that left some out matched only the places read.
+  const partPlaces = across && !wholeRead;
   // The search's scope, under the bar while something is searched and there is another place
   // to search: the bar keeps the field's room, and the list starts where it did.
   const scopeLine = !all && filtering && everyPlace.length > 1 && (
@@ -1261,11 +1230,10 @@ export function Documents() {
       repeated={repeated}
       byName={byName}
       current={shown}
-      all={all}
       // All documents with no place but the collections says their failure once, as its list.
       quietError={all && !ownShelf && !collections.kept}
       opening={resolving ? collection : null}
-      place={all ? ALL_DOCUMENTS : (collection ?? picked.namespace)}
+      place={urlPlace}
       onPick={goTo}
       onLeave={pickCollection}
       creating={creatingCollection}
@@ -1547,7 +1515,7 @@ export function Documents() {
                     reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
                     onClick: () => {
                       const [from] = selectedPlaces;
-                      const moved = from ? (selectedByPlace().get(from) ?? []) : [];
+                      const moved = from ? (selectedGroups?.get(from) ?? []) : [];
                       if (from)
                         openMove(
                           from,
@@ -1724,7 +1692,13 @@ export function Documents() {
             kind="filtered"
             things="documents"
             filter={listQuery.trim()}
-            among={partial ? `${loaded} loaded` : undefined}
+            among={
+              partial
+                ? `${loaded} loaded${partPlaces ? " from the places read" : ""}`
+                : partPlaces
+                  ? "the places read"
+                  : undefined
+            }
             onClear={() => setQuery("")}
           />
         )}

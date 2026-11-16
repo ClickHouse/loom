@@ -57,7 +57,7 @@ function shortName(uri: string): string {
 /** What a search reads: this library, or every place (how many once the places are known,
  *  and how many it leaves out). */
 function hint(everywhere: boolean, unknown: boolean, places: number, notSearched: number): string {
-  if (!everywhere && notSearched === 0) return "Searches every document in this library, whatever the tag filter.";
+  if (!everywhere) return "Searches every document in this library, whatever the tag filter.";
   if (unknown) return "Searches every document in every place you read, whatever the tag filter.";
   const left = notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : "";
   return `Searches every document in ${places} place${places === 1 ? "" : "s"}, whatever the tag filter${left}.`;
@@ -260,8 +260,9 @@ export function LibraryPassages({
     <section id={PASSAGES_PANEL_ID} aria-label="Find a passage" className="mb-4 rounded-sm border border-border p-3">
       <div className="space-y-3">
         <p id={`${PASSAGES_PANEL_ID}-hint`} className="text-xs text-text-muted">
-          {hint(everywhere, waiting || !!unavailable, namespaces.length + 1, notSearched)} Each passage is cited by the
-          revision it was read from and its place.
+          {/* No claim of what it searches while the places could not be read. */}
+          {!unavailable && `${hint(everywhere, waiting, namespaces.length + 1, notSearched)} `}
+          Each passage is cited by the revision it was read from and its place.
         </p>
         <form
           className="flex gap-2"

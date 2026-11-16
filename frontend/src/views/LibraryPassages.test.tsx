@@ -91,6 +91,22 @@ describe("LibraryPassages", () => {
     expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
+  it("claims no places searched while the places could not be read", () => {
+    render(
+      <LibraryPassages
+        identity={identity}
+        everywhere
+        unavailable="The places to search could not be read."
+        navEnabled
+        onHitsShown={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText("Passage to find")).toHaveAccessibleDescription(
+      "Each passage is cited by the revision it was read from and its place.",
+    );
+  });
+
   it("cites each hit by revision and place, and opens its document", async () => {
     vi.mocked(searchKnowledge).mockResolvedValue([
       HIT,

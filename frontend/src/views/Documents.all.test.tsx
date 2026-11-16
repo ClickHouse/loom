@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   bulkDeleteKnowledge: vi.fn(),
   searchKnowledge: vi.fn(),
   listMine: vi.fn(),
+  listGrants: vi.fn(),
   getKnowledge: vi.fn(async () => ({ found: true, content: "text" })),
   fetchKnowledgePreview: vi.fn(async () => null),
 }));
@@ -505,6 +506,43 @@ describe("All documents", () => {
     ).toBeInTheDocument();
   });
 
+  it("says a filter that matches nothing ran over the places read when one was refused", async () => {
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "zzz" } });
+    expect(await screen.findByText(/in the places read/)).toHaveTextContent(
+      "No documents match zzz in the places read",
+    );
+  });
+
+  it("reads the list once when the collections answer again without a refused place", async () => {
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (places.includes("col-legal")) throw REFUSED;
+      return { rows: EVERY.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    // The refusal reads the collections again, and their new answer no longer lists Legal.
+    api.listCollections
+      .mockResolvedValueOnce({ collections: COLLECTIONS, next_cursor: null })
+      .mockResolvedValue({ collections: COLLECTIONS.slice(0, 2), next_cursor: null });
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    await waitFor(() => expect(screen.queryByText(/Not shown/)).toBeNull());
+    await settle();
+    const pages = api.listKnowledge.mock.calls.filter((c) => (c[1] as ListOpts).limit !== 1).map(placesOf);
+    // The refused read, the read of the rest, and one read under the new answer.
+    expect(pages).toEqual([
+      ["team", "col-me", "col-eng", "col-legal"],
+      ["team", "col-me", "col-eng"],
+      ["team", "col-me", "col-eng"],
+    ]);
+  });
+
   it("says nothing is in any place only when every place was read and holds none", async () => {
     api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
     render(<Documents />);
@@ -568,6 +606,35 @@ describe("The Library's search scope", () => {
     // An empty search lists the place shown again.
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
     await waitFor(() => expect(screen.queryByText("Team plan")).toBeNull());
+  });
+
+  it("says anything added to an empty collection is shared, never from a read that left it out", async () => {
+    api.listGrants.mockResolvedValue({
+      rows: [
+        { subject: "w", role: "admin", status: "active", granted_at: "2026-09-28 12:00:00", granted_by: "w" },
+        { subject: "bob", role: "viewer", status: "active", granted_at: "2026-09-28 12:00:00", granted_by: "w" },
+      ],
+      next_cursor: null,
+    });
+    // The collection holds nothing; read with the others, its read fails.
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      if (places.includes("col-eng") && places.length > 1) throw REFUSED;
+      if (places.includes("col-eng") && opts.limit === 1)
+        throw new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "busy" });
+      return { rows: [], next_cursor: null };
+    });
+    render(<Documents />);
+    expect(await screen.findByText(/Anything added here is shared with them/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+    await settle();
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Search in" })).getByRole("button", { name: "Everywhere" }),
+    );
+    await screen.findByText(/Couldn't read Engineering/);
+    expect(screen.queryByText(/Anything added here is shared with them/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
+    expect(await screen.findByText(/Anything added here is shared with them/)).toBeInTheDocument();
   });
 
   it("says Load more failed when one place's cursor is refused, with no read from the top", async () => {
