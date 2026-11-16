@@ -260,6 +260,10 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   `memory.search` matches of the user's input to the instructions, and after the run
   it sends the turn to `memory.set_from_messages`; install the `[agent-framework]`
   extra.
+- `loom.integrations.claude_memory.AsyncLoomMemoryTool(agent, store=...)` and
+  `LoomMemoryTool(sync_agent, store=...)` run the Claude API memory tool's commands
+  against Loom documents (`knowledge.get`, `knowledge.upsert`, `knowledge.list`,
+  `knowledge.bulk_delete`); install the `[claude-memory]` extra.
 - `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
   `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
   extra.

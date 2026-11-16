@@ -163,6 +163,14 @@ describe("dist", () => {
     expect(readFileSync(join(dist, "integrations/ai-sdk.mjs"), "utf8")).toMatch(/from "ai"/);
   }, 30_000); // loading ai in both module formats takes seconds
 
+  it("the claude-memory subpath loads in both formats and leaves @anthropic-ai/sdk to the app", async () => {
+    const esm = (await import(join(dist, "integrations/claude-memory.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/claude-memory.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["loomMemoryHandlers", "loomMemoryTool"]);
+    expect(readFileSync(join(dist, "integrations/claude-memory.mjs"), "utf8")).toMatch(/from "@anthropic-ai\/sdk/);
+  });
+
   it("no bundle imports a Node built-in", () => {
     const files = readdirSync(dist, { recursive: true }) as string[];
     for (const f of files.filter((n) => /\.(mjs|cjs)$/.test(n))) {
