@@ -126,7 +126,7 @@ export class LoomSession implements Session {
         scope,
       );
       const entries = page.entries as ItemRow[];
-      offset += entries.length;
+      offset += SESSION_PAGE;
       rows.push(...entries.filter((r) => ITEM_KEY.test(r.memory_key.slice(this.prefix.length))));
       if (!page.truncated) break;
       if (limit !== undefined && rows.length > limit) {

@@ -164,7 +164,7 @@ class LoomSession:
                 fields=["memory_key", "value", "value_truncated", "created_at"],
                 **self._scope(),
             )
-            offset += len(page["entries"])
+            offset += _PAGE
             rows += [
                 r
                 for r in page["entries"]

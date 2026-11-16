@@ -146,9 +146,9 @@ class _Rows:
     """memory.set / list / get / delete over a dict, listed as the server lists: the
     newest second first, by key within a second, values cut to 2,048 characters."""
 
-    def __init__(self, page: int = 2) -> None:
+    def __init__(self, unserved: int = 0) -> None:
         self.rows: dict[tuple[Any, Any, str], tuple[Any, int]] = {}
-        self.page = page
+        self.unserved = unserved
         self.second = 0  # the clock rows are stamped with; a test moves it
         self.hidden: set[str] = set()  # keys Loom labels sensitive: listed without a value
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -168,9 +168,14 @@ class _Rows:
             ),
             key=lambda r: (-r[2], r[0]),
         )
-        page = mine[offset : offset + self.page]
+        scanned = [None] * self.unserved + mine
+        limit = int(kw["limit"])
+        page = scanned[offset : offset + limit]
         entries = []
-        for key, value, second in page:
+        for row in page:
+            if row is None:
+                continue
+            key, value, second = row
             text = json.dumps(value)
             cut = len(text) > 2048
             entries.append(
@@ -181,7 +186,7 @@ class _Rows:
                     "created_at": f"2026-01-01T00:00:{second:02d}",
                 }
             )
-        return {"entries": entries, "truncated": offset + self.page < len(mine)}
+        return {"entries": entries, "truncated": offset + limit < len(scanned)}
 
     async def get(self, key: str, **kw: Any) -> dict[str, Any] | None:
         self.calls.append(("get", {"key": key, **kw}))
@@ -211,7 +216,12 @@ def _msg(role: str, text: str) -> dict[str, Any]:
 def test_a_session_keeps_items_in_order_across_pages_and_repeats() -> None:
     rows = _Rows()
     session = _session(rows)
-    items = [_msg("user", "hi"), _msg("assistant", "hello"), _msg("user", "hi")]
+    items = [
+        *[_msg("user", f"m{i}") for i in range(100)],
+        _msg("user", "hi"),
+        _msg("assistant", "hello"),
+        _msg("user", "hi"),
+    ]
     asyncio.run(session.add_items(items))
     asyncio.run(session.add_items([_msg("assistant", "again")]))
     assert asyncio.run(session.get_items()) == [*items, _msg("assistant", "again")]
@@ -223,6 +233,15 @@ def test_a_session_keeps_items_in_order_across_pages_and_repeats() -> None:
     sets = [kw for op, kw in rows.calls if op == "set"]
     assert {kw["memory_type"] for kw in sets} == {"episodic"}
     assert {(kw["user_id"], kw["session_id"]) for kw in sets} == {("alice", session._loom_session)}
+
+
+def test_an_empty_truncated_page_advances_past_unserved_projections() -> None:
+    rows = _Rows(unserved=100)
+    session = _session(rows)
+    items = [_msg("user", "hi"), _msg("assistant", "hello")]
+    asyncio.run(session.add_items(items))
+    assert asyncio.run(session.get_items()) == items
+    assert [kw["offset"] for op, kw in rows.calls if op == "list"] == [0, 100]
 
 
 def test_pop_item_removes_and_returns_the_latest_item() -> None:
@@ -321,7 +340,7 @@ def test_a_latest_read_stops_once_it_holds_an_older_second() -> None:
         asyncio.run(session.add_items([_msg("user", f"m{second}")]))
     rows.calls.clear()
     assert [i["content"] for i in asyncio.run(session.get_items(limit=1))] == ["m5"]
-    assert len([c for c in rows.calls if c[0] == "list"]) == 1  # not all three pages
+    assert len([c for c in rows.calls if c[0] == "list"]) == 1
 
 
 def test_a_long_or_sensitive_item_is_read_whole_by_key() -> None:
@@ -373,7 +392,7 @@ def test_a_runner_reads_and_extends_the_history_through_the_session() -> None:
         def stream_response(self, *a: Any, **kw: Any) -> Any:
             raise NotImplementedError
 
-    rows = _Rows(page=100)
+    rows = _Rows()
     session = _session(rows)
     assistant = OpenAIAgent(name="assistant", model=_Echo())
     asyncio.run(Runner.run(assistant, "first", session=session))
