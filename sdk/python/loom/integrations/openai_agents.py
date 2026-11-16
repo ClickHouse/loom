@@ -129,8 +129,10 @@ class LoomSession:
     ) -> None:
         if not session_id:
             raise ValueError("session_id names the session")
-        if user_id is not None and user_id.strip() in ("", "-"):
-            raise ValueError(f"user_id names a Loom user or is None; {user_id!r} names none")
+        if user_id is not None and (user_id in ("", "-") or user_id != user_id.strip()):
+            raise ValueError(
+                "user_id must name a Loom user without surrounding whitespace, or be None"
+            )
         self.session_id = session_id
         self.session_settings = session_settings or SessionSettings()
         self._agent = agent

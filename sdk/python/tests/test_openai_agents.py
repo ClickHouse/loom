@@ -323,8 +323,8 @@ def test_the_loom_session_is_per_user_and_unambiguous() -> None:
 def test_a_session_refuses_a_missing_id_a_user_naming_none_and_an_empty_prefix() -> None:
     with pytest.raises(ValueError, match="session_id"):
         _session(_Rows(), "")
-    for user in ("", "-"):
-        with pytest.raises(ValueError, match="names none"):
+    for user in ("", "-", " alice", "alice "):
+        with pytest.raises(ValueError, match="user_id"):
             _session(_Rows(), user_id=user)
     with pytest.raises(ValueError, match="key_prefix"):
         _session(_Rows(), key_prefix="/")

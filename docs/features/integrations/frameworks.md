@@ -746,3 +746,5 @@ client can speak for several agents.
 
 - [Context-provider architecture](../../architecture/agent-framework-adapter.md).
 - [Memory-tool architecture](../../architecture/claude-memory-adapter.md).
+
+- [Adapter architecture](../../architecture/openai-agents-sessions.md).

@@ -83,8 +83,8 @@ export class LoomSession implements Session {
   ) {
     if (!sessionId) throw new Error("sessionId names the session");
     const user = opts.userId;
-    if (user !== undefined && ["", "-"].includes(user.trim())) {
-      throw new Error(`userId names a Loom user or is undefined; ${JSON.stringify(user)} names none`);
+    if (user !== undefined && (["", "-"].includes(user) || user !== user.trim())) {
+      throw new Error("userId must name a Loom user without surrounding whitespace, or be undefined");
     }
     const rawPrefix = opts.keyPrefix ?? "openai-agents";
     let start = 0;

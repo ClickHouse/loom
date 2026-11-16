@@ -75,3 +75,6 @@ to recall user facts before a run and record the conversation after it.
 
 Store the [Claude API memory tool](../features/integrations/frameworks.md#claude-api-memory-tool)
 file tree in Loom so agents in a namespace can share its contents.
+
+Keep [OpenAI Agents session history](../features/integrations/frameworks.md#openai-agents-sdk)
+in Loom across agent runs and handoffs.

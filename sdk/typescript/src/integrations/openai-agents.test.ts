@@ -260,7 +260,9 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
   it("refuses a missing id, a user naming none and an empty prefix", () => {
     const { agent } = rowsHarness();
     expect(() => new LoomSession(agent, "")).toThrow("sessionId");
-    expect(() => new LoomSession(agent, "s1", { userId: "-" })).toThrow("names none");
+    for (const userId of ["-", " alice", "alice "]) {
+      expect(() => new LoomSession(agent, "s1", { userId })).toThrow("userId");
+    }
     expect(() => new LoomSession(agent, "s1", { keyPrefix: "/" })).toThrow("keyPrefix");
   });
 });

@@ -151,6 +151,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
+- [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.
 - [Provider reconfiguration](docs/architecture/provider-reconfiguration.md): Loom stores dashboard model configuration as encrypted, versioned rows in `loom.provider_configuration`.
 - [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
