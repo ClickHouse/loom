@@ -19,6 +19,27 @@ _NUMBER = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?")
 # not a setting: nesting past this is refused so the call stack stays bounded
 _MAX_DEPTH = 64
 _ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+_HEX = "0123456789abcdefABCDEF"
+
+
+def _decode_json_string(raw: str) -> str:
+    """One JSON string, decoded by the stdlib.
+
+    A surrogate pair is one character, so the key `json.dumps` writes matches
+    the name and a second spelling of that character is a duplicate. An
+    unpaired surrogate is not a character the UTF-8 file can hold.
+    """
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise JsoncEditError("bad unicode escape") from exc
+    if not isinstance(value, str):
+        raise JsoncEditError("bad unicode escape")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise JsoncEditError("unpaired surrogate") from exc
+    return value
 
 
 class JsoncEditError(Exception):
@@ -182,13 +203,15 @@ class _Parser:
 
     def _parse_string(self) -> str:
         text = self.text
+        start = self.i
+        if start >= len(text) or text[start] != '"':
+            raise JsoncEditError("unterminated string")
         self.i += 1
-        chars: list[str] = []
         while self.i < len(text):
             char = text[self.i]
             if char == '"':
                 self.i += 1
-                return "".join(chars)
+                return _decode_json_string(text[start : self.i])
             if char == "\\":
                 self.i += 1
                 if self.i >= len(text):
@@ -196,21 +219,16 @@ class _Parser:
                 esc = text[self.i]
                 self.i += 1
                 if esc in _ESCAPES:
-                    chars.append(_ESCAPES[esc])
                     continue
                 if esc == "u":
                     hex_digits = text[self.i : self.i + 4]
-                    if len(hex_digits) < 4 or any(
-                        c not in "0123456789abcdefABCDEF" for c in hex_digits
-                    ):
+                    if len(hex_digits) < 4 or any(c not in _HEX for c in hex_digits):
                         raise JsoncEditError("bad unicode escape")
-                    chars.append(chr(int(hex_digits, 16)))
                     self.i += 4
                     continue
                 raise JsoncEditError("bad escape")
             if ord(char) < 0x20:
                 raise JsoncEditError("unterminated string")
-            chars.append(char)
             self.i += 1
         raise JsoncEditError("unterminated string")
 

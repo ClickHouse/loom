@@ -842,3 +842,257 @@ def test_zed_install_adds_context_servers_when_the_key_is_absent(
     assert '"theme": "One Dark"' in text
     assert '"context_servers"' in text
     assert '"url": "http://localhost:7777/mcp"' in text
+
+
+# U+1F600 is one character. Its JSON spelling is the surrogate pair \uD83D\uDE00.
+_NON_BMP = "\U0001f600"
+_OTHER_NON_BMP = "\U0001f44d"
+
+
+def test_zed_install_writes_a_non_bmp_name(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A new name outside the BMP is written once. The repeat is the same bytes."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text('{\n  "theme": "One Dark"\n}\n')
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name=_NON_BMP, dry_run=False
+    )
+    text = cfg.read_text()
+    raw = cfg.read_bytes()
+    assert '"theme": "One Dark"' in text
+    assert json.loads('"\\uD83D\\uDE00"') == _NON_BMP
+    data = _jsonc_object(text)
+    assert list(data["context_servers"]) == [_NON_BMP]
+    assert data["context_servers"][_NON_BMP]["headers"]["Authorization"] == "Bearer T"
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name=_NON_BMP, dry_run=False
+    )
+    assert cfg.read_bytes() == raw
+
+
+def test_zed_install_updates_a_literal_non_bmp_key(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The character itself is the key. A token change rewrites that entry only."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    other = '"other": {"command": "keep-me", "args": ["stay"]}'
+    cfg.write_text(
+        "{\n"
+        '  "context_servers": {\n'
+        f"    {json.dumps(_NON_BMP, ensure_ascii=False)}: "
+        '{"url": "http://old", "headers": {"Authorization": "Bearer old-token"}},\n'
+        f"    {other}\n"
+        "  }\n"
+        "}\n"
+    )
+    assert other.encode() in cfg.read_bytes()
+    assert cli._install_one(
+        "zed",
+        token="new-token",
+        server_url="http://localhost:7777",
+        name=_NON_BMP,
+        dry_run=False,
+    )
+    text = cfg.read_text()
+    assert other in text
+    assert "old-token" not in text
+    assert text.count("new-token") == 1
+    data = _jsonc_object(text)
+    assert set(data["context_servers"]) == {_NON_BMP, "other"}
+    assert data["context_servers"]["other"] == {"command": "keep-me", "args": ["stay"]}
+    assert data["context_servers"][_NON_BMP]["headers"]["Authorization"] == "Bearer new-token"
+    again = cfg.read_bytes()
+    assert cli._install_one(
+        "zed",
+        token="new-token",
+        server_url="http://localhost:7777",
+        name=_NON_BMP,
+        dry_run=False,
+    )
+    assert cfg.read_bytes() == again
+
+
+@pytest.mark.parametrize("escape", [r"\uD83D\uDE00", r"\uD83d\uDe00"])
+def test_zed_install_updates_an_escaped_surrogate_pair(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, escape: str
+) -> None:
+    """The escaped pair is the same key as the character. The other pair stays."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    sibling = r'"\uD83D\uDC4D": {"command": "keep-me"}'
+    cfg.write_text(
+        "{\n"
+        '  "context_servers": {\n'
+        f'    "{escape}": '
+        '{"url": "http://old", "headers": {"Authorization": "Bearer old-token"}},\n'
+        f"    {sibling}\n"
+        "  }\n"
+        "}\n"
+    )
+    assert cli._install_one(
+        "zed",
+        token="new-token",
+        server_url="http://localhost:7777",
+        name=_NON_BMP,
+        dry_run=False,
+    )
+    text = cfg.read_text()
+    assert sibling in text
+    assert text.count(escape) == 1
+    assert "old-token" not in text
+    assert text.count("new-token") == 1
+    data = _jsonc_object(text)
+    assert json.loads('"\\uD83D\\uDE00"') == _NON_BMP
+    assert json.loads('"\\uD83D\\uDC4D"') == _OTHER_NON_BMP
+    assert set(data["context_servers"]) == {_NON_BMP, _OTHER_NON_BMP}
+    assert data["context_servers"][_OTHER_NON_BMP] == {"command": "keep-me"}
+    assert len(data["context_servers"]) == 2
+    again = cfg.read_bytes()
+    assert cli._install_one(
+        "zed",
+        token="new-token",
+        server_url="http://localhost:7777",
+        name=_NON_BMP,
+        dry_run=False,
+    )
+    assert cfg.read_bytes() == again
+
+
+def test_zed_install_refuses_a_literal_key_and_its_escaped_pair(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The character and its surrogate pair are one key. A duplicate is not a write."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = (
+        "{\n"
+        '  "context_servers": {\n'
+        f"    {json.dumps(_NON_BMP, ensure_ascii=False)}: "
+        '{"url": "http://old", "headers": {"Authorization": "Bearer old"}},\n'
+        '    "\\uD83D\\uDE00": {"url": "http://other", '
+        '"headers": {"Authorization": "Bearer other"}}\n'
+        "  }\n"
+        "}\n"
+    )
+    cfg.write_bytes(original.encode())
+    before = cfg.read_bytes()
+    assert (
+        cli._install_one(
+            "zed", token="T", server_url="http://localhost:7777", name=_NON_BMP, dry_run=False
+        )
+        is False
+    )
+    assert cfg.read_bytes() == before
+    err = capsys.readouterr().err
+    assert "not changed" in err
+    assert "duplicate" in err
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        '{ "note": "\\uD800" }\n',
+        '{ "note": "\\uDE00" }\n',
+        '{ "note": "\\uD83D\\uD83D" }\n',
+        '{ "note": "\\uD83D\\uDE00\\uD800" }\n',
+        '{ "context_servers": { "\\uD800": {"command": "true"} } }\n',
+    ],
+)
+def test_zed_install_refuses_an_unpaired_surrogate_without_writing(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    original: str,
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text(original)
+    before = cfg.read_bytes()
+    assert (
+        cli._install_one(
+            "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+        )
+        is False
+    )
+    assert cfg.read_bytes() == before
+    assert "not changed" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        '{ "note": "\\u12" }\n',
+        '{ "note": "\\uXXXX" }\n',
+        '{ "note": "\\uD83" }\n',
+    ],
+)
+def test_zed_install_refuses_a_malformed_unicode_escape_without_writing(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    original: str,
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text(original)
+    before = cfg.read_bytes()
+    assert (
+        cli._install_one(
+            "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+        )
+        is False
+    )
+    assert cfg.read_bytes() == before
+    assert "not changed" in capsys.readouterr().err
+
+
+def test_zed_dry_run_redacts_a_non_bmp_name_and_writes_nothing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = '{\n  "theme": "One Dark"\n}\n'
+    cfg.write_bytes(original.encode())
+    before = cfg.read_bytes()
+    assert cli._install_one(
+        "zed",
+        token="super-secret-token",
+        server_url="http://localhost:7777",
+        name=_NON_BMP,
+        dry_run=True,
+    )
+    captured = capsys.readouterr()
+    assert cfg.read_bytes() == before
+    assert "super-secret-token" not in captured.out
+    assert "super-secret-token" not in captured.err
+    assert "<token>" in captured.out
+
+
+def test_zed_install_keeps_a_legal_surrogate_pair_in_another_value(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legal pair in a different entry stays the bytes it was."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    kept = r'"other": {"command": "\uD83D\uDE00"}'
+    cfg.write_text('{\n  "context_servers": {\n    ' + kept + "\n  }\n}\n")
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    text = cfg.read_text()
+    assert kept in text
+    data = _jsonc_object(text)
+    assert data["context_servers"]["other"]["command"] == _NON_BMP
+    assert "loom" in data["context_servers"]
+    assert len(data["context_servers"]) == 2
+
+
+def test_zed_install_updates_an_escaped_bmp_key(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single \\uXXXX below U+10000 is that character, and the spelling stays."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text(
+        '{\n  "context_servers": {\n    "\\u00e9": '
+        '{"url": "http://old", "headers": {"Authorization": "Bearer old"}}\n  }\n}\n'
+    )
+    name = "\u00e9"
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name=name, dry_run=False
+    )
+    text = cfg.read_text()
+    assert r'"\u00e9"' in text
+    data = _jsonc_object(text)
+    assert list(data["context_servers"]) == [name]
+    assert data["context_servers"][name]["headers"]["Authorization"] == "Bearer T"
