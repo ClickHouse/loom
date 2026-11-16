@@ -159,6 +159,14 @@ async def test_a_restatement_by_another_user_keeps_its_own_row(
         )
         assert bob["conflict_verdict"] == "clear" and not bob.get("noop"), bob
         assert bob["memory_id"] != alice["memory_id"]
+        row = await a.memory.get("seat_b", user_id="bob")
+        assert row is not None
+        assert (row["value"], row["user_id"], row["status"], row["memory_id"]) == (
+            "prefers AISLE seats.",
+            "bob",
+            "active",
+            bob["memory_id"],
+        )
         # The same user's restatement still merges.
         again = await a.memory.set(
             "seat_a2", "Prefers aisle seats", memory_type="semantic", user_id="alice"

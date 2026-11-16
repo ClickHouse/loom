@@ -420,13 +420,12 @@ async def _foreign_pinned_rows(
 
 
 def _split_by_writer_scope(
-    peers: list[ConflictPeer], user_id: str
+    peers: list[ConflictPeer], scope: ReadFilters | None
 ) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
     """(peers inside the writer's scope (`_writer_scope`), peers outside it). A writer
     bounded to one user, or a write that names its user, never merges into,
     reinforces, supersedes or marks another user's row; only a pinned one still
     blocks it. A scope the request cannot resolve keeps no peer inside."""
-    scope = _writer_scope(user_id)
     if scope is None:
         return [], peers
     inside: list[ConflictPeer] = []
@@ -589,7 +588,7 @@ async def check_on_commit(
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
 
-    all_peers, foreign = _split_by_writer_scope([_peer_of(r) for r in rows], new_user_id)
+    all_peers, foreign = _split_by_writer_scope([_peer_of(r) for r in rows], scope)
     peers = [p for p in all_peers if p.similarity >= threshold]
     if keyed:
         verdict = "conflict" if peers else "clear"

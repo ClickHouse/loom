@@ -16,12 +16,12 @@ concepts](../../concepts/memory.md).
 
 `memory.set`, `memory.bulk_set` (and so `memory.set_from_messages`) and `memory.update`
 compare the new value with the active rows of the same `memory_type` in the namespace. A
-write that names a `user_id` reads and is compared with that user's rows only, so its
-verdict never merges it into, marks it a duplicate of, or retires or flags another user's
-row; another user's pinned row still refuses it ([pinned facts](#pinned-facts)). Same-key
-supersession under `newest_wins` and the value-update pass still read the request's scope,
-so under a namespace-wide token they can retire another user's row. A write
-without a user is compared with every user's rows:
+write without a user is compared with every user's rows. A write that names a `user_id`
+reads and is compared with that user's rows only, so its verdict never merges it into,
+marks it a duplicate of, or retires or flags another user's row; another user's pinned row
+still refuses it ([pinned facts](#pinned-facts)). Same-key supersession under
+`newest_wins` and the value-update pass still read the request's scope, so under a
+namespace-wide token they can retire another user's row. Each write is judged:
 
 - A canonical-form match is a **merge**: nothing is written.
 - Cosine at or above the duplicate threshold, with the same content words and no

@@ -795,7 +795,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
     with read_filters_bound(current_auth(), one_user):  # the narrowed batch and its pinned arm
         await CF.candidate_rows_many(
-            user_id="-", org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+            user_id="u1", org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
         )
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
