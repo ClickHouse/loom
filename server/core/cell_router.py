@@ -247,6 +247,8 @@ def start_reader() -> asyncio.Task[None]:
                         await read_once(client)
                     except Exception as e:  # noqa: BLE001 — a failed read must not stop the reader
                         log.warning("cell state: the router read failed: %s", type(e).__name__)
+                    if _serving:
+                        return
                 await _sleep(period_s())
         finally:
             if client is not None:

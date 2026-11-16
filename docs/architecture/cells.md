@@ -519,16 +519,16 @@ that reports them; there is no generation key.
   in the same transaction: a startup value survives the reset, a `SET` does not, so a
   pooler, which a cell must not have ([Postgres](../operations/postgres.md)), reads unmarked
   whether it strips startup parameters or sends them again with `SET`, and the read runs on
-  the server connection the reset ran on. It costs three round trips per refresh (`BEGIN`,
-  `RESET ALL` and `COMMIT`), and every process reports a fresh value with no prober. A
-  session the pooler stripped, or a process with `LOOM_CELL` unset under the Postgres
-  authority, reads `false`; `null` means only that no read has landed (a boot with skipped
-  Postgres migrations whose first read failed, or the ClickHouse authority, where nothing is
-  read). The `cell_marker` readiness check of a process with `LOOM_CELL` set reads the same
-  value: it fails in `enforced` and `partial`, where the triggers refuse an unmarked
-  session's writes for an org the cell does not hold and the tenancy row of each newly
-  placed org, and passes with a warning in `recording`, so a first cell behind such a pooler
-  does not stall its rollout before attach, which refuses the process
+  the server connection the reset ran on. It costs three round trips more per refresh
+  (`BEGIN`, `RESET ALL` and `COMMIT`), and every process reports a fresh value with no
+  prober. A session the pooler stripped, or a process with `LOOM_CELL` unset under the
+  Postgres authority, reads `false`; `null` means only that no read has landed (a boot with
+  skipped Postgres migrations whose first read failed, or the ClickHouse authority, where
+  nothing is read). The `cell_marker` readiness check of a process with `LOOM_CELL` set
+  reads the same value: it fails in `enforced` and `partial`, where the triggers refuse an
+  unmarked session's writes for an org the cell does not hold and the tenancy row of each
+  newly placed org, and passes with a warning in `recording`, so a first cell behind such a
+  pooler does not stall its rollout before attach, which refuses the process
   ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
 - `router` and `router_why`: with `LOOM_CELL` set, `router` is `null` and `router_why` names
   why until the `first` row is read, and then both are present on a first cell only (a later

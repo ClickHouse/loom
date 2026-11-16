@@ -395,7 +395,8 @@ def test_the_background_reader_asks_until_serving(monkeypatch: pytest.MonkeyPatc
         await cell_router.start_reader()
 
     asyncio.run(_run())
-    assert len(calls) == 3 and sleeps == [cell_router.period_s()] * 3
+    # No sleep after the read that finds `serving`: the reader ends there.
+    assert len(calls) == 3 and sleeps == [cell_router.period_s()] * 2
     assert cell_router._serving and cell_router.router_key()["router"] is True
     assert len(clients) == 1 and clients[0].is_closed
 
