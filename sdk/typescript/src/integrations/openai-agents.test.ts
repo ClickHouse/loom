@@ -249,6 +249,14 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     expect(calls[0].body.session_id).toBe("oai-ts-c10f2e9c4ca65c3f8b98");
   });
 
+  it("trims long slash prefixes without scanning each suffix", async () => {
+    const { agent } = rowsHarness();
+    expect(() => new LoomSession(agent, "s", { keyPrefix: "/".repeat(100_000) })).toThrow("keyPrefix");
+    const session = new LoomSession(agent, "s", { keyPrefix: `${"/".repeat(100_000)}notes${"/".repeat(100_000)}` });
+    await session.addItems([{ role: "user", content: "kept" }]);
+    expect(await session.getItems()).toEqual([{ role: "user", content: "kept" }]);
+  });
+
   it("refuses a missing id, a user naming none and an empty prefix", () => {
     const { agent } = rowsHarness();
     expect(() => new LoomSession(agent, "")).toThrow("sessionId");

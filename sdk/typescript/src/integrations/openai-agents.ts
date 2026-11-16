@@ -86,7 +86,12 @@ export class LoomSession implements Session {
     if (user !== undefined && ["", "-"].includes(user.trim())) {
       throw new Error(`userId names a Loom user or is undefined; ${JSON.stringify(user)} names none`);
     }
-    const prefix = (opts.keyPrefix ?? "openai-agents").replace(/^\/+|\/+$/g, "");
+    const rawPrefix = opts.keyPrefix ?? "openai-agents";
+    let start = 0;
+    let end = rawPrefix.length;
+    while (start < end && rawPrefix[start] === "/") start++;
+    while (end > start && rawPrefix[end - 1] === "/") end--;
+    const prefix = rawPrefix.slice(start, end);
     if (!prefix) throw new Error("keyPrefix must not be empty");
     this.prefix = `${prefix}/`;
   }
