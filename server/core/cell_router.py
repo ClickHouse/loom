@@ -44,6 +44,8 @@ ATTACHING, SERVING, OTHER, UNKNOWN = "attaching", "serving", "other", "unknown"
 _answer: tuple[str, float] | None = None
 # Read `serving` once: kept for the process's life.
 _serving = False
+# The cause `_ask` gives a 401, which `_keep_router` tells from every other cause.
+_UNAUTHORIZED = "401: the router does not accept LOOM_CELL_ROUTER_TOKEN"
 # The heartbeat's `router` key and its cause, and when a run of 401 answers began.
 _router: bool | None = None
 _router_why = ""
@@ -149,10 +151,10 @@ async def read_once(client: httpx.AsyncClient | None = None) -> None:
 
 def _keep_router(router: bool | None, why: str, now: float) -> None:
     """Update the `router` key from one read: `router` None is a transient failure, which
-    keeps the last value; a 401 (`why` starting with 401) turns it false only past one
+    keeps the last value; a 401 (`why` is `_UNAUTHORIZED`) turns it false only past one
     LOOM_ROUTER_DIRECTORY_CACHE_S of 401s."""
     global _router, _router_why, _unauthorized_since
-    if why.startswith("401"):
+    if why == _UNAUTHORIZED:
         if _unauthorized_since is None:
             _unauthorized_since = now
         if now - _unauthorized_since <= float(settings.router_directory_cache_s):
@@ -192,7 +194,7 @@ async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str]:
     except httpx.HTTPError as e:
         return UNKNOWN, None, f"the router did not answer ({type(e).__name__})"
     if r.status_code == 401:
-        return UNKNOWN, None, "401: the router does not accept LOOM_CELL_ROUTER_TOKEN"
+        return UNKNOWN, None, _UNAUTHORIZED
     if r.status_code == 404:
         return UNKNOWN, False, f"404: the router holds no first cell named {settings.cell!r}"
     if r.status_code != 200:

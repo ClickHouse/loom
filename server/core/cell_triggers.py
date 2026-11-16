@@ -411,7 +411,7 @@ def readiness_check() -> readiness.CheckResult:
     stall its rollout before attach. Missing triggers are named by `loom doctor` and attach,
     not here: a first cell in `recording` has none."""
     marked = cell.marked()
-    if marked is None or marked:
+    if marked is not False:
         return readiness.result(True, "")
     lost = (
         "this process's pooled Postgres sessions do not keep the tenancy marker "

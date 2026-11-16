@@ -237,15 +237,11 @@ async def _refuse_unscoped(org: str) -> None:
                 operation="tenancy",
             )
         if answer == cell_router.UNKNOWN:
-            missing = cell_router.unset()
-            if missing:
-                # Also after attach: the upgrade steps unset the token on CLIs once it ends.
-                text = f"this process cannot ask the router ({', '.join(missing)} unset)"
-            else:
-                text = "the directory is unreadable"
+            # With router settings unset the org alone is named: past `recording` (the
+            # mode this path runs in) a CLI holds no router token (`_ch.check_orgs`).
+            text = "" if cell_router.unset() else ", and the directory is unreadable"
             raise BackendUnavailableError(
-                f"org {org!r} is not held by this cell, and {text}",
-                operation="tenancy",
+                f"org {org!r} is not held by this cell{text}", operation="tenancy"
             )
     raise WrongCellError(org)
 

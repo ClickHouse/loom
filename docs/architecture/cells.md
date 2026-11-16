@@ -555,17 +555,18 @@ is asked no more often and still answers 503. A process with no heartbeat (a CLI
 workers child) asks on demand instead, at most once every `LOOM_TENANCY_MODE_CACHE_S`.
 
 The reader keeps the directory's last answer for the tenancy check too, as one of four:
-`attaching`, `serving`, another state, or unknown while no read has landed, the last one failed,
-answered 401 or 404, or is late (older than the period this process reads at, the background
-reader's or the on-demand window, plus `LOOM_CELL_ROUTER_TIMEOUT_S`). Once a process has
-read `serving` it keeps that for its life and asks no more: only `loom cell restore` lowers
-it, and that restarts the processes. A first cell in `recording` records a new org only on
-`attaching`. A platform or `*`-org principal, or a call with no principal, places no org: on
-a first cell whose directory answers `attaching`, or cannot be read before it has read
-`serving`, such a call for an org the cell does not hold answers 503 ("attach in progress"
-or the directory unreadable), since the org's data may be in this cell until attach places
-it; once `serving`, and on a later cell, it answers 409 `WRONG_CELL`. A process booting
-after `serving` while the router is down answers those calls 503 until its first read lands.
+`attaching`, `serving`, another state, or unknown while no read has landed, the last one
+failed, answered 401 or 404, or is late (older than the period this process reads at, the
+background reader's or the on-demand window, plus `LOOM_CELL_ROUTER_TIMEOUT_S`). Once a
+process has read `serving` it keeps that for its life and asks no more: only
+`loom cell restore` lowers it, and that restarts the processes. A first cell in `recording`
+records a new org only on `attaching`. A platform or `*`-org principal, or a call with no
+principal, places no org: on a first cell whose directory answers `attaching`, or cannot be
+read before it has read `serving`, such a call for an org the cell does not hold answers 503
+("attach in progress" or the directory unreadable), since the org's data may be in this cell
+until attach places it; once `serving`, and on a later cell, it answers 409 `WRONG_CELL`. A
+process booting after `serving` while the router is down answers those calls 503 until its
+first read lands.
 
 With `LOOM_CELL` set, a non-empty `LOOM_CELL_ROUTER_URL` that is not an http(s) URL with a
 host, a port at most 65535 and no `?` or `#` refuses the boot (`cell.settings_problem`); an
@@ -682,8 +683,8 @@ lock and never waits on attach. An insert that finds `enforced` (a process whose
 still reads `recording`) writes nothing: the request goes on to the placement call as in
 `enforced`, and a CLI command refuses as in `enforced`, naming the org (`loom cell place`
 places it). A process whose cache still reads `enforced` after step 3 or step 4 returns
-the cell to `recording` places through the router's gate until its cache expires. `loom doctor`
-lists any tenancy row the directory does not place.
+the cell to `recording` places through the router's gate until its cache expires.
+`loom doctor` lists any tenancy row the directory does not place.
 
 - **It runs after verification, before anything is written for the org.** The op gate
   (`gates.authorize`) checks the org the transport resolves (`gates.resolve_org`, with

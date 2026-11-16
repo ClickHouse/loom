@@ -378,8 +378,6 @@ def gated_by_state() -> bool:
     """Whether this deployment's server processes read the state rows and are gated on
     them: under the Postgres authority, `LOOM_CELL` set or not (a cell needs that
     authority, `settings_problem`). Under the ClickHouse authority nothing is read."""
-    from server.core import pg
-
     return pg.enabled()
 
 
@@ -538,8 +536,6 @@ async def refresh() -> bool:
     on the server connection the process's statements run on. A failed read, or rows that
     do not decode, keeps the last view and is retried on schedule."""
     global _view
-    from server.core import pg
-
     try:
         _view = _decoded(await pg.fetchrow_reset(_READ))
     except Exception as e:  # noqa: BLE001 — a failed read keeps the last rows; the gate holds

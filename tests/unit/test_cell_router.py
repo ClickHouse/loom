@@ -474,20 +474,18 @@ def test_an_unscoped_caller_on_an_attaching_first_cell_answers_503(
         asyncio.run(tenancy.ensure_held("new", auth))
 
 
-def test_an_unscoped_refusal_without_router_settings_names_them_not_attach(
+def test_an_unscoped_refusal_without_router_settings_names_the_org_alone(
     enforced: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With the router token unset, as the upgrade steps leave CLIs once attach ends, the
-    refusal names the unset setting and says nothing about attach."""
+    """With the router token unset, as every CLI past `recording` has it, the refusal names
+    the org alone: never attach, never a token the CLI is refused with."""
     monkeypatch.setattr(
         cell_router, "directory_answer", AsyncMock(return_value=cell_router.UNKNOWN)
     )
     monkeypatch.setattr(cell_router, "unset", lambda: ["LOOM_CELL_ROUTER_TOKEN"])
     with pytest.raises(errors.BackendUnavailableError) as raised:
         asyncio.run(tenancy.ensure_held("new", None))
-    text = str(raised.value)
-    assert "cannot ask the router (LOOM_CELL_ROUTER_TOKEN unset)" in text
-    assert "attach" not in text
+    assert str(raised.value) == "org 'new' is not held by this cell"
 
 
 @pytest.mark.parametrize("answer", ["serving", "other"])
