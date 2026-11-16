@@ -617,9 +617,10 @@ async def fetchrow_reset(sql: str) -> Any:
     """`fetchrow` after RESET ALL, in one transaction, so behind a transaction pooler both
     run on one server connection: the session's settings as its startup values leave them
     (a session SET leaked onto that connection by another client is gone). Two round trips
-    more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure,
-    a cancel included, rolls the transaction back before the connection returns to the
-    pool."""
+    more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure
+    rolls the transaction back before the connection returns to the pool; after a cancel
+    the ROLLBACK is tried too, and where the connection refuses it while the cancel is
+    still in flight, the pool's release reset ends the transaction."""
     async with connection() as conn:
         try:
             await conn.execute("BEGIN; RESET ALL")

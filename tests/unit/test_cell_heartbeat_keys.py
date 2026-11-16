@@ -113,7 +113,7 @@ def test_serves_reports_loom_serves_traffic(monkeypatch: pytest.MonkeyPatch) -> 
     [
         ("enforced", False, False, "refuse its writes"),
         ("partial", False, False, "refuse its writes"),
-        ("recording", False, True, "the triggers attach creates"),
+        ("recording", False, True, "once attach raises the mode"),
         ("open", False, True, ""),
         ("enforced", True, True, ""),
         ("unread", None, True, ""),

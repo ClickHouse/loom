@@ -417,9 +417,14 @@ def readiness_check() -> readiness.CheckResult:
         "this process's pooled Postgres sessions do not keep the tenancy marker "
         f"{pg.TENANCY_MARKER} (a pooler that drops startup parameters?)"
     )
+    refused = (
+        "its writes for an org the cell does not hold, and the tenancy row of each newly placed org"
+    )
     state = cell.reported_mode()
     if state == "recording":
-        return readiness.CheckResult(True, f"{lost}; the triggers attach creates refuse its writes")
+        return readiness.CheckResult(
+            True, f"{lost}; once attach raises the mode, the cell's triggers refuse {refused}"
+        )
     if state in ("enforced", "partial"):
-        return readiness.result(False, f"{lost}; the cell's triggers refuse its writes")
+        return readiness.result(False, f"{lost}; the cell's triggers refuse {refused}")
     return readiness.result(True, "")

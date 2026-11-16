@@ -525,7 +525,8 @@ that reports them; no generation key is added.
   migrations whose first read failed, or the ClickHouse authority, where nothing is read).
   The `cell_marker` readiness check of a process with `LOOM_CELL` set reads the same
   value: it fails in `enforced` and `partial`, where the triggers refuse an unmarked
-  session's writes, and passes with a warning in `recording`, so a first cell behind such a
+  session's writes for an org the cell does not hold and the tenancy row of each newly
+  placed org, and passes with a warning in `recording`, so a first cell behind such a
   pooler does not stall its rollout before attach, which refuses the process
   ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
 - `router` and `router_why`: with `LOOM_CELL` set, present as `null` until the `first` row
