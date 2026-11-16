@@ -294,6 +294,12 @@ def _parse_jsonnet(path: str, source: bytes) -> ParsedFile:
     return parse_jsonnet(path, source)
 
 
+def _parse_lua(path: str, source: bytes) -> ParsedFile:
+    from server.code.domain.extract.lang_lua import parse_lua
+
+    return parse_lua(path, source)
+
+
 def _parse_k8s(path: str, source: bytes) -> ParsedFile:
     from server.code.domain.extract.lang_k8s import parse_k8s
 
@@ -396,6 +402,7 @@ _PARSERS = {
     "hcl": _parse_hcl,
     "k8s": _parse_k8s,
     "jsonnet": _parse_jsonnet,
+    "lua": _parse_lua,
     "tla": _parse_tla,
     "tla_config": _parse_tlc,
     "flatbuffers": _parse_fbs,
@@ -408,7 +415,7 @@ _LANE_INCLUDE_LANGS: frozenset[str] = frozenset(
 
 # The lanes without a tree-sitter grammar — chunks from their symbol spans, edges from
 # their reference sites (`lane_units`)
-LANE_UNIT_LANGS: frozenset[str] = frozenset({"proto", "gotemplate", "hcl", "k8s", "jsonnet"})
+LANE_UNIT_LANGS: frozenset[str] = frozenset({"proto", "gotemplate", "hcl", "k8s", "jsonnet", "lua"})
 
 
 def _lane_module(lang: str) -> Any:
@@ -424,6 +431,10 @@ def _lane_module(lang: str) -> Any:
         from server.code.domain.extract import lang_jsonnet
 
         return lang_jsonnet
+    if lang == "lua":
+        from server.code.domain.extract import lang_lua
+
+        return lang_lua
     return lang_proto if lang == "proto" else lang_gotemplate
 
 
