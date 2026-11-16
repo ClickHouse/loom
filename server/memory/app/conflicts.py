@@ -230,12 +230,16 @@ async def candidate_rows_many(
             "keys": [items[i][1] for i in idxs],
             "max_dists": [float(items[i][3]) for i in idxs],
         }
-        rows = await ch.query_all(
+        candidates = ch.query_all(
             candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
         )
         if scope.narrowed:  # other users' pinned rows still block; the scope hides them
-            pinned = await ch.query_all(pinned_sql_many(len(idxs)), params=params)
-            rows += [r for r in pinned if _foreign_pinned(r, scope)]
+            rows, pinned = await asyncio.gather(
+                candidates, ch.query_all(pinned_sql_many(len(idxs)), params=params)
+            )
+            rows = rows + [r for r in pinned if _foreign_pinned(r, scope)]
+        else:
+            rows = await candidates
         for i in idxs:
             out[i] = []
         seen: set[tuple[int, str]] = set()

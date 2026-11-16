@@ -783,11 +783,11 @@ def _candidate(mid: str, uid: str, value: str, *, pinned: bool = False) -> dict[
     }
 
 
-async def _verdict(rows: list[dict[str, Any]], value: str) -> Any:
+async def _verdict(rows: list[dict[str, Any]], value: str, user_id: str = "u1") -> Any:
     from server.memory.app.conflicts import check_on_commit
 
     return await check_on_commit(
-        new_user_id="-",
+        new_user_id=user_id,
         org="o",
         namespace="n",
         agent="a",
@@ -825,7 +825,7 @@ async def test_a_bounded_write_treats_another_users_row_as_absent(monkeypatch) -
     mine = await _verdict([_candidate("mine", "u1", "vault 1234")], "vault 1234")
     assert (mine.verdict, mine.existing_memory_id) == ("merge", "mine")
     _bind(None, WHOLE_NAMESPACE)
-    wide = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234")
+    wide = await _verdict([_candidate("theirs", "u2", "vault 1234")], "vault 1234", user_id="-")
     assert (wide.verdict, wide.existing_memory_id) == ("merge", "theirs")
 
 
