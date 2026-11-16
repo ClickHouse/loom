@@ -156,6 +156,35 @@ describe("All documents", () => {
     expect(api.bulkDeleteKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "col-eng" }, ["runbooks/drain.md"]);
   });
 
+  it("moves a selection from the place its rows are in, and a row from its own place", async () => {
+    const more = [...EVERY, doc("col-eng", "runbooks/fill.md", "Fill a lane")];
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => {
+      const places = [id.namespace, ...(opts.namespaces ?? [])];
+      return { rows: more.filter((r) => places.includes(r.namespace)), next_cursor: null };
+    });
+    render(<Documents />);
+    await screen.findByText("Fill a lane");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Drain a lane" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Fill a lane" }));
+    const bar = screen.getByLabelText("Search and filters");
+    await userEvent.click(within(bar).getByRole("button", { name: "Move to…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Move 2 documents" });
+    expect(within(dialog).getByText("From Engineering")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: /To/ }));
+    const mine = await screen.findByText("My files", { selector: ".collection-depth" });
+    const list = mine.closest("[role=dialog]") as HTMLElement;
+    const offered = [...list.querySelectorAll(".collection-depth")].map((o) => o.textContent);
+    expect(offered).toContain("My files");
+    expect(offered).not.toContain("Engineering");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Team plan" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    const own = await screen.findByRole("dialog", { name: "Move 1 document" });
+    expect(within(own).getByText("From Namespace team")).toBeInTheDocument();
+  });
+
   it("says a server that reads one place per call shows only the first, never all of them", async () => {
     api.listKnowledge.mockResolvedValue({
       rows: [{ ...EVERY[0], namespace: undefined }],
@@ -588,6 +617,20 @@ describe("All documents", () => {
       ),
     );
     expect(screen.queryByText("This collection is empty")).toBeNull();
+  });
+
+  it("shows a header namespace named all as that namespace, not as All documents", async () => {
+    useStore.setState({
+      myNamespaces: [{ namespace: "all", role: "writer", status: "active", kind: "memory" } as never],
+      identity: { org: "acme", namespace: "all", agent: "loom-ui" },
+    });
+    at("/library");
+    api.listKnowledge.mockResolvedValue({ rows: [doc("all", "notes/a.md", "A note")], next_cursor: null });
+    render(<Documents />);
+    await screen.findByText("A note");
+    await settle();
+    expect(screen.getByLabelText("Show the documents of")).not.toHaveTextContent("All documents");
+    expect(api.listKnowledge.mock.calls.every((c) => !(c[1] as ListOpts).namespaces)).toBe(true);
   });
 
   it("says nothing is in any place only when every place was read and holds none", async () => {

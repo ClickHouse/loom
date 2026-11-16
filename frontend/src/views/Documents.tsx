@@ -84,7 +84,7 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
-import { useRefusedPlaces } from "../lib/useRefusedPlaces";
+import { useAcrossRead } from "../lib/useAcrossRead";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -312,16 +312,18 @@ export function Documents() {
   const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
   // The writes to `identity` (Add, the empty state): the collection shown, My files or the
   // header's namespace; each row's own are `reasonFor`'s.
-  const addReason = (): string | null => {
-    if (addsTo) return addsTo === shown ? viewerOfShown : null;
-    if (!all || ownShelf) return viewerHere;
+  // `waits`: not known yet (a role or the collections still loading), rather than refused.
+  const addReason = (): { reason: string; waits: boolean } | null => {
+    if (addsTo) return addsTo === shown && viewerOfShown ? { reason: viewerOfShown, waits: false } : null;
+    if (!all || ownShelf) return viewerHere ? { reason: viewerHere, waits: roleLoading } : null;
     // All documents without the header's namespace adds to My files, once the list names it.
-    if (collections.kept) return NO_PLACE_TO_ADD;
-    return collections.error ? NO_LIST_TO_ADD : ADD_WAITS;
+    if (collections.kept) return { reason: NO_PLACE_TO_ADD, waits: false };
+    return collections.error ? { reason: NO_LIST_TO_ADD, waits: false } : { reason: ADD_WAITS, waits: true };
   };
-  const writeReason = addReason();
+  const add = addReason();
+  const writeReason = add?.reason ?? null;
   // Known to be unable to add, rather than not known yet: the empty state's words.
-  const knownReadOnly = writeReason !== null && writeReason !== ROLE_LOADING && writeReason !== ADD_WAITS;
+  const knownReadOnly = !!add && !add.waits;
   // The place's admins manage its sources. An admin claim reaches no collection, so there
   // only the collection's own role decides.
   const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", roleRead.role, whoami);
@@ -401,53 +403,38 @@ export function Documents() {
   if (scopeOf.at !== place) setScopeOf({ at: place, scope: "here" });
   const scope = scopeOf.scope;
   const across = all || (scope === "everywhere" && filtering);
-  // Every place the person reads in the Library, in the tree's order: the header's namespace,
-  // then My files and the collections. Waits for the collections' first answer.
-  const everyPlace = useMemo(() => {
-    const out = new Set<string>(ownShelf ? [picked.namespace] : []);
-    for (const { c } of treeOrder(collections.kept?.rows ?? [])) out.add(c.namespace);
-    return [...out];
-  }, [ownShelf, picked.namespace, collections.kept]);
   // Every reload (Retry, a delete, an add, an edit) goes through the load effect below, so an
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
-  // What a read of several places read, keyed to what it was read for: the places the rows
-  // and the cursor come from, those that failed, and whether the server read only the first.
-  const [readOf, setReadOf] = useState<{
-    key: string;
-    read: string[];
-    failed: PlaceFailure[];
-    oneAtATime: boolean;
-  } | null>(null);
-  const refusals = useRefusedPlaces(
-    collections.kept,
-    picked.org,
-    across && !!readOf?.failed.some((f) => isRefusal(f.error)),
-  );
-  // A new collections answer while a refused place is named reads the list again: a grant
-  // that lagged behind the list may have caught up.
-  if (refusals.reread) reload();
   const placesWaiting = !collections.kept && !collections.error;
-  // The places one read asks for: up to MAX_PLACES_READ it can read, a refused one not
-  // counted; the rest are said to be left out.
-  const everyRead = useMemo(() => {
-    const skip = new Set(refusals.skip.map((f) => f.namespace));
-    const out: string[] = [];
-    let readable = 0;
-    for (const p of everyPlace) {
-      if (!skip.has(p)) {
-        if (readable === MAX_PLACES_READ) break;
-        readable += 1;
-      }
-      out.push(p);
-    }
-    return out;
-  }, [everyPlace, refusals.skip]);
-  const placesCut = everyPlace.length - everyRead.length;
-  const readPlaces = across ? everyRead : [identity.namespace];
-  // What the rows on screen were read for: the org and the places, in order.
-  const readKey = `${identity.org}/${readPlaces.join("\n")}`;
+  // The places (`readKey`) the rows on screen were read for.
+  const [rowsScope, setRowsScope] = useState("");
+  const {
+    everyPlace,
+    everyRead,
+    placesCut,
+    readPlaces,
+    readKey,
+    setReadOf,
+    refusals,
+    report,
+    leftOut,
+    placesKnown,
+    wholeRead,
+    partPlaces,
+    passagesIn,
+  } = useAcrossRead({
+    org: identity.org,
+    namespace: identity.namespace,
+    ownShelf,
+    shelf: picked.namespace,
+    pickedOrg: picked.org,
+    collections,
+    across,
+    rowsScope,
+    reload,
+  });
   // A place's name on a row and in the notes: the header's namespace, My files or a
   // collection's title, told apart from another of the same title.
   const placeLabel = useCallback(
@@ -476,8 +463,6 @@ export function Documents() {
   const [loadError, setLoadError] = useState<unknown>(null);
   // The namespace the failed read was for: an error belongs to the place it came from.
   const [loadErrorFor, setLoadErrorFor] = useState("");
-  // The places (`readKey`) the rows on screen were read for.
-  const [rowsScope, setRowsScope] = useState("");
   // A Load more in flight: a new read stops it.
   const moreRead = useRef<AbortController | null>(null);
   // The place (`place`) whose list returned a document on this visit: a later filtered, failed
@@ -599,11 +584,6 @@ export function Documents() {
     onOpenPlace: goTo,
   });
   const readTags = JSON.parse(serverTags) as string[];
-  // The read on screen's own report; one for other places is not this list's.
-  const report = readOf?.key === readKey && rowsScope === readKey ? readOf : null;
-  const leftOut = report?.failed ?? [];
-  // Whether every place the person reads is known: not while the collections failed or stop early.
-  const placesKnown = !!collections.kept && !collections.kept.truncated && !collections.error;
   const loadMore = async () => {
     // The cursor holds for the places its first page read, which the report names.
     if (!nextCursor || loadingMore || !report) return;
@@ -1171,16 +1151,9 @@ export function Documents() {
   }, [everyRead, placeLabel, byName]);
   const selectedGroups = selected.size > 0 ? selectedByPlace() : null;
   const selectedPlaces = selectedGroups ? [...selectedGroups.keys()] : [];
-  // A passage search everywhere reads the places the list read (not one refused), and waits
-  // while the list reads them; here, the place shown.
-  const passagesIn = across ? (report?.read ?? null) : [identity.namespace];
   const passagesLeftOut = across && report ? everyPlace.length - report.read.length : 0;
   // All documents with nothing to read: no place listed, or the collections not read.
   const noneToRead = across && rows !== null && readPlaces.length === 0;
-  // Every place the person reads was read, so "none anywhere" is true of the Library.
-  const wholeRead = !!report && leftOut.length === 0 && !report.oneAtATime && placesCut === 0 && placesKnown;
-  // A filter over a read of several places that left some out matched only the places read.
-  const partPlaces = across && !wholeRead;
   // The search's scope, under the bar while something is searched and there is another place
   // to search: the bar keeps the field's room, and the list starts where it did.
   const scopeLine = !all && filtering && everyPlace.length > 1 && (
@@ -1523,12 +1496,14 @@ export function Documents() {
                     icon: "arrow-right",
                     reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
                     onClick: () => {
-                      const [first] = selectedGroups ?? [];
-                      if (first)
+                      const from = selectedPlaces[0];
+                      const moved = from ? selectedGroups?.get(from) : undefined;
+                      if (from && moved) {
                         openMove(
-                          first[0],
-                          first[1].map((r) => r.source_uri),
+                          from,
+                          moved.map((r) => r.source_uri),
                         );
+                      }
                     },
                   },
                   { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },

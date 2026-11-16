@@ -56,9 +56,9 @@ function shortName(uri: string): string {
 
 /** What a search reads: this library, or every place (how many once the places are known,
  *  and how many it leaves out). */
-function hint(everywhere: boolean, unknown: boolean, places: number, notSearched: number): string {
+function hint(everywhere: boolean, waiting: boolean, places: number, notSearched: number): string {
   if (!everywhere) return "Searches every document in this library, whatever the tag filter.";
-  if (unknown) return "Searches every document in every place you read, whatever the tag filter.";
+  if (waiting) return "Searches every document in every place you read, whatever the tag filter.";
   const left = notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : "";
   return `Searches every document in ${places} place${places === 1 ? "" : "s"}, whatever the tag filter${left}.`;
 }
