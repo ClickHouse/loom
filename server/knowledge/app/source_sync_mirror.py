@@ -113,7 +113,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # whatever a file's content did; a walk cut at its bounds still does, since every
     # copy it did not reach is `unread`.
     if lists_current and whole:
-        # The state at the end wins: a delivery owed at the read may be parked by now.
+        # Parked at the end outranks owed at the read; either holds the row back.
         held_back = await documents.publications_owed(src.org, src.mirror, suffix) or owed
         if held_back:
             note = _HELD_BACK[held_back]
