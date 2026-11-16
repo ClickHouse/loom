@@ -531,20 +531,20 @@ that reports them; no generation key is added.
   cell behind such a pooler does not stall its rollout before attach, which refuses the
   process
   ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
-- `router` and `router_why`: with `LOOM_CELL` set, `router` is `null` and `router_why`
-  names why until the `first` row is read, and then both are present on a first cell only
-  (a later cell's state route answers 404, so it neither asks nor reports them). `router` is whether this process's last read of
-  `GET /cells/v1/cells/<cell>` with its own credential answered 200 naming the cell: `null`
-  until the first read answers (still booting), `true` on such an answer, and `false` for a
-  configuration that never works: a router setting unset (the process never asks), a URL
-  that cannot be requested, a 404, an answer for another cell, or a 401 that persists past
-  one `LOOM_ROUTER_DIRECTORY_CACHE_S`. That is the router's setting, which the cell's
-  processes carry too: a router replica's cached credential hashes answer 401 for a token
-  rotated a moment ago, so until then the last value stands and `router_why` reads "401,
-  possibly a rotation" (a router run with a longer cache can make attach refuse during a
-  rotation; a rerun clears it). A transient failure (a timeout, a connect error, a 503, a
-  200 that is not a JSON object naming the cell) keeps the last value, and while `router` is
-  `null` `router_why` names the last such cause.
+- `router` and `router_why`: with `LOOM_CELL` set, `router` is `null` and `router_why` names
+  why until the `first` row is read, and then both are present on a first cell only (a later
+  cell's state route answers 404, so it neither asks nor reports them). `router` is whether
+  this process's last read of `GET /cells/v1/cells/<cell>` with its own credential answered
+  200 naming the cell: `null` until the first read answers (still booting), `true` on such
+  an answer, and `false` for a configuration that never works: a router setting unset (the
+  process never asks), a URL that cannot be requested, a 404, an answer for another cell, or
+  a 401 that persists past one `LOOM_ROUTER_DIRECTORY_CACHE_S`. That is the router's
+  setting, which the cell's processes carry too: a router replica's cached credential hashes
+  answer 401 for a token rotated a moment ago, so until then the last value stands and
+  `router_why` reads "401, possibly a rotation" (a router run with a longer cache can make
+  attach refuse during a rotation; a rerun clears it). A transient failure (a timeout, a
+  connect error, a 503, a 200 that is not a JSON object naming the cell) keeps the last
+  value, and while `router` is `null` `router_why` names the last such cause.
 
 One background reader per server process asks the route every
 `min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)` on a first cell until it

@@ -405,7 +405,7 @@ def readiness_check() -> readiness.CheckResult:
     not here: a first cell in `recording` has none."""
     marked = cell.marked()
     if marked is not False:
-        return readiness.result(True, "")
+        return readiness.CheckResult(True)
     lost = (
         "this process's pooled Postgres sessions do not keep the tenancy marker "
         f"{pg.TENANCY_MARKER} (a pooler that drops startup parameters?)"
@@ -420,4 +420,4 @@ def readiness_check() -> readiness.CheckResult:
         )
     if state in ("enforced", "partial"):
         return readiness.result(False, f"{lost}; the cell's triggers refuse {refused}")
-    return readiness.result(True, "")
+    return readiness.CheckResult(True)
