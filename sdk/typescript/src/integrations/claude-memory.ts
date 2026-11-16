@@ -23,11 +23,16 @@ const ROOT = "/memories";
 // The SDK's local memory tool numbers lines to 999,999.
 const LINE_WIDTH = 6;
 const PAGE = 200;
+// knowledge.bulk_delete's cap on URIs a call.
+const DELETE_BATCH = 500;
 
 export interface LoomMemoryToolOptions {
   /** The file tree: one per application, or per user. One path segment. Default `default`. */
   store?: string;
 }
+
+/** `betaMemoryTool`'s extra tool properties, such as `cache_control`. */
+export type LoomMemoryToolExtras = Parameters<typeof betaMemoryTool>[1];
 
 class Store {
   readonly tag: string;
@@ -55,17 +60,18 @@ function checked(path: string): string {
   if (path !== ROOT && !path.startsWith(`${ROOT}/`)) {
     throw new ToolError(`Path must start with /memories, got: ${path}`);
   }
+  // As POSIX normpath: resolve `.` and `..` over the whole path, then check the result.
   const parts: string[] = [];
   for (const part of path.split("/")) {
     if (part === "" || part === ".") continue;
-    if (part === "..") {
-      if (parts.length <= 1) throw new ToolError(`Path ${path} would escape /memories directory`);
-      parts.pop();
-    } else {
-      parts.push(part);
-    }
+    if (part === "..") parts.pop();
+    else parts.push(part);
   }
-  return `/${parts.join("/")}`;
+  const normal = `/${parts.join("/")}`;
+  if (normal !== ROOT && !normal.startsWith(`${ROOT}/`)) {
+    throw new ToolError(`Path ${path} would escape /memories directory`);
+  }
+  return normal;
 }
 
 function under(paths: string[], directory: string): string[] {
@@ -88,7 +94,7 @@ function listing(shown: string, directory: string, paths: string[]): string {
     shown,
     ...[...entries]
       .sort()
-      .filter((e) => !e.startsWith("."))
+      .filter((e) => !e.split("/").some((part) => part.startsWith(".")))
       .map((e) => `${shown.replace(/\/+$/, "")}/${e}`),
   ];
   return `${head}\n${lines.join("\n")}`;
@@ -108,6 +114,7 @@ function numbered(path: string, text: string, range?: number[] | null): string {
 }
 
 function replaced(path: string, text: string, old: string, next: string): [string, string] {
+  if (!old) throw new ToolError(`No replacement was performed, old_str is empty in ${path}.`);
   const count = text.split(old).length - 1;
   if (count === 0) {
     throw new ToolError(`No replacement was performed, old_str \`${old}\` did not appear verbatim in ${path}.`);
@@ -175,7 +182,10 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
     await agent.call("knowledge.upsert", { content, source_uri: store.uri(path), tags: [store.tag] });
   };
   const remove = async (list: string[]): Promise<void> => {
-    await agent.call("knowledge.bulk_delete", { source_uris: list.map((p) => store.uri(p)) });
+    const uris = list.map((p) => store.uri(p));
+    for (let start = 0; start < uris.length; start += DELETE_BATCH) {
+      await agent.call("knowledge.bulk_delete", { source_uris: uris.slice(start, start + DELETE_BATCH) });
+    }
   };
 
   return {
@@ -189,7 +199,9 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
     },
     async create(command) {
       const path = checked(command.path);
-      if (path === ROOT || (await text(path)) !== null) throw new ToolError(`File ${command.path} already exists`);
+      if (path === ROOT || (await text(path)) !== null || under(await paths(), path).length > 0) {
+        throw new ToolError(`File ${command.path} already exists`);
+      }
       await write(path, command.file_text);
       return `File created successfully at: ${command.path}`;
     },
@@ -239,6 +251,6 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
 }
 
 /** The Claude API memory tool over a loom `Agent`'s documents, for the SDK's tool runner. */
-export function loomMemoryTool(agent: Agent, opts: LoomMemoryToolOptions = {}) {
-  return betaMemoryTool(loomMemoryHandlers(agent, opts));
+export function loomMemoryTool(agent: Agent, opts: LoomMemoryToolOptions = {}, extras?: LoomMemoryToolExtras) {
+  return betaMemoryTool(loomMemoryHandlers(agent, opts), extras);
 }

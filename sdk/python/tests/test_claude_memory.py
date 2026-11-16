@@ -223,7 +223,10 @@ def test_every_path_stays_under_the_memories_root(run: Runner) -> None:
         run(docs, {"command": "create", "path": "/memories/../secret", "file_text": "x"})
     run(docs, {"command": "create", "path": "/memories/a/../b.md", "file_text": "x"})
     assert list(docs.docs) == ["loom-memory://default/memories/b.md"]
-    assert docs.calls.count("upsert") == 1
+    assert docs.calls == ["get", "list", "upsert"]  # the refused paths called nothing
+    # Back under the root once resolved, as POSIX normpath reads it.
+    run(docs, {"command": "create", "path": "/memories/a/../../memories/c.md", "file_text": "x"})
+    assert "loom-memory://default/memories/c.md" in docs.docs
 
 
 def test_a_store_sees_only_its_own_files(run: Runner) -> None:
@@ -265,7 +268,57 @@ def test_a_real_agent_posts_knowledge_ops() -> None:
     agent.transport.post = post  # type: ignore[method-assign]
     tool = AsyncLoomMemoryTool(agent, store="alice")
     asyncio.run(tool.call({"command": "create", "path": "/memories/a.md", "file_text": "hi"}))
-    assert [p for p, _ in posts] == ["/v1/knowledge.get", "/v1/knowledge.upsert"]
-    get, upsert = (body for _, body in posts)
+    assert [p for p, _ in posts] == [
+        "/v1/knowledge.get",
+        "/v1/knowledge.list",
+        "/v1/knowledge.upsert",
+    ]
+    get, listing, upsert = (body for _, body in posts)
+    assert listing["tags"] == ["claude-memory:alice"]
     assert get["source_uri"] == upsert["source_uri"] == "loom-memory://alice/memories/a.md"
     assert (upsert["content"], upsert["tags"]) == ("hi", ["claude-memory:alice"])
+
+
+def test_an_empty_old_str_is_refused(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/n.md", "file_text": "abc"})
+    with pytest.raises(ToolError, match="old_str is empty"):
+        run(
+            docs,
+            {"command": "str_replace", "path": "/memories/n.md", "old_str": "", "new_str": "x"},
+        )
+
+
+def test_hidden_files_are_left_out_at_every_level(run: Runner) -> None:
+    docs = _Docs()
+    for path in ("/memories/p/.secret", "/memories/.d/a.md", "/memories/p/b.md"):
+        run(docs, {"command": "create", "path": path, "file_text": "x"})
+    assert run(docs, {"command": "view", "path": "/memories"}).endswith(
+        "/memories\n/memories/p/\n/memories/p/b.md"
+    )
+
+
+def test_create_on_a_directory_is_refused(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/p/b.md", "file_text": "x"})
+    with pytest.raises(ToolError, match="already exists"):
+        run(docs, {"command": "create", "path": "/memories/p", "file_text": "x"})
+
+
+def test_a_large_directory_is_deleted_in_batches_the_server_takes(run: Runner) -> None:
+    docs = _Docs()
+    for i in range(501):
+        docs.docs[f"loom-memory://default/memories/big/{i:04d}.md"] = (
+            "x",
+            ["claude-memory:default"],
+        )
+    sizes: list[int] = []
+    bulk_delete = docs.bulk_delete
+
+    async def counted(source_uris: list[str]) -> dict[str, Any]:
+        sizes.append(len(source_uris))
+        return await bulk_delete(source_uris)
+
+    docs.bulk_delete = counted  # type: ignore[method-assign]
+    run(docs, {"command": "delete", "path": "/memories/big"})
+    assert sizes == [500, 1] and docs.docs == {}

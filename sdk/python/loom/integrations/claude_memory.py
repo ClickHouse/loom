@@ -58,6 +58,7 @@ if TYPE_CHECKING:
 ROOT = "/memories"
 _LINE_WIDTH = 6  # the SDK's local memory tool numbers lines to 999,999
 _PAGE = 200
+_DELETE_BATCH = 500  # knowledge.bulk_delete's cap on URIs a call
 
 
 class _Store:
@@ -101,7 +102,8 @@ def _listing(shown: str, directory: str, paths: list[str]) -> str:
     header = (
         f"Here're the files and directories up to 2 levels deep in {shown}, excluding hidden items:"
     )
-    lines = [shown] + [f"{shown.rstrip('/')}/{e}" for e in sorted(entries) if not e.startswith(".")]
+    visible = [e for e in sorted(entries) if not any(part.startswith(".") for part in e.split("/"))]
+    lines = [shown] + [f"{shown.rstrip('/')}/{e}" for e in visible]
     return header + "\n" + "\n".join(lines)
 
 
@@ -118,6 +120,8 @@ def _numbered(path: str, text: str, view_range: list[int] | None) -> str:
 
 def _replaced(path: str, text: str, old: str, new: str) -> tuple[str, str]:
     """(new text, the tool's answer) for a str_replace."""
+    if not old:
+        raise ToolError(f"No replacement was performed, old_str is empty in {path}.")
     count = text.count(old)
     if count == 0:
         raise ToolError(
@@ -145,7 +149,7 @@ def _replaced(path: str, text: str, old: str, new: str) -> tuple[str, str]:
     )
 
 
-def _inserted(path: str, text: str, line: int, insert: str) -> str:
+def _inserted(text: str, line: int, insert: str) -> str:
     lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
@@ -196,6 +200,11 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
             text, source_uri=self._store.uri(path), tags=[self._store.tag]
         )
 
+    async def _delete(self, paths: list[str]) -> None:
+        uris = [self._store.uri(p) for p in paths]
+        for start in range(0, len(uris), _DELETE_BATCH):
+            await self._agent.knowledge.bulk_delete(uris[start : start + _DELETE_BATCH])
+
     async def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
         path = _checked(command.path)
         text = None if path == ROOT else await self._text(path)
@@ -208,7 +217,7 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
 
     async def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
         path = _checked(command.path)
-        if path == ROOT or await self._text(path) is not None:
+        if path == ROOT or await self._text(path) is not None or _under(await self._paths(), path):
             raise ToolError(f"File {command.path} already exists")
         await self._write(path, command.file_text)
         return f"File created successfully at: {command.path}"
@@ -227,9 +236,7 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
         text = await self._text(path)
         if text is None:
             raise _missing(command.path)
-        await self._write(
-            path, _inserted(command.path, text, command.insert_line, command.insert_text)
-        )
+        await self._write(path, _inserted(text, command.insert_line, command.insert_text))
         return f"The file {command.path} has been edited."
 
     async def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
@@ -239,7 +246,7 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
         doomed = [path] if await self._text(path) is not None else _under(await self._paths(), path)
         if not doomed:
             raise ToolError(f"The path {command.path} does not exist")
-        await self._agent.knowledge.bulk_delete([self._store.uri(p) for p in doomed])
+        await self._delete(doomed)
         return f"Successfully deleted {command.path}"
 
     async def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
@@ -258,7 +265,7 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
             text = await self._text(source)
             if text is not None:
                 await self._write(target, text)
-        await self._agent.knowledge.bulk_delete([self._store.uri(s) for s, _ in moves])
+        await self._delete([s for s, _ in moves])
         return f"Successfully renamed {command.old_path} to {command.new_path}"
 
 
@@ -292,6 +299,11 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
     def _write(self, path: str, text: str) -> None:
         self._agent.knowledge.upsert(text, source_uri=self._store.uri(path), tags=[self._store.tag])
 
+    def _delete(self, paths: list[str]) -> None:
+        uris = [self._store.uri(p) for p in paths]
+        for start in range(0, len(uris), _DELETE_BATCH):
+            self._agent.knowledge.bulk_delete(uris[start : start + _DELETE_BATCH])
+
     def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
         path = _checked(command.path)
         text = None if path == ROOT else self._text(path)
@@ -304,7 +316,7 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
 
     def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
         path = _checked(command.path)
-        if path == ROOT or self._text(path) is not None:
+        if path == ROOT or self._text(path) is not None or _under(self._paths(), path):
             raise ToolError(f"File {command.path} already exists")
         self._write(path, command.file_text)
         return f"File created successfully at: {command.path}"
@@ -323,7 +335,7 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
         text = self._text(path)
         if text is None:
             raise _missing(command.path)
-        self._write(path, _inserted(command.path, text, command.insert_line, command.insert_text))
+        self._write(path, _inserted(text, command.insert_line, command.insert_text))
         return f"The file {command.path} has been edited."
 
     def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
@@ -333,7 +345,7 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
         doomed = [path] if self._text(path) is not None else _under(self._paths(), path)
         if not doomed:
             raise ToolError(f"The path {command.path} does not exist")
-        self._agent.knowledge.bulk_delete([self._store.uri(p) for p in doomed])
+        self._delete(doomed)
         return f"Successfully deleted {command.path}"
 
     def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
@@ -352,5 +364,5 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
             text = self._text(source)
             if text is not None:
                 self._write(target, text)
-        self._agent.knowledge.bulk_delete([self._store.uri(s) for s, _ in moves])
+        self._delete([s for s, _ in moves])
         return f"Successfully renamed {command.old_path} to {command.new_path}"

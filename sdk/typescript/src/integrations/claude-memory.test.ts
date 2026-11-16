@@ -144,5 +144,42 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     const alice = loomMemoryHandlers(agent, { store: "alice" });
     await expect(alice.view({ command: "view", path: "/memories/b.md" })).rejects.toThrow("does not exist");
     expect(() => loomMemoryHandlers(agent, { store: "a/b" })).toThrow("store");
+    // Back under the root once resolved, as POSIX normpath reads it (the Python tool agrees).
+    await h.create({ command: "create", path: "/memories/a/../../memories/c.md", file_text: "x" });
+    expect(docs.has("loom-memory://default/memories/c.md")).toBe(true);
+  });
+
+  it("refuses an empty old_str, hides nested hidden files and refuses create on a directory", async () => {
+    const { agent } = harness();
+    const h = loomMemoryHandlers(agent);
+    await h.create({ command: "create", path: "/memories/n.md", file_text: "abc" });
+    await expect(
+      h.str_replace({ command: "str_replace", path: "/memories/n.md", old_str: "", new_str: "x" }),
+    ).rejects.toThrow("old_str is empty");
+    for (const path of ["/memories/p/.secret", "/memories/.d/a.md", "/memories/p/b.md"]) {
+      await h.create({ command: "create", path, file_text: "x" });
+    }
+    expect(await h.view({ command: "view", path: "/memories/p" })).toMatch(/\/memories\/p\n\/memories\/p\/b\.md$/);
+    await expect(h.create({ command: "create", path: "/memories/p", file_text: "x" })).rejects.toThrow(
+      "already exists",
+    );
+  });
+
+  it("deletes a large directory in batches the server takes", async () => {
+    const { agent, docs, ops } = harness();
+    for (let i = 0; i < 501; i++) {
+      docs.set(`loom-memory://default/memories/big/${String(i).padStart(4, "0")}.md`, {
+        content: "x",
+        tags: ["claude-memory:default"],
+      });
+    }
+    await loomMemoryHandlers(agent).delete({ command: "delete", path: "/memories/big" });
+    expect(ops.filter((op) => op === "knowledge.bulk_delete")).toHaveLength(2);
+    expect(docs.size).toBe(0);
+  });
+
+  it("passes the tool's extra properties through", () => {
+    const tool = loomMemoryTool(harness().agent, {}, { cache_control: { type: "ephemeral" } });
+    expect(tool).toMatchObject({ type: "memory_20250818", cache_control: { type: "ephemeral" } });
   });
 });
