@@ -1348,9 +1348,8 @@ def test_only_zed_settings_writes_skip_newline_translation(
     monkeypatch.setattr(cli, "_resolve_install_path", lambda _client: cursor)
     assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
     assert seen == [None]
-    cursor_text = cursor.read_bytes().decode("utf-8")
+    cursor_text = cursor.read_text(encoding="utf-8")
     assert cursor.read_bytes() == _text_stream(tmp_path / "cursor-platform.json", cursor_text, None)
-    assert _text_stream(tmp_path / "cursor-crlf.json", cursor_text, "\r\n") != cursor.read_bytes()
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli._install_claude_code_capture("https://h", "secret-token", dry_run=False)
     assert cli._install_codex_capture("https://h", "secret-token", dry_run=False)

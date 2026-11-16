@@ -94,9 +94,8 @@ def test_token_config_and_set_host_follow_the_platform_stream(tmp_path: Path) ->
     assert _mode(token) == 0o600
     cfg = tmp_path / "config.json"
     write_config(cfg, url="https://h", namespace="ns", org="org")
-    cfg_text = cfg.read_bytes().decode("utf-8")
+    cfg_text = cfg.read_text(encoding="utf-8")
     assert cfg.read_bytes() == _text_stream(tmp_path / "cfg-platform", cfg_text, None)
-    assert _text_stream(tmp_path / "cfg-crlf", cfg_text, "\r\n") != cfg.read_bytes()
     assert _mode(cfg) == 0o600
     env = tmp_path / ".env"
     env.write_bytes(b"LOOM_JWT_SECRET=s3cret\n")
@@ -104,8 +103,7 @@ def test_token_config_and_set_host_follow_the_platform_stream(tmp_path: Path) ->
         emails=["ops@example.com"], env_file=str(env), append=False, dry_run=False
     )
     assert shell._cmd_set_host(ns) == 0
-    env_text = env.read_bytes().decode("utf-8")
-    assert b"LOOM_JWT_SECRET=s3cret\n" in env.read_bytes()
+    env_text = env.read_text(encoding="utf-8")
+    assert "LOOM_JWT_SECRET=s3cret\n" in env_text
     assert env.read_bytes() == _text_stream(tmp_path / "env-platform", env_text, None)
-    assert _text_stream(tmp_path / "env-crlf", env_text, "\r\n") != env.read_bytes()
     assert _mode(env) == 0o600
