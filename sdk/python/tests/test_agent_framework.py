@@ -17,6 +17,7 @@ from agent_framework import (
     AgentLoopMiddleware,
     BaseChatClient,
     ChatResponse,
+    ChatResponseUpdate,
     Content,
     ContextProvider,
     Message,
@@ -61,6 +62,12 @@ class _Client(BaseChatClient):  # type: ignore[misc]
     ) -> Any:
         self.sent.append((list(messages), dict(options or {})))
         reply = self.replies[min(len(self.sent), len(self.replies)) - 1]
+        if stream:
+
+            async def updates() -> Any:
+                yield ChatResponseUpdate(role="assistant", contents=list(reply.contents))
+
+            return self._build_response_stream(updates())
 
         async def respond() -> ChatResponse:
             return ChatResponse(messages=[reply])
@@ -288,3 +295,27 @@ def test_a_whole_conversation_passed_each_run_sends_only_its_new_turn() -> None:
     assert search[1] == ("in May",)  # the latest user message, as the other adapters search
     ((_, (messages,), _),) = [c for c in fake.calls if c[0] == "set_from_messages"]
     assert [m["content"] for m in messages] == ["I fly to Lisbon", "in May", "Noted."]
+
+
+@pytest.mark.filterwarnings("ignore:.*AgentLoopMiddleware is experimental")
+def test_a_streamed_loop_sends_its_last_reply() -> None:
+    fake = _FakeMemory()
+    client = _Client(
+        Message(role="assistant", contents=["Step one."]),
+        Message(role="assistant", contents=["Step two."]),
+    )
+    agent = Agent(
+        client=client,
+        context_providers=[_provider(fake)],
+        middleware=[AgentLoopMiddleware(lambda iteration, **_: iteration < 2)],
+    )
+
+    async def go() -> None:
+        stream = agent.run("Plan my trip", session=agent.create_session(), stream=True)
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+    asyncio.run(go())
+    extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert [[m["content"] for m in c[1][0]] for c in extracts] == [["Plan my trip", "Step two."]]

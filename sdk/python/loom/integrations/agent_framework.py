@@ -50,9 +50,10 @@ _MAX_MESSAGES = 400
 class LoomContextProvider(ContextProvider):
     """Agent Framework ``ContextProvider`` over a Loom ``Agent``.
 
-    ``before_run`` runs ``memory.search`` with the text of the run's user
-    messages and adds the matches as instructions; ``after_run`` sends the text
-    of the run's input and response messages to ``memory.set_from_messages``.
+    ``before_run`` runs ``memory.search`` with the run's latest user message and
+    adds the matches as instructions; ``after_run`` sends the user text of the
+    run's new turn and the assistant text of its response to
+    ``memory.set_from_messages``.
     The mapping is in ``docs/features/integrations/frameworks.md``
     (Microsoft Agent Framework). The framework awaits its providers, so the
     provider takes a ``loom.Agent``.

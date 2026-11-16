@@ -371,9 +371,10 @@ The agent keeps its own conversation history: for a run given a session, with no
 provider configured and a client that does not store the conversation itself, it adds its
 in-memory one beside Loom's provider. Loom holds the memories across sessions. A caller
 that passes the whole conversation to each run sends Loom only the turn after its last
-assistant message. Inside an `AgentLoopMiddleware` loop, the turn (the user's input and the
-agent's replies, not the loop's own prompts) is sent once, when the loop ends, and each
-iteration recalls for its own input, the loop's prompt after the first.
+assistant message. Inside an `AgentLoopMiddleware` loop, the turn is sent once, when the loop
+ends, without the loop's own prompts: the user's input and every reply, or only the last reply
+when the loop streams or returns its final response only. Each iteration recalls for its own
+input, so after the first the memories match the loop's prompt, not the user's request.
 
 | Agent Framework | Loom                                                                                                                                                                                                                                                         |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -603,8 +604,9 @@ client can speak for several agents.
   model call of the turn, and `AssemblerMiddleware` does not catch a policy's error.
 - **An Agent Framework run fails when Loom is unreachable.** The `Agent` does not catch a
   provider's error, before the run or after it. A failure after the run comes once the model
-  has answered: the run raises, the turn is not added to the session's history, any tool's
-  effect stays, and a streamed reply has already been shown.
+  has answered: the run raises, a history provider that runs after Loom's (the agent's
+  in-memory one) does not record the turn, any tool's effect stays, and a streamed reply has
+  already been shown.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
