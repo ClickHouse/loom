@@ -30,8 +30,9 @@ dashboard under **Plugins & MCPs**, for every member.
 
 A server with OAuth on takes the bare URL, the resource its protected-resource metadata
 names; tools outside its default toolset run through `loom_op`. The entry sends no
-`Authorization` header, so a team server without OAuth answers 401; for one, write the
-entry with a token through `loom install --client cursor` below.
+`Authorization` header, so a team server without OAuth answers 401. Such a team skips the
+plugin: `loom install --client cursor` [below](#mcp-tools) writes the entry with a token,
+and `npx skills add` adds the skills.
 [Clients that sign in by browser](mcp-clients.md#clients-that-sign-in-by-browser) has
 the OAuth details.
 
