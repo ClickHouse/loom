@@ -404,7 +404,7 @@ across conversations, and the application runs its commands. `AsyncLoomMemoryToo
 memory tool bases and run those commands against Loom: each file is a Loom document, so
 every agent of the namespace reads the same files, `knowledge.search` finds what they say,
 and the files stay in the Loom deployment. Install with
-`pip install 'clickhouse-loom[claude-memory]'` (`anthropic` 2.8 or later 2.x).
+`pip install 'clickhouse-loom[claude-memory]'` (`anthropic` 2.8.x).
 
 ```python
 import anthropic
@@ -426,7 +426,7 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 
 In TypeScript, `loomMemoryTool(agent, { store }, extras)` returns the SDK's `betaMemoryTool`
 (with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an
-optional peer dependency, 1.8 or later 1.x):
+optional peer dependency, 1.8.x):
 
 ```ts
 import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
@@ -700,4 +700,5 @@ client can speak for several agents.
 - [Writing memory](../memory/writing.md) and [search and ask](../memory/search-and-ask.md).
 - [Integrations overview](./index.md).
 
-[Context-provider architecture](../../architecture/agent-framework-adapter.md).
+- [Context-provider architecture](../../architecture/agent-framework-adapter.md).
+- [Memory-tool architecture](../../architecture/claude-memory-adapter.md).
