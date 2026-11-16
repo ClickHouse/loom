@@ -60,9 +60,12 @@ describe("loomTools (OpenAI Agents SDK adapter)", () => {
   });
 });
 
-/** A loom server keeping memory rows by (user, session, key), listed by key two a page. */
+/** A Loom server keeping memory rows by (user, session, key), listed as the server lists
+ * them: the newest second first, by key within a second, values cut to 2,048 characters. */
 function rowsHarness() {
-  const rows = new Map<string, { key: string; value: unknown; user: unknown; session: unknown }>();
+  const rows = new Map<string, { key: string; value: unknown; user: unknown; session: unknown; second: number }>();
+  const hidden = new Set<string>();
+  const clock = { second: 0 };
   const calls: Array<{ op: string; body: Record<string, unknown> }> = [];
   const fetch = async (url: string, init: RequestInit) => {
     const op = url.split("/v1/")[1];
@@ -76,22 +79,41 @@ function rowsHarness() {
         value: JSON.parse(body.value),
         user: body.user_id,
         session: body.session_id,
+        second: clock.second,
       });
     } else if (op === "memory.list") {
       const mine = [...rows.values()]
         .filter((r) => r.user === body.user_id && r.session === body.session_id && r.key.startsWith(body.prefix))
-        .sort((a, b) => (a.key < b.key ? -1 : 1));
+        .sort((a, b) => b.second - a.second || (a.key < b.key ? -1 : 1));
       const page = mine.slice(body.offset, body.offset + 2);
       reply = {
-        entries: page.map((r) => ({ memory_key: r.key, value: r.value })),
+        entries: page.map((r) => {
+          const text = JSON.stringify(r.value);
+          const cut = text.length > 2048;
+          return {
+            memory_key: r.key,
+            value: hidden.has(r.key) ? null : cut ? `${text.slice(0, 2048)}…` : r.value,
+            value_truncated: cut || hidden.has(r.key),
+            created_at: `2026-01-01T00:00:${String(r.second).padStart(2, "0")}`,
+          };
+        }),
         truncated: body.offset + 2 < mine.length,
       };
+    } else if (op === "memory.get") {
+      const row = rows.get(id(body.memory_key));
+      reply = row ? { found: true, value: row.value } : { found: false };
     } else if (op === "memory.delete") {
       rows.delete(id(body.memory_key));
     }
     return new Response(JSON.stringify(reply), { status: 200 });
   };
-  return { agent: new Agent("o", "n", "bot", { baseUrl: "http://x", fetch, logLevel: "off" }), rows, calls };
+  return {
+    agent: new Agent("o", "n", "bot", { baseUrl: "http://x", fetch, logLevel: "off" }),
+    rows,
+    calls,
+    clock,
+    hidden,
+  };
 }
 
 const msg = (role: "user" | "assistant", content: string) => ({ role, content }) as never;
@@ -135,6 +157,48 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     expect(await mine.getItems()).toEqual([]);
     expect(await mine.popItem()).toBeUndefined();
     expect(await other.getItems()).toEqual([msg("user", "c")]);
+  });
+
+  it("returns a history spanning seconds in the order it was added, and stops a latest read early", async () => {
+    const { agent, clock, calls } = rowsHarness();
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    for (const [second, pair] of [
+      ["u1", "a1"],
+      ["u2", "a2"],
+      ["u3", "a3"],
+    ].entries()) {
+      clock.second = second;
+      await session.addItems([msg("user", pair[0]), msg("assistant", pair[1])]);
+    }
+    const contents = (items: unknown[]) => items.map((i) => (i as { content: string }).content);
+    expect(contents(await session.getItems())).toEqual(["u1", "a1", "u2", "a2", "u3", "a3"]);
+    calls.length = 0;
+    expect(contents(await session.getItems(1))).toEqual(["a3"]);
+    expect(calls.filter((c) => c.op === "memory.list")).toHaveLength(2); // not all three pages
+    expect(await session.popItem()).toEqual(msg("assistant", "a3"));
+  });
+
+  it("reads a long or sensitive item whole by key", async () => {
+    const { agent, rows, hidden } = rowsHarness();
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    const long = msg("assistant", "x".repeat(5000));
+    await session.addItems([msg("user", "my key is sk-123"), long]);
+    for (const r of rows.values()) if ((r.value as { content: string }).content.startsWith("my key")) hidden.add(r.key);
+    expect(await session.getItems()).toEqual([msg("user", "my key is sk-123"), long]);
+  });
+
+  it("does not read a nested key prefix's items as its own", async () => {
+    const { agent } = rowsHarness();
+    const outer = new LoomSession(agent, "s1", { keyPrefix: "a" });
+    const inner = new LoomSession(agent, "s1", { keyPrefix: "a/b" });
+    await inner.addItems([msg("user", "inner")]);
+    expect(await outer.getItems()).toEqual([]);
+  });
+
+  it("hashes a non-ASCII id as the Python LoomSession does", async () => {
+    const { agent, calls } = rowsHarness();
+    await new LoomSession(agent, "s1", { userId: "jos\u00e9" }).addItems([msg("user", "x")]);
+    expect(calls[0].body.session_id).toBe("oai-c10f2e9c4ca65c3f8b98");
   });
 
   it("refuses a missing id, a user naming none and an empty prefix", () => {

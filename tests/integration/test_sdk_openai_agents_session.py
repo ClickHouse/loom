@@ -3,6 +3,8 @@ episodic memories of the user's Loom session, read back as written."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 # An SDK extra, outside the server's environment: install openai-agents to run these.
@@ -32,6 +34,16 @@ async def test_a_session_keeps_its_items_in_loom(agent) -> None:
     ] * 3
     other = LoomSession(agent, "trip-42", user_id="bob")
     assert await other.get_items() == []
+
+    # Items added a second later, one past the list's 2,048-character preview, still come
+    # back in the order they were added and whole.
+    await asyncio.sleep(1.1)
+    later = [{"role": "assistant", "content": "x" * 5000}, {"role": "user", "content": "last"}]
+    await session.add_items(later)
+    assert await session.get_items() == [*items, *later]
+    assert await session.get_items(limit=2) == later
+    assert await session.pop_item() == later[1]
+    assert await session.pop_item() == later[0]
 
     assert await session.pop_item() == items[2]
     assert await session.get_items(limit=1) == [items[1]]

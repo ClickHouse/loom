@@ -192,9 +192,9 @@ rejected value, a server error) returns `<tool> failed: <message>` to the model,
 correct the call; the run goes on.
 
 `LoomSession` is the OpenAI Agents SDK's `Session` over Loom: a run given it reads and
-extends the conversation history of one session there, so every process (and the TypeScript
-`LoomSession`) that opens the same session id for the same user reads the same history, and
-a handoff between agents of one run keeps it.
+extends the conversation history of one session there. Every process whose Loom agent has
+the same name, and the TypeScript `LoomSession`, reads the same history for the same session
+id and user, and a handoff between agents of one run keeps it.
 
 ```python
 from loom.integrations.openai_agents import LoomSession
@@ -203,19 +203,20 @@ session = LoomSession(loom_agent, "trip-42", user_id="alice")
 result = await Runner.run(assistant, "Book my usual seat to Lisbon", session=session)
 ```
 
-| `Session`       | Loom                                                                                                                   |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `get_items`     | `memory.list` of the session's items, oldest first; `limit` (or `session_settings.limit`) keeps the latest             |
-| `add_items`     | one `memory.set` per item, an `episodic` memory under `<key_prefix>/<nanoseconds>-<random>`, the item's JSON its value |
-| `pop_item`      | the latest item, deleted with `memory.delete` and returned                                                             |
-| `clear_session` | `memory.delete` of every item of the session                                                                           |
+| `Session`       | Loom                                                                                                                                                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `get_items`     | `memory.list` of the session's items, sorted by key (the order they were added); `limit` (or `session_settings.limit`) keeps the latest, and the read stops once it holds them; an item the list cuts at 2,048 characters, or sends without a value, is read whole with `memory.get` |
+| `add_items`     | one `memory.set` per item, an `episodic` memory under `<key_prefix>/<nanoseconds>-<random>`, the item's JSON its value                                                                                                                                                               |
+| `pop_item`      | the latest item, read as `get_items(limit=1)` reads it, deleted with `memory.delete` and returned                                                                                                                                                                                    |
+| `clear_session` | `memory.delete` of every item of the session                                                                                                                                                                                                                                         |
 
 An `episodic` memory is not embedded, so an item is never merged with or judged against
 another row, and a repeated item stays two items (one `memory.set` per item: a batch would
 fold a value identical to a live row). Items are stored under a Loom session derived from
 the user and the session id (`oai-` and a digest of the pair), and keys sort in the order
-the items were added. The history is the user's: unset, `user_id` writes the namespace's
-shared rows; an empty or `-` user raises `ValueError`. To keep what a conversation
+the items were added. A read without a limit (the SDK's default) and `clear_session` list the
+whole history. The history is the user's: unset, `user_id` writes the namespace's shared
+rows; an empty or `-` user raises `ValueError`. To keep what a conversation
 established beyond its history, give the model `loom_remember`, or send the turns to
 `memory.set_from_messages`.
 

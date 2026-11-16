@@ -57,15 +57,19 @@ export interface LoomSessionOptions {
 }
 
 const SESSION_PAGE = 100;
-// Items added in one millisecond keep their order: a per-process counter on top of the clock.
-let tick = 0n;
+// A key this session wrote, after its prefix: 20 digits of nanoseconds, 8 hex.
+const ITEM_KEY = /^\d{20}-[0-9a-f]{8}$/;
+// The last stamp this process wrote: the next is the clock or one past it, never less.
+let lastStamp = 0n;
+
+type ItemRow = { memory_key: string; value?: unknown; value_truncated?: boolean; created_at?: string };
 
 /**
- * The OpenAI Agents SDK's `Session` over a loom `Agent` (the twin of the Python
- * `LoomSession`): the conversation history of one session, as episodic memories of
- * the user's loom session, keyed `<keyPrefix>/<nanoseconds>-<random>` so keys sort
- * in the order the items were added. The Python and TypeScript sessions of the same
- * id and user read the same history.
+ * The OpenAI Agents SDK's `Session` over a Loom `Agent` (the twin of the Python
+ * `LoomSession`): the conversation history of one session, as episodic memories of the
+ * Loom agent and the user, keyed `<keyPrefix>/<nanoseconds>-<random>`; reads sort the
+ * items by key, the order they were added. Every process whose Loom agent has the same
+ * name, and the Python `LoomSession`, reads the same history for the same id and user.
  */
 export class LoomSession implements Session {
   private readonly prefix: string;
@@ -79,7 +83,7 @@ export class LoomSession implements Session {
     if (!sessionId) throw new Error("sessionId names the session");
     const user = opts.userId;
     if (user !== undefined && ["", "-"].includes(user.trim())) {
-      throw new Error(`userId names a loom user or is undefined; ${JSON.stringify(user)} names none`);
+      throw new Error(`userId names a Loom user or is undefined; ${JSON.stringify(user)} names none`);
     }
     const prefix = (opts.keyPrefix ?? "openai-agents").replace(/^\/+|\/+$/g, "");
     if (!prefix) throw new Error("keyPrefix must not be empty");
@@ -91,16 +95,23 @@ export class LoomSession implements Session {
   }
 
   private scope(): Promise<Scope> {
-    // loom files a long value's chunks by session alone, and a caller chooses its ids.
+    // A Loom session that two users choosing the same session id cannot share; the
+    // Python LoomSession hashes the same compact JSON.
     this.loomSession ??= sha256Hex(JSON.stringify([this.opts.userId ?? "-", this.sessionId])).then(
       (hex) => `oai-${hex.slice(0, 20)}`,
     );
     return this.loomSession.then((sessionId) => ({ userId: this.opts.userId, sessionId }));
   }
 
-  private async rows(): Promise<Array<{ memory_key: string; value?: unknown }>> {
+  /**
+   * The latest `limit` item rows (all when undefined), oldest first. memory.list serves
+   * the newest second first and orders by key within a second, so a read for `limit`
+   * rows stops once it holds `limit` and a row of an older second.
+   */
+  private async latest(limit?: number): Promise<ItemRow[]> {
     const scope = await this.scope();
-    const rows: Array<{ memory_key: string; value?: unknown }> = [];
+    const rows: ItemRow[] = [];
+    let offset = 0;
     for (;;) {
       const page = await this.agent.call(
         "memory.list",
@@ -108,51 +119,73 @@ export class LoomSession implements Session {
           prefix: this.prefix,
           memory_type: "episodic",
           limit: SESSION_PAGE,
-          offset: rows.length,
-          fields: ["memory_key", "value"],
+          offset,
+          fields: ["memory_key", "value", "value_truncated", "created_at"],
         },
         scope,
       );
-      rows.push(...(page.entries as Array<{ memory_key: string; value?: unknown }>));
-      if (!page.truncated) return rows;
+      const entries = page.entries as ItemRow[];
+      offset += entries.length;
+      rows.push(...entries.filter((r) => ITEM_KEY.test(r.memory_key.slice(this.prefix.length))));
+      if (!page.truncated) break;
+      if (limit !== undefined && rows.length > limit) {
+        if (String(rows[rows.length - 1].created_at) < String(rows[limit - 1].created_at)) break;
+      }
     }
+    rows.sort((a, b) => (a.memory_key < b.memory_key ? -1 : a.memory_key > b.memory_key ? 1 : 0));
+    if (limit === undefined) return rows;
+    return limit > 0 ? rows.slice(-limit) : [];
+  }
+
+  /** A row's item: the listed value, or the whole one by key when the list cut it (or sent none). */
+  private async value(row: ItemRow): Promise<AgentInputItem> {
+    if (row.value_truncated || row.value === undefined || row.value === null) {
+      const full = await this.agent.call("memory.get", { memory_key: row.memory_key }, await this.scope());
+      return item((full as { value?: unknown }).value);
+    }
+    return item(row.value);
   }
 
   async getItems(limit?: number): Promise<AgentInputItem[]> {
-    const rows = await this.rows();
-    const kept = limit === undefined ? rows : limit > 0 ? rows.slice(-limit) : [];
-    return kept.map((row) => item(row.value));
+    const rows = await this.latest(limit);
+    const out: AgentInputItem[] = [];
+    for (const row of rows) out.push(await this.value(row));
+    return out;
   }
 
   async addItems(items: AgentInputItem[]): Promise<void> {
     const scope = await this.scope();
     for (const entry of items) {
+      const clock = BigInt(Date.now()) * 1_000_000n;
+      lastStamp = clock > lastStamp ? clock : lastStamp + 1n;
       // One memory.set per item: a batch folds a value identical to a live row.
-      const stamp = (BigInt(Date.now()) * 1_000_000n + (tick++ % 1_000_000n)).toString().padStart(20, "0");
       await this.agent.call(
         "memory.set",
-        { memory_key: `${this.prefix}${stamp}-${randomHex()}`, value: JSON.stringify(entry), memory_type: "episodic" },
+        {
+          memory_key: `${this.prefix}${lastStamp.toString().padStart(20, "0")}-${randomHex()}`,
+          value: JSON.stringify(entry),
+          memory_type: "episodic",
+        },
         scope,
       );
     }
   }
 
   async popItem(): Promise<AgentInputItem | undefined> {
-    const rows = await this.rows();
-    const last = rows.at(-1);
+    const [last] = await this.latest(1);
     if (!last) return undefined;
+    const popped = await this.value(last);
     await this.agent.call("memory.delete", { memory_key: last.memory_key }, await this.scope());
-    return item(last.value);
+    return popped;
   }
 
   async clearSession(): Promise<void> {
     const scope = await this.scope();
-    for (const row of await this.rows()) {
+    for (const row of await this.latest()) {
       await this.agent.call("memory.delete", { memory_key: row.memory_key }, scope);
     }
   }
 }
-
 /** A stored item: the JSON text it was written as, or the value loom parsed from it. */
 function item(value: unknown): AgentInputItem {
   return (typeof value === "string" ? JSON.parse(value) : value) as AgentInputItem;

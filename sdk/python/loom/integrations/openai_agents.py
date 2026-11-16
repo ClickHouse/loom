@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import time
 from collections.abc import Iterable
@@ -100,16 +101,20 @@ def _function_tool(tools: AgentTools, spec: dict[str, Any]) -> FunctionTool:
 
 
 _PAGE = 100
+# A key this session wrote: the prefix, 20 digits of nanoseconds, 8 hex.
+_ITEM_KEY = re.compile(r"\d{20}-[0-9a-f]{8}")
+_last_stamp = 0  # the last item key's nanoseconds this process wrote
 
 
 class LoomSession:
     """The OpenAI Agents SDK's ``Session`` over a Loom ``Agent``: the conversation
-    history of one session, as episodic memories of the user's Loom session.
+    history of one session, as episodic memories of the Loom agent and the user.
 
     Each item is one ``episodic`` memory (not embedded, so never merged with or
-    judged against another row) under ``<key_prefix>/<nanoseconds>-<random>``, so
-    keys sort in the order the items were added. Every process that opens the same
-    session id for the same user reads the same history. The mapping is in
+    judged against another row) under ``<key_prefix>/<nanoseconds>-<random>``; reads
+    sort the items by key, the order they were added. Every process whose Loom agent
+    has the same name, and the TypeScript ``LoomSession``, reads the same history for
+    the same session id and user. The mapping is in
     ``docs/features/integrations/frameworks.md`` (OpenAI Agents SDK).
     """
 
@@ -133,65 +138,84 @@ class LoomSession:
         self._prefix = key_prefix.strip("/") + "/"
         if self._prefix == "/":
             raise ValueError("key_prefix must not be empty")
-        # Loom files a long value's chunks by session alone, and a caller chooses its ids.
-        # Compact JSON, as JavaScript writes it, so the TypeScript session names the same.
-        pair = json.dumps([user_id or "-", session_id], separators=(",", ":"))
+        # A Loom session that two users choosing the same session id cannot share. Compact,
+        # unescaped JSON, as JavaScript writes it, so the TypeScript session names the same.
+        pair = json.dumps([user_id or "-", session_id], separators=(",", ":"), ensure_ascii=False)
         self._loom_session = f"oai-{hashlib.sha256(pair.encode()).hexdigest()[:20]}"
 
-    async def _entries(self) -> list[dict[str, Any]]:
-        """Every item's row, oldest first (keys sort in the order items were added)."""
+    def _scope(self) -> dict[str, Any]:
+        return {"user_id": self._user_id, "session_id": self._loom_session}
+
+    async def _latest(self, limit: int | None) -> list[dict[str, Any]]:
+        """The session's latest `limit` item rows (all when None), oldest first.
+
+        memory.list serves the newest second first and orders by key within a second, so
+        a read for `limit` rows stops once it holds `limit` and a row of an older second;
+        the rows are then sorted by key, the order the items were added."""
         rows: list[dict[str, Any]] = []
+        offset = 0
         while True:
             page = await self._agent.memory.list(
                 prefix=self._prefix,
                 memory_type="episodic",
-                user_id=self._user_id,
-                session_id=self._loom_session,
                 limit=_PAGE,
-                offset=len(rows),
-                fields=["memory_key", "value"],
+                offset=offset,
+                fields=["memory_key", "value", "value_truncated", "created_at"],
+                **self._scope(),
             )
-            rows += page["entries"]
+            offset += len(page["entries"])
+            rows += [
+                r
+                for r in page["entries"]
+                if _ITEM_KEY.fullmatch(str(r["memory_key"])[len(self._prefix) :])
+            ]
             if not page.get("truncated"):
-                return rows
+                break
+            if limit is not None and len(rows) > limit:
+                if str(rows[-1]["created_at"]) < str(rows[limit - 1]["created_at"]):
+                    break
+        rows.sort(key=lambda r: str(r["memory_key"]))
+        return rows if limit is None else rows[-limit:] if limit > 0 else []
+
+    async def _value(self, row: dict[str, Any]) -> TResponseInputItem:
+        """A row's item: the listed value, or the whole one by key when the list cut it
+        (or, for a row Loom labels sensitive, sent none)."""
+        if row.get("value_truncated") or row.get("value") is None:
+            full = await self._agent.memory.get(str(row["memory_key"]), **self._scope())
+            return _item(None if full is None else full.get("value"))
+        return _item(row["value"])
 
     async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
-        rows = await self._entries()
-        count = resolve_session_limit(limit, self.session_settings)
-        if count is not None:
-            rows = rows[-count:] if count > 0 else []
-        return [_item(row["value"]) for row in rows]
+        rows = await self._latest(resolve_session_limit(limit, self.session_settings))
+        return [await self._value(row) for row in rows]
 
     async def add_items(self, items: list[TResponseInputItem]) -> None:
-        start = time.time_ns()
-        for i, item in enumerate(items):
+        global _last_stamp
+        for item in items:
+            # The clock or one past this process's last stamp, never less: keys keep order.
+            _last_stamp = max(time.time_ns(), _last_stamp + 1)
             # One memory.set per item: a batch folds a value identical to a live row.
             await self._agent.memory.set(
-                f"{self._prefix}{start + i:020d}-{secrets.token_hex(4)}",
+                f"{self._prefix}{_last_stamp:020d}-{secrets.token_hex(4)}",
                 json.dumps(item),
                 memory_type="episodic",
-                user_id=self._user_id,
-                session_id=self._loom_session,
+                **self._scope(),
             )
 
     async def pop_item(self) -> TResponseInputItem | None:
-        rows = await self._entries()
+        rows = await self._latest(1)
         if not rows:
             return None
-        last = rows[-1]
-        await self._agent.memory.delete(
-            last["memory_key"], user_id=self._user_id, session_id=self._loom_session
-        )
-        return _item(last["value"])
+        item = await self._value(rows[-1])
+        await self._agent.memory.delete(str(rows[-1]["memory_key"]), **self._scope())
+        return item
 
     async def clear_session(self) -> None:
-        for row in await self._entries():
-            await self._agent.memory.delete(
-                row["memory_key"], user_id=self._user_id, session_id=self._loom_session
-            )
+        for row in await self._latest(None):
+            await self._agent.memory.delete(str(row["memory_key"]), **self._scope())
 
 
 def _item(value: Any) -> TResponseInputItem:
     """A stored item: the JSON text it was written as, or the value Loom parsed from it."""
     parsed = json.loads(value) if isinstance(value, str) else value
-    return parsed  # type: ignore[no-any-return]
+    return parsed

@@ -1424,7 +1424,8 @@ class MemoryClient:
         """List memory entries under this identity tuple.
 
         Two modes:
-          • `sort_by="recency"` (default) — order by memory_key.
+          • `sort_by="recency"` (default) — newest first by `created_at` (whole
+            seconds), then by memory_key within a second.
           • `sort_by="score"` — order by `evidence_count + recall_count*0.5`
             DESC. The "hot memory" view. Optional `quotas: dict[memory_type, int]`
             caps per-type slot counts.

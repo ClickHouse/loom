@@ -143,32 +143,50 @@ def test_max_result_chars_caps_what_the_model_reads() -> None:
 
 
 class _Rows:
-    """memory.set / list / delete over a dict: (user, session, key) -> value, listed
-    by key in pages of `page`."""
+    """memory.set / list / get / delete over a dict, listed as the server lists: the
+    newest second first, by key within a second, values cut to 2,048 characters."""
 
     def __init__(self, page: int = 2) -> None:
-        self.rows: dict[tuple[str | None, str | None, str], Any] = {}
+        self.rows: dict[tuple[Any, Any, str], tuple[Any, int]] = {}
         self.page = page
+        self.second = 0  # the clock rows are stamped with; a test moves it
+        self.hidden: set[str] = set()  # keys Loom labels sensitive: listed without a value
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def set(self, key: str, value: Any, memory_type: str, **kw: Any) -> dict[str, Any]:
         self.calls.append(("set", {"key": key, "memory_type": memory_type, **kw}))
-        self.rows[(kw.get("user_id"), kw.get("session_id"), key)] = json.loads(value)
+        self.rows[(kw.get("user_id"), kw.get("session_id"), key)] = (json.loads(value), self.second)
         return {}
 
     async def list(self, *, prefix: str, offset: int = 0, **kw: Any) -> dict[str, Any]:
         self.calls.append(("list", {"prefix": prefix, "offset": offset, **kw}))
-        keys = sorted(
-            k
-            for (u, s, k) in self.rows
-            if u == kw.get("user_id") and s == kw.get("session_id") and k.startswith(prefix)
+        mine = sorted(
+            (
+                (k, v, t)
+                for (u, s_, k), (v, t) in self.rows.items()
+                if u == kw.get("user_id") and s_ == kw.get("session_id") and k.startswith(prefix)
+            ),
+            key=lambda r: (-r[2], r[0]),
         )
-        page = keys[offset : offset + self.page]
-        rows = [
-            {"memory_key": k, "value": self.rows[(kw.get("user_id"), kw.get("session_id"), k)]}
-            for k in page
-        ]
-        return {"entries": rows, "truncated": offset + self.page < len(keys)}
+        page = mine[offset : offset + self.page]
+        entries = []
+        for key, value, second in page:
+            text = json.dumps(value)
+            cut = len(text) > 2048
+            entries.append(
+                {
+                    "memory_key": key,
+                    "value": None if key in self.hidden else (text[:2048] + "…" if cut else value),
+                    "value_truncated": cut or key in self.hidden,
+                    "created_at": f"2026-01-01T00:00:{second:02d}",
+                }
+            )
+        return {"entries": entries, "truncated": offset + self.page < len(mine)}
+
+    async def get(self, key: str, **kw: Any) -> dict[str, Any] | None:
+        self.calls.append(("get", {"key": key, **kw}))
+        row = self.rows.get((kw.get("user_id"), kw.get("session_id"), key))
+        return None if row is None else {"value": row[0]}
 
     async def delete(self, key: str, **kw: Any) -> bool:
         self.calls.append(("delete", {"key": key, **kw}))
@@ -244,6 +262,10 @@ def test_the_loom_session_is_per_user_and_unambiguous() -> None:
     assert loom_session("alice", "s1") != loom_session("bob", "s1")
     assert loom_session("a/b", "c") != loom_session("a", "b/c")
     assert loom_session(None, "s1").startswith("oai-")
+    assert loom_session("josé", "s1") != loom_session("jose", "s1")
+    assert (
+        loom_session("josé", "s1") == "oai-c10f2e9c4ca65c3f8b98"
+    )  # unescaped, as JavaScript writes it
     # The TypeScript LoomSession names the same: sha256 of the compact JSON pair.
     assert loom_session("alice", "s1") == "oai-65872b142b2cfb23bddc"
 
@@ -256,6 +278,50 @@ def test_a_session_refuses_a_missing_id_a_user_naming_none_and_an_empty_prefix()
             _session(_Rows(), user_id=user)
     with pytest.raises(ValueError, match="key_prefix"):
         _session(_Rows(), key_prefix="/")
+
+
+def test_history_spanning_seconds_comes_back_in_the_order_it_was_added() -> None:
+    rows = _Rows()
+    session = _session(rows)
+    for second, batch in enumerate([["u1", "a1"], ["u2", "a2"], ["u3", "a3"]]):
+        rows.second = second
+        asyncio.run(session.add_items([_msg("user", batch[0]), _msg("assistant", batch[1])]))
+    contents = [i["content"] for i in asyncio.run(session.get_items())]
+    assert contents == ["u1", "a1", "u2", "a2", "u3", "a3"]
+    assert [i["content"] for i in asyncio.run(session.get_items(limit=3))] == ["a2", "u3", "a3"]
+    assert asyncio.run(session.pop_item()) == _msg("assistant", "a3")
+
+
+def test_a_latest_read_stops_once_it_holds_an_older_second() -> None:
+    rows = _Rows()
+    session = _session(rows)
+    for second in range(6):
+        rows.second = second
+        asyncio.run(session.add_items([_msg("user", f"m{second}")]))
+    rows.calls.clear()
+    assert [i["content"] for i in asyncio.run(session.get_items(limit=1))] == ["m5"]
+    assert len([c for c in rows.calls if c[0] == "list"]) == 1  # not all three pages
+
+
+def test_a_long_or_sensitive_item_is_read_whole_by_key() -> None:
+    rows = _Rows()
+    session = _session(rows)
+    long = _msg("assistant", "x" * 5000)
+    asyncio.run(session.add_items([_msg("user", "my key is sk-123"), long]))
+    rows.hidden = {
+        k for (_, _, k), (v, _) in rows.rows.items() if v["content"].startswith("my key")
+    }
+    assert asyncio.run(session.get_items()) == [_msg("user", "my key is sk-123"), long]
+    assert len([c for c in rows.calls if c[0] == "get"]) == 2
+
+
+def test_a_nested_key_prefix_is_not_read_as_this_sessions_items() -> None:
+    rows = _Rows()
+    outer, inner = _session(rows, key_prefix="a"), _session(rows, key_prefix="a/b")
+    asyncio.run(inner.add_items([_msg("user", "inner")]))
+    assert asyncio.run(outer.get_items()) == []
+    asyncio.run(outer.clear_session())
+    assert asyncio.run(inner.get_items()) == [_msg("user", "inner")]
 
 
 def test_a_runner_reads_and_extends_the_history_through_the_session() -> None:
