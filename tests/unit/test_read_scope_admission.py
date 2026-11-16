@@ -787,6 +787,7 @@ async def _verdict(rows: list[dict[str, Any]], value: str) -> Any:
     from server.memory.app.conflicts import check_on_commit
 
     return await check_on_commit(
+        new_user_id="-",
         org="o",
         namespace="n",
         agent="a",

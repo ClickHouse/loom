@@ -7105,3 +7105,33 @@ async def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage(
             await c.fetch("SELECT 1")
     assert expired == [True] and conn.terminated
     assert not pg.is_outage(_InRecovery("some other internal error"))
+
+
+async def test_a_postgres_point_write_reads_the_peers_of_its_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import conflicts, set_commit
+
+    reads: list[dict[str, object]] = []
+
+    async def distance(*a: object, **kw: object) -> float:
+        return 0.3
+
+    async def peer_rows(**kw: object) -> list[object]:
+        reads.append(kw)
+        return []
+
+    monkeypatch.setattr(conflicts, "peer_distance", distance)
+    monkeypatch.setattr(conflicts, "peer_rows", peer_rows)
+    input = MemorySetInput(
+        org="o", namespace="n", agent="a", user_id="bob", memory_key="seat", value="aisle"
+    )
+    w = set_commit._SetWrite(
+        input=input, version=1, retyped_from="", existing=None, expires_at=None
+    )
+    w.embedding = [0.1, 0.2]
+    await set_commit._pg_peer_rows(w, SimpleNamespace(policy="auto_reinforce"))
+    assert [r["user_id"] for r in reads] == ["bob"]

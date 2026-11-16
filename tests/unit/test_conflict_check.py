@@ -87,6 +87,7 @@ async def _check(value: str, **kw: Any) -> Any:
         memory_key="new_key",
         new_value=value,
         new_embedding=[0.1, 0.2, 0.3],
+        new_user_id="-",
     )
     base.update(kw)
     return await cf.check_on_commit(**base)

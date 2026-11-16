@@ -18,7 +18,9 @@ concepts](../../concepts/memory.md).
 compare the new value with the active rows of the same `memory_type` in the namespace. A
 write that names a `user_id` reads and is compared with that user's rows only, so its
 verdict never merges it into, marks it a duplicate of, or retires or flags another user's
-row; another user's pinned row still refuses it ([pinned facts](#pinned-facts)). A write
+row; another user's pinned row still refuses it ([pinned facts](#pinned-facts)). Same-key
+supersession under `newest_wins` and the value-update pass still read the request's scope,
+so under a namespace-wide token they can retire another user's row. A write
 without a user is compared with every user's rows:
 
 - A canonical-form match is a **merge**: nothing is written.
@@ -61,14 +63,14 @@ duplicate threshold follows the same order without the type step, ending at
 Every write answers with `conflict_verdict`, the `peers` it was judged against (closest
 first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>, ...)`.
 
-| Verdict     | Meaning                                                                                                                              | Row written                                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `clear`     | Nothing close.                                                                                                                       | Yes, `active`.                                                     |
-| `merge`     | The same fact after canonicalisation is already stored.                                                                              | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
-| `duplicate` | Near-identical to a peer but not canonically equal.                                                                                  | Yes, `status='duplicate'` with `duplicate_of`.                     |
-| `conflict`  | Close to a peer but different.                                                                                                       | Yes; both rows `conflicted` and cross-linked.                      |
-| `refines`   | Under `newest_wins`, the same statement with a different fill, unless the peer's `valid_at` is later.                                | Yes; the replaced peer is superseded.                              |
-| `rejected`  | Close to a pinned peer (a `decision`, a `definition` and another user's restated pin excepted), or a changed value for a pinned key. | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
+| Verdict     | Meaning                                                                                                                                                             | Row written                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `clear`     | Nothing close.                                                                                                                                                      | Yes, `active`.                                                     |
+| `merge`     | The same fact after canonicalisation is already stored.                                                                                                             | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
+| `duplicate` | Near-identical to a peer but not canonically equal.                                                                                                                 | Yes, `status='duplicate'` with `duplicate_of`.                     |
+| `conflict`  | Close to a peer but different.                                                                                                                                      | Yes; both rows `conflicted` and cross-linked.                      |
+| `refines`   | Under `newest_wins`, the same statement with a different fill, unless the peer's `valid_at` is later.                                                               | Yes; the replaced peer is superseded.                              |
+| `rejected`  | Close to a pinned peer (a `decision`, a `definition`, and under a namespace-wide token another user's restated pin, excepted), or a changed value for a pinned key. | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
 
 - Every verdict is deterministic and settled in the response.
 - `dry_run=true` runs the whole check and writes nothing.

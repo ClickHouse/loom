@@ -498,8 +498,8 @@ async def check_on_commit(
     memory_key: str,
     new_value: str,
     new_embedding: list[float],
+    new_user_id: str,
     new_run_id: str = "-",
-    new_user_id: str = "-",
     new_valid_at: datetime | None = None,
     candidate_rows: list[dict[str, Any]] | None = None,
     resolved_threshold: float | None = None,
@@ -519,6 +519,7 @@ async def check_on_commit(
     is returned as `duplicate` (insert, status='duplicate', `duplicate_of`
     the peer) rather than `merge` (no insert), so the run's `run_id`-scoped
     reads find what the run wrote. Same-run restatements still merge.
+
     `new_user_id`: a write that names its user is judged against that user's
     rows only (another user's pinned row still blocks it), so a restatement
     never folds into a row the writer's `user_id`-scoped reads cannot see.

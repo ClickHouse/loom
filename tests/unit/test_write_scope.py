@@ -829,6 +829,7 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
 
     def check(candidate_rows: Any) -> Any:
         return conflicts.check_on_commit(
+            new_user_id="-",
             org="o",
             namespace="n",
             agent="bot",
@@ -903,6 +904,7 @@ def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) 
 
     def check() -> Any:
         return conflicts.check_on_commit(
+            new_user_id="-",
             org="o",
             namespace="n",
             agent="bot",

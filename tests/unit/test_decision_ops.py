@@ -641,6 +641,7 @@ def _commit_verdict(first: str, second: str, *, policy: str = "", pinned: bool =
     }
     out = asyncio.run(
         check_on_commit(
+            new_user_id="-",
             org="o",
             namespace="n",
             agent="claude",
@@ -755,6 +756,7 @@ def test_a_foreign_pinned_decision_leaves_a_clear_write_marked_for_review(monkey
     )
     out = asyncio.run(
         check_on_commit(
+            new_user_id="-",
             org="o",
             namespace="n",
             agent="claude",

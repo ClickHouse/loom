@@ -2098,6 +2098,7 @@ async def test_a_peer_below_the_threshold_marks_the_write_but_never_flags_it(mon
     monkeypatch.setattr(cf, "get_client", lambda: ch)
     monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
     res = await cf.check_on_commit(
+        new_user_id="-",
         org="o",
         namespace="n",
         agent="ag",

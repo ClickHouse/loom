@@ -229,6 +229,7 @@ async def test_a_foreign_pinned_row_blocks_a_narrowed_write_single_and_bulk(
 
     def check(candidate_rows: Any) -> Any:
         return conflicts.check_on_commit(
+            new_user_id="-",
             org=org,
             namespace=_NS,
             agent="bot",

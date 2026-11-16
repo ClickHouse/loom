@@ -101,6 +101,7 @@ async def test_check_on_commit_with_prefetched_rows_issues_no_peer_statement(mon
         }
     ]
     res = await conflicts.check_on_commit(
+        new_user_id="-",
         org="o",
         namespace="ns",
         agent="a",

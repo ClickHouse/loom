@@ -80,6 +80,7 @@ async def test_clear_when_no_peers(install_ch) -> None:
 
     install_ch(_FakeCH(peers=[]))
     result = await check_on_commit(
+        new_user_id="-",
         org="clickhouse",
         namespace="finance",
         agent="a",
@@ -112,6 +113,7 @@ async def test_merge_on_canonical_form_match(install_ch) -> None:
         )
     )
     result = await check_on_commit(
+        new_user_id="-",
         org="clickhouse",
         namespace="finance",
         agent="a",
@@ -143,6 +145,7 @@ async def test_duplicate_when_high_similarity_canonical_mismatch(install_ch) -> 
         )
     )
     result = await check_on_commit(
+        new_user_id="-",
         org="clickhouse",
         namespace="finance",
         agent="a",
@@ -175,6 +178,7 @@ async def test_conflict_when_below_duplicate_threshold(install_ch) -> None:
         )
     )
     result = await check_on_commit(
+        new_user_id="-",
         org="clickhouse",
         namespace="finance",
         agent="a",
@@ -208,6 +212,7 @@ async def test_pinned_short_circuit_takes_priority_over_duplicate(install_ch) ->
         )
     )
     result = await check_on_commit(
+        new_user_id="-",
         org="clickhouse",
         namespace="finance",
         agent="a",
@@ -242,6 +247,7 @@ async def test_per_namespace_override_lowers_duplicate_threshold(install_ch) -> 
         )
     )
     result = await check_on_commit(
+        new_user_id="-",
         org="clickhouse",
         namespace="finance",
         agent="a",
