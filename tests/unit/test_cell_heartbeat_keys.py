@@ -177,11 +177,13 @@ def test_a_cell_refuses_to_boot_with_a_router_url_that_cannot_be_requested(
     assert cell.settings_problem() == ""
 
 
+@pytest.mark.parametrize("failure", [LookupError, asyncio.CancelledError])
 def test_a_failed_reset_read_rolls_back_before_the_release(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
 ) -> None:
-    """The read fails after `BEGIN; RESET ALL`: the transaction is rolled back on the
-    connection, so the pool gets it back idle, and the read's error is raised."""
+    """The read fails, or is cancelled (a shutdown mid-refresh), after `BEGIN; RESET ALL`:
+    the transaction is rolled back on the connection, so the pool gets it back idle, and
+    the read's error or the cancel is raised."""
     sent: list[str] = []
 
     class _Conn:
@@ -199,7 +201,7 @@ def test_a_failed_reset_read_rolls_back_before_the_release(
             return ""
 
         async def fetchrow(self, sql: str) -> Any:
-            raise LookupError("relation does not exist")
+            raise failure("relation does not exist")
 
     conn = _Conn()
 
@@ -208,6 +210,6 @@ def test_a_failed_reset_read_rolls_back_before_the_release(
         yield conn
 
     monkeypatch.setattr(pg, "connection", _connection)
-    with pytest.raises(LookupError):
+    with pytest.raises(failure):
         asyncio.run(pg.fetchrow_reset(cell._READ))
     assert sent == ["BEGIN; RESET ALL", "ROLLBACK"] and not conn.in_transaction

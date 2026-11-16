@@ -46,6 +46,8 @@ _answer: tuple[str, float] | None = None
 _serving = False
 # The cause `_ask` gives a 401, which `_keep_router` tells from every other cause.
 _UNAUTHORIZED = "401: the router does not accept LOOM_CELL_ROUTER_TOKEN"
+# The background reader's wait between reads; tests replace it.
+_sleep = asyncio.sleep
 # The heartbeat's `router` key and its cause, and when a run of 401 answers began.
 _router: bool | None = None
 _router_why = ""
@@ -237,7 +239,7 @@ def start_reader() -> asyncio.Task[None]:
                         await read_once(client)
                     except Exception as e:  # noqa: BLE001 — a failed read must not stop the reader
                         log.warning("cell state: the router read failed: %s", type(e).__name__)
-                await asyncio.sleep(period_s())
+                await _sleep(period_s())
         finally:
             if client is not None:
                 await client.aclose()

@@ -388,7 +388,7 @@ def test_the_background_reader_asks_until_serving(monkeypatch: pytest.MonkeyPatc
     async def _sleep(s: float) -> None:
         sleeps.append(s)
 
-    monkeypatch.setattr(cell_router.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(cell_router, "_sleep", _sleep)
 
     async def _run() -> None:
         await cell_router.start_reader()
@@ -411,7 +411,7 @@ def test_the_background_reader_waits_for_the_first_row_and_a_later_cell_never_as
         # The first row is read between two periods: a later cell's.
         cell._view = cell._View(read_at=time.monotonic(), first=(False, "eu-1"))
 
-    monkeypatch.setattr(cell_router.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(cell_router, "_sleep", _sleep)
 
     async def _run() -> None:
         await cell_router.start_reader()

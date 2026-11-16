@@ -551,15 +551,16 @@ class MalformedRow(ValueError):
 
 
 def _decoded(row: Any) -> _View:
-    first = json_object(row["first"]) if row else None
-    own = json_object(row["own"]) if row else None
+    """`_READ`'s one row (a SELECT with no FROM always returns one)."""
+    first = json_object(row["first"])
+    own = json_object(row["own"])
     return _View(
         read_at=time.monotonic(),
         first=(bool(first["is_first"]), str(first["cell"])) if first else None,
-        mode=str(row["mode"] or "") if row else "",
+        mode=str(row["mode"] or ""),
         current=json_object(own.get("current_fp")) if own else None,
         next=json_object(own.get("next_fp")) if own else None,
-        has_tenancy=bool(row["tenancy"]) if row else False,
+        has_tenancy=bool(row["tenancy"]),
         marked=bool(row["marked"]),
     )
 

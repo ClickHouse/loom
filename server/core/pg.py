@@ -617,15 +617,17 @@ async def fetchrow_reset(sql: str) -> Any:
     """`fetchrow` after RESET ALL, in one transaction, so behind a transaction pooler both
     run on one server connection: the session's settings as its startup values leave them
     (a session SET leaked onto that connection by another client is gone). Two round trips
-    more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure
-    rolls the transaction back before the connection returns to the pool."""
+    more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure,
+    a cancel included, rolls the transaction back before the connection returns to the
+    pool."""
     async with connection() as conn:
         try:
             await conn.execute("BEGIN; RESET ALL")
             row = await conn.fetchrow(sql)
             await conn.execute("COMMIT")
             return row
-        except Exception as e:
+        except BaseException as e:
+            # Not `conn.transaction()`: a cancel must not leave a BEGIN asyncpg never saw.
             if not _lost(conn) and conn.is_in_transaction():
                 try:
                     await asyncio.wait_for(conn.execute("ROLLBACK"), _RELEASE_TIMEOUT_S)
@@ -634,7 +636,8 @@ async def fetchrow_reset(sql: str) -> Any:
                         "Postgres rollback failed (%s); the pool resets the connection",
                         error_summary(rollback),
                     )
-            _raise_if_unavailable(e)
+            if isinstance(e, Exception):
+                _raise_if_unavailable(e)
             raise
 
 
