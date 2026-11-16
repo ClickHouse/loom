@@ -44,7 +44,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from server.core import readiness
+from server.core import pg, readiness
 from server.core.errors import caller_text
 from server.settings import settings
 from server.settings.catalog import is_http_url
@@ -479,7 +479,7 @@ _READ = (
     "EXISTS (SELECT 1 FROM loom.tenancy) AS tenancy, "
     # Read after RESET ALL (`refresh`): a startup value survives it, a session SET leaked
     # onto a pooled server connection does not. A session without it reads false.
-    "COALESCE(current_setting('loom.tenancy_checked', true) = 'on', false) AS marked"
+    f"COALESCE(current_setting('{pg.TENANCY_MARKER}', true) = 'on', false) AS marked"
 )
 
 

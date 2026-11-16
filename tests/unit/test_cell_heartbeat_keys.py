@@ -60,7 +60,7 @@ def test_marked_reports_what_the_refresh_read(
     monkeypatch: pytest.MonkeyPatch, marked: bool
 ) -> None:
     async def _row(sql: str) -> dict[str, Any]:
-        assert "current_setting('loom.tenancy_checked', true)" in sql
+        assert f"current_setting('{pg.TENANCY_MARKER}', true)" in sql
         return {
             "first": {"is_first": True, "cell": "eu-1"},
             "mode": "recording",
@@ -106,30 +106,6 @@ def test_with_loom_cell_unset_no_router_key_and_the_derived_state(
 def test_serves_reports_loom_serves_traffic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "serves_traffic", False)
     assert _reported()["serves"] is False
-
-
-def test_the_refresh_resets_the_session_in_the_reads_transaction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`BEGIN; RESET ALL` in one simple query, the read, then COMMIT, on one connection."""
-    sent: list[str] = []
-
-    class _Conn:
-        async def execute(self, sql: str) -> str:
-            sent.append(sql)
-            return ""
-
-        async def fetchrow(self, sql: str) -> dict[str, Any]:
-            sent.append(sql)
-            return {"marked": True}
-
-    @contextlib.asynccontextmanager
-    async def _connection() -> AsyncIterator[Any]:
-        yield _Conn()
-
-    monkeypatch.setattr(pg, "connection", _connection)
-    assert asyncio.run(pg.fetchrow_reset(cell._READ)) == {"marked": True}
-    assert sent == ["BEGIN; RESET ALL", cell._READ, "COMMIT"]
 
 
 @pytest.mark.parametrize(

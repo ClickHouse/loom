@@ -210,7 +210,7 @@ async def ensure(conn: Any) -> None:
     tries; a table whose lock it cannot take is logged with the holders of its locks, one
     the role cannot alter is logged as such, and either is skipped (the boot serves). A
     failed read of the state or the catalog raises. Runs on the migration session, which
-    holds the migration lock. `ensure_table` runs one table's part alone."""
+    holds the migration lock."""
     state = await cell.read_state(conn)
     if state == "open":
         return
@@ -237,26 +237,6 @@ async def ensure(conn: Any) -> None:
             await _run_ddl(conn, r["relname"], sqls)
 
 
-async def ensure_table(conn: Any, table: str, *, recording_first: bool = False) -> bool:
-    """`ensure` for one table of the planned set (`loom.tenancy` its guard, any other its
-    org triggers), so one table's DDL can run alone: in `enforced`, or with
-    `recording_first` also in a first cell's `recording`, where the org triggers' function
-    passes every row and a boot never creates them. False when the DDL was not applied (its
-    lock not taken, a table this role cannot alter); True when it was, or nothing was
-    needed. Raises for a table outside the planned set, or in another state."""
-    state = await cell.read_state(conn)
-    if state != "enforced" and not (recording_first and state == "recording"):
-        raise RuntimeError(f"cell triggers: not created in state {state!r}")
-    planned = [
-        (r, names) for r, names in _planned(await conn.fetch(ORG_TABLES)) if r["relname"] == table
-    ]
-    if not planned:
-        raise ValueError(f"loom.{table} carries no cell triggers")
-    ((_, names),) = planned
-    sqls = _table_statements(table, names, await _triggers(conn, names))
-    return not sqls or await _run_ddl(conn, table, sqls)
-
-
 def _table_statements(
     table: str, names: tuple[str, ...], present: dict[tuple[str, str], Any]
 ) -> list[str]:
@@ -271,10 +251,10 @@ def _table_statements(
     return out
 
 
-async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> bool:
-    """A table's DDL in one transaction, LOCK_ATTEMPTS short tries; whether it applied. The
-    boot serves past the two causes cells.md names (its lock not taken, a table this role
-    cannot alter); any other error fails it, as a failed read of the state does."""
+async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
+    """A table's DDL in one transaction, LOCK_ATTEMPTS short tries. The boot serves past
+    the two causes cells.md names (its lock not taken, a table this role cannot alter);
+    any other error fails it, as a failed read of the state does."""
     import asyncpg
 
     for attempt in range(LOCK_ATTEMPTS):
@@ -283,12 +263,12 @@ async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> bool:
                 await conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
                 for sql in sqls:
                     await conn.execute(sql)
-            return True
+            return
         except asyncpg.exceptions.InsufficientPrivilegeError as e:
             log.warning(
                 "cell triggers: not applied on loom.%s (%s): this role cannot alter it", table, e
             )
-            return False
+            return
         except asyncpg.exceptions.LockNotAvailableError as e:
             # Short tries outlast a short transaction; an autovacuum is left to finish.
             if attempt < LOCK_ATTEMPTS - 1:
@@ -301,7 +281,6 @@ async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> bool:
                 "; ".join(sqls),
                 await _holders(conn, table),
             )
-    return False
 
 
 async def _holders(conn: Any, table: str) -> str:

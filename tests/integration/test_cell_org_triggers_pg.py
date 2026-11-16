@@ -714,32 +714,6 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
 
 
 @pytest.mark.asyncio
-async def test_ensure_table_creates_a_recording_first_cells_triggers_only_when_asked() -> None:
-    """Attach creates a first cell's triggers in `recording`, one table at a time; a boot's
-    `ensure` never does, and the function passes every row there."""
-    async with _cell("recording") as (dsn, conn):
-        with pytest.raises(RuntimeError, match="recording"):
-            await cell_triggers.ensure_table(conn, "scope_generations")
-        assert await cell_triggers.ensure_table(conn, "scope_generations", recording_first=True)
-        assert await cell_triggers.ensure_table(conn, "tenancy", recording_first=True)
-        assert await _cell_triggers(conn) == {
-            ("scope_generations", "tenancy_insert", "O"),
-            ("scope_generations", "tenancy_update", "O"),
-            ("tenancy", "tenancy_record", "O"),
-        }
-        # Again: nothing to do.
-        assert await cell_triggers.ensure_table(conn, "scope_generations", recording_first=True)
-        with pytest.raises(ValueError, match="no cell triggers"):
-            await cell_triggers.ensure_table(conn, "idempotency", recording_first=True)
-        plain = await _unmarked(dsn)
-        try:
-            await plain.execute(_INSERT, "unheld-org", "s")  # recording passes every row
-            await plain.execute(_HOLD, "new-org")  # a first cell still recording records
-        finally:
-            await plain.close()
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("loom_cell", ["eu-1", ""])
 async def test_the_cell_refresh_reads_the_marker_its_pool_sends(loom_cell: str) -> None:
     """The pool sends the marker as a startup value with LOOM_CELL set: the refresh reads it
