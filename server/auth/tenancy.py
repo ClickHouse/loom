@@ -231,8 +231,8 @@ async def _refuse_unscoped(org: str) -> None:
     if cell.is_first():
         missing = cell_router.unset()
         if missing and not cell_router.has_reader():
-            # A CLI past `recording` (the mode this path runs in) holds no router token
-            # (`_ch.check_orgs`), so it asks nothing and names the org alone.
+            # No background reader and a router setting unset (a CLI past `recording` holds
+            # no token, `_ch.check_orgs`): nothing to ask, so the org alone is named.
             raise BackendUnavailableError(
                 f"org {org!r} is not held by this cell", operation="tenancy"
             )

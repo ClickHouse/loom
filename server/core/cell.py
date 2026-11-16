@@ -249,8 +249,8 @@ class _View:
     current: dict[str, Any] | None = None
     next: dict[str, Any] | None = None
     has_tenancy: bool = False
-    # Whether the pooled session the read ran on keeps the tenancy marker after RESET ALL;
-    # None until a read lands.
+    # Whether the pooled session the read ran on keeps the tenancy marker; None until a
+    # read lands.
     marked: bool | None = None
     error: str = ""
 
@@ -305,8 +305,8 @@ def rows_read() -> bool:
 
 def marked() -> bool | None:
     """Whether this process's pooled sessions keep the tenancy marker, as the last read
-    found it after RESET ALL (`refresh`); None until a read lands, so under the ClickHouse
-    authority, where nothing is read, always None."""
+    found it (`refresh`); None until a read lands, so under the ClickHouse authority, where
+    nothing is read, always None."""
     return _view.marked
 
 
@@ -475,8 +475,8 @@ _READ = (
     "(SELECT mode FROM loom.tenancy_mode) AS mode, "
     "(SELECT row_to_json(s) FROM (SELECT current_fp, next_fp FROM loom.cell_self) s) AS own, "
     "EXISTS (SELECT 1 FROM loom.tenancy) AS tenancy, "
-    # Read after RESET ALL (`refresh`): a startup value survives it, a SET does not, so a
-    # pooler (a cell has none) reads false whether it strips or re-sends the marker.
+    # On a cell read after RESET ALL (`refresh`): a startup value survives it, a SET does
+    # not, so a pooler (a cell has none) reads false whether it strips or re-sends it.
     f"COALESCE(current_setting('{pg.TENANCY_MARKER}', true) = 'on', false) AS marked"
 )
 
@@ -531,10 +531,11 @@ async def read_state_if_present(conn: Any) -> tuple[str, str]:
 
 
 async def refresh() -> bool:
-    """Read the state rows and the session's marker in one statement, after RESET ALL in
-    the same transaction (`pg.fetchrow_reset`), so the marker read is the startup value of
-    the server connection the read ran on. A failed read, or rows that do not decode,
-    keeps the last view and is retried on schedule."""
+    """Read the state rows and the session's marker in one statement: on a cell after RESET
+    ALL in the same transaction (`pg.fetchrow_reset`), so the marker read is the startup
+    value of the server connection the read ran on; with LOOM_CELL unset a plain read,
+    where no marker is sent and `marked` reads false. A failed read, or rows that do not
+    decode, keeps the last view and is retried on schedule."""
     global _view
     try:
         # Only a cell reads `marked`: elsewhere the plain read skips the reset's round trips.
