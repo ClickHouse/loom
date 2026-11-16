@@ -221,8 +221,8 @@ def test_it_refuses_a_sync_agent_a_top_k_out_of_bounds_and_a_user_naming_none() 
     for top_k in (0, 501):
         with pytest.raises(ValueError, match="top_k"):
             _provider(_FakeMemory(), top_k=top_k)
-    for user in ("", "-", " "):
-        with pytest.raises(ValueError, match="names none"):
+    for user in ("", "-", " ", " alice", "alice "):
+        with pytest.raises(ValueError, match="user_id"):
             _provider(_FakeMemory(), user_id=user)
 
 

@@ -79,8 +79,10 @@ class LoomContextProvider(ContextProvider):
             )
         if not 1 <= top_k <= 500:
             raise ValueError("top_k must be between 1 and 500, memory.search's bounds")
-        if user_id is not None and user_id.strip() in ("", "-"):
-            raise ValueError(f"user_id names a Loom user or is None; {user_id!r} names none")
+        if user_id is not None and (user_id in ("", "-") or user_id != user_id.strip()):
+            raise ValueError(
+                "user_id must name a Loom user without surrounding whitespace, or be None"
+            )
         super().__init__(source_id)
         self._agent = agent
         self._user_id = user_id

@@ -47,3 +47,6 @@ memory over HTTP, Python and MCP. [When Loom does not fit](../getting-started/ov
 covers the cases an in-process memory library serves better.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).
+
+Use a [Microsoft Agent Framework context provider](../features/integrations/frameworks.md#microsoft-agent-framework)
+to recall user facts before a run and record the conversation after it.

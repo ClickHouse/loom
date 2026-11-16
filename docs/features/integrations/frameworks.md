@@ -349,7 +349,7 @@ request out of the events the policy reads. Those policies trim events, not the 
 takes in `context_providers=[...]`: before each run it adds the Loom memories that match
 the user's input to the run's instructions, and after the run it sends the turn's text to
 Loom, which extracts the facts. Install with `pip install 'clickhouse-loom[agent-framework]'`
-(`agent-framework-core` 1.26 or later 1.x). Agent Framework succeeds AutoGen; a new project
+(`agent-framework-core` 1.26.x). Agent Framework succeeds AutoGen; a new project
 uses this provider, and the [AutoGen](#autogen) memory stays for AutoGen projects.
 
 ```python
@@ -625,3 +625,5 @@ client can speak for several agents.
 - [Python SDK](../../reference/python-sdk.md) and [TypeScript SDK](../../reference/typescript-sdk.md).
 - [Writing memory](../memory/writing.md) and [search and ask](../memory/search-and-ask.md).
 - [Integrations overview](./index.md).
+
+[Context-provider architecture](../../architecture/agent-framework-adapter.md).
