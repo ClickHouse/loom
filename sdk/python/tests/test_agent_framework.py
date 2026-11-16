@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from agent_framework import (
     Agent,
+    AgentLoopMiddleware,
     BaseChatClient,
     ChatResponse,
     Content,
@@ -193,8 +194,8 @@ def test_a_run_without_user_text_reads_nothing() -> None:
 def test_a_long_turn_is_sent_in_batches_the_server_takes() -> None:
     fake = _FakeMemory()
     messages = [Message(role="user", contents=[f"fact {i}"]) for i in range(401)]
-    _run_messages = Agent(client=_Client(), context_providers=[_provider(fake)])
-    asyncio.run(_run_messages.run(messages, session=_run_messages.create_session()))
+    agent = Agent(client=_Client(), context_providers=[_provider(fake)])
+    asyncio.run(agent.run(messages, session=agent.create_session()))
     sizes = [len(c[1][0]) for c in fake.calls if c[0] == "set_from_messages"]
     assert sizes == [400, 2]
 
@@ -250,3 +251,40 @@ def test_a_real_agent_posts_the_provider_calls() -> None:
         _loom_session("alice", session.session_id),
     )
     assert [m["content"] for m in extract["messages"]] == ["seat", "Noted."]
+
+
+@pytest.mark.filterwarnings("ignore:.*AgentLoopMiddleware is experimental")
+def test_a_loop_sends_the_users_turn_and_the_replies_once() -> None:
+    fake = _FakeMemory()
+    client = _Client(
+        Message(role="assistant", contents=["Step one."]),
+        Message(role="assistant", contents=["Step two."]),
+    )
+    agent = Agent(
+        client=client,
+        context_providers=[_provider(fake)],
+        middleware=[AgentLoopMiddleware(lambda iteration, **_: iteration < 2)],
+    )
+    asyncio.run(agent.run("Plan my trip", session=agent.create_session()))
+    extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert [[(m["role"], m["content"]) for m in c[1][0]] for c in extracts] == [
+        [("user", "Plan my trip"), ("assistant", "Step one."), ("assistant", "Step two.")]
+    ]
+    searches = [c[1][0] for c in fake.calls if c[0] == "search"]
+    assert searches[0] == "Plan my trip" and len(searches) == 2
+
+
+def test_a_whole_conversation_passed_each_run_sends_only_its_new_turn() -> None:
+    fake = _FakeMemory()
+    agent = Agent(client=_Client(), context_providers=[_provider(fake)])
+    history = [
+        Message(role="user", contents=["I prefer aisle seats"]),
+        Message(role="assistant", contents=["Noted."]),
+        Message(role="user", contents=["I fly to Lisbon"]),
+        Message(role="user", contents=["in May"]),
+    ]
+    asyncio.run(agent.run(history))
+    (search,) = [c for c in fake.calls if c[0] == "search"]
+    assert search[1] == ("in May",)  # the latest user message, as the other adapters search
+    ((_, (messages,), _),) = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert [m["content"] for m in messages] == ["I fly to Lisbon", "in May", "Noted."]

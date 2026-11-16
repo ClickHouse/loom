@@ -95,8 +95,9 @@ class LoomContextProvider(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        query = " ".join(m.text for m in context.input_messages if m.role == "user" and m.text)
-        if not query.strip():
+        asked = [m.text for m in _new_turn(context.input_messages) if m.role == "user"]
+        query = next((text for text in reversed(asked) if text.strip()), "")
+        if not query:
             return
         result = await self._agent.memory.search(
             query,
@@ -131,8 +132,9 @@ class LoomContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         response = context.response
-        turn = [*context.input_messages, *(response.messages if response else [])]
-        messages = _texts(turn)
+        # A user message in a response is a loop's own prompt, not the user's words.
+        replies = [m for m in (response.messages if response else []) if m.role == "assistant"]
+        messages = _texts([*_new_turn(context.input_messages), *replies])
         loom_session = _loom_session(self._user_id or "-", session.session_id)
         for start in range(0, len(messages), _MAX_MESSAGES):
             await self._agent.memory.set_from_messages(
@@ -141,6 +143,13 @@ class LoomContextProvider(ContextProvider):
                 session_id=loom_session,
                 defer=self._defer,
             )
+
+
+def _new_turn(messages: Sequence[Message]) -> Sequence[Message]:
+    """The input after its last assistant message: a caller that passes the whole
+    conversation each run sends only its new turn to Loom."""
+    last = max((i for i, m in enumerate(messages) if m.role == "assistant"), default=-1)
+    return messages[last + 1 :]
 
 
 def _texts(messages: Sequence[Message]) -> list[dict[str, object]]:

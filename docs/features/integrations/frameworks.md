@@ -369,13 +369,16 @@ async with LoomAgent(org="acme", namespace="support") as loom_agent:
 
 The agent keeps its own conversation history: for a run given a session, with no history
 provider configured and a client that does not store the conversation itself, it adds its
-in-memory one beside Loom's provider. Loom holds the memories across sessions. Inside an
-`AgentLoopMiddleware` loop, the turn is sent to Loom once, when the loop ends.
+in-memory one beside Loom's provider. Loom holds the memories across sessions. A caller
+that passes the whole conversation to each run sends Loom only the turn after its last
+assistant message. Inside an `AgentLoopMiddleware` loop, the turn (the user's input and the
+agent's replies, not the loop's own prompts) is sent once, when the loop ends, and each
+iteration recalls for its own input, the loop's prompt after the first.
 
-| Agent Framework | Loom                                                                                                                                                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `before_run`    | `memory.search` with the text of the run's user messages; with `honour_abstain`, leaves out memories below Loom's floor and adds nothing when Loom abstains; the matches are added as one block of instructions                                        |
-| `after_run`     | the user and assistant text of the run's input and response messages, sent to `memory.set_from_messages` (400 messages a call, the op's cap), where Loom extracts the facts and resolves duplicates and conflicts; tool calls and results are not sent |
+| Agent Framework | Loom                                                                                                                                                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `before_run`    | `memory.search` with the run's latest user message; with `honour_abstain`, leaves out memories below Loom's floor and adds nothing when Loom abstains; the matches are added as one block of instructions                                                    |
+| `after_run`     | the user text of the run's new turn and the assistant text of its response, sent to `memory.set_from_messages` (400 messages a call, the op's cap), where Loom extracts the facts and resolves duplicates and conflicts; tool calls and results are not sent |
 
 Extraction runs under a Loom session derived from the user and the Agent Framework session
 (`maf-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and
