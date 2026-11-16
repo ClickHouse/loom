@@ -76,19 +76,20 @@ def upsert_object_key(
     when the root is not an object, `section` is not one object, or `name` is
     duplicated there.
     """
+    newline = _fragment_newline(text)
     root = _parse_root(text)
     section_member = _only(root, section)
     if section_member is None:
-        return _commit(text, root, section, {name: entry}, section, name, entry)
+        return _commit(text, root, section, {name: entry}, section, name, entry, newline)
     if not isinstance(section_member.value, _Object):
         raise JsoncEditError(f"{section} is not an object")
     current = _only(section_member.value, name)
     if current is None:
-        return _commit(text, section_member.value, name, entry, section, name, entry)
+        return _commit(text, section_member.value, name, entry, section, name, entry, newline)
     if _to_data(current.value) == entry:
         return text, False
     indent = _indent_before(text, current.key_start) or "  "
-    rendered = _render(entry, indent)
+    rendered = _render(entry, indent, newline)
     updated = text[: current.value_start] + rendered + text[current.value_end :]
     _require_entry(updated, section, name, entry)
     return updated, True
@@ -118,6 +119,21 @@ def _indent_before(text: str, pos: int) -> str:
     return text[start:pos]
 
 
+def _fragment_newline(text: str) -> str:
+    """The ending the new fragment uses.
+
+    A file whose breaks are all CR LF gets CR LF. A file whose breaks are
+    all LF, or that has none, gets LF. A mix is not rewritten; the fragment
+    uses LF.
+    """
+    crlf = text.count("\r\n")
+    bare_lf = text.count("\n") - crlf
+    bare_cr = text.count("\r") - crlf
+    if crlf and bare_lf == 0 and bare_cr == 0:
+        return "\r\n"
+    return "\n"
+
+
 def _commit(
     text: str,
     obj: _Object,
@@ -126,8 +142,9 @@ def _commit(
     section: str,
     name: str,
     entry: dict[str, Any],
+    newline: str,
 ) -> tuple[str, bool]:
-    updated = _insert_member(text, obj, key, value)
+    updated = _insert_member(text, obj, key, value, newline)
     _require_entry(updated, section, name, entry)
     return updated, True
 
@@ -144,14 +161,14 @@ def _require_entry(text: str, section: str, name: str, entry: dict[str, Any]) ->
         raise JsoncEditError("could not place the new key")
 
 
-def _render(value: object, base_indent: str) -> str:
+def _render(value: object, base_indent: str, newline: str) -> str:
     lines = json.dumps(value, indent=2).split("\n")
     if len(lines) == 1:
         return lines[0]
-    return "\n".join([lines[0], *[base_indent + line for line in lines[1:]]])
+    return newline.join([lines[0], *[base_indent + line for line in lines[1:]]])
 
 
-def _insert_member(text: str, obj: _Object, key: str, value: object) -> str:
+def _insert_member(text: str, obj: _Object, key: str, value: object, newline: str) -> str:
     # Token offsets from the parse. The nearest newline can sit inside a
     # block comment, so it is not a place to splice.
     if obj.members:
@@ -165,7 +182,8 @@ def _insert_member(text: str, obj: _Object, key: str, value: object) -> str:
     else:
         at = obj.end - 1
         member_indent = _indent_before(text, obj.start) + "  "
-    piece = f"\n{member_indent}{json.dumps(key)}: {_render(value, member_indent)}\n"
+    rendered = _render(value, member_indent, newline)
+    piece = f"{newline}{member_indent}{json.dumps(key)}: {rendered}{newline}"
     return text[:at] + piece + text[at:]
 
 

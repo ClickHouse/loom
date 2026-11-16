@@ -383,7 +383,8 @@ def _install_zed(
         print(f"✓ zed: wrote {name} → {cfg_path}")
         return True
     try:
-        original = cfg_path.read_text(encoding="utf-8")
+        # read_text translates CR LF to LF, and the write then drops every CR.
+        original = cfg_path.read_bytes().decode("utf-8")
     except (UnicodeDecodeError, OSError) as exc:
         _print_zed_manual(
             cfg_path, section, name, entry, token, f"could not read it ({exc})", dry_run=dry_run

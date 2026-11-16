@@ -1096,3 +1096,161 @@ def test_zed_install_updates_an_escaped_bmp_key(tmp_path, monkeypatch: pytest.Mo
     data = _jsonc_object(text)
     assert list(data["context_servers"]) == [name]
     assert data["context_servers"][name]["headers"]["Authorization"] == "Bearer T"
+
+
+def _no_bare_break(raw: bytes) -> None:
+    """Every break is CR LF, or every break is LF. A leftover CR or LF is mixed."""
+    if b"\r\n" in raw:
+        stripped = raw.replace(b"\r\n", b"")
+        assert b"\n" not in stripped
+        assert b"\r" not in stripped
+    else:
+        assert b"\r" not in raw
+
+
+def test_zed_install_keeps_crlf_and_writes_the_new_fragment_as_crlf(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CR LF file stays CR LF, including the lines this command adds."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{\r\n  "theme": "One Dark",\r\n}\r\n'
+    cfg.write_bytes(original)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    raw = cfg.read_bytes()
+    assert b'"theme": "One Dark",\r\n' in raw
+    assert b'"url": "http://localhost:7777/mcp"' in raw
+    _no_bare_break(raw)
+    assert b"\r\n" in raw
+    data = _jsonc_object(raw.decode("utf-8"))
+    assert data["theme"] == "One Dark"
+    assert data["context_servers"]["loom"]["headers"]["Authorization"] == "Bearer T"
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert cfg.read_bytes() == raw
+
+
+def test_zed_install_keeps_lf_without_adding_cr(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_bytes(b'{\n  "theme": "One Dark",\n}\n')
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    raw = cfg.read_bytes()
+    assert b"\r" not in raw
+    assert b'"theme": "One Dark",\n' in raw
+    assert b'"url": "http://localhost:7777/mcp"' in raw
+    again = raw
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert cfg.read_bytes() == again
+
+
+def test_zed_install_leaves_a_mixed_file_mixed_and_uses_lf_for_the_fragment(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mix is not normalized. The new fragment uses LF."""
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{\r\n  "theme": "One Dark",\n  "ui": "kept"\n}\n'
+    cfg.write_bytes(original)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    raw = cfg.read_bytes()
+    assert raw.startswith(b"{\r\n")
+    # The previous member gains a comma. Its LF stays, and no new CR LF appears.
+    assert b'"theme": "One Dark",\n' in raw
+    assert b'"ui": "kept",\n' in raw
+    assert raw.count(b"\r\n") == original.count(b"\r\n")
+    assert b'"url": "http://localhost:7777/mcp"' in raw
+    data = _jsonc_object(raw.decode("utf-8"))
+    assert data["ui"] == "kept"
+    assert "loom" in data["context_servers"]
+
+
+def test_zed_install_changes_only_the_crlf_entry(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    sibling = b'    "other": {"command": "keep-me"}\r\n'
+    cfg.write_bytes(
+        b'{\r\n  "context_servers": {\r\n'
+        b'    "loom": {"url": "http://old", "headers": {"Authorization": "Bearer old-token"}},\r\n'
+        + sibling
+        + b"  }\r\n}\r\n"
+    )
+    assert cli._install_one(
+        "zed",
+        token="new-token",
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=False,
+    )
+    raw = cfg.read_bytes()
+    assert sibling in raw
+    assert b"old-token" not in raw
+    assert raw.count(b"new-token") == 1
+    _no_bare_break(raw)
+    data = _jsonc_object(raw.decode("utf-8"))
+    assert data["context_servers"]["other"] == {"command": "keep-me"}
+    assert data["context_servers"]["loom"]["headers"]["Authorization"] == "Bearer new-token"
+    again = raw
+    assert cli._install_one(
+        "zed",
+        token="new-token",
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=False,
+    )
+    assert cfg.read_bytes() == again
+
+
+def test_zed_install_refuses_broken_crlf_without_writing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{ "theme": "One Dark",\r\n'
+    cfg.write_bytes(original)
+    assert (
+        cli._install_one(
+            "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+        )
+        is False
+    )
+    assert cfg.read_bytes() == original
+    assert "not changed" in capsys.readouterr().err
+
+
+def test_zed_dry_run_keeps_crlf_bytes_and_hides_the_token(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{\r\n  "theme": "One Dark",\r\n}\r\n'
+    cfg.write_bytes(original)
+    assert cli._install_one(
+        "zed",
+        token="super-secret-token",
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=True,
+    )
+    captured = capsys.readouterr()
+    assert cfg.read_bytes() == original
+    assert b"super-secret-token" not in cfg.read_bytes()
+    assert "super-secret-token" not in captured.out
+    assert "super-secret-token" not in captured.err
+    assert "<token>" in captured.out
+
+
+def test_zed_install_writes_a_missing_file_with_lf(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    raw = cfg.read_bytes()
+    assert b"\r" not in raw
+    assert raw.endswith(b"\n")
+    assert _jsonc_object(raw.decode("utf-8"))["context_servers"]["loom"]["url"].endswith("/mcp")
