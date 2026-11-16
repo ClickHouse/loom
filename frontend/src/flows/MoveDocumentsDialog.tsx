@@ -57,6 +57,7 @@ export function MoveDocumentsDialog({
   sourceUris,
   places,
   placesReading = null,
+  initialTo = "",
   onMoved,
   onClose,
   onCloseAutoFocus,
@@ -71,6 +72,8 @@ export function MoveDocumentsDialog({
   /** The collections are still being read, their read failed, or there are more than the
    *  Library reads: `places` may lack some. */
   placesReading?: "loading" | "failed" | "truncated" | null;
+  /** The place it opens on (a drop on the Library's tree); none picked otherwise. */
+  initialTo?: string;
   /** After every call of a move (a selection goes in calls of `MOVE_MAX`), whatever it
    *  answered (a failed one may have moved some): the sources that call moved. */
   onMoved: (moved: string[]) => void;
@@ -78,7 +81,7 @@ export function MoveDocumentsDialog({
   /** Where focus goes once it closes, as the Modal's. */
   onCloseAutoFocus?: (e: Event) => void;
 }) {
-  const [to, setTo] = useState("");
+  const [to, setTo] = useState(initialTo);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // What is still to move: a second Move after a stop sends only these.
