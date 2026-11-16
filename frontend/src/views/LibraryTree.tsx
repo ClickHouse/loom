@@ -255,7 +255,7 @@ export const LibraryTree = memo(function LibraryTree({
   const tree = useMemo(() => placeTree(rows ?? []), [rows]);
 
   // A collection dragged in the tree.
-  const { held: heldCollection, start: holdCollection, end: dropCollection } = useDragHold<CollectionEntry>();
+  const { held: heldCollection, start: holdCollection, end: endCollectionDrag } = useDragHold<CollectionEntry>();
   // The place under what is held.
   const [over, setOver] = useState<string | null>(null);
   // A collection dropped on a place: the Move dialog, set to it.
@@ -273,7 +273,7 @@ export const LibraryTree = memo(function LibraryTree({
     return {
       draggable: true,
       onDragStart: (e: DragEvent) => holdCollection(e, c, c.namespace),
-      onDragEnd: dropCollection,
+      onDragEnd: endCollectionDrag,
     };
   };
   // Where what is held may land: documents on a place their Move to… lists; a collection
@@ -281,7 +281,7 @@ export const LibraryTree = memo(function LibraryTree({
   const dropAt = (key: string, entry: CollectionEntry | null): DropProps => {
     let land: (() => void) | null = null;
     if (documentDrop) {
-      if (key !== TOP_LEVEL && documentDrop.targets.has(key)) land = () => documentDrop.onDrop(key);
+      if (documentDrop.targets.has(key)) land = () => documentDrop.onDrop(key);
     } else if (heldCollection) {
       const held = heldCollection;
       const fits =
@@ -309,7 +309,7 @@ export const LibraryTree = memo(function LibraryTree({
       onDrop: (e: DragEvent) => {
         e.preventDefault();
         setOver(null);
-        dropCollection();
+        endCollectionDrag();
         drop();
       },
     };
@@ -465,9 +465,13 @@ export const LibraryTree = memo(function LibraryTree({
           // Closed without a move, the Modal hands focus back as it does.
           onCloseAutoFocus={(e) => {
             if (!nested.current) return;
-            e.preventDefault();
             const key = nesting.parent ? placeFocusKey(nesting.parent) : NEW_COLLECTION_FOCUS;
-            document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
+            const to = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`);
+            // Not drawn (New collection's form stands in its button's place): the Modal hands
+            // focus back as it does.
+            if (!to) return;
+            e.preventDefault();
+            to.focus();
           }}
         />
       )}

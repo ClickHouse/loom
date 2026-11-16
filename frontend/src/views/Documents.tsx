@@ -1059,14 +1059,18 @@ export function Documents() {
     return out;
   };
   // Documents dragged from the list onto the tree: the row, or the selection when the row is in
-  // it; `from` is null for a selection across places, which Move to… does not take.
-  const { held: heldDocs, start: holdDocs, end: endDrag } = useDragHold<{ from: string | null; uris: string[] }>();
+  // it. A selection across places does not drag, as Move to… takes one place at a time.
+  const { held: heldDocs, start: holdDocs, end: endDrag } = useDragHold<{ from: string; uris: string[] }>();
   const startDrag = (r: KnowledgeEntry, key: string, e: DragEvent) => {
-    let held: { from: string | null; uris: string[] } = { from: placeOf(r).namespace, uris: [r.source_uri] };
+    let held = { from: placeOf(r).namespace, uris: [r.source_uri] };
     if (selected.has(key)) {
       const groups = [...selectedByPlace()];
       const only = groups.length === 1 ? groups[0] : undefined;
-      held = only ? { from: only[0], uris: only[1].map((x) => x.source_uri) } : { from: null, uris: [] };
+      if (!only) {
+        e.preventDefault();
+        return;
+      }
+      held = { from: only[0], uris: only[1].map((x) => x.source_uri) };
     }
     holdDocs(e, held, r.source_uri);
   };
@@ -1275,10 +1279,10 @@ export function Documents() {
     if (!heldDocs) return null;
     const { from, uris } = heldDocs;
     return {
-      targets: new Set(from ? placesFrom(from).map((p) => p.namespace) : []),
+      targets: new Set(placesFrom(from).map((p) => p.namespace)),
       onDrop: (to) => {
         endDrag();
-        if (from) openMove(from, uris, to);
+        openMove(from, uris, to);
       },
     };
   }, [heldDocs, placesFrom, endDrag, openMove]);

@@ -32,7 +32,7 @@ const doc = (namespace: string, source_uri: string, title: string, hoursAgo: num
   has_blob: true,
   blob_size: 18_000,
   blob_content_type: "text/markdown",
-  original_filename: `${source_uri.split("/").at(-1)}`,
+  original_filename: source_uri.split("/").at(-1) ?? source_uri,
 });
 
 /** The documents the server holds, which a move changes; the calls it was sent. */

@@ -670,14 +670,34 @@ describe("LibraryTree's drops", () => {
 
   it("leaves the focus where the Modal hands it when Move is closed without moving", async () => {
     const dt = await hold("Runbooks");
+    // A press on the row's link focuses it before the drag starts.
+    const dragged = screen.getByRole("link", { name: "Runbooks" });
+    dragged.focus();
     fireEvent.dragOver(row("Ops"), { dataTransfer: dt });
     fireEvent.drop(row("Ops"), { dataTransfer: dt });
     const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(api.moveCollection).not.toHaveBeenCalled();
-    expect(screen.getByRole("link", { name: "Ops" })).not.toHaveFocus();
-    expect(screen.getByRole("button", { name: "New collection" })).not.toHaveFocus();
+    await waitFor(() => expect(dragged).toHaveFocus());
+  });
+
+  it("hands focus back to New collection's open form after a move to the top level", async () => {
+    api.moveCollection.mockResolvedValue({ namespace: "col-runbooks", parent: "", moved: true });
+    tree({ rows: NEST, current: "col-ingest" });
+    await userEvent.click(screen.getByRole("button", { name: "New collection" }));
+    const field = screen.getByRole("textbox", { name: /^New collection/ });
+    expect(field).toHaveFocus();
+    const dt = dataTransfer();
+    fireEvent.dragStart(row("Runbooks"), { dataTransfer: dt });
+    const top = await screen.findByText("Drop here for the top level");
+    fireEvent.dragOver(top, { dataTransfer: dt });
+    fireEvent.drop(top, { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "col-runbooks", ""));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(field).toHaveFocus());
   });
 
   it("drags only a collection the person administers, and not their own files", () => {

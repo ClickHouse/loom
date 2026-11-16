@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "../../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DRAG_TYPE } from "../../lib/useDragHold";
 import { DropZone } from "./DropZone";
 
 afterEach(cleanup);
@@ -32,5 +33,21 @@ describe("DropZone", () => {
     fireEvent.drop(screen.getByTestId("zone"), { dataTransfer: { types: ["Files"], files: [] } });
     expect(onDrop).toHaveBeenCalledTimes(1); // the busy zone hands no drop on
     expect(screen.getByTestId("zone").className).not.toContain("bg-accent-soft");
+  });
+
+  it("leaves alone a document or collection the page moves by dragging", () => {
+    const onDrop = vi.fn();
+    render(
+      <DropZone data-testid="zone" onDrop={onDrop}>
+        <p>files</p>
+      </DropZone>,
+    );
+    const zone = screen.getByTestId("zone");
+    const dataTransfer = { types: [DRAG_TYPE], dropEffect: "move", files: [] };
+    // Not cancelled: the browser shows no drop here.
+    expect(fireEvent.dragOver(zone, { dataTransfer })).toBe(true);
+    expect(zone.className).not.toContain("bg-accent-soft");
+    fireEvent.drop(zone, { dataTransfer });
+    expect(onDrop).not.toHaveBeenCalled();
   });
 });
