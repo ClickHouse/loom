@@ -1,5 +1,5 @@
 """The first cell's state as the router's directory answers it (server/core/cell_router.py):
-the three-valued answer the tenancy check reads, sticky once `serving`, the background
+the four answers the tenancy check reads, sticky once `serving`, the background
 reader of a server process and the on-demand read of one without it, and the heartbeat's
 `router` and `router_why` keys (docs/architecture/cells.md, "The heartbeat's keys")."""
 
@@ -490,10 +490,11 @@ def test_an_unscoped_refusal_without_router_settings_names_them_not_attach(
     assert "attach" not in text
 
 
+@pytest.mark.parametrize("answer", ["serving", "other"])
 def test_an_unscoped_caller_answers_wrong_cell_once_serving_or_on_a_later_cell(
-    enforced: None, monkeypatch: pytest.MonkeyPatch
+    enforced: None, monkeypatch: pytest.MonkeyPatch, answer: str
 ) -> None:
-    read = AsyncMock(return_value="serving")
+    read = AsyncMock(return_value=answer)
     monkeypatch.setattr(cell_router, "directory_answer", read)
     with pytest.raises(errors.WrongCellError):
         asyncio.run(tenancy.ensure_held("new", None))

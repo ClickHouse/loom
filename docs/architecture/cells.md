@@ -554,8 +554,8 @@ read per replica per window; a failed read answers 503 for its window, so a down
 is asked no more often and still answers 503. A process with no heartbeat (a CLI, the
 workers child) asks on demand instead, at most once every `LOOM_TENANCY_MODE_CACHE_S`.
 
-The reader keeps the directory's last answer for the tenancy check too, as three values:
-`attaching`, another state, or unknown while no read has landed, the last one failed,
+The reader keeps the directory's last answer for the tenancy check too, as one of four:
+`attaching`, `serving`, another state, or unknown while no read has landed, the last one failed,
 answered 401 or 404, or is late (older than the period this process reads at, the background
 reader's or the on-demand window, plus `LOOM_CELL_ROUTER_TIMEOUT_S`). Once a process has
 read `serving` it keeps that for its life and asks no more: only `loom cell restore` lowers

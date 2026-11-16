@@ -3,8 +3,8 @@ with the cell's own credential), for the tenancy check and the heartbeat
 (docs/architecture/cells.md, "The heartbeat's keys").
 
 Only a process with `LOOM_CELL` set on a first cell asks: a later cell's route answers 404.
-The answer is three-valued for the tenancy check (`directory_answer`): `attaching`,
-`serving` or another state, and `unknown` while no read has landed, the last one failed or
+The tenancy check reads one of four answers (`directory_answer`): `attaching`, `serving`,
+another state (`other`), or `unknown` while no read has landed, the last one failed or
 answered for no state of this cell, or it is late (older than the period it is read at plus
 `LOOM_CELL_ROUTER_TIMEOUT_S`). Once the process has read `serving` it keeps it for its life
 and asks no more: only `loom cell restore` lowers it, and that restarts the processes.
