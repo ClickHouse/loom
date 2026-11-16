@@ -176,7 +176,13 @@ async def _measure(
 
 
 def set_gap_check(
-    *, memory_type: str, memory_key: str, embedding: list[float], reach: float, peer_ids: set[str]
+    *,
+    memory_type: str,
+    memory_key: str,
+    embedding: list[float],
+    reach: float,
+    peer_ids: set[str],
+    user_id: str = "-",
 ) -> Callable[[list[dict[str, Any]]], bool]:
     """For `memory.set`'s commit (`Admission.gap_check`): a gap clears when no row of it
     is one of the verdict's peers, and every row that could be one (it counts as a
@@ -191,7 +197,7 @@ def set_gap_check(
             for r in rows
             if r["memory_type"] == memory_type
             and r["memory_key"] != memory_key
-            and could_be_peer(r)
+            and could_be_peer(r, user_id)
         ]
         return all(
             d is not None and d > reach + _LOCAL_MARGIN
@@ -224,6 +230,7 @@ async def absorb(
     embedding: list[float],
     max_distance: float,
     peers: list[dict[str, Any]],
+    user_id: str = "-",
 ) -> tuple[dict[tuple[str, str], int], list[dict[str, Any]]] | None:
     """The generations and peer rows a `memory.set` verdict is reached again at: each
     key the gap committed replaces what `peers` held for it, and joins them when it is
@@ -250,7 +257,9 @@ async def absorb(
     candidates = [
         r
         for r in newest.values()
-        if r["memory_type"] == memory_type and r["memory_key"] != memory_key and could_be_peer(r)
+        if r["memory_type"] == memory_type
+        and r["memory_key"] != memory_key
+        and could_be_peer(r, user_id)
     ]
     local = distances([_local_vector(r) for r in candidates], embedding)
     candidates = [
@@ -265,7 +274,7 @@ async def absorb(
                 return None  # published, yet no vector: read the peers anew
             if d <= max_distance:
                 kept.append(_peer_row(r, d))
-    return {**captured, (org, namespace): through}, trim_peers(kept)
+    return {**captured, (org, namespace): through}, trim_peers(kept, user_id)
 
 
 async def gap_is_clear(

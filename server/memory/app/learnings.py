@@ -395,7 +395,8 @@ async def _promote_via_memory_set(
     """Seeder and bot-rule path: the candidate has no source memory yet. Write it
     as a new memory via handle_memory_set so check_on_commit enforces the same
     pinned-reject / dedup / canonical-merge verdicts a regular write would get. A
-    seeder candidate lands at namespace scope under the approver; a bot rule
+    seeder candidate lands under the approver's `user_id`, judged against that user's
+    rows as any write naming its user is; a bot rule
     (`assistant_turn`) as its agent's namespace-wide row (`user_id` '-'), which
     reads bounded to one user do not serve, with the supporters' mean confidence."""
     from server.memory.app.write import handle_memory_set
@@ -408,7 +409,7 @@ async def _promote_via_memory_set(
         # The candidate, not one supporter's session, is where it came from.
         source_trace = f"learning:{candidate_row['candidate_id']}"
     else:
-        # A seeder candidate: namespace scope, under the approver's user_id.
+        # A seeder candidate, under the approver's user_id.
         agent, user_id = "-", approver or "-"
         # The originating conversation, so the row keeps a path back to its thread
         # once the candidate ages out.

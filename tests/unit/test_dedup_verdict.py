@@ -342,6 +342,34 @@ async def test_a_write_naming_its_user_is_judged_against_that_users_rows(install
 
 
 @pytest.mark.asyncio
+async def test_a_restatement_of_another_users_pinned_row_is_written(install_ch) -> None:
+    """A restatement contradicts nothing, so another user's pin does not refuse it."""
+    pinned = _restated_peer(user_id="alice")
+    pinned[0].update(pinned=1)
+    install_ch(_FakeCH(peers=pinned))
+    result = await _write("-", user_id="bob")
+    assert result.verdict == "clear"
+
+
+@pytest.mark.asyncio
+async def test_the_peer_read_of_a_write_naming_its_user_reads_that_users_rows(
+    install_ch,
+) -> None:
+    ch = _FakeCH(peers=[])
+    seen: list[dict[str, Any]] = []
+    query_all = ch.query_all
+
+    async def recording(sql: str, params=None):
+        seen.append(dict(params or {}))
+        return await query_all(sql, params)
+
+    ch.query_all = recording  # type: ignore[method-assign]
+    install_ch(ch)
+    await _write("-", user_id="bob")
+    assert any(p.get("scope_uid") == "bob" for p in seen)
+
+
+@pytest.mark.asyncio
 async def test_another_users_pinned_row_still_blocks_a_write(install_ch) -> None:
     pinned = _restated_peer(user_id="alice")
     pinned[0].update(pinned=1, value='"User prefers MySQL."', dist=0.04)

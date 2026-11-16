@@ -325,6 +325,7 @@ async def commit_set_rows(
             embedding=w.embedding,
             reach=w.max_distance,
             peer_ids={str(p.get("memory_id")) for p in w.peer_rows},
+            user_id=w.input.user_id,
         )
     try:
         return await pg_publish.commit(rows, targets=targets, admission=admission, idempotent=True)
@@ -342,6 +343,7 @@ async def commit_set_rows(
                 embedding=w.embedding,
                 max_distance=w.max_distance,
                 peers=w.peer_rows,
+                user_id=w.input.user_id,
             )
         if absorbed is None:
             w.generations, w.peer_rows = {}, None
@@ -714,6 +716,7 @@ async def _pg_peer_rows(w: _SetWrite, cfg: Any) -> str:
                         memory_key=input.memory_key,
                         embedding=w.embedding,
                         max_distance=w.max_distance,
+                        user_id=input.user_id,
                     )
     return str(policy)
 

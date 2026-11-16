@@ -117,7 +117,7 @@ async def test_definitions_past_the_cap_leave_room_for_the_facts_behind_them(
     metas = [(e, "v", None, None, None) for e in entries]
     pending = [(i, "text", "excerpt", "key text") for i in range(4)]
     out = await bulk_set._bulk_conflict_verdicts(
-        SimpleNamespace(org="o", namespace="n", agent="a"),
+        SimpleNamespace(org="o", namespace="n", agent="a", user_id="-"),
         [{"memory_type": e.memory_type} for e in entries],
         metas,
         pending,
@@ -130,7 +130,7 @@ async def test_definitions_past_the_cap_leave_room_for_the_facts_behind_them(
     assert {out[i].verdict for i in range(3)} == {"clear"}
     # A batch of definitions alone answers each one clear.
     only = await bulk_set._bulk_conflict_verdicts(
-        SimpleNamespace(org="o", namespace="n", agent="a"),
+        SimpleNamespace(org="o", namespace="n", agent="a", user_id="-"),
         [{"memory_type": e.memory_type} for e in entries[:3]],
         metas[:3],
         pending[:3],
@@ -141,7 +141,7 @@ async def test_definitions_past_the_cap_leave_room_for_the_facts_behind_them(
     assert {i: v.verdict for i, v in only.items()} == {0: "clear", 1: "clear", 2: "clear"}
     # At cap 0 nothing is checked, and the batch answers as one with no definition would.
     out = await bulk_set._bulk_conflict_verdicts(
-        SimpleNamespace(org="o", namespace="n", agent="a"),
+        SimpleNamespace(org="o", namespace="n", agent="a", user_id="-"),
         [{"memory_type": e.memory_type} for e in entries],
         metas,
         pending,
