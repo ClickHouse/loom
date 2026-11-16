@@ -1363,3 +1363,28 @@ def test_a_cli_declaring_an_org_name_past_the_limit_refuses_without_a_traceback(
     long = "a" * (cell.ORG_MAX_BYTES + 1)
     with pytest.raises(_ch.OrgNotHeld, match=f"longer than the {cell.ORG_MAX_BYTES}"):
         asyncio.run(_ch.check_orgs([long]))
+
+
+def test_a_cli_without_the_router_token_names_it_for_an_unplaced_org(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CLI on a first cell past attach, its router token removed as the upgrade steps
+    say, declaring an org the cell does not hold: refused, naming the unset setting."""
+    _serving_cell(monkeypatch)
+    monkeypatch.setattr(settings, "cell_router_url", "https://router.example")
+    monkeypatch.setattr(settings, "cell_router_token", "")
+    monkeypatch.setattr(pg, "fetchval", AsyncMock(return_value=None))
+    monkeypatch.setattr(cell, "mode", lambda: "enforced")
+    monkeypatch.setattr(cell, "is_first", lambda: True)
+    monkeypatch.setattr(tenancy, "_held", set())
+    monkeypatch.setattr(tenancy, "_elsewhere", {})
+    monkeypatch.setattr(tenancy, "_place", AsyncMock(side_effect=AssertionError("placed")))
+    monkeypatch.setattr(
+        cell_router, "directory_answer", AsyncMock(return_value=cell_router.UNKNOWN)
+    )
+    with pytest.raises(_ch.OrgNotHeld) as refused:
+        asyncio.run(_ch.check_orgs(["acme"]))
+    assert str(refused.value) == (
+        "refusing: org 'acme' is not held by this cell, and this process cannot ask the "
+        "router (LOOM_CELL_ROUTER_TOKEN unset)"
+    )

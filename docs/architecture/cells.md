@@ -523,11 +523,11 @@ that reports them; no generation key is added.
   pooler stripped, or a process with `LOOM_CELL` unset under the Postgres authority, reads
   `false`; `null` means only that no read has landed (a boot with skipped Postgres
   migrations whose first read failed, or the ClickHouse authority, where nothing is read).
-  The `cell_triggers` readiness check of a process with `LOOM_CELL` set reads the same
+  The `cell_marker` readiness check of a process with `LOOM_CELL` set reads the same
   value: it fails in `enforced` and `partial`, where the triggers refuse an unmarked
   session's writes, and passes with a warning in `recording`, so a first cell behind such a
   pooler does not stall its rollout before attach, which refuses the process
-  ([troubleshooting](../operations/troubleshooting.md#the-cell_triggers-readiness-check-names-the-tenancy-marker)).
+  ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
 - `router` and `router_why`: with `LOOM_CELL` set, present as `null` until the `first` row
   is read and then on a first cell only (a later cell's state route answers 404, so it
   neither asks nor reports them). `router` is whether this process's last read of
@@ -680,9 +680,9 @@ primary alone. The attach command fixes those timeouts, and its tests cover each
 these cases. The mode cache reads the mode with a plain `SELECT`, which takes no row
 lock and never waits on attach. An insert that finds `enforced` (a process whose cache
 still reads `recording`) writes nothing: the request goes on to the placement call as in
-`enforced`, and a CLI command refuses as in `enforced`, naming `loom cell place`. A
-process whose cache still reads `enforced` after step 3 or step 4 returns the cell to
-`recording` places through the router's gate until its cache expires. `loom doctor`
+`enforced`, and a CLI command refuses as in `enforced`, naming the org (`loom cell place`
+places it). A process whose cache still reads `enforced` after step 3 or step 4 returns
+the cell to `recording` places through the router's gate until its cache expires. `loom doctor`
 lists any tenancy row the directory does not place.
 
 - **It runs after verification, before anything is written for the org.** The op gate
@@ -1207,7 +1207,7 @@ the directory row.
 | A cell's `first` value is not yet read                                   | every request but health probes and the probe route answers 503 (SCIM with `Retry-After`); the process is unready and runs no worker (a workers child, or a server process with Postgres migrations pending; any other server process fails its boot)                                                                                                                                                                                |
 | A request for another cell's org                                         | 409 `WRONG_CELL` after verification, nothing written                                                                                                                                                                                                                                                                                                                                                                                 |
 | A platform, `*`-org or principal-less call for an unheld org             | on a first cell, 503 while the directory answers `attaching` or cannot be read before a `serving` answer; 409 `WRONG_CELL` once `serving` and on a later cell                                                                                                                                                                                                                                                                        |
-| A pooler that strips the tenancy marker from a cell's sessions           | the `cell_triggers` readiness check fails in `enforced` and `partial` and warns in `recording`; the heartbeat reports `marked` false and attach refuses the process                                                                                                                                                                                                                                                                  |
+| A pooler that strips the tenancy marker from a cell's sessions           | the `cell_marker` readiness check fails in `enforced` and `partial` and warns in `recording`; the heartbeat reports `marked` false and attach refuses the process                                                                                                                                                                                                                                                                    |
 | A cell restored to an earlier time                                       | `loom cell restore` writes placed orgs' rows back before it starts                                                                                                                                                                                                                                                                                                                                                                   |
 | A first cell restored to before its prepare, not yet attached            | at processes with `LOOM_CELL` set, every request but health probes and the probe route answers 503 until prepare reruns                                                                                                                                                                                                                                                                                                              |
 | The directory lost                                                       | every cell serves the orgs it holds; placements and uncached lookups answer 503, directory commands refuse, until it is back                                                                                                                                                                                                                                                                                                         |
@@ -1409,7 +1409,7 @@ An integration test with two cells and a router in CI's Postgres job:
   2 and `enforced` is placed by step 4 with no 503; after step 3's write of the cell's
   mode, a process whose cache still reads `recording` sends a new org's request to the
   placement call, which a closed cell answers 503; a CLI command whose insert finds
-  `enforced` refuses, naming `loom cell place`, and makes no placement call; after step
+  `enforced` refuses, naming the org, and makes no placement call; after step
   3's refused wait or step 4's recheck returns the cell to `recording`, a new org is
   recorded with no placement call, and one at a process whose cache still reads
   `enforced` places through the gate until the cache expires; each ordering of attach's

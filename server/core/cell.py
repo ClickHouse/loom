@@ -564,7 +564,7 @@ def _decoded(row: Any) -> _View:
         current=json_object(own.get("current_fp")) if own else None,
         next=json_object(own.get("next_fp")) if own else None,
         has_tenancy=bool(row["tenancy"]) if row else False,
-        marked=bool(row["marked"]) if row else False,
+        marked=bool(row["marked"]),
     )
 
 

@@ -411,10 +411,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `LOOM_BOOT_MIGRATE` on, and repeat until `loom doctor` names no missing or disabled
   trigger.
 
-### The cell_triggers readiness check names the tenancy marker
+### The cell_marker readiness check names the tenancy marker
 
 - **Symptom:** `/v1/health/ready` of a process with `LOOM_CELL` set reports the
-  `cell_triggers` check with "pooled Postgres sessions do not keep the tenancy marker":
+  `cell_marker` check with "pooled Postgres sessions do not keep the tenancy marker":
   failing on an `enforced` or `partial` cell, passing with that reason on a first cell still
   `recording`, and the process's cell heartbeat reports `marked` as `false`.
 - **Cause:** a connection pooler between the process and Postgres (a transaction pooler that

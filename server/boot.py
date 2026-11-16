@@ -932,7 +932,7 @@ def register_readiness_checks(ch: Any) -> None:
     if cell.gated_by_state():
         readiness.register("cell", cell.readiness_check)
         if settings.cell:
-            readiness.register("cell_triggers", cell_triggers.readiness_check)
+            readiness.register("cell_marker", cell_triggers.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every
     # replica at once, and an LB with no ready backend would cut off the

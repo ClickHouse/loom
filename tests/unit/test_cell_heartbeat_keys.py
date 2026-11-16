@@ -1,5 +1,5 @@
 """The keys a process's cell heartbeat carries beside its fingerprint (`serves`, `marked`,
-`router`, `router_why`), the marker read in the cell refresh, the `cell_triggers` readiness
+`router`, `router_why`), the marker read in the cell refresh, the `cell_marker` readiness
 check that reads it, the derived tenancy mode, and the boot refusal of a router URL that
 cannot be requested (docs/architecture/cells.md, "The heartbeat's keys")."""
 
@@ -119,7 +119,7 @@ def test_serves_reports_loom_serves_traffic(monkeypatch: pytest.MonkeyPatch) -> 
         ("unread", None, True, ""),
     ],
 )
-def test_the_cell_triggers_check_reads_the_cached_marker(
+def test_the_cell_marker_check_reads_the_cached_marker(
     monkeypatch: pytest.MonkeyPatch, state: str, marked: bool | None, ok: bool, reason: str
 ) -> None:
     rows = {
@@ -135,17 +135,17 @@ def test_the_cell_triggers_check_reads_the_cached_marker(
     assert (reason in found.reason) if reason else found.reason == ""
 
 
-def test_the_cell_triggers_check_runs_only_with_loom_cell_set(
+def test_the_cell_marker_check_runs_only_with_loom_cell_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "storage_authority", "postgres")
     monkeypatch.setattr(readiness, "_CHECKS", {})
     boot.register_readiness_checks(object())
-    assert "cell_triggers" in readiness.names()
+    assert "cell_marker" in readiness.names()
     monkeypatch.setattr(readiness, "_CHECKS", {})
     monkeypatch.setattr(settings, "cell", "")
     boot.register_readiness_checks(object())
-    assert "cell_triggers" not in readiness.names() and "cell" in readiness.names()
+    assert "cell_marker" not in readiness.names() and "cell" in readiness.names()
 
 
 @pytest.mark.parametrize(

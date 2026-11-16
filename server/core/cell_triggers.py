@@ -403,7 +403,7 @@ def _function_defects(function: str, fn: Any) -> list[Defect]:
 
 
 def readiness_check() -> readiness.CheckResult:
-    """The `cell_triggers` readiness check of a process with LOOM_CELL set: whether its
+    """The `cell_marker` readiness check of a process with LOOM_CELL set: whether its
     pooled sessions keep the tenancy marker, as the cell-state read found it
     (`cell.marked`). Without it the cell's triggers judge this process's writes as an
     unchecked writer's, so it fails in `enforced` and `partial`; in `recording` it passes
