@@ -373,18 +373,26 @@ export function Documents() {
   const [tablesFor, setTablesFor] = useState<KnowledgeEntry | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
-  // The documents Move to… was opened for, the place they are in, and the place picked for
-  // them (a drop on the tree); another place shown closes it.
-  const [moving, setMoving] = useState<{ from: string; uris: string[]; to?: string } | null>(null);
+  // The documents being moved, their source and an optional destination picked by a drop.
+  // Showing another place closes the dialog.
+  const [moving, setMoving] = useState<{
+    from: string;
+    uris: string[];
+    to?: string;
+    action?: "add-to-collection";
+  } | null>(null);
   // Whether the open Move to… dialog moved any document: prefer the search when it is mounted.
   const movedSome = useRef(false);
   const moveOpener = useRef<HTMLElement | null>(null);
-  const openMove = useCallback((from: string, uris: string[], to?: string) => {
-    movedSome.current = false;
-    const active = document.activeElement;
-    moveOpener.current = active instanceof HTMLElement && active !== document.body ? active : null;
-    setMoving({ from, uris, to });
-  }, []);
+  const openMove = useCallback(
+    (from: string, uris: string[], options?: { to?: string; action?: "add-to-collection" }) => {
+      movedSome.current = false;
+      const active = document.activeElement;
+      moveOpener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+      setMoving({ from, uris, ...options });
+    },
+    [],
+  );
   useEffect(() => setMoving(null), [place]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
 
@@ -823,7 +831,8 @@ export function Documents() {
         if (!ac.signal.aborted) toastError("Open failed", e, { read: true });
       });
   };
-  const onMove = (r: KnowledgeEntry) => openMove(placeOf(r).namespace, [r.source_uri]);
+  const onMove = (r: KnowledgeEntry, action?: "add-to-collection") =>
+    openMove(placeOf(r).namespace, [r.source_uri], { action });
   // Stable, so the passage list is not built again on each render of the page.
   const openPassage = useCallback(
     (uri: string, ns?: string) =>
@@ -1159,7 +1168,7 @@ export function Documents() {
       replace: setReplaceEntry,
       edit: setEditEntry,
       remove: (r) => void handlers.current.onDelete(r),
-      move: (r) => handlers.current.onMove(r),
+      move: (r, action) => handlers.current.onMove(r, action),
       toggle: toggleRow,
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
       openPlace: (p) => goTo(p),
@@ -1178,6 +1187,16 @@ export function Documents() {
   }, [everyRead, placeLabel, byName]);
   const selectedGroups = selected.size > 0 ? selectedByPlace() : null;
   const selectedPlaces = selectedGroups ? [...selectedGroups.keys()] : [];
+  const moveSelection = (action?: "add-to-collection") => {
+    const from = selectedPlaces[0];
+    const docs = from ? selectedGroups?.get(from) : undefined;
+    if (selectedPlaces.length === 1 && from && docs)
+      openMove(
+        from,
+        docs.map((r) => r.source_uri),
+        { action },
+      );
+  };
   const passagesLeftOut = across && report ? everyPlace.length - report.read.length : 0;
   // All documents with nothing to read: no place listed, or the collections not read.
   const noneToRead = across && rows !== null && readPlaces.length === 0;
@@ -1291,7 +1310,7 @@ export function Documents() {
       targets: new Set(placesFrom(from).map((p) => p.namespace)),
       onDrop: (to) => {
         endDrag();
-        openMove(from, uris, to);
+        openMove(from, uris, { to });
       },
     };
   }, [heldDocs, placesFrom, endDrag, openMove]);
@@ -1322,6 +1341,7 @@ export function Documents() {
       from={moving.from}
       fromLabel={placeLabel(moving.from)}
       sourceUris={moving.uris}
+      action={moving.action}
       places={movePlaces}
       initialTo={moving.to}
       placesReading={
@@ -1543,16 +1563,14 @@ export function Documents() {
                     label: "Move to…",
                     icon: "arrow-right",
                     reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
-                    onClick: () => {
-                      const from = selectedPlaces[0];
-                      const moved = from ? selectedGroups?.get(from) : undefined;
-                      if (from && moved) {
-                        openMove(
-                          from,
-                          moved.map((r) => r.source_uri),
-                        );
-                      }
-                    },
+                    onClick: () => moveSelection(),
+                  },
+                  {
+                    label: "Add to collection…",
+                    icon: "folder-closed",
+                    reason:
+                      selectedPlaces.length > 1 ? "Add to collection… takes documents from one place at a time." : null,
+                    onClick: () => moveSelection("add-to-collection"),
                   },
                   { label: "Delete", icon: "trash", danger: true, loading: bulkBusy, onClick: onBulkDelete },
                 ],
@@ -1998,7 +2016,7 @@ interface DocRowActions {
   replace: (r: KnowledgeEntry) => void;
   edit: (r: KnowledgeEntry) => void;
   remove: (r: KnowledgeEntry) => void;
-  move: (r: KnowledgeEntry) => void;
+  move: (r: KnowledgeEntry, action?: "add-to-collection") => void;
   /** Selection, for the bulk writes, by the row's key; a row whose writes are unavailable has none. */
   toggle: (key: string, range?: boolean) => void;
   tag: (tag: string) => void;
@@ -2128,6 +2146,12 @@ const DocRow = memo(function DocRow({
     { label: "Replace content", icon: "refresh", reason: writeReason, onSelect: () => replace(r) },
     { label: "Edit details", icon: "pencil", reason: writeReason, onSelect: () => edit(r) },
     { label: "Move to…", icon: "arrow-right", reason: writeReason, onSelect: () => move(r) },
+    {
+      label: "Add to collection…",
+      icon: "folder-closed",
+      reason: writeReason,
+      onSelect: () => move(r, "add-to-collection"),
+    },
     {
       label: "Copy URI",
       icon: "copy",

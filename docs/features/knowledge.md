@@ -1142,6 +1142,14 @@ recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 
 ### Moving documents
 
+In the dashboard, **Move to…** on a document row or selection offers places the
+person writes. **Add to collection…** offers only those collections, including **My
+files**. Both move the documents: each document lives in one place. Before confirmation,
+**Add to collection…** says the documents leave their source, and both actions say who
+can read them at the destination. In **All documents** or an everywhere search, a selection
+must come from one place; each row uses its own place. Cancelling leaves the documents
+where they are.
+
 `knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the
 same org: a collection, `@me` (an end user's own collection) or a namespace. The caller
 needs writer on both; one it cannot write answers `found: false` and moves nothing, so the

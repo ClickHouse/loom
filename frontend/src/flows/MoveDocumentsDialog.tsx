@@ -58,6 +58,7 @@ export function MoveDocumentsDialog({
   places,
   placesReading = null,
   initialTo = "",
+  action = "move",
   onMoved,
   onClose,
   onCloseAutoFocus,
@@ -74,6 +75,8 @@ export function MoveDocumentsDialog({
   placesReading?: "loading" | "failed" | "truncated" | null;
   /** The place it opens on (a drop on the Library's tree); none picked otherwise. */
   initialTo?: string;
+  /** Add to collection uses the same relocation, with only collection destinations. */
+  action?: "move" | "add-to-collection";
   /** After every call of a move (a selection goes in calls of `MOVE_MAX`), whatever it
    *  answered (a failed one may have moved some): the sources that call moved. */
   onMoved: (moved: string[]) => void;
@@ -89,7 +92,9 @@ export function MoveDocumentsDialog({
   // Closing it stops the calls still to send; the one in flight runs to its answer.
   const stop = useRef<AbortController | null>(null);
   useEffect(() => () => stop.current?.abort(), []);
-  const target = places.find((p) => p.namespace === to) ?? null;
+  const adding = action === "add-to-collection";
+  const destinations = adding ? places.filter((p) => p.kind !== "namespace") : places;
+  const target = destinations.find((p) => p.namespace === to) ?? null;
   const what = documents(left.length);
 
   const submit = async () => {
@@ -132,7 +137,7 @@ export function MoveDocumentsDialog({
       open
       onOpenChange={(v) => !v && onClose()}
       onCloseAutoFocus={onCloseAutoFocus}
-      title={`Move ${what}`}
+      title={adding ? `Add ${what} to a collection` : `Move ${what}`}
       className="w-full max-w-[480px]"
     >
       <form
@@ -143,8 +148,20 @@ export function MoveDocumentsDialog({
       >
         <div className="space-y-4">
           <p className="text-sm text-text-muted">{`From ${fromLabel}`}</p>
-          <Select id="move-documents-to" label="To" value={to} placeholder="Pick a place" onSelect={setTo} showSearch>
-            {places.map((p) => (
+          {adding && (
+            <p className="text-sm text-text-muted">
+              {`Adding moves ${what} out of ${fromLabel}. Each document lives in one place.`}
+            </p>
+          )}
+          <Select
+            id="move-documents-to"
+            label="To"
+            value={to}
+            placeholder={adding ? "Pick a collection" : "Pick a place"}
+            onSelect={setTo}
+            showSearch
+          >
+            {destinations.map((p) => (
               <Select.Item key={p.namespace} value={p.namespace}>
                 <span className="collection-depth" style={{ "--depth": p.depth } as CSSProperties}>
                   {p.label}
@@ -162,8 +179,12 @@ export function MoveDocumentsDialog({
               Not every collection is listed: there are more than the Library reads.
             </p>
           )}
-          {places.length === 0 && !placesReading && (
-            <p className="text-sm text-text-muted">There is no other place you can add documents to.</p>
+          {destinations.length === 0 && !placesReading && (
+            <p className="text-sm text-text-muted">
+              {adding
+                ? "There is no other collection you can add documents to."
+                : "There is no other place you can add documents to."}
+            </p>
           )}
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>
