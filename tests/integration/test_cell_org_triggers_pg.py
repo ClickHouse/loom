@@ -7,6 +7,7 @@ names what the triggers lack. Each test runs in a database of its own (`_pg_data
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import shutil
 from collections.abc import AsyncIterator
@@ -715,34 +716,38 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("loom_cell", ["eu-1", ""])
-async def test_the_cell_refresh_reads_the_marker_its_pool_sends(loom_cell: str) -> None:
+async def test_the_cell_refresh_reads_the_marker_its_pool_sends(
+    monkeypatch: pytest.MonkeyPatch, loom_cell: str
+) -> None:
     """The pool sends the marker as a startup value with LOOM_CELL set: the refresh reads it
     after RESET ALL; without LOOM_CELL it reads false, never null."""
     from server.settings import settings
 
     async with _cell("recording") as (dsn, _conn):
-        saved = (settings.pg_dsn, settings.cell, pg._expected, cell._view)
-        settings.pg_dsn, settings.cell, pg._expected = dsn, loom_cell, None
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", loom_cell)
+        monkeypatch.setattr(pg, "_expected", None)
+        monkeypatch.setattr(cell, "_view", cell._view)
         try:
             assert await cell.refresh() is True
             assert cell.marked() is bool(loom_cell)
             assert cell.reported_mode() == "recording"
         finally:
             await pg.close_pool()
-            settings.pg_dsn, settings.cell, pg._expected, cell._view = saved
 
 
 @pytest.mark.asyncio
-async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error() -> None:
+async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A read that fails inside the refresh's transaction is rolled back before the pool
     takes the connection back, so the release logs nothing through the loop's handler."""
-    import asyncio
-
     from server.settings import settings
 
     async with _cell("recording") as (dsn, _conn):
-        saved = (settings.pg_dsn, settings.cell, pg._expected)
-        settings.pg_dsn, settings.cell, pg._expected = dsn, "eu-1", None
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", "eu-1")
+        monkeypatch.setattr(pg, "_expected", None)
         loop = asyncio.get_running_loop()
         errors: list[dict[str, Any]] = []
         handler = loop.get_exception_handler()
@@ -759,7 +764,6 @@ async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error()
         finally:
             loop.set_exception_handler(handler)
             await pg.close_pool()
-            settings.pg_dsn, settings.cell, pg._expected = saved
 
 
 @pytest.mark.asyncio
