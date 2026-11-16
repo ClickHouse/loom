@@ -145,9 +145,7 @@ async def test_a_narrowed_writers_conflict_reads_cost_at_most_two_namespace_read
     try:
         scope = conflicts._writer_scope("u3")
         own = await measured("scoped", lambda: conflicts.nearest_peer_rows(ch, params, scope))
-        pinned = await measured(
-            "pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope, own)
-        )
+        pinned = await measured("pinned", lambda: conflicts._foreign_pinned_rows(ch, params, scope))
         bulk = await measured(
             "bulk",
             lambda: conflicts.candidate_rows_many(

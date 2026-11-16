@@ -359,6 +359,31 @@ async def test_a_write_naming_its_user_is_not_judged_against_a_shared_row(instal
 
 
 @pytest.mark.asyncio
+async def test_a_decision_for_a_user_is_checked_against_that_users_decisions(install_ch) -> None:
+    """A close decision of another user under another key is no peer of Bob's decision; a
+    decision recorded with no user still conflicts with it."""
+    from server.memory.app.conflicts import check_on_commit
+
+    install_ch(_FakeCH(peers=_restated_peer(user_id="alice")))
+
+    async def decide(user_id: str):
+        return await check_on_commit(
+            org="clickhouse",
+            namespace="finance",
+            agent="a",
+            memory_type="decision",
+            memory_key="decision:k_new",
+            new_value='"user prefers postgres"',
+            new_embedding=[0.1, 0.2],
+            new_run_id="-",
+            new_user_id=user_id,
+        )
+
+    assert (await decide("bob")).verdict == "clear"
+    assert (await decide("-")).verdict == "conflict"
+
+
+@pytest.mark.asyncio
 async def test_a_restatement_of_a_shared_pinned_row_is_written(install_ch) -> None:
     pinned = _restated_peer(user_id="-")
     pinned[0].update(pinned=1)

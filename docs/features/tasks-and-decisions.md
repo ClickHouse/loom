@@ -311,8 +311,8 @@ decision's row, files it as a duplicate of one, lets one replace it or lets a pi
 read; a close decision under another key is flagged as a conflict. A decision recorded for a user is checked against
 that user's decisions only, as any write that names its user is
 ([how a write is judged](memory/conflicts-and-refusal.md#how-a-write-is-judged)). The conflict resolver may later
-retire one of a close pair it judges an update of the other; that is recorded as `memory.auto_supersede`, and `memory.restore` undoes
-it.
+retire one of a close pair it judges an update of the other; that is recorded as `memory.auto_supersede`, and
+`memory.restore` undoes it.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
 (`superseded_prior=true`); history keeps it. The key is derived as a record's identity key is (see [typed

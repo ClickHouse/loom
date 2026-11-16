@@ -404,7 +404,7 @@ def _foreign_pinned(r: Mapping[str, Any], scope: ReadFilters | None) -> bool:
 
 
 async def _foreign_pinned_rows(
-    ch: Any, params: dict[str, Any], scope: ReadFilters | None, rows: list[dict[str, Any]]
+    ch: Any, params: dict[str, Any], scope: ReadFilters | None
 ) -> list[dict[str, Any]]:
     """The pinned peers the scoped peer query cannot see, for a writer bounded
     below the namespace: a pinned row of another user still blocks its write.
@@ -412,11 +412,8 @@ async def _foreign_pinned_rows(
     pinned one, and the pinned memory rows decide type, not their vectors' metadata."""
     if scope is not None and not scope.narrowed:
         return []
-    seen = {str(r.get("memory_id")) for r in rows}
     pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
-    return [
-        dict(r) for r in pinned if _foreign_pinned(r, scope) and str(r.get("memory_id")) not in seen
-    ]
+    return [dict(r) for r in pinned if _foreign_pinned(r, scope)]
 
 
 async def _scoped_and_pinned_peers(
@@ -426,9 +423,9 @@ async def _scoped_and_pinned_peers(
     statements run together: a write that names its user under a namespace-wide token,
     the common adapter write, needs both."""
     if scope is None:
-        return await _foreign_pinned_rows(ch, params, scope, [])
+        return await _foreign_pinned_rows(ch, params, scope)
     rows, pinned = await asyncio.gather(
-        nearest_peer_rows(ch, params, scope), _foreign_pinned_rows(ch, params, scope, [])
+        nearest_peer_rows(ch, params, scope), _foreign_pinned_rows(ch, params, scope)
     )
     seen = {str(r.get("memory_id")) for r in rows}
     return rows + [r for r in pinned if str(r.get("memory_id")) not in seen]
