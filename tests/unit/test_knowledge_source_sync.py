@@ -912,6 +912,18 @@ def test_a_pass_leaves_a_mirrored_source_of_a_store_without_a_mirror_turn(world:
     assert world.sources[-1].pending_delete
 
 
+def test_a_pass_leaves_a_source_whose_access_this_build_does_not_know(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    world.sources = [_source(access="shared")]  # a later build's value
+    result = asyncio.run(source_sync.run_sync())
+    assert (result.sources, result.synced, result.failed) == (0, 0, 0)
+    assert world.upserts == []
+    world.sources = [_source(access="shared", active=False, pending_delete=True)]
+    result = asyncio.run(source_sync.run_sync())
+    assert (result.retired, result.failed) == (0, 0)
+    assert world.sources[-1].pending_delete  # kept for the build that knows it
+
+
 def test_a_deleted_namespace_s_source_still_has_its_documents_retired(world: _World) -> None:
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     asyncio.run(source_sync.run_sync())
