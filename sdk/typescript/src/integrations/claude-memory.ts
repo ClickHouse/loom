@@ -233,6 +233,7 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
 
   /** The text of the file `path`; a ToolError when it is a directory or nothing. */
   const file = async (shown: string, path: string): Promise<string> => {
+    if (path === ROOT) throw new ToolError(`The path ${shown} is not a file.`);
     const body = await text(path);
     if (body !== null) return body;
     if ((await under(path, 1)).length > 0) throw new ToolError(`The path ${shown} is not a file.`);

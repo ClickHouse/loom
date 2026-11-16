@@ -226,6 +226,8 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
 
     async def _file(self, shown: str, path: str) -> str:
         """The text of the file `path`; ToolError when it is a directory or nothing."""
+        if path == ROOT:
+            raise ToolError(f"The path {shown} is not a file.")
         text = await self._text(path)
         if text is not None:
             return text

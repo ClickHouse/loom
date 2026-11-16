@@ -151,6 +151,18 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     );
   });
 
+  it("refuses edits of the empty root as a directory", async () => {
+    const h = loomMemoryHandlers(harness().agent);
+    for (const path of ["/memories", "/memories/p/.."]) {
+      await expect(h.insert({ command: "insert", path, insert_line: 0, insert_text: "x" })).rejects.toThrow(
+        "is not a file",
+      );
+      await expect(h.str_replace({ command: "str_replace", path, old_str: "x", new_str: "y" })).rejects.toThrow(
+        "is not a file",
+      );
+    }
+  });
+
   it("keeps every path under /memories and a store to its own files", async () => {
     const { agent, docs, ops } = harness();
     const h = loomMemoryHandlers(agent);

@@ -202,6 +202,16 @@ def test_view_refuses_the_reference_line_limit_before_slicing(run: Runner) -> No
         run(docs, {"command": "view", "path": "/memories/n.md", "view_range": [1, 1]})
 
 
+def test_edits_refuse_the_empty_root_as_a_directory(run: Runner) -> None:
+    for path in ("/memories", "/memories/p/.."):
+        for command in (
+            {"command": "insert", "insert_line": 0, "insert_text": "x"},
+            {"command": "str_replace", "old_str": "x", "new_str": "y"},
+        ):
+            with pytest.raises(ToolError, match="is not a file"):
+                run(_Docs(), {**command, "path": path})
+
+
 def test_delete_a_file_or_a_directory(run: Runner) -> None:
     docs = _Docs()
     for path in ("/memories/a.md", "/memories/p/b.md", "/memories/p/c.md", "/memories/pq.md"):
