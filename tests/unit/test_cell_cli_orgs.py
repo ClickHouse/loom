@@ -777,7 +777,7 @@ def test_a_cli_with_loom_cell_set_judges_only_its_stores(monkeypatch: pytest.Mon
 @pytest.fixture(autouse=True)
 def _directory_attaching(monkeypatch: pytest.MonkeyPatch) -> None:
     """The directory answers that the first cell is `attaching`, as during the rollout
-    (the state read's own tests are in test_cell_tenancy.py)."""
+    (the state read's own tests are in test_cell_router.py)."""
     monkeypatch.setattr(cell_router, "directory_answer", AsyncMock(return_value="attaching"))
 
 

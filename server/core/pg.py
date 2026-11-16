@@ -628,7 +628,8 @@ async def fetchrow_reset(sql: str) -> Any:
             await conn.execute("COMMIT")
             return row
         except BaseException as e:
-            # Not `conn.transaction()`: a cancel must not leave a BEGIN asyncpg never saw.
+            # BEGIN and RESET ALL went as one simple query; the rollback reads the protocol's
+            # transaction status, which a cancel mid-BEGIN still sets.
             lost = _lost(conn)
             if not lost and conn.is_in_transaction():
                 try:
