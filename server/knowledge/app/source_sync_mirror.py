@@ -103,8 +103,8 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
                 break
     except _Refused:
         pass  # every stored list is written: the listing row may still land
-    # As in a folder turn, only a full listing looks up what it no longer has: a copy
-    # it does not have already reads `unread`, so waiting for the interval costs nothing.
+    # As in a folder turn, only a turn at the full interval looks up what the listing no
+    # longer has: such a copy already reads `unread`, so the wait costs nothing.
     if result.full and result.complete:
         gone = functools.partial(sync.file_gone, token, listing=listing, turn=result)
         by_id = {str(f["id"]): uri for uri, f in listed.items()}
