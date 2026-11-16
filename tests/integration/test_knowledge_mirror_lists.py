@@ -8,6 +8,7 @@ stores.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from typing import Any
@@ -33,6 +34,7 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
         mirror_uri,
         source_id_tag,
     )
+    from server.knowledge.store import documents
     from server.knowledge.store import sources as store
 
     ch = get_client()
@@ -50,6 +52,7 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
                     "namespace": mirror,
                     "source_uri": uri,
                     "content": "Kept text.",
+                    "content_sha256": hashlib.sha256(b"Kept text.").hexdigest(),
                     "tags": ["source-kind:design_doc", "source:decks", tag],
                     "metadata": json.dumps({"ingested_from": "f1", "source_revision": "r1"}),
                     "version": 1000,
@@ -81,6 +84,8 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
             access=MIRRORED_ACCESS,
             mirror=mirror,
         )
+        before = await documents.get_one(org, mirror, uri)
+        assert before is not None
         written = await source_sync_mirror._write_lists(src, {uri: access_list.AccessList()})
         assert written
 
@@ -89,6 +94,11 @@ async def test_a_list_rewrite_keeps_the_copy_searchable(monkeypatch: pytest.Monk
         assert access_list.from_json(copy["access_json"]) == access_list.AccessList()
         assert copy["searchable"] == "1"  # its chunks still serve: nothing re-embedded
         assert copy["source_revision"] == "r1"
+        after = await documents.get_one(org, mirror, uri)
+        assert after is not None and after.version > before.version
+        # The rewrite is a new version of the same row; only the list differs.
+        kept = {"version", "ingested_at", "access_json"}
+        assert after.model_dump(exclude=kept) == before.model_dump(exclude=kept)
     finally:
         await ch.disconnect()
         if pg.enabled():
