@@ -231,8 +231,8 @@ def test_a_new_org_records_at_default_settings(monkeypatch: pytest.MonkeyPatch) 
         monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
     clock = _clock(monkeypatch)
     monkeypatch.setattr(cell_router, "_background", True)
-    # The worst case: a read stamped as soon as it began, the next one landing a period
-    # and a whole timeout later.
+    # The worst case: the last answer one period plus one whole timeout old when the
+    # next one lands.
     monkeypatch.setattr(cell_router, "_answer", ("attaching", clock.t))
     clock.advance(cell_router.period_s() + float(settings.cell_router_timeout_s))
     held: set[str] = set()

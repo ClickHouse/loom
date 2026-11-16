@@ -1270,6 +1270,32 @@ def test_a_state_read_begun_before_a_change_is_not_cached(
     asyncio.run(_run())
 
 
+def test_a_state_read_slower_than_the_window_serves_the_requests_behind_it(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window is timed from when a read ends: a read that takes longer than
+    LOOM_ROUTER_DIRECTORY_CACHE_S still answers the next request from the cache."""
+    now = [0.0]
+    router = router_app.Router(clock=lambda: now[0])
+    real = directory.first_cell_named
+    calls = 0
+
+    async def _slow(name: str) -> directory.Cell | None:
+        nonlocal calls
+        calls += 1
+        now[0] += 2 * settings.router_directory_cache_s
+        return await real(name)
+
+    monkeypatch.setattr(directory, "first_cell_named", _slow)
+
+    async def _run() -> None:
+        await router._state_row("eu-1")
+        await router._state_row("eu-1")
+
+    asyncio.run(_run())
+    assert calls == 1
+
+
 def test_attach_serving_waits_for_a_state_read_in_flight_and_drops_its_row(
     store: _Store, listener: _Listener, cell_credential: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

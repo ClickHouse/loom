@@ -531,9 +531,9 @@ that reports them; no generation key is added.
   cell behind such a pooler does not stall its rollout before attach, which refuses the
   process
   ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
-- `router` and `router_why`: with `LOOM_CELL` set, present as `null` until the `first` row
-  is read and then on a first cell only (a later cell's state route answers 404, so it
-  neither asks nor reports them). `router` is whether this process's last read of
+- `router` and `router_why`: with `LOOM_CELL` set, `router` is `null` and `router_why`
+  names why until the `first` row is read, and then both are present on a first cell only
+  (a later cell's state route answers 404, so it neither asks nor reports them). `router` is whether this process's last read of
   `GET /cells/v1/cells/<cell>` with its own credential answered 200 naming the cell: `null`
   until the first read answers (still booting), `true` on such an answer, and `false` for a
   configuration that never works: a router setting unset (the process never asks), a URL

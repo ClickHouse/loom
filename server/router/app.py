@@ -337,16 +337,18 @@ class Router:
 
     async def _state_row(self, name: str) -> _StateRead:
         """Cell `name`'s row for its state route, read from the directory at most once per
-        LOOM_ROUTER_DIRECTORY_CACHE_S; a failed read stands for its window too."""
+        LOOM_ROUTER_DIRECTORY_CACHE_S; a failed read stands for its window too, timed from
+        when the read ended, so a read slower than the window still serves the requests
+        queued behind it."""
         async with self._states_lock:
-            now = self._clock()
             read = self._states.get(name)
-            if read is None or now - read.read_at >= settings.router_directory_cache_s:
+            if read is None or self._clock() - read.read_at >= settings.router_directory_cache_s:
                 gen = self._credentials_gen
                 try:
-                    read = _StateRead(await directory.first_cell_named(name), "", now)
+                    row = await directory.first_cell_named(name)
+                    read = _StateRead(row, "", self._clock())
                 except directory.DirectoryUnavailable as e:
-                    read = _StateRead(None, e.reason, now)
+                    read = _StateRead(None, e.reason, self._clock())
                 # A read that began before a change is not kept for a window.
                 if gen == self._credentials_gen:
                     self._states[name] = read
