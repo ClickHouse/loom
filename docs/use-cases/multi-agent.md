@@ -19,6 +19,9 @@ learn and hand over.
   search, separate from long-term memory. [Working memory and profiles](../features/memory/working-memory-and-profiles.md)
 - **Context packs.** `context.pack` builds the bounded bundle an agent loads at the start
   of a task. [Unified search and context packs](../features/unified-search.md)
+- **Session briefs.** The resumable state of one line of work: goal, status, decisions,
+  dead ends and what is done. One agent saves it with `session.brief_save` and the next
+  loads it with `session.brief_get`. [Session briefs](../features/conversations-and-sessions.md#session-briefs)
 - **Framework adapters.** The SDKs present Loom through agent frameworks' own memory
   interfaces. [Agent frameworks](../features/integrations/frameworks.md)
 
