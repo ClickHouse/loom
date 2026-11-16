@@ -538,8 +538,6 @@ async def refresh() -> bool:
     decode, keeps the last view and is retried on schedule."""
     global _view
     try:
-        # Only a cell resets before the read; elsewhere no marker is sent and `marked` reads
-        # false.
         read = pg.fetchrow_reset if settings.cell else pg.fetchrow
         _view = _decoded(await read(_READ))
     except Exception as e:  # noqa: BLE001 — a failed read keeps the last rows; the gate holds

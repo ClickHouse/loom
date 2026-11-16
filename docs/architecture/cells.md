@@ -511,7 +511,7 @@ or in a process that never reads them. Its `fingerprint` JSON holds the fingerpr
 version and fields, and beside them keys that no fingerprint compares: they are never in
 `loom.cell_self`, the directory's fingerprints or a placement body, and a KeeperMap row
 needs no column for them (`server.core.instances.cell_row`). Their presence proves the build
-that reports them; no generation key is added.
+that reports them; there is no generation key.
 
 - `serves`: `LOOM_SERVES_TRAFFIC`.
 - `marked`: whether this process's pooled Postgres sessions keep the tenancy marker
@@ -549,12 +549,13 @@ One background reader per server process asks the route every
 `min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)` on a first cell until it
 has read `serving` (`server/core/cell_router.py`); nothing awaits it, so a slow router
 delays no beat and no request, and the beat reports what it last read, at most one period
-plus one beat old. Every uvicorn process runs one, so a thousand pods of eight workers ask
-up to 1,600 times a second. Each router replica answers the route from its own read of the
-cell's row, made at most once per `LOOM_ROUTER_DIRECTORY_CACHE_S`, so the directory sees one
-read per replica per window; a failed read answers 503 for its window, so a down directory
-is asked no more often and still answers 503. A process with no heartbeat (a CLI, the
-workers child) asks on demand instead, at most once every `LOOM_TENANCY_MODE_CACHE_S`.
+plus `LOOM_CELL_ROUTER_TIMEOUT_S` old when a beat writes it. Every uvicorn process runs one,
+so a thousand pods of eight workers ask up to 1,600 times a second. Each router replica
+answers the route from its own read of the cell's row, made at most once per
+`LOOM_ROUTER_DIRECTORY_CACHE_S`, so the directory sees one read per replica per window; a
+failed read answers 503 for its window, so a down directory is asked no more often and still
+answers 503. A process with no heartbeat (a CLI, the workers child) asks on demand instead,
+at most once every `LOOM_TENANCY_MODE_CACHE_S`.
 
 The reader keeps the directory's last answer for the tenancy check too, as one of four:
 `attaching`, `serving`, another state, or unknown while no read has landed, the last one
