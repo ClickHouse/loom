@@ -4,7 +4,6 @@ the token file, `.env` (set-host), client MCP configs."""
 from __future__ import annotations
 
 import argparse
-import os
 import stat
 from pathlib import Path
 
@@ -15,18 +14,10 @@ from server.cli._paths import write_private
 from server.cli.init import write_config, write_token
 
 
-def _translate_unset_newline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An open that leaves newline unset translates each ``\\n`` to CR LF."""
-    real = os.fdopen
-
-    def fdopen(fd, mode="r", buffering=-1, encoding=None, errors=None, newline=None, **kwargs):
-        if "b" not in mode and newline is None:
-            newline = "\r\n"
-        return real(
-            fd, mode, buffering, encoding=encoding, errors=errors, newline=newline, **kwargs
-        )
-
-    monkeypatch.setattr(os, "fdopen", fdopen)
+def _text_stream(path: Path, text: str, newline: str | None) -> bytes:
+    with path.open("w", encoding="utf-8", newline=newline) as fh:
+        fh.write(text)
+    return path.read_bytes()
 
 
 def _mode(p: Path) -> int:
@@ -70,45 +61,51 @@ def test_set_host_rewrites_env_owner_only(tmp_path: Path) -> None:
     assert text.endswith("\n") and _mode(env) == 0o600
 
 
-def test_write_private_keeps_lf_and_crlf_when_newline_translates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _translate_unset_newline(monkeypatch)
-    lf = tmp_path / "lf.json"
-    crlf = tmp_path / "nested" / "crlf.json"
-    write_private(lf, "{}\n")
-    write_private(crlf, "{\r\n}\r\n")
-    assert lf.read_bytes() == b"{}\n"
-    assert crlf.read_bytes() == b"{\r\n}\r\n"
-    assert _mode(lf) == 0o600
-    assert _mode(crlf) == 0o600 and _mode(crlf.parent) == 0o700
-    assert [p.name for p in tmp_path.iterdir() if not p.is_dir()] == ["lf.json"]
+def test_a_crlf_text_stream_adds_a_cr_on_a_real_file(tmp_path: Path) -> None:
+    text = '{\r\n  "theme": "One Dark",\r\n}\r\n'
+    raw = _text_stream(tmp_path / "stream.json", text, "\r\n")
+    assert raw != text.encode()
+    assert raw.count(b"\r") - raw.count(b"\r\n") == text.count("\n")
 
 
-def test_token_and_config_keep_lf_when_newline_translates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_write_private_default_matches_the_platform_stream_and_raw_does_not(
+    tmp_path: Path,
 ) -> None:
-    _translate_unset_newline(monkeypatch)
+    text = "{\r\n}\r\n"
+    default = tmp_path / "default.json"
+    raw = tmp_path / "nested" / "raw.json"
+    translated = tmp_path / "translated.json"
+    write_private(default, text)
+    write_private(raw, text, newline="")
+    write_private(translated, text, newline="\r\n")
+    assert default.read_bytes() == _text_stream(tmp_path / "platform.json", text, None)
+    assert raw.read_bytes() == text.encode()
+    assert translated.read_bytes() == _text_stream(tmp_path / "stream.json", text, "\r\n")
+    assert translated.read_bytes() != raw.read_bytes()
+    assert _mode(default) == 0o600
+    assert _mode(raw) == 0o600 and _mode(raw.parent) == 0o700
+    assert [p.name for p in tmp_path.iterdir() if p.suffix == ".tmp"] == []
+
+
+def test_token_config_and_set_host_follow_the_platform_stream(tmp_path: Path) -> None:
     token = tmp_path / "token"
     write_token("secret-token", token)
-    assert token.read_bytes() == b"secret-token\n" and _mode(token) == 0o600
+    assert token.read_bytes() == _text_stream(tmp_path / "token-platform", "secret-token\n", None)
+    assert _mode(token) == 0o600
     cfg = tmp_path / "config.json"
     write_config(cfg, url="https://h", namespace="ns", org="org")
-    assert b"\r" not in cfg.read_bytes() and cfg.read_bytes().endswith(b"\n")
+    cfg_text = cfg.read_bytes().decode("utf-8")
+    assert cfg.read_bytes() == _text_stream(tmp_path / "cfg-platform", cfg_text, None)
+    assert _text_stream(tmp_path / "cfg-crlf", cfg_text, "\r\n") != cfg.read_bytes()
     assert _mode(cfg) == 0o600
-
-
-def test_set_host_keeps_lf_when_newline_translates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _translate_unset_newline(monkeypatch)
     env = tmp_path / ".env"
     env.write_bytes(b"LOOM_JWT_SECRET=s3cret\n")
     ns = argparse.Namespace(
         emails=["ops@example.com"], env_file=str(env), append=False, dry_run=False
     )
     assert shell._cmd_set_host(ns) == 0
-    raw = env.read_bytes()
-    assert b"\r" not in raw
-    assert b"LOOM_JWT_SECRET=s3cret\n" in raw
+    env_text = env.read_bytes().decode("utf-8")
+    assert b"LOOM_JWT_SECRET=s3cret\n" in env.read_bytes()
+    assert env.read_bytes() == _text_stream(tmp_path / "env-platform", env_text, None)
+    assert _text_stream(tmp_path / "env-crlf", env_text, "\r\n") != env.read_bytes()
     assert _mode(env) == 0o600

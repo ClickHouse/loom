@@ -379,11 +379,10 @@ def _install_zed(
         if dry_run:
             _print_dry_run(cfg_path, {section: {name: entry}}, token)
             return True
-        write_private(cfg_path, rendered)
+        write_private(cfg_path, rendered, newline="")
         print(f"✓ zed: wrote {name} → {cfg_path}")
         return True
     try:
-        # Bytes, so a CR in the file is still a CR when the splice runs.
         original = cfg_path.read_bytes().decode("utf-8")
     except (UnicodeDecodeError, OSError) as exc:
         _print_zed_manual(
@@ -404,7 +403,7 @@ def _install_zed(
     if not changed:
         print(f"✓ zed: {name} already set → {cfg_path}")
         return True
-    write_private(cfg_path, rendered)
+    write_private(cfg_path, rendered, newline="")
     print(f"✓ zed: wrote {name} → {cfg_path}")
     return True
 

@@ -4,7 +4,6 @@ Code capture (settings.json `env`) writer."""
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 import pytest
@@ -1257,22 +1256,10 @@ def test_zed_install_writes_a_missing_file_with_lf(
     assert _jsonc_object(raw.decode("utf-8"))["context_servers"]["loom"]["url"].endswith("/mcp")
 
 
-def _translate_unset_newline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An open that leaves newline unset translates each ``\\n`` to CR LF.
-
-    That is the stdlib rule when the platform separator is CR LF. An explicit
-    newline is left alone.
-    """
-    real = os.fdopen
-
-    def fdopen(fd, mode="r", buffering=-1, encoding=None, errors=None, newline=None, **kwargs):
-        if "b" not in mode and newline is None:
-            newline = "\r\n"
-        return real(
-            fd, mode, buffering, encoding=encoding, errors=errors, newline=newline, **kwargs
-        )
-
-    monkeypatch.setattr(os, "fdopen", fdopen)
+def _text_stream(path, text: str, newline: str | None) -> bytes:
+    with path.open("w", encoding="utf-8", newline=newline) as fh:
+        fh.write(text)
+    return path.read_bytes()
 
 
 def _zed_round(cfg, original: bytes, *, keep: bytes) -> None:
@@ -1295,31 +1282,25 @@ def _zed_round(cfg, original: bytes, *, keep: bytes) -> None:
     assert twice.count(b"new-token") == 1
 
 
-def test_zed_install_keeps_lf_bytes_when_newline_translates(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _translate_unset_newline(monkeypatch)
+def test_zed_install_keeps_lf_bytes(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _zed_path(tmp_path, monkeypatch)
     original = b'{\n  "theme": "One Dark",\n}\n'
     _zed_round(cfg, original, keep=b'{\n  "theme": "One Dark",')
     assert b"\r" not in cfg.read_bytes()
 
 
-def test_zed_install_keeps_crlf_bytes_when_newline_translates(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _translate_unset_newline(monkeypatch)
+def test_zed_install_keeps_crlf_bytes(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _zed_path(tmp_path, monkeypatch)
     original = b'{\r\n  "theme": "One Dark",\r\n}\r\n'
     _zed_round(cfg, original, keep=b'{\r\n  "theme": "One Dark",')
     raw = cfg.read_bytes()
-    assert b"\r" not in raw.replace(b"\r\n", b"")
+    assert b"\r\r\n" not in raw
+    streamed = _text_stream(tmp_path / "crlf-stream.json", raw.decode("utf-8"), "\r\n")
+    assert streamed != raw
+    assert streamed.count(b"\r") > raw.count(b"\r")
 
 
-def test_zed_install_keeps_mixed_bytes_when_newline_translates(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _translate_unset_newline(monkeypatch)
+def test_zed_install_keeps_mixed_bytes(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _zed_path(tmp_path, monkeypatch)
     original = b'{\r\n  "theme": "One Dark",\n  "ui": "kept"\n}\n'
     _zed_round(cfg, original, keep=b'"ui": "kept",\n')
@@ -1328,10 +1309,7 @@ def test_zed_install_keeps_mixed_bytes_when_newline_translates(
     assert raw.count(b"\r\n") == 1
 
 
-def test_zed_install_keeps_a_bom_and_crlf_when_newline_translates(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _translate_unset_newline(monkeypatch)
+def test_zed_install_keeps_a_bom_and_crlf(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _zed_path(tmp_path, monkeypatch)
     original = b'\xef\xbb\xbf{\r\n  "theme": "One Dark",\r\n}\r\n'
     _zed_round(cfg, original, keep=b'\xef\xbb\xbf{\r\n  "theme": "One Dark",')
@@ -1340,19 +1318,41 @@ def test_zed_install_keeps_a_bom_and_crlf_when_newline_translates(
     assert b"\r" not in raw.replace(b"\r\n", b"")
 
 
-def test_other_client_writes_keep_lf_when_newline_translates(
+def test_only_zed_settings_writes_skip_newline_translation(
     tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _translate_unset_newline(monkeypatch)
-    cfg = tmp_path / "mcp.json"
-    monkeypatch.setattr(cli, "_resolve_install_path", lambda _c: cfg)
+    seen: list[str | None] = []
+    real = cli.write_private
+
+    def wrap(path, text, *args, **kwargs):
+        seen.append(kwargs.get("newline", None))
+        return real(path, text, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "write_private", wrap)
+    zed = _zed_path(tmp_path, monkeypatch)
+    zed.write_bytes(b'{\r\n  "theme": "One Dark",\r\n}\r\n')
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert seen == [""]
+    assert b"\r\r\n" not in zed.read_bytes()
+    seen.clear()
+    fresh = tmp_path / "fresh.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda _client: fresh)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert seen == [""]
+    seen.clear()
+    cursor = tmp_path / "mcp.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda _client: cursor)
     assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
-    assert b"\r" not in cfg.read_bytes()
+    assert seen == [None]
+    cursor_text = cursor.read_bytes().decode("utf-8")
+    assert cursor.read_bytes() == _text_stream(tmp_path / "cursor-platform.json", cursor_text, None)
+    assert _text_stream(tmp_path / "cursor-crlf.json", cursor_text, "\r\n") != cursor.read_bytes()
     monkeypatch.setenv("HOME", str(tmp_path))
     assert cli._install_claude_code_capture("https://h", "secret-token", dry_run=False)
     assert cli._install_codex_capture("https://h", "secret-token", dry_run=False)
-    claude = tmp_path / ".claude" / "settings.json"
-    codex = tmp_path / ".loom" / "config.json"
-    assert b"\r" not in claude.read_bytes()
-    assert b"\r" not in codex.read_bytes()
+    assert seen[1:] == [None, None]
     capsys.readouterr()
