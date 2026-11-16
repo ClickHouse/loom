@@ -9,6 +9,11 @@ ClickHouse (or Postgres for live memory and knowledge state).
 - **Memory and recall.** Versioned facts with provenance, search that abstains when
   nothing is close enough, and a ranking boost for memories that successful runs relied
   on. [Memory](../concepts/memory.md) · [Runs](../features/runs.md)
+- **Procedures.** Reusable how-tos the agent learns from doing: `procedure.add` stores one
+  as a graph of steps, `procedure.match` finds the ones that fit a task, and the runs the
+  agent reports teach Loom the proven path and the steps that fail. A revised graph is kept
+  only if its runs do not do worse.
+  [Procedures and learnings](../features/memory/procedures-and-learnings.md)
 - **Refusal.** A pinned fact refuses contradicting writes, and `blacklist.add` registers a
   pattern no write may store. [Conflicts and refusal](../features/memory/conflicts-and-refusal.md)
 - **Audit.** Each operation that changes memory leaves an audit row with a SHA-256 of its
