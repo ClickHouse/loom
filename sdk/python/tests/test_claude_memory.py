@@ -245,7 +245,7 @@ def test_a_store_sees_only_its_own_files(run: Runner) -> None:
 
 
 def test_it_refuses_a_bad_store_and_the_other_agent_kind() -> None:
-    for store in ("", "a/b", " a"):
+    for store in ("", "a/b", " a", "a ", "a\t", "\x00a"):
         with pytest.raises(ValueError, match="store"):
             _async_tool(_Docs(), store=store)
     with pytest.raises(TypeError, match="LoomMemoryTool"):
@@ -365,6 +365,16 @@ def test_a_listing_walks_each_directory_before_its_neighbours(run: Runner) -> No
     assert run(docs, {"command": "view", "path": "/memories"}).endswith(
         "/memories\n/memories/notes/\n/memories/notes/x.md\n/memories/notes-old.md\n/memories/notes.md"
     )
+
+
+def test_overlapping_matches_are_each_named_as_the_reference_answers(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/n.md", "file_text": "aaaa"})
+    with pytest.raises(ToolError, match="in lines: 1, 1, 1\\."):
+        run(
+            docs,
+            {"command": "str_replace", "path": "/memories/n.md", "old_str": "aa", "new_str": "b"},
+        )
 
 
 def test_a_directory_renamed_into_itself_moves_each_file_once(run: Runner) -> None:

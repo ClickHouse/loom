@@ -448,7 +448,7 @@ refusals are Loom's own (an empty `old_str`, and a path under a file).
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `view`        | a file: `knowledge.get`, its lines numbered, `view_range` honoured; a directory: `knowledge.list` of the store's tag, its files and directories two levels deep                   |
 | `create`      | `knowledge.upsert` of the text; refused when the file or a directory of that path exists                                                                                          |
-| `str_replace` | `knowledge.get`, then `knowledge.upsert` with the one occurrence replaced; refused when `old_str` is empty or appears no time or more than once                                   |
+| `str_replace` | `knowledge.get`, then `knowledge.upsert` with the one occurrence replaced; refused when `old_str` is empty, does not appear, or appears more than once                            |
 | `insert`      | `knowledge.get`, then `knowledge.upsert` with the line inserted at `insert_line`                                                                                                  |
 | `delete`      | `knowledge.bulk_delete` of the file, or of every file under the directory, 500 a call                                                                                             |
 | `rename`      | each file under the old path copied to the new one, then `knowledge.bulk_delete` of the old; refused when the destination exists; a failure partway leaves the copies made so far |

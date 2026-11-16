@@ -242,6 +242,14 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     );
   });
 
+  it("names each overlapping match, as the reference answers", async () => {
+    const h = loomMemoryHandlers(harness().agent);
+    await h.create({ command: "create", path: "/memories/n.md", file_text: "aaaa" });
+    await expect(
+      h.str_replace({ command: "str_replace", path: "/memories/n.md", old_str: "aa", new_str: "b" }),
+    ).rejects.toThrow("in lines: 1, 1, 1.");
+  });
+
   it("renames a directory into itself, moving each file once", async () => {
     const { agent, docs } = harness();
     const h = loomMemoryHandlers(agent);

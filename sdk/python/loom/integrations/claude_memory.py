@@ -65,7 +65,7 @@ class _Store:
     """The documents of one store: path <-> source URI, and its tag."""
 
     def __init__(self, store: str) -> None:
-        # One rule both SDKs apply alike: no edge a space or control character can sit on.
+        # Both SDKs refuse a store whose first or last code point is at or below the space.
         if not store or "/" in store or ord(store[0]) <= 32 or ord(store[-1]) <= 32:
             raise ValueError(f"store is one non-empty path segment, got {store!r}")
         self.tag = f"claude-memory:{store}"
@@ -130,6 +130,7 @@ def _replaced(path: str, text: str, old: str, new: str) -> tuple[str, str]:
             f"No replacement was performed, old_str `{old}` did not appear verbatim in {path}."
         )
     if count > 1:
+        # One entry per match, overlapping ones too, as the reference tool answers.
         lines, start, line, seen = [], 0, 1, 0
         while (pos := text.find(old, start)) != -1:
             line += text.count("\n", seen, pos)  # one pass: newlines since the last match

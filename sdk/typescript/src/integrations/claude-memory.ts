@@ -39,7 +39,7 @@ class Store {
   private readonly prefix: string;
 
   constructor(store: string) {
-    // One rule both SDKs apply alike: no edge a space or control character can sit on.
+    // Both SDKs refuse a store whose first or last code point is at or below the space.
     const edge = (ch: string | undefined) => ch === undefined || (ch.codePointAt(0) ?? 0) <= 32;
     if (!store || store.includes("/") || edge(store[0]) || edge(store[store.length - 1])) {
       throw new Error(`store is one non-empty path segment, got ${JSON.stringify(store)}`);
@@ -152,6 +152,7 @@ function replaced(path: string, text: string, old: string, next: string): [strin
     throw new ToolError(`No replacement was performed, old_str \`${old}\` did not appear verbatim in ${path}.`);
   }
   if (count > 1) {
+    // One entry per match, overlapping ones too, as the reference tool answers.
     const lines: number[] = [];
     let line = 1;
     let seen = 0;
