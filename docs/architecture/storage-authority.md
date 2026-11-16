@@ -283,8 +283,8 @@ sequenceDiagram
    document counted as in (`pg_memory.capture`). Nothing waits here.
 3. **Verdict.** The embedding and the conflict check run outside any transaction.
    Under this authority `memory.set` fetches its peer rows itself
-   (`conflicts.peer_rows`: the writer's peers in its scope, which is its user's rows when it
-   names one (`_writer_scope`), and every pinned one)
+   (`conflicts.peer_rows`: the writer's peers in `_writer_scope`, its user's rows when it
+   names one, and every pinned one)
    and passes them to `check_on_commit`, so a later round can add to them.
 4. **Commit.** One transaction (`pg_memory.commit_versions`), locks taken in one order
    (the policy scopes' advisory locks, shared and sorted; then generation rows by

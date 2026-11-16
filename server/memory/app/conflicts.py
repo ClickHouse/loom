@@ -233,7 +233,9 @@ async def candidate_rows_many(
         candidates = ch.query_all(
             candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
         )
-        if scope.narrowed:  # other users' pinned rows still block; the scope hides them
+        # Pinned rows outside the writer's scope (another user's or a shared one) still
+        # block; the scope hides them.
+        if scope.narrowed:
             rows, pinned = await asyncio.gather(
                 candidates, ch.query_all(pinned_sql_many(len(idxs)), params=params)
             )
@@ -410,10 +412,12 @@ def _foreign_pinned(r: Mapping[str, Any], scope: ReadFilters | None) -> bool:
 async def _foreign_pinned_rows(
     ch: Any, params: dict[str, Any], scope: ReadFilters | None
 ) -> list[dict[str, Any]]:
-    """The pinned peers the scoped peer query cannot see, for a writer bounded
-    below the namespace: a pinned row of another user still blocks its write.
-    Its own statement (`PINNED_PEERS_SQL`), so the writer's closer rows never hide a
-    pinned one, and the pinned memory rows decide type, not their vectors' metadata."""
+    """The pinned peers the scoped peer query cannot see, for a write whose scope is
+    below the namespace: a pinned row outside it (another user's or a shared one)
+    still blocks the write. Its own statement (`PINNED_PEERS_SQL`), so the writer's
+    closer rows never hide a pinned one, and the pinned memory rows decide type, not
+    their vectors' metadata. Disjoint from the scoped read (`scope_where` and
+    `row_in_read_scope` test the same user and session), so no row appears in both."""
     if scope is not None and not scope.narrowed:
         return []
     pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
