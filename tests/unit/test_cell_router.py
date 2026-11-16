@@ -458,7 +458,7 @@ def enforced(monkeypatch: pytest.MonkeyPatch) -> None:
     "answer,refusal",
     [
         ("attaching", "attach in progress"),
-        ("unknown", "cannot tell whether attach still places it"),
+        ("unknown", "is not held by this cell, and"),
     ],
 )
 @pytest.mark.parametrize("principal", ["platform", "none"])
@@ -472,6 +472,22 @@ def test_an_unscoped_caller_on_an_attaching_first_cell_answers_503(
     auth = _auth("*", Role.PLATFORM_ADMIN) if principal == "platform" else None
     with pytest.raises(errors.BackendUnavailableError, match=refusal):
         asyncio.run(tenancy.ensure_held("new", auth))
+
+
+def test_an_unscoped_refusal_without_router_settings_names_them_not_attach(
+    enforced: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the router token unset, as the upgrade steps leave CLIs once attach ends, the
+    refusal names the unset setting and says nothing about attach."""
+    monkeypatch.setattr(
+        cell_router, "directory_answer", AsyncMock(return_value=cell_router.UNKNOWN)
+    )
+    monkeypatch.setattr(cell_router, "unset", lambda: ["LOOM_CELL_ROUTER_TOKEN"])
+    with pytest.raises(errors.BackendUnavailableError) as raised:
+        asyncio.run(tenancy.ensure_held("new", None))
+    text = str(raised.value)
+    assert "cannot ask the router (LOOM_CELL_ROUTER_TOKEN unset)" in text
+    assert "attach" not in text
 
 
 def test_an_unscoped_caller_answers_wrong_cell_once_serving_or_on_a_later_cell(

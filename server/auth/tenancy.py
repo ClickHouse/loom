@@ -238,10 +238,13 @@ async def _refuse_unscoped(org: str) -> None:
             )
         if answer == cell_router.UNKNOWN:
             missing = cell_router.unset()
-            why = f"{', '.join(missing)} unset" if missing else "directory unreadable"
+            if missing:
+                # Also after attach: the upgrade steps unset the token on CLIs once it ends.
+                text = f"this process cannot ask the router ({', '.join(missing)} unset)"
+            else:
+                text = "the directory is unreadable"
             raise BackendUnavailableError(
-                f"org {org!r} is not held by this cell, which cannot tell whether attach "
-                f"still places it here ({why})",
+                f"org {org!r} is not held by this cell, and {text}",
                 operation="tenancy",
             )
     raise WrongCellError(org)
