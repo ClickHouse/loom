@@ -4668,9 +4668,8 @@ settings:
   # span loss at SIGTERM. [restart]
   # otel_metrics_export_interval_s: 60
 
-  # Most series one metric holds (per export interval under delta temporality); past it,
-  # a new attribute set adds to one series marked `otel.metric.overflow`. The request
-  # metrics need about operations x namespaces x outcomes: raise it for many namespaces.
+  # Most series per metric; past it, new attribute sets join one `otel.metric.overflow`
+  # series. Request metrics need about operations x namespaces x transports x outcomes.
   # [restart]
   # otel_metrics_cardinality_limit: 20000
 

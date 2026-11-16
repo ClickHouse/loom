@@ -10,10 +10,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import UTC
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from server.core.ch_names import NamedClient, otel_database, otel_table
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.metrics.export import CardinalityLimits
 
 log = logging.getLogger(__name__)
 
@@ -155,7 +158,7 @@ _SPAN_SCHEDULE_DELAY_MS = 3000
 class _MetricReaderKwargs(TypedDict):
     export_interval_millis: int
     export_timeout_millis: int
-    cardinality_limits: dict[Any, int]
+    cardinality_limits: CardinalityLimits
 
 
 def _metric_reader_kwargs() -> _MetricReaderKwargs:
@@ -164,9 +167,8 @@ def _metric_reader_kwargs() -> _MetricReaderKwargs:
     The export timeout is half the interval, capped at 10 s: the reader runs
     every gauge callback inside collect(), and the probes behind them are
     cached, so a collect that needs longer is stuck, not
-    slow. The series limit replaces the SDK's own (2000 a metric) for every
-    instrument class, so a metric past it is visible as one series marked
-    `otel.metric.overflow` rather than at a limit nobody set.
+    slow. The series limit replaces the SDK's silent 2000 a metric for every
+    instrument class.
     """
     from opentelemetry.sdk.metrics import (
         Counter,

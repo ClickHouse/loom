@@ -57,6 +57,15 @@ def test_default_cadence_is_one_minute_and_spans_keep_three_seconds() -> None:
     assert otel_exporters._SPAN_SCHEDULE_DELAY_MS == 3000
 
 
+def test_the_series_limit_covers_every_instrument_class() -> None:
+    import typing
+
+    from opentelemetry.sdk.metrics.export import InstrumentCardinalityKey
+
+    every = {typing.get_args(t)[0] for t in typing.get_args(InstrumentCardinalityKey)}
+    assert set(otel_exporters._metric_reader_kwargs()["cardinality_limits"]) == every
+
+
 def test_a_metric_keeps_series_up_to_the_setting_then_overflows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
