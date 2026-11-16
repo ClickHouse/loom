@@ -33,7 +33,7 @@ export function isClientId(v: string | null): v is ClientId {
 
 // Clients that speak MCP only over stdio — need the npx mcp-remote shim to
 // bridge to a remote HTTP MCP server. Mirrors server/identity/app/token_clients.py.
-const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "zed", "cline"]);
+const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "cline"]);
 
 // Coding agents mount the `coding` toolset: the memory verbs they call plus the code
 // tools, which the deployment default `core` lists only with LOOM_MCP_CODE_TOOLS.
