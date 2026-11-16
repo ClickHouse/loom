@@ -519,9 +519,8 @@ that reports them; no generation key is added.
   in the same transaction: a startup value survives the reset, a `SET` does not, so a
   pooler, which a cell must not have ([Postgres](../operations/postgres.md)), reads unmarked
   whether it strips startup parameters or sends them again with `SET`, and the read runs on
-  the server connection the reset ran on. It costs two round trips per refresh
-  (`BEGIN; RESET ALL` as one simple query, then `COMMIT`), and every process reports a fresh
-  value with no prober. A session the pooler stripped, or a process with `LOOM_CELL` unset
+  the server connection the reset ran on. It costs three round trips per refresh (`BEGIN`,
+  `RESET ALL` and `COMMIT`), and every process reports a fresh value with no prober. A session the pooler stripped, or a process with `LOOM_CELL` unset
   under the Postgres authority, reads `false`; `null` means only that no read has landed (a
   boot with skipped Postgres migrations whose first read failed, or the ClickHouse
   authority, where nothing is read). The `cell_marker` readiness check of a process with

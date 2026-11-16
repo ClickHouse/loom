@@ -6,10 +6,8 @@ cannot be requested (docs/architecture/cells.md, "The heartbeat's keys")."""
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import time
-from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -175,41 +173,3 @@ def test_a_cell_refuses_to_boot_with_a_router_url_that_cannot_be_requested(
     # A deployment that is not a cell is untouched.
     monkeypatch.setattr(settings, "cell", "")
     assert cell.settings_problem() == ""
-
-
-@pytest.mark.parametrize("failure", [LookupError, asyncio.CancelledError])
-def test_a_failed_reset_read_rolls_back_before_the_release(
-    monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
-) -> None:
-    """The read fails, or is cancelled (a shutdown mid-refresh), after `BEGIN; RESET ALL`:
-    the transaction is rolled back on the connection, so the pool gets it back idle, and
-    the read's error or the cancel is raised."""
-    sent: list[str] = []
-
-    class _Conn:
-        in_transaction = False
-
-        def is_closed(self) -> bool:
-            return False
-
-        def is_in_transaction(self) -> bool:
-            return self.in_transaction
-
-        async def execute(self, sql: str) -> str:
-            sent.append(sql)
-            self.in_transaction = sql.startswith("BEGIN")
-            return ""
-
-        async def fetchrow(self, sql: str) -> Any:
-            raise failure("relation does not exist")
-
-    conn = _Conn()
-
-    @contextlib.asynccontextmanager
-    async def _connection() -> AsyncIterator[Any]:
-        yield conn
-
-    monkeypatch.setattr(pg, "connection", _connection)
-    with pytest.raises(failure):
-        asyncio.run(pg.fetchrow_reset(cell._READ))
-    assert sent == ["BEGIN; RESET ALL", "ROLLBACK"] and not conn.in_transaction

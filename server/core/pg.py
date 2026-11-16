@@ -614,34 +614,13 @@ async def fetchval(sql: str, *args: Any) -> Any:
 
 
 async def fetchrow_reset(sql: str) -> Any:
-    """`fetchrow` after RESET ALL, in one transaction, so it reads the session's settings as
-    its startup values leave them: a SET is gone, and a pooler (which a cell must not
-    have) cannot swap the server connection between the reset and the read. Two round trips
-    more than `fetchrow`: `BEGIN; RESET ALL` in one simple query, then COMMIT. A failure
-    rolls the transaction back before the connection returns to the pool; after a cancel
-    the ROLLBACK is tried too, and where the connection refuses it while the cancel is
-    still in flight, the pool's release reset ends the transaction."""
-    async with connection() as conn:
-        try:
-            await conn.execute("BEGIN; RESET ALL")
-            row = await conn.fetchrow(sql)
-            await conn.execute("COMMIT")
-            return row
-        except BaseException as e:
-            # BEGIN and RESET ALL went as one simple query; the rollback reads the protocol's
-            # transaction status, which a cancel mid-BEGIN still sets.
-            lost = _lost(conn)
-            if not lost and conn.is_in_transaction():
-                try:
-                    await asyncio.wait_for(conn.execute("ROLLBACK"), _RELEASE_TIMEOUT_S)
-                except Exception as rollback:  # noqa: BLE001 — the read's error is raised
-                    log.warning(
-                        "Postgres rollback failed (%s); the pool resets the connection",
-                        error_summary(rollback),
-                    )
-            if isinstance(e, Exception):
-                _raise_if_unavailable(e, lost=lost)
-            raise
+    """`fetchrow` after RESET ALL, in one transaction (`transaction`, with its rollback and
+    error mapping), so it reads the session's settings as its startup values leave them:
+    a SET is gone, and a pooler (which a cell must not have) cannot swap the server
+    connection between the reset and the read. Three round trips more than `fetchrow`."""
+    async with transaction() as conn:
+        await conn.execute("RESET ALL")
+        return await conn.fetchrow(sql)
 
 
 async def execute(sql: str, *args: Any) -> str:

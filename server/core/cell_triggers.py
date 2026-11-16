@@ -419,5 +419,5 @@ def readiness_check() -> readiness.CheckResult:
             True, f"{lost}; once attach raises the mode, the cell's triggers refuse {refused}"
         )
     if state in ("enforced", "partial"):
-        return readiness.result(False, f"{lost}; the cell's triggers refuse {refused}")
+        return readiness.CheckResult(False, f"{lost}; the cell's triggers refuse {refused}")
     return readiness.CheckResult(True)
