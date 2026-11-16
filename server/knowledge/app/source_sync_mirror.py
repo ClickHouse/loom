@@ -51,8 +51,8 @@ log = logging.getLogger("loom.knowledge.source_sync")
 PERMISSIONS_PACE_S = 0.1  # not a setting: the store's limit, the same on every deployment
 # Why a listing row waits on a publication: one owed passes, one parked needs an operator.
 _HELD_BACK = {
-    "owed": "publication: a written list is not in ClickHouse yet",
-    "parked": "publication: a written list is parked; see the knowledge delivery backlog",
+    "owed": "publication: a write is not in ClickHouse yet",
+    "parked": "publication: a write is parked; see the knowledge delivery backlog",
 }
 # List rewrites read and written in one round trip each.
 _REWRITE_BATCH = 100  # not a setting: a bound on one statement's size

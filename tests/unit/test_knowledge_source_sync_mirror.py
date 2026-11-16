@@ -553,7 +553,7 @@ def test_a_publication_owed_when_the_copies_were_read_records_no_listing_row(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     _turn(world, _mirrored())
     assert len(world.upserts) == 1 and mirror["listings"] == []
-    assert _detail(world)["error"] == "publication: a written list is not in ClickHouse yet"
+    assert _detail(world)["error"] == "publication: a write is not in ClickHouse yet"
 
 
 def test_a_failed_permission_read_does_not_hold_back_retirement(
@@ -910,7 +910,7 @@ def test_a_delivery_owed_at_the_read_and_parked_by_the_end_is_noted_parked_first
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     _turn(world, _mirrored())
     assert mirror["listings"] == []
-    assert _detail(world)["error"].startswith("publication: a written list is parked")
+    assert _detail(world)["error"].startswith("publication: a write is parked")
 
 
 def test_a_parked_publication_is_shown_beside_a_failed_fetch(
@@ -927,7 +927,7 @@ def test_a_parked_publication_is_shown_beside_a_failed_fetch(
     world.file_answers["bad1"] = httpx.Response(503)
     _turn(world, _mirrored())
     error = _detail(world)["error"]
-    assert error.startswith("publication: a written list is parked") and "503" in error
+    assert error.startswith("publication: a write is parked") and "503" in error
 
 
 def test_a_parked_publication_is_logged_with_its_source(
