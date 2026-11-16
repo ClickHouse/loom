@@ -424,11 +424,11 @@ async def _scoped_and_pinned_peers(
     the common adapter write, needs both."""
     if scope is None:
         return await _foreign_pinned_rows(ch, params, scope)
+    # Disjoint: the scoped read returns rows inside the scope, the pinned read rows outside it.
     rows, pinned = await asyncio.gather(
         nearest_peer_rows(ch, params, scope), _foreign_pinned_rows(ch, params, scope)
     )
-    seen = {str(r.get("memory_id")) for r in rows}
-    return rows + [r for r in pinned if str(r.get("memory_id")) not in seen]
+    return rows + pinned
 
 
 def _split_by_writer_scope(
