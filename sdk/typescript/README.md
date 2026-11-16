@@ -431,6 +431,13 @@ const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ name: "assistan
 
 Loom's agent verbs (`AgentTools`: `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as function tools built with `tool()` from `@openai/agents`, an optional peer dependency, bound to one user, session or run.
 
+```ts
+import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";
+const session = new LoomSession(bot, "trip-42", { userId: "u-42" }); // run(assistant, input, { session })
+```
+
+`LoomSession` is the SDK's `Session` over loom: the conversation history of one session, as episodic memories of the user's loom session, the same rows the Python `LoomSession` reads.
+
 ## Strands Agents
 
 ```ts

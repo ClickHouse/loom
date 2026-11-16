@@ -143,7 +143,7 @@ describe("dist", () => {
     const esm = (await import(join(dist, "integrations/openai-agents.mjs"))) as object;
     const cjs = require(join(dist, "integrations/openai-agents.cjs")) as object;
     expect(names(esm)).toEqual(names(cjs));
-    expect(names(esm)).toEqual(["loomTools"]);
+    expect(names(esm)).toEqual(["LoomSession", "loomTools"]);
     expect(readFileSync(join(dist, "integrations/openai-agents.mjs"), "utf8")).toMatch(/from "@openai\/agents"/);
   }, 30_000); // loading @openai/agents in both module formats takes seconds
 

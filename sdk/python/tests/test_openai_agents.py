@@ -137,3 +137,161 @@ def test_max_result_chars_caps_what_the_model_reads() -> None:
     out = _invoke(recall, {"query": "seat"})
     assert out.endswith("…[truncated]")
     assert len(out) == 100 + len("…[truncated]")
+
+
+# ---- LoomSession -------------------------------------------------------------
+
+
+class _Rows:
+    """memory.set / list / delete over a dict: (user, session, key) -> value, listed
+    by key in pages of `page`."""
+
+    def __init__(self, page: int = 2) -> None:
+        self.rows: dict[tuple[str | None, str | None, str], Any] = {}
+        self.page = page
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def set(self, key: str, value: Any, memory_type: str, **kw: Any) -> dict[str, Any]:
+        self.calls.append(("set", {"key": key, "memory_type": memory_type, **kw}))
+        self.rows[(kw.get("user_id"), kw.get("session_id"), key)] = json.loads(value)
+        return {}
+
+    async def list(self, *, prefix: str, offset: int = 0, **kw: Any) -> dict[str, Any]:
+        self.calls.append(("list", {"prefix": prefix, "offset": offset, **kw}))
+        keys = sorted(
+            k
+            for (u, s, k) in self.rows
+            if u == kw.get("user_id") and s == kw.get("session_id") and k.startswith(prefix)
+        )
+        page = keys[offset : offset + self.page]
+        rows = [
+            {"memory_key": k, "value": self.rows[(kw.get("user_id"), kw.get("session_id"), k)]}
+            for k in page
+        ]
+        return {"entries": rows, "truncated": offset + self.page < len(keys)}
+
+    async def delete(self, key: str, **kw: Any) -> bool:
+        self.calls.append(("delete", {"key": key, **kw}))
+        return self.rows.pop((kw.get("user_id"), kw.get("session_id"), key), None) is not None
+
+
+class _Memory:
+    def __init__(self, rows: _Rows) -> None:
+        self.memory = rows
+
+
+def _session(rows: _Rows, session_id: str = "s1", **kw: Any) -> Any:
+    from loom.integrations.openai_agents import LoomSession
+
+    return LoomSession(_Memory(rows), session_id, **{"user_id": "alice", **kw})  # type: ignore[arg-type]
+
+
+def _msg(role: str, text: str) -> dict[str, Any]:
+    return {"role": role, "content": text}
+
+
+def test_a_session_keeps_items_in_order_across_pages_and_repeats() -> None:
+    rows = _Rows()
+    session = _session(rows)
+    items = [_msg("user", "hi"), _msg("assistant", "hello"), _msg("user", "hi")]
+    asyncio.run(session.add_items(items))
+    asyncio.run(session.add_items([_msg("assistant", "again")]))
+    assert asyncio.run(session.get_items()) == [*items, _msg("assistant", "again")]
+    assert asyncio.run(session.get_items(limit=2)) == [
+        _msg("user", "hi"),
+        _msg("assistant", "again"),
+    ]
+    assert asyncio.run(session.get_items(limit=0)) == []
+    sets = [kw for op, kw in rows.calls if op == "set"]
+    assert {kw["memory_type"] for kw in sets} == {"episodic"}
+    assert {(kw["user_id"], kw["session_id"]) for kw in sets} == {("alice", session._loom_session)}
+
+
+def test_pop_item_removes_and_returns_the_latest_item() -> None:
+    rows = _Rows()
+    session = _session(rows)
+    asyncio.run(session.add_items([_msg("user", "a"), _msg("assistant", "b")]))
+    assert asyncio.run(session.pop_item()) == _msg("assistant", "b")
+    assert asyncio.run(session.get_items()) == [_msg("user", "a")]
+    assert asyncio.run(session.pop_item()) == _msg("user", "a")
+    assert asyncio.run(session.pop_item()) is None
+
+
+def test_clear_session_deletes_only_this_sessions_items() -> None:
+    rows = _Rows()
+    mine, other, bobs = _session(rows), _session(rows, "s2"), _session(rows, user_id="bob")
+    for session in (mine, other, bobs):
+        asyncio.run(session.add_items([_msg("user", "x"), _msg("user", "y"), _msg("user", "z")]))
+    asyncio.run(mine.clear_session())
+    assert asyncio.run(mine.get_items()) == []
+    assert len(asyncio.run(other.get_items())) == len(asyncio.run(bobs.get_items())) == 3
+
+
+def test_session_settings_limit_is_the_default_limit() -> None:
+    from agents.memory import SessionSettings
+
+    rows = _Rows()
+    session = _session(rows, session_settings=SessionSettings(limit=1))
+    asyncio.run(session.add_items([_msg("user", "a"), _msg("user", "b")]))
+    assert asyncio.run(session.get_items()) == [_msg("user", "b")]
+    assert len(asyncio.run(session.get_items(limit=5))) == 2
+
+
+def test_the_loom_session_is_per_user_and_unambiguous() -> None:
+    def loom_session(user: str | None, session_id: str) -> str:
+        return str(_session(_Rows(), session_id, user_id=user)._loom_session)
+
+    assert loom_session("alice", "s1") != loom_session("bob", "s1")
+    assert loom_session("a/b", "c") != loom_session("a", "b/c")
+    assert loom_session(None, "s1").startswith("oai-")
+    # The TypeScript LoomSession names the same: sha256 of the compact JSON pair.
+    assert loom_session("alice", "s1") == "oai-65872b142b2cfb23bddc"
+
+
+def test_a_session_refuses_a_missing_id_a_user_naming_none_and_an_empty_prefix() -> None:
+    with pytest.raises(ValueError, match="session_id"):
+        _session(_Rows(), "")
+    for user in ("", "-"):
+        with pytest.raises(ValueError, match="names none"):
+            _session(_Rows(), user_id=user)
+    with pytest.raises(ValueError, match="key_prefix"):
+        _session(_Rows(), key_prefix="/")
+
+
+def test_a_runner_reads_and_extends_the_history_through_the_session() -> None:
+    from agents import Agent as OpenAIAgent
+    from agents import Runner
+    from agents.items import ModelResponse
+    from agents.models.interface import Model
+    from agents.usage import Usage
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    seen: list[list[Any]] = []
+
+    class _Echo(Model):
+        async def get_response(
+            self, system_instructions: Any, input: Any, *a: Any, **kw: Any
+        ) -> ModelResponse:
+            seen.append(list(input) if isinstance(input, list) else [input])
+            text = ResponseOutputText(text=f"reply {len(seen)}", type="output_text", annotations=[])
+            message = ResponseOutputMessage(
+                id=f"m{len(seen)}",
+                content=[text],
+                role="assistant",
+                status="completed",
+                type="message",
+            )
+            return ModelResponse(output=[message], usage=Usage(), response_id=None)
+
+        def stream_response(self, *a: Any, **kw: Any) -> Any:
+            raise NotImplementedError
+
+    rows = _Rows(page=100)
+    session = _session(rows)
+    assistant = OpenAIAgent(name="assistant", model=_Echo())
+    asyncio.run(Runner.run(assistant, "first", session=session))
+    asyncio.run(Runner.run(assistant, "second", session=session))
+    second_input = seen[1]
+    assert [i.get("content") if isinstance(i, dict) else None for i in second_input][0] == "first"
+    history = asyncio.run(session.get_items())
+    assert [h.get("role") for h in history] == ["user", "assistant", "user", "assistant"]

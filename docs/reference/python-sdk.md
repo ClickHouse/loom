@@ -243,8 +243,9 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   `aflush(memory)` hands what is left in the window to the `Memory`'s blocks
   and archives it.
 - `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
-  `AgentTools` as OpenAI Agents SDK `FunctionTool`s; install the
-  `[openai-agents]` extra.
+  `AgentTools` as OpenAI Agents SDK `FunctionTool`s, and
+  `LoomSession(agent, session_id, user_id=...)` is its `Session`, the history kept as
+  episodic memories; install the `[openai-agents]` extra.
 - `loom.integrations.crewai.LoomCrewMemory(agent=...)` is a CrewAI `Memory`
   over a `SyncAgent`: `recall` is `memory.search`, a task's output goes to
   `memory.set_from_messages`; install the `[crewai]` extra.

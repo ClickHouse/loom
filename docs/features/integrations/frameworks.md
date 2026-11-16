@@ -15,8 +15,8 @@ or needs another database, vector store or cache.
 | LangChain                      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                     | `BaseRetriever`                                                          |
 | LangChain.js                   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain`     | `BaseRetriever` from `@langchain/core`                                   |
 | LlamaIndex                     | `LoomRetriever`, `LoomMemoryBlock`              | Python, `loom.integrations.llamaindex`                    | `BaseRetriever`, `BaseMemoryBlock`                                       |
-| OpenAI Agents SDK              | `loom_tools`                                    | Python, `loom.integrations.openai_agents`                 | `FunctionTool`                                                           |
-| OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`                                           |
+| OpenAI Agents SDK              | `loom_tools`, `LoomSession` | Python, `loom.integrations.openai_agents`                 | `FunctionTool`, the `Session` protocol |
+| OpenAI Agents SDK (TypeScript) | `loomTools`, `LoomSession` | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`, `Session` |
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                                                   |
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`                                             |
 | AG2                            | `LoomRecallPolicy`, `loom_tools`                | Python, `loom.integrations.ag2`                           | `ag2.assembly.AssemblyPolicy`, `tool()` from `ag2.tools`                 |
@@ -191,10 +191,41 @@ parameters, so the tools are not strict. A call Loom refuses (a missing argument
 rejected value, a server error) returns `<tool> failed: <message>` to the model, which can
 correct the call; the run goes on.
 
-Conversation history stays in the session store the run is given: the OpenAI Agents
-SDK's `Session` protocol removes and clears items, and Loom's conversations are
-append-only. To keep what a conversation established, give the model `loom_remember`, or
-send the turns to `memory.set_from_messages`.
+`LoomSession` is the OpenAI Agents SDK's `Session` over Loom: a run given it reads and
+extends the conversation history of one session there, so every process (and the TypeScript
+`LoomSession`) that opens the same session id for the same user reads the same history, and
+a handoff between agents of one run keeps it.
+
+```python
+from loom.integrations.openai_agents import LoomSession
+
+session = LoomSession(loom_agent, "trip-42", user_id="alice")
+result = await Runner.run(assistant, "Book my usual seat to Lisbon", session=session)
+```
+
+| `Session`       | Loom                                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `get_items`     | `memory.list` of the session's items, oldest first; `limit` (or `session_settings.limit`) keeps the latest             |
+| `add_items`     | one `memory.set` per item, an `episodic` memory under `<key_prefix>/<nanoseconds>-<random>`, the item's JSON its value |
+| `pop_item`      | the latest item, deleted with `memory.delete` and returned                                                             |
+| `clear_session` | `memory.delete` of every item of the session                                                                           |
+
+An `episodic` memory is not embedded, so an item is never merged with or judged against
+another row, and a repeated item stays two items (one `memory.set` per item: a batch would
+fold a value identical to a live row). Items are stored under a Loom session derived from
+the user and the session id (`oai-` and a digest of the pair), and keys sort in the order
+the items were added. The history is the user's: unset, `user_id` writes the namespace's
+shared rows; an empty or `-` user raises `ValueError`. To keep what a conversation
+established beyond its history, give the model `loom_remember`, or send the turns to
+`memory.set_from_messages`.
+
+| `LoomSession` argument | Default         | Effect                                                          |
+| ---------------------- | --------------- | --------------------------------------------------------------- |
+| `agent`                | required        | the `loom.Agent` the session calls                              |
+| `session_id`           | required        | the session's id                                                |
+| `user_id`              | none            | the end user the history belongs to                             |
+| `key_prefix`           | `openai-agents` | the items' key prefix                                           |
+| `session_settings`     | the SDK's       | `limit`: the default number of latest items `get_items` returns |
 
 In TypeScript, `loomTools(agent, scope)` from `@clickhouse/loom/integrations/openai-agents`
 returns the same tools built with `tool()` from `@openai/agents`, an optional peer
@@ -209,6 +240,16 @@ const assistant = new OpenAIAgent({
   tools: loomTools(agent, { userId: "alice" }),
 });
 const result = await run(assistant, "Book my usual seat to Lisbon");
+```
+
+`new LoomSession(agent, sessionId, { userId, keyPrefix })` is the TypeScript `Session`, over
+the same rows as the Python one:
+
+```ts
+import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";
+
+const session = new LoomSession(agent, "trip-42", { userId: "alice" });
+const result = await run(assistant, "Book my usual seat to Lisbon", { session });
 ```
 
 ## CrewAI
