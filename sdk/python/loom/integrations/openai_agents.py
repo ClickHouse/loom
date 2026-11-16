@@ -154,6 +154,7 @@ class LoomSession:
         if limit is not None and limit <= 0:
             return []
         rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
         offset = 0
         while True:
             page = await self._agent.memory.list(
@@ -164,12 +165,14 @@ class LoomSession:
                 fields=["memory_key", "value", "value_truncated", "created_at"],
                 **self._scope(),
             )
-            offset += _PAGE
-            rows += [
-                r
-                for r in page["entries"]
-                if _ITEM_KEY.fullmatch(str(r["memory_key"])[len(self._prefix) :])
-            ]
+            entries = page["entries"]
+            # The server may cap a viewer's page or filter stale projected rows.
+            offset += max(1, len(entries))
+            for row in entries:
+                key = str(row["memory_key"])
+                if key not in seen and _ITEM_KEY.fullmatch(key[len(self._prefix) :]):
+                    seen.add(key)
+                    rows.append(row)
             if not page.get("truncated"):
                 break
             if limit is not None and len(rows) > limit:

@@ -112,6 +112,7 @@ export class LoomSession implements Session {
     if (limit !== undefined && limit <= 0) return [];
     const scope = await this.scope();
     const rows: ItemRow[] = [];
+    const seen = new Set<string>();
     let offset = 0;
     for (;;) {
       const page = await this.agent.call(
@@ -126,8 +127,14 @@ export class LoomSession implements Session {
         scope,
       );
       const entries = page.entries as ItemRow[];
-      offset += SESSION_PAGE;
-      rows.push(...entries.filter((r) => ITEM_KEY.test(r.memory_key.slice(this.prefix.length))));
+      // The server may cap a viewer's page or filter stale projected rows.
+      offset += Math.max(1, entries.length);
+      for (const row of entries) {
+        if (!seen.has(row.memory_key) && ITEM_KEY.test(row.memory_key.slice(this.prefix.length))) {
+          seen.add(row.memory_key);
+          rows.push(row);
+        }
+      }
       if (!page.truncated) break;
       if (limit !== undefined && rows.length > limit) {
         if (String(rows[rows.length - 1].created_at) < String(rows[limit - 1].created_at)) break;

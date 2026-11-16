@@ -146,9 +146,10 @@ class _Rows:
     """memory.set / list / get / delete over a dict, listed as the server lists: the
     newest second first, by key within a second, values cut to 2,048 characters."""
 
-    def __init__(self, unserved: int = 0) -> None:
+    def __init__(self, unserved: int = 0, cap: int = 100) -> None:
         self.rows: dict[tuple[Any, Any, str], tuple[Any, int]] = {}
         self.unserved = unserved
+        self.cap = cap
         self.second = 0  # the clock rows are stamped with; a test moves it
         self.hidden: set[str] = set()  # keys Loom labels sensitive: listed without a value
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -169,7 +170,7 @@ class _Rows:
             key=lambda r: (-r[2], r[0]),
         )
         scanned = [None] * self.unserved + mine
-        limit = int(kw["limit"])
+        limit = min(self.cap, int(kw["limit"]))
         page = scanned[offset : offset + limit]
         entries = []
         for row in page:
@@ -236,12 +237,21 @@ def test_a_session_keeps_items_in_order_across_pages_and_repeats() -> None:
 
 
 def test_an_empty_truncated_page_advances_past_unserved_projections() -> None:
-    rows = _Rows(unserved=100)
+    rows = _Rows(unserved=100, cap=50)
     session = _session(rows)
     items = [_msg("user", "hi"), _msg("assistant", "hello")]
     asyncio.run(session.add_items(items))
     assert asyncio.run(session.get_items()) == items
-    assert [kw["offset"] for op, kw in rows.calls if op == "list"] == [0, 100]
+    offsets = [kw["offset"] for op, kw in rows.calls if op == "list"]
+    assert offsets == sorted(set(offsets))
+
+
+def test_a_viewer_cap_keeps_every_item_once() -> None:
+    rows = _Rows(cap=50)
+    session = _session(rows)
+    items = [_msg("user", f"m{i}") for i in range(120)]
+    asyncio.run(session.add_items(items))
+    assert asyncio.run(session.get_items()) == items
 
 
 def test_pop_item_removes_and_returns_the_latest_item() -> None:

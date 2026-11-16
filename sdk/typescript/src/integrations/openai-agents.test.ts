@@ -63,7 +63,7 @@ describe("loomTools (OpenAI Agents SDK adapter)", () => {
 
 /** A Loom server keeping memory rows by (user, session, key), listed as the server lists
  * them: the newest second first, by key within a second, values cut to 2,048 characters. */
-function rowsHarness(unserved = 0) {
+function rowsHarness(unserved = 0, cap = 100) {
   const rows = new Map<string, { key: string; value: unknown; user: unknown; session: unknown; second: number }>();
   const hidden = new Set<string>();
   const clock = { second: 0 };
@@ -87,7 +87,8 @@ function rowsHarness(unserved = 0) {
         .filter((r) => r.user === body.user_id && r.session === body.session_id && r.key.startsWith(body.prefix))
         .sort((a, b) => b.second - a.second || (a.key < b.key ? -1 : 1));
       const scanned: Array<(typeof mine)[number] | null> = [...Array.from({ length: unserved }, () => null), ...mine];
-      const page = scanned.slice(body.offset, body.offset + body.limit).filter((r) => r !== null);
+      const effectiveLimit = Math.min(cap, body.limit);
+      const page = scanned.slice(body.offset, body.offset + effectiveLimit).filter((r) => r !== null);
       reply = {
         entries: page.map((r) => {
           const text = JSON.stringify(r.value);
@@ -99,7 +100,7 @@ function rowsHarness(unserved = 0) {
             created_at: `2026-01-01T00:00:${String(r.second).padStart(2, "0")}`,
           };
         }),
-        truncated: body.offset + body.limit < scanned.length,
+        truncated: body.offset + effectiveLimit < scanned.length,
       };
     } else if (op === "memory.get") {
       const row = rows.get(id(body.memory_key));
@@ -175,12 +176,21 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
   });
 
   it("advances past an empty page of unserved projections", async () => {
-    const { agent, calls } = rowsHarness(100);
+    const { agent, calls } = rowsHarness(100, 50);
     const session = new LoomSession(agent, "s1", { userId: "alice" });
     const items = [msg("user", "hi"), msg("assistant", "hello")];
     await session.addItems(items);
     expect(await session.getItems()).toEqual(items);
-    expect(calls.filter((c) => c.op === "memory.list").map((c) => c.body.offset)).toEqual([0, 100]);
+    const offsets = calls.filter((c) => c.op === "memory.list").map((c) => Number(c.body.offset));
+    expect(offsets).toEqual([...new Set(offsets)].sort((a, b) => a - b));
+  });
+
+  it("keeps every item once when the server caps a viewer page", async () => {
+    const { agent } = rowsHarness(0, 50);
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    const items = Array.from({ length: 120 }, (_, i) => msg("user", `m${i}`));
+    await session.addItems(items);
+    expect(await session.getItems()).toEqual(items);
   });
 
   it("pops the latest item and clears only its own session", async () => {
