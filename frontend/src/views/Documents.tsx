@@ -55,6 +55,8 @@ import { needsRole, useNamespaceRoleRead } from "../lib/namespaceRole";
 import { ROLE_LOADING, needsLine } from "../lib/callReason";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
+import { DropZone } from "../components/ui/DropZone";
+import { captureFileDrop } from "../lib/folderUpload";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
@@ -344,6 +346,10 @@ export function Documents() {
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [initialDrop, setInitialDrop] = useState<ReturnType<typeof captureFileDrop> | undefined>();
+  useEffect(() => {
+    if (!addOpen) setInitialDrop(undefined);
+  }, [addOpen]);
   // New collection: the picker's dialog, which the empty Library opens too.
   const [creatingCollection, setCreatingCollection] = useState(false);
   // An upload of many files has started: the dialog stays open when the place shown changes.
@@ -1378,11 +1384,20 @@ export function Documents() {
       identity={{ org: identity.org, namespace: identity.namespace }}
       place={addsTo ? distinctTitle(addsTo, repeated) : identity.namespace}
       tree={folderTree}
+      initialDrop={initialDrop}
       // Folders wait for a list still being read (or read again after it failed), or one too
       // long to show; a collection not in a whole list takes none.
       foldersLater={!folderTree && (collections.rows === null || collections.truncated)}
       onAdded={reloadAfterWrite}
     />
+  );
+  const emptyDropAllowed = !!shown && !across && writeReason === null;
+  const emptyAdd = (
+    <Unavailable reason={writeReason}>
+      <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+        Add document
+      </Button>
+    </Unavailable>
   );
   // Either page beside the places tree, when there is room for one. The dialog keeps one
   // place in React's tree whichever page shows, so React keeps it.
@@ -1722,11 +1737,25 @@ export function Documents() {
           // One Add, unavailable with why to a role that cannot add or is still loading, so it
           // keeps its focus as the role resolves.
           actions={
-            <Unavailable reason={writeReason}>
-              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-                Add document
-              </Button>
-            </Unavailable>
+            emptyDropAllowed ? (
+              <DropZone
+                data-testid="library-empty-drop"
+                className="space-y-3 p-6"
+                onDrop={(e) => {
+                  const captured = captureFileDrop(e.dataTransfer);
+                  if (!captured.files.length && !captured.entries.length) return;
+                  setInitialDrop(captured);
+                  setAddOpen(true);
+                }}
+              >
+                <p className="text-sm text-text-muted">
+                  {folderTree ? "Drop files or folders here" : "Drop files here"}
+                </p>
+                {emptyAdd}
+              </DropZone>
+            ) : (
+              emptyAdd
+            )
           }
         />
       )}

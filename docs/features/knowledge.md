@@ -1321,6 +1321,11 @@ print(status["state"], status["revision"], status["coverage"])
 
 ### Many files from the dashboard
 
+An empty collection the person writes also accepts files and folders in its **Drop files
+or folders here** area. Dropping opens the same **Add document** preview for that
+collection; the person confirms before any upload starts. A folder keeps its nesting as
+[below](#a-folder-from-the-dashboard).
+
 The Library's **Add document** takes several files at once, picked together or dropped
 on it, and names the place they go to. Each file is its own upload and ingest, as above,
 under its file name as the source; there is no batch op. Before sending, the dialog

@@ -4,7 +4,7 @@ import { installApi } from "./fixtures";
 const COLLECTIONS = [
   { namespace: "col-me-e2e", parent: "", personal: true, role: "admin", title: "", description: "" },
   { namespace: "col-runbooks", parent: "", personal: false, role: "writer", title: "Runbooks", description: "" },
-  { namespace: "policies", parent: "", personal: false, role: "writer", title: "Reference", description: "" },
+  { namespace: "col-policies", parent: "", personal: false, role: "writer", title: "Reference", description: "" },
   { namespace: "col-legal", parent: "", personal: false, role: "viewer", title: "Legal", description: "" },
 ];
 const doc = (namespace: string, source_uri: string, title: string) => ({
@@ -81,12 +81,74 @@ for (const width of [1440, 375]) {
       expect(moves).toEqual([
         expect.objectContaining({
           namespace: "col-runbooks",
-          to_namespace: "policies",
+          to_namespace: "col-policies",
           source_uris: ["runbooks/drain.md"],
         }),
       ]);
       await expect(row(page, "Drain a lane").getByRole("link", { name: "Reference" })).toBeVisible();
       await page.screenshot({ path: info.outputPath("row-moved.png") });
+    });
+
+    test("an empty collection takes files and folders into Add, and cancel clears the captured files", async ({
+      page,
+    }) => {
+      await open(page);
+      await page.goto("/library?collection=col-policies");
+      const zone = page.getByTestId("library-empty-drop");
+      await expect(zone.getByText("Drop files or folders here")).toBeVisible();
+      for (const folder of [false, true]) {
+        const transfer = await page.evaluateHandle((isFolder) => {
+          const file = new File(["incident notes"], "notes.txt", { type: "text/plain" });
+          const data = new DataTransfer();
+          data.items.add(file);
+          if (isFolder) {
+            Object.defineProperty(data, "items", {
+              value: [
+                {
+                  kind: "file",
+                  getAsFile: () => null,
+                  webkitGetAsEntry: () => ({
+                    isFile: false,
+                    isDirectory: true,
+                    name: "Incidents",
+                    createReader: () => {
+                      const batches = [
+                        [
+                          {
+                            isFile: true,
+                            isDirectory: false,
+                            name: file.name,
+                            file: (ok: (f: File) => void) => ok(file),
+                          },
+                        ],
+                        [],
+                      ];
+                      return { readEntries: (ok: (entries: unknown[]) => void) => ok(batches.shift() ?? []) };
+                    },
+                  }),
+                },
+              ],
+            });
+          }
+          return data;
+        }, folder);
+        if (folder) expect(await transfer.evaluate((data) => data.items[0].webkitGetAsEntry()?.isDirectory)).toBe(true);
+        await zone.dispatchEvent("dragover", { dataTransfer: transfer });
+        await zone.dispatchEvent("drop", { dataTransfer: transfer });
+        if (folder) {
+          await expect(page.getByRole("dialog", { name: "Add documents to Reference" })).toBeVisible();
+          await expect(page.getByText("Creates 1 collection in Reference:")).toBeVisible();
+          await expect(page.getByText("Incidents · 1 file")).toBeVisible();
+        } else {
+          const dialog = page.getByRole("dialog", { name: "Add document", exact: true });
+          await expect(dialog.getByRole("textbox", { name: /Source URI/ })).toHaveValue("notes.txt");
+          await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+          await zone.getByRole("button", { name: "Add document", exact: true }).click();
+          await expect(dialog.getByRole("textbox", { name: /Source URI/ })).toHaveValue("");
+          await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+        }
+        await transfer.dispose();
+      }
     });
 
     test("bulk Add to collection requires one source place and moves every selected document", async ({
@@ -125,7 +187,7 @@ for (const width of [1440, 375]) {
       expect(moves).toEqual([
         expect.objectContaining({
           namespace: "col-runbooks",
-          to_namespace: "policies",
+          to_namespace: "col-policies",
           source_uris: ["runbooks/drain.md", "runbooks/fill.md"],
         }),
       ]);
