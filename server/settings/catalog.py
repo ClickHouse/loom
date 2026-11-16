@@ -4150,8 +4150,9 @@ class ObservabilitySettings(BaseModel):
     # Metric export cadence, seconds. Spans keep their own 3 s batch delay,
     # which bounds span loss at SIGTERM.
     otel_metrics_export_interval_s: int = 60
-    # Series each metric keeps per process; past it, a new attribute set adds to one
-    # series marked `otel.metric.overflow`. Sized above the request metrics' labels.
+    # Most series one metric holds (per export interval under delta temporality); past it,
+    # a new attribute set adds to one series marked `otel.metric.overflow`. The request
+    # metrics need about operations x namespaces x outcomes: raise it for many namespaces.
     otel_metrics_cardinality_limit: int = Field(default=20_000, ge=1)
     # Delta temporality for counters and histograms (an idle synchronous
     # series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md)

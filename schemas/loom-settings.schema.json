@@ -5562,7 +5562,7 @@
           "default": 20000,
           "minimum": 1,
           "type": "integer",
-          "description": "Series each metric keeps per process; past it, a new attribute set adds to one series marked `otel.metric.overflow`. Sized above the request metrics' labels."
+          "description": "Most series one metric holds (per export interval under delta temporality); past it, a new attribute set adds to one series marked `otel.metric.overflow`. The request metrics need about operations x namespaces x outcomes: raise it for many namespaces."
         },
         "otel_metrics_delta_temporality": {
           "default": false,

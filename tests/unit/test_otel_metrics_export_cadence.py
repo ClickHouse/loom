@@ -68,15 +68,21 @@ def test_a_metric_keeps_series_up_to_the_setting_then_overflows(
     monkeypatch.setattr(settings, "otel_metrics_cardinality_limit", 3)
     kw = otel_exporters._metric_reader_kwargs()
     reader = InMemoryMetricReader(cardinality_limits=kw["cardinality_limits"])
-    counter = MeterProvider(metric_readers=[reader]).get_meter("t").create_counter("loom.requests")
+    meter = MeterProvider(metric_readers=[reader]).get_meter("t")
+    counter = meter.create_counter("loom.requests")
+    histogram = meter.create_histogram("loom.request.duration")
     for i in range(5):
         counter.add(1, {"loom.operation": f"op{i}"})
+        histogram.record(1.0, {"loom.operation": f"op{i}"})
     data = reader.get_metrics_data()
     assert data is not None
-    points = data.resource_metrics[0].scope_metrics[0].metrics[0].data.data_points
-    named = [p for p in points if "loom.operation" in p.attributes]
-    overflow = [p for p in points if p.attributes.get("otel.metric.overflow") is True]
-    assert len(named) == 3 and len(overflow) == 1 and overflow[0].value == 2
+    metrics = data.resource_metrics[0].scope_metrics[0].metrics
+    assert len(metrics) == 2
+    for metric in metrics:
+        points = metric.data.data_points
+        named = [p for p in points if "loom.operation" in p.attributes]
+        overflow = [p for p in points if p.attributes.get("otel.metric.overflow") is True]
+        assert len(named) == 3 and len(overflow) == 1, metric.name
 
 
 def test_reader_kwargs_follow_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:

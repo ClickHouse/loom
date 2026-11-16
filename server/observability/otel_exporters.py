@@ -164,10 +164,10 @@ def _metric_reader_kwargs() -> _MetricReaderKwargs:
     The export timeout is half the interval, capped at 10 s: the reader runs
     every gauge callback inside collect(), and the probes behind them are
     cached, so a collect that needs longer is stuck, not
-    slow. The SDK's own limit (2000 series per metric) is below what the
-    request metrics' operation, namespace and outcome labels reach.
+    slow. The series limit replaces the SDK's own (2000 a metric) for every
+    instrument class, so a metric past it is visible as one series marked
+    `otel.metric.overflow` rather than at a limit nobody set.
     """
-    # Loom creates no synchronous gauge, so the SDK's private _Gauge class stays out.
     from opentelemetry.sdk.metrics import (
         Counter,
         Histogram,
@@ -175,6 +175,7 @@ def _metric_reader_kwargs() -> _MetricReaderKwargs:
         ObservableGauge,
         ObservableUpDownCounter,
         UpDownCounter,
+        _Gauge,
     )
 
     interval_ms = max(1, int(settings.otel_metrics_export_interval_s)) * 1000
@@ -183,6 +184,7 @@ def _metric_reader_kwargs() -> _MetricReaderKwargs:
         Counter,
         UpDownCounter,
         Histogram,
+        _Gauge,
         ObservableCounter,
         ObservableUpDownCounter,
         ObservableGauge,
