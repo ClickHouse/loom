@@ -15,7 +15,7 @@ from tests.integration._eventually import eventually
 pytest.importorskip("agent_framework")
 
 from agent_framework import Agent, BaseChatClient, ChatResponse, Message
-from loom.integrations.agent_framework import LoomContextProvider
+from loom.integrations.agent_framework import LoomContextProvider, _loom_session
 
 
 class _EchoClient(BaseChatClient):  # type: ignore[misc]
@@ -36,27 +36,34 @@ class _EchoClient(BaseChatClient):  # type: ignore[misc]
         return respond()
 
 
-async def _turn(loom: Any, user: str, text: str) -> str:
-    """One run in a new session; returns the instructions the model was sent."""
+async def _turn(loom: Any, user: str, text: str) -> tuple[str, str]:
+    """One run in a new session; returns the instructions the model was sent and the
+    session's id."""
     client = _EchoClient()
     provider = LoomContextProvider(loom, user_id=user, honour_abstain=False, defer=False)
     agent = Agent(client=client, context_providers=[provider])
-    await agent.run(text, session=agent.create_session())
-    return client.instructions[0]
+    session = agent.create_session()
+    await agent.run(text, session=session)
+    return client.instructions[0], session.session_id
 
 
 async def test_a_turn_reaches_a_later_runs_instructions(agent) -> None:
     # defer=False: extraction inline, since the test server runs no background workers
-    await _turn(agent, "alice", "I fly to Lisbon every month.")
+    _, session_id = await _turn(agent, "alice", "I fly to Lisbon every month.")
 
-    async def recalled() -> bool:
+    async def fact() -> Any:
         found = await agent.memory.search("Lisbon", user_id="alice", namespace_scope="this")
-        return any(h.source == "fact" for h in found)
+        return next((h for h in found if h.source == "fact"), None)
 
     # A write is searchable once its embedding lands; eventually raises on timeout.
-    await eventually(recalled, description="the turn's fact")
-    instructions = await _turn(agent, "alice", "Where does Alice fly every month?")
+    hit = await eventually(fact, description="the turn's fact")
+    loom_session = _loom_session("alice", session_id)
+    row = await agent.memory.get(hit.memory_key, user_id="alice", session_id=loom_session)
+    assert row is not None
+    assert (row["agent"], row["user_id"], row["session_id"]) == (agent.agent, "alice", loom_session)
+    assert row["source_class"] == "extracted"
+    instructions, _ = await _turn(agent, "alice", "Where does Alice fly every month?")
     assert "Relevant memory content from Loom" in instructions
     assert "lisbon" in instructions.lower()
-    other = await _turn(agent, "bob", "Where does Alice fly every month?")
+    other, _ = await _turn(agent, "bob", "Where does Alice fly every month?")
     assert "lisbon" not in other.lower()

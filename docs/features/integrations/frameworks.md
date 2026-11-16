@@ -367,8 +367,10 @@ async with LoomAgent(org="acme", namespace="support") as loom_agent:
     await agent.run("I prefer aisle seats", session=session)
 ```
 
-The agent keeps its own conversation history: with no history provider configured, it adds
-its in-memory one beside Loom's provider, and Loom holds the memories across sessions.
+The agent keeps its own conversation history: for a run given a session, with no history
+provider configured and a client that does not store the conversation itself, it adds its
+in-memory one beside Loom's provider. Loom holds the memories across sessions. Inside an
+`AgentLoopMiddleware` loop, the turn is sent to Loom once, when the loop ends.
 
 | Agent Framework | Loom                                                                                                                                                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -597,7 +599,9 @@ client can speak for several agents.
 - **An AG2 turn fails when Loom is unreachable.** `LoomRecallPolicy` runs before each
   model call of the turn, and `AssemblerMiddleware` does not catch a policy's error.
 - **An Agent Framework run fails when Loom is unreachable.** The `Agent` does not catch a
-  provider's error, before the run or after it.
+  provider's error, before the run or after it. A failure after the run comes once the model
+  has answered: the run raises, the turn is not added to the session's history, any tool's
+  effect stays, and a streamed reply has already been shown.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.

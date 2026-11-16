@@ -136,20 +136,22 @@ def test_the_loom_session_is_per_user_and_unambiguous() -> None:
     assert ":" not in _loom_session("a:b", "c")  # Loom's chunk keys are `chunk:<session>:<n>`
 
 
-def test_tool_calls_and_empty_text_are_not_sent() -> None:
+def test_only_user_and_assistant_text_is_sent() -> None:
     fake = _FakeMemory()
     call = Message(
         role="assistant",
         contents=[Content.from_function_call(call_id="c1", name="lookup", arguments="{}")],
     )
-    _run(
-        _provider(fake, defer=False),
-        _Client(call, Message(role="assistant", contents=["Done."])),
-        "hi",
-    )
+    turn = [
+        Message(role="system", contents=["Be brief."]),
+        Message(role="user", contents=["hi"]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c0", result="42")]),
+        Message(role="user", contents=["  "]),
+    ]
+    agent = Agent(client=_Client(call), context_providers=[_provider(fake, defer=False)])
+    asyncio.run(agent.run(turn, session=agent.create_session()))
     ((_, (messages,), kw),) = [c for c in fake.calls if c[0] == "set_from_messages"]
-    assert all(m["content"].strip() for m in messages)
-    assert all(m["role"] in ("user", "assistant") for m in messages)
+    assert [(m["role"], m["content"]) for m in messages] == [("user", "hi")]
     assert kw["defer"] is False
 
 
@@ -167,11 +169,13 @@ def test_abstention_and_rows_below_the_floor_add_nothing() -> None:
 
 
 def test_derived_rows_are_cut_to_top_k_after_filtering() -> None:
-    hits = [_hit(f"k{i}", f"fact {i}") for i in range(4)]
+    weak = dataclasses.replace(_hit("w", "weak"), below_threshold=True)
+    hits = [weak] + [_hit(f"k{i}", f"fact {i}") for i in range(4)]
     client = _Client()
     _run(_provider(_FakeMemory(hits), top_k=2), client, "q")
     text = _instructions(client.sent[0])
-    assert "2. fact 1" in text and "fact 2" not in text
+    assert "1. fact 0" in text and "2. fact 1" in text
+    assert "weak" not in text and "fact 2" not in text
 
 
 def test_a_run_without_user_text_reads_nothing() -> None:

@@ -18,9 +18,9 @@ after the run it sends the turn's text to Loom, which extracts the facts::
         session = agent.create_session()
         await agent.run("I prefer aisle seats", session=session)
 
-The agent keeps its own conversation history: with no history provider
-configured it adds its in-memory one, and Loom holds the memories across
-sessions. Install with ``pip install 'clickhouse-loom[agent-framework]'``.
+The agent keeps its own conversation history (its in-memory one, for a run given
+a session and a client that does not store the conversation), and Loom holds the
+memories across sessions. Install with ``pip install 'clickhouse-loom[agent-framework]'``.
 """
 
 from __future__ import annotations
@@ -57,6 +57,10 @@ class LoomContextProvider(ContextProvider):
     (Microsoft Agent Framework). The framework awaits its providers, so the
     provider takes a ``loom.Agent``.
     """
+
+    # Inside an AgentLoopMiddleware loop, the turn is sent once, when the loop ends: the
+    # loop's own continue prompts are not the user's words.
+    after_run_once_per_turn = True
 
     def __init__(
         self,
@@ -129,7 +133,7 @@ class LoomContextProvider(ContextProvider):
         response = context.response
         turn = [*context.input_messages, *(response.messages if response else [])]
         messages = _texts(turn)
-        loom_session = _loom_session(self._user_id or "-", context.session_id or session.session_id)
+        loom_session = _loom_session(self._user_id or "-", session.session_id)
         for start in range(0, len(messages), _MAX_MESSAGES):
             await self._agent.memory.set_from_messages(
                 messages[start : start + _MAX_MESSAGES],
