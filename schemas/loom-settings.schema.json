@@ -264,7 +264,7 @@
         "cell_router_url": {
           "default": "",
           "type": "string",
-          "description": "The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; \"\" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a value that is not an http(s) URL with a host refuses the boot."
+          "description": "The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; \"\" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a value other than an http(s) URL with a host, a port at most 65535 and no '?' or '#' refuses the boot."
         },
         "ch_analysis_max_concurrent": {
           "default": 8,

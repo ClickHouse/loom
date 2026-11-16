@@ -1245,8 +1245,8 @@ the attach release's own heartbeat keys: a build before them reads only a finger
 version and fields, so it takes a newer build's heartbeat as it is, and attach refuses a
 process that reports none. That release waits on the routers': every router replica runs it
 before any cell's processes do, since a prepared first cell asks the state route from its
-first beat and only a router of that release answers it from its cache
-([upgrades](../operations/upgrades.md#upgrade-procedure)).
+first cell-state read until it reads `serving`, and only a router of that release answers it
+from its cache ([upgrades](../operations/upgrades.md#upgrade-procedure)).
 
 ## Invariants
 
