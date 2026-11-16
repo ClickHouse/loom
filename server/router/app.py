@@ -324,13 +324,16 @@ class Router:
         if isinstance(presented, JSONResponse):
             return presented
         read = await self._state_row(name)
+        if read.row is not None and not read.row.holds(presented):
+            # The cached row predates a rotation the credential cache has seen: read again.
+            self._forget_credentials()
+            read = await self._state_row(name)
         if read.error:
             return _refused(503, read.error)
         row = read.row
         if row is None:
             return _refused(404, f"cell {name!r} is not the first cell")
         if not row.holds(presented):
-            # The cached hash, and the rows read with it, predate the directory's row.
             self._forget_credentials()
             return _refused(401, "the credential names no cell of this directory")
         return JSONResponse({"cell": row.cell, "state": row.state})

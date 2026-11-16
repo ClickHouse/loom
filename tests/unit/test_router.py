@@ -669,6 +669,30 @@ def test_a_replaced_credential_is_refused_on_the_state_read_once_the_window_pass
     assert fake.credential_reads == 2
 
 
+def test_a_rotated_credential_reads_its_state_when_only_the_row_cache_predates_it(
+    fake: _Directory,
+) -> None:
+    """The two caches' windows can end apart: a credential the credential cache already
+    accepts, against a cached row that predates the rotation, reads the row again rather
+    than answering 401."""
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    clock = ManualClock()
+    router = router_app.Router(clock=clock)
+    client = TestClient(router_app.build_app(router))
+    assert _state(client).status_code == 200
+    stale = router._states["eu-1"]
+    rotated = "rotated-credential-0123456789abcdef"
+    sha = hashlib.sha256(rotated.encode()).hexdigest()
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching", credential_sha256=sha)
+    clock.advance(settings.router_directory_cache_s)
+    assert _state(client, token=rotated).status_code == 200  # both caches read again
+    # The row cache alone holding the row from before the rotation:
+    router._states["eu-1"] = stale._replace(read_at=clock())
+    reads = fake.state_reads
+    assert _state(client, token=rotated).json() == {"cell": "eu-1", "state": "attaching"}
+    assert fake.state_reads == reads + 1
+
+
 def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) -> None:
     fake.down = True
     assert _state(_client()).status_code == 503
