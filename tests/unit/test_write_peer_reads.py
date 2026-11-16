@@ -282,6 +282,38 @@ async def test_a_bulk_write_naming_its_user_reads_and_judges_that_users_rows(
     assert "bob" in users and users <= {"bob", None}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", ["batched", "per_fact"])
+async def test_a_bulk_write_naming_its_user_writes_a_restatement_of_another_users_pin(
+    monkeypatch, read: str
+) -> None:
+    """Through the batched candidates' pinned arm as through the per-fact read, Bob's
+    restatement of Alice's pinned value contradicts nothing and is written."""
+    from server.memory.app import bulk_set
+
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
+    ch = StubCH()
+    pinned = {
+        "memory_id": "p1",
+        "memory_key": "earlier",
+        "value": "U lives in Lisbon",
+        "pinned": 1,
+        "agent": "bot",
+        "user_id": "alice",
+        "session_id": "-",
+        "run_id": "-",
+        "valid_at": None,
+        "dist": 0.01,
+    }
+    ch.query_all_returns = [[{**pinned, "qidx": q} for q in range(2)]] * 20
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")
+    put, metas, pending, vectors = _bulk(2)
+    put.user_id = "bob"
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
+    assert [out[i].verdict for i in range(2)] == ["clear", "clear"]
+
+
 @pytest.mark.parametrize("read", ["batched", "per_fact"])
 def test_a_narrowed_bulk_writer_is_refused_by_another_users_pinned_peer(
     monkeypatch, read: str

@@ -520,8 +520,9 @@ async def check_on_commit(
     reads find what the run wrote. Same-run restatements still merge.
 
     `new_user_id`: a write that names its user is judged against that user's
-    rows only (another user's pinned row still blocks it), so a restatement
-    never folds into a row the writer's `user_id`-scoped reads cannot see.
+    rows only, so a restatement never folds into a row the writer's
+    `user_id`-scoped reads cannot see. Another user's close pinned row still
+    blocks it, unless the write restates its value under a namespace-wide token.
 
     `new_valid_at`: the new row's validity date when the writer supplied one; it decides
     which side of a templated substitution `newest_wins` retires.
