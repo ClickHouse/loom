@@ -2,9 +2,10 @@
 
 `cursor-session-hook.sh` is a Cursor agent hook that hands a finished
 conversation's transcript to `loom ingest-transcript`, which posts each turn
-to `conversation.append`. For Loom's tools inside Cursor, use the MCP config
-instead (`loom install --client cursor`, see [docs/features/integrations/mcp-clients.md](../../docs/features/integrations/mcp-clients.md));
-the two are independent.
+to `conversation.append`. For Loom's tools inside Cursor, use the
+[Cursor plugin](../../docs/features/integrations/cursor.md#plugin) or the MCP config
+(`loom install --client cursor`, see [docs/features/integrations/mcp-clients.md](../../docs/features/integrations/mcp-clients.md));
+the hook is independent of both.
 
 ## Install
 
