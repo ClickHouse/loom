@@ -724,8 +724,9 @@ def test_outcome_keeps_an_empty_files_list_from_the_live_row(env, monkeypatch) -
 
 
 def test_a_foreign_pinned_decision_leaves_a_clear_write_marked_for_review(monkeypatch) -> None:
-    """A pinned decision outside the writer's read scope, with a peer below the conflict
-    threshold: the write is clear, and the peer still asks the resolver to look."""
+    """A pinned decision outside the writer's scope (the write names `u1`), with a peer
+    below the conflict threshold: the write is clear, and the peer still asks the resolver
+    to look."""
     from server.memory.app.conflicts import DEFAULT_CONFLICT_POLICY, check_on_commit
 
     row = {"agent": "claude", "session_id": "-", "run_id": "-"}
