@@ -151,6 +151,8 @@ class LoomSession:
         memory.list serves the newest second first and orders by key within a second, so
         a read for `limit` rows stops once it holds `limit` and a row of an older second;
         the rows are then sorted by key, the order the items were added."""
+        if limit is not None and limit <= 0:
+            return []
         rows: list[dict[str, Any]] = []
         offset = 0
         while True:

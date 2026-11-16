@@ -109,6 +109,7 @@ export class LoomSession implements Session {
    * rows stops once it holds `limit` and a row of an older second.
    */
   private async latest(limit?: number): Promise<ItemRow[]> {
+    if (limit !== undefined && limit <= 0) return [];
     const scope = await this.scope();
     const rows: ItemRow[] = [];
     let offset = 0;

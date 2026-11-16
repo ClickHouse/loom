@@ -166,6 +166,13 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     expect(await session.getItems()).toEqual(items);
   });
 
+  it.each([0, -1])("returns no items for limit %s with paginated history", async (limit) => {
+    const { agent } = rowsHarness();
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    await session.addItems([msg("user", "a"), msg("assistant", "b"), msg("user", "c")]);
+    expect(await session.getItems(limit)).toEqual([]);
+  });
+
   it("pops the latest item and clears only its own session", async () => {
     const { agent } = rowsHarness();
     const mine = new LoomSession(agent, "s1", { userId: "alice" });

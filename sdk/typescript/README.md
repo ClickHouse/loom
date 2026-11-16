@@ -436,7 +436,7 @@ import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";
 const session = new LoomSession(bot, "trip-42", { userId: "u-42" }); // run(assistant, input, { session })
 ```
 
-`LoomSession` is the SDK's `Session` over loom: the conversation history of one session, as episodic memories of the user's loom session, the same rows the Python `LoomSession` reads.
+`LoomSession` is the SDK's `Session` over loom: the conversation history of one session, as episodic memories of the user's loom session, separate rows from Python because the SDKs use different native item formats.
 
 ## Strands Agents
 
