@@ -194,8 +194,8 @@ A searchable `memory.set` runs these checks in order:
    - same canonical form (lowercased, punctuation stripped, whitespace collapsed) →
      `merge`: nothing written, the peer is reinforced, `merged_into_key` names it;
    - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT` (under a namespace-wide
-     token, a write that names its user and restates another user's pinned value is
-     written);
+     token, a write that names its user and restates another user's or a shared pinned
+     value is written);
    - under `newest_wins`, a peer that states the same subject and predicate with a
      different object → `refines`: the peer is retired, unless its `valid_at` is later
      than the new row's, which answers `conflict`;

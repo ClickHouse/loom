@@ -359,6 +359,15 @@ async def test_a_write_naming_its_user_is_not_judged_against_a_shared_row(instal
 
 
 @pytest.mark.asyncio
+async def test_a_restatement_of_a_shared_pinned_row_is_written(install_ch) -> None:
+    pinned = _restated_peer(user_id="-")
+    pinned[0].update(pinned=1)
+    install_ch(_FakeCH(peers=pinned))
+    result = await _write("-", user_id="alice")
+    assert result.verdict == "clear"
+
+
+@pytest.mark.asyncio
 async def test_a_restatement_of_another_users_pinned_row_is_written(install_ch) -> None:
     """A restatement contradicts nothing, so another user's pin does not refuse it."""
     pinned = _restated_peer(user_id="alice")
