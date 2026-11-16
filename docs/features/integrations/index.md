@@ -1,7 +1,8 @@
 # Integrations
 
-Loom on a bare ClickHouse service is a complete deployment. Each integration below is
-opt-in; one you leave unconfigured does nothing. They fall into three groups:
+Integrations put Loom's tools in front of a model, capture its conversations, or receive
+its telemetry. Each one below is opt-in; one you leave unconfigured does nothing (Loom on
+a bare ClickHouse service is a complete deployment). They fall into three groups:
 
 - **Agent-side:** put Loom's tools in front of a model (plugins, MCP clients, framework
   adapters).
