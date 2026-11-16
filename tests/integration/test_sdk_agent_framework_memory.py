@@ -14,7 +14,8 @@ from tests.integration._eventually import eventually
 # An SDK extra, outside the server's environment: install agent-framework-core to run these.
 pytest.importorskip("agent_framework")
 
-from agent_framework import Agent, BaseChatClient, ChatResponse, Message
+from agent_framework import Agent as FrameworkAgent
+from agent_framework import BaseChatClient, ChatResponse, Message
 from loom.integrations.agent_framework import LoomContextProvider, _loom_session
 
 
@@ -41,7 +42,7 @@ async def _turn(loom: Any, user: str, text: str) -> tuple[str, str]:
     session's id."""
     client = _EchoClient()
     provider = LoomContextProvider(loom, user_id=user, honour_abstain=False, defer=False)
-    agent = Agent(client=client, context_providers=[provider])
+    agent = FrameworkAgent(client=client, context_providers=[provider])
     session = agent.create_session()
     await agent.run(text, session=session)
     return client.instructions[0], session.session_id
