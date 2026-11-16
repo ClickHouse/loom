@@ -568,10 +568,19 @@ describe("All documents", () => {
     render(<Documents />);
     await screen.findByText("Not shown, as you can't read it: Legal.");
     await settle();
+    const before = api.listKnowledge.mock.calls.length;
     act(() => {
       history.pushState(null, "", "/library?collection=col-legal");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
+    // The collection's own read asks the server, not the refusal kept for All documents.
+    await waitFor(() =>
+      expect(
+        api.listKnowledge.mock.calls
+          .slice(before)
+          .some((c) => placesOf(c).join() === "col-legal" && (c[1] as ListOpts).limit === 50),
+      ).toBe(true),
+    );
     await waitFor(() =>
       expect(toasts.toast).toHaveBeenCalledWith(
         expect.stringMatching(/^col-legal is not among the collections/),
@@ -673,6 +682,29 @@ describe("The Library's search scope", () => {
     expect(screen.queryByText(/Anything added here is shared with them/)).toBeNull();
     fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "" } });
     expect(await screen.findByText(/Anything added here is shared with them/)).toBeInTheDocument();
+  });
+
+  it("starts each visit to a place here, also a return to one searched everywhere", async () => {
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+    await settle();
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Search in" })).getByRole("button", { name: "Everywhere" }),
+    );
+    await screen.findByText("Team plan");
+    for (const path of ["/library?collection=col-me", "/library?collection=col-eng"]) {
+      act(() => {
+        history.pushState(null, "", path);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      await settle();
+    }
+    fireEvent.change(screen.getByLabelText("Search library"), { target: { value: "a" } });
+    await settle();
+    const scope = screen.getByRole("group", { name: "Search in" });
+    expect(within(scope).getByRole("button", { name: "This collection" })).toHaveAttribute("aria-pressed", "true");
+    expect(placesOf(api.listKnowledge.mock.calls.at(-1) as unknown[])).toEqual(["col-eng"]);
   });
 
   it("says Load more failed when one place's cursor is refused, with no read from the top", async () => {

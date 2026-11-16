@@ -5,7 +5,8 @@ import { isRefusal, type PlaceFailure } from "./libraryAcross";
 /** Places a read was refused under the collections answer on screen (`kept`): later reads
  *  skip them and name them again, until the collections answer again (a grant may have caught
  *  up). `namedRefusal`: the list on screen names a refused place. `reread` is true for the one
- *  render in which a new answer lands while it does: the caller reads the list again then. */
+ *  render in which a new answer lands while it does: the caller reads the list again in that
+ *  render, not in an effect, which would start a second read when the places change too. */
 export function useRefusedPlaces<T>(kept: T, org: string, namedRefusal: boolean) {
   const [refused, setRefused] = useState<{ under: T | null; failures: PlaceFailure[] }>({ under: null, failures: [] });
   const skip = useMemo(() => (refused.under === kept ? refused.failures : []), [refused, kept]);

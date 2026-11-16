@@ -396,10 +396,10 @@ export function Documents() {
   const parsedQuery = useMemo(() => parseSearchQuery(listQuery), [listQuery]);
   const filtering = listQuery.trim() !== "";
   // Where a search looks: the place shown, or every place. All documents reads every place
-  // whatever is typed; another place starts each visit here, from its first render, as the
-  // choice is kept with the place it was picked in.
+  // whatever is typed; each visit to another place starts here, from its first render.
   const [scopeOf, setScopeOf] = useState<{ at: string; scope: SearchScope }>({ at: place, scope: "here" });
-  const scope = scopeOf.at === place ? scopeOf.scope : "here";
+  if (scopeOf.at !== place) setScopeOf({ at: place, scope: "here" });
+  const scope = scopeOf.scope;
   const across = all || (scope === "everywhere" && filtering);
   // Every place the person reads in the Library, in the tree's order: the header's namespace,
   // then My files and the collections. Waits for the collections' first answer.
@@ -420,7 +420,11 @@ export function Documents() {
     failed: PlaceFailure[];
     oneAtATime: boolean;
   } | null>(null);
-  const refusals = useRefusedPlaces(collections.kept, picked.org, !!readOf?.failed.some((f) => isRefusal(f.error)));
+  const refusals = useRefusedPlaces(
+    collections.kept,
+    picked.org,
+    across && !!readOf?.failed.some((f) => isRefusal(f.error)),
+  );
   // A new collections answer while a refused place is named reads the list again: a grant
   // that lagged behind the list may have caught up.
   if (refusals.reread) reload();
@@ -529,7 +533,8 @@ export function Documents() {
           setRows(r.rows);
           setRowsScope(scope);
           setReadOf({ key: scope, read: r.read, failed: r.failed, oneAtATime: r.oneAtATime });
-          refusals.record(under, r);
+          // A read of one place says nothing of the others' refusals.
+          if (across) refusals.record(under, r);
           // A read that returned a document: the library holds one, whatever filter
           // narrows a later read. An unfiltered read that returned none: it holds none.
           if (r.rows?.length) setListedScope(at);
@@ -1518,11 +1523,11 @@ export function Documents() {
                     icon: "arrow-right",
                     reason: selectedPlaces.length > 1 ? "Move to… takes documents from one place at a time." : null,
                     onClick: () => {
-                      const [from] = selectedPlaces;
-                      if (from)
+                      const [first] = selectedGroups ?? [];
+                      if (first)
                         openMove(
-                          from,
-                          (selectedGroups?.get(from) ?? []).map((r) => r.source_uri),
+                          first[0],
+                          first[1].map((r) => r.source_uri),
                         );
                     },
                   },
