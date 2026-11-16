@@ -424,8 +424,8 @@ async with Agent(org="acme", namespace="support") as loom_agent:
         ...
 ```
 
-In TypeScript, `loomMemoryTool(agent, { store })` returns the SDK's `betaMemoryTool` over
-the same documents (`@anthropic-ai/sdk` is an optional peer dependency, 1.8 or later 1.x):
+In TypeScript, `loomMemoryTool(agent, { store }, extras)` returns the SDK's `betaMemoryTool`
+(with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an optional peer dependency, 1.8 or later 1.x):
 
 ```ts
 import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
@@ -436,17 +436,17 @@ const memory = loomMemoryTool(agent, { store: "alice" });
 
 A file `/memories/<path>` is the document `loom-memory://<store>/memories/<path>`, tagged
 `claude-memory:<store>`; directories are the paths' prefixes. Both SDKs read and write the
-same documents, and answer each command with the text the SDK's own local memory tool
-answers (a directory view lists paths without sizes).
+same documents and answer each command with the same text: the text the Python SDK's local
+memory tool answers, except that a directory view lists paths without sizes.
 
-| Command       | Loom                                                                                                                                                            |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `view`        | a file: `knowledge.get`, its lines numbered, `view_range` honoured; a directory: `knowledge.list` of the store's tag, its files and directories two levels deep |
-| `create`      | `knowledge.upsert` of the text; refused when the file exists                                                                                                    |
-| `str_replace` | `knowledge.get`, then `knowledge.upsert` with the one occurrence replaced; refused when `old_str` appears no time or more than once                             |
-| `insert`      | `knowledge.get`, then `knowledge.upsert` with the line inserted at `insert_line`                                                                                |
-| `delete`      | `knowledge.bulk_delete` of the file, or of every file under the directory                                                                                       |
-| `rename`      | each file under the old path copied to the new one, then `knowledge.bulk_delete` of the old; refused when the destination exists                                |
+| Command       | Loom                                                                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `view`        | a file: `knowledge.get`, its lines numbered, `view_range` honoured; a directory: `knowledge.list` of the store's tag, its files and directories two levels deep                   |
+| `create`      | `knowledge.upsert` of the text; refused when the file or a directory of that path exists                                                                                          |
+| `str_replace` | `knowledge.get`, then `knowledge.upsert` with the one occurrence replaced; refused when `old_str` is empty or appears no time or more than once                                   |
+| `insert`      | `knowledge.get`, then `knowledge.upsert` with the line inserted at `insert_line`                                                                                                  |
+| `delete`      | `knowledge.bulk_delete` of the file, or of every file under the directory, 500 a call                                                                                             |
+| `rename`      | each file under the old path copied to the new one, then `knowledge.bulk_delete` of the old; refused when the destination exists; a failure partway leaves the copies made so far |
 
 Every path must be `/memories` or under it, after `.` and `..` are resolved; any other path
 is refused before Loom is called. A refusal is a `ToolError`, which the tool runner returns
