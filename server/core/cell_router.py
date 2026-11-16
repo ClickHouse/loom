@@ -147,7 +147,8 @@ async def read_once(client: httpx.AsyncClient | None = None) -> None:
     else:
         state, router, why, unauthorized = await _ask(client)
     if why != _logged_why:
-        if why:
+        # A pod that serves no traffic may run with no router settings: not a warning there.
+        if why and not (missing and not settings.serves_traffic):
             log.warning("cell state: the router read: %s", why)
         _logged_why = why
     now = time.monotonic()

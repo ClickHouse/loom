@@ -334,7 +334,6 @@ class Router:
         if row is None:
             return _refused(404, f"cell {name!r} is not the first cell")
         if not row.holds(presented):
-            self._forget_credentials()
             return _refused(401, "the credential names no cell of this directory")
         return JSONResponse({"cell": row.cell, "state": row.state})
 

@@ -693,6 +693,26 @@ def test_a_rotated_credential_reads_its_state_when_only_the_row_cache_predates_i
     assert fake.state_reads == reads + 1
 
 
+def test_a_credential_the_reread_row_does_not_hold_answers_401_after_one_read(
+    fake: _Directory,
+) -> None:
+    """A cached row that does not hold the credential is read again once; a row that still
+    does not answers 401, and that second read stays cached for its window."""
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    clock = ManualClock()
+    router = router_app.Router(clock=clock)
+    client = TestClient(router_app.build_app(router))
+    assert _state(client).status_code == 200
+    other = hashlib.sha256(b"another-credential-0123456789abcdef").hexdigest()
+    router._states["eu-1"] = router._states["eu-1"]._replace(
+        row=_row(is_first=True, state="attaching", credential_sha256=other)
+    )
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching", credential_sha256=other)
+    reads = fake.state_reads
+    assert _state(client).status_code == 401
+    assert fake.state_reads == reads + 1 and "eu-1" in router._states
+
+
 def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) -> None:
     fake.down = True
     assert _state(_client()).status_code == 503

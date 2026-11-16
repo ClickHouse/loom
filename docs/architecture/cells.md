@@ -574,7 +574,8 @@ unreadable), since the org's data may be in this cell until attach places it; on
 
 With `LOOM_CELL` set, a non-empty `LOOM_CELL_ROUTER_URL` that is not an http(s) URL with a
 host, a port at most 65535 and no `?` or `#` refuses the boot (`cell.settings_problem`); an
-empty one is allowed, for workers-only pods.
+empty one is allowed, for workers-only pods (`LOOM_SERVES_TRAFFIC=false`), whose heartbeat
+then reports `router` as `false` with the unset settings in `router_why`, logging nothing.
 
 ## The tenancy check and placement
 

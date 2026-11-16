@@ -519,3 +519,17 @@ def test_an_unscoped_caller_answers_wrong_cell_once_serving_or_on_a_later_cell(
     with pytest.raises(errors.WrongCellError):
         asyncio.run(tenancy.ensure_held("new", None))
     read.assert_awaited_once()  # a later cell never asks
+
+
+@pytest.mark.parametrize("serves,warned", [(True, True), (False, False)])
+def test_unset_router_settings_warn_only_on_a_pod_that_serves(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, serves: bool, warned: bool
+) -> None:
+    """A workers-only pod may run with no router settings: it reports `router` false and
+    logs nothing; a pod that serves warns."""
+    monkeypatch.setattr(settings, "serves_traffic", serves)
+    monkeypatch.setattr(cell_router, "unset", lambda: ["LOOM_CELL_ROUTER_URL"])
+    with caplog.at_level("WARNING", logger="server.core.cell_router"):
+        asyncio.run(cell_router.read_once())
+    assert ("LOOM_CELL_ROUTER_URL unset" in caplog.text) is warned
+    assert cell_router._router is False
