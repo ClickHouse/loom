@@ -49,21 +49,11 @@ export class LoomMemory implements INodeType {
   async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {
     const { agent, userId } = await client(this, itemIndex);
     const rawSessionId = this.getNodeParameter("sessionId", itemIndex);
-    if (
-      (typeof rawSessionId !== "string" && typeof rawSessionId !== "number") ||
-      !String(rawSessionId).trim()
-    ) {
-      throw new NodeOperationError(
-        this.getNode(),
-        "Session ID must be a non-empty string or number",
-      );
+    if ((typeof rawSessionId !== "string" && typeof rawSessionId !== "number") || !String(rawSessionId).trim()) {
+      throw new NodeOperationError(this.getNode(), "Session ID must be a non-empty string or number");
     }
     const sessionId = String(rawSessionId);
-    const history = new LoomChatHistory(
-      agent,
-      JSON.stringify([this.getWorkflow().id, sessionId]),
-      userId,
-    );
+    const history = new LoomChatHistory(agent, JSON.stringify([this.getWorkflow().id, sessionId]), userId);
     return {
       response: new BufferWindowMemory({
         chatHistory: history,

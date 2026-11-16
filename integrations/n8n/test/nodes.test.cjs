@@ -12,14 +12,7 @@ function harness({ unserved = 0, cap = 500 } = {}) {
   const rows = new Map();
   const calls = [];
   const key = (body) =>
-    JSON.stringify([
-      body.org,
-      body.namespace,
-      body.agent,
-      body.user_id,
-      body.session_id,
-      body.memory_key,
-    ]);
+    JSON.stringify([body.org, body.namespace, body.agent, body.user_id, body.session_id, body.memory_key]);
   const fetch = async (url, options) => {
     const body = JSON.parse(options.body);
     const op = String(url).split("/v1/")[1];
@@ -53,9 +46,7 @@ function harness({ unserved = 0, cap = 500 } = {}) {
         truncated: body.offset + limit < scanned.length,
       };
     } else if (op === "memory.get") {
-      output = rows.has(key(body))
-        ? { found: true, value: rows.get(key(body)).value }
-        : { found: false };
+      output = rows.has(key(body)) ? { found: true, value: rows.get(key(body)).value } : { found: false };
     } else if (op === "memory.delete") {
       rows.delete(key(body));
       output = { deleted: true };
@@ -92,11 +83,7 @@ function harness({ unserved = 0, cap = 500 } = {}) {
 test("history keeps repeats and long messages in order across server-capped filtered pages", async () => {
   const { agent } = harness({ unserved: 3, cap: 2 });
   const history = new LoomChatHistory(agent, "trip", "alice");
-  const messages = [
-    new HumanMessage("hi"),
-    new AIMessage("x".repeat(5000)),
-    new HumanMessage("hi"),
-  ];
+  const messages = [new HumanMessage("hi"), new AIMessage("x".repeat(5000)), new HumanMessage("hi")];
   for (const message of messages) await history.addMessage(message);
   const resumed = new LoomChatHistory(agent, "trip", "alice");
   const got = await resumed.getMessages();
@@ -111,8 +98,7 @@ test("clearing a conversation leaves other users and sessions intact", async () 
   const mine = new LoomChatHistory(agent, "trip", "alice");
   const otherUser = new LoomChatHistory(agent, "trip", "bob");
   const otherSession = new LoomChatHistory(agent, "another", "alice");
-  for (const history of [mine, otherUser, otherSession])
-    await history.addMessage(new HumanMessage("hi"));
+  for (const history of [mine, otherUser, otherSession]) await history.addMessage(new HumanMessage("hi"));
   await mine.clear();
   assert.deepEqual(await mine.getMessages(), []);
   assert.equal((await otherUser.getMessages())[0].content, "hi");
@@ -141,22 +127,14 @@ test("the real framework memory saves turns and returns its configured window af
 test("the action node returns Loom search results and binds writes to the user", async () => {
   const { context, calls } = harness();
   const node = new Loom();
-  const [remembered] = await node.execute.call(
-    context({ operation: "remember", memoryKey: "seat", value: '"aisle"' }),
-  );
+  const [remembered] = await node.execute.call(context({ operation: "remember", memoryKey: "seat", value: '"aisle"' }));
   assert.ok(remembered[0].json.memory_id);
   assert.equal(calls[0].body.user_id, "alice");
-  const [recalled] = await node.execute.call(
-    context({ operation: "recall", query: "seat", limit: 5 }),
-  );
+  const [recalled] = await node.execute.call(context({ operation: "recall", query: "seat", limit: 5 }));
   assert.equal(recalled[0].json.entries[0].value, "aisle");
-  const [knowledge] = await node.execute.call(
-    context({ operation: "searchKnowledge", query: "seat", limit: 5 }),
-  );
+  const [knowledge] = await node.execute.call(context({ operation: "searchKnowledge", query: "seat", limit: 5 }));
   assert.equal(knowledge[0].json.entries[0].title, "Travel");
-  for (const call of calls.filter((call) =>
-    ["memory.search", "knowledge.search"].includes(call.op),
-  )) {
+  for (const call of calls.filter((call) => ["memory.search", "knowledge.search"].includes(call.op))) {
     assert.equal(call.body.namespace_scope, "this");
     assert.equal(call.body.user_id, "alice");
   }
@@ -165,11 +143,7 @@ test("the action node returns Loom search results and binds writes to the user",
 
 test("server refusals fail a node or become an error item when continue-on-fail is selected", async () => {
   const { context } = harness();
-  mock.method(
-    globalThis,
-    "fetch",
-    async () => new Response(JSON.stringify({ detail: "forbidden" }), { status: 403 }),
-  );
+  mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ detail: "forbidden" }), { status: 403 }));
   const node = new Loom();
   const params = { operation: "recall", query: "seat", limit: 5 };
   await assert.rejects(node.execute.call(context(params)), /forbidden|403/);
@@ -179,10 +153,7 @@ test("server refusals fail a node or become an error item when continue-on-fail 
 
 test("the bundled tokenizer carries its upstream license text", () => {
   const { readFileSync } = require("node:fs");
-  const licenses = readFileSync(
-    require("node:path").join(__dirname, "../dist/THIRD_PARTY_LICENSES.txt"),
-    "utf8",
-  );
+  const licenses = readFileSync(require("node:path").join(__dirname, "../dist/THIRD_PARTY_LICENSES.txt"), "utf8");
   const tokenizer = licenses.split("js-tiktoken 1.0.21\n")[1]?.split("\n\n---\n\n")[0];
   assert.match(tokenizer, /Permission is hereby granted/);
 });

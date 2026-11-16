@@ -104,18 +104,13 @@ export class Loom implements INodeType {
               { ...scope, agentId: "*" },
             );
           } else if (operation === "searchKnowledge") {
-            result = await agent.call(
-              "knowledge.search",
-              { query, top_k, namespace_scope: "this" },
-              scope,
-            );
+            result = await agent.call("knowledge.search", { query, top_k, namespace_scope: "this" }, scope);
           } else throw new NodeOperationError(this.getNode(), `Unknown operation: ${operation}`);
         }
         output.push({ json: result as INodeExecutionData["json"], pairedItem: { item: i } });
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
-        if (!this.continueOnFail())
-          throw new NodeOperationError(this.getNode(), failure, { itemIndex: i });
+        if (!this.continueOnFail()) throw new NodeOperationError(this.getNode(), failure, { itemIndex: i });
         output.push({ json: { error: failure.message }, pairedItem: { item: i } });
       }
     }

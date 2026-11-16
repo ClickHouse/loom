@@ -52,9 +52,7 @@ export class LoomChatHistory extends BaseListChatMessageHistory {
       if (!page.truncated) break;
       offset += Math.max(1, entries.length);
     }
-    return [...rows.values()].sort((a, b) =>
-      a.memory_key < b.memory_key ? -1 : a.memory_key > b.memory_key ? 1 : 0,
-    );
+    return [...rows.values()].sort((a, b) => (a.memory_key < b.memory_key ? -1 : a.memory_key > b.memory_key ? 1 : 0));
   }
 
   async getMessages(): Promise<BaseMessage[]> {
@@ -62,11 +60,7 @@ export class LoomChatHistory extends BaseListChatMessageHistory {
     for (const row of await this.rows()) {
       let value = row.value;
       if (row.value_truncated || value === undefined || value === null) {
-        const full = await this.agent.call(
-          "memory.get",
-          { memory_key: row.memory_key },
-          this.scope,
-        );
+        const full = await this.agent.call("memory.get", { memory_key: row.memory_key }, this.scope);
         value = full.value;
       }
       if (value === undefined || value === null) throw new Error("A conversation item is missing");

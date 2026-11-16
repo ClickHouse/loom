@@ -45,12 +45,9 @@ for (const input of used) {
     directory = parent;
   }
   if (licenses.has(metadata.name)) continue;
-  const files = readdirSync(directory).filter((name) =>
-    /^(license|copying|notice)(\.|$)/i.test(name),
-  );
+  const files = readdirSync(directory).filter((name) => /^(license|copying|notice)(\.|$)/i.test(name));
   const sourceLicense = sourceLicenses[`${metadata.name}@${metadata.version}`];
-  if (files.length === 0 && !sourceLicense)
-    throw new Error(`No license file for bundled ${metadata.name}`);
+  if (files.length === 0 && !sourceLicense) throw new Error(`No license file for bundled ${metadata.name}`);
   licenses.set(
     metadata.name,
     `${metadata.name} ${metadata.version}\n${[...files.map((name) => readFileSync(join(directory, name), "utf8")), ...(sourceLicense ? [readFileSync(sourceLicense, "utf8")] : [])].join("\n")}`,
