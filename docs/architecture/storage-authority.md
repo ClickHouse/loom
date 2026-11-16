@@ -283,7 +283,8 @@ sequenceDiagram
    document counted as in (`pg_memory.capture`). Nothing waits here.
 3. **Verdict.** The embedding and the conflict check run outside any transaction.
    Under this authority `memory.set` fetches its peer rows itself
-   (`conflicts.peer_rows`: the writer's peers in its read scope and every pinned one)
+   (`conflicts.peer_rows`: the writer's peers in its scope, its user's rows when it names
+   one (`_writer_scope`), and every pinned one)
    and passes them to `check_on_commit`, so a later round can add to them.
 4. **Commit.** One transaction (`pg_memory.commit_versions`), locks taken in one order
    (the policy scopes' advisory locks, shared and sorted; then generation rows by
@@ -455,8 +456,8 @@ is refused at commit and reached again on peers read anew, whatever the gap:
 
 - a row that cannot be a peer is ruled out: another memory type, the writer's own key
   (rechecked under its head lock), a vector farther than the check reaches, and for
-  `memory.set` also a row not live or not active, or outside the writer's read scope and
-  not pinned (`memory.bulk_set` judges such a row by its vector too);
+  `memory.set` also a row not live or not active, or outside the writer's scope
+  (`_writer_scope`) and not pinned (`memory.bulk_set` judges such a row by its vector too);
 - vectors are measured on this process's copy of the vectors it committed, and only a
   row clearly out of reach (by a margin over ClickHouse's lower stored precision) is
   ruled out that way;

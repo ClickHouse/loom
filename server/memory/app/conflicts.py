@@ -419,6 +419,21 @@ async def _foreign_pinned_rows(
     ]
 
 
+async def _scoped_and_pinned_peers(
+    ch: Any, params: dict[str, Any], scope: ReadFilters | None
+) -> list[dict[str, Any]]:
+    """The writer's nearest peers in `scope` and the pinned ones outside it, the two
+    statements run together: a write that names its user under a namespace-wide token,
+    the common adapter write, needs both."""
+    if scope is None:
+        return await _foreign_pinned_rows(ch, params, scope, [])
+    rows, pinned = await asyncio.gather(
+        nearest_peer_rows(ch, params, scope), _foreign_pinned_rows(ch, params, scope, [])
+    )
+    seen = {str(r.get("memory_id")) for r in rows}
+    return rows + [r for r in pinned if str(r.get("memory_id")) not in seen]
+
+
 def _split_by_writer_scope(
     peers: list[ConflictPeer], scope: ReadFilters | None
 ) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
@@ -564,17 +579,15 @@ async def check_on_commit(
         "dim": new_dim,
     }
     scope = _writer_scope(new_user_id)
-    if candidate_rows is not None:
-        rows = [dict(r) for r in candidate_rows]
-    elif scope is None:
-        rows = []
-    else:
-        rows = await nearest_peer_rows(ch, params, scope)
     keyed = memory_type in KEY_IDENTIFIED_TYPES
     # Rows passed in (`candidate_rows_many`, `peer_rows`) carry their pinned arm already;
     # a decision needs none.
-    if candidate_rows is None and not keyed:
-        rows += await _foreign_pinned_rows(ch, params, scope, rows)
+    if candidate_rows is not None:
+        rows = [dict(r) for r in candidate_rows]
+    elif keyed:
+        rows = [] if scope is None else await nearest_peer_rows(ch, params, scope)
+    else:
+        rows = await _scoped_and_pinned_peers(ch, params, scope)
     rows = await _without_erased(org, namespace, rows)
     if not rows:
         return ConflictResult(verdict="clear", peers=[])
@@ -1119,9 +1132,7 @@ async def peer_rows(
         "max_dist": max_distance,
         "dim": len(embedding),
     }
-    scope = _writer_scope(user_id)
-    rows = [] if scope is None else await nearest_peer_rows(ch, params, scope)
-    return rows + await _foreign_pinned_rows(ch, params, scope, rows)
+    return await _scoped_and_pinned_peers(ch, params, _writer_scope(user_id))
 
 
 async def _without_erased(

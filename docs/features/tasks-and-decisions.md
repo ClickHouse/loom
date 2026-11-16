@@ -308,8 +308,10 @@ extracted rows that are not pinned or attested and extract it again, which reads
 
 A decision is identified by its key, not its text. The write-time conflict check never merges a decision into another
 decision's row, files it as a duplicate of one, lets one replace it or lets a pinned one refuse it, however alike they
-read; a close decision under another key is flagged as a conflict. The conflict resolver may later retire one of a
-close pair it judges an update of the other; that is recorded as `memory.auto_supersede`, and `memory.restore` undoes
+read; a close decision under another key is flagged as a conflict. A decision recorded for a user is checked against
+that user's decisions only, as any write that names its user is
+([how a write is judged](memory/conflicts-and-refusal.md#how-a-write-is-judged)). The conflict resolver may later
+retire one of a close pair it judges an update of the other; that is recorded as `memory.auto_supersede`, and `memory.restore` undoes
 it.
 
 `category` plus `scenario` identify a decision. Deciding the same scenario again supersedes the earlier record
