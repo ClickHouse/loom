@@ -721,6 +721,99 @@ def test_zed_install_keeps_a_trailing_comma_beside_the_closing_brace(
     _assert_zed_loom(_jsonc_object(cfg.read_text()), theme="One Dark", other=None)
 
 
+# The inserter treated the line nearest a closing brace as a safe splice point.
+# A block comment can contain that newline, so the new member lands inside the
+# comment and a later parse does not see it.
+@pytest.mark.parametrize(
+    ("original", "theme", "other"),
+    [
+        ('{\n  "theme": "One Dark" /* a\n  b */}\n', "One Dark", None),
+        ('{\n  "theme": "One Dark", /* a\n  b */}\n', "One Dark", None),
+        ("{ /* a\nb */ }\n", None, None),
+        (
+            '{\n  "context_servers": {\n    "other": {"command": "true"} /* a\n    b */}\n}\n',
+            None,
+            {"command": "true"},
+        ),
+        (
+            '{\n  "context_servers": {\n    "other": {"command": "true"}, /* a\n    b */}\n}\n',
+            None,
+            {"command": "true"},
+        ),
+    ],
+)
+def test_zed_install_places_loom_outside_a_multiline_block_comment(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    original: str,
+    theme: str | None,
+    other: dict | None,
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text(original)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert "wrote" in capsys.readouterr().out
+    text = cfg.read_text()
+    assert "/* a" in text and "b */" in text
+    _assert_zed_loom(_jsonc_object(text), theme=theme, other=other)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert cfg.read_text() == text
+
+
+def test_zed_install_replaces_a_visible_loom_entry_beside_a_block_comment(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text('{\n  "theme": "One Dark" /* a\n  b */}\n')
+    assert cli._install_one(
+        "zed", token="token-1", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    once = cfg.read_text()
+    assert (
+        _jsonc_object(once)["context_servers"]["loom"]["headers"]["Authorization"]
+        == "Bearer token-1"
+    )
+    assert cli._install_one(
+        "zed", token="token-1", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert cfg.read_text() == once
+    assert cli._install_one(
+        "zed", token="token-2", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    twice = cfg.read_text()
+    assert "token-1" not in twice
+    assert twice.count("token-2") == 1
+    assert _jsonc_object(twice)["context_servers"]["loom"]["headers"]["Authorization"] == (
+        "Bearer token-2"
+    )
+    assert _jsonc_object(twice)["theme"] == "One Dark"
+    assert "/* a" in twice and "b */" in twice
+
+
+def test_zed_dry_run_on_a_block_comment_keeps_bytes_and_hides_the_token(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = '{\n  "theme": "One Dark" /* a\n  b */}\n'
+    cfg.write_text(original)
+    assert cli._install_one(
+        "zed",
+        token="super-secret-token",
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=True,
+    )
+    out = capsys.readouterr().out
+    assert cfg.read_text() == original
+    assert "super-secret-token" not in out
+    assert "<token>" in out
+
+
 def test_zed_install_keeps_a_nested_trailing_comma_beside_the_closing_brace(
     tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

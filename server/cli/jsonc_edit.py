@@ -1,9 +1,11 @@
 """Insert one key into a JSONC object.
 
-A full rewrite drops comments and trailing commas. The edit splices the new
-member in place and adds a comma after the previous member when that member
-had none. Every other byte stays. A merge that cannot locate one object span
-raises, and the caller keeps the original bytes.
+A full rewrite drops comments and trailing commas. The edit splices after the
+previous member's comma, or before the closing brace when the object has no
+members, and adds a comma when the previous member had none. Those offsets
+come from the parse. A newline is not a splice point: a block comment can
+contain one. Every other byte stays. A merge that cannot locate one object
+span raises, and the caller keeps the original bytes.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ class JsoncEditError(Exception):
 class _Member:
     key: str
     value: Any
+    key_start: int
     value_start: int
     value_end: int
     comma_at: int | None
@@ -55,17 +58,19 @@ def upsert_object_key(
     root = _parse_root(text)
     section_member = _only(root, section)
     if section_member is None:
-        return _insert_member(text, root, section, {name: entry}), True
+        return _commit(text, root, section, {name: entry}, section, name, entry)
     if not isinstance(section_member.value, _Object):
         raise JsoncEditError(f"{section} is not an object")
     current = _only(section_member.value, name)
     if current is None:
-        return _insert_member(text, section_member.value, name, entry), True
+        return _commit(text, section_member.value, name, entry, section, name, entry)
     if _to_data(current.value) == entry:
         return text, False
-    indent = _line_indent(text, current.value_start)
+    indent = _indent_before(text, current.key_start) or "  "
     rendered = _render(entry, indent)
-    return text[: current.value_start] + rendered + text[current.value_end :], True
+    updated = text[: current.value_start] + rendered + text[current.value_end :]
+    _require_entry(updated, section, name, entry)
+    return updated, True
 
 
 def _only(obj: _Object, key: str) -> _Member | None:
@@ -83,13 +88,39 @@ def _to_data(value: Any) -> Any:
     return value
 
 
-def _line_indent(text: str, pos: int) -> str:
-    newline = text.rfind("\n", 0, pos)
-    start = 0 if newline < 0 else newline + 1
-    end = start
-    while end < len(text) and text[end] in " \t":
-        end += 1
-    return text[start:end]
+def _indent_before(text: str, pos: int) -> str:
+    """Spaces and tabs that touch pos. A newline stops the scan, so a comment
+    on an earlier line cannot supply the indent."""
+    start = pos
+    while start > 0 and text[start - 1] in " \t":
+        start -= 1
+    return text[start:pos]
+
+
+def _commit(
+    text: str,
+    obj: _Object,
+    key: str,
+    value: object,
+    section: str,
+    name: str,
+    entry: dict[str, Any],
+) -> tuple[str, bool]:
+    updated = _insert_member(text, obj, key, value)
+    _require_entry(updated, section, name, entry)
+    return updated, True
+
+
+def _require_entry(text: str, section: str, name: str, entry: dict[str, Any]) -> None:
+    """The written text has to parse back to the entry. A splice inside a
+    comment is syntactically quiet and must not count as success."""
+    root = _parse_root(text)
+    section_member = _only(root, section)
+    if section_member is None or not isinstance(section_member.value, _Object):
+        raise JsoncEditError("could not place the new key")
+    current = _only(section_member.value, name)
+    if current is None or _to_data(current.value) != entry:
+        raise JsoncEditError("could not place the new key")
 
 
 def _render(value: object, base_indent: str) -> str:
@@ -100,41 +131,20 @@ def _render(value: object, base_indent: str) -> str:
 
 
 def _insert_member(text: str, obj: _Object, key: str, value: object) -> str:
-    brace = obj.end - 1
-    after_last: int | None = None
+    # Token offsets from the parse. The nearest newline can sit inside a
+    # block comment, so it is not a place to splice.
     if obj.members:
         last = obj.members[-1]
         if last.comma_at is None:
             text = text[: last.value_end] + "," + text[last.value_end :]
-            brace += 1
-            after_last = last.value_end + 1
+            at = last.value_end + 1
         else:
-            after_last = last.comma_at + 1
-    newline = text.rfind("\n", obj.start, brace)
-    # The closing brace shares the last member's line, so that line starts
-    # before the member. Splice after the member, not at the line start.
-    if after_last is not None and newline >= 0 and after_last > newline:
-        indent_end = newline + 1
-        while indent_end < brace and text[indent_end] in " \t":
-            indent_end += 1
-        member_indent = text[newline + 1 : indent_end] or "  "
-        piece = f"\n{member_indent}{json.dumps(key)}: {_render(value, member_indent)}\n"
-        return text[:after_last] + piece + text[after_last:]
-    if newline < 0:
-        member_indent = "  "
-        prefix = "\n"
-        at = brace
+            at = last.comma_at + 1
+        member_indent = _indent_before(text, last.key_start) or "  "
     else:
-        close_indent = text[newline + 1 : brace]
-        if close_indent.strip() != "":
-            member_indent = "  "
-        elif set(close_indent) <= {"\t"} and close_indent.startswith("\t"):
-            member_indent = close_indent + "\t"
-        else:
-            member_indent = close_indent + "  "
-        prefix = ""
-        at = newline + 1
-    piece = f"{prefix}{member_indent}{json.dumps(key)}: {_render(value, member_indent)}\n"
+        at = obj.end - 1
+        member_indent = _indent_before(text, obj.start) + "  "
+    piece = f"\n{member_indent}{json.dumps(key)}: {_render(value, member_indent)}\n"
     return text[:at] + piece + text[at:]
 
 
@@ -257,6 +267,7 @@ class _Parser:
                 return _Object(start, self.i, tuple(members))
             if text[self.i] != '"':
                 raise JsoncEditError("object key is not a string")
+            key_start = self.i
             key = self._parse_string()
             self._skip()
             if self.i >= len(text) or text[self.i] != ":":
@@ -273,7 +284,7 @@ class _Parser:
                 self.i += 1
             elif self.i < len(text) and text[self.i] != "}":
                 raise JsoncEditError("expected comma or end of object")
-            members.append(_Member(key, value, value_start, value_end, comma_at))
+            members.append(_Member(key, value, key_start, value_start, value_end, comma_at))
 
     def _parse_array(self) -> list[Any]:
         self.i += 1
