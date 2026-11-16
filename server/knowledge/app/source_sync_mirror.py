@@ -190,8 +190,9 @@ async def _refresh_lists(
             await _write_lists(src, changed)  # what was read is written all the same
             raise
         if not await _write_lists(src, changed):
-            # A copy another writer holds keeps its list: the listing vouches for nothing,
-            # but the later batches' narrowings are still written.
+            # Defence in depth: only this turn writes this source's mirror addresses today,
+            # but a copy some later writer of mirror rows holds keeps its list. The listing
+            # then vouches for nothing; the later batches' narrowings are still written.
             _note(result, "permissions: a stored copy is not this source's to write")
             all_written = False
     return all_written and not result.cut
@@ -224,7 +225,8 @@ async def _file_access(
 async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.AccessList]) -> bool:
     """Write each stored document's new list as a new row with everything else as it
     was: its chunks are kept, so nothing is embedded again. False when a document is
-    not this source's to write, so its list stays as it was."""
+    not this source's to write (no other writer reaches a mirror's `#<source id>`
+    addresses today; the check guards a later one), so its list stays as it was."""
     if not lists:
         return True
     pass_context.check_stop()
