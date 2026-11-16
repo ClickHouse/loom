@@ -703,7 +703,8 @@ content and the new list, as `knowledge.update_metadata` without `reindex` does,
 chunk or embedding is rebuilt; an unchanged list costs no write. A stored copy behind
 its file's revision (a fetch deferred, given up or over the size bound) takes only the
 part of the new list its stored list already admitted, since its text was shared under
-that list; the content write that brings it up to date carries the wider one. A stored
+that list; the content write that brings it up to date carries the wider one. A behind
+copy that once reads `unread` stays so until that write, which fails closed. A stored
 document the complete listing no longer has is rewritten `unread`, with every entry
 cleared, then retired on positive evidence, as today. The listing row's start lands only
 once every changed list and every such `unread` rewrite of that listing is written, so a

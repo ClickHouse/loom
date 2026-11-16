@@ -791,6 +791,30 @@ def test_a_copy_behind_its_file_is_never_widened_by_the_store_s_new_list(
     assert access_list.from_json(world.docs[uri]["access_json"]).emails == ("ann@example.com",)
 
 
+def test_a_behind_copy_that_read_unread_stays_unread_until_its_content_write(
+    world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_sync_max_file_bytes", 100)
+    world.files = [_file("pdf1", PDF, "2026-01-01T00:00:00.000Z", size="10", permissions=READERS)]
+    _turn(world, _mirrored())
+    [uri] = world.docs
+    # A revision past the size bound whose list could not be read, then one that can.
+    world.files = [_file("pdf1", PDF, "2026-01-02T00:00:00.000Z", size="101")]
+
+    async def _failed(token: str, file_id: str, **kw: Any) -> Any:
+        raise gdrive.VendorError("503")
+
+    monkeypatch.setattr(gdrive, "file_permissions", _failed)
+    _turn(world, _mirrored())
+    assert world.docs[uri]["access_json"] == ""
+    world.files[0]["permissions"] = READERS
+    _turn(world, _mirrored())
+    assert world.docs[uri]["access_json"] == ""  # narrowing only: unread admits nobody
+    world.files = [_file("pdf1", PDF, "2026-01-03T00:00:00.000Z", size="10", permissions=READERS)]
+    _turn(world, _mirrored())  # the content write carries the list read with it
+    assert access_list.from_json(world.docs[uri]["access_json"]).emails == ("ann@example.com",)
+
+
 def test_a_copy_another_writer_holds_keeps_its_list_and_no_listing_row_lands(
     world: Any, mirror: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
