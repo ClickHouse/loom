@@ -435,6 +435,9 @@ const memory = loomMemoryTool(agent, { store: "alice" });
 // client.beta.messages.toolRunner({ model, max_tokens, tools: [memory], messages })
 ```
 
+`loomMemoryHandlers(agent, { store })` returns the six command handlers alone, for a loop that
+dispatches the tool's calls itself.
+
 A file `/memories/<path>` is the document `loom-memory://<store>/memories/<path>`, tagged
 `claude-memory:<store>`; directories are the paths' prefixes. Both SDKs read and write the
 same documents and answer each command with the same text: the text the Python SDK's local

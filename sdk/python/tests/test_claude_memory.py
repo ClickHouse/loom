@@ -356,3 +356,37 @@ def test_editing_a_directory_answers_that_it_is_not_a_file(run: Runner) -> None:
         run(
             docs, {"command": "insert", "path": "/memories/p", "insert_line": 0, "insert_text": "y"}
         )
+
+
+def test_a_listing_walks_each_directory_before_its_neighbours(run: Runner) -> None:
+    docs = _Docs()
+    for path in ("/memories/notes.md", "/memories/notes/x.md", "/memories/notes-old.md"):
+        run(docs, {"command": "create", "path": path, "file_text": "x"})
+    assert run(docs, {"command": "view", "path": "/memories"}).endswith(
+        "/memories\n/memories/notes/\n/memories/notes/x.md\n/memories/notes-old.md\n/memories/notes.md"
+    )
+
+
+def test_a_directory_renamed_into_itself_moves_each_file_once(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/a/x.md", "file_text": "x"})
+    run(docs, {"command": "rename", "old_path": "/memories/a", "new_path": "/memories/a/b"})
+    assert list(docs.docs) == ["loom-memory://default/memories/a/b/x.md"]
+
+
+def test_the_sync_tool_runs_on_a_real_sync_agents_loop() -> None:
+    posts: list[str] = []
+
+    async def post(path: str, payload: dict[str, Any], *a: Any, **kw: Any) -> dict[str, Any]:
+        posts.append(path)
+        return {"found": False, "rows": [], "next_cursor": None}
+
+    agent = SyncAgent(org="acme", namespace="travel", agent="bot", base_url="http://x", api_key="k")
+    try:
+        agent._agent.transport.post = post  # type: ignore[method-assign]
+        tool = LoomMemoryTool(agent, store="alice")
+        answer = tool.call({"command": "create", "path": "/memories/a.md", "file_text": "hi"})
+    finally:
+        agent.close()
+    assert answer == "File created successfully at: /memories/a.md"
+    assert posts == ["/v1/knowledge.get", "/v1/knowledge.list", "/v1/knowledge.upsert"]

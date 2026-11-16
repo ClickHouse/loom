@@ -28,7 +28,7 @@ Install with ``pip install 'clickhouse-loom[claude-memory]'``.
 from __future__ import annotations
 
 import posixpath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     from anthropic.lib.tools import (
@@ -65,7 +65,8 @@ class _Store:
     """The documents of one store: path <-> source URI, and its tag."""
 
     def __init__(self, store: str) -> None:
-        if not store or "/" in store or store != store.strip():
+        # One rule both SDKs apply alike: no edge a space or control character can sit on.
+        if not store or "/" in store or ord(store[0]) <= 32 or ord(store[-1]) <= 32:
             raise ValueError(f"store is one non-empty path segment, got {store!r}")
         self.tag = f"claude-memory:{store}"
         self._prefix = f"loom-memory://{store}"
@@ -73,8 +74,9 @@ class _Store:
     def uri(self, path: str) -> str:
         return self._prefix + path
 
-    def path(self, uri: str) -> str | None:
-        return uri[len(self._prefix) :] if uri.startswith(self._prefix + ROOT) else None
+    def path(self, uri: str) -> str:
+        """The path of a URI this store's listing returned (it starts with the prefix)."""
+        return uri[len(self._prefix) :]
 
 
 def _checked(path: str) -> str:
@@ -99,7 +101,10 @@ def _listing(shown: str, directory: str, paths: list[str]) -> str:
     header = (
         f"Here're the files and directories up to 2 levels deep in {shown}, excluding hidden items:"
     )
-    visible = [e for e in sorted(entries) if not any(part.startswith(".") for part in e.split("/"))]
+    # By path segment, as the reference walks each directory: `notes/` and its files
+    # before `notes.md`.
+    ordered = sorted(entries, key=lambda e: e.rstrip("/").split("/"))
+    visible = [e for e in ordered if not any(part.startswith(".") for part in e.split("/"))]
     lines = [shown] + [f"{shown.rstrip('/')}/{e}" for e in visible]
     return header + "\n" + "\n".join(lines)
 
@@ -125,9 +130,11 @@ def _replaced(path: str, text: str, old: str, new: str) -> tuple[str, str]:
             f"No replacement was performed, old_str `{old}` did not appear verbatim in {path}."
         )
     if count > 1:
-        lines, start = [], 0
+        lines, start, line, seen = [], 0, 1, 0
         while (pos := text.find(old, start)) != -1:
-            lines.append(text[:pos].count("\n") + 1)
+            line += text.count("\n", seen, pos)  # one pass: newlines since the last match
+            seen = pos
+            lines.append(line)
             start = pos + 1
         raise ToolError(
             f"No replacement was performed. Multiple occurrences of old_str `{old}` in lines: "
@@ -148,7 +155,7 @@ def _replaced(path: str, text: str, old: str, new: str) -> tuple[str, str]:
 
 def _inserted(text: str, line: int, insert: str) -> str:
     lines = text.split("\n")
-    if lines and lines[-1] == "":
+    if lines[-1] == "":
         lines.pop()
     if line < 0 or line > len(lines):
         raise ToolError(
@@ -194,7 +201,7 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
                 limit=limit or _PAGE,
                 cursor=cursor,
             )
-            paths += [p for r in page["rows"] if (p := self._store.path(r["source_uri"]))]
+            paths += [self._store.path(r["source_uri"]) for r in page["rows"]]
             cursor = page.get("next_cursor")
             if not cursor or limit:
                 return sorted(paths)
@@ -306,19 +313,19 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
         self._tool = AsyncLoomMemoryTool(agent._agent, store=store)
 
     def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
-        return str(self._sync._run(self._tool.view(command)))
+        return cast(str, self._sync._run(self._tool.view(command)))
 
     def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
-        return str(self._sync._run(self._tool.create(command)))
+        return cast(str, self._sync._run(self._tool.create(command)))
 
     def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
-        return str(self._sync._run(self._tool.str_replace(command)))
+        return cast(str, self._sync._run(self._tool.str_replace(command)))
 
     def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
-        return str(self._sync._run(self._tool.insert(command)))
+        return cast(str, self._sync._run(self._tool.insert(command)))
 
     def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
-        return str(self._sync._run(self._tool.delete(command)))
+        return cast(str, self._sync._run(self._tool.delete(command)))
 
     def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
-        return str(self._sync._run(self._tool.rename(command)))
+        return cast(str, self._sync._run(self._tool.rename(command)))

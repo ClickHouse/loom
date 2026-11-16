@@ -39,7 +39,9 @@ class Store {
   private readonly prefix: string;
 
   constructor(store: string) {
-    if (!store || store.includes("/") || store !== store.trim()) {
+    // One rule both SDKs apply alike: no edge a space or control character can sit on.
+    const edge = (ch: string | undefined) => ch === undefined || (ch.codePointAt(0) ?? 0) <= 32;
+    if (!store || store.includes("/") || edge(store[0]) || edge(store[store.length - 1])) {
       throw new Error(`store is one non-empty path segment, got ${JSON.stringify(store)}`);
     }
     this.tag = `claude-memory:${store}`;
@@ -50,8 +52,9 @@ class Store {
     return this.prefix + path;
   }
 
-  path(uri: string): string | null {
-    return uri.startsWith(this.prefix + ROOT) ? uri.slice(this.prefix.length) : null;
+  /** The path of a URI this store's listing returned (it starts with the prefix). */
+  path(uri: string): string {
+    return uri.slice(this.prefix.length);
   }
 }
 
@@ -85,6 +88,15 @@ function byCodePoint(a: string, b: string): number {
   return x.length - y.length;
 }
 
+/** Paths compared segment by segment, each by code point, as Python compares lists. */
+function bySegments(a: string[], b: string[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const d = byCodePoint(a[i], b[i]);
+    if (d !== 0) return d;
+  }
+  return a.length - b.length;
+}
+
 /** `text` without the trailing runs of `ch` (a loop: a regex would be quadratic here). */
 function trimEnd(text: string, ch: string): string {
   let end = text.length;
@@ -104,9 +116,11 @@ function listing(shown: string, directory: string, paths: string[]): string {
   }
   const head = `Here're the files and directories up to 2 levels deep in ${shown}, excluding hidden items:`;
   const base = trimEnd(shown, "/");
-  const visible = [...entries].sort(byCodePoint).filter((e) => !e.split("/").some((part) => part.startsWith(".")));
-  return `${head}
-${[shown, ...visible.map((e) => `${base}/${e}`)].join("\n")}`;
+  // By path segment, as the reference walks each directory: `notes/` and its files before `notes.md`.
+  const visible = [...entries]
+    .sort((a, b) => bySegments(trimEnd(a, "/").split("/"), trimEnd(b, "/").split("/")))
+    .filter((e) => !e.split("/").some((part) => part.startsWith(".")));
+  return `${head}\n${[shown, ...visible.map((e) => `${base}/${e}`)].join("\n")}`;
 }
 
 /** The directories above `path`, below /memories. */
@@ -139,10 +153,12 @@ function replaced(path: string, text: string, old: string, next: string): [strin
   }
   if (count > 1) {
     const lines: number[] = [];
-    let at = text.indexOf(old);
-    while (at !== -1) {
-      lines.push(text.slice(0, at).split("\n").length);
-      at = text.indexOf(old, at + 1);
+    let line = 1;
+    let seen = 0;
+    for (let at = text.indexOf(old); at !== -1; at = text.indexOf(old, at + 1)) {
+      for (let k = seen; k < at; k++) if (text[k] === "\n") line++; // one pass over the text
+      seen = at;
+      lines.push(line);
     }
     throw new ToolError(
       `No replacement was performed. Multiple occurrences of old_str \`${old}\` in lines: ${lines.join(", ")}. Please ensure it is unique`,
@@ -163,7 +179,7 @@ function replaced(path: string, text: string, old: string, next: string): [strin
 
 function inserted(text: string, line: number, insert: string): string {
   const lines = text.split("\n");
-  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  if (lines[lines.length - 1] === "") lines.pop();
   if (line < 0 || line > lines.length) {
     throw new ToolError(
       `Invalid \`insert_line\` parameter: ${line}. It should be within the range [0, ${lines.length}].`,
@@ -191,10 +207,7 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
         limit: limit ?? PAGE,
         cursor: cursor ?? null,
       });
-      for (const row of page.rows) {
-        const path = store.path(row.source_uri);
-        if (path) out.push(path);
-      }
+      for (const row of page.rows) out.push(store.path(row.source_uri));
       cursor = limit ? null : page.next_cursor;
     } while (cursor);
     return out.sort(byCodePoint);

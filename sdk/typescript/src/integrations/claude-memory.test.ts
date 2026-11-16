@@ -231,6 +231,55 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     );
   });
 
+  it("walks each directory before its neighbours, as the Python tool lists", async () => {
+    const { agent } = harness();
+    const h = loomMemoryHandlers(agent);
+    for (const path of ["/memories/notes.md", "/memories/notes/x.md", "/memories/notes-old.md"]) {
+      await h.create({ command: "create", path, file_text: "x" });
+    }
+    expect(await h.view({ command: "view", path: "/memories" })).toMatch(
+      /\/memories\n\/memories\/notes\/\n\/memories\/notes\/x\.md\n\/memories\/notes-old\.md\n\/memories\/notes\.md$/,
+    );
+  });
+
+  it("renames a directory into itself, moving each file once", async () => {
+    const { agent, docs } = harness();
+    const h = loomMemoryHandlers(agent);
+    await h.create({ command: "create", path: "/memories/a/x.md", file_text: "x" });
+    await h.rename({ command: "rename", old_path: "/memories/a", new_path: "/memories/a/b" });
+    expect([...docs.keys()]).toEqual(["loom-memory://default/memories/a/b/x.md"]);
+  });
+
+  it("refuses a rename of the root, onto the root or from a missing path", async () => {
+    const h = loomMemoryHandlers(harness().agent);
+    await expect(h.rename({ command: "rename", old_path: "/memories", new_path: "/memories/x" })).rejects.toThrow(
+      "itself",
+    );
+    await expect(h.rename({ command: "rename", old_path: "/memories/a", new_path: "/memories" })).rejects.toThrow(
+      "already exists",
+    );
+    await expect(h.rename({ command: "rename", old_path: "/memories/a", new_path: "/memories/b" })).rejects.toThrow(
+      "does not exist",
+    );
+  });
+
+  it("answers that a missing path does not exist for str_replace and insert", async () => {
+    const h = loomMemoryHandlers(harness().agent);
+    await expect(
+      h.str_replace({ command: "str_replace", path: "/memories/none", old_str: "a", new_str: "b" }),
+    ).rejects.toThrow("does not exist");
+    await expect(
+      h.insert({ command: "insert", path: "/memories/none", insert_line: 0, insert_text: "a" }),
+    ).rejects.toThrow("does not exist");
+  });
+
+  it("refuses a store with a space or control character at either edge", () => {
+    const { agent } = harness();
+    for (const store of [" a", "a ", "a\t", "\u0000a", ""]) {
+      expect(() => loomMemoryHandlers(agent, { store })).toThrow("store");
+    }
+  });
+
   it("passes the tool's extra properties through", () => {
     const tool = loomMemoryTool(harness().agent, {}, { cache_control: { type: "ephemeral" } });
     expect(tool).toMatchObject({ type: "memory_20250818", cache_control: { type: "ephemeral" } });
