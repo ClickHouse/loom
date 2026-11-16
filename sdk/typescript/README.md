@@ -396,7 +396,7 @@ import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
 const memory = loomMemoryTool(bot, { store: "u-42" }); // client.beta.messages.toolRunner({ tools: [memory], ... })
 ```
 
-The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8 or later 1.x).
+The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8 or later 1.x).
 
 ## LangChain.js
 

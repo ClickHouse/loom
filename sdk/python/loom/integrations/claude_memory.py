@@ -57,7 +57,7 @@ if TYPE_CHECKING:
 
 ROOT = "/memories"
 _LINE_WIDTH = 6  # the SDK's local memory tool numbers lines to 999,999
-_PAGE = 200
+_PAGE = 500  # knowledge.list's cap on rows a page
 _DELETE_BATCH = 500  # knowledge.bulk_delete's cap on URIs a call
 
 
@@ -87,16 +87,13 @@ def _checked(path: str) -> str:
     return normal
 
 
-def _under(paths: list[str], directory: str) -> list[str]:
-    return sorted(p for p in paths if p.startswith(directory.rstrip("/") + "/"))
-
-
 def _listing(shown: str, directory: str, paths: list[str]) -> str:
-    """A directory view: its files and subdirectories two levels deep, as the SDK's
-    local memory tool lists them (no sizes: a document's size is not listed)."""
+    """A directory view of `paths` (the files under `directory`): its files and
+    subdirectories two levels deep, as the SDK's local memory tool lists them (no
+    sizes: a document's size is not listed)."""
     entries: set[str] = set()
-    for path in _under(paths, directory):
-        parts = path[len(directory.rstrip("/")) + 1 :].split("/")
+    for path in paths:
+        parts = path[len(directory) + 1 :].split("/")
         for depth in range(1, min(len(parts), 2) + 1):
             entries.add("/".join(parts[:depth]) + ("/" if depth < len(parts) else ""))
     header = (
@@ -166,6 +163,12 @@ def _missing(path: str) -> ToolError:
     return ToolError(f"The path {path} does not exist. Please provide a valid path.")
 
 
+def _ancestors(path: str) -> list[str]:
+    """The directories above `path`, below /memories."""
+    parts = path[len(ROOT) + 1 :].split("/")[:-1]
+    return [ROOT + "/" + "/".join(parts[: n + 1]) for n in range(len(parts))]
+
+
 class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
     """The memory tool's commands over a ``loom.Agent``'s documents, for the async
     tool runner. ``store`` names the file tree: one per application, or per user."""
@@ -179,17 +182,22 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
         self._agent = agent
         self._store = _Store(store)
 
-    async def _paths(self) -> list[str]:
+    async def _under(self, directory: str, limit: int | None = None) -> list[str]:
+        """The files under `directory`, sorted; at most `limit` when given (any of them)."""
         paths: list[str] = []
         cursor: str | None = None
         while True:
             page = await self._agent.knowledge.list(
-                tags=[self._store.tag], limit=_PAGE, cursor=cursor
+                tags=[self._store.tag],
+                uri_prefix=[self._store.uri(directory) + "/"],
+                fields=["source_uri"],
+                limit=limit or _PAGE,
+                cursor=cursor,
             )
             paths += [p for r in page["rows"] if (p := self._store.path(r["source_uri"]))]
             cursor = page.get("next_cursor")
-            if not cursor:
-                return paths
+            if not cursor or limit:
+                return sorted(paths)
 
     async def _text(self, path: str) -> str | None:
         doc = await self._agent.knowledge.get(self._store.uri(path))
@@ -205,37 +213,49 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
         for start in range(0, len(uris), _DELETE_BATCH):
             await self._agent.knowledge.bulk_delete(uris[start : start + _DELETE_BATCH])
 
+    async def _file(self, shown: str, path: str) -> str:
+        """The text of the file `path`; ToolError when it is a directory or nothing."""
+        text = await self._text(path)
+        if text is not None:
+            return text
+        if await self._under(path, limit=1):
+            raise ToolError(f"The path {shown} is not a file.")
+        raise _missing(shown)
+
+    async def _no_file_above(self, path: str) -> None:
+        """ToolError when a directory above `path` is a file."""
+        for above in _ancestors(path):
+            if await self._text(above) is not None:
+                raise ToolError(f"The path {above} is a file, not a directory")
+
     async def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
         path = _checked(command.path)
         text = None if path == ROOT else await self._text(path)
         if text is not None:
             return _numbered(command.path, text, command.view_range)
-        paths = await self._paths()
-        if path != ROOT and not _under(paths, path):
+        paths = await self._under(path)
+        if path != ROOT and not paths:
             raise _missing(command.path)
         return _listing(command.path, path, paths)
 
     async def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
         path = _checked(command.path)
-        if path == ROOT or await self._text(path) is not None or _under(await self._paths(), path):
+        if path == ROOT or await self._text(path) is not None or await self._under(path, limit=1):
             raise ToolError(f"File {command.path} already exists")
+        await self._no_file_above(path)
         await self._write(path, command.file_text)
         return f"File created successfully at: {command.path}"
 
     async def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
         path = _checked(command.path)
-        text = await self._text(path)
-        if text is None:
-            raise _missing(command.path)
+        text = await self._file(command.path, path)
         updated, answer = _replaced(command.path, text, command.old_str, command.new_str)
         await self._write(path, updated)
         return answer
 
     async def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
         path = _checked(command.path)
-        text = await self._text(path)
-        if text is None:
-            raise _missing(command.path)
+        text = await self._file(command.path, path)
         await self._write(path, _inserted(text, command.insert_line, command.insert_text))
         return f"The file {command.path} has been edited."
 
@@ -243,7 +263,7 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
         path = _checked(command.path)
         if path == ROOT:
             raise ToolError("Cannot delete the /memories directory itself")
-        doomed = [path] if await self._text(path) is not None else _under(await self._paths(), path)
+        doomed = [path] if await self._text(path) is not None else await self._under(path)
         if not doomed:
             raise ToolError(f"The path {command.path} does not exist")
         await self._delete(doomed)
@@ -253,25 +273,28 @@ class AsyncLoomMemoryTool(BetaAsyncAbstractMemoryTool):
         old, new = _checked(command.old_path), _checked(command.new_path)
         if old == ROOT:
             raise ToolError("Cannot rename the /memories directory itself")
-        paths = await self._paths()
-        if new == ROOT or new in paths or _under(paths, new):
+        if new == ROOT or await self._text(new) is not None or await self._under(new, limit=1):
             raise ToolError(f"The destination {command.new_path} already exists")
-        moves = (
-            [(old, new)] if old in paths else [(p, new + p[len(old) :]) for p in _under(paths, old)]
-        )
-        if not moves:
-            raise ToolError(f"The path {command.old_path} does not exist")
-        for source, target in moves:
-            text = await self._text(source)
-            if text is not None:
-                await self._write(target, text)
-        await self._delete([s for s, _ in moves])
+        await self._no_file_above(new)
+        text = await self._text(old)
+        if text is not None:
+            await self._write(new, text)
+            await self._delete([old])
+        else:
+            sources = await self._under(old)
+            if not sources:
+                raise ToolError(f"The path {command.old_path} does not exist")
+            for source in sources:
+                moved = await self._text(source)
+                if moved is not None:
+                    await self._write(new + source[len(old) :], moved)
+            await self._delete(sources)
         return f"Successfully renamed {command.old_path} to {command.new_path}"
 
 
 class LoomMemoryTool(BetaAbstractMemoryTool):
-    """The memory tool's commands over a ``loom.SyncAgent``'s documents, for the
-    sync tool runner; the same files as ``AsyncLoomMemoryTool`` of the store."""
+    """The memory tool's commands over a ``loom.SyncAgent``'s documents, for the sync
+    tool runner: ``AsyncLoomMemoryTool`` run on the SyncAgent's loop, the same files."""
 
     def __init__(self, agent: SyncAgent, *, store: str = "default", **kwargs: Any) -> None:
         if not isinstance(agent, SyncAgent):
@@ -279,90 +302,23 @@ class LoomMemoryTool(BetaAbstractMemoryTool):
                 "LoomMemoryTool needs a loom.SyncAgent; AsyncLoomMemoryTool takes an Agent"
             )
         super().__init__(**kwargs)
-        self._agent = agent
-        self._store = _Store(store)
-
-    def _paths(self) -> list[str]:
-        paths: list[str] = []
-        cursor: str | None = None
-        while True:
-            page = self._agent.knowledge.list(tags=[self._store.tag], limit=_PAGE, cursor=cursor)
-            paths += [p for r in page["rows"] if (p := self._store.path(r["source_uri"]))]
-            cursor = page.get("next_cursor")
-            if not cursor:
-                return paths
-
-    def _text(self, path: str) -> str | None:
-        doc = self._agent.knowledge.get(self._store.uri(path))
-        return None if doc is None else str(doc.get("content") or "")
-
-    def _write(self, path: str, text: str) -> None:
-        self._agent.knowledge.upsert(text, source_uri=self._store.uri(path), tags=[self._store.tag])
-
-    def _delete(self, paths: list[str]) -> None:
-        uris = [self._store.uri(p) for p in paths]
-        for start in range(0, len(uris), _DELETE_BATCH):
-            self._agent.knowledge.bulk_delete(uris[start : start + _DELETE_BATCH])
+        self._sync = agent
+        self._tool = AsyncLoomMemoryTool(agent._agent, store=store)
 
     def view(self, command: BetaMemoryTool20250818ViewCommand) -> str:
-        path = _checked(command.path)
-        text = None if path == ROOT else self._text(path)
-        if text is not None:
-            return _numbered(command.path, text, command.view_range)
-        paths = self._paths()
-        if path != ROOT and not _under(paths, path):
-            raise _missing(command.path)
-        return _listing(command.path, path, paths)
+        return str(self._sync._run(self._tool.view(command)))
 
     def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
-        path = _checked(command.path)
-        if path == ROOT or self._text(path) is not None or _under(self._paths(), path):
-            raise ToolError(f"File {command.path} already exists")
-        self._write(path, command.file_text)
-        return f"File created successfully at: {command.path}"
+        return str(self._sync._run(self._tool.create(command)))
 
     def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
-        path = _checked(command.path)
-        text = self._text(path)
-        if text is None:
-            raise _missing(command.path)
-        updated, answer = _replaced(command.path, text, command.old_str, command.new_str)
-        self._write(path, updated)
-        return answer
+        return str(self._sync._run(self._tool.str_replace(command)))
 
     def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
-        path = _checked(command.path)
-        text = self._text(path)
-        if text is None:
-            raise _missing(command.path)
-        self._write(path, _inserted(text, command.insert_line, command.insert_text))
-        return f"The file {command.path} has been edited."
+        return str(self._sync._run(self._tool.insert(command)))
 
     def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
-        path = _checked(command.path)
-        if path == ROOT:
-            raise ToolError("Cannot delete the /memories directory itself")
-        doomed = [path] if self._text(path) is not None else _under(self._paths(), path)
-        if not doomed:
-            raise ToolError(f"The path {command.path} does not exist")
-        self._delete(doomed)
-        return f"Successfully deleted {command.path}"
+        return str(self._sync._run(self._tool.delete(command)))
 
     def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
-        old, new = _checked(command.old_path), _checked(command.new_path)
-        if old == ROOT:
-            raise ToolError("Cannot rename the /memories directory itself")
-        paths = self._paths()
-        if new == ROOT or new in paths or _under(paths, new):
-            raise ToolError(f"The destination {command.new_path} already exists")
-        moves = (
-            [(old, new)] if old in paths else [(p, new + p[len(old) :]) for p in _under(paths, old)]
-        )
-        if not moves:
-            raise ToolError(f"The path {command.old_path} does not exist")
-        for source, target in moves:
-            text = self._text(source)
-            if text is not None:
-                self._write(target, text)
-        self._delete([s for s, _ in moves])
-        return f"Successfully renamed {command.old_path} to {command.new_path}"
+        return str(self._sync._run(self._tool.rename(command)))

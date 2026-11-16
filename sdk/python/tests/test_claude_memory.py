@@ -33,10 +33,21 @@ class _Docs:
         return {}
 
     async def list(
-        self, *, tags: list[str], limit: int, cursor: str | None = None
+        self,
+        *,
+        tags: list[str],
+        uri_prefix: list[str],
+        fields: list[str],
+        limit: int,
+        cursor: str | None = None,
     ) -> dict[str, Any]:
         self.calls.append("list")
-        rows = sorted(u for u, (_, t) in self.docs.items() if set(t) & set(tags))
+        assert fields == ["source_uri"]
+        rows = sorted(
+            u
+            for u, (_, t) in self.docs.items()
+            if set(t) & set(tags) and any(u.startswith(p) for p in uri_prefix)
+        )
         start = int(cursor or 0)
         page = rows[start : start + 2]
         more = start + 2 < len(rows)
@@ -52,15 +63,6 @@ class _Docs:
         return {}
 
 
-class _SyncDocs:
-    def __init__(self, docs: _Docs) -> None:
-        self._docs = docs
-
-    def __getattr__(self, name: str) -> Any:
-        method = getattr(self._docs, name)
-        return lambda *a, **kw: asyncio.run(method(*a, **kw))
-
-
 class _Loom:
     def __init__(self, docs: _Docs) -> None:
         self.knowledge = docs
@@ -72,7 +74,9 @@ def _async_tool(docs: _Docs, store: str = "default") -> AsyncLoomMemoryTool:
 
 def _sync_tool(docs: _Docs, store: str = "default") -> LoomMemoryTool:
     agent = object.__new__(SyncAgent)
-    agent.__dict__["knowledge"] = _SyncDocs(docs)
+    # A SyncAgent runs its async Agent's calls on its loop; here, one asyncio.run a call.
+    agent.__dict__["_agent"] = _Loom(docs)
+    agent.__dict__["_run"] = asyncio.run
     return LoomMemoryTool(agent, store=store)
 
 
@@ -274,7 +278,13 @@ def test_a_real_agent_posts_knowledge_ops() -> None:
         "/v1/knowledge.upsert",
     ]
     get, listing, upsert = (body for _, body in posts)
-    assert listing["tags"] == ["claude-memory:alice"]
+    # Only the path's own directory is listed, one row, its URI only.
+    assert listing["uri_prefix"] == ["loom-memory://alice/memories/a.md/"]
+    assert (listing["tags"], listing["fields"], listing["limit"]) == (
+        ["claude-memory:alice"],
+        ["source_uri"],
+        1,
+    )
     assert get["source_uri"] == upsert["source_uri"] == "loom-memory://alice/memories/a.md"
     assert (upsert["content"], upsert["tags"]) == ("hi", ["claude-memory:alice"])
 
@@ -322,3 +332,27 @@ def test_a_large_directory_is_deleted_in_batches_the_server_takes(run: Runner) -
     docs.bulk_delete = counted  # type: ignore[method-assign]
     run(docs, {"command": "delete", "path": "/memories/big"})
     assert sizes == [500, 1] and docs.docs == {}
+
+
+def test_a_path_under_a_file_is_refused(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/a", "file_text": "x"})
+    with pytest.raises(ToolError, match="/memories/a is a file"):
+        run(docs, {"command": "create", "path": "/memories/a/b", "file_text": "x"})
+    run(docs, {"command": "create", "path": "/memories/c.md", "file_text": "x"})
+    with pytest.raises(ToolError, match="/memories/a is a file"):
+        run(
+            docs,
+            {"command": "rename", "old_path": "/memories/c.md", "new_path": "/memories/a/c.md"},
+        )
+
+
+def test_editing_a_directory_answers_that_it_is_not_a_file(run: Runner) -> None:
+    docs = _Docs()
+    run(docs, {"command": "create", "path": "/memories/p/b.md", "file_text": "x"})
+    with pytest.raises(ToolError, match="The path /memories/p is not a file"):
+        run(docs, {"command": "str_replace", "path": "/memories/p", "old_str": "x", "new_str": "y"})
+    with pytest.raises(ToolError, match="The path /memories/p is not a file"):
+        run(
+            docs, {"command": "insert", "path": "/memories/p", "insert_line": 0, "insert_text": "y"}
+        )

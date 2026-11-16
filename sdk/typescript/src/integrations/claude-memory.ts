@@ -1,10 +1,10 @@
 /**
- * loom as the storage of the Claude API memory tool (TypeScript twin of
+ * Loom as the storage of the Claude API memory tool (TypeScript twin of
  * `loom.integrations.claude_memory`).
  *
  * The memory tool (`memory_20250818`) lets Claude keep files under `/memories`
  * across conversations; the application runs its commands. `loomMemoryTool`
- * runs them against loom: each file is a loom document, so every agent of the
+ * runs them against Loom: each file is a Loom document, so every agent of the
  * namespace reads the same files and `knowledge.search` finds what they say.
  *
  *     const memory = loomMemoryTool(agent, { store: "alice" });
@@ -22,7 +22,7 @@ import type { Agent } from "../agent.js";
 const ROOT = "/memories";
 // The SDK's local memory tool numbers lines to 999,999.
 const LINE_WIDTH = 6;
-const PAGE = 200;
+const PAGE = 500; // knowledge.list's cap on rows a page
 // knowledge.bulk_delete's cap on URIs a call.
 const DELETE_BATCH = 500;
 
@@ -74,30 +74,48 @@ function checked(path: string): string {
   return normal;
 }
 
-function under(paths: string[], directory: string): string[] {
-  const prefix = `${directory.replace(/\/+$/, "")}/`;
-  return paths.filter((p) => p.startsWith(prefix)).sort();
+/** Strings in code-point order, as Python sorts them, so both SDKs list alike. */
+function byCodePoint(a: string, b: string): number {
+  const x = [...a];
+  const y = [...b];
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const d = (x[i].codePointAt(0) ?? 0) - (y[i].codePointAt(0) ?? 0);
+    if (d !== 0) return d;
+  }
+  return x.length - y.length;
 }
 
-/** A directory view, two levels deep, as the SDK's local memory tool lists one (no sizes). */
+/** `text` without the trailing runs of `ch` (a loop: a regex would be quadratic here). */
+function trimEnd(text: string, ch: string): string {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === ch) end--;
+  return text.slice(0, end);
+}
+
+/** A directory view of `paths` (the files under `directory`), two levels deep, as the
+ * Python SDK's local memory tool lists one (no sizes). */
 function listing(shown: string, directory: string, paths: string[]): string {
-  const base = directory.replace(/\/+$/, "");
   const entries = new Set<string>();
-  for (const path of under(paths, directory)) {
-    const parts = path.slice(base.length + 1).split("/");
+  for (const path of paths) {
+    const parts = path.slice(directory.length + 1).split("/");
     for (let depth = 1; depth <= Math.min(parts.length, 2); depth++) {
       entries.add(parts.slice(0, depth).join("/") + (depth < parts.length ? "/" : ""));
     }
   }
   const head = `Here're the files and directories up to 2 levels deep in ${shown}, excluding hidden items:`;
-  const lines = [
-    shown,
-    ...[...entries]
-      .sort()
-      .filter((e) => !e.split("/").some((part) => part.startsWith(".")))
-      .map((e) => `${shown.replace(/\/+$/, "")}/${e}`),
-  ];
-  return `${head}\n${lines.join("\n")}`;
+  const base = trimEnd(shown, "/");
+  const visible = [...entries].sort(byCodePoint).filter((e) => !e.split("/").some((part) => part.startsWith(".")));
+  return `${head}
+${[shown, ...visible.map((e) => `${base}/${e}`)].join("\n")}`;
+}
+
+/** The directories above `path`, below /memories. */
+function ancestors(path: string): string[] {
+  const parts = path
+    .slice(ROOT.length + 1)
+    .split("/")
+    .slice(0, -1);
+  return parts.map((_, n) => `${ROOT}/${parts.slice(0, n + 1).join("/")}`);
 }
 
 function numbered(path: string, text: string, range?: number[] | null): string {
@@ -151,28 +169,35 @@ function inserted(text: string, line: number, insert: string): string {
       `Invalid \`insert_line\` parameter: ${line}. It should be within the range [0, ${lines.length}].`,
     );
   }
-  lines.splice(line, 0, insert.replace(/\n+$/, ""));
+  lines.splice(line, 0, trimEnd(insert, "\n"));
   return `${lines.join("\n")}\n`;
 }
 
 const missing = (path: string) => new ToolError(`The path ${path} does not exist. Please provide a valid path.`);
 
-/** The memory tool's command handlers over a loom `Agent`'s documents. */
+/** The memory tool's command handlers over a Loom `Agent`'s documents. */
 export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {}): MemoryToolHandlers {
   const store = new Store(opts.store ?? "default");
 
-  const paths = async (): Promise<string[]> => {
+  /** The files under `directory`, sorted; at most `limit` when given (any of them). */
+  const under = async (directory: string, limit?: number): Promise<string[]> => {
     const out: string[] = [];
     let cursor: string | null | undefined;
     do {
-      const page = await agent.call("knowledge.list", { tags: [store.tag], limit: PAGE, cursor: cursor ?? null });
+      const page = await agent.call("knowledge.list", {
+        tags: [store.tag],
+        uri_prefix: [`${store.uri(directory)}/`],
+        fields: ["source_uri"],
+        limit: limit ?? PAGE,
+        cursor: cursor ?? null,
+      });
       for (const row of page.rows) {
         const path = store.path(row.source_uri);
         if (path) out.push(path);
       }
-      cursor = page.next_cursor;
+      cursor = limit ? null : page.next_cursor;
     } while (cursor);
-    return out;
+    return out.sort(byCodePoint);
   };
   const text = async (path: string): Promise<string | null> => {
     const doc = await agent.call("knowledge.get", { source_uri: store.uri(path) });
@@ -188,42 +213,55 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
     }
   };
 
+  /** The text of the file `path`; a ToolError when it is a directory or nothing. */
+  const file = async (shown: string, path: string): Promise<string> => {
+    const body = await text(path);
+    if (body !== null) return body;
+    if ((await under(path, 1)).length > 0) throw new ToolError(`The path ${shown} is not a file.`);
+    throw missing(shown);
+  };
+  /** A ToolError when a directory above `path` is a file. */
+  const noFileAbove = async (path: string): Promise<void> => {
+    for (const above of ancestors(path)) {
+      if ((await text(above)) !== null) throw new ToolError(`The path ${above} is a file, not a directory`);
+    }
+  };
+
   return {
     async view(command) {
       const path = checked(command.path);
       const body = path === ROOT ? null : await text(path);
       if (body !== null) return numbered(command.path, body, command.view_range);
-      const all = await paths();
-      if (path !== ROOT && under(all, path).length === 0) throw missing(command.path);
-      return listing(command.path, path, all);
+      const files = await under(path);
+      if (path !== ROOT && files.length === 0) throw missing(command.path);
+      return listing(command.path, path, files);
     },
     async create(command) {
       const path = checked(command.path);
-      if (path === ROOT || (await text(path)) !== null || under(await paths(), path).length > 0) {
+      if (path === ROOT || (await text(path)) !== null || (await under(path, 1)).length > 0) {
         throw new ToolError(`File ${command.path} already exists`);
       }
+      await noFileAbove(path);
       await write(path, command.file_text);
       return `File created successfully at: ${command.path}`;
     },
     async str_replace(command) {
       const path = checked(command.path);
-      const body = await text(path);
-      if (body === null) throw missing(command.path);
+      const body = await file(command.path, path);
       const [updated, answer] = replaced(command.path, body, command.old_str, command.new_str);
       await write(path, updated);
       return answer;
     },
     async insert(command) {
       const path = checked(command.path);
-      const body = await text(path);
-      if (body === null) throw missing(command.path);
+      const body = await file(command.path, path);
       await write(path, inserted(body, command.insert_line, command.insert_text));
       return `The file ${command.path} has been edited.`;
     },
     async delete(command) {
       const path = checked(command.path);
       if (path === ROOT) throw new ToolError("Cannot delete the /memories directory itself");
-      const doomed = (await text(path)) !== null ? [path] : under(await paths(), path);
+      const doomed = (await text(path)) !== null ? [path] : await under(path);
       if (doomed.length === 0) throw new ToolError(`The path ${command.path} does not exist`);
       await remove(doomed);
       return `Successfully deleted ${command.path}`;
@@ -232,25 +270,29 @@ export function loomMemoryHandlers(agent: Agent, opts: LoomMemoryToolOptions = {
       const old = checked(command.old_path);
       const next = checked(command.new_path);
       if (old === ROOT) throw new ToolError("Cannot rename the /memories directory itself");
-      const all = await paths();
-      if (next === ROOT || all.includes(next) || under(all, next).length > 0) {
+      if (next === ROOT || (await text(next)) !== null || (await under(next, 1)).length > 0) {
         throw new ToolError(`The destination ${command.new_path} already exists`);
       }
-      const moves: [string, string][] = all.includes(old)
-        ? [[old, next]]
-        : under(all, old).map((p) => [p, next + p.slice(old.length)]);
-      if (moves.length === 0) throw new ToolError(`The path ${command.old_path} does not exist`);
-      for (const [source, target] of moves) {
-        const body = await text(source);
-        if (body !== null) await write(target, body);
+      await noFileAbove(next);
+      const body = await text(old);
+      if (body !== null) {
+        await write(next, body);
+        await remove([old]);
+      } else {
+        const sources = await under(old);
+        if (sources.length === 0) throw new ToolError(`The path ${command.old_path} does not exist`);
+        for (const source of sources) {
+          const moved = await text(source);
+          if (moved !== null) await write(next + source.slice(old.length), moved);
+        }
+        await remove(sources);
       }
-      await remove(moves.map(([source]) => source));
       return `Successfully renamed ${command.old_path} to ${command.new_path}`;
     },
   };
 }
 
-/** The Claude API memory tool over a loom `Agent`'s documents, for the SDK's tool runner. */
+/** The Claude API memory tool over a Loom `Agent`'s documents, for the SDK's tool runner. */
 export function loomMemoryTool(agent: Agent, opts: LoomMemoryToolOptions = {}, extras?: LoomMemoryToolExtras) {
   return betaMemoryTool(loomMemoryHandlers(agent, opts), extras);
 }

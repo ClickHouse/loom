@@ -20,6 +20,7 @@ function harness() {
     } else if (op === "knowledge.list") {
       const rows = [...docs.entries()]
         .filter(([, d]) => d.tags.some((t) => body.tags.includes(t)))
+        .filter(([u]) => body.uri_prefix.some((p: string) => u.startsWith(p)))
         .map(([u]) => u)
         .sort();
       const start = Number(body.cursor ?? 0);
@@ -176,6 +177,58 @@ describe("loomMemoryTool (Claude memory tool over loom documents)", () => {
     await loomMemoryHandlers(agent).delete({ command: "delete", path: "/memories/big" });
     expect(ops.filter((op) => op === "knowledge.bulk_delete")).toHaveLength(2);
     expect(docs.size).toBe(0);
+  });
+
+  it("refuses a path under a file and answers that a directory is not a file", async () => {
+    const { agent } = harness();
+    const h = loomMemoryHandlers(agent);
+    await h.create({ command: "create", path: "/memories/a", file_text: "x" });
+    await expect(h.create({ command: "create", path: "/memories/a/b", file_text: "x" })).rejects.toThrow(
+      "/memories/a is a file",
+    );
+    await h.create({ command: "create", path: "/memories/p/b.md", file_text: "x" });
+    await expect(
+      h.str_replace({ command: "str_replace", path: "/memories/p", old_str: "x", new_str: "y" }),
+    ).rejects.toThrow("The path /memories/p is not a file");
+    await expect(
+      h.rename({ command: "rename", old_path: "/memories/p/b.md", new_path: "/memories/a/b.md" }),
+    ).rejects.toThrow("/memories/a is a file");
+  });
+
+  it("lists only the path's own directory, its URIs only", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetch = async (url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      if (url.endsWith("knowledge.list")) calls.push(body);
+      return new Response(JSON.stringify(url.endsWith("knowledge.list") ? { rows: [] } : { found: false }), {
+        status: 200,
+      });
+    };
+    const agent = new Agent("o", "n", "bot", { baseUrl: "http://x", fetch, logLevel: "off" });
+    await loomMemoryHandlers(agent, { store: "alice" }).create({
+      command: "create",
+      path: "/memories/a.md",
+      file_text: "x",
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        uri_prefix: ["loom-memory://alice/memories/a.md/"],
+        fields: ["source_uri"],
+        limit: 1,
+        tags: ["claude-memory:alice"],
+      }),
+    ]);
+  });
+
+  it("sorts a listing by code point, as the Python tool does", async () => {
+    const { agent } = harness();
+    const h = loomMemoryHandlers(agent);
+    for (const path of ["/memories/\uFF21.md", "/memories/\u{1F600}.md"]) {
+      await h.create({ command: "create", path, file_text: "x" });
+    }
+    expect(await h.view({ command: "view", path: "/memories" })).toMatch(
+      /\/memories\/\uFF21\.md\n\/memories\/\u{1F600}\.md$/u,
+    );
   });
 
   it("passes the tool's extra properties through", () => {

@@ -425,7 +425,8 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 ```
 
 In TypeScript, `loomMemoryTool(agent, { store }, extras)` returns the SDK's `betaMemoryTool`
-(with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an optional peer dependency, 1.8 or later 1.x):
+(with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an
+optional peer dependency, 1.8 or later 1.x):
 
 ```ts
 import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
@@ -437,7 +438,8 @@ const memory = loomMemoryTool(agent, { store: "alice" });
 A file `/memories/<path>` is the document `loom-memory://<store>/memories/<path>`, tagged
 `claude-memory:<store>`; directories are the paths' prefixes. Both SDKs read and write the
 same documents and answer each command with the same text: the text the Python SDK's local
-memory tool answers, except that a directory view lists paths without sizes.
+memory tool answers, except that a directory view lists paths without sizes and that two
+refusals are Loom's own (an empty `old_str`, and a path under a file).
 
 | Command       | Loom                                                                                                                                                                              |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -451,7 +453,9 @@ memory tool answers, except that a directory view lists paths without sizes.
 Every path must be `/memories` or under it, after `.` and `..` are resolved; any other path
 is refused before Loom is called. A refusal is a `ToolError`, which the tool runner returns
 to Claude as an error result. An edit reads the file and writes it back, so two agents that
-edit one file at once keep the later write, as with the SDK's local memory tool.
+edit one file at once keep the later write, as with the SDK's local memory tool; a
+directory view, delete or rename that pages while another agent rewrites a file under it
+can miss that file.
 
 | Argument | Default   | Effect                                                                                                 |
 | -------- | --------- | ------------------------------------------------------------------------------------------------------ |
