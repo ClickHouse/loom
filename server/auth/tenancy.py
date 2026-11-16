@@ -18,8 +18,8 @@ for the org a verified call acts in, before anything is written:
   then read the winner back): placed here, the cell writes its row and serves; placed
   elsewhere, the call answers 409 `WRONG_CELL` and nothing is written. A platform or
   `*`-org principal, or a call with no principal, never places an org: it answers 409
-  `WRONG_CELL`, but on a first cell whose directory answers `attaching`, or cannot be read
-  before it has read `serving`, where it answers 503. A failed placement call answers 503,
+  `WRONG_CELL`, or 503 on a first cell whose directory answers `attaching` or cannot be
+  read before it has read `serving`. A failed placement call answers 503,
   and the router's refusal of a new org past the length limit answers 422.
 """
 
@@ -223,12 +223,19 @@ async def _require_attaching(org: str) -> None:
 
 
 async def _refuse_unscoped(org: str) -> None:
-    """Refuse an unheld org for a principal that places none: 409 `WRONG_CELL`, except on a
+    """Refuse an unheld org for a principal that places none: 409 `WRONG_CELL`, or 503 on a
     first cell whose directory answers `attaching` or cannot be read before it has read
-    `serving`, where the org's data may be in this cell until attach places it: 503."""
+    `serving`, since the org's data may be in this cell until attach places it."""
     from server.core import cell
 
     if cell.is_first():
+        missing = cell_router.unset()
+        if missing and not cell_router.has_reader():
+            # A CLI past `recording` (the mode this path runs in) holds no router token
+            # (`_ch.check_orgs`), so it asks nothing and names the org alone.
+            raise BackendUnavailableError(
+                f"org {org!r} is not held by this cell", operation="tenancy"
+            )
         answer = await cell_router.directory_answer()
         if answer == cell_router.ATTACHING:
             raise BackendUnavailableError(
@@ -237,17 +244,9 @@ async def _refuse_unscoped(org: str) -> None:
                 operation="tenancy",
             )
         if answer == cell_router.UNKNOWN:
-            missing = cell_router.unset()
-            if not missing:
-                text = ", and the directory is unreadable"
-            elif cell_router.has_reader():
-                text = f", and {', '.join(missing)} unset"
-            else:
-                # Past `recording` (the mode this path runs in) a CLI holds no router
-                # token (`_ch.check_orgs`): the org alone is named.
-                text = ""
+            why = f"{', '.join(missing)} unset" if missing else "the directory is unreadable"
             raise BackendUnavailableError(
-                f"org {org!r} is not held by this cell{text}", operation="tenancy"
+                f"org {org!r} is not held by this cell, and {why}", operation="tenancy"
             )
     raise WrongCellError(org)
 

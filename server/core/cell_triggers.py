@@ -400,15 +400,15 @@ def readiness_check() -> readiness.CheckResult:
     pooled sessions keep the tenancy marker, as the cell-state read found it
     (`cell.marked`). Without it the cell's triggers judge this process's writes as an
     unchecked writer's, so it fails in `enforced` and `partial`; in `recording` it passes
-    with a warning, so a first cell behind a pooler that strips startup parameters does not
-    stall its rollout before attach. Missing triggers are named by `loom doctor` and attach,
-    not here: a first cell in `recording` has none."""
+    with a warning, so a first cell behind a pooler does not stall its rollout before
+    attach. Missing triggers are named by `loom doctor` and attach, not here: a first cell
+    in `recording` has none."""
     marked = cell.marked()
     if marked is not False:
         return readiness.CheckResult(True)
     lost = (
         "this process's pooled Postgres sessions do not keep the tenancy marker "
-        f"{pg.TENANCY_MARKER} (a pooler that drops startup parameters?)"
+        f"{pg.TENANCY_MARKER} (a connection pooler between this process and Postgres?)"
     )
     refused = (
         "its writes for an org the cell does not hold, and the tenancy row of each newly placed org"

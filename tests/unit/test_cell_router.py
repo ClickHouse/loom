@@ -478,14 +478,14 @@ def test_an_unscoped_refusal_without_router_settings_names_the_org_alone(
     enforced: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With the router token unset, as every CLI past `recording` has it, the refusal names
-    the org alone: never attach, never a token the CLI is refused with."""
-    monkeypatch.setattr(
-        cell_router, "directory_answer", AsyncMock(return_value=cell_router.UNKNOWN)
-    )
+    the org alone and asks nothing: never attach, never a token the CLI is refused with."""
+    read = AsyncMock(return_value=cell_router.UNKNOWN)
+    monkeypatch.setattr(cell_router, "directory_answer", read)
     monkeypatch.setattr(cell_router, "unset", lambda: ["LOOM_CELL_ROUTER_TOKEN"])
     with pytest.raises(errors.BackendUnavailableError) as raised:
         asyncio.run(tenancy.ensure_held("new", None))
     assert str(raised.value) == "org 'new' is not held by this cell"
+    read.assert_not_awaited()
 
 
 def test_a_server_names_its_unset_router_settings_in_an_unscoped_refusal(
