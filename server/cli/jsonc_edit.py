@@ -1,8 +1,9 @@
-"""Insert one key into a JSONC object and leave every other byte in place.
+"""Insert one key into a JSONC object.
 
-A full rewrite drops comments and trailing commas. Zed settings are JSONC, so a
-merge that cannot locate one object span raises and the caller keeps the
-original bytes.
+A full rewrite drops comments and trailing commas. The edit splices the new
+member in place and adds a comma after the previous member when that member
+had none. Every other byte stays. A merge that cannot locate one object span
+raises, and the caller keeps the original bytes.
 """
 
 from __future__ import annotations
@@ -100,7 +101,25 @@ def _render(value: object, base_indent: str) -> str:
 
 def _insert_member(text: str, obj: _Object, key: str, value: object) -> str:
     brace = obj.end - 1
+    after_last: int | None = None
+    if obj.members:
+        last = obj.members[-1]
+        if last.comma_at is None:
+            text = text[: last.value_end] + "," + text[last.value_end :]
+            brace += 1
+            after_last = last.value_end + 1
+        else:
+            after_last = last.comma_at + 1
     newline = text.rfind("\n", obj.start, brace)
+    # The closing brace shares the last member's line, so that line starts
+    # before the member. Splice after the member, not at the line start.
+    if after_last is not None and newline >= 0 and after_last > newline:
+        indent_end = newline + 1
+        while indent_end < brace and text[indent_end] in " \t":
+            indent_end += 1
+        member_indent = text[newline + 1 : indent_end] or "  "
+        piece = f"\n{member_indent}{json.dumps(key)}: {_render(value, member_indent)}\n"
+        return text[:after_last] + piece + text[after_last:]
     if newline < 0:
         member_indent = "  "
         prefix = "\n"
@@ -116,12 +135,6 @@ def _insert_member(text: str, obj: _Object, key: str, value: object) -> str:
         prefix = ""
         at = newline + 1
     piece = f"{prefix}{member_indent}{json.dumps(key)}: {_render(value, member_indent)}\n"
-    if obj.members and obj.members[-1].comma_at is None:
-        value_end = obj.members[-1].value_end
-        if value_end > at:
-            raise JsoncEditError("could not place the new key")
-        text = text[:value_end] + "," + text[value_end:]
-        at += 1
     return text[:at] + piece + text[at:]
 
 

@@ -625,6 +625,118 @@ def test_zed_dry_run_names_settings_json_and_writes_nothing(
     assert not (settings.parent / "mcp.json").exists()
 
 
+def _jsonc_object(text: str) -> dict:
+    """A JSONC object parsed for an assertion.
+
+    Strings are copied through, so ``//`` inside a URL is not a comment. This
+    is not the installer editor.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            out.append(text[i:j])
+            i = j
+            continue
+        if text.startswith("//", i):
+            newline = text.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end < 0:
+                raise AssertionError(f"unterminated comment\n{text}")
+            i = end + 2
+            continue
+        out.append(text[i])
+        i += 1
+    stripped = "".join(out)
+    cleaned: list[str] = []
+    i = 0
+    n = len(stripped)
+    while i < n:
+        if stripped[i] == '"':
+            j = i + 1
+            while j < n:
+                if stripped[j] == "\\":
+                    j += 2
+                    continue
+                if stripped[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            cleaned.append(stripped[i:j])
+            i = j
+            continue
+        if stripped[i] == ",":
+            k = i + 1
+            while k < n and stripped[k] in " \t\r\n":
+                k += 1
+            if k < n and stripped[k] in "}]":
+                i += 1
+                continue
+        cleaned.append(stripped[i])
+        i += 1
+    try:
+        data = json.loads("".join(cleaned))
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"written settings are not JSONC: {exc}\n{text}") from exc
+    if not isinstance(data, dict):
+        raise AssertionError(f"written settings are not an object\n{text}")
+    return data
+
+
+def _assert_zed_loom(data: dict, *, theme: str | None, other: dict | None) -> None:
+    if theme is not None:
+        assert data["theme"] == theme
+    servers = data["context_servers"]
+    assert isinstance(servers, dict)
+    if other is not None:
+        assert servers["other"] == other
+    assert servers["loom"] == {
+        "url": "http://localhost:7777/mcp",
+        "headers": {"Authorization": "Bearer T"},
+    }
+
+
+def test_zed_install_keeps_a_trailing_comma_beside_the_closing_brace(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text('{\n  "theme": "One Dark",}\n')
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert "wrote" in capsys.readouterr().out
+    _assert_zed_loom(_jsonc_object(cfg.read_text()), theme="One Dark", other=None)
+
+
+def test_zed_install_keeps_a_nested_trailing_comma_beside_the_closing_brace(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text('{\n  "context_servers": {\n    "other": {"command": "true"},}\n}\n')
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert "wrote" in capsys.readouterr().out
+    _assert_zed_loom(
+        _jsonc_object(cfg.read_text()),
+        theme=None,
+        other={"command": "true"},
+    )
+
+
 def test_zed_install_adds_context_servers_when_the_key_is_absent(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
