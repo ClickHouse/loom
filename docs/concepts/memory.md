@@ -188,10 +188,13 @@ A searchable `memory.set` runs these checks in order:
    used by `set_from_messages`) treats any live row with the same hash in
    `(org, namespace, agent, user_id)` as the fact (`LOOM_MEMORY_BULK_DEDUP_SCOPE=identity`).
 5. **Peer search and verdict.** Active rows of the same `memory_type` whose embedding is
-   close to the new value are **peers**, compared closest first:
+   close to the new value are **peers**, compared closest first; a write that names its
+   `user_id` takes them from that user's rows only
+   ([how a write is judged](../features/memory/conflicts-and-refusal.md#how-a-write-is-judged)):
    - same canonical form (lowercased, punctuation stripped, whitespace collapsed) →
      `merge`: nothing written, the peer is reinforced, `merged_into_key` names it;
-   - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT`;
+   - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT` (under a namespace-wide
+     token, a restatement of another user's pinned value is written);
    - under `newest_wins`, a peer that states the same subject and predicate with a
      different object → `refines`: the peer is retired, unless its `valid_at` is later
      than the new row's, which answers `conflict`;

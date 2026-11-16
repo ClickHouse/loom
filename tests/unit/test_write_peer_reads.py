@@ -277,7 +277,7 @@ async def test_a_bulk_write_naming_its_user_reads_and_judges_that_users_rows(
     put.user_id = "bob"
     out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
     assert [out[i].verdict for i in range(2)] == ["clear", "clear"]
-    # The nearest-peer statements read Bob's rows; the pinned read stays namespace-wide.
+    # The nearest-peer statements read Bob's rows; any other carries no user filter.
     users = {p.get("scope_uid") for sql, p in ch.query_all_calls if "cosineDistance" in sql}
     assert "bob" in users and users <= {"bob", None}
 
@@ -287,8 +287,8 @@ async def test_a_bulk_write_naming_its_user_reads_and_judges_that_users_rows(
 async def test_a_bulk_write_naming_its_user_writes_a_restatement_of_another_users_pin(
     monkeypatch, read: str
 ) -> None:
-    """Through the batched candidates' pinned arm as through the per-fact read, Bob's
-    restatement of Alice's pinned value contradicts nothing and is written."""
+    """Batched and per fact, Bob's restatement of Alice's pinned value contradicts
+    nothing and is written (the fake serves Alice's row to every statement)."""
     from server.memory.app import bulk_set
 
     monkeypatch.setattr(settings, "memory_bulk_peer_read", read)

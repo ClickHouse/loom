@@ -819,9 +819,13 @@ class _CloserOwnRowsOfBothTypes(_NamespaceCH):
         _PinnedRowWithAnotherTypesVector,
     ],
 )
+@pytest.mark.parametrize("token", ["bounded to U", "namespace-wide"])
 def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
-    monkeypatch, namespace_rows: type[_NamespaceCH]
+    monkeypatch, namespace_rows: type[_NamespaceCH], token: str
 ) -> None:
+    """A write for U, under a token bounded to U or a namespace-wide one naming U, is
+    refused by V's close pinned row through the per-fact read and the batched
+    candidates' pinned arm alike."""
     from server.memory.app import conflicts
 
     ch = namespace_rows()
@@ -850,10 +854,13 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
         )
         return await check(rows[0])
 
-    single = _run_as(_pinned("U"), lambda: check(None))
-    batched = _run_as(_pinned("U"), bulk)
+    auth = _pinned("U") if token == "bounded to U" else None
+    single = _run_as(auth, lambda: check(None))
+    ch.sql.clear()
+    batched = _run_as(auth, bulk)
     assert single.verdict == batched.verdict == "rejected"
     assert single.pinned_blocker_id == batched.pinned_blocker_id == "v1"
+    assert any("m.pinned = 1" in s and "BY qidx" in s for s, _ in ch.sql)
 
 
 class _OwnPinnedRowBeyondTen(_NamespaceCH):
