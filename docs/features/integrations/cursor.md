@@ -14,10 +14,10 @@ hooks: no code shunt and no capture of tool calls, runs or working memory; the
 
 ## Plugin
 
-`.cursor-plugin/` at the repository root makes it a Cursor plugin marketplace with one
-plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The plugin is
-not listed in Cursor's marketplace and has not been tested in Cursor. On a Teams or
-Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs → Add
+`.cursor-plugin/` at the repository root makes the repository a Cursor plugin marketplace
+with one plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The
+plugin is not listed in Cursor's marketplace and has not been tested in Cursor. On a
+Teams or Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs → Add
 Marketplace → Import from Repo** with `https://github.com/ClickHouse/loom`.
 
 The plugin has one variable, **Loom MCP URL**. A team admin sets it in Cursor's
@@ -33,8 +33,8 @@ names; tools outside its default toolset run through `loom_op`. The entry sends 
 `Authorization` header, so a team server without OAuth answers 401. Such a team skips the
 plugin: `loom install --client cursor` [below](#mcp-tools) writes the entry with a token,
 and `npx skills add` adds the skills.
-[Clients that sign in by browser](mcp-clients.md#clients-that-sign-in-by-browser) has
-the OAuth details.
+[Clients that sign in by browser](mcp-clients.md#clients-that-sign-in-by-browser) has the
+OAuth details.
 
 ## MCP tools
 

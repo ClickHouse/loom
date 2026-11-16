@@ -8,9 +8,10 @@ import posixpath
 import re
 from pathlib import Path
 
+import pytest
+
+import server.cli.install as cli
 from server.cli._client import DEFAULT_BASE_URL
-from server.cli.install import _install_mcp_url
-from server.identity.app.token_clients import CODING_CLIENTS, CODING_TOOLSET
 from tests.unit.test_loom_code_skill import ROOT_SKILLS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,10 +47,17 @@ def test_the_entry_sends_no_authorization_header() -> None:
     assert entry == {"url": "${LOOM_MCP_URL}"}
 
 
-def test_the_default_url_is_the_one_loom_install_writes_for_cursor() -> None:
+def test_the_default_url_is_the_one_loom_install_writes_for_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "mcp.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda client: config)
+    assert cli._install_one(
+        "cursor", token="", server_url=DEFAULT_BASE_URL, name="loom", dry_run=False
+    )
+    written = json.loads(config.read_text())["mcpServers"]["loom"]["url"]
     default = MANIFEST["variables"]["properties"]["LOOM_MCP_URL"]["default"]
-    assert "cursor" in CODING_CLIENTS
-    assert default == _install_mcp_url(DEFAULT_BASE_URL, CODING_TOOLSET)
+    assert default == written
 
 
 def test_the_plugin_ships_the_root_skills() -> None:
