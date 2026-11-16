@@ -19,8 +19,8 @@ for the org a verified call acts in, before anything is written:
   elsewhere, the call answers 409 `WRONG_CELL` and nothing is written. A platform or
   `*`-org principal, or a call with no principal, never places an org: it answers 409
   `WRONG_CELL`, or 503 on a first cell whose directory answers `attaching` or cannot be
-  read before it has read `serving`. A failed placement call answers 503,
-  and the router's refusal of a new org past the length limit answers 422.
+  read before it has read `serving`. A failed placement call answers 503, and the
+  router's refusal of a new org past the length limit answers 422.
 """
 
 from __future__ import annotations
