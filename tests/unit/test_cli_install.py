@@ -4,6 +4,7 @@ Code capture (settings.json `env`) writer."""
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -433,3 +434,207 @@ def test_install_gives_each_client_the_toolset_the_server_setup_gives(
     setup = client_config(client, "https://h/mcp", "T")
     key = setup["config_key"]
     assert json.loads(cfg.read_text())[key] == setup["config"][key]
+
+
+_ZED_SETTINGS = """\
+// loom-709-repo-marker: this comment identifies the settings file Zed should open
+
+{
+  "theme": "One Dark",
+  "context_servers": {
+    "marker-existing-server": {
+      "command": "true",
+      "args": ["loom-709-marker"]
+    }
+  }
+}
+"""
+
+_ZED_TOKEN = "repro-not-a-secret"
+_ZED_URL = "http://localhost:7777/mcp"
+
+
+def _zed_path(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    cfg = tmp_path / "settings.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda _client: cfg)
+    return cfg
+
+
+def test_zed_config_path_is_the_settings_file() -> None:
+    """Zed reads context_servers from settings.json. macOS uses the same
+    ~/.config/zed path as Linux. Windows uses %APPDATA%\\Zed\\settings.json."""
+    assert cli.CONFIG_PATHS["zed"] == {
+        "darwin": "~/.config/zed/settings.json",
+        "linux": "~/.config/zed/settings.json",
+        "win32": "%APPDATA%\\Zed\\settings.json",
+    }
+
+
+def test_zed_resolve_install_path_follows_the_platform(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert cli._resolve_install_path("zed") == tmp_path / ".config" / "zed" / "settings.json"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert cli._resolve_install_path("zed") == tmp_path / ".config" / "zed" / "settings.json"
+
+
+def test_zed_install_merges_jsonc_and_repeats_without_rewriting(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text(_ZED_SETTINGS)
+    assert cli._install_one(
+        "zed",
+        token=_ZED_TOKEN,
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=False,
+    )
+    text = cfg.read_text()
+    assert text.startswith(
+        "// loom-709-repo-marker: this comment identifies the settings file Zed should open\n"
+    )
+    assert '"theme": "One Dark"' in text
+    assert '"marker-existing-server"' in text
+    assert '"args": ["loom-709-marker"]' in text
+    assert '"url": "http://localhost:7777/mcp"' in text
+    assert f'"Authorization": "Bearer {_ZED_TOKEN}"' in text
+    assert "mcp-remote" not in text
+    assert "mcp.json" not in text
+    again = text
+    assert cli._install_one(
+        "zed",
+        token=_ZED_TOKEN,
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=False,
+    )
+    assert cfg.read_text() == again
+
+
+def test_zed_install_keeps_trailing_commas_comments_and_url_slashes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = """\
+{
+  // keep this line
+  "theme": "http://example.com/a//b", /* kept */
+  "context_servers": {
+    "marker-existing-server": {
+      "command": "true",
+      "args": ["keep-me",],
+    },
+  },
+}
+"""
+    cfg.write_text(original)
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    text = cfg.read_text()
+    assert "// keep this line" in text
+    assert "/* kept */" in text
+    assert '"theme": "http://example.com/a//b"' in text
+    assert '"args": ["keep-me",]' in text
+    assert text.rstrip().endswith("}")
+    assert '"url": "http://localhost:7777/mcp"' in text
+    assert "mcp-remote" not in text
+
+
+def test_zed_install_replaces_only_the_loom_entry(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text(_ZED_SETTINGS)
+    assert cli._install_one(
+        "zed", token="old-token", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    once = cfg.read_text()
+    assert cli._install_one(
+        "zed", token="new-token", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    text = cfg.read_text()
+    assert "old-token" not in text
+    assert "Bearer new-token" in text
+    assert "// loom-709-repo-marker" in text
+    assert '"args": ["loom-709-marker"]' in text
+    assert text != once
+
+
+def test_zed_install_refuses_unmerged_jsonc_without_touching_bytes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    broken = '{ "theme": "One Dark",\n'
+    cfg.write_text(broken)
+    assert (
+        cli._install_one(
+            "zed", token=_ZED_TOKEN, server_url="http://localhost:7777", name="loom", dry_run=False
+        )
+        is False
+    )
+    assert cfg.read_text() == broken
+    err = capsys.readouterr().err
+    assert "not changed" in err
+    assert _ZED_URL in err
+    assert _ZED_TOKEN in err
+    assert "context_servers" in err
+
+
+def test_zed_install_refuses_a_non_object_context_servers(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = '{ "theme": "One Dark", "context_servers": [] }\n'
+    cfg.write_text(original)
+    assert (
+        cli._install_one(
+            "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+        )
+        is False
+    )
+    assert cfg.read_text() == original
+    assert "context_servers" in capsys.readouterr().err
+
+
+def test_zed_dry_run_names_settings_json_and_writes_nothing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "linux")
+    settings = tmp_path / ".config" / "zed" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(_ZED_SETTINGS)
+    before = settings.read_bytes()
+    assert cli._install_one(
+        "zed",
+        token=_ZED_TOKEN,
+        server_url="http://localhost:7777",
+        name="loom",
+        dry_run=True,
+    )
+    out = capsys.readouterr().out
+    assert str(settings) in out
+    assert "mcp.json" not in out
+    assert _ZED_TOKEN not in out
+    assert "<token>" in out
+    assert settings.read_bytes() == before
+    assert not (settings.parent / "mcp.json").exists()
+
+
+def test_zed_install_adds_context_servers_when_the_key_is_absent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _zed_path(tmp_path, monkeypatch)
+    cfg.write_text('// note\n{\n  "theme": "One Dark"\n}\n')
+    assert cli._install_one(
+        "zed", token="T", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    text = cfg.read_text()
+    assert text.startswith("// note\n")
+    assert '"theme": "One Dark"' in text
+    assert '"context_servers"' in text
+    assert '"url": "http://localhost:7777/mcp"' in text
