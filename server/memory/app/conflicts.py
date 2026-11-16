@@ -438,7 +438,7 @@ async def _scoped_and_pinned_peers(
 def _split_by_writer_scope(
     peers: list[ConflictPeer], scope: ReadFilters | None
 ) -> tuple[list[ConflictPeer], list[ConflictPeer]]:
-    """(peers inside the writer's scope (`_writer_scope`), peers outside it). A writer
+    """(inside, outside) the writer's scope (`_writer_scope`). A writer
     bounded to one user, or a write that names its user, never merges into,
     reinforces, supersedes or marks another user's row; only a pinned one still
     blocks it. A scope the request cannot resolve keeps no peer inside."""
@@ -1174,9 +1174,9 @@ def could_be_peer(row: Mapping[str, Any], user_id: str) -> bool:
         return False
     if str(row.get("status") or "active") not in ("active", "conflicted"):
         return False
-    scope = _writer_scope(user_id)
     if row.get("pinned"):
         return True
+    scope = _writer_scope(user_id)
     return scope is not None and row_in_read_scope(scope, row.get("user_id"), row.get("session_id"))
 
 
