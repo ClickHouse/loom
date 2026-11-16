@@ -133,7 +133,10 @@ async def read_once(client: httpx.AsyncClient | None = None) -> None:
     """Ask the router once, on `client` (the background reader's) or a client of its own,
     and keep the answer."""
     global _answer, _serving, _logged_why
-    if client is None:
+    router: bool | None
+    if missing := unset():
+        state, router, why = UNKNOWN, False, f"{', '.join(missing)} unset"
+    elif client is None:
         import httpx
 
         async with httpx.AsyncClient() as own:
@@ -175,9 +178,7 @@ def _keep_router(router: bool | None, why: str, now: float) -> None:
 
 async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str]:
     """(the answer for the tenancy check, the `router` value it proves or None for a
-    transient failure, its cause)."""
-    if missing := unset():
-        return UNKNOWN, False, f"{', '.join(missing)} unset"
+    transient failure, its cause); the router settings are set (`read_once`)."""
     import httpx
 
     limit = float(settings.cell_router_timeout_s)

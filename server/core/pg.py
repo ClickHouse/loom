@@ -629,7 +629,8 @@ async def fetchrow_reset(sql: str) -> Any:
             return row
         except BaseException as e:
             # Not `conn.transaction()`: a cancel must not leave a BEGIN asyncpg never saw.
-            if not _lost(conn) and conn.is_in_transaction():
+            lost = _lost(conn)
+            if not lost and conn.is_in_transaction():
                 try:
                     await asyncio.wait_for(conn.execute("ROLLBACK"), _RELEASE_TIMEOUT_S)
                 except Exception as rollback:  # noqa: BLE001 — the read's error is raised
@@ -638,7 +639,7 @@ async def fetchrow_reset(sql: str) -> Any:
                         error_summary(rollback),
                     )
             if isinstance(e, Exception):
-                _raise_if_unavailable(e)
+                _raise_if_unavailable(e, lost=lost)
             raise
 
 

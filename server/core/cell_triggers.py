@@ -36,9 +36,7 @@ TENANCY_TRIGGER = "tenancy_record"
 CELL_FIRST_TRIGGERS = ("cell_first_immutable", "cell_first_no_truncate")
 # Org-keyed tables the org triggers skip: the cell's own tenancy rows (`tenancy_record`
 # guards them instead), and the idempotency rows keyed by the caller's token org (a platform
-# admin's replay row for its home org is not refused). Outside the guard is not outside the
-# first attach: its org scan (`server/cli/cell_scan.py`) reads every table with an `org`
-# column, these included, and places the orgs it finds.
+# admin's replay row for its home org is neither refused nor placed).
 EXCLUDED = frozenset({"tenancy", "idempotency", "idempotency_fences"})
 # A table's DDL waits this long for its lock a try, LOCK_ATTEMPTS tries LOCK_RETRY_S
 # apart: a boot never queues behind a long transaction (and every write of the table
@@ -214,41 +212,36 @@ async def ensure(conn: Any) -> None:
     state = await cell.read_state(conn)
     if state == "open":
         return
+    # A table's statements, in one transaction: one lock wait, and every statement or none.
+    statements: dict[str, list[str]] = {}
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
-    always = [
-        f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
-        for name in CELL_FIRST_TRIGGERS
-        if (row := first.get(("cell_first", name))) is not None and row["enabled"] != "A"
-    ]
-    if always:
-        await _run_ddl(conn, "cell_first", always)
-    if state != "enforced":
-        return
-    tables = await conn.fetch(ORG_TABLES)
-    for r in tables:
-        if r["relkind"] == "p":
-            # No trigger guards it: named here as missing() names it.
-            log.warning(
-                "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
+    for name in CELL_FIRST_TRIGGERS:
+        row = first.get(("cell_first", name))
+        if row is not None and row["enabled"] != "A":
+            statements.setdefault("cell_first", []).append(
+                f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
             )
-    present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
-    for r, names in _planned(tables):
-        if sqls := _table_statements(r["relname"], names, present):
-            await _run_ddl(conn, r["relname"], sqls)
-
-
-def _table_statements(
-    table: str, names: tuple[str, ...], present: dict[tuple[str, str], Any]
-) -> list[str]:
-    """The DDL that gives `table` its named triggers, each present and enabled."""
-    out = []
-    for name in names:
-        row = present.get((table, name))
-        if row is None:
-            out.append(_create(f"loom.{_ident(table)}", name))
-        elif row["enabled"] != "O":
-            out.append(f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}")
-    return out
+    if state == "enforced":
+        present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
+        tables = await conn.fetch(ORG_TABLES)
+        for r in tables:
+            if r["relkind"] == "p":
+                # No trigger guards it: named here as missing() names it.
+                log.warning(
+                    "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
+                )
+        for r, names in _planned(tables):
+            table = r["relname"]
+            for name in names:
+                row = present.get((table, name))
+                if row is None:
+                    statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
+                elif row["enabled"] != "O":
+                    statements.setdefault(table, []).append(
+                        f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
+                    )
+    for table, sqls in statements.items():
+        await _run_ddl(conn, table, sqls)
 
 
 async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
