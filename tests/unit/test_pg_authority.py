@@ -7135,3 +7135,40 @@ async def test_a_postgres_point_write_reads_the_peers_of_its_user(
     w.embedding = [0.1, 0.2]
     await set_commit._pg_peer_rows(w, SimpleNamespace(policy="auto_reinforce"))
     assert [r["user_id"] for r in reads] == ["bob"]
+
+
+async def test_absorb_rejoins_a_gap_row_only_for_a_write_it_could_be_a_peer_of(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit of Alice's unpinned row inside the reach joins the peers of a write with no
+    user, and is no peer of Bob's write, as on the verdict's first round."""
+    alices = _row("hers", user_id="alice", value="Prefers aisle seats", run_id="-", valid_at=None)
+    pg_admission.remember(identity_key(alices), 1, [1.0, 0.0])
+
+    async def gap(*_a: object) -> tuple[int, list[dict[str, object]]]:
+        return 7, [alices]
+
+    async def measure(*_a: object) -> list[list[float] | None]:
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(pg_admission, "_gap", gap)
+    monkeypatch.setattr(pg_admission, "_measure", measure)
+
+    async def peers(user: str) -> list[str]:
+        out = await pg_admission.absorb(
+            captured={},
+            moved={},
+            org="o",
+            namespace="n",
+            memory_type="semantic",
+            memory_key="mine",
+            embedding=[1.0, 0.0],
+            max_distance=0.3,
+            peers=[],
+            user_id=user,
+        )
+        assert out is not None
+        return [str(r["memory_key"]) for r in out[1]]
+
+    assert await peers("bob") == []
+    assert await peers("-") == ["hers"]
