@@ -4,6 +4,7 @@ Code capture (settings.json `env`) writer."""
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 import pytest
@@ -1254,3 +1255,104 @@ def test_zed_install_writes_a_missing_file_with_lf(
     assert b"\r" not in raw
     assert raw.endswith(b"\n")
     assert _jsonc_object(raw.decode("utf-8"))["context_servers"]["loom"]["url"].endswith("/mcp")
+
+
+def _translate_unset_newline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An open that leaves newline unset translates each ``\\n`` to CR LF.
+
+    That is the stdlib rule when the platform separator is CR LF. An explicit
+    newline is left alone.
+    """
+    real = os.fdopen
+
+    def fdopen(fd, mode="r", buffering=-1, encoding=None, errors=None, newline=None, **kwargs):
+        if "b" not in mode and newline is None:
+            newline = "\r\n"
+        return real(
+            fd, mode, buffering, encoding=encoding, errors=errors, newline=newline, **kwargs
+        )
+
+    monkeypatch.setattr(os, "fdopen", fdopen)
+
+
+def _zed_round(cfg, original: bytes, *, keep: bytes) -> None:
+    cfg.write_bytes(original)
+    assert cli._install_one(
+        "zed", token="old-token", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    once = cfg.read_bytes()
+    assert keep in once
+    assert cli._install_one(
+        "zed", token="old-token", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    assert cfg.read_bytes() == once
+    assert cli._install_one(
+        "zed", token="new-token", server_url="http://localhost:7777", name="loom", dry_run=False
+    )
+    twice = cfg.read_bytes()
+    assert keep in twice
+    assert b"old-token" not in twice
+    assert twice.count(b"new-token") == 1
+
+
+def test_zed_install_keeps_lf_bytes_when_newline_translates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _translate_unset_newline(monkeypatch)
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{\n  "theme": "One Dark",\n}\n'
+    _zed_round(cfg, original, keep=b'{\n  "theme": "One Dark",')
+    assert b"\r" not in cfg.read_bytes()
+
+
+def test_zed_install_keeps_crlf_bytes_when_newline_translates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _translate_unset_newline(monkeypatch)
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{\r\n  "theme": "One Dark",\r\n}\r\n'
+    _zed_round(cfg, original, keep=b'{\r\n  "theme": "One Dark",')
+    raw = cfg.read_bytes()
+    assert b"\r" not in raw.replace(b"\r\n", b"")
+
+
+def test_zed_install_keeps_mixed_bytes_when_newline_translates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _translate_unset_newline(monkeypatch)
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'{\r\n  "theme": "One Dark",\n  "ui": "kept"\n}\n'
+    _zed_round(cfg, original, keep=b'"ui": "kept",\n')
+    raw = cfg.read_bytes()
+    assert raw.startswith(b"{\r\n")
+    assert raw.count(b"\r\n") == 1
+
+
+def test_zed_install_keeps_a_bom_and_crlf_when_newline_translates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _translate_unset_newline(monkeypatch)
+    cfg = _zed_path(tmp_path, monkeypatch)
+    original = b'\xef\xbb\xbf{\r\n  "theme": "One Dark",\r\n}\r\n'
+    _zed_round(cfg, original, keep=b'\xef\xbb\xbf{\r\n  "theme": "One Dark",')
+    raw = cfg.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r" not in raw.replace(b"\r\n", b"")
+
+
+def test_other_client_writes_keep_lf_when_newline_translates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _translate_unset_newline(monkeypatch)
+    cfg = tmp_path / "mcp.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda _c: cfg)
+    assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
+    assert b"\r" not in cfg.read_bytes()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert cli._install_claude_code_capture("https://h", "secret-token", dry_run=False)
+    assert cli._install_codex_capture("https://h", "secret-token", dry_run=False)
+    claude = tmp_path / ".claude" / "settings.json"
+    codex = tmp_path / ".loom" / "config.json"
+    assert b"\r" not in claude.read_bytes()
+    assert b"\r" not in codex.read_bytes()
+    capsys.readouterr()

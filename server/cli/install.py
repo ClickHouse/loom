@@ -383,7 +383,7 @@ def _install_zed(
         print(f"✓ zed: wrote {name} → {cfg_path}")
         return True
     try:
-        # read_text translates CR LF to LF, and the write then drops every CR.
+        # Bytes, so a CR in the file is still a CR when the splice runs.
         original = cfg_path.read_bytes().decode("utf-8")
     except (UnicodeDecodeError, OSError) as exc:
         _print_zed_manual(
