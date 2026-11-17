@@ -6370,6 +6370,25 @@
           "type": "string",
           "description": "Volume named in tiering TTL clauses; must match a volume in the cluster's storage_policies."
         },
+        "tls_cert_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM certificate chain the web port serves, with tls_key_file. Both set: the port serves HTTPS only, and a renewed pair is served without a restart (server/core/tls.py); both \"\": plain HTTP. Served by scripts/serve.sh and `loom serve`."
+        },
+        "tls_key_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused."
+        },
+        "tls_min_version": {
+          "default": "1.2",
+          "enum": [
+            "1.2",
+            "1.3"
+          ],
+          "type": "string",
+          "description": "Lowest TLS version the web port accepts with tls_cert_file: \"1.2\" or \"1.3\" (a settings file's unquoted 1.3 reads as the same)."
+        },
         "tracker_bisect_component_dirs": {
           "default": 8,
           "type": "integer",

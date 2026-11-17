@@ -160,6 +160,20 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- if has (printf "LOOM_%s" (upper $k)) $pgNames }}{{ fail (printf "set %s through postgres.*, not settingsFile, beside postgres.host" $k) }}{{ end }}
 {{- end }}
 {{- end }}
+{{- /* The names the tls block renders (loom.tlsEnv), with the mount and the HTTPS probes
+they need: set anywhere else, the probes would still use HTTP. */}}
+{{- $_ := include "loom.tls" . }}
+{{- $tlsNames := list "LOOM_TLS_CERT_FILE" "LOOM_TLS_KEY_FILE" "LOOM_TLS_MIN_VERSION" }}
+{{- range $tlsNames }}
+{{- if hasKey $.Values.env . }}{{ fail (printf "set %s through tls.*, not env" .) }}{{ end }}
+{{- if hasKey $.Values.secrets.extra . }}{{ fail (printf "set %s through tls.*, not secrets.extra" .) }}{{ end }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if has .name $tlsNames }}{{ fail (printf "set %s through tls.*, not extraEnv" .name) }}{{ end }}
+{{- end }}
+{{- range $k, $_ := .Values.settingsFile | default dict }}
+{{- if has (printf "LOOM_%s" (upper $k)) $tlsNames }}{{ fail (printf "set %s through tls.*, not settingsFile" $k) }}{{ end }}
+{{- end }}
 LOOM_DEPLOYMENT: "1"
 LOOM_PUBLIC_BASE_URL: {{ required "publicBaseUrl is required" .Values.publicBaseUrl | quote }}
 {{- if not (hasKey .Values.env "LOOM_OAUTH_ISSUER") }}
@@ -284,6 +298,65 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- end -}}
 {{- end }}
 
+{{/* The tls block, checked: "" secretName serves plain HTTP. A release upgraded with
+--reuse-values from a chart without the block has none, so minVersion has a default. */}}
+{{- define "loom.tls" -}}
+{{- $tls := deepCopy (.Values.tls | default dict) -}}
+{{- if kindIs "invalid" $tls.minVersion }}{{ $_ := set $tls "minVersion" "1.2" }}{{ end -}}
+{{- if $tls.secretName -}}
+{{- if not (kindIs "string" $tls.secretName) }}{{ fail "tls.secretName must be the name of a kubernetes.io/tls Secret" }}{{ end -}}
+{{- if not (has (toString $tls.minVersion) (list "1.2" "1.3")) }}{{ fail "tls.minVersion must be \"1.2\" or \"1.3\"" }}{{ end -}}
+{{- if dig "enabled" false (.Values.assistant | default dict) }}{{ fail "assistant.enabled calls Loom's port over plain HTTP, which tls.secretName turns off: turn one of them off" }}{{ end -}}
+{{- $ingress := .Values.ingress | default dict -}}
+{{- if and $ingress.enabled (eq (toString $ingress.className) "alb") -}}
+{{- $annotations := $ingress.annotations | default dict -}}
+{{- $alb := "set ingress.annotations.\"alb.ingress.kubernetes.io/%s\" to HTTPS beside tls.secretName, or the ALB sends plain HTTP to a port that answers HTTPS only" -}}
+{{- if ne (toString (get $annotations "alb.ingress.kubernetes.io/backend-protocol")) "HTTPS" }}{{ fail (printf $alb "backend-protocol") }}{{ end -}}
+{{- if and (hasKey $annotations "alb.ingress.kubernetes.io/healthcheck-protocol") (ne (toString (get $annotations "alb.ingress.kubernetes.io/healthcheck-protocol")) "HTTPS") }}{{ fail (printf $alb "healthcheck-protocol") }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $tls -}}
+{{- end }}
+
+{{/* The settings that serve the mounted pair (loom.tlsVolumeMount) on the web port. */}}
+{{- define "loom.tlsEnv" -}}
+{{- $tls := include "loom.tls" . | fromYaml -}}
+{{- if $tls.secretName -}}
+- name: LOOM_TLS_CERT_FILE
+  value: /etc/loom/tls/tls.crt
+- name: LOOM_TLS_KEY_FILE
+  value: /etc/loom/tls/tls.key
+- name: LOOM_TLS_MIN_VERSION
+  value: {{ toString $tls.minVersion | quote }}
+{{- end -}}
+{{- end }}
+
+{{/* The certificate and key, readable by the pod's group (podSecurityContext.fsGroup)
+only. Mounted whole, not by subPath, so the kubelet swaps in a renewed pair. */}}
+{{- define "loom.tlsVolume" -}}
+{{- $tls := include "loom.tls" . | fromYaml -}}
+{{- if $tls.secretName -}}
+- name: tls
+  secret:
+    secretName: {{ $tls.secretName | quote }}
+    defaultMode: 0440
+    items:
+      - key: tls.crt
+        path: tls.crt
+      - key: tls.key
+        path: tls.key
+{{- end -}}
+{{- end }}
+
+{{- define "loom.tlsVolumeMount" -}}
+{{- $tls := include "loom.tls" . | fromYaml -}}
+{{- if $tls.secretName -}}
+- name: tls
+  mountPath: /etc/loom/tls
+  readOnly: true
+{{- end -}}
+{{- end }}
+
 {{/* Hash of the embedding space, which every pod must share and cannot roll.
 The root secret is compared with the release's Secret instead (deployment.yaml),
 so no digest of it is published on the Deployment. */}}
@@ -353,6 +426,9 @@ passes and runs an overdue worker instead of restarting its interval. */}}
 {{- with include "loom.pgVolumeMount" . }}
 {{ . }}
 {{- end }}
+{{- with include "loom.tlsVolumeMount" . }}
+{{ . }}
+{{- end }}
 {{- end }}
 
 {{/* The settings file's `data`, for the release's ConfigMap and each hook Job's copy. */}}
@@ -420,6 +496,9 @@ for the workers pods. */}}
 {{- with include "loom.pgVolume" . }}
 {{ . }}
 {{- end }}
+{{- with include "loom.tlsVolume" . }}
+{{ . }}
+{{- end }}
 {{- with .Values.extraVolumes }}
 {{ toYaml . }}
 {{- end }}
@@ -432,18 +511,19 @@ for the workers pods. */}}
 {{- end }}
 
 {{- define "loom.probes" -}}
+{{- $scheme := ternary ", scheme: HTTPS" "" (not (empty (include "loom.tls" . | fromYaml).secretName)) -}}
 startupProbe:
-  httpGet: { path: /v1/health/ready, port: http }
+  httpGet: { path: /v1/health/ready, port: http{{ $scheme }} }
   periodSeconds: {{ .Values.probes.startup.periodSeconds }}
   failureThreshold: {{ .Values.probes.startup.failureThreshold }}
   timeoutSeconds: 3
 livenessProbe:
-  httpGet: { path: /v1/health/live, port: http }
+  httpGet: { path: /v1/health/live, port: http{{ $scheme }} }
   periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
   failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
   timeoutSeconds: 3
 readinessProbe:
-  httpGet: { path: /v1/health/ready, port: http }
+  httpGet: { path: /v1/health/ready, port: http{{ $scheme }} }
   periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
   failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
   timeoutSeconds: 3
@@ -498,6 +578,9 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     {{- end }}
     {{- include "loom.podEnv" $ | nindent 4 }}
     {{- with include "loom.pgEnv" $ }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with include "loom.tlsEnv" $ }}
     {{- . | nindent 4 }}
     {{- end }}
     - name: LOOM_SETTINGS_FILE

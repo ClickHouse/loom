@@ -26,7 +26,15 @@ from urllib.parse import urlsplit
 
 import httpx
 import idna
-from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from server.core.document_formats import route_key
 from server.core.embedding_space import inferred_provider
@@ -5189,6 +5197,22 @@ class RuntimeSettings(BaseModel):
     # outside trust-network, the dev signing secret or a weak root, gateway or end-user
     # key. Only for a port others cannot reach.
     allow_insecure: bool = False
+    # PEM certificate chain the web port serves, with tls_key_file. Both set: the port
+    # serves HTTPS only, and a renewed pair is served without a restart (server/core/tls.py);
+    # both "": plain HTTP. Served by scripts/serve.sh and `loom serve`.
+    tls_cert_file: str = ""
+    # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused.
+    tls_key_file: str = ""
+    # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3" (a settings
+    # file's unquoted 1.3 reads as the same).
+    tls_min_version: Annotated[Literal["1.2", "1.3"], BeforeValidator(str)] = "1.2"
+
+    @model_validator(mode="after")
+    def _check_tls_pair(self) -> RuntimeSettings:
+        """A certificate without its key, or a key without its certificate, serves nothing."""
+        if bool(self.tls_cert_file) != bool(self.tls_key_file):
+            raise ValueError("set LOOM_TLS_CERT_FILE and LOOM_TLS_KEY_FILE together, or neither")
+        return self
 
     def workers_mode(self) -> str:
         """`background_workers` as this process runs it: `auto` outside the

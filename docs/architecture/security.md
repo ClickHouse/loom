@@ -879,8 +879,9 @@ its value.
   check refuses. The sign-in pages under `/oauth/` run no script and send the same policy:
   their URLs can carry a user code or an authorization request, so no other site receives
   them as a referrer, and their form POSTs carry the page's own `Origin`.
-- HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
-  terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
+- HSTS, without `includeSubDomains` or `preload`: browsers reach Loom through a TLS
+  terminator, whether Loom's own port serves plain HTTP or HTTPS (`LOOM_TLS_CERT_FILE`),
+  and a browser ignores the header over plain HTTP and honours it over HTTPS.
 
 **Route policies.** The dashboard page carries a Content-Security-Policy whose
 `script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,

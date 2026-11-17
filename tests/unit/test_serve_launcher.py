@@ -1,6 +1,7 @@
-"""scripts/serve.sh, the image's launcher, with stub `python` and `uvicorn` on
-PATH: how many web processes it starts, which runtime directory they share and
-which event loop they run, and the bind address the startup checks read."""
+"""scripts/serve.sh, the image's launcher, with a stub `python` on PATH, which also
+stands in for the web tier it starts (`server.core.web_server`, uvicorn): how many web
+processes it starts, which runtime directory they share and which event loop they run,
+and the bind address the startup checks read."""
 
 from __future__ import annotations
 
@@ -14,7 +15,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-_PYTHON = """#!/bin/sh
+# The stub web tier prints its arguments and the environment it starts in.
+_WEB_SERVER = """  "-m server.core.web_server "*)
+    echo "$* bind=${LOOM_BIND_HOST:-} runtime=${LOOM_RUNTIME_DIR:-}" ;;"""
+_PYTHON = (
+    """#!/bin/sh
 case "$*" in
   "-m server.core.web_workers") echo 4 ;;
   "-m server.settings.launch runtime_dir web_workers trusted_proxies")
@@ -24,12 +29,13 @@ case "$*" in
     [ "$STUB_RUNTIME_DIR" = none ] && { echo "loom: no private directory" >&2; exit 2; }
     [ "$STUB_RUNTIME_DIR" = broken ] && { echo "Traceback: settings invalid" >&2; exit 1; }
     echo "${LOOM_RUNTIME_DIR:-$STUB_RUNTIME_DIR}" ;;
+"""
+    + _WEB_SERVER
+    + """
   *) exit 99 ;;
 esac
 """
-_UVICORN = """#!/bin/sh
-echo "$* bind=${LOOM_BIND_HOST:-} runtime=${LOOM_RUNTIME_DIR:-}"
-"""
+)
 
 
 def _launch(
@@ -45,9 +51,8 @@ def _launch(
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    for name, body in (("python", _PYTHON), ("uvicorn", _UVICORN)):
-        (bin_dir / name).write_text(body)
-        (bin_dir / name).chmod(0o755)
+    (bin_dir / "python").write_text(_PYTHON)
+    (bin_dir / "python").chmod(0o755)
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "STUB_RUNTIME_DIR": runtime_dir,
@@ -163,7 +168,7 @@ def test_the_launch_values_resolve_as_the_server_loads_them(tmp_path: Path) -> N
 
 
 def _launch_real(tmp_path: Path, settings_file: str) -> subprocess.CompletedProcess[str]:
-    """serve.sh with the real resolver and stub uvicorn and runtime check."""
+    """serve.sh with the real resolver and a stub web tier and runtime check."""
     yaml = tmp_path / "loom.yaml"
     yaml.write_text(settings_file)
     bin_dir = tmp_path / "bin"
@@ -172,12 +177,12 @@ def _launch_real(tmp_path: Path, settings_file: str) -> subprocess.CompletedProc
 case "$*" in
   "-m server.settings.launch "*) exec "{sys.executable}" "$@" ;;
   "-m server.core.runtime_files") echo /run/loom ;;
+{_WEB_SERVER}
   *) exit 99 ;;
 esac
 '''
-    for name, body in (("python", shim), ("uvicorn", _UVICORN)):
-        (bin_dir / name).write_text(body)
-        (bin_dir / name).chmod(0o755)
+    (bin_dir / "python").write_text(shim)
+    (bin_dir / "python").chmod(0o755)
     env = {**_without_loom(), "PATH": f"{bin_dir}:/usr/bin:/bin", "PORT": "1", "LOOM_ENV_FILE": ""}
     return subprocess.run(
         ["sh", str(ROOT / "scripts" / "serve.sh")],
@@ -285,6 +290,14 @@ def test_the_launcher_runs_the_stdlib_loop_unless_told(
     done = _launch(tmp_path, workers="1", runtime_dir="none", loop=loop)
     assert done.returncode == 0, done.stderr
     assert _arg(done.stdout, "--loop") == started
+
+
+def test_a_uvicorn_variable_stops_the_launcher_by_name(tmp_path: Path) -> None:
+    """The web tier reads no UVICORN_* variable, so one would be dropped without a word."""
+    extra = {"UVICORN_LOG_LEVEL": "debug", "UVICORN_SSL_CERTFILE": "/x"}
+    done = _launch(tmp_path, workers="1", runtime_dir="none", extra=extra)
+    assert done.returncode == 2 and done.stdout == ""
+    assert "does not read UVICORN_LOG_LEVEL UVICORN_SSL_CERTFILE" in done.stderr
 
 
 def test_a_settings_file_the_server_would_refuse_stops_the_launcher(tmp_path: Path) -> None:

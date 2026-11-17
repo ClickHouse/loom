@@ -396,6 +396,34 @@ A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps
 list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`
 (Helm 3.14 or later).
 
+## TLS on the Loom port
+
+`tls.secretName` names a `kubernetes.io/tls` Secret in the release's namespace. Every web
+and workers pod mounts its `tls.crt` and `tls.key` (mode 0440, group
+`podSecurityContext.fsGroup`), serves them on port 7777 with HTTPS only and probes over
+HTTPS; the Service marks the port `appProtocol: https`. `tls.minVersion` sets
+`LOOM_TLS_MIN_VERSION`. The chart refuses the `LOOM_TLS_*` settings anywhere else: the
+mount and the HTTPS probes come with `tls.secretName`.
+
+A controller that renews the Secret in place needs no restart. The kubelet updates the
+mount within its sync period, and each web process serves the new pair from its next
+handshake ([TLS on the Loom port](deployment.md#tls-on-the-loom-port)). The Secret must
+exist before the pods start.
+
+The Ingress or proxy in front then connects over HTTPS: on EKS, add
+`alb.ingress.kubernetes.io/backend-protocol: HTTPS` to `ingress.annotations` (the chart
+refuses an `alb` Ingress without it). Setting or
+clearing `tls.secretName` on a running release breaks requests until the rollout ends:
+the balancer and in-cluster clients switch scheme for every pod at once, while the pods
+restart one at a time. Plan a window, or install a second release with TLS and move the
+clients to it. A client in the cluster that calls the Service by URL, such as
+`deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` with the CA that
+issued the certificate (`SSL_CERT_FILE` for the `loom` CLI). The assistant calls the port
+over plain HTTP, so the chart refuses `assistant.enabled` with `tls.secretName`. Keep
+`tls.minVersion` at `"1.2"` unless every client of the port, the balancer included,
+speaks TLS 1.3. `helm test` calls the Service over HTTPS without verifying the
+certificate.
+
 ## Separate workers
 
 `workers.enabled: true` moves the background workers to their own Deployment

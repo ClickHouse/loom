@@ -140,6 +140,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         open_signup_without_trust_network=settings.signup_open_without_trust_network(),
         weak_keys=weak_keys(),
     )
+    from server.core import tls
+
+    tls.require_served()
 
     from server.core.object_store import require_client
 
@@ -444,7 +447,8 @@ async def _response_headers(request: Request, call_next: Any) -> Response:
     # same-origin keeps the real Origin on a same-origin non-GET request, which
     # web_refusal needs; no-referrer would send `Origin: null` on a form POST.
     response.headers.setdefault("Referrer-Policy", "same-origin")
-    # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
+    # Sent whatever the port serves: clients reach Loom over HTTPS through a terminator
+    # in front even when the port is plain HTTP, and browsers ignore HSTS over plain HTTP.
     if settings.hsts_max_age_seconds > 0:
         response.headers.setdefault(
             "Strict-Transport-Security", f"max-age={settings.hsts_max_age_seconds}"

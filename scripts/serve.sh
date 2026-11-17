@@ -9,6 +9,15 @@
 # one process holding the ClickHouse workers lease (server/workers/leader.py).
 set -eu
 
+# uvicorn runs through server.core.web_server, which takes its options from the
+# arguments at the end of this script only, never from uvicorn's UVICORN_*
+# variables: refuse them rather than start without the options they name.
+uvicorn_vars=$(env | sed -n 's/^\(UVICORN_[A-Za-z0-9_]*\)=.*/\1/p' | sort | tr '\n' ' ')
+if [ -n "$uvicorn_vars" ]; then
+  echo "loom: the web tier does not read ${uvicorn_vars% }; remove them" >&2
+  exit 2
+fi
+
 chosen=""
 launch_runtime_dir="" launch_web_workers="" launch_trusted_proxies=""
 if [ -z "${LOOM_RUNTIME_DIR:-}" ] || [ -z "${LOOM_WEB_WORKERS:-}" ] || [ -z "${LOOM_TRUSTED_PROXIES:-}" ]; then
@@ -68,10 +77,13 @@ case "${LOOM_LISTEN_HOST:-127.0.0.1}" in
   127.0.0.1 | localhost | ::1) ;;
   *) [ -n "${LOOM_BIND_HOST:-}" ] || export LOOM_BIND_HOST="$LOOM_LISTEN_HOST" ;;
 esac
-# exec: uvicorn must be PID 1 to receive docker's SIGTERM (a POSIX shell does
+# server.core.web_server runs uvicorn with these options and, when
+# LOOM_TLS_CERT_FILE and LOOM_TLS_KEY_FILE name a pair, serves HTTPS only
+# (server/core/tls.py); uvicorn's own CLI cannot pass that TLS context.
+# exec: the server must be PID 1 to receive docker's SIGTERM (a POSIX shell does
 # not forward it to its child).
-exec uvicorn server.main:app --host "${LOOM_LISTEN_HOST:-127.0.0.1}" --port "${PORT:-7777}" \
+exec python -m server.core.web_server --host "${LOOM_LISTEN_HOST:-127.0.0.1}" --port "${PORT:-7777}" \
   --workers "$LOOM_WEB_WORKERS" --loop "${LOOM_UVICORN_LOOP:-asyncio}" \
   --timeout-graceful-shutdown "${LOOM_GRACEFUL_SHUTDOWN_S:-10}" \
   --timeout-keep-alive "${LOOM_KEEP_ALIVE_S:-5}" \
-  --proxy-headers --forwarded-allow-ips="${LOOM_TRUSTED_PROXIES:-127.0.0.1}"
+  --forwarded-allow-ips="${LOOM_TRUSTED_PROXIES:-127.0.0.1}"

@@ -165,11 +165,12 @@ EOF
 - The gateway replaces a header that is there. A request without an `Authorization`
   header goes out unchanged and Loom refuses it.
 - A missing Secret, or an atespace without the grant, makes the gateway refuse the request.
-- The chart serves HTTP inside the cluster, so on this rule the token crosses from the
-  gateway to Loom unencrypted. To encrypt that hop, point the agent at a TLS endpoint in
-  front of Loom whose certificate is publicly trusted, such as the chart's Ingress host,
-  and allow that host with an `https` rule. The gateway then intercepts the agent's TLS,
-  so the actor mounts Substrate's [egress trust
+- This guide's `http://` URL and rule need the chart without `tls.secretName`, which makes
+  the port answer HTTPS only. The chart then serves HTTP inside the cluster, so on this
+  rule the token crosses from the gateway to Loom unencrypted. To encrypt that hop, point
+  the agent at a TLS endpoint in front of Loom whose certificate is publicly trusted, such
+  as the chart's Ingress host, and allow that host with an `https` rule. The gateway then
+  intercepts the agent's TLS, so the actor mounts Substrate's [egress trust
   bundle](https://ate.dev/docs/guides/egress-trust-bundle/) and points its MCP client at
   it (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` or `REQUESTS_CA_BUNDLE`, by the client's
   runtime), and Loom sees connections from the ingress controller rather than from
