@@ -242,6 +242,93 @@ def test_an_accepted_speculation_still_captures_the_committed_turn() -> None:
     ]
 
 
+def test_the_first_confirmed_speculation_uses_the_assistant_context() -> None:
+    fake = _FakeMemory()
+    service = _service(fake)
+    committed = _context(("user", "I prefer aisle seats"), ("assistant", "Noted."))
+    provisional = _context(("user", "unconfirmed guess"))
+
+    async def go() -> None:
+        capture = service.capture_processor()
+        await _feed(
+            service.recall_processor(), LLMContextFrame(context=provisional, speculation=True)
+        )
+        # Accepted native speculation omits a committed recall frame. The assistant
+        # aggregator supplies its committed context before the completed-turn frame.
+        await _feed(capture, LLMContextFrame(context=committed))
+        await _feed(capture, LLMContextFrame(context=provisional, speculation=True))
+        await _feed(
+            capture,
+            LLMContextAssistantTurnFrame(text="Noted.", timestamp="2026-01-01T00:00:00Z"),
+        )
+
+    asyncio.run(go())
+    assert [c for c in fake.calls if c[0] == "search"] == []
+    extracts = [c[1][0] for c in fake.calls if c[0] == "set_from_messages"]
+    assert extracts == [
+        [
+            {"role": "user", "content": "I prefer aisle seats"},
+            {"role": "assistant", "content": "Noted."},
+        ]
+    ]
+
+
+def test_recycled_integer_ids_do_not_hide_a_replacement_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Model reused integer identities after compaction without depending on the
+    # allocator's timing. Source message objects and their contents are distinct.
+    adapter = importlib.import_module("loom.integrations.pipecat")
+    monkeypatch.setattr(
+        adapter, "id", lambda message: 1 if message["role"] == "user" else 2, raising=False
+    )
+    fake = _FakeMemory()
+    service = _service(fake)
+    context = _context(("user", "first turn"))
+    _recall_and_capture(service, context, "first reply")
+    context.set_messages([{"role": "user", "content": "replacement turn"}])
+    _recall_and_capture(service, context, "replacement reply")
+    assert [c[1][0] for c in fake.calls if c[0] == "search"] == ["first turn", "replacement turn"]
+    extracts = [c[1][0] for c in fake.calls if c[0] == "set_from_messages"]
+    assert extracts == [
+        [
+            {"role": "user", "content": "first turn"},
+            {"role": "assistant", "content": "first reply"},
+        ],
+        [
+            {"role": "user", "content": "replacement turn"},
+            {"role": "assistant", "content": "replacement reply"},
+        ],
+    ]
+
+
+def test_partial_capture_retries_only_the_unacknowledged_batch() -> None:
+    class FailingSecondBatch(_FakeMemory):
+        async def set_from_messages(self, messages: list[dict[str, Any]], **kw: Any) -> None:
+            await super().set_from_messages(messages, **kw)
+            if len([c for c in self.calls if c[0] == "set_from_messages"]) == 2:
+                raise LoomError("retry the unacknowledged tail")
+
+    fake = FailingSecondBatch()
+    service = _service(fake)
+    context = LLMContext([{"role": "user", "content": f"fact {index}"} for index in range(402)])
+
+    async def go() -> None:
+        await _feed(service.recall_processor(), LLMContextFrame(context=context))
+        capture = service.capture_processor()
+        turn = LLMContextAssistantTurnFrame(text="Noted.", timestamp="2026-01-01T00:00:00Z")
+        await _feed(capture, turn)
+        await _feed(capture, turn)
+
+    asyncio.run(go())
+    batches = [c[1][0] for c in fake.calls if c[0] == "set_from_messages"]
+    assert [len(batch) for batch in batches] == [400, 2, 2]
+    assert batches[1] == batches[2]
+    assert {message["content"] for message in batches[0]}.isdisjoint(
+        message["content"] for message in batches[2]
+    )
+
+
 def test_a_replaced_context_still_writes_the_new_turn() -> None:
     """Compacting or replacing history must not skip the next completed turn."""
     fake = _FakeMemory()
