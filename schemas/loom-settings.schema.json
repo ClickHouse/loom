@@ -6387,7 +6387,7 @@
             "1.3"
           ],
           "type": "string",
-          "description": "Lowest TLS version the web port accepts with tls_cert_file: \"1.2\" or \"1.3\" (a settings file's unquoted 1.3 reads as the same)."
+          "description": "Lowest TLS version the web port accepts with tls_cert_file: \"1.2\" or \"1.3\"."
         },
         "tracker_bisect_component_dirs": {
           "default": 8,

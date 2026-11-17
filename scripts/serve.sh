@@ -9,20 +9,6 @@
 # one process holding the ClickHouse workers lease (server/workers/leader.py).
 set -eu
 
-# uvicorn runs through server.core.web_server, which takes its options from the
-# arguments at the end of this script only, never from uvicorn's UVICORN_*
-# variables: refuse them rather than start without the options they name. Not
-# refused: the options this script passes, which uvicorn's CLI read from the
-# arguments too, and the variables Kubernetes sets for a Service named uvicorn.
-passed='HOST|PORT|WORKERS|LOOP|TIMEOUT_GRACEFUL_SHUTDOWN|TIMEOUT_KEEP_ALIVE|FORWARDED_ALLOW_IPS|PROXY_HEADERS'
-service_links='SERVICE_[A-Z0-9_]+|PORT_[0-9]+_(TCP|UDP|SCTP)(_PROTO|_PORT|_ADDR)?'
-uvicorn_vars=$(env | sed -n 's/^\(UVICORN_[A-Za-z0-9_]*\)=.*/\1/p' \
-  | grep -v -E "^UVICORN_($passed|$service_links)\$" | sort | tr '\n' ' ')
-if [ -n "$uvicorn_vars" ]; then
-  echo "loom: the web tier does not read ${uvicorn_vars% }; remove them" >&2
-  exit 2
-fi
-
 chosen=""
 launch_runtime_dir="" launch_web_workers="" launch_trusted_proxies=""
 if [ -z "${LOOM_RUNTIME_DIR:-}" ] || [ -z "${LOOM_WEB_WORKERS:-}" ] || [ -z "${LOOM_TRUSTED_PROXIES:-}" ]; then
@@ -84,7 +70,9 @@ case "${LOOM_LISTEN_HOST:-127.0.0.1}" in
 esac
 # server.core.web_server runs uvicorn with these options and, when
 # LOOM_TLS_CERT_FILE and LOOM_TLS_KEY_FILE name a pair, serves HTTPS only
-# (server/core/tls.py); uvicorn's own CLI cannot pass that TLS context.
+# (server/core/tls.py); uvicorn's own CLI cannot pass that TLS context. It
+# reads no UVICORN_* variable and refuses to start while one names another
+# uvicorn option.
 # exec: the server must be PID 1 to receive docker's SIGTERM (a POSIX shell does
 # not forward it to its child).
 exec python -m server.core.web_server --host "${LOOM_LISTEN_HOST:-127.0.0.1}" --port "${PORT:-7777}" \

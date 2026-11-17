@@ -1750,7 +1750,7 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach. |
 | `LOOM_TLS_CERT_FILE` | `str` | `''` |  | PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP. |
 | `LOOM_TLS_KEY_FILE` | `str` | `''` |  | PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused. |
-| `LOOM_TLS_MIN_VERSION` | `'1.2' \| '1.3'` | `'1.2'` |  | Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3" (a settings file's unquoted 1.3 reads as the same). |
+| `LOOM_TLS_MIN_VERSION` | `'1.2' \| '1.3'` | `'1.2'` |  | Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3". |
 
 ### Outbound HTTP
 

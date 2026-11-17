@@ -26,15 +26,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import idna
-from pydantic import (
-    AfterValidator,
-    BaseModel,
-    BeforeValidator,
-    Field,
-    PrivateAttr,
-    field_validator,
-    model_validator,
-)
+from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from server.core.document_formats import route_key
 from server.core.embedding_space import inferred_provider
@@ -5202,9 +5194,8 @@ class RuntimeSettings(BaseModel):
     tls_cert_file: str = ""
     # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused.
     tls_key_file: str = ""
-    # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3" (a settings
-    # file's unquoted 1.3 reads as the same).
-    tls_min_version: Annotated[Literal["1.2", "1.3"], BeforeValidator(str)] = "1.2"
+    # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3".
+    tls_min_version: Literal["1.2", "1.3"] = "1.2"
 
     @model_validator(mode="after")
     def _check_tls_pair(self) -> RuntimeSettings:

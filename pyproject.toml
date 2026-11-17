@@ -18,7 +18,7 @@ classifiers = ["Private :: Do Not Upload"]
 
 dependencies = [
   "fastapi>=0.118",
-  "uvicorn[standard]>=0.47", # ssl_context_factory (server/core/tls.py)
+  "uvicorn[standard]>=0.50", # ssl_context_factory, and a worker exiting 3 stops all (server/core/tls.py)
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
   # The YAML settings file (server/settings/_file.py); uvicorn[standard] pulls it in too.

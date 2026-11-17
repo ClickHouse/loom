@@ -457,5 +457,3 @@ def test_one_file_without_the_other_fails_at_load(field: str) -> None:
 def test_a_minimum_version_other_than_1_2_or_1_3_fails_at_load() -> None:
     with pytest.raises(ValidationError, match="tls_min_version"):
         Settings(_env_file=None, tls_min_version="1.1")
-    # A settings file's unquoted version is a number.
-    assert Settings(_env_file=None, tls_min_version=1.3).tls_min_version == "1.3"
