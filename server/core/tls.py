@@ -38,8 +38,9 @@ _Stamp = tuple[tuple[int, int, int, int], ...]
 
 # True once uvicorn built this process's context (`context_factory`).
 _served = False
-# Seconds a web process whose pair does not load waits before it exits: not a setting,
-# it bounds how often uvicorn starts that process again while the files stay bad.
+# Seconds a web process whose pair does not load waits before it exits, which bounds how
+# often uvicorn starts it again while the files stay bad.
+# not a setting: it paces restarts while the configuration is broken, which no deployment tunes
 LOAD_RETRY_S = 10.0
 
 
