@@ -93,7 +93,7 @@ class LoomMemoryService:
             raise TypeError("LoomMemoryService needs a loom.Agent: Pipecat awaits its processors")
         if not 1 <= top_k <= 500:
             raise ValueError("top_k must be between 1 and 500, memory.search's bounds")
-        if user_id is not None and (user_id in ("", "-") or user_id != user_id.strip()):
+        if user_id is not None and (user_id in ("", "-", "*") or user_id != user_id.strip()):
             raise ValueError(
                 "user_id must name a Loom user without surrounding whitespace, or be None"
             )
