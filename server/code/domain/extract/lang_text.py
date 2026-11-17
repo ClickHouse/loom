@@ -74,7 +74,6 @@ _CODE_TEXT_EXTENSIONS: frozenset[str] = frozenset(
         ".hx",
         ".graphql",
         ".gql",
-        ".thrift",
         ".avsc",
         ".capnp",
         ".asm",

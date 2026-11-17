@@ -134,6 +134,7 @@ still gets file-level impact.
 | Shell (`.sh`, `.bash`, `.bats`, shebang, rc files)                                     | yes                   | calls (commands), `source` includes                                           | —                 |
 | Prisma (`.prisma`)                                                                     | yes                   | model relations                                                               | —                 |
 | Protocol Buffers (`.proto`), FlatBuffers (`.fbs`)                                      | yes                   | imports, type uses                                                            | —                 |
+| Thrift IDL (`.thrift`)                                                                 | yes                   | includes, type uses, service `extends`                                        | —                 |
 | Go templates and Helm charts (`.tpl`, `.tmpl`, `.gotmpl`, templated manifests)         | yes                   | template calls                                                                | —                 |
 | Terraform / HCL (`.tf`, `.tfvars`, `.hcl`), Kubernetes manifests                       | yes                   | references (`reads`)                                                          | —                 |
 | Jsonnet (`.jsonnet`, `.libsonnet`)                                                     | yes                   | calls, imports                                                                | —                 |

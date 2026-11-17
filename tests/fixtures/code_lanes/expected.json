@@ -113,6 +113,11 @@
   "sql/views/rollup.sql | calls | column": 3,
   "sql/views/rollup.sql | calls | table": 4,
   "sql/views/rollup.sql | calls | view": 1,
+  "thrift/acme/machines.thrift | includes | file": 1,
+  "thrift/acme/machines.thrift | inherits | interface": 1,
+  "thrift/acme/machines.thrift | uses_type | enum": 2,
+  "thrift/acme/machines.thrift | uses_type | struct": 7,
+  "thrift/acme/machines.thrift | uses_type | type": 6,
   "tla/Ledger.cfg | calls | operator": 3,
   "tla/Ledger.cfg | includes | file": 1,
   "tla/Ledger.tla | calls | constant": 3,
@@ -1663,6 +1668,31 @@
     "statement": 5,
     "table": 2,
     "view": 2
+   }
+  },
+  "thrift/acme/machines.thrift": {
+   "facets": {},
+   "includes": [
+    "thrift/acme/shared.thrift"
+   ],
+   "lang": "thrift",
+   "symbols": {
+    "enum": 1,
+    "function": 4,
+    "interface": 1,
+    "struct": 3,
+    "type": 1
+   }
+  },
+  "thrift/acme/shared.thrift": {
+   "facets": {},
+   "includes": [],
+   "lang": "thrift",
+   "symbols": {
+    "function": 1,
+    "interface": 1,
+    "struct": 2,
+    "type": 1
    }
   },
   "tla/Ledger.cfg": {
