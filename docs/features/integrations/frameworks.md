@@ -626,7 +626,8 @@ conversation history. Use separate namespaces and restricted tokens for mutually
 untrusted users.
 
 Without a community package, n8n's MCP Client Tool node can connect to Loom's MCP URL
-with a bearer token and expose `loom_remember` and `loom_recall` to its AI Agent.
+with `?toolset=core` and a bearer token, and expose `loom_memory_set` and `loom_search`
+to its AI Agent.
 [The MCP client setup](./mcp-clients.md#other-editors-and-agents) describes that route.
 
 ## LangGraph
