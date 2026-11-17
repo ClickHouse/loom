@@ -78,6 +78,7 @@ _LANG_WORKFLOWS: tuple[str, ...] = (
     "hosts",
     "java",
     "js",
+    "lua",
     "md",
     "prisma",
     "proto",

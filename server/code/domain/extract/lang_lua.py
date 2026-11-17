@@ -205,6 +205,44 @@ def _params(toks: list[_Tok], i: int) -> tuple[str, int]:
     return "(" + ", ".join(names) + ")", j + 1
 
 
+def _call_sites(toks: list[_Tok], header: set[int]) -> list[tuple[int, str, str]]:
+    """`f(…)` and `a.b(…)` call sites, past definitions' own names, method calls on an
+    unknown receiver, and Lua's base functions and standard libraries."""
+    n = len(toks)
+    sites: list[tuple[int, str, str]] = []
+    for i, tok in enumerate(toks):
+        name = tok.text
+        if i in header or not _is_name(name) or i + 1 >= n or toks[i + 1].text != "(":
+            continue
+        prev = toks[i - 1].text if i > 0 else ""
+        if prev == ":" or prev == "function":
+            continue  # a method call on an unknown receiver; an anonymous function
+        if prev == ".":
+            receiver = toks[i - 2].text if i >= 2 else ""
+            if receiver in BUILTIN_LIBRARIES and (i < 3 or toks[i - 3].text not in (".", ":")):
+                continue
+        elif name in BUILTIN_FUNCTIONS:
+            continue
+        sites.append((tok.line, name, SITE_CALL))
+    return sites
+
+
+def _requires(toks: list[_Tok]) -> list[str]:
+    """The module names `require "a.b"` / `require("a.b")` name, as written."""
+    n = len(toks)
+    out: list[str] = []
+    for i, tok in enumerate(toks):
+        if tok.text != "require" or (i > 0 and toks[i - 1].text in (".", ":")):
+            continue
+        j = i + 1
+        if j < n and toks[j].text == "(":
+            j += 1
+        spec = _string_value(toks[j].text) if j < n else None
+        if spec:
+            out.append(spec.strip())
+    return out
+
+
 def lua_units(path: str, text: str) -> LuaUnits:
     units = LuaUnits()
     mod = module_scope(path)
@@ -261,30 +299,8 @@ def lua_units(path: str, text: str) -> LuaUnits:
                 add(parts, False, j + 1, start, params)
         i += 1
 
-    for i, tok in enumerate(toks):
-        name = tok.text
-        if i in header or not _is_name(name) or i + 1 >= n or toks[i + 1].text != "(":
-            continue
-        prev = toks[i - 1].text if i > 0 else ""
-        if prev == ":" or prev == "function":
-            continue  # a method call on an unknown receiver; an anonymous function
-        if prev == ".":
-            receiver = toks[i - 2].text if i >= 2 else ""
-            if receiver in BUILTIN_LIBRARIES and (i < 3 or toks[i - 3].text not in (".", ":")):
-                continue
-        elif name in BUILTIN_FUNCTIONS:
-            continue
-        units.sites.append((tok.line, name, SITE_CALL))
-
-    for i, tok in enumerate(toks):
-        if tok.text != "require" or (i > 0 and toks[i - 1].text in (".", ":")):
-            continue
-        j = i + 1
-        if j < n and toks[j].text == "(":
-            j += 1
-        spec = _string_value(toks[j].text) if j < n else None
-        if spec:
-            units.requires.append(spec.strip())
+    units.sites = _call_sites(toks, header)
+    units.requires = _requires(toks)
     return units
 
 
