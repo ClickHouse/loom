@@ -185,6 +185,113 @@ def test_a_speculative_context_frame_does_not_search() -> None:
     assert _memory_text(context) == ""
 
 
+def test_a_cancelled_speculation_does_not_replace_the_committed_capture() -> None:
+    """A provisional context must not become the source of the durable write."""
+    fake = _FakeMemory()
+    service = _service(fake)
+    committed = _context(("user", "I prefer aisle seats"))
+    speculative = _context(("user", "unconfirmed guess"))
+
+    async def go() -> None:
+        await _feed(service.recall_processor(), LLMContextFrame(context=committed))
+        await _feed(
+            service.recall_processor(),
+            LLMContextFrame(context=speculative, speculation=True),
+        )
+        committed.add_message({"role": "assistant", "content": "Noted."})
+        await _feed(
+            service.capture_processor(),
+            LLMContextAssistantTurnFrame(text="Noted.", timestamp="2026-01-01T00:00:00Z"),
+        )
+
+    asyncio.run(go())
+    searches = [c[1][0] for c in fake.calls if c[0] == "search"]
+    extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert searches == ["I prefer aisle seats"]
+    assert [[(m["role"], m["content"]) for m in c[1][0]] for c in extracts] == [
+        [("user", "I prefer aisle seats"), ("assistant", "Noted.")]
+    ]
+
+
+def test_an_accepted_speculation_still_captures_the_committed_turn() -> None:
+    """After a provisional frame, the committed context remains the capture source."""
+    fake = _FakeMemory()
+    service = _service(fake)
+    committed = _context(("user", "I prefer aisle seats"))
+    speculative = _context(("user", "I prefer aisle seats"))
+
+    async def go() -> None:
+        await _feed(service.recall_processor(), LLMContextFrame(context=committed))
+        await _feed(
+            service.recall_processor(),
+            LLMContextFrame(context=speculative, speculation=True),
+        )
+        await _feed(service.recall_processor(), LLMContextFrame(context=committed))
+        committed.add_message({"role": "assistant", "content": "Noted."})
+        await _feed(
+            service.capture_processor(),
+            LLMContextAssistantTurnFrame(text="Noted.", timestamp="2026-01-01T00:00:00Z"),
+        )
+
+    asyncio.run(go())
+    searches = [c[1][0] for c in fake.calls if c[0] == "search"]
+    extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert searches == ["I prefer aisle seats"]
+    assert [[(m["role"], m["content"]) for m in c[1][0]] for c in extracts] == [
+        [("user", "I prefer aisle seats"), ("assistant", "Noted.")]
+    ]
+
+
+def test_a_replaced_context_still_writes_the_new_turn() -> None:
+    """Compacting or replacing history must not skip the next completed turn."""
+    fake = _FakeMemory()
+    service = _service(fake)
+    context = _context(("user", "I prefer aisle seats"))
+    _recall_and_capture(service, context, "Noted.")
+    context.set_messages([{"role": "user", "content": "I fly to Lisbon"}])
+
+    async def go() -> None:
+        await _feed(service.recall_processor(), LLMContextFrame(context=context))
+        context.add_message({"role": "assistant", "content": "Safe travels."})
+        await _feed(
+            service.capture_processor(),
+            LLMContextAssistantTurnFrame(text="Safe travels.", timestamp="2026-01-01T00:00:01Z"),
+        )
+
+    asyncio.run(go())
+    extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert [[(m["role"], m["content"]) for m in c[1][0]] for c in extracts] == [
+        [("user", "I prefer aisle seats"), ("assistant", "Noted.")],
+        [("user", "I fly to Lisbon"), ("assistant", "Safe travels.")],
+    ]
+
+
+def test_a_repeated_utterance_is_a_new_turn() -> None:
+    """Equal text on a new committed user message is a new turn, not a duplicate frame."""
+    fake = _FakeMemory()
+    service = _service(fake)
+    context = _context(("user", "yes"))
+    _recall_and_capture(service, context, "Go on.")
+    context.add_message({"role": "user", "content": "yes"})
+
+    async def go() -> None:
+        await _feed(service.recall_processor(), LLMContextFrame(context=context))
+        context.add_message({"role": "assistant", "content": "Understood."})
+        await _feed(
+            service.capture_processor(),
+            LLMContextAssistantTurnFrame(text="Understood.", timestamp="2026-01-01T00:00:01Z"),
+        )
+
+    asyncio.run(go())
+    searches = [c[1][0] for c in fake.calls if c[0] == "search"]
+    extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
+    assert searches == ["yes", "yes"]
+    assert [[(m["role"], m["content"]) for m in c[1][0]] for c in extracts] == [
+        [("user", "yes"), ("assistant", "Go on.")],
+        [("user", "yes"), ("assistant", "Understood.")],
+    ]
+
+
 def test_two_turns_search_and_write_once_each() -> None:
     fake = _FakeMemory()
     service = _service(fake)

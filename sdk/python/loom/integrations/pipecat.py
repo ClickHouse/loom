@@ -103,8 +103,8 @@ class LoomMemoryService:
         self._top_k = top_k
         self._honour_abstain = honour_abstain
         self._defer = defer
-        self._last_query: str | None = None
-        self._written = 0
+        self._last_user_message_id: int | None = None
+        self._written_ids: set[int] = set()
         self._context: Any | None = None
 
     def recall_processor(self) -> LoomRecallProcessor:
@@ -116,13 +116,20 @@ class LoomMemoryService:
         return LoomCaptureProcessor(self)
 
     async def _recall(self, frame: LLMContextFrame) -> None:
-        context = frame.context
-        self._context = context
+        # A speculative frame carries a provisional context that must not become
+        # the capture source, and must not be treated as a committed user turn.
         if frame.speculation:
             return
-        query = _latest_user_text(context.get_messages())
-        if not query or query == self._last_query:
+        context = frame.context
+        self._context = context
+        user_message = _latest_user_message(context.get_messages())
+        if user_message is None:
             return
+        # Same committed message, including a second frame of this turn: already recalled.
+        # A new message with the same text is a new turn and is searched again.
+        if id(user_message) == self._last_user_message_id:
+            return
+        query = _message_text(user_message)
         result = await self._agent.memory.search(
             query,
             top_k=self._top_k,
@@ -134,7 +141,7 @@ class LoomMemoryService:
             bodies="full",
             explain=False,
         )
-        self._last_query = query
+        self._last_user_message_id = id(user_message)
         hits = list(result)
         if self._honour_abstain:
             if result.abstain:
@@ -148,8 +155,11 @@ class LoomMemoryService:
         _replace_memory_message(context, text)
 
     async def _capture(self, context: Any) -> None:
-        messages = _texts(context.get_messages())
-        new = messages[self._written :]
+        # Identity of the source message, not history length: compaction and
+        # set_messages replace the list, which would skip a new turn if we sliced
+        # from a stale cursor.
+        items = _capturable(context.get_messages())
+        new = [message for message_id, message in items if message_id not in self._written_ids]
         if not new:
             return
         loom_session = _loom_session(self._user_id or "-", self._session_id)
@@ -160,7 +170,7 @@ class LoomMemoryService:
                 session_id=loom_session,
                 defer=self._defer,
             )
-        self._written = len(messages)
+        self._written_ids.update(message_id for message_id, _ in items)
 
 
 class LoomRecallProcessor(FrameProcessor):
@@ -205,27 +215,25 @@ class LoomCaptureProcessor(FrameProcessor):
             return
 
 
-def _latest_user_text(messages: Sequence[Any]) -> str:
+def _latest_user_message(messages: Sequence[Any]) -> Any | None:
     for message in reversed(messages):
         if _is_memory_message(message):
             continue
-        if _role(message) == "user":
-            text = _message_text(message)
-            if text.strip():
-                return text
-    return ""
+        if _role(message) == "user" and _message_text(message).strip():
+            return message
+    return None
 
 
-def _texts(messages: Sequence[Any]) -> list[dict[str, object]]:
-    """The user and assistant text of `messages`; memory blocks and tool calls are left out."""
-    out: list[dict[str, object]] = []
+def _capturable(messages: Sequence[Any]) -> list[tuple[int, dict[str, object]]]:
+    """The user and assistant text of `messages`, keyed by the source message identity."""
+    out: list[tuple[int, dict[str, object]]] = []
     for message in messages:
         if _is_memory_message(message):
             continue
         role = _role(message)
         text = _message_text(message)
         if role in ("user", "assistant") and text.strip():
-            out.append({"role": role, "content": text})
+            out.append((id(message), {"role": role, "content": text}))
     return out
 
 
