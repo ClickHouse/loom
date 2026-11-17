@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from server.auth import agents, attempts, machines, oauth, oidc, revocation
 from server.core import grant_cache
 from server.core.errors import BackendUnavailableError
+from tests.unit.clock_fake import ManualClock
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.filterwarnings("default")
@@ -153,7 +154,9 @@ def _with_key(
     )
 
 
-def test_a_bots_key_gets_an_hour_long_scoped_token(bots) -> None:
+def test_a_bots_key_gets_an_hour_long_scoped_token(bots, monkeypatch) -> None:
+    clock = ManualClock(t=time.time())
+    monkeypatch.setattr(oauth.time, "time", clock.time)
     r = _with_key(TestClient(oauth_app()), _assertion(bots["key"]))
     assert r.status_code == 200 and r.json()["expires_in"] == 3600
     claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
