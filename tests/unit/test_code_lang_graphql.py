@@ -108,6 +108,19 @@ schema @link(url: "x") { query: Shop mutation: Mutation }
     )
 
 
+def test_a_schema_block_leaves_out_the_default_root_names() -> None:
+    src = b"""schema { query: Shop }
+type Shop { me: Me }
+type Mutation { reset: Me }
+extend schema { subscription: Feed }
+type Feed { tick: Me }
+"""
+    got = _symbols(src)
+    assert set(got) == {"Shop", "Shop.me", "Mutation", "Feed", "Feed.tick"}, (
+        "with a `schema` definition, `Mutation` is a root only if a block names it"
+    )
+
+
 def test_field_types_and_implements_are_sites() -> None:
     pf = parse_graphql("shop/schema.graphql", SCHEMA)
     assert reference_sites(pf) == [

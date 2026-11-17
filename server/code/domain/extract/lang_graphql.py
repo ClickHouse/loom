@@ -138,7 +138,10 @@ class _Parser:
         self.toks = toks
         self.i = 0
         self.last_line = toks[0].line if toks else 0
-        self.roots = dict(ROOT_TYPES)
+        # root types named by `schema` and `extend schema` blocks; the default
+        # names count only in a file without a `schema` definition
+        self.named_roots: dict[str, str] = {}
+        self.schema_defined = False
         self.units = GraphqlUnits()
         # (symbol, owner): a field's owner decides at the end whether it is a root
         # field, since a `schema` block may come after the types it names
@@ -248,7 +251,8 @@ class _Parser:
                 self._skip_operation()
             else:
                 self._next()
-        roots = set(self.roots.values())
+        defaults = {} if self.schema_defined else ROOT_TYPES
+        roots = set({**defaults, **self.named_roots}.values())
         self.units.symbols = [s for s, owner in self._items if not owner or owner in roots]
         return self.units
 
@@ -270,6 +274,7 @@ class _Parser:
         if kw == "schema":
             self._directives()
             if self._peek_text() == "{":
+                self.schema_defined = self.schema_defined or not extend
                 self._schema_block()
             return
         if kw == "directive":
@@ -305,7 +310,7 @@ class _Parser:
                 self._next()
                 if _is_name(name := self._peek()) and name is not None:
                     self._next()
-                    self.roots[t.text] = name.text
+                    self.named_roots[t.text] = name.text
 
     def _directive_definition(self) -> None:
         """`@name(args) repeatable on A | B`: defines no type, names none."""
