@@ -141,6 +141,44 @@ test("the action node returns Loom search results and binds writes to the user",
   assert.equal(node.description.usableAsTool, true);
 });
 
+test("user whitespace is normalized before history and action requests", async () => {
+  const { context, calls } = harness();
+  const memoryNode = new LoomMemory();
+  const actionNode = new Loom();
+  const message = "x".repeat(5000);
+  for (const edge of ["\u0085", "\u001c", "\u001d", "\u001e", "\u001f"]) {
+    for (const userId of [`${edge}alice`, `alice${edge}`, `${edge} \t${edge}alice${edge}\t ${edge}`]) {
+      const start = calls.length;
+      const { response: memory } = await memoryNode.supplyData.call(context({ userId }), 0);
+      await memory.saveContext({ input: message }, { output: "saved" });
+      const { response: resumed } = await memoryNode.supplyData.call(context({ userId: "alice" }), 0);
+      const history = (await resumed.loadMemoryVariables({})).chat_history;
+      assert.ok(history.length >= 2, "the canonical user resumes the saved turn");
+      assert.equal(history.at(-2).content, message);
+      await actionNode.execute.call(context({ userId, operation: "remember", memoryKey: "seat", value: '"aisle"' }));
+      await actionNode.execute.call(context({ userId, operation: "recall", query: "seat", limit: 5 }));
+      assert.ok(calls.slice(start).some((call) => call.op === "memory.get"));
+      for (const call of calls.slice(start)) assert.equal(call.body.user_id, "alice");
+    }
+  }
+});
+
+test("normalized blank users stay shared and normalized sentinel users are refused", async () => {
+  const { context, calls } = harness();
+  const node = new Loom();
+  for (const edge of ["", " ", "\u0085", "\u001c", "\u001d", "\u001e", "\u001f"]) {
+    const userId = `${edge}\t ${edge}`;
+    await node.execute.call(context({ userId, operation: "recall", query: "seat", limit: 5 }));
+    assert.equal(calls.at(-1).body.user_id ?? "-", "-");
+    const count = calls.length;
+    await assert.rejects(
+      node.execute.call(context({ userId: `${edge}-${edge}`, operation: "recall", query: "seat", limit: 5 })),
+      /User ID/,
+    );
+    assert.equal(calls.length, count);
+  }
+});
+
 test("server refusals fail a node or become an error item when continue-on-fail is selected", async () => {
   const { context } = harness();
   mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ detail: "forbidden" }), { status: 403 }));

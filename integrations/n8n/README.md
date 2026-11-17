@@ -40,6 +40,7 @@ Set Organization, Namespace and Agent Name on each node. User ID filters that us
 memories. Leaving it empty writes shared memories and Recall searches every user
 allowed by the token in this namespace. Token grants enforce access. Give mutually
 untrusted users separate namespaces and restricted tokens.
+Surrounding whitespace is removed from User ID before reads, writes and history lookup.
 
 - **Loom Chat Memory:** connect its Memory output to an AI Agent's Memory input. Set
   Session ID to a conversation identifier, such as `{{ $json.sessionId }}` from a Chat
