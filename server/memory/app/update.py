@@ -125,6 +125,7 @@ async def _revision_supersession(
             "memory_id": str(existing.memory_id),
             "memory_key": existing.memory_key,
             "value": serialized_value,
+            "user_id": existing.user_id,
         }
     ]
     await supersede_same_key_rows(

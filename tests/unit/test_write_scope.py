@@ -363,6 +363,47 @@ def test_same_key_supersession_under_a_namespace_wide_token_without_a_user_stays
     assert ch.sql and all("scope_uid" not in s for s, _ in ch.sql)
 
 
+def test_point_write_same_key_batch_under_a_namespace_wide_token_reads_the_named_users_rows() -> (
+    None
+):
+    """memory.set's production batch carries input.user_id, so Bob's write does not see Alice's row."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app.key_supersession import supersede_same_key_rows
+    from server.memory.app.set_commit import _same_key_batch
+
+    batch = _same_key_batch(
+        MemorySetInput(
+            org="o", namespace="n", agent="a", user_id="bob", memory_key="seat", value="window"
+        ),
+        "m-bob",
+    )
+    ch = _SqlCH()
+    _run_as(
+        _namespace_wide(),
+        lambda: supersede_same_key_rows(
+            follows=[], org="o", namespace="n", new_rows=batch, ch=ch, policy="newest_wins"
+        ),
+    )
+    assert _scoped_to(ch, "bob")
+
+
+def test_update_by_id_supersession_under_a_namespace_wide_token_reads_the_existing_rows_user() -> (
+    None
+):
+    """memory.update_by_id must retire peers of the existing row's user, not the whole namespace."""
+    from server.memory.app.update import _revision_supersession
+
+    existing = SimpleNamespace(
+        memory_id="m-bob", memory_key="seat", namespace="n", agent="a", user_id="bob"
+    )
+    ch = _SqlCH()
+    _run_as(
+        _namespace_wide(),
+        lambda: _revision_supersession("o", existing, "aisle", ch, "newest_wins", []),
+    )
+    assert _scoped_to(ch, "bob")
+
+
 def test_value_update_peers_under_a_namespace_wide_token_are_the_named_users_rows() -> None:
     """Bob's value-update pass must not mark Alice's dated fact superseded."""
     from server.memory.app.value_updates import _peers_codes_first, _peers_joined, _peers_many

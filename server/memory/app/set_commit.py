@@ -1100,9 +1100,16 @@ async def _set_after_write(
 
 def _same_key_batch(input: MemorySetInput, memory_id: str) -> list[dict[str, Any]]:
     """The one-row batch same-key supersession takes, with the serialized value (the form
-    the row stores)."""
+    the row stores) and the write's user, so the peer read stays in that user's scope."""
     stored = json.dumps(input.value, default=str) if input.value is not None else ""
-    return [{"memory_id": memory_id, "memory_key": input.memory_key, "value": stored}]
+    return [
+        {
+            "memory_id": memory_id,
+            "memory_key": input.memory_key,
+            "value": stored,
+            "user_id": input.user_id,
+        }
+    ]
 
 
 async def _set_post_insert(
