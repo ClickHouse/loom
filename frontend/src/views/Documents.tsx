@@ -87,6 +87,7 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
+import { focusViewHeading } from "../lib/place";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -376,8 +377,11 @@ export function Documents() {
   const [moving, setMoving] = useState<{ from: string; uris: string[]; to?: string } | null>(null);
   // Whether the open Move to… dialog moved any document: prefer the search when it is mounted.
   const movedSome = useRef(false);
+  const moveOpener = useRef<HTMLElement | null>(null);
   const openMove = useCallback((from: string, uris: string[], to?: string) => {
     movedSome.current = false;
+    const active = document.activeElement;
+    moveOpener.current = active instanceof HTMLElement && active !== document.body ? active : null;
     setMoving({ from, uris, to });
   }, []);
   useEffect(() => setMoving(null), [place]);
@@ -1325,11 +1329,13 @@ export function Documents() {
       }}
       onClose={() => setMoving(null)}
       onCloseAutoFocus={(e) => {
+        if (!movedSome.current) return;
         const search = searchRef.current;
-        if (!movedSome.current || !search) return;
+        if (!search && moveOpener.current?.isConnected) return;
         // The rows, the menu or the selection bar that opened it may have left.
         e.preventDefault();
-        search.focus();
+        if (search) search.focus();
+        else focusViewHeading();
       }}
     />
   );

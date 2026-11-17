@@ -277,6 +277,37 @@ describe("dragging documents onto the Library's tree", () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
+  it.each(["all", "col-eng"])(
+    "returns focus to the Library heading after moving an unselected row in %s",
+    async (view) => {
+      api.moveKnowledge.mockImplementation(
+        async (_id: unknown, _to: string, uris: string[], _s: unknown, onCall?: (r: KnowledgeMoveResult[]) => void) => {
+          const results = uris.map((source_uri) => ({ source_uri, moved: true, reason: "" }) as KnowledgeMoveResult);
+          held = held.map((r) => (uris.includes(r.source_uri) ? { ...r, namespace: "col-me" } : r));
+          onCall?.(results);
+          return { found: true, results };
+        },
+      );
+      history.replaceState(null, "", view === "all" ? "/library?place=all" : "/library?collection=col-eng");
+      render(<Documents />, { container: main() });
+      await screen.findByText("Drain a lane");
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select Fill a lane" }));
+      const oldRow = docRow("Drain a lane");
+      await userEvent.click(within(oldRow).getByRole("button", { name: "Actions for Drain a lane" }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+      const dialog = await screen.findByRole("dialog", { name: "Move 1 document" });
+      await userEvent.click(within(dialog).getByRole("button", { name: /To/ }));
+      await userEvent.click(await screen.findByText("My files", { selector: ".collection-depth" }));
+      await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await waitFor(() => expect(oldRow).not.toBeInTheDocument());
+      expect(screen.getByRole("checkbox", { name: "Select Fill a lane" })).toBeChecked();
+      expect(screen.getByLabelText("Search and filters")).toHaveTextContent("1 selected");
+      expect(screen.queryByLabelText("Search library")).toBeNull();
+      await waitFor(() => expect(screen.getByRole("heading", { level: 1 })).toHaveFocus());
+    },
+  );
+
   it("drags no row without the tree beside the list", async () => {
     render(<Documents />, { container: main(TREE_PAGE_MIN - 1) });
     await screen.findByText("Services agreement");
