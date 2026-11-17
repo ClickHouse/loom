@@ -278,6 +278,11 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
   nothing when Loom abstains, and leaves out memories below the floor, unless
   `honour_abstain=False`.
+- `loom.integrations.pipecat.LoomMemoryService(agent, user_id=...)` is a Pipecat
+  memory service: its recall processor adds the `memory.search` matches of the
+  turn's user text to the shared `LLMContext`, and its capture processor sends
+  the completed turn to `memory.set_from_messages`; install the `[pipecat]`
+  extra.
 
 The LangGraph and Strands adapters import without their framework installed. See
 [Frameworks](../features/integrations/frameworks.md).
