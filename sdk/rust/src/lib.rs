@@ -64,6 +64,10 @@
 //!     tags: None,
 //!     memory_type: None,
 //!     search_mode: None,
+//!     agent_id: None,
+//!     namespace_scope: None,
+//!     user_id: None,
+//!     session_id: None,
 //! };
 //! ```
 //!
