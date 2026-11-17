@@ -145,6 +145,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Claude API memory file tree](docs/architecture/claude-memory-adapter.md): The Claude API memory adapter implements the framework's Python memory-tool bases and TypeScript memory handlers through Loom knowledge documents.
 - [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes in an optional S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live memory, knowledge state and the records beside them.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
+- [Dify tools adapter](docs/architecture/dify-adapter.md): The Dify plugin calls Loom through the Python SDK and stores no content locally.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Document sources](docs/architecture/document-sources.md): A document source pulls files from a document store (a shared-folder store, a page store, a project tracker, a meeting store) into a namespace's documents and keeps them in step, on any shared namespace or collection.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.

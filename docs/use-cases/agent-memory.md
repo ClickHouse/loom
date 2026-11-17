@@ -81,3 +81,6 @@ in Loom across agent runs and handoffs.
 
 For a visual workflow, [n8n nodes](../features/integrations/frameworks.md#n8n) connect an
 AI Agent to Loom conversation history, durable memories and knowledge search.
+
+Use the [Dify tools plugin](../features/integrations/frameworks.md#dify) to save facts,
+recall a user's memories and search app documents from a workflow.

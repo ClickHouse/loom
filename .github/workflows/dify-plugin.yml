@@ -1,0 +1,40 @@
+name: Dify plugin
+
+on:
+  pull_request:
+    paths:
+      - integrations/dify/**
+      - .github/workflows/dify-plugin.yml
+  push:
+    branches: [main]
+    paths:
+      - integrations/dify/**
+      - .github/workflows/dify-plugin.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt pytest
+        working-directory: integrations/dify
+      - run: python -m pytest tests -q
+        working-directory: integrations/dify
+      - name: Package with the official CLI
+        run: |
+          curl --fail --location https://github.com/langgenius/dify-plugin-daemon/releases/download/0.6.15/dify-plugin-linux-amd64 --output "$RUNNER_TEMP/dify"
+          echo "d0a1e3b25bd6c5f6cd749cad2cf04817ea808344e6cc07a2c49bb0108019ab93  $RUNNER_TEMP/dify" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/dify"
+          "$RUNNER_TEMP/dify" plugin package integrations/dify -o loom-0.1.0.difypkg
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: loom-dify-plugin
+          path: loom-0.1.0.difypkg

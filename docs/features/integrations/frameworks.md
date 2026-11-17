@@ -31,6 +31,7 @@ or needs another database, vector store or cache.
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol                                               |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
 | Pipecat                        | `LoomMemoryService`                             | Python, `loom.integrations.pipecat`                       | recall and capture `FrameProcessor`s                                     |
+| Dify                           | Remember, Recall, Search knowledge              | `integrations/dify` standalone plugin                     | Native Dify tools                                                        |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -630,6 +631,24 @@ Without a community package, n8n's MCP Client Tool node can connect to Loom's MC
 with `?toolset=core` and a bearer token, and expose `loom_memory_set` and `loom_search`
 to its AI Agent.
 [The MCP client setup](./mcp-clients.md#other-editors-and-agents) describes that route.
+
+## Dify
+
+The [Loom tools plugin](../../../integrations/dify/README.md) runs Remember, Recall and
+Search knowledge as native Dify tools. Install its `.difypkg` from a local package
+file and configure a reachable Loom URL, a scoped writer token and the deployment's
+organization, namespace and agent. Bind the User ID form field to your app's user;
+it is separate from model-generated arguments.
+
+Remember stores a fact, Recall searches that user's memories across agents, and
+Search knowledge searches shared app documents. Both searches stay in the configured
+namespace. The plugin calls the Python SDK, adds no store and keeps data in your Loom
+deployment. [Privacy](../../../integrations/dify/PRIVACY.md) describes credentials,
+network access, provider processing and retention. The package is tested through the
+native plugin SDK against Loom; a Dify application and Dify Cloud have not been tested.
+
+The [MCP/OpenAPI setup](mcp-clients.md#hosted-builders-and-chat-apps) also works without
+the package.
 
 ## LangGraph
 
