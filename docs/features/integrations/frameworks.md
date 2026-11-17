@@ -29,6 +29,7 @@ or needs another database, vector store or cache.
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                                                              |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol                                               |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
+| Pipecat                        | `LoomMemoryService`                             | Python, `loom.integrations.pipecat`                       | recall and capture `FrameProcessor`s                                     |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -643,6 +644,64 @@ const store = new LoomMemoryStore(agent, { tags: ["customer"] });
 | `key_prefix` / `keyPrefix`                | `strands`  | key prefix                                                    |
 | — / `scope`                               | none       | TypeScript only: a per-store user, session or run scope       |
 
+## Pipecat
+
+`LoomMemoryService` owns two Pipecat `FrameProcessor`s that share one Loom `Agent` and
+user. The recall processor sits after the user context aggregator and before the LLM; the
+capture processor sits after the assistant aggregator. On each `LLMContextFrame` the recall
+processor runs `memory.search` with the turn's latest user text and inserts the matches into
+the shared `LLMContext`. Audio frames, and a second context frame for the same user text,
+pass through with no further Loom call. After the turn, the capture processor sends the
+turn's user and assistant text to `memory.set_from_messages` when it sees the assistant
+aggregator's `LLMContextAssistantTurnFrame`.
+
+```python
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from loom import Agent
+from loom.integrations.pipecat import LoomMemoryService
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    memory = LoomMemoryService(loom_agent, user_id="alice")
+    context = LLMContext([{"role": "system", "content": "Be helpful."}])
+    user, assistant = LLMContextAggregatorPair(context)
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,
+            user,
+            memory.recall_processor(),
+            llm,
+            tts,
+            transport.output(),
+            assistant,
+            memory.capture_processor(),
+        ]
+    )
+```
+
+Install with `pip install 'clickhouse-loom[pipecat]'` (`pipecat-ai` 1.16.x).
+
+| Pipecat                        | Loom                                                                                                                                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLMContextFrame` (recall)     | `memory.search` with the turn's latest user text; with `honour_abstain`, leaves out memories below Loom's floor and adds nothing when Loom abstains; the matches replace one developer block |
+| `LLMContextAssistantTurnFrame` | the user text of the new turn and the assistant text of its response, sent to `memory.set_from_messages` (400 messages a call, the op's cap); memory blocks and empty text are not sent      |
+
+Extraction runs under a Loom session derived from the user and the service's `session_id`
+(`pipecat-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone,
+and a caller may choose its session ids. When `session_id` is omitted, the service mints one
+for its lifetime, so the turns of one call share a session.
+
+| `LoomMemoryService` argument | Default  | Effect                                                                                                                                                                                      |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`                      | required | the `loom.Agent` the processors call; Pipecat awaits its processors, so a `SyncAgent` is refused                                                                                            |
+| `user_id`                    | none     | the end user the memories belong to; unset, recall reads all namespace memories the token permits and extraction writes shared rows; empty, `-` or whitespace-padded ids raise `ValueError` |
+| `session_id`                 | minted   | the caller's conversation id, folded into the Loom session; unset, a fresh id is used for this service instance                                                                             |
+| `top_k`                      | 5        | memories per turn, from 1 to 500                                                                                                                                                            |
+| `honour_abstain`             | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                                                           |
+| `defer`                      | `True`   | queue the extraction on the server instead of waiting                                                                                                                                       |
+
 ## Agent orchestrators
 
 A harness that runs several agents gives them shared, durable memory by mounting Loom's
@@ -693,6 +752,10 @@ client can speak for several agents.
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).
 - **One store per event loop** for LangGraph's sync API: mixing sync and async calls on
   one store runs the agent on two loops.
+- **A Pipecat turn continues when Loom is unreachable.** The recall and capture processors
+  still push the frame they were given: the context frame reaches the model, and audio
+  frames stay on their path. A failed capture leaves the turn in the conversation but not
+  in Loom.
 
 ## Related
 

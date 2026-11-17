@@ -271,6 +271,8 @@ module = [
   "langgraph.*",
   "strands",
   "strands.*",
+  "pipecat",
+  "pipecat.*",
 ]
 ignore_missing_imports = true
 
