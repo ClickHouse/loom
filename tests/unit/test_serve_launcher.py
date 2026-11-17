@@ -300,6 +300,21 @@ def test_a_uvicorn_variable_stops_the_launcher_by_name(tmp_path: Path) -> None:
     assert "does not read UVICORN_LOG_LEVEL UVICORN_SSL_CERTFILE" in done.stderr
 
 
+def test_uvicorn_variables_it_never_read_do_not_stop_the_launcher(tmp_path: Path) -> None:
+    """A Service named uvicorn gives every pod UVICORN_SERVICE_* and UVICORN_PORT*, and
+    uvicorn's CLI took the options this script passes from its arguments."""
+    extra = {
+        "UVICORN_SERVICE_HOST": "10.0.0.1",
+        "UVICORN_SERVICE_PORT": "80",
+        "UVICORN_PORT": "tcp://10.0.0.1:80",
+        "UVICORN_PORT_80_TCP_ADDR": "10.0.0.1",
+        "UVICORN_WORKERS": "3",
+    }
+    done = _launch(tmp_path, workers="1", runtime_dir="none", extra=extra)
+    assert done.returncode == 0, done.stderr
+    assert _workers(done.stdout) == "1"
+
+
 def test_a_settings_file_the_server_would_refuse_stops_the_launcher(tmp_path: Path) -> None:
     done = _launch_real(tmp_path, "version: 1\nsettings: false\n")
     assert done.returncode != 0 and done.stdout == ""

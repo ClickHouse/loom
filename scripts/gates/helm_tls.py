@@ -116,6 +116,11 @@ def main() -> None:
     refused(alb.format("backend-protocol"), *sets("tls.secretName=x"))
     health = "ingress.annotations.alb\\.ingress\\.kubernetes\\.io/healthcheck-protocol=HTTP"
     refused(alb.format("healthcheck-protocol"), *sets("tls.secretName=x", ALB_HTTPS, health))
+    # The controller reads the Service's annotation over the Ingress's.
+    service = "service.annotations.alb\\.ingress\\.kubernetes\\.io/backend-protocol="
+    refused(alb.format("backend-protocol"), *sets("tls.secretName=x", ALB_HTTPS, service + "HTTP"))
+    only_service = sets("tls.secretName=loom-tls", service + "HTTPS", *EVERYTHING)
+    check_served(render(*EKS, *only_service), "on the Service only", "1.2")
     assistant = ("assistant.enabled=true", "assistant.existingSecret=ci")
     refused(
         "assistant.enabled calls Loom's port over plain HTTP", *sets("tls.secretName=x", *assistant)

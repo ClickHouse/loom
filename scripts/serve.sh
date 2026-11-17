@@ -11,8 +11,13 @@ set -eu
 
 # uvicorn runs through server.core.web_server, which takes its options from the
 # arguments at the end of this script only, never from uvicorn's UVICORN_*
-# variables: refuse them rather than start without the options they name.
-uvicorn_vars=$(env | sed -n 's/^\(UVICORN_[A-Za-z0-9_]*\)=.*/\1/p' | sort | tr '\n' ' ')
+# variables: refuse them rather than start without the options they name. Not
+# refused: the options this script passes, which uvicorn's CLI read from the
+# arguments too, and the variables Kubernetes sets for a Service named uvicorn.
+passed='HOST|PORT|WORKERS|LOOP|TIMEOUT_GRACEFUL_SHUTDOWN|TIMEOUT_KEEP_ALIVE|FORWARDED_ALLOW_IPS|PROXY_HEADERS'
+service_links='SERVICE_[A-Z0-9_]+|PORT_[0-9]+_(TCP|UDP|SCTP)(_PROTO|_PORT|_ADDR)?'
+uvicorn_vars=$(env | sed -n 's/^\(UVICORN_[A-Za-z0-9_]*\)=.*/\1/p' \
+  | grep -v -E "^UVICORN_($passed|$service_links)\$" | sort | tr '\n' ' ')
 if [ -n "$uvicorn_vars" ]; then
   echo "loom: the web tier does not read ${uvicorn_vars% }; remove them" >&2
   exit 2

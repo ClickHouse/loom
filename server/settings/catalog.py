@@ -5197,9 +5197,8 @@ class RuntimeSettings(BaseModel):
     # outside trust-network, the dev signing secret or a weak root, gateway or end-user
     # key. Only for a port others cannot reach.
     allow_insecure: bool = False
-    # PEM certificate chain the web port serves, with tls_key_file. Both set: the port
-    # serves HTTPS only, and a renewed pair is served without a restart (server/core/tls.py);
-    # both "": plain HTTP. Served by scripts/serve.sh and `loom serve`.
+    # PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a
+    # renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP.
     tls_cert_file: str = ""
     # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused.
     tls_key_file: str = ""

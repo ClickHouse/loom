@@ -19,6 +19,7 @@ import logging
 import os
 import ssl
 import stat
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -37,6 +38,9 @@ _Stamp = tuple[tuple[int, int, int, int], ...]
 
 # True once uvicorn built this process's context (`context_factory`).
 _served = False
+# Seconds a web process whose pair does not load waits before it exits: not a setting,
+# it bounds how often uvicorn starts that process again while the files stay bad.
+LOAD_RETRY_S = 10.0
 
 
 class TLSRefused(RuntimeError):
@@ -48,16 +52,12 @@ def _stamp(files: tuple[str, str]) -> _Stamp:
     return tuple((s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns) for s in stats)
 
 
-def _no_passphrase() -> bytes:
-    """The passphrase OpenSSL gets for an encrypted key: none, so the load fails rather
-    than prompting on a terminal from the event loop."""
-    return b""
-
-
 def _load(files: tuple[str, str], min_version: ssl.TLSVersion) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = min_version
-    context.load_cert_chain(certfile=files[0], keyfile=files[1], password=_no_passphrase)
+    # An empty passphrase: an encrypted key fails to load rather than prompting on a
+    # terminal from the event loop.
+    context.load_cert_chain(certfile=files[0], keyfile=files[1], password=b"")
     return context
 
 
@@ -118,9 +118,23 @@ def _from_settings() -> RenewingContext:
 
 def context_factory(_config: Any, _default: Callable[[], ssl.SSLContext]) -> ssl.SSLContext:
     """uvicorn's `ssl_context_factory`: called in each web process as its config loads,
-    before the lifespan starts. Module level, so a spawned worker unpickles it."""
+    before the lifespan starts. Module level, so a spawned worker unpickles it.
+
+    A process whose pair does not load (uvicorn replacing a web process that exited while
+    the files are bad) logs it, waits LOAD_RETRY_S and exits 1, which uvicorn answers with
+    a new process; the other processes keep serving their last pair. Exit code 3 would
+    make uvicorn stop them all."""
     global _served
-    context = _from_settings().context
+    try:
+        context = _from_settings().context
+    except OSError as e:  # ssl.SSLError is an OSError
+        log.error(
+            "TLS: the certificate and key do not load: %s; this web process exits in %.0f s",
+            e,
+            LOAD_RETRY_S,
+        )
+        time.sleep(LOAD_RETRY_S)
+        raise SystemExit(1) from e
     _served = True
     return context
 

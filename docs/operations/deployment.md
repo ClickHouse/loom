@@ -996,9 +996,11 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
   the certificate, or one file replaced before the other) logs a warning and leaves the
   last good pair in place until the files change again; files the server cannot read yet
   (their mode, a missing file) leave it in place until a handshake can read them. Replace
-  each file in one rename, or both at once as a Kubernetes Secret mount does. A process
-  that starts while the pair does not load (a new pod, or uvicorn replacing a web process
-  that exited) refuses to start, and the others keep serving.
+  each file in one rename, or both at once as a Kubernetes Secret mount does. A server
+  that starts while the pair does not load refuses to start. A web process that uvicorn
+  starts in place of one that exited, while the pair does not load, logs it, waits 10 s
+  and exits, and uvicorn starts it again; the other web processes keep serving their last
+  pair.
 - A key file every user on the host can read logs a warning at start.
 - The pair is loaded once before the web processes start, so one that does not load stops
   the start. `scripts/serve.sh` (the image) and `loom serve` serve it; a server started

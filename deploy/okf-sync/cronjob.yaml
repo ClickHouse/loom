@@ -72,8 +72,9 @@ spec:
               env:
                 - name: NAMESPACE
                   value: shared-lessons
-                # https:// when the release sets tls.secretName, with SSL_CERT_FILE naming
-                # the CA that issued its certificate.
+                # https:// when the release sets tls.secretName. Then set SSL_CERT_FILE,
+                # naming the CA that issued its certificate, on the export command only:
+                # it replaces the system roots that the import's PUBLIC_URL needs.
                 - name: PRIVATE_URL
                   value: http://loom.loom.svc:7777
                 - name: PUBLIC_URL

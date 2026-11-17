@@ -6373,7 +6373,7 @@
         "tls_cert_file": {
           "default": "",
           "type": "string",
-          "description": "PEM certificate chain the web port serves, with tls_key_file. Both set: the port serves HTTPS only, and a renewed pair is served without a restart (server/core/tls.py); both \"\": plain HTTP. Served by scripts/serve.sh and `loom serve`."
+          "description": "PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both \"\", HTTP."
         },
         "tls_key_file": {
           "default": "",

@@ -310,6 +310,12 @@ def test_no_pair_serves_plain_http(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tls, "_served", False)
     assert tls.uvicorn_options() == {}
     tls.require_served()
+    started: list[dict[str, Any]] = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: started.append(kw))
+    argv = ["--host", "0.0.0.0", "--port", "7777", "--workers", "1", "--loop", "asyncio"]
+    argv += ["--timeout-graceful-shutdown", "10", "--timeout-keep-alive", "5"]
+    assert web_server.main([*argv, "--forwarded-allow-ips=127.0.0.1"]) == 0
+    assert "ssl_context_factory" not in started[0] and started[0]["proxy_headers"] is True
 
 
 def test_a_pair_that_does_not_load_refuses_before_the_web_tier_starts(
@@ -404,6 +410,24 @@ def test_each_spawned_web_process_builds_its_own_context(
     with concurrent.futures.ProcessPoolExecutor(1, mp_context=spawn) as pool:
         assert pool.submit(_context_in_child, config).result(timeout=60) == (True, True)
     assert tls._served is False  # the child's, not this process's
+
+
+def test_a_web_process_whose_pair_does_not_load_waits_then_exits(
+    tls_settings: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exit code 1, not uvicorn's startup failure, so uvicorn starts it again and keeps the
+    other web processes; the wait bounds how often."""
+    _write(tls_settings[1], _pair(2)[1])
+    waits: list[float] = []
+    monkeypatch.setattr("server.core.tls.time.sleep", waits.append)
+    with caplog.at_level(logging.ERROR, logger="server.core.tls"):
+        with pytest.raises(SystemExit) as exited:
+            tls.context_factory(None, ssl.create_default_context)
+    assert exited.value.code == 1 and waits == [tls.LOAD_RETRY_S]
+    assert tls._served is False
+    assert sum("do not load" in r.getMessage() for r in caplog.records) == 1
 
 
 def test_a_process_that_serves_plain_http_with_the_pair_set_refuses_to_start(

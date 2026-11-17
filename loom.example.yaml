@@ -4945,10 +4945,9 @@ settings:
   # key. Only for a port others cannot reach. [restart]
   # allow_insecure: false
 
-  # PEM certificate chain the web port serves, with tls_key_file. Both set: the port
-  # serves HTTPS only, and a renewed pair is served without a restart
-  # (server/core/tls.py); both "": plain HTTP. Served by scripts/serve.sh and `loom
-  # serve`. [restart]
+  # PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only
+  # and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both
+  # "", HTTP. [restart]
   # tls_cert_file: ""
 
   # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is

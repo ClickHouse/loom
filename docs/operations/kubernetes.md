@@ -410,15 +410,21 @@ mount within its sync period, and each web process serves the new pair from its 
 handshake ([TLS on the Loom port](deployment.md#tls-on-the-loom-port)). The Secret must
 exist before the pods start.
 
-The Ingress or proxy in front then connects over HTTPS: on EKS, add
-`alb.ingress.kubernetes.io/backend-protocol: HTTPS` to `ingress.annotations` (the chart
-refuses an `alb` Ingress without it). Setting or
+The Ingress or proxy in front then connects over HTTPS. On EKS, add
+`alb.ingress.kubernetes.io/backend-protocol: HTTPS` to `ingress.annotations`: the chart
+refuses an `alb` Ingress without it, or with another `backend-protocol` or
+`healthcheck-protocol` in `ingress.annotations` or `service.annotations` (the controller
+reads both, the Service's first). With ingress-nginx, set
+`nginx.ingress.kubernetes.io/backend-protocol: HTTPS`; other controllers have their own
+setting, which the chart does not check. Setting or
 clearing `tls.secretName` on a running release breaks requests until the rollout ends:
 the balancer and in-cluster clients switch scheme for every pod at once, while the pods
 restart one at a time. Plan a window, or install a second release with TLS and move the
 clients to it. A client in the cluster that calls the Service by URL, such as
-`deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` with the CA that
-issued the certificate (`SSL_CERT_FILE` for the `loom` CLI). The assistant calls the port
+`deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` and trusts the CA
+that issued the certificate. For the `loom` CLI, `SSL_CERT_FILE` names that CA and
+replaces the system roots, so set it on the command that calls the Service only, or point
+it at a bundle of the system roots and the CA. The assistant calls the port
 over plain HTTP, so the chart refuses `assistant.enabled` with `tls.secretName`. Keep
 `tls.minVersion` at `"1.2"` unless every client of the port, the balancer included,
 speaks TLS 1.3. `helm test` calls the Service over HTTPS without verifying the

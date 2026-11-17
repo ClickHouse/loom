@@ -309,8 +309,10 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if dig "enabled" false (.Values.assistant | default dict) }}{{ fail "assistant.enabled calls Loom's port over plain HTTP, which tls.secretName turns off: turn one of them off" }}{{ end -}}
 {{- $ingress := .Values.ingress | default dict -}}
 {{- if and $ingress.enabled (eq (toString $ingress.className) "alb") -}}
-{{- $annotations := $ingress.annotations | default dict -}}
-{{- $alb := "set ingress.annotations.\"alb.ingress.kubernetes.io/%s\" to HTTPS beside tls.secretName, or the ALB sends plain HTTP to a port that answers HTTPS only" -}}
+{{- /* The controller also reads these from the Service, where they win over the Ingress's. */}}
+{{- $service := dig "annotations" (dict) (.Values.service | default dict) -}}
+{{- $annotations := mergeOverwrite (deepCopy ($ingress.annotations | default dict)) (deepCopy $service) -}}
+{{- $alb := "set ingress.annotations.\"alb.ingress.kubernetes.io/%s\" to HTTPS beside tls.secretName (and not to another value in service.annotations), or the ALB sends plain HTTP to a port that answers HTTPS only" -}}
 {{- if ne (toString (get $annotations "alb.ingress.kubernetes.io/backend-protocol")) "HTTPS" }}{{ fail (printf $alb "backend-protocol") }}{{ end -}}
 {{- if and (hasKey $annotations "alb.ingress.kubernetes.io/healthcheck-protocol") (ne (toString (get $annotations "alb.ingress.kubernetes.io/healthcheck-protocol")) "HTTPS") }}{{ fail (printf $alb "healthcheck-protocol") }}{{ end -}}
 {{- end -}}
