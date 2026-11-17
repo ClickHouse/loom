@@ -212,8 +212,9 @@ result = await Runner.run(assistant, "Book my usual seat to Lisbon", session=ses
 | `clear_session` | `memory.delete` of every item of the session                                                                                                                                                                                                                                         |
 
 An `episodic` memory is not embedded, so an item is never merged with or judged against
-another row, and a repeated item stays two items (one `memory.set` per item: a batch would
-fold a value identical to a live row). Items are stored under a Loom session derived from
+another row, and a repeated item stays two items (one `memory.set` per item, bypassing SDK
+coalescing: a batch would fold a value identical to a live row). A read fails if an item
+disappears before its full value can be fetched. Items are stored under a Loom session derived from
 the user and the session id (`oai-py-` and a digest of the pair in Python, `oai-ts-`
 in TypeScript), and keys sort in the order
 the items were added. A read without a limit (the SDK's default) and `clear_session` list the

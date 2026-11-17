@@ -49,3 +49,8 @@ async def test_a_session_keeps_its_items_in_loom(agent) -> None:
     assert await session.get_items(limit=1) == [items[1]]
     await session.clear_session()
     assert await session.get_items() == []
+
+    repeated = {"role": "user", "content": "again"}
+    await asyncio.gather(*(session.add_items([repeated]) for _ in range(4)))
+    assert await session.get_items() == [repeated] * 4
+    await session.clear_session()

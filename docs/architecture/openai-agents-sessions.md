@@ -6,6 +6,7 @@ conversation. The framework packages remain optional dependencies.
 
 Each item is one `memory.set` call with its native JSON, a timestamp-and-random
 key, the end user and a session derived from the user and native session id.
+Point writes bypass SDK coalescing so concurrent repeated items remain separate.
 Episodic rows preserve repeated items without semantic extraction or duplicate
 merging. Python and TypeScript use separate derived-session prefixes because
 their native item formats differ.
@@ -16,6 +17,9 @@ requested limit retaining the latest items. Deletion carries the user and derive
 session: `pop_item` deletes the latest item, and `clear_session` deletes the listed
 history. Concurrent appends or clears are individual server operations, not a
 transaction across the conversation.
+If an item disappears before hydration, the read fails instead of returning an
+incomplete native item. Keys use writer clocks; concurrent writers do not share a
+server sequence.
 
 ## Source entry points
 

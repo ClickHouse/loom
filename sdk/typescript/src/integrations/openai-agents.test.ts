@@ -66,6 +66,7 @@ describe("loomTools (OpenAI Agents SDK adapter)", () => {
 function rowsHarness(unserved = 0, cap = 100) {
   const rows = new Map<string, { key: string; value: unknown; user: unknown; session: unknown; second: number }>();
   const hidden = new Set<string>();
+  const disappear = new Set<string>();
   const clock = { second: 0 };
   const calls: Array<{ op: string; body: Record<string, unknown> }> = [];
   const fetch = async (url: string, init: RequestInit) => {
@@ -103,6 +104,7 @@ function rowsHarness(unserved = 0, cap = 100) {
         truncated: body.offset + effectiveLimit < scanned.length,
       };
     } else if (op === "memory.get") {
+      if (disappear.has(body.memory_key)) rows.delete(id(body.memory_key));
       const row = rows.get(id(body.memory_key));
       reply = row ? { found: true, value: row.value } : { found: false };
     } else if (op === "memory.delete") {
@@ -116,6 +118,7 @@ function rowsHarness(unserved = 0, cap = 100) {
     calls,
     clock,
     hidden,
+    disappear,
   };
 }
 
@@ -234,6 +237,23 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     for (const r of rows.values()) if ((r.value as { content: string }).content.startsWith("my key")) hidden.add(r.key);
     expect(await session.getItems()).toEqual([msg("user", "my key is sk-123"), long]);
   });
+
+  it.each(["getItems", "popItem"] as const)("fails %s when an item disappears during hydration", async (method) => {
+    const { agent, calls, disappear } = rowsHarness();
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    await session.addItems([msg("assistant", "x".repeat(5000))]);
+    disappear.add(String(calls[0].body.memory_key));
+    await expect(session[method]()).rejects.toThrow("unavailable");
+  });
+
+  it.each(["\u001c", "\u001d", "\u001e", "\u001f", "\u0085"].flatMap((c) => [c, `${c}alice`, `alice${c}`]))(
+    "refuses server-stripped identity whitespace %j before requests",
+    (userId) => {
+      const { agent, calls } = rowsHarness();
+      expect(() => new LoomSession(agent, "s1", { userId })).toThrow("userId");
+      expect(calls).toHaveLength(0);
+    },
+  );
 
   it("does not read a nested key prefix's items as its own", async () => {
     const { agent } = rowsHarness();

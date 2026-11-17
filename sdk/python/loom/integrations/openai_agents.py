@@ -188,7 +188,9 @@ class LoomSession:
         (or, for a row Loom labels sensitive, sent none)."""
         if row.get("value_truncated") or row.get("value") is None:
             full = await self._agent.memory.get(str(row["memory_key"]), **self._scope())
-            return _item(None if full is None else full.get("value"))
+            if full is None or full.get("value") is None:
+                raise LoomError("Session item is unavailable; retry reading history")
+            return _item(full["value"])
         return _item(row["value"])
 
     async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
@@ -201,10 +203,13 @@ class LoomSession:
             # The clock or one past this process's last stamp, never less: keys keep order.
             _last_stamp = max(time.time_ns(), _last_stamp + 1)
             # One memory.set per item: a batch folds a value identical to a live row.
-            await self._agent.memory.set(
-                f"{self._prefix}{_last_stamp:020d}-{secrets.token_hex(4)}",
-                json.dumps(item),
-                memory_type="episodic",
+            await self._agent.call(
+                "memory.set",
+                {
+                    "memory_key": f"{self._prefix}{_last_stamp:020d}-{secrets.token_hex(4)}",
+                    "value": json.dumps(item),
+                    "memory_type": "episodic",
+                },
                 **self._scope(),
             )
 

@@ -203,6 +203,12 @@ class _Memory:
     def __init__(self, rows: _Rows) -> None:
         self.memory = rows
 
+    async def call(self, op: str, body: dict[str, Any], **scope: Any) -> dict[str, Any]:
+        assert op == "memory.set"
+        return await self.memory.set(
+            body["memory_key"], body["value"], body["memory_type"], **scope
+        )
+
 
 def _session(rows: _Rows, session_id: str = "s1", **kw: Any) -> Any:
     from loom.integrations.openai_agents import LoomSession
@@ -363,6 +369,44 @@ def test_a_long_or_sensitive_item_is_read_whole_by_key() -> None:
     }
     assert asyncio.run(session.get_items()) == [_msg("user", "my key is sk-123"), long]
     assert len([c for c in rows.calls if c[0] == "get"]) == 2
+
+
+@pytest.mark.parametrize("method", ["get_items", "pop_item"])
+def test_a_disappearing_item_fails_instead_of_returning_invalid_history(method: str) -> None:
+    class _DisappearingRows(_Rows):
+        async def get(self, key: str, **kw: Any) -> None:
+            await self.delete(key, **kw)
+            return None
+
+    session = _session(_DisappearingRows())
+    asyncio.run(session.add_items([_msg("assistant", "x" * 5000)]))
+    with pytest.raises(LoomError, match="unavailable"):
+        asyncio.run(getattr(session, method)())
+
+
+def test_concurrent_repeats_use_point_writes_with_default_sdk_coalescing() -> None:
+    from loom.integrations.openai_agents import LoomSession
+
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    async def post(path: str, body: dict[str, Any], *args: Any, **kwargs: Any) -> dict[str, Any]:
+        posts.append((path, dict(body)))
+        return {}
+
+    async def append() -> None:
+        async with Agent(
+            org="o", namespace="n", agent="bot", api_key="k", mentor_brief=False, auto_run=False
+        ) as agent:
+            assert agent.coalesce_sets
+            agent.transport.post = post  # type: ignore[method-assign]
+            session = LoomSession(agent, "s1", user_id="alice")
+            await asyncio.gather(*(session.add_items([_msg("user", "again")]) for _ in range(4)))
+            assert agent.coalesce_sets
+
+    asyncio.run(append())
+    assert [path for path, _ in posts] == ["/v1/memory.set"] * 4
+    assert len({body["memory_key"] for _, body in posts}) == 4
+    assert {body["value"] for _, body in posts} == {json.dumps(_msg("user", "again"))}
 
 
 def test_a_nested_key_prefix_is_not_read_as_this_sessions_items() -> None:

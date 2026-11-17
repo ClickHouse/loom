@@ -19,7 +19,9 @@
 import { type AgentInputItem, type FunctionTool, type Session, tool } from "@openai/agents";
 import type { Agent, Scope } from "../agent.js";
 import { LoomError } from "../errors.js";
+import { trimSlashes } from "../slashes.js";
 import { AgentTools, type AgentToolsOptions } from "../tools.js";
+import { hasIdentityWhitespace } from "../whitespace.js";
 
 /** The JSON-schema parameters a non-strict `tool()` takes (the type is not exported). */
 type JsonParameters = Extract<Parameters<typeof tool>[0], { strict: false }>["parameters"];
@@ -83,15 +85,10 @@ export class LoomSession implements Session {
   ) {
     if (!sessionId) throw new Error("sessionId names the session");
     const user = opts.userId;
-    if (user !== undefined && (["", "-"].includes(user) || user !== user.trim())) {
+    if (user !== undefined && (["", "-"].includes(user) || hasIdentityWhitespace(user))) {
       throw new Error("userId must name a Loom user without surrounding whitespace, or be undefined");
     }
-    const rawPrefix = opts.keyPrefix ?? "openai-agents";
-    let start = 0;
-    let end = rawPrefix.length;
-    while (start < end && rawPrefix[start] === "/") start++;
-    while (end > start && rawPrefix[end - 1] === "/") end--;
-    const prefix = rawPrefix.slice(start, end);
+    const prefix = trimSlashes(opts.keyPrefix ?? "openai-agents");
     if (!prefix) throw new Error("keyPrefix must not be empty");
     this.prefix = `${prefix}/`;
   }
@@ -154,7 +151,11 @@ export class LoomSession implements Session {
   private async value(row: ItemRow): Promise<AgentInputItem> {
     if (row.value_truncated || row.value === undefined || row.value === null) {
       const full = await this.agent.call("memory.get", { memory_key: row.memory_key }, await this.scope());
-      return item((full as { value?: unknown }).value);
+      const value = (full as { value?: unknown }).value;
+      if (value === undefined || value === null) {
+        throw new LoomError("Session item is unavailable; retry reading history");
+      }
+      return item(value);
     }
     return item(row.value);
   }
