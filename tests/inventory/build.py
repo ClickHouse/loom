@@ -85,6 +85,7 @@ _LANG_WORKFLOWS: tuple[str, ...] = (
     "rust",
     "shell",
     "sql",
+    "thrift",
     "tla",
     "ts",
     "vue",
