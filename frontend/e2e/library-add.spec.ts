@@ -89,6 +89,37 @@ for (const width of [1440, 375]) {
       await page.screenshot({ path: info.outputPath("row-moved.png") });
     });
 
+    for (const collection of [false, true]) {
+      test(`adding an unselected row keeps the other selection and focuses the heading in ${collection ? "a collection" : "All documents"}`, async ({
+        page,
+      }) => {
+        const moves = await open(page);
+        if (collection) await page.goto("/library?collection=col-runbooks");
+        await page.getByRole("checkbox", { name: "Select Fill a lane", exact: true }).click();
+        const before = await row(page, "Drain a lane").elementHandle();
+        await row(page, "Drain a lane").getByRole("button", { name: "Actions for Drain a lane" }).click();
+        await page.getByRole("menuitem", { name: "Add to collection…" }).click();
+        const dialog = page.getByRole("dialog", { name: "Add 1 document to a collection" });
+        await dialog.getByRole("button", { name: /To/ }).click();
+        await page.getByRole("dialog").last().getByText("Reference", { exact: true }).click();
+        await dialog.getByRole("button", { name: "Move", exact: true }).click();
+        await expect(dialog).toHaveCount(0);
+        await expect.poll(() => before!.evaluate((el) => el.isConnected)).toBe(false);
+        await expect(page.getByRole("checkbox", { name: "Select Fill a lane", exact: true })).toBeChecked();
+        await expect(page.getByLabel("Search and filters")).toContainText("1 selected");
+        await expect(page.getByRole("textbox", { name: "Search library", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+        expect(moves).toEqual([
+          expect.objectContaining({
+            namespace: "col-runbooks",
+            to_namespace: "col-policies",
+            source_uris: ["runbooks/drain.md"],
+          }),
+        ]);
+        await before!.dispose();
+      });
+    }
+
     test("an empty collection takes files and folders into Add, and cancel clears the captured files", async ({
       page,
     }) => {
