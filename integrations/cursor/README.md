@@ -4,7 +4,7 @@
 conversation's transcript to `loom ingest-transcript`, which posts each turn
 to `conversation.append`. For Loom's tools inside Cursor, use the
 [Cursor plugin](../../docs/features/integrations/cursor.md#plugin)
-(untested in Cursor) or the MCP config (`loom install --client cursor`, see
+or the MCP config (`loom install --client cursor`, see
 [docs/features/integrations/mcp-clients.md](../../docs/features/integrations/mcp-clients.md));
 the hook is independent of both.
 

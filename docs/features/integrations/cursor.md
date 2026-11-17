@@ -16,9 +16,10 @@ hooks: no code shunt and no capture of tool calls, runs or working memory; the
 
 `.cursor-plugin/` at the repository root makes the repository a Cursor plugin marketplace
 with one plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The
-plugin is not listed in Cursor's marketplace and has not been tested in Cursor. On a
-Teams or Enterprise plan, a team admin adds it under **Dashboard → Plugins & MCPs → Add
-Marketplace → Import from Repo** with `https://github.com/ClickHouse/loom`.
+plugin is not listed in Cursor's marketplace. Its local single-user connection and
+read-only memory search are tested in Cursor. On a Teams or Enterprise plan, a team
+admin adds it under **Dashboard → Plugins & MCPs → Add Marketplace → Import from Repo**
+with `https://github.com/ClickHouse/loom`.
 
 The plugin has one variable, **Loom MCP URL**. A team admin sets it in Cursor's
 dashboard under **Plugins & MCPs**, for every member.
