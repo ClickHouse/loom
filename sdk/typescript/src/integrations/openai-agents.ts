@@ -64,30 +64,32 @@ const ITEM_KEY = /^\d{20}-[0-9a-f]{8}$/;
 // The last stamp this process wrote: the next is the clock or one past it, never less.
 let lastStamp = 0n;
 
-type ItemRow = { memory_key: string; value?: unknown; value_truncated?: boolean; created_at?: string };
+type ItemRow = { memory_key: string; value?: unknown; value_truncated?: boolean };
 
 /**
  * The OpenAI Agents SDK's `Session` over a Loom `Agent` (the twin of the Python
  * `LoomSession`): the conversation history of one session, as episodic memories of the
  * Loom agent and the user, keyed `<keyPrefix>/<nanoseconds>-<random>`; reads sort the
- * items by key, the order they were added. Every process whose Loom agent has the same
+ * items by their writer-generated keys. Every process whose Loom agent has the same
  * name reads the same TypeScript history for the same id and user. Python sessions
  * have a separate history because their item formats differ.
  */
 export class LoomSession implements Session {
   private readonly prefix: string;
+  private readonly userId?: string;
   private loomSession?: Promise<string>;
 
   constructor(
     private readonly agent: Agent,
     private readonly sessionId: string,
-    private readonly opts: LoomSessionOptions = {},
+    opts: LoomSessionOptions = {},
   ) {
     if (!sessionId) throw new Error("sessionId names the session");
     const user = opts.userId;
     if (user !== undefined && (["", "-"].includes(user) || hasIdentityWhitespace(user))) {
       throw new Error("userId must name a Loom user without surrounding whitespace, or be undefined");
     }
+    this.userId = user;
     const prefix = trimSlashes(opts.keyPrefix ?? "openai-agents");
     if (!prefix) throw new Error("keyPrefix must not be empty");
     this.prefix = `${prefix}/`;
@@ -99,16 +101,16 @@ export class LoomSession implements Session {
 
   private scope(): Promise<Scope> {
     // Users and SDK languages have separate histories: their native item formats differ.
-    this.loomSession ??= sha256Hex(JSON.stringify([this.opts.userId ?? "-", this.sessionId])).then(
+    this.loomSession ??= sha256Hex(JSON.stringify([this.userId ?? "-", this.sessionId])).then(
       (hex) => `oai-ts-${hex.slice(0, 20)}`,
     );
-    return this.loomSession.then((sessionId) => ({ userId: this.opts.userId, sessionId }));
+    return this.loomSession.then((sessionId) => ({ userId: this.userId, sessionId }));
   }
 
   /**
-   * The latest `limit` item rows (all when undefined), oldest first. memory.list serves
-   * the newest second first and orders by key within a second, so a read for `limit`
-   * rows stops once it holds `limit` and a row of an older second.
+   * The latest `limit` item rows (all when undefined), oldest first. Server arrival
+   * order can differ from writer keys, so even a limited read scans every page
+   * before selecting the key-ordered suffix.
    */
   private async latest(limit?: number): Promise<ItemRow[]> {
     if (limit !== undefined && limit <= 0) return [];
@@ -124,7 +126,7 @@ export class LoomSession implements Session {
           memory_type: "episodic",
           limit: SESSION_PAGE,
           offset,
-          fields: ["memory_key", "value", "value_truncated", "created_at"],
+          fields: ["memory_key", "value", "value_truncated"],
         },
         scope,
       );
@@ -138,9 +140,6 @@ export class LoomSession implements Session {
         }
       }
       if (!page.truncated) break;
-      if (limit !== undefined && rows.length > limit) {
-        if (String(rows[rows.length - 1].created_at) < String(rows[limit - 1].created_at)) break;
-      }
     }
     rows.sort((a, b) => (a.memory_key < b.memory_key ? -1 : a.memory_key > b.memory_key ? 1 : 0));
     if (limit === undefined) return rows;
@@ -177,7 +176,7 @@ export class LoomSession implements Session {
         "memory.set",
         {
           memory_key: `${this.prefix}${lastStamp.toString().padStart(20, "0")}-${randomHex()}`,
-          value: JSON.stringify(entry),
+          value: JSON.stringify(mapToolBytes(entry, (data) => (data instanceof Uint8Array ? Array.from(data) : data))),
           memory_type: "episodic",
         },
         scope,
@@ -202,7 +201,27 @@ export class LoomSession implements Session {
 }
 /** A stored item: the JSON text it was written as, or the value loom parsed from it. */
 function item(value: unknown): AgentInputItem {
-  return (typeof value === "string" ? JSON.parse(value) : value) as AgentInputItem;
+  const parsed = (typeof value === "string" ? JSON.parse(value) : value) as AgentInputItem;
+  return mapToolBytes(parsed, (data) => {
+    if (!Array.isArray(data)) return data;
+    if (data.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+      throw new LoomError("Session item contains invalid binary data");
+    }
+    return new Uint8Array(data);
+  });
+}
+
+/** Native image/file byte leaves use JSON arrays in storage; other JSON stays unchanged. */
+function mapToolBytes(value: AgentInputItem, convert: (data: unknown) => unknown): AgentInputItem {
+  if (value?.type !== "function_call_result") return value;
+  const output = value.output;
+  if (!output || typeof output !== "object" || Array.isArray(output)) return value;
+  const kind = output.type;
+  const content = kind === "image" ? output.image : kind === "file" ? output.file : undefined;
+  if (!content || typeof content === "string" || !("data" in content)) return value;
+  const data = convert(content.data);
+  if (data === content.data) return value;
+  return { ...value, output: { ...output, [kind]: { ...content, data } } } as AgentInputItem;
 }
 
 function randomHex(): string {

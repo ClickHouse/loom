@@ -125,6 +125,87 @@ function rowsHarness(unserved = 0, cap = 100) {
 const msg = (role: "user" | "assistant", content: string) => ({ role, content }) as never;
 
 describe("LoomSession (OpenAI Agents SDK session)", () => {
+  it.each(["before", "after"])(
+    "keeps the validated user when caller options change %s the first write",
+    async (when) => {
+      const { agent, calls } = rowsHarness();
+      const options = { userId: "alice" };
+      const session = new LoomSession(agent, "s1", options);
+      if (when === "after") await session.addItems([msg("user", "first")]);
+      options.userId = when === "before" ? "-" : "bob";
+      await session.addItems([msg("user", "second")]);
+      expect(calls.filter((call) => call.op === "memory.set").map((call) => call.body.user_id)).toEqual(
+        when === "before" ? ["alice"] : ["alice", "alice"],
+      );
+      expect((await session.getItems()).length).toBe(when === "before" ? 1 : 2);
+      const resumed = new LoomSession(agent, "s1", { userId: "alice" });
+      expect(await resumed.getItems()).toEqual(await session.getItems());
+    },
+  );
+
+  it.each(["getItems", "popItem"] as const)(
+    "uses the same key-order tail for %s when server times differ",
+    async (method) => {
+      const { agent, clock } = rowsHarness();
+      const session = new LoomSession(agent, "s1", { userId: "alice" });
+      const items = Array.from({ length: 102 }, (_, i) => msg("user", `m${i}`));
+      for (const [second, batch] of [
+        [2, items.slice(0, 1)],
+        [1, items.slice(1, 101)],
+        [0, items.slice(101)],
+      ] as const) {
+        clock.second = second;
+        await session.addItems([...batch]);
+      }
+      const history = await session.getItems();
+      expect(history).toEqual(items);
+      if (method === "getItems") expect(await session.getItems(1)).toEqual(history.slice(-1));
+      else {
+        expect(await session.popItem()).toEqual(history.at(-1));
+        expect(await session.getItems()).toEqual(history.slice(0, -1));
+      }
+    },
+  );
+
+  it.each<AgentInputItem>([
+    {
+      type: "function_call_result",
+      name: "image",
+      callId: "image-1",
+      status: "completed",
+      output: { type: "image", image: { data: new Uint8Array([137, 80, 78, 71]), mediaType: "image/png" } },
+    },
+    {
+      type: "function_call_result",
+      name: "image",
+      callId: "image-2",
+      status: "completed",
+      output: { type: "image", image: { data: new Uint8Array() } },
+    },
+    {
+      type: "function_call_result",
+      name: "file",
+      callId: "file-1",
+      status: "completed",
+      output: {
+        type: "file",
+        file: { data: new Uint8Array(3000).fill(65), mediaType: "text/plain", filename: "example.txt" },
+      },
+    },
+  ])("preserves native binary tool output $callId without changing ordinary JSON", async (entry) => {
+    const { agent } = rowsHarness();
+    const session = new LoomSession(agent, "s1", { userId: "alice" });
+    const ordinary: AgentInputItem = {
+      role: "user",
+      content: "ordinary",
+      providerData: { type: "file", file: { data: [65, 66] }, numericObject: { "0": 65, "1": 66 } },
+    };
+    await session.addItems([entry, ordinary]);
+    expect(await session.getItems()).toEqual([entry, ordinary]);
+    expect(await session.popItem()).toEqual(ordinary);
+    expect(await session.popItem()).toEqual(entry);
+  });
+
   it("keeps items in order across pages, with repeats, as episodic rows of the user's loom session", async () => {
     const { agent, calls } = rowsHarness();
     const session = new LoomSession(agent, "s1", { userId: "alice" });
@@ -210,7 +291,7 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     expect(await other.getItems()).toEqual([msg("user", "c")]);
   });
 
-  it("returns a history spanning seconds in the order it was added, and stops a latest read early", async () => {
+  it("returns a history spanning seconds in key order with a matching latest read", async () => {
     const { agent, clock, calls } = rowsHarness();
     const session = new LoomSession(agent, "s1", { userId: "alice" });
     for (const [second, pair] of [

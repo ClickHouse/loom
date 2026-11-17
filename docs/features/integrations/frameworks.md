@@ -204,21 +204,22 @@ session = LoomSession(loom_agent, "trip-42", user_id="alice")
 result = await Runner.run(assistant, "Book my usual seat to Lisbon", session=session)
 ```
 
-| `Session`       | Loom                                                                                                                                                                                                                                                                                 |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `get_items`     | `memory.list` of the session's items, sorted by key (the order they were added); `limit` (or `session_settings.limit`) keeps the latest, and the read stops once it holds them; an item the list cuts at 2,048 characters, or sends without a value, is read whole with `memory.get` |
-| `add_items`     | one `memory.set` per item, an `episodic` memory under `<key_prefix>/<nanoseconds>-<random>`, the item's JSON its value                                                                                                                                                               |
-| `pop_item`      | the latest item, read as `get_items(limit=1)` reads it, deleted with `memory.delete` and returned                                                                                                                                                                                    |
-| `clear_session` | `memory.delete` of every item of the session                                                                                                                                                                                                                                         |
+| `Session`       | Loom                                                                                                                                                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_items`     | `memory.list` of the session's items, sorted by writer-generated key; `limit` (or `session_settings.limit`) keeps the latest after scanning the history; an item the list cuts at 2,048 characters, or sends without a value, is read whole with `memory.get` |
+| `add_items`     | one `memory.set` per item, an `episodic` memory under `<key_prefix>/<nanoseconds>-<random>`, the item's JSON its value                                                                                                                                        |
+| `pop_item`      | the latest item, read as `get_items(limit=1)` reads it, deleted with `memory.delete` and returned                                                                                                                                                             |
+| `clear_session` | `memory.delete` of every item of the session                                                                                                                                                                                                                  |
 
 An `episodic` memory is not embedded, so an item is never merged with or judged against
 another row, and a repeated item stays two items (one `memory.set` per item, bypassing SDK
 coalescing: a batch would fold a value identical to a live row). A read fails if an item
 disappears before its full value can be fetched. Items are stored under a Loom session derived from
 the user and the session id (`oai-py-` and a digest of the pair in Python, `oai-ts-`
-in TypeScript), and keys sort in the order
-the items were added. A read without a limit (the SDK's default) and `clear_session` list the
-whole history. The history is the user's: unset, `user_id` writes the namespace's shared
+in TypeScript). Keys follow writer clocks; independent writers do not share a server
+sequence. Reads, `pop_item` and `clear_session` scan the whole history: server arrival
+times cannot bound keys from different writer clocks. The history is the user's:
+unset, `user_id` writes the namespace's shared
 rows; an empty or `-` user raises `ValueError`. To keep what a conversation
 established beyond its history, give the model `loom_remember`, or send the turns to
 `memory.set_from_messages`.
@@ -247,7 +248,9 @@ const result = await run(assistant, "Book my usual seat to Lisbon");
 ```
 
 `new LoomSession(agent, sessionId, { userId, keyPrefix })` is the TypeScript `Session`, over
-its native item format and separate session rows:
+its native item format and separate session rows. The user is fixed when the session is
+constructed. Binary image and file tool results keep their bytes and media information
+when stored and read back:
 
 ```ts
 import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";

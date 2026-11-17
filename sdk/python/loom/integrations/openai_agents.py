@@ -112,7 +112,7 @@ class LoomSession:
 
     Each item is one ``episodic`` memory (not embedded, so never merged with or
     judged against another row) under ``<key_prefix>/<nanoseconds>-<random>``; reads
-    sort the items by key, the order they were added. Every process whose Loom agent
+    sort the items by their writer-generated keys. Every process whose Loom agent
     has the same name reads the same Python history for the same session id and user.
     TypeScript sessions have a separate history because their item formats differ. The mapping is in
     ``docs/features/integrations/frameworks.md`` (OpenAI Agents SDK).
@@ -150,9 +150,8 @@ class LoomSession:
     async def _latest(self, limit: int | None) -> list[dict[str, Any]]:
         """The session's latest `limit` item rows (all when None), oldest first.
 
-        memory.list serves the newest second first and orders by key within a second, so
-        a read for `limit` rows stops once it holds `limit` and a row of an older second;
-        the rows are then sorted by key, the order the items were added."""
+        Server arrival order can differ from writer keys, so even a limited read
+        scans every page before selecting the key-ordered suffix."""
         if limit is not None and limit <= 0:
             return []
         rows: list[dict[str, Any]] = []
@@ -164,7 +163,7 @@ class LoomSession:
                 memory_type="episodic",
                 limit=_PAGE,
                 offset=offset,
-                fields=["memory_key", "value", "value_truncated", "created_at"],
+                fields=["memory_key", "value", "value_truncated"],
                 **self._scope(),
             )
             entries = page["entries"]
@@ -177,9 +176,6 @@ class LoomSession:
                     rows.append(row)
             if not page.get("truncated"):
                 break
-            if limit is not None and len(rows) > limit:
-                if str(rows[-1]["created_at"]) < str(rows[limit - 1]["created_at"]):
-                    break
         rows.sort(key=lambda r: str(r["memory_key"]))
         return rows if limit is None else rows[-limit:] if limit > 0 else []
 

@@ -348,7 +348,7 @@ def test_history_spanning_seconds_comes_back_in_the_order_it_was_added() -> None
     assert asyncio.run(session.pop_item()) == _msg("assistant", "a3")
 
 
-def test_a_latest_read_stops_once_it_holds_an_older_second() -> None:
+def test_a_latest_read_returns_the_last_item_from_a_single_page() -> None:
     rows = _Rows()
     session = _session(rows)
     for second in range(6):
@@ -357,6 +357,24 @@ def test_a_latest_read_stops_once_it_holds_an_older_second() -> None:
     rows.calls.clear()
     assert [i["content"] for i in asyncio.run(session.get_items(limit=1))] == ["m5"]
     assert len([c for c in rows.calls if c[0] == "list"]) == 1
+
+
+@pytest.mark.parametrize("method", ["get_items", "pop_item"])
+def test_limited_history_uses_the_same_key_order_when_server_times_differ(method: str) -> None:
+    rows = _Rows()
+    session = _session(rows)
+    items = [_msg("user", f"m{i}") for i in range(102)]
+    # Server arrival time need not follow keys from different writers' clocks.
+    for second, batch in [(2, items[:1]), (1, items[1:101]), (0, items[101:])]:
+        rows.second = second
+        asyncio.run(session.add_items(batch))
+    history = asyncio.run(session.get_items())
+    assert history == items
+    if method == "get_items":
+        assert asyncio.run(session.get_items(limit=1)) == history[-1:]
+    else:
+        assert asyncio.run(session.pop_item()) == history[-1]
+        assert asyncio.run(session.get_items()) == history[:-1]
 
 
 def test_a_long_or_sensitive_item_is_read_whole_by_key() -> None:

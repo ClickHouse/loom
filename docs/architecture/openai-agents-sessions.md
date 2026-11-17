@@ -13,7 +13,11 @@ their native item formats differ.
 
 Reads page through `memory.list`, deduplicate overlapping keys and hydrate missing
 or truncated values with `memory.get`. Items are returned in key order, with a
-requested limit retaining the latest items. Deletion carries the user and derived
+requested limit retaining the latest items. Positive limited reads also scan the
+history because server arrival times cannot bound writer-generated keys. The TypeScript adapter
+snapshots the validated user at construction. Its native image and file byte
+payloads use JSON arrays in storage and return as `Uint8Array`; ordinary JSON and
+media information remain unchanged. Deletion carries the user and derived
 session: `pop_item` deletes the latest item, and `clear_session` deletes the listed
 history. Concurrent appends or clears are individual server operations, not a
 transaction across the conversation.
