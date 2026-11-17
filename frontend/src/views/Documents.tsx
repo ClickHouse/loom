@@ -40,6 +40,7 @@ import {
   type CollectionEntry,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
@@ -413,6 +414,10 @@ export function Documents() {
   // answer for a namespace the page has left is aborted and dropped.
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
+  const reloadAfterWrite = () => {
+    reload();
+    invalidateSharedCollections();
+  };
   const placesWaiting = !collections.kept && !collections.error;
   // The places (`readKey`) the rows on screen were read for.
   const [rowsScope, setRowsScope] = useState("");
@@ -704,7 +709,7 @@ export function Documents() {
     }
     // The row and its menu leave with the next read: focus then goes to the search.
     focusSearchOnRead.current = true;
-    reload();
+    reloadAfterWrite();
   };
 
   // The delete's Undo: the place it was deleted from, whatever the page shows now.
@@ -721,7 +726,7 @@ export function Documents() {
             : `Restored ${source_uri}`,
           "ok",
         );
-        reload();
+        reloadAfterWrite();
       } else {
         toast(`${source_uri} was not restored: ${RESTORE_REFUSED[r.reason]}`, "info");
       }
@@ -1046,7 +1051,7 @@ export function Documents() {
       }
       // A place that refused keeps its rows selected; the rest leave the selection.
       selection.drop(gone);
-      if (gone.length) reload();
+      if (gone.length) reloadAfterWrite();
     } finally {
       setBulkBusy(false);
     }
@@ -1325,7 +1330,7 @@ export function Documents() {
       onMoved={(moved) => {
         // Any answer may have changed the list, a failed call's too.
         if (moved.length) movedSome.current = true;
-        reload();
+        reloadAfterWrite();
       }}
       onClose={() => setMoving(null)}
       onCloseAutoFocus={(e) => {
@@ -1356,7 +1361,7 @@ export function Documents() {
       // Folders wait for a list still being read (or read again after it failed), or one too
       // long to show; a collection not in a whole list takes none.
       foldersLater={!folderTree && (collections.rows === null || collections.truncated)}
-      onAdded={reload}
+      onAdded={reloadAfterWrite}
     />
   );
   // Either page beside the places tree, when there is room for one. The dialog keeps one
@@ -1623,7 +1628,7 @@ export function Documents() {
             if (!v) setReplaceEntry(null);
           }}
           identity={placeOf(replaceEntry)}
-          onAdded={reload}
+          onAdded={reloadAfterWrite}
           replaceMode={
             replaceEntry
               ? {
@@ -1643,7 +1648,7 @@ export function Documents() {
         }}
         identity={editEntry ? placeOf(editEntry) : { org: identity.org, namespace: identity.namespace }}
         entry={editEntry}
-        onSaved={reload}
+        onSaved={reloadAfterWrite}
       />
 
       {rows === null && (

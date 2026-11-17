@@ -49,6 +49,7 @@ classifiers = [
 dependencies = ["httpx[http2]>=0.27"]
 
 [project.optional-dependencies]
+haystack = ["haystack-ai>=3.5,<3.6"]
 # A bot that proves a key (loom.machine) signs its client assertion with these.
 machine = ["pyjwt[crypto]>=2.8"]
 # The same, with the key read from AWS Secrets Manager (LOOM_CLIENT_KEY_SECRET).

@@ -201,7 +201,10 @@ async def test_a_parked_page_withholds_a_definition_relabelled_since_page_one(
     monkeypatch.setattr(pg_validation, "stale_flags", _fresh)
     rows = [_parked("note", "bot"), _parked("definition/arr", "_shared"), _parked("later", "bot")]
     hits, next_offset, stale = await output._parked_slice(
-        SimpleNamespace(org="o", namespace="n", top_k=2), {"hits": rows}, 0, {""}
+        MemorySearchInput(org="o", namespace="n", query="retention", top_k=2),
+        {"hits": rows},
+        0,
+        {""},
     )
     assert [h.memory_key for h in hits] == ["note", "later"]
     # Withheld, not stale: the authority still serves it.
@@ -218,7 +221,10 @@ async def test_a_parked_page_fails_closed_when_a_source_is_not_read(
     sources["fail"] = True
     rows = [_parked("note", "bot"), _parked("definition/arr", "_shared")]
     hits, _next, stale = await output._parked_slice(
-        SimpleNamespace(org="o", namespace="n", top_k=2), {"hits": rows}, 0, {""}
+        MemorySearchInput(org="o", namespace="n", query="retention", top_k=2),
+        {"hits": rows},
+        0,
+        {""},
     )
     assert [h.memory_key for h in hits] == ["note"] and stale == 0
     assert noted == ["memory.search: shared_definitions_withheld"]
@@ -260,7 +266,10 @@ async def test_a_parked_page_notes_a_withheld_read_once_across_its_windows(
         _parked("definition/b", "_shared"),
     ]
     hits, _next, _stale = await output._parked_slice(
-        SimpleNamespace(org="o", namespace="n", top_k=2), {"hits": rows}, 0, {""}
+        MemorySearchInput(org="o", namespace="n", query="retention", top_k=2),
+        {"hits": rows},
+        0,
+        {""},
     )
     assert [h.memory_key for h in hits] == ["note"]
     assert [d.split(" (")[0] for d in degradations.current()] == [

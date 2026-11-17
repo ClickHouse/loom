@@ -2946,6 +2946,10 @@ settings:
   # (docs/concepts/identities-and-namespaces.md). [live]
   # memory_shared_definitions_max: 500
 
+  # How much longer memory.search waits for its term leg once the other legs are done;
+  # past it the leg adds nothing (docs/concepts/identities-and-namespaces.md). [live]
+  # memory_term_leg_wait_ms: 100
+
   # --- prompt safety and search priors ---
 
   # Cap on memory.search's metadata priors (confidence, soft tag/category) so they break

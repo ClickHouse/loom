@@ -108,8 +108,7 @@ def merge_memory_hits(
     caller's `top_k` (`search_repo_decisions` keeps one per key), and a base hit
     pushed out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
-    # the similarity each base row holds its slot at: none for one moved for stale code
-    slot_sims = [-math.inf if code_change.moved_for_stale_code(b) else b.similarity for b in base]
+    slot_sims = [_slot_similarity(b) for b in base]
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
     added: list[_MemorySearchHit] = []
@@ -126,6 +125,16 @@ def merge_memory_hits(
         out.append(b)
         out.extend(slots[i + 1])
     return out, added
+
+
+def _slot_similarity(b: _MemorySearchHit) -> float:
+    """The similarity a base row holds its slot at: a governed definition stays above every
+    extra hit, and a row moved for stale code holds none."""
+    if b.governed:
+        return math.inf
+    if code_change.moved_for_stale_code(b):
+        return -math.inf
+    return b.similarity
 
 
 async def memory_with_repo_decisions(

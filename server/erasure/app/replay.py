@@ -39,7 +39,9 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
+from server.core import pg
 from server.core.datetimes import to_naive_utc
+from server.core.naming import is_mirror_name
 from server.erasure.api.erasure import ErasureRequestInput
 from server.erasure.app.saga import (
     RECOVERY_WORKER_ACTOR,
@@ -53,7 +55,7 @@ from server.erasure.app.saga_steps import (
     PG_ONLY_STEPS,
     USER_STEPS,
     ErasureStepError,
-    with_mirrors,
+    erased_scope,
 )
 from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 from server.erasure.domain.scopes import shown_scope
@@ -113,8 +115,23 @@ def _request(
         actor=actor,
         requested_at=to_naive_utc(entry["requested_at"]),
         attempts=1,
+        mirror_marked=bool(entry.get("mirror_marked")),
     )
     return input, row
+
+
+async def _promote_mark(row: RequestRow) -> None:
+    # A failed persistence must already make this run's later output opaque.
+    row["mirror_marked"] = True
+    if pg.enabled():
+        await pg_ledger.record(row)
+    await erasure_ledger.promote_mirror_mark(str(row["org"]), str(row["id"]))
+
+
+async def _retain_mark(row: RequestRow) -> None:
+    current = await erasure_ledger.mirror_mark(str(row["org"]), str(row["id"]))
+    if current or row.get("mirror_marked"):
+        await _promote_mark(row)
 
 
 async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) -> str:
@@ -123,6 +140,7 @@ async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) 
     first that failed. Its completed row carries no census (`erasure-re-verify` reads it
     unverified): one would count the other store's later writes."""
     input, row = _request(entry)
+    await _retain_mark(row)
     erasure_id = str(entry["id"])
     completed_at = to_naive_utc(entry["completed_at"])
     if restored == "postgres":
@@ -131,7 +149,7 @@ async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) 
         # run again, it would delete what the user wrote after it.
         marked = await pg_ledger.pg_steps(input.org, erasure_id)
         steps = [s for s in _replayed(input.scope_type, restored) if s[0] not in marked]
-        await _run_steps(input, erasure_id, steps)
+        await _run_steps(input, erasure_id, steps, row)
         await pg_ledger.complete(input.org, erasure_id, completed_at)
         return "completed"
     # What the restored ledger says, from a row checkpointed before the point (its steps'
@@ -142,6 +160,8 @@ async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) 
     trusted = await erasure_ledger.trusted_row(
         input.org, erasure_id, before=point, actor=REPLAY_ACTOR
     )
+    if trusted is not None and trusted.get("mirror_marked") and not row.get("mirror_marked"):
+        await _promote_mark(row)
     if trusted is not None and trusted["status"] == "completed":
         return "completed"
     done = set(trusted["done"]) if trusted is not None else set()
@@ -153,7 +173,7 @@ async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) 
         failure_reason=REPLAY_PENDING_REASON,
     )
     steps = [s for s in _replayed(input.scope_type, restored) if s[0] not in done]
-    await _run_steps(input, erasure_id, steps)
+    await _run_steps(input, erasure_id, steps, row)
     names = [n for n, _ in (USER_STEPS if input.scope_type == "user_id" else NAMESPACE_STEPS)]
     await checkpoint(
         row=row,
@@ -180,7 +200,7 @@ async def replay(entry: Mapping[str, Any], restored: Restored, point: datetime) 
 
 
 async def _run_steps(
-    input: ErasureRequestInput, erasure_id: str, steps: list[tuple[str, Any]]
+    input: ErasureRequestInput, erasure_id: str, steps: list[tuple[str, Any]], row: RequestRow
 ) -> None:
     """`steps` in order over the erasure's scope, as its saga runs them: each under its
     name in the mutation tag, its failure an `ErasureStepError` naming it."""
@@ -195,13 +215,20 @@ async def _run_steps(
         scope = parse_namespace_list(input.scope_value)
     if input.scope_type == "user_id":
         await marks.bump(input.org, marks.ORG_WIDE, "erasure")
-    # A namespace scope's steps cover its mirrors, as the saga runs them.
-    runs = steps if input.scope_type == "user_id" else [(n, with_mirrors(f)) for n, f in steps]
     with erasure_mutations.saga_scope(erasure_id), erasure_mutations.purge_scope(purge):
-        for name, step in runs:
+        for name, step in steps:
             with erasure_mutations.step_scope(name):
                 try:
-                    await step(input.org, scope)
+                    if input.scope_type == "user_id":
+                        await step(input.org, scope)
+                    else:
+                        async with erased_scope(input.org, "namespace", scope) as expanded:
+                            if not row.get("mirror_marked") and any(
+                                is_mirror_name(ns)
+                                for ns in erasure_mutations.namespaces_of(expanded)
+                            ):
+                                await _promote_mark(row)
+                            await step(input.org, expanded)
                 except Exception as e:
                     raise ErasureStepError(name, e) from e
 
@@ -212,6 +239,7 @@ async def requeue(entry: Mapping[str, Any], restored: Restored, point: datetime)
     # The saga the recovery worker resumes keeps this actor on every row it writes: not
     # REPLAY_ACTOR, whose rows a later reconcile trusts whatever their time.
     input, row = _request(entry, actor=RECOVERY_WORKER_ACTOR)
+    await _retain_mark(row)
     if restored == "postgres":
         await pg_ledger.record(row)
         # The restore undid the Postgres steps that committed after its point; those the
@@ -228,6 +256,8 @@ async def requeue(entry: Mapping[str, Any], restored: Restored, point: datetime)
         trusted = await erasure_ledger.trusted_row(
             input.org, str(entry["id"]), before=point, actor=REPLAY_ACTOR
         )
+        if trusted is not None and trusted.get("mirror_marked") and not row.get("mirror_marked"):
+            await _promote_mark(row)
         if trusted is not None and trusted["status"] in ("completed", "abandoned"):
             ended = trusted["status"]
             mark = pg_ledger.complete if ended == "completed" else pg_ledger.abandon

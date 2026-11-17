@@ -87,3 +87,6 @@ recall a user's memories and search app documents from a workflow.
 
 Use [Google ADK memory](../features/integrations/frameworks.md#google-adk) to recall
 per-user facts and shared knowledge through ADK memory tools.
+
+Use a [Haystack document store and retriever](../features/integrations/frameworks.md#haystack)
+to search documents from a pipeline while keeping them in your Loom deployment.

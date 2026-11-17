@@ -81,7 +81,8 @@ const docRow = (title: string) => screen.getByText(title).closest("[data-doc-row
 const tree = () => screen.getByRole("navigation", { name: "Library places" });
 const place = (name: string) => within(tree()).getByRole("link", { name }).closest(".library-tree-row") as HTMLElement;
 /** Each place in the tree that takes what is held (a dialog open over it too). */
-const takers = () => [...document.querySelectorAll(".library-tree-row[data-drop]")].map((r) => r.textContent);
+const takers = () =>
+  [...document.querySelectorAll(".library-tree-row[data-drop]")].map((r) => r.querySelector("a")?.textContent);
 
 /** Pick up `title`'s row and wait a tick for the tree to answer. */
 async function pickUp(title: string) {

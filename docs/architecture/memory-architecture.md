@@ -1049,6 +1049,11 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    Trace, exposure and query-node rows are inserted directly, fire-and-forget (an exposure a
    breadth rule counts is a waited insert before the answer).
 
+Search pages use a versioned payload. A build accepts only its own page version, so a
+build that cannot enforce governed-hit freshness cannot read a page that carries one.
+Page handles may therefore answer `page_expired` across an upgrade or rollback; the
+caller repeats the original search. The payload version changes for all pages together.
+
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the
 fallback. `memory.search_trace` runs the vector leg's SQL with extra columns (no fusion,

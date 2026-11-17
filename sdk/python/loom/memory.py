@@ -386,6 +386,9 @@ class MemorySearchHit:
     # response's gate used; the server sends the key only
     # when set. Drop these rows for an "abstain means abstain" reading.
     below_threshold: bool = False
+    # True on a governed definition, served first because the query names its term or
+    # an alias; the server sends the key only when set.
+    governed: bool = field(default=False, kw_only=True)
     # Date metadata from the row; empty when the row had no date dimension.
     temporal_anchor: str = ""
     # How precisely the source pinned temporal_anchor (0..1; 0 = unscored).
@@ -461,7 +464,10 @@ class MemorySearchResult(list[MemorySearchHit]):
       • ``abstain_code`` — "" | "no_match" | "below_threshold" |
         "entity_absent" | "low_calibrated_confidence" | "page_expired".
         Branch on it; ``abstain_reason`` is free text with the values in it.
-      • ``retrieval_risk`` — "low" | "medium" | "high" | "abstain".
+      • ``retrieval_risk`` — "low" | "medium" | "high" | "abstain", for the
+        hits that are not governed.
+      • ``term_leg`` — what the governed-definition leg did: "complete" |
+        "empty" | "capped" | "timed_out" | "failed" | "off".
       • ``reinforcement`` — "credited", "not_credited (measurement_label |
         no_consumer | no_closer)", or "" when the read asked for no credit
         (``auto_touch=False``). A reader is credited when it names a
@@ -483,6 +489,7 @@ class MemorySearchResult(list[MemorySearchHit]):
         abstain_reason: str = "",
         abstain_code: str = "",
         retrieval_risk: str = "",
+        term_leg: str = "",
         reinforcement: str = "",
         pending_extraction: int = 0,
         degraded: tuple[str, ...] = (),
@@ -494,6 +501,7 @@ class MemorySearchResult(list[MemorySearchHit]):
         self.abstain_code = abstain_code
         self.reinforcement = reinforcement
         self.retrieval_risk = retrieval_risk
+        self.term_leg = term_leg
         self.pending_extraction = pending_extraction
         self.degraded = degraded
         self.next = next
@@ -590,6 +598,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         code_state=str(r.get("code_state") or ""),
         rank_score=float(r.get("rank_score") or 0.0),
         below_threshold=bool(r.get("below_threshold") or False),
+        governed=bool(r.get("governed") or False),
         temporal_anchor=str(r.get("temporal_anchor") or ""),
         temporal_confidence=float(r.get("temporal_confidence") or 0.0),
         valid_at=str(r.get("valid_at") or ""),
@@ -638,6 +647,7 @@ def _search_result(result: dict[str, Any]) -> MemorySearchResult:
         abstain_reason=str(result.get("abstain_reason") or ""),
         abstain_code=str(result.get("abstain_code") or ""),
         retrieval_risk=str(result.get("retrieval_risk") or ""),
+        term_leg=str(result.get("term_leg") or ""),
         reinforcement=str(result.get("reinforcement") or ""),
         pending_extraction=int(result.get("pending_extraction") or 0),
         degraded=tuple(str(x) for x in (result.get("degraded") or ())),

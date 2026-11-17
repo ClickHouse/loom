@@ -1,21 +1,23 @@
 # Curation loop design
 
 This page is the design of the curation loop, which turns what people ask into definitions
-an organization stands behind. Searches that find nothing become knowledge gaps. A gap, or
-a query a team runs often on its own ClickHouse, becomes a drafted definition in the
-learnings queue. A definition an admin promotes into the shared layer is governed: when a
-query names its term, `memory.search` serves it above every other hit, a derived
-aggregate's count aside. The parts land in this order: knowledge gaps (recording, grouping
-and the list), governed definitions (the shared-layer changes and the term leg), then
+an organization stands behind. Searches that find nothing become knowledge gaps. A gap, or a
+query a team runs often on its own ClickHouse, becomes a drafted definition in the learnings
+queue. A definition an admin promotes into the shared layer is governed: when a query names
+its term, `memory.search` serves it above every other hit, a derived aggregate's count
+aside. The parts land in this order: knowledge gaps (recording, grouping and the list),
+governed definitions (the shared-layer changes and the term leg), then
 `knowledge.gaps.draft` and query history, which queue definition drafts and so need the
 review path the second part builds. Knowledge gaps are built and described in [knowledge
-gaps](../architecture/knowledge-gaps.md). So are a definition's write-time rules
-([conflicts and refusal](../features/memory/conflicts-and-refusal.md)) and its promotion
-rules with their ceiling setting, the read-time check and `memory.definitions.list` ([the
-shared layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)).
-The term leg and the review path are not built yet, and none of their ops, tables or
-settings are served until the pull request that builds each part lands. That pull request
-moves its part into the page that owns it, written as what Loom does, and removes it here.
+gaps](../architecture/knowledge-gaps.md). So are a definition's write-time rules ([conflicts
+and refusal](../features/memory/conflicts-and-refusal.md)) and its promotion rules with
+their ceiling setting, the read-time check and `memory.definitions.list` ([the shared
+layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)),
+and the term leg ([governed definitions in
+search](../concepts/identities-and-namespaces.md#governed-definitions-in-search)). The
+review path is not built yet, and none of its ops, tables or settings are served until the
+pull request that builds each part lands. That pull request moves its part into the page
+that owns it, written as what Loom does, and removes it here.
 
 ```mermaid
 flowchart LR
@@ -41,7 +43,8 @@ pasted byte-order mark) dropped, then `canonical_document_text` (`server/core/ha
 NFKC, trimmed, every run of whitespace made one space), then `str.casefold`. One helper in
 `server/memory/domain/definitions.py` folds a name, and its unit tests pin each step with
 a table. The folded form decides whether two names are one (`SAT`, `Sat` and `sat ` are);
-matching against a query keeps the case rule of the term leg below.
+matching against a query keeps the case rule of the term leg ([governed definitions in
+search](../concepts/identities-and-namespaces.md#governed-definitions-in-search)).
 
 A definition's value is a JSON object, which `memory.set` stores whole in `value` and in
 `value_json` (the embedding reads its excerpt, as for any row):
@@ -125,22 +128,20 @@ again and moves the mark.
 Writes that race the redaction are listed on [the history
 page](../features/memory/history-and-provenance.md#scrubbing-history-memoryredact).
 
-The shared layer needs these changes still, each in the pull request that adds the term
-leg except where a change names another, because the term leg serves shared rows to every
-reader:
+The pull request that adds the `knowledge_gap` and `query_history` candidate kinds makes two
+more changes, because the term leg serves shared rows to every reader:
 
-- **A redact** of a past version of a definition's source, in the pull request that adds the
-  `knowledge_gap` and `query_history` candidate kinds, also reaches every such candidate
+- **A redact** of a past version of a definition's source also reaches every such candidate
   whose drafted value is the version's text, or that the version's `candidate-id:` tag
   names, promoted or not: its text is blanked, since `learnings.list` shows it to admins,
   and a blanked candidate is not promoted (`learnings.review` answers it not found, as it
   does a blanked `assistant_turn` candidate). No other draft of the term is reached, and no
   draft while the live head holds the redacted text.
-- **The review path's promotion** of a `knowledge_gap` or `query_history` draft, in the
-  pull request that adds those kinds: the approved hash is the canonical-JSON hash of the
-  drafted value; `decided_by` and the audit subject come from the token, never the body's
-  `approver`; the review sets `promoted_from_candidate_id` itself; and the name check runs
-  before the review's write, so a refused review writes nothing.
+- **The review path's promotion** of a `knowledge_gap` or `query_history` draft: the
+  approved hash is the canonical-JSON hash of the drafted value; `decided_by` and the audit
+  subject come from the token, never the body's `approver`; the review sets
+  `promoted_from_candidate_id` itself; and the name check runs before the review's write, so
+  a refused review writes nothing.
 
 Should two shared rows match one name despite the name check (one promoted through a build
 without the check, or one whose claim on the namespace ran out), the term leg serves,
@@ -158,166 +159,14 @@ a definition is not flagged against it. The term leg serves the governed
 definition above such a fact; a cross-type check would add a candidate read to every write,
 and is not part of this design.
 
-### The term leg
-
-`memory.search` gains one leg, which runs wherever `memory.search` runs, inside
-`memory.ask` and `context.pack` as well. It covers memory only: knowledge has its own
-exact-key leg for identifiers a document defines
-(`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already points at
-the documents behind it. `loom_search` serves the leg through its memory section.
-`governed` and `term_leg` are added output fields, which the SDKs and the MCP schema
-carry.
-
-**What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
-under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
-over. It serves no definition whose source is labelled or graded `medium` or `high` (the
-read-time check above). A namespace holds at most `memory_shared_definitions_max`
-definitions: a promotion that adds a key past that ceiling is refused (a revision is not,
-unless the namespace is already past it), `memory.definitions.list` shows the count
-against it, and an admin demotes a definition to make room, so the leg reads every one.
-`loom.shared` stores a value as one string, so the leg reads every definition's full
-`value`, `rests_on` included, to match its `term` and `aliases`; the ceiling is what
-bounds that read. It computes the served hash and reads the source for the matched rows
-only. A read that still finds more (a race, or rows promoted through an older build) reads
-the most recently promoted (by `promoted_at`, then `promotion_event`) and reports
-`term_leg` `capped`, which also keeps a `memory.search` from recording a miss. It runs
-concurrently with the other legs under its own time bound (`memory_term_leg_timeout_ms`),
-which never shortens theirs; a leg past its bound adds nothing. Its latency is measured
-against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
-request that adds it.
-
-**Matching.** The query goes through `canonical_document_text` and loses its format
-characters, as a name does, so `MRR` matches the full-width `什么是ＭＲＲ` and `churn rate`
-matches a query that puts two spaces between the words; only case follows the per-word
-rule below. Every combining mark (category M) is first joined to the letter or number
-before it (with any marks already joined to that), in the term and in the query, and a
-joined character takes its base's place in the rules below. A mark with no letter or
-number before it joins nothing and counts as punctuation. A term or alias then matches
-where it appears in the query, at whole joined characters, with no character next to it
-that continues its edge:
-
-- next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
-  those;
-- next to a letter of another script written with spaces (Cyrillic, Greek, Devanagari):
-  any letter of a script other than Latin, or any decimal digit, so `मत` does not match
-  inside "कीमत", `कम` not inside "कमी" (whose `म` carries a mark) and `बिक्री` not inside
-  "बिक्रीकर";
-- before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
-  nothing, since Korean particles attach to the word before them;
-- next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
-  punctuation: nothing, so `ยอดขาย` matches in "ดูยอดขาย", while `ก` does not match inside
-  "กิ", whose `ก` carries a mark.
-
-So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
-matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
-the name, a word being a run of joined letters and numbers (Unicode L and N, with their
-marks): a word written all in capitals, or with a capital after its first letter, matches
-only as written, and any other word matches case-folded. So `IT` does not match "what is
-it" and `GitHub` stays exact, while `Churn Rate` matches "what is our churn rate" and
-`ARR growth` matches "ARR Growth" but not "arr growth".
-
-**Placement.** Matched rows go to the top of the served list with `governed = true`, in
-the order their names first appear in the query. Two names that start at the same place
-put the longer first, so `ARR growth` comes before `ARR` in "what drove ARR growth"; a tie
-past that goes to the latest `promoted_at`, then `promotion_event`, as for one name. Any
-other hit under the same key in the addressed namespace is removed, so an edited private
-copy is not served beside the governed text. A derived aggregate's synthetic row
-(`derived_aggregate`, an exact count over the namespace's rows) stays first, above the
-governed hits, as the response documents it. No later stage or floor of `memory.search`,
-`loom_search` or the ops that run `memory.search` reorders governed hits, moves one below
-a hit that is not governed (that row aside), or drops one in favour of such a hit, a stage
-added later included. No floor, threshold or filter removes a governed hit either: not
-`min_similarity`, the precision floor, the foreign margin, a calibration drop or
-`loom_search`'s `drop_loom_output`, which drops hits that read like Loom's own output,
-since its score says nothing about whether the admin's definition answers the question. A
-search in any op that serves a governed hit is not a miss. Governed hits count within
-`top_k`, within a stage's cap on the memory section (the tracker verdict's
-`verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and within the token
-budgets (`body_budget_tokens`, `context.pack`'s block budget). A cap cuts governed hits
-last: when more match than fit, the later ones in query order are not served. A budget may
-shorten a body but never reorders the hits.
-
-**Scores.** A governed hit's `similarity` and `distance` are its shared embedding's to the
-query; when it has none, `similarity` is `0` and `distance` is `1`, since similarity is
-one minus distance, and `governed` marks the hit; and its `rank_score` is above the
-pool's; its `below_threshold` flag is never set. A response that serves a governed hit has
-`abstain` false and no `abstain_code`; `retrieval_confidence` and `retrieval_risk`
-describe the hits that are not governed.
-
-**Pages and fields.** The leg runs only on a search's first page. The list a search parks
-for its later pages is the merged one, governed hits first, so the next page starts after
-the rows page one served and no ordinary hit is skipped. The leg is off when a field asks
-for other content: any `memory_type` (`definition` is not one of its values); `tags` or
-`category` filtering, not with `tags_soft` or `category_soft`; `as_of`; `min_body_chars`;
-and `recent_first` or `anchor_first` above 0, whose rows are documented to come first. A
-field that only says whose rows to read keeps it on, since a definition is the
-namespace's: an `agent`, `run_id`, `session_ids`, or a `user_id` or `session_id` in the
-body or pinned by the read scope, as `context.pack`'s per-prompt recall sends. So do
-`scope`, `exclude_keys` and `min_similarity`, a soft tag or category and `entity_filter`,
-which only boost rows. It drops any key in `exclude_keys`.
-
-**`term_leg`** says what the leg did: `complete`; `empty` when the namespace holds no
-definition; `capped` or `timed_out` past its bounds; `failed` when any of its reads failed
-(the definitions, or a source that then failed closed and withheld a definition); and
-`off` when a page handle or a field turned it off, or the query is not valid Unicode,
-which the leg skips rather than fail the search (such a query records no miss either).
-
-**Read scope.** Governed definitions are served through this leg under any read scope: an
-admin published them for every reader of the namespace, and a user-bounded reader who
-could not see one would read the term as undefined. This is an exception to the read-scope
-rule that a bounded read serves no namespace-wide row ([read scope inside a
-namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
-governed definitions through this leg only. The implementing pull request updates that
-page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
-on `SCOPED_OPS`, which say every memory read of those ops carries the read scope.
-
-**Memory scope.** The leg also serves shared rows to a search with `scope = "private"`,
-the default, whose fact leg today reads only private rows (its key-match arm, anchor pool
-and digest descent already reach shared ones): a governed definition answers every search
-that names its term. This is a second exception, for governed definitions through this leg
-only. The implementing pull request updates the `scope` field's description in
-`server/memory/api/models_search.py`, the shared-layer section of [identities and
-namespaces](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)
-and the generated operations reference.
-
-**Stored answers.** `memory.ask`'s ordinary precedent path reruns retrieval and reuses an
-answer only when its synthesis window is the same, so a governed hit entering or leaving the
-window already stops the reuse. Its fast path, which the ClickHouse authority runs, reuses
-an answer while the namespace's write mark has not moved. Every insert into `loom.shared` (a
-promotion, a demotion) moves the namespace's memory write mark (`PLANE_BY_TABLE` in
-`server/core/namespace_write_marks.py`), so once the mark lands, no answer from before a
-promotion or demotion on N is reused after it. It lands at once in the process that wrote
-it, and in every other process once the writing process flushes its marks
-(`namespace_write_marks_flush_interval_s`). An answer retrieved between a promotion's shared
-row and its vector (including a vector the embedding worker fills in later) is still reused.
-A relabel to `medium` or `high` moves the mark through its new version of the source row in
-`loom.memory`, and the redact's scrub of a shared copy moves it
-(`namespace_write_marks.bump`). Rolling upgrades below covers N-1's. A lapse with no write,
-a source passing its `expires_at` or `valid_to`, does not move the mark, and the precedent
-path's evidence check compares each cited row's live hash (catching a tombstone, a redaction
-or an edit), not its status or validity. An answer that quoted such a definition is reused
-for up to `memory_ask_precedents_fast_max_age_hours` (with no bound when it is 0), as for
-any row that expires today.
-
-**Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
-served list is exactly what it was before. The memory-plane rule asks for a paired
-benchmark when a similarity gate or a rank weight moves; this leg moves neither. It
-inserts rows only on a term match. So the pull request that adds it shows, on the offline
-harnesses, that served keys and order are identical for every query naming no term, and
-reports the gain on a small set of term queries.
-
 ## Knowledge gaps
 
 Recording misses, grouping them and `knowledge.gaps.list` are built: [knowledge
 gaps](../architecture/knowledge-gaps.md). What the later parts add to them follows.
 
-A `memory.search` that served a governed definition records no miss, and one whose term
-leg did not finish (`term_leg` anything but `complete` or `empty`, so `off` too: a field
-that turns the leg off, such as `recent_first`, also keeps the search from recording a
-miss) records none either, so a defined term is never recorded as a gap because its leg
-was cut. Once a document can be hidden from some readers (the `mirrored` access of
-[document sources](../architecture/document-sources.md)), a `knowledge.search` or
-`loom_search` that left out a document its reader may not see records no miss.
+Once a document can be hidden from some readers (the `mirrored` access of [document
+sources](../architecture/document-sources.md)), a `knowledge.search` or `loom_search` that
+left out a document its reader may not see records no miss.
 
 ### Ops and dashboard
 
@@ -536,7 +385,6 @@ the op budgets before they ship it.
 | Setting                                  | Default      |
 | ---------------------------------------- | ------------ |
 | `memory_shared_definitions_max`          | 500          |
-| `memory_term_leg_timeout_ms`             | 50           |
 | `knowledge_query_history_enabled`        | off          |
 | `knowledge_query_history_min_users`      | 3, never < 3 |
 | `knowledge_query_history_max_drafts`     | 20 per turn  |
@@ -552,10 +400,6 @@ the op budgets before they ship it.
   `knowledge_query_history_window_days`) and time limit
   (`knowledge_query_history_read_timeout_s`), separate from the tracker's live-read
   budget, and a timeout counts against the source's breaker like any tracker read.
-- The term leg is one bounded read of the namespace's shared definitions per search (their
-  full values, `rests_on` included, at most `memory_shared_definitions_max`), one read
-  of the matched definitions' source rows, and a grading of each matched source's value,
-  on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
 - A definition's promotion, through `memory.promote` or `learnings.review`, reads the
   namespace's definition rows once, at most `memory_shared_definitions_max` plus one (past
   it the promotion is refused), to check its term and aliases; the review path runs the

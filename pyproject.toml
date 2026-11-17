@@ -263,6 +263,8 @@ module = [
   "pydantic_ai.*",
   "ag2",
   "ag2.*",
+  "haystack",
+  "haystack.*",
   "agent_framework",
   "agent_framework.*",
   "anthropic",

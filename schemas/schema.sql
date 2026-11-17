@@ -1898,7 +1898,8 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
     `verified_at` Nullable(DateTime) DEFAULT NULL,
     `purge` Bool DEFAULT false,
     `actor` String DEFAULT '',
-    `census` String DEFAULT ''
+    `census` String DEFAULT '',
+    `mirror_marked` Bool DEFAULT false
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id

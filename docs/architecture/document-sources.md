@@ -902,6 +902,26 @@ statements and census keys against these, and its tests pin each one:
   the name registered again gets a new mirror; the registry keeps them, so a resume or a
   replay after a restore still reaches them. A `user_id` erasure touches no mirror row
   (the sync writes them as `-`), and its census and export name none.
+- Each namespace step resolves its mirrors once and persists `mirror_marked` in
+  `loom.erasure_requests` and, under the Postgres authority, `loom.erasure_ledger`
+  before counting or deleting that scope. Failure-tail verification does the same;
+  if marking fails it counts nothing. The mark only moves from false to true and
+  survives registry loss, resume, abandonment and restore replay. A restore promotion
+  preserves the receipt, checkpoint time and pending-replay fence. Marked checkpoints
+  use the high bit of their UInt64 version; they supersede stale unmarked writers
+  even after a merge, while timestamps order marked writes.
+- Marked `erasure.request` replies carry codes only for every caller, since the
+  idempotent answer can be replayed after a role change. `erasure.status` and
+  `erasure.list` carry codes only unless the current caller is a flat platform admin;
+  namespace and org admins receive zero counts, empty residue, no census and no
+  verification timestamp. These placeholders never prove verified absence. Masking
+  the whole receipt prevents a caller subtracting its namespace's counts to discover
+  a mirror's size. Ordinary receipts keep their counts. Marked completion and
+  abandonment audit rows persist no counts. Failed marked receipts and audit rows
+  answer `ERASURE_FAILED` for every cause and withhold step progress, so a residue
+  failure reveals no special code or failed stage. Full internal evidence remains
+  available for recovery and authorized
+  platform-admin status reads.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once

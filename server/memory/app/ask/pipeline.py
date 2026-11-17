@@ -49,6 +49,7 @@ from server.memory.app.ask.state import (
     _synth_telemetry,
 )
 from server.memory.domain import ask_attribution as _attr
+from server.memory.domain.search_types import governed_after_computed
 
 
 def _world_knowledge_allowed(world_knowledge: str | None, settings: Any) -> bool:
@@ -271,6 +272,9 @@ async def _fill_pool(
     # The hard tag belt and the authority's check, after the last leg that adds a row.
     run.ranked = await _tag_belt(run.ranked, run.search_input)
     run.ranked = await _served_pool(run.ranked, run.search_input)
+    # The reranks and injections above order by recency and identifiers: a governed
+    # definition any of the searches served leads again.
+    run.ranked = governed_after_computed(run.ranked, str(run.search_input.namespace))
     run.results = run.ranked[: run.target_k]
     run.synth_pool = run.ranked[: run.window]
     return notes

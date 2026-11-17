@@ -72,6 +72,54 @@ This checks one fast-tier definition. Uncommitted edits still need local reads, 
 successful lookup is not a measurement of task accuracy or cost savings. See
 [code operations](../features/code-index/operations.md) for search, callers and impact.
 
+## Check one caller and its impact
+
+Use the same indexed repository and choose a function with one direct caller you can
+identify in source. Its language needs call edges
+([language support](../features/code-index/overview.md#language-support)). Replace the
+placeholders below with your organization, indexed namespace and qualified function name.
+
+1. Call `loom_op` with `op: "code.index_status"` and
+   `arguments: {"org": "<org>", "namespace": "<indexed namespace>", "brief": false}`.
+   Record `git_head` and the returned `compiler_tiers` commits. Fast and compiler tiers
+   can describe different revisions.
+2. Ask the agent to call `loom_op` with this request:
+
+   ```json
+   {
+     "op": "code.callers",
+     "arguments": {
+       "org": "<org>",
+       "namespace": "<indexed namespace>",
+       "name": "<qualified function name>",
+       "depth": 1,
+       "max_nodes": 20,
+       "include_ambiguous": false
+     }
+   }
+   ```
+
+   Check a returned `edges` row's `from_symbol`, `path`, `line`, `edge_kind`, `tier`
+   and `confidence`. Verify that the source at that tier's recorded commit contains
+   the direct call; a reference to the name alone does not establish a call. If
+   `ambiguous` is true, choose the intended qualified name from `candidates` first.
+
+3. Call `loom_op` again with `op: "code.impact"` and
+   `arguments: {"org": "<org>", "namespace": "<indexed namespace>", "name": "<qualified function name>", "depth": 1, "per_hop_limit": 20}`.
+   Look for the checked caller in `impacted_symbols`: `qualified_name`, `path`,
+   `hop: 1` and `tier`. This request resolves the supplied name; `files` would
+   seed every function in those files. `impacted_tests` lists mapped tests;
+   the op does not execute them.
+4. Read `epistemic`, `causes`, `counts_floor` and `truncated` on both answers, and
+   repeat the status request. Compare returned locations with source at the relevant
+   tier's commit. Missing fields or watermarks, changed watermarks, a missing expected
+   caller or a source mismatch leave this check unverified
+   ([freshness](../features/code-index/freshness.md#the-mirrors-own-age)).
+
+This checks one caller's membership in the indexed graph. Counts remain floors,
+including when `epistemic` is `exact`: runtime dispatch can be absent. Empty edges or
+impact rows do not prove that a function has no callers or that a change is safe.
+
 ## Start
 
 [Adding repositories](../features/code-index/repositories.md) turns the index on for a

@@ -320,6 +320,7 @@
  "memory_search_trust_weight",
  "memory_shared_definitions_max",
  "memory_summary_entity_ttl_s",
+ "memory_term_leg_wait_ms",
  "memory_webhook_ack_timeout_seconds",
  "memory_webhook_backoff_steps_seconds",
  "memory_webhook_cooldown_seconds",

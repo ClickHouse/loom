@@ -448,6 +448,9 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     identity the hit carries (user, session, agent, where the leg read them); when the rows
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
+    # Governed text is the approved shared copy, not a same-key private row.
+    if getattr(h, "governed", False):
+        return author_label([])
     rows = actors.get(hit_row(h, input.namespace)) or []
     is_fact_row = names_row(h) and getattr(h, "source", "fact") != "chunk"
     row = hit_row_key(h, input.namespace) if is_fact_row else None
@@ -625,7 +628,13 @@ async def _pack_memories(st: _PackState) -> None:
             if resource:
                 cite = f"{cite}#{resource}"
             row_of[cite] = hit_row(h, input.namespace)  # a chunk's parent
-            group = resource or f"{source}:{ns}"
+            # A governed definition is its own group, so the per-group cap never moves one
+            # below another row.
+            group = (
+                f"governed:{h.memory_key}"
+                if getattr(h, "governed", None)
+                else resource or f"{source}:{ns}"
+            )
             evidence.append(
                 EvidenceItem(
                     citation=cite,

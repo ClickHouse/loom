@@ -38,6 +38,7 @@ import { LIBRARY_PLACES_LABEL } from "../lib/useTreeFocusHandoff";
 import { ALL_DOCUMENTS } from "../lib/libraryPlace";
 import { MORE_SHOWN, useShowMore } from "../lib/useShowMore";
 import { useDragHold } from "../lib/useDragHold";
+import { fmtInt } from "../lib/format";
 import {
   collectionPath,
   cycleStart,
@@ -341,6 +342,9 @@ export const LibraryTree = memo(function LibraryTree({
           icon={expanded ? "folder-open" : "folder-closed"}
           depth={depth}
           here={c.namespace === current}
+          count={c.document_count}
+          countBusy={busy}
+          countFailed={failed}
           expanded={expanded}
           onToggle={kids.length > 0 ? () => toggle(c.namespace) : undefined}
           onPick={onPick}
@@ -392,6 +396,9 @@ export const LibraryTree = memo(function LibraryTree({
               icon="user"
               depth={0}
               here={tree.own.namespace === current}
+              count={tree.own.document_count}
+              countBusy={busy}
+              countFailed={failed}
               onPick={onPick}
               drop={dropAt(tree.own.namespace, tree.own)}
             />
@@ -531,6 +538,9 @@ function PlaceRow({
   onPick,
   drag,
   drop,
+  count,
+  countBusy = false,
+  countFailed = false,
 }: {
   collection: string | null;
   label: string;
@@ -544,8 +554,16 @@ function PlaceRow({
   drag?: HTMLAttributes<HTMLElement>;
   /** What is held may land on it. */
   drop?: DropProps;
+  count?: number | null;
+  countBusy?: boolean;
+  countFailed?: boolean;
 }) {
   const focusKey = placeFocusKey(collection);
+  const countHint = countBusy
+    ? `Updating document count for ${label}`
+    : countFailed || count == null
+      ? `Document count unavailable for ${label}`
+      : `${count} document${count === 1 ? "" : "s"} directly in ${label}`;
   return (
     <div
       className="library-tree-row"
@@ -577,6 +595,12 @@ function PlaceRow({
         data-focus-key={focusKey}
         onOpen={() => onPick(collection, focusKey, label)}
       />
+      {collection !== null && collection !== ALL_DOCUMENTS && (
+        <span className="library-tree-count" title={countHint}>
+          <span aria-hidden="true">{countBusy ? "…" : countFailed || count == null ? "—" : fmtInt(count)}</span>
+          <span className="sr-only">{countHint}</span>
+        </span>
+      )}
     </div>
   );
 }

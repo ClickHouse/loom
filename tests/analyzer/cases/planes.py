@@ -609,6 +609,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await K.delete_versions(ORG, NS, [("doc://a", 5)], ch=ch)
     await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
+    await D.current_document_counts(ORG, [NS, "n2"], ch=ch)
     await D.list_with_chunk_counts(
         ORG,
         [NS],

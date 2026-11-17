@@ -30,6 +30,7 @@ class RequestRow(TypedDict):
     actor: str
     urgency: str
     purge: bool
+    mirror_marked: bool
     attempts: int
     requested_at: datetime
 
@@ -91,6 +92,7 @@ class RequestStatusRow(TypedDict):
     residue: str
     census: str
     purge: bool
+    mirror_marked: bool
 
 
 class OrphanGraphRow(TypedDict):

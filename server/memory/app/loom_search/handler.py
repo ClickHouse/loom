@@ -79,6 +79,8 @@ def _record_gap_miss(input: SearchInput, payload: dict[str, Any], repo_namespace
     if any(s.get("error") for s in (memory, *others)) or any(s.get("results") for s in others):
         return
     hits = memory.get("results") or []
+    if memory.get("term_leg") not in ("complete", "empty") or any(h.get("governed") for h in hits):
+        return  # a governed definition answers, or a term leg not complete or empty may hold one
     if repo_namespace and repo_namespace != input.namespace:
         if any(h.get("namespace") == repo_namespace for h in hits):
             return  # a decision merged from the scoped repository answers

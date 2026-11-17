@@ -2510,6 +2510,9 @@ class MemorySettings(BaseModel):
     # Most shared definitions a namespace holds; a promotion past it is refused
     # (docs/concepts/identities-and-namespaces.md).
     memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
+    # How much longer memory.search waits for its term leg once the other legs are done;
+    # past it the leg adds nothing (docs/concepts/identities-and-namespaces.md).
+    memory_term_leg_wait_ms: Annotated[int, LIVE] = Field(default=100, ge=1)
 
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so

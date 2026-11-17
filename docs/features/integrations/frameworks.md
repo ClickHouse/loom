@@ -34,6 +34,7 @@ or needs another database, vector store or cache.
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
 | Pipecat                        | `LoomMemoryService`                             | Python, `loom.integrations.pipecat`                       | recall and capture `FrameProcessor`s                                     |
 | Dify                           | Remember, Recall, Search knowledge              | `integrations/dify` standalone plugin                     | Native Dify tools                                                        |
+| Haystack                       | `LoomDocumentStore`, `LoomRetriever`            | Python, `loom.integrations.haystack`                      | `DocumentStore` protocol, retrieval component                            |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -163,6 +164,61 @@ or `flush` is called, which may run a call on another event loop than the one an
 was opened on; an `Agent` serves `aget` and `aput` on its own loop. `Memory` keeps its
 short-term messages in its own chat store (in process by default); only what the block
 receives reaches Loom.
+
+## Haystack
+
+`LoomDocumentStore` implements Haystack 3.5's `DocumentStore` protocol, and
+`LoomRetriever` is a native retrieval component over Loom knowledge search. Install
+`pip install 'clickhouse-loom[haystack]'` (`haystack-ai>=3.5,<3.6`).
+
+```python
+from haystack import Document, Pipeline
+from haystack.components.writers import DocumentWriter
+from loom.integrations.haystack import LoomDocumentStore, LoomRetriever
+
+store = LoomDocumentStore("acme", "support")
+DocumentWriter(store).run(
+    documents=[Document(id="travel", content="Boarding starts 30 minutes before departure.")]
+)
+pipeline = Pipeline()
+pipeline.add_component("recall", LoomRetriever(store, top_k=5))
+result = pipeline.run({"recall": {"query": "When does boarding start?"}})
+```
+
+Set `LOOM_BASE_URL` and `LOOM_API_KEY` for the deployment. The token is a Haystack
+`Secret` referencing the environment by default, so `to_dict` and pipeline exports
+carry the variable name. A token supplied with `Secret.from_token` works at runtime
+but Haystack refuses to serialize it. The store accepts `base_url=`, `api_key=`,
+`agent=` (default `haystack`) and `store=` (default `default`). Explicit endpoint URLs
+cannot contain credentials, query strings or fragments.
+
+Each store maps a document id to a hashed URI under its own `haystack://` prefix and
+marks its rows with a store tag. Native document serialization preserves ids,
+metadata, embeddings and binary fields in Loom's original-file bytes; text is indexed
+for search. A document without text indexes its id. Data stays in the user's Loom
+deployment, with no additional database, vector store or cache. Documents are shared
+by the namespace; use separate namespaces and scoped tokens for untrusted apps.
+
+The store implements count, full-document filtering, writes with Haystack duplicate
+policies and deletion. `DuplicatePolicy.NONE` has the same behavior as `FAIL`.
+Filters use Haystack's native nested comparison and logic predicates over the full
+stored documents. Counting and filtering list and hydrate the store, so large stores
+incur a full read. Missing ids raise `MissingDocumentError`; writes and batched
+deletions can partially finish when a request fails. Concurrent writes can return a
+conflict from Loom; duplicate checks are not a transaction across writers.
+
+The retriever accepts `top_k` from 1 to 100 and `search_mode` of `hybrid` (default),
+`semantic` or `lexical`. It searches only this store in this namespace, then hydrates
+full documents and removes repeated chunk hits. Results are ranked by their first
+matching chunk among at most 100 candidates; repeated chunks or concurrent deletions
+can leave fewer than `top_k` documents. Use Haystack's native `FilterRetriever` over
+the same store when filtering all documents instead of ranking a query.
+
+Haystack's trusted-module policy also applies to serialized pipelines. Loading a
+pipeline containing this adapter requires the application to trust the installed
+`loom.integrations.haystack` module according to Haystack's configuration. The adapter
+does not change that policy or register trust automatically. A pipeline constructed
+directly from the imported component works as in the example.
 
 ## OpenAI Agents SDK
 

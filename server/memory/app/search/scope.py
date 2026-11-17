@@ -63,6 +63,9 @@ class _SearchRun:
     triples_matched: int = 0
     # The side legs the orchestrator launched after the scope reads.
     side_tasks: list[asyncio.Task[Any] | None] = field(default_factory=list)
+    # The term leg (`term_leg.launch`), launched once the search is admitted and joined
+    # after the verdict.
+    term_task: asyncio.Task[Any] | None = None
     # Sequential reads, entered once the Postgres barrier waited (`pg_validation.admit`)
     # and left by `close`.
     sequential_scope: ExitStack = field(default_factory=ExitStack)
@@ -76,6 +79,7 @@ class _SearchRun:
             self.calibration_task,
             self.fanout_task,
             self.canonical_task,
+            self.term_task,
             *self.side_tasks,
         ):
             if task is not None and not task.done():

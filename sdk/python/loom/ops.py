@@ -8043,6 +8043,7 @@ class CollectionListInput(TypedDict, total=False):
 
     org: Required[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -8051,6 +8052,7 @@ class CollectionListBody(TypedDict, total=False):
 
     org: NotRequired[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -8066,6 +8068,7 @@ class CollectionEntry(TypedDict, total=False):
     role: Required[str]
     description: NotRequired[str]
     title: NotRequired[str]
+    document_count: NotRequired[Optional[int]]
 
 
 class CollectionMoveInput(TypedDict, total=False):
@@ -12351,6 +12354,7 @@ class MemorySearchHit(TypedDict, total=False):
     distance: Required[float]
     similarity: Required[float]
     below_threshold: NotRequired[Optional[bool]]
+    governed: NotRequired[Optional[bool]]
     tags: NotRequired[Optional[list[str]]]
     reinforcement_count: NotRequired[Optional[int]]
     used_count: NotRequired[Optional[int]]
@@ -15411,6 +15415,7 @@ class MemorySearchOutput(TypedDict, total=False):
     score_explanation: NotRequired[str]
     retrieval_confidence: NotRequired[float]
     retrieval_risk: NotRequired[Literal["low", "medium", "high", "abstain"]]
+    term_leg: NotRequired[Literal["complete", "empty", "capped", "timed_out", "failed", "off"]]
     route_agreement: NotRequired[float]
     calibration_explanation: NotRequired[str]
     fallback_rounds_used: NotRequired[int]

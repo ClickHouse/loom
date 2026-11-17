@@ -71,12 +71,13 @@ async def _step_verify_residue(
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
     spellings = await census_spellings(org, scope_type, scope_value)
-    async with erased_scope(org, scope_type, scope_value) as scope:
-        per_table = await erasure_census.residue_census(org, scope_type, scope, spellings=spellings)
-        if scope_type == "namespace":  # and the scope's objects left in the document bucket
-            per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
-                org, scope
-            )
+    per_table = await erasure_census.residue_census(
+        org, scope_type, scope_value, spellings=spellings
+    )
+    if scope_type == "namespace":  # and the scope's objects left in the document bucket
+        per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
+            org, scope_value
+        )
     holder["per_table"] = per_table
     holder["count"] = sum(per_table.values())
     holder["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
@@ -216,20 +217,6 @@ async def erased_scope(
     with purge_scope(True):
         # A scope that names one of its own mirrors lists it once.
         yield list(dict.fromkeys([*names, *mirrors]))
-
-
-def with_mirrors(
-    step: Callable[[str, _NS], Awaitable[int]],
-) -> Callable[[str, _NS], Awaitable[int]]:
-    """`step` over the `erased_scope`. A scope that holds a mirror is erased as a purge:
-    no token reads or restores an `acl-` name, so its rows leave the disk, and in one
-    pass, so a Postgres step commits one mark and an org-wide step runs once."""
-
-    async def run(org: str, namespace: _NS) -> int:
-        async with erased_scope(org, "namespace", namespace) as scope:
-            return await step(org, scope)
-
-    return run
 
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:

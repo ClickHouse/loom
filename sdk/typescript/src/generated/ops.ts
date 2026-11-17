@@ -1920,6 +1920,8 @@ export interface CollectionListInput {
   org: string;
   /** Collections per page. */
   limit?: number;
+  /** Include the live document count directly in each collection; default false. */
+  include_document_counts?: boolean;
   /** The `next_cursor` of the previous page; none for the first. */
   cursor?: string | null;
 }
@@ -1931,6 +1933,8 @@ export interface CollectionEntry {
   role: string;
   description?: string;
   title?: string;
+  /** Live documents directly in this collection, excluding children; null unless requested. */
+  document_count?: number | null;
 }
 
 export interface CollectionListOutput {
@@ -4761,6 +4765,7 @@ export interface MemorySearchHit {
   distance: number;
   similarity: number;
   below_threshold?: boolean | null;
+  governed?: boolean | null;
   tags?: string[] | null;
   reinforcement_count?: number | null;
   used_count?: number | null;
@@ -6897,6 +6902,7 @@ export interface MemorySearchOutput {
   score_explanation?: string;
   retrieval_confidence?: number;
   retrieval_risk?: "low" | "medium" | "high" | "abstain";
+  term_leg?: "complete" | "empty" | "capped" | "timed_out" | "failed" | "off";
   route_agreement?: number;
   calibration_explanation?: string;
   fallback_rounds_used?: number;

@@ -265,3 +265,43 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
         "(the code it is about is gone, commit deaddeaddead: check before relying on it) "
         "we chose clickhouse"
     ) in out.sections["decisions"]
+
+
+def test_every_governed_definition_leads_the_memories_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four governed definitions from one namespace: the per-group cap never moves one
+    below an ordinary fact."""
+    _dead_other_sections(monkeypatch)
+    governed = [
+        NS(
+            **{
+                **vars(_FACT),
+                "memory_key": f"definition/d{i}",
+                "content_excerpt": f"term {i}",
+                "rank_score": 5.0 - i,
+                "memory_type": "definition",
+                "governed": True,
+            }
+        )
+        for i in range(4)
+    ]
+    # a row of another group, which the cap would otherwise put above the fourth
+    other = NS(
+        **{
+            **vars(_FACT),
+            "memory_key": "m2",
+            "content_excerpt": "a resource row",
+            "source_resource_id": "doc-1",
+            "rank_score": 0.5,
+        }
+    )
+    monkeypatch.setattr(
+        "server.memory.app.search.handle_memory_search", _search_stub([*governed, _FACT, other])
+    )
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
+    )
+    block = out.sections["memories"]
+    positions = [block.index(f"term {i}") for i in range(4)]
+    assert positions == sorted(positions) and positions[-1] < block.index("a resource row")

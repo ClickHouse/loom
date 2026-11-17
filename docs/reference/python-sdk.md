@@ -242,6 +242,9 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   block when `Memory` is used through `get` / `put` or with `flush`;
   `aflush(memory)` hands what is left in the window to the `Memory`'s blocks
   and archives it.
+- `loom.integrations.haystack.LoomDocumentStore(org, namespace, ...)` stores native
+  Haystack documents in Loom knowledge; `LoomRetriever(store)` is a retrieval
+  component. Install the `[haystack]` extra.
 - `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
   `AgentTools` as OpenAI Agents SDK `FunctionTool`s, and
   `LoomSession(agent, session_id, user_id=...)` is its `Session`, the history kept as

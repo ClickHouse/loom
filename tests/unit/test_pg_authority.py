@@ -1650,7 +1650,9 @@ def _parked_page(hits: list[Any], **kw: Any) -> dict[str, Any]:
 
 
 def _page_input(top_k: int) -> Any:
-    return SimpleNamespace(org="o", namespace="n", top_k=top_k)
+    from server.memory.api.models_search import MemorySearchInput
+
+    return MemorySearchInput(org="o", namespace="n", query="q", top_k=top_k)
 
 
 @pytest.mark.asyncio
@@ -2887,6 +2889,7 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     than its parent's time left."""
     from contextlib import ExitStack
 
+    from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search import handler, pg_validation
 
     seen: list[tuple[str, list[str], float | None]] = []
@@ -2898,8 +2901,9 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     monkeypatch.setattr(pg_validation, "admit", _admit)
     run = SimpleNamespace(namespaces=["n"], sequential_scope=ExitStack())
     budget = SimpleNamespace(wall_left_s=lambda: 0.4)
-    search = SimpleNamespace(org="o", _pass_depth=depth)
-    await handler._admit(search, run, budget)
+    search = MemorySearchInput(org="o", namespace="n", query="q", memory_type="semantic")
+    search._pass_depth = depth
+    await handler._admit(search, run, budget, None, "fake-ngram-1024")
     assert seen == [("o", ["n"], cap)]
 
 

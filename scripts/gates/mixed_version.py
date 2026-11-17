@@ -25,8 +25,9 @@ Then it writes from each build and reads from the other, and checks:
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
 runs in a throwaway container on its default config, so custom settings take
-`SQL_`. The gate needs docker; without it, or `git`, it skips with exit 0, or
-fails with `--require` (CI).
+`SQL_`. `LOOM_CH_CONTAINER` gives the throwaway container an isolated name,
+as in `dev/ci_start_clickhouse.sh`. The gate needs docker; without it, or `git`,
+it skips with exit 0, or fails with `--require` (CI).
 
     python scripts/gates/mixed_version.py [--base REV] [--keep] [--require]
 """
@@ -93,7 +94,7 @@ def _skip(why: str, *, required: bool) -> int:
 @contextlib.contextmanager
 def clickhouse(keep: bool) -> Iterator[int]:
     port = _free_port()
-    name = f"loom-mixed-{os.getpid()}"
+    name = os.environ.get("LOOM_CH_CONTAINER") or f"loom-mixed-{os.getpid()}"
     cfg = ROOT / "deploy" / "clickhouse-config"
     mounts = [
         (ROOT / "deploy" / "lemmagen3", "/var/lib/clickhouse/lemmagen3"),

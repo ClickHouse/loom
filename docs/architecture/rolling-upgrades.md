@@ -826,6 +826,23 @@ schema. These rules keep that safe. The operator procedure is in
     namespace row. No request can add a mirrored source yet.
     `tests/unit/test_knowledge_source_mirror_pass.py` checks N's side.
 
+56. **Mirror erasure receipts** (migrations `101_erasure_mirror_mark.sql` and
+    Postgres `013_erasure_mirror_mark.sql`): N adds a Boolean `mirror_marked`, false
+    for ordinary receipts, to both erasure ledgers. Before a namespace step or its
+    failure census reaches mirrors, N persists true. Request replies and namespace
+    audit rows then carry codes only; status and list expose counts only to a freshly
+    authorized flat platform admin. Recovery, reverify resume and restore replay
+    preserve the mark; cross-store copies promote it without replacing terminal
+    state. A replay promotion changes no receipt or pending fence. Marked versions
+    reserve bit 63 of the UInt64 version, so even a later unmarked checkpoint cannot
+    replace one; timestamps order marked writes. N-1 ignores the column and cannot
+    advance a marked saga. Mirrored sources remain refused
+    until every process implements this protection and the later read and session
+    protections. Before N-1 may serve after enablement, the enablement and rollback
+    procedure must settle outstanding marked sagas, remove mirrored content and scrub
+    marked receipts and audit counts while preserving their mark and version priority;
+    a schema downgrade alone provides no privacy protection.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

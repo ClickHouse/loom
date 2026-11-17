@@ -1181,6 +1181,18 @@ document that moved the first time answers `not_found`. Under the Postgres autho
 the two writes is its own commit. The ordering and what a cut-off move leaves are in
 [failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
 
+## Collection document counts
+
+The Library's collection tree shows how many live documents each collection holds
+directly; documents in child collections count beside those children. Zero means the
+collection has no live documents. A dash means the count is unavailable, and an ellipsis
+means it is being refreshed. Adding, moving, deleting or restoring documents refreshes
+the counts. Counts read the same document metadata as the document list, so a write
+awaiting publication can take a moment to appear.
+
+Clients request counts with `include_document_counts=true` on
+[`collection.list`](../reference/operations/collection.md#collectionlist).
+
 ## Ingesting files
 
 `knowledge.add` takes text the caller extracted. A file Loom should extract goes in two

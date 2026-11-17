@@ -935,3 +935,102 @@ def test_completion_rows_join_at_the_window_edge() -> None:
     # a pool shorter than the window: the rows simply follow it
     assert _insert_at_window(["r0", "r1"], ["b1"], 25) == ["r0", "r1", "b1"]
     assert _insert_at_window([], ["b1"], 25) == ["b1"]
+
+
+@pytest.mark.parametrize("governed_first", [True, False])
+async def test_compound_ask_keeps_governed_text_instead_of_a_private_same_key(
+    ask_env, monkeypatch, governed_first
+) -> None:
+    import server.memory.app.search as hsearch
+
+    key = "definition/mrr"
+    approved = _hit(key, excerpt="Approved monthly recurring revenue definition.")
+    approved.namespace = "ns"
+    approved.governed = True
+    approved._row_identity = ("_shared", "-", "-")
+    private = _hit(key, excerpt="Conflicting private monthly recurring revenue text.")
+    private.namespace = "ns"
+    private._row_identity = ("bot", "alice", "private-session")
+    other = _hit(key, excerpt="Another namespace's independent definition.")
+    other.namespace = "other"
+    other._row_identity = ("bot", "alice", "other-session")
+    computed = _hit("derived_aggregate", excerpt="Computed recurring revenue total: 42.")
+    computed.namespace = "ns"
+    computed.source = "computed"
+    queries = []
+
+    async def search(search_input):
+        queries.append(search_input.query)
+        serve_governed = (len(queries) == 1) == governed_first
+        hits = [approved] if serve_governed else [private, other, computed]
+        return _search_output(hits)
+
+    monkeypatch.setattr(hsearch, "handle_memory_search", search)
+    result = await _run(
+        query="What is MRR? Additionally, how do we calculate monthly recurring revenue?",
+        allow_synthesis=False,
+        decompose="off",
+        top_k=15,
+    )
+    assert "how do we calculate monthly recurring revenue?" in queries
+    assert [(h.namespace, h.memory_key) for h in result.results] == [
+        ("ns", "derived_aggregate"),
+        ("ns", key),
+        ("other", key),
+    ]
+    assert "Conflicting private" not in str(result.model_dump())
+    assert ask_env.llm.calls == []
+
+
+@pytest.mark.parametrize("synthesize", [False, True])
+async def test_bridge_ask_uses_the_read_namespace_for_governed_conflicts(
+    ask_env, monkeypatch, synthesize
+) -> None:
+    import server.core.ch as ch_mod
+
+    key = "definition/alice_jones"
+    approved = _hit(key, excerpt="The CEO of ARR is Alice Jones.")
+    approved.namespace = "ns"
+    approved.governed = True
+    approved._row_identity = ("_shared", "-", "-")
+    other = _hit(key, excerpt="independent definition from another namespace.")
+    other.namespace = "other"
+    other._row_identity = ("bot", "alice", "other-session")
+    ask_env.search_output = _search_output([approved, other])
+    ch = ch_mod.get_client()
+    original_query_all = ch.query_all
+    bridges = []
+
+    async def query_all(sql, params=None):
+        if "memory_key LIKE {pat:String}" in sql:
+            bridges.append(dict(params or {}))
+            return [
+                {
+                    "memory_key": key,
+                    "memory_type": "fact",
+                    "value": "Conflicting private country of residence.",
+                    "agent": "bot",
+                    "user_id": "alice",
+                    "session_id": "private-session",
+                    "status": "active",
+                    "version": 1,
+                    "tags": [],
+                }
+            ]
+        return await original_query_all(sql, params=params)
+
+    monkeypatch.setattr(ch, "query_all", query_all)
+    result = await _run(
+        query="What country is the CEO of ARR from?",
+        allow_synthesis=synthesize,
+        decompose="off",
+        top_k=15,
+    )
+    assert any(p["ns"] == "ns" and p["pat"] == "%alice_jones%" for p in bridges)
+    assert [(h.namespace, h.memory_key) for h in result.results] == [
+        ("ns", key),
+        ("other", key),
+    ]
+    assert "Conflicting private" not in str(result.model_dump())
+    assert len(ask_env.llm.calls) == int(synthesize)
+    assert "Conflicting private" not in str(ask_env.llm.calls)
