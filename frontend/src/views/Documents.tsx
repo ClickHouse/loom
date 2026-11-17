@@ -374,7 +374,7 @@ export function Documents() {
   // The documents Move to… was opened for, the place they are in, and the place picked for
   // them (a drop on the tree); another place shown closes it.
   const [moving, setMoving] = useState<{ from: string; uris: string[]; to?: string } | null>(null);
-  // Whether the open Move to… dialog moved any document: focus then goes to the search.
+  // Whether the open Move to… dialog moved any document: prefer the search when it is mounted.
   const movedSome = useRef(false);
   const openMove = useCallback((from: string, uris: string[], to?: string) => {
     movedSome.current = false;
@@ -1325,10 +1325,11 @@ export function Documents() {
       }}
       onClose={() => setMoving(null)}
       onCloseAutoFocus={(e) => {
-        if (!movedSome.current) return;
+        const search = searchRef.current;
+        if (!movedSome.current || !search) return;
         // The rows, the menu or the selection bar that opened it may have left.
         e.preventDefault();
-        searchRef.current?.focus();
+        search.focus();
       }}
     />
   );

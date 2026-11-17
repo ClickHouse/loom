@@ -61,6 +61,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
   // The selection's Clear button leaves with it (Clear itself, or a bulk action that empties
   // the selection): focus that fell to the page goes to the search the bar brings back.
   const bar = useRef<HTMLDivElement>(null);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const Bar = search ? "search" : "div";
   const selecting = !!selection && selection.count > 0;
   const reasons = menuReasons(selection?.actions.map((a) => a.reason) ?? [], "list-toolbar-actions");
@@ -118,7 +119,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
             <div className="ml-auto sm:hidden">
               <Dropdown modal={false}>
                 <MenuTrigger>
-                  <Button type="secondary" htmlType="button" iconRight="chevron-down">
+                  <Button ref={actionsTrigger} type="secondary" htmlType="button" iconRight="chevron-down">
                     Actions
                   </Button>
                 </MenuTrigger>
@@ -130,7 +131,11 @@ export function ListToolbar({ label, search = true, children, count, selection }
                       reason={a.reason}
                       describedBy={a.reason ? reasons.idOf(a.reason) : undefined}
                       disabled={a.disabled || a.loading}
-                      onSelect={a.onClick}
+                      onSelect={() => {
+                        // A dialog opened by the item returns to the button that stays mounted.
+                        actionsTrigger.current?.focus();
+                        a.onClick();
+                      }}
                     >
                       {a.label}
                     </GatedItem>

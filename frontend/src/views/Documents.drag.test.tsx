@@ -8,6 +8,7 @@ import type { KnowledgeMoveResult } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { TREE_PAGE_MIN } from "../lib/useTreeHeight";
+import { PHONE_QUERY } from "../lib/useMedia";
 import { Documents } from "./Documents";
 
 const api = vi.hoisted(() => ({
@@ -218,6 +219,62 @@ describe("dragging documents onto the Library's tree", () => {
     const alert = await within(dialog).findByRole("alert");
     expect(alert).toHaveTextContent(/the list shows where each one is now/);
     expect(toasts.toast).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Move to…", "refusal"],
+    ["Move to…", "failed call then Cancel"],
+    ["Actions", "refusal"],
+    ["Actions", "failed call then Cancel"],
+  ] as const)("returns focus to %s after a partial move with %s", async (entry, outcome) => {
+    api.moveKnowledge.mockImplementation(
+      async (_id: unknown, _to: string, _u: string[], _s: unknown, onCall?: (r: KnowledgeMoveResult[]) => void) => {
+        const results: KnowledgeMoveResult[] = [{ source_uri: "runbooks/drain.md", moved: true, reason: "" }];
+        if (outcome === "refusal") results.push({ source_uri: "runbooks/fill.md", moved: false, reason: "exists" });
+        held = held.map((r) => (r.source_uri === "runbooks/drain.md" ? { ...r, namespace: "col-me" } : r));
+        // The API aggregates earlier answers before a later call fails.
+        onCall?.(results);
+        if (outcome === "failed call then Cancel") {
+          onCall?.([]);
+          return { found: true, results, error: new Error("network down") };
+        }
+        return { found: true, results };
+      },
+    );
+    if (entry === "Actions") {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: query === PHONE_QUERY,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }));
+      render(<Documents />, { container: main(TREE_PAGE_MIN - 1) });
+      await screen.findByText("Services agreement");
+    } else {
+      await open();
+    }
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Drain a lane" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Fill a lane" }));
+    const bar = screen.getByLabelText("Search and filters");
+    const opener = within(bar).getByRole("button", { name: entry });
+    await userEvent.click(opener);
+    if (entry === "Actions") await userEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Move 2 documents" });
+    await userEvent.click(within(dialog).getByRole("button", { name: /To/ }));
+    await userEvent.click(await screen.findByText("My files", { selector: ".collection-depth" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    if (outcome === "failed call then Cancel") {
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        "1 document moved before the call that failed",
+      );
+      await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(bar).toHaveTextContent("1 selected"));
+    expect(screen.getByRole("checkbox", { name: "Select Fill a lane" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Drain a lane" })).not.toBeChecked();
+    expect(screen.queryByLabelText("Search library")).toBeNull();
+    expect(opener).toBeInTheDocument();
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it("drags no row without the tree beside the list", async () => {
