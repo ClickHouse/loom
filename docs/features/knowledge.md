@@ -1147,8 +1147,8 @@ person writes. **Add to collection…** offers only those collections, including
 files**. Both move the documents: each document lives in one place. Before confirmation,
 **Add to collection…** says the documents leave their source, and both actions say who
 can read them at the destination. In **All documents** or an everywhere search, a selection
-must come from one place; each row uses its own place. Cancelling leaves the documents
-where they are.
+must come from one place; each row uses its own place. Cancelling before confirmation
+leaves the documents where they are.
 
 `knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the
 same org: a collection, `@me` (an end user's own collection) or a namespace. The caller
