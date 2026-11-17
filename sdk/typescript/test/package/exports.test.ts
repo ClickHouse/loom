@@ -139,6 +139,14 @@ describe("dist", () => {
     );
   }, 30_000); // loading @langchain/core in both module formats takes seconds
 
+  it("the google-adk subpath loads in both formats without loading the framework", async () => {
+    const esm = (await import(join(dist, "integrations/google-adk.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/google-adk.cjs")) as object;
+    expect(names(esm)).toEqual(["LoomMemoryService"]);
+    expect(names(cjs)).toEqual(names(esm));
+    expect(readFileSync(join(dist, "integrations/google-adk.mjs"), "utf8")).not.toContain('from "@google/adk"');
+  });
+
   it("the openai-agents subpath loads in both formats and leaves @openai/agents to the app", async () => {
     const esm = (await import(join(dist, "integrations/openai-agents.mjs"))) as object;
     const cjs = require(join(dist, "integrations/openai-agents.cjs")) as object;

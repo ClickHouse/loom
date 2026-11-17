@@ -7,9 +7,10 @@ import type { CollectionEntry } from "../api";
 import { axeViolations } from "../test/axe";
 import { act, cleanup, fireEvent, render, type RenderOptions, screen, waitFor, within } from "../test/rtl";
 import { repeatedTitles } from "../lib/collections";
+import { DRAG_TYPE } from "../lib/useDragHold";
 import { LibraryTree, NEW_COLLECTION_FOCUS, placeFocusKey, placeTree } from "./LibraryTree";
 
-const api = vi.hoisted(() => ({ createCollection: vi.fn() }));
+const api = vi.hoisted(() => ({ createCollection: vi.fn(), moveCollection: vi.fn() }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const toast = vi.hoisted(() => ({ toast: vi.fn(), toastError: vi.fn() }));
 vi.mock("../components/Toast", async (importOriginal) => ({
@@ -38,6 +39,7 @@ const ROWS = [
 beforeEach(() => {
   localStorage.clear();
   api.createCollection.mockReset();
+  api.moveCollection.mockReset();
   toast.toast.mockReset();
   toast.toastError.mockReset();
 });
@@ -561,5 +563,179 @@ describe("LibraryTree's form", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("col-q4", 7, NEW_COLLECTION_FOCUS));
     expect(screen.queryByRole("textbox")).toBeNull();
+  });
+});
+
+describe("LibraryTree's drops", () => {
+  // Engineering holds Runbooks, which holds Ingest; the person administers all but Ingest.
+  const NEST = [
+    entry("col-me-1a2b", { personal: true }),
+    entry("col-eng", { title: "Engineering" }),
+    entry("col-ops", { title: "Ops" }),
+    entry("col-runbooks", { parent: "col-eng", title: "Runbooks" }),
+    entry("col-ingest", { parent: "col-runbooks", title: "Ingest", role: "writer" }),
+    entry("col-legal", { title: "Legal", role: "viewer" }),
+  ];
+  const dataTransfer = () => ({ setData: vi.fn(), clearData: vi.fn(), effectAllowed: "", dropEffect: "" });
+  /** The tree row of the place this link names. */
+  const row = (name: string) => screen.getByRole("link", { name }).closest(".library-tree-row") as HTMLElement;
+  /** Each listed place's drop state, by its name. */
+  const drops = () =>
+    Object.fromEntries(
+      screen
+        .queryAllByRole("link")
+        .map((a) => [a.textContent, a.closest(".library-tree-row")?.getAttribute("data-drop")]),
+    );
+
+  /** The tree on Ingest (its parents open), with `name`'s row picked up. */
+  async function hold(name: string) {
+    tree({ rows: NEST, current: "col-ingest" });
+    const dt = dataTransfer();
+    fireEvent.dragStart(row(name), { dataTransfer: dt });
+    await waitFor(() => expect(row("Ops")).toHaveAttribute("data-drop", "ok"));
+    return dt;
+  }
+
+  it("takes a collection into one the person writes, never into itself, under itself or where it is", async () => {
+    await hold("Runbooks");
+    expect(drops()).toEqual({
+      "All documents": null,
+      "Namespace bench": null,
+      "My files": null,
+      Engineering: null, // already its parent
+      Runbooks: null,
+      Ingest: null, // under it
+      Ops: "ok",
+      Legal: null, // read only
+    });
+    expect(fireEvent.dragOver(row("Ingest"), { dataTransfer: dataTransfer() })).toBe(true);
+    fireEvent.drop(row("Ingest"), { dataTransfer: dataTransfer() });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens Move set to the collection dropped on, and moves it there with collection.move", async () => {
+    api.moveCollection.mockResolvedValue({ namespace: "col-runbooks", parent: "col-ops", moved: true });
+    const dt = await hold("Runbooks");
+    expect(fireEvent.dragOver(row("Ops"), { dataTransfer: dt })).toBe(false);
+    expect(row("Ops")).toHaveAttribute("data-drop", "over");
+    fireEvent.drop(row("Ops"), { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    expect(within(dialog).getByRole("button", { name: /Inside/ })).toHaveTextContent("Ops");
+    // The drop is over: no place stays marked.
+    expect(Object.values(drops()).filter(Boolean)).toEqual([]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "col-runbooks", "col-ops"));
+    expect(toast.toast).toHaveBeenCalledWith("Moved Runbooks into Ops", "ok");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Focus goes to the place it was dropped on, which the move leaves where it was.
+    await waitFor(() => expect(screen.getByRole("link", { name: "Ops" })).toHaveFocus());
+  });
+
+  it("offers the top level to a collection that sits inside another, and none to one already there", async () => {
+    api.moveCollection.mockResolvedValue({ namespace: "col-runbooks", parent: "", moved: true });
+    const dt = await hold("Runbooks");
+    const top = screen.getByText("Drop here for the top level");
+    expect(top).toHaveAttribute("data-drop", "ok");
+    fireEvent.dragOver(top, { dataTransfer: dt });
+    fireEvent.drop(top, { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    expect(within(dialog).getByRole("button", { name: /Inside/ })).toHaveTextContent("Top level");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "col-runbooks", ""));
+    await waitFor(() => expect(screen.getByRole("button", { name: "New collection" })).toHaveFocus());
+    cleanup();
+    await hold("Engineering");
+    expect(screen.queryByText("Drop here for the top level")).toBeNull();
+  });
+
+  it("holds nothing when the drag ends before the tick that holds it", async () => {
+    tree({ rows: NEST, current: "col-ingest" });
+    const dt = dataTransfer();
+    fireEvent.dragStart(row("Runbooks"), { dataTransfer: dt });
+    fireEvent.dragEnd(row("Runbooks"), { dataTransfer: dt });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(Object.values(drops()).filter(Boolean)).toEqual([]);
+    expect(screen.queryByText("Drop here for the top level")).toBeNull();
+  });
+
+  it("carries Loom's own drag type, never text a field would take", async () => {
+    const dt = await hold("Runbooks");
+    // The link's own address and text are cleared first.
+    expect(dt.clearData).toHaveBeenCalled();
+    expect(dt.setData).toHaveBeenCalledWith(DRAG_TYPE, "move");
+    expect(dt.setData).not.toHaveBeenCalledWith("text/plain", expect.anything());
+  });
+
+  it("leaves the focus where the Modal hands it when Move is closed without moving", async () => {
+    const dt = await hold("Runbooks");
+    // A press on the row's link focuses it before the drag starts.
+    const dragged = screen.getByRole("link", { name: "Runbooks" });
+    dragged.focus();
+    fireEvent.dragOver(row("Ops"), { dataTransfer: dt });
+    fireEvent.drop(row("Ops"), { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.moveCollection).not.toHaveBeenCalled();
+    await waitFor(() => expect(dragged).toHaveFocus());
+  });
+
+  it("hands focus back to New collection's open form after a move to the top level", async () => {
+    api.moveCollection.mockResolvedValue({ namespace: "col-runbooks", parent: "", moved: true });
+    const { update } = tree({ rows: NEST, current: "col-ingest" });
+    await userEvent.click(screen.getByRole("button", { name: "New collection" }));
+    const field = screen.getByRole("textbox", { name: /^New collection/ });
+    // A press on the row's link focuses it before the drag starts.
+    screen.getByRole("link", { name: "Runbooks" }).focus();
+    const dt = dataTransfer();
+    fireEvent.dragStart(row("Runbooks"), { dataTransfer: dt });
+    const top = await screen.findByText("Drop here for the top level");
+    fireEvent.dragOver(top, { dataTransfer: dt });
+    fireEvent.drop(top, { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "col-runbooks", ""));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The list read again draws Runbooks at the top: its old row is gone.
+    update({ rows: NEST.map((c) => (c.namespace === "col-runbooks" ? { ...c, parent: "" } : c)) });
+    await waitFor(() => expect(field).toHaveFocus());
+  });
+
+  it("drags only a collection the person administers, and not their own files", () => {
+    tree({ rows: NEST, current: "col-ingest" });
+    expect(row("Runbooks")).toHaveAttribute("draggable", "true");
+    expect(row("Ingest")).not.toHaveAttribute("draggable");
+    expect(row("My files")).not.toHaveAttribute("draggable");
+    expect(row("All documents")).not.toHaveAttribute("draggable");
+  });
+
+  it("keeps the dialog open with what to do when the move fails", async () => {
+    api.moveCollection.mockRejectedValue(new Error("network down"));
+    const dt = await hold("Runbooks");
+    fireEvent.dragOver(row("Ops"), { dataTransfer: dt });
+    fireEvent.drop(row("Ops"), { dataTransfer: dt });
+    const dialog = await screen.findByRole("dialog", { name: "Move Runbooks" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+    expect(toast.toast).not.toHaveBeenCalled();
+  });
+
+  it("marks only the places the page says take the documents held, and hands it the drop", () => {
+    const onDrop = vi.fn();
+    const { update } = tree({ rows: NEST, current: "col-ingest" });
+    expect(Object.values(drops()).filter(Boolean)).toEqual([]);
+    update({ documentDrop: { targets: new Set(["bench", "col-ops"]), onDrop } });
+    expect(drops()).toMatchObject({ "Namespace bench": "ok", Ops: "ok", "My files": null, Ingest: null });
+    expect(screen.queryByText("Drop here for the top level")).toBeNull();
+    fireEvent.drop(row("My files"), { dataTransfer: dataTransfer() });
+    expect(onDrop).not.toHaveBeenCalled();
+    fireEvent.dragOver(row("Namespace bench"), { dataTransfer: dataTransfer() });
+    expect(row("Namespace bench")).toHaveAttribute("data-drop", "over");
+    fireEvent.drop(row("Namespace bench"), { dataTransfer: dataTransfer() });
+    expect(onDrop).toHaveBeenCalledWith("bench");
+    update({ documentDrop: null });
+    expect(Object.values(drops()).filter(Boolean)).toEqual([]);
   });
 });

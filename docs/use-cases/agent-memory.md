@@ -84,3 +84,6 @@ AI Agent to Loom conversation history, durable memories and knowledge search.
 
 Use the [Dify tools plugin](../features/integrations/frameworks.md#dify) to save facts,
 recall a user's memories and search app documents from a workflow.
+
+Use [Google ADK memory](../features/integrations/frameworks.md#google-adk) to recall
+per-user facts and shared knowledge through ADK memory tools.

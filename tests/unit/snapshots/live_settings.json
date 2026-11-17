@@ -106,6 +106,7 @@
  "knowledge_search_rerank_timeout_s",
  "knowledge_search_rerank_top",
  "knowledge_source_max_documents",
+ "knowledge_source_mirror_documents_per_pass",
  "knowledge_source_probe_timeout_s",
  "knowledge_source_sync_cap_share",
  "knowledge_source_sync_documents_per_pass",

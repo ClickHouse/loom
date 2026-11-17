@@ -23,6 +23,8 @@ or needs another database, vector store or cache.
 | Claude API memory tool         | `LoomMemoryTool`, `AsyncLoomMemoryTool`         | Python, `loom.integrations.claude_memory`                 | `BetaAbstractMemoryTool`, `BetaAsyncAbstractMemoryTool` from `anthropic` |
 | Claude API memory tool         | `loomMemoryTool`                                | TypeScript, `@clickhouse/loom/integrations/claude-memory` | `betaMemoryTool` from `@anthropic-ai/sdk`                                |
 | Microsoft Agent Framework      | `LoomContextProvider`                           | Python, `loom.integrations.agent_framework`               | `agent_framework.ContextProvider`                                        |
+| Google ADK                     | `LoomMemoryService`                             | Python, `loom.integrations.google_adk`                    | `google.adk.memory.BaseMemoryService`                                    |
+| Google ADK (TypeScript)        | `LoomMemoryService`                             | TypeScript, `@clickhouse/loom/integrations/google-adk`    | `BaseMemoryService` from `@google/adk`                                   |
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                                                        |
 | Mastra                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool` from `@mastra/core`                                         |
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                                                       |
@@ -519,6 +521,121 @@ can miss that file.
 A store is not a boundary: every reader of the namespace can read every store's documents.
 Give each user their own namespace when users must not read each other's files.
 
+## Google ADK
+
+`LoomMemoryService` implements ADK's `BaseMemoryService`, which a `Runner` takes as
+`memory_service=`. ADK's own memory tools read it: `preload_memory` searches with the
+user's message before each model call and adds the matches to the prompt, and
+`load_memory` lets the model search. A callback saves each turn. Install with
+`pip install 'clickhouse-loom[google-adk]'` (`google-adk` 2.14.x).
+
+```python
+from google.adk.agents import LlmAgent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.tools import preload_memory
+from google.genai import types
+from loom import Agent
+from loom.integrations.google_adk import LoomMemoryService
+
+
+async def save_turn(ctx):
+    turn = [e for e in ctx.session.events if e.invocation_id == ctx.invocation_id]
+    await ctx.add_events_to_memory(events=turn)
+
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    sessions = InMemorySessionService()
+    runner = Runner(
+        app_name="support",
+        agent=LlmAgent(
+            name="assistant",
+            model="gemini-flash-latest",
+            tools=[preload_memory],
+            after_agent_callback=save_turn,
+        ),
+        session_service=sessions,
+        memory_service=LoomMemoryService(loom_agent, app_name="support"),
+    )
+    session = await sessions.create_session(app_name="support", user_id="alice")
+    message = types.Content(role="user", parts=[types.Part(text="I prefer aisle seats")])
+    async for event in runner.run_async(
+        user_id="alice", session_id=session.id, new_message=message
+    ):
+        ...
+```
+
+ADK scopes memory by app and user. Loom's authorization boundary is the namespace:
+a write can merge with another agent's row for the same user, so apps sharing a
+namespace also share that user's memory context. A service therefore serves one ADK
+app, named by `app_name`, in the namespace of its Loom agent, and refuses a call for
+another app; give each app its own namespace and service. The ADK user is the Loom
+`user_id`; empty, `-`, `*` and whitespace-padded ids raise `ValueError`.
+Extraction runs under a Loom session derived from the user and the ADK session (`adk-`
+and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and ADK
+makes a session id unique per user only. A search reads all of the user's memories in the
+namespace, from every session. Remaining result slots hold up to 100 knowledge documents shared by
+the app namespace; documents carry no fact-deletion id.
+
+| ADK                     | Loom                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add_session_to_memory` | the text of the session's events, without the ones a rewind took back, sent to `memory.set_from_messages` (400 messages a call, the op's cap); Loom extracts the facts and resolves duplicates and conflicts. A session added again is extracted again, so a callback that runs every turn, as `after_agent_callback` does, saves that turn's events, as in the example                                                                                                                                                               |
+| `add_events_to_memory`  | the same for the events given, such as the latest turn; a call without a `session_id` raises `ValueError`, since Loom files a turn's verbatim chunks by session. A turn saved before a later rewind keeps its memories: the app deletes its facts by the ids a search returns, and its verbatim passages stay until [erasure](../memory/retention-and-erasure.md) removes them                                                                                                                                                        |
+| `add_memory`            | one `memory.set` per entry with text (an entry without text is skipped) under `<key_prefix>/<first 20 hex of sha256(user and text)>`, its `timestamp` as the memory's `valid_at` when it is ISO 8601 (one without a zone is read as local time, as ADK writes its own)                                                                                                                                                                                                                                                                |
+| `search_memory`         | `memory.search` of the user's memories, followed by `knowledge.search` for remaining slots; with `honour_abstain`, leaves out memories below Loom's floor and abstaining memory results; each entry's `custom_metadata` carries `similarity` and `source`, and its `timestamp` is `valid_at` when the row has one                                                                                                                                                                                                                     |
+| `delete_memory`         | the entry id carries its key, session, writer and searched version. `memory.delete_version` deletes that exact row only; a rewritten or missing version is a no-op. Passages, summaries, knowledge hits and facts without writer/version metadata have no deletion id. Use [erasure](../memory/retention-and-erasure.md) for their content. A call without an id does nothing. Adding the session again can extract the fact again; [`blacklist.add`](../memory/conflicts-and-refusal.md#refusal-the-blacklist) refuses future writes |
+
+Events keep their text parts only: the model's thoughts and tool calls and results are not
+sent, and neither is `custom_metadata` or an entry's `author` and `id`.
+
+| `LoomMemoryService` argument | Default  | Effect                                                                                         |
+| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `agent`                      | required | the `loom.Agent` the service calls; ADK awaits its memory service, so a `SyncAgent` is refused |
+| `app_name`                   | required | the ADK app the service serves; a call for another app raises `ValueError`                     |
+| `top_k`                      | 10       | memories per search, from 1 to 500                                                             |
+| `honour_abstain`             | `True`   | filter the memory leg below Loom's floor or on abstention; knowledge remains available         |
+| `defer`                      | `True`   | queue the extraction on the server instead of waiting for it                                   |
+| `key_prefix`                 | `adk`    | the prefix of `add_memory`'s keys; an empty one is refused                                     |
+
+The TypeScript service implements `@google/adk` 2.5's `BaseMemoryService` interface
+(`npm install @google/adk@~2.5`). It exposes `addSessionToMemory` and `searchMemory`;
+that interface has no individual-memory deletion or event-append method. Both SDKs
+use the same derived Loom session for the same user and ADK session id. TypeScript
+options are `appName`, `topK`, `honourAbstain` and `defer`, with the Python defaults.
+
+```ts
+import { InMemorySessionService, LlmAgent, PRELOAD_MEMORY, Runner } from "@google/adk";
+import { LoomMemoryService } from "@clickhouse/loom/integrations/google-adk";
+
+const sessions = new InMemorySessionService();
+const memory = new LoomMemoryService(loomAgent, { appName: "support" });
+const runner = new Runner({
+  appName: "support",
+  agent: new LlmAgent({ name: "assistant", model: "gemini-flash-latest", tools: [PRELOAD_MEMORY] }),
+  sessionService: sessions,
+  memoryService: memory,
+  autoCreateSession: true,
+});
+for await (const event of runner.runAsync({
+  userId: "alice",
+  sessionId: "travel",
+  newMessage: { role: "user", parts: [{ text: "I prefer aisle seats" }] },
+})) {
+  /* consume the turn */
+}
+const session = await sessions.getSession({
+  appName: "support",
+  userId: "alice",
+  sessionId: "travel",
+});
+if (session) await memory.addSessionToMemory(session);
+```
+
+Save a completed TypeScript session once. Saving it again extracts it again; the
+TypeScript interface has no per-turn append operation. ADK's in-memory session
+service in these examples holds the running conversation only; Loom stores the
+extracted memories and searchable documents in the user's deployment.
+
 ## Pydantic AI
 
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
@@ -835,6 +952,9 @@ client can speak for several agents.
   has answered: the run raises, a history provider that runs after Loom's (the agent's
   in-memory one) does not record the turn, any tool's effect stays, and a streamed reply has
   already been shown.
+- **ADK carries on without memory when `preload_memory`'s search fails.** It logs a
+  warning and the model call goes on; a failed `load_memory` search or save callback fails
+  the run.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
@@ -861,3 +981,4 @@ client can speak for several agents.
 - [Context-provider architecture](../../architecture/agent-framework-adapter.md).
 - [Memory-tool architecture](../../architecture/claude-memory-adapter.md).
 - [Session history architecture](../../architecture/openai-agents-sessions.md).
+- [ADK adapter architecture](../../architecture/google-adk-adapter.md).

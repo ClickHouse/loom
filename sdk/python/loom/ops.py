@@ -12365,6 +12365,7 @@ class MemorySearchHit(TypedDict, total=False):
     valid_at: NotRequired[str]
     via_path: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    agent: NotRequired[str]
     user_id: NotRequired[str]
     source: NotRequired[str]
     parent_memory_key: NotRequired[str]

@@ -265,6 +265,14 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   `LoomMemoryTool(sync_agent, store=...)` run the Claude API memory tool's commands
   against Loom documents (`knowledge.get`, `knowledge.upsert`, `knowledge.list`,
   `knowledge.bulk_delete`); install the `[claude-memory]` extra.
+- `loom.integrations.google_adk.LoomMemoryService(agent, app_name=...)` is a
+  Google ADK `BaseMemoryService` for one ADK app: a saved session or turn goes
+  to `memory.set_from_messages`, `add_memory` is `memory.set`, `search_memory`
+  uses `memory.search` scoped to the ADK user, then fills remaining slots with
+  up to 100 shared namespace documents from `knowledge.search`; `delete_memory`
+  calls `memory.delete_version` for the exact writer and version carried in the
+  search entry id. Install the
+  `[google-adk]` extra.
 - `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
   `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
   extra.

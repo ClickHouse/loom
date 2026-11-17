@@ -635,6 +635,17 @@ jobs:
       - name: Apply migrations
         id: migrate
         run: python -m server.core.schema.migrate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.part == '1'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install native Google ADK clients
+        if: matrix.part == '1'
+        run: |
+          uv pip install --python "$PWD/.venv/bin/python" --target "$RUNNER_TEMP/loom-adk-client" './sdk/python[google-adk]'
+          npm --prefix sdk/typescript ci --no-audit --no-fund
       # Provider staging tests create private, UUID-owned copies and run before
       # the web process starts, against this job's disposable migrated database.
       - name: Provider rebuild storage and recovery
@@ -711,6 +722,9 @@ jobs:
         env:
           LOOM_TEST_SHARD: ${{ matrix.part }}/4
         run: pytest tests/integration -q --durations=20
+      - name: Native Google ADK live tests (Python and TypeScript)
+        if: matrix.part == '1'
+        run: python -m tests.integration._google_adk_ci "$RUNNER_TEMP/loom-adk-client"
       # The tenant-isolation gates against a server that enforces auth. The numbered
       # parts run them with auth off, where every token is ignored and no refusal is seen.
       # The three checks of the isolation gates part are independent: a failure in

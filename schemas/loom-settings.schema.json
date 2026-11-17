@@ -3185,6 +3185,12 @@
           "type": "integer",
           "description": "Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square."
         },
+        "knowledge_source_mirror_documents_per_pass": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share."
+        },
         "knowledge_source_probe_timeout_s": {
           "default": 20.0,
           "exclusiveMinimum": 0,
@@ -3203,7 +3209,7 @@
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass."
+          "description": "Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass."
         },
         "knowledge_source_sync_enabled": {
           "default": false,

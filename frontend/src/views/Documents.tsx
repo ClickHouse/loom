@@ -1,4 +1,5 @@
 import {
+  type DragEvent,
   lazy,
   memo,
   type ReactNode,
@@ -68,7 +69,7 @@ import { LibraryCollections, treeOrder, useReadableCollections } from "./Library
 import { useCollectionSharing } from "./CollectionSharing";
 import { MoveDocumentsDialog, type MovePlace } from "../flows/MoveDocumentsDialog";
 import { PlaceTitleLink, TopLevelPlaces } from "./LibraryHierarchy";
-import { expandedKey, LibraryTree } from "./LibraryTree";
+import { type DocumentDrop, expandedKey, LibraryTree } from "./LibraryTree";
 import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
 import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
@@ -81,10 +82,12 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
 import { useMedia, PHONE_QUERY } from "../lib/useMedia";
+import { useDragHold } from "../lib/useDragHold";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 import { useTreeFocusHandoff } from "../lib/useTreeFocusHandoff";
+import { focusViewHeading } from "../lib/place";
 
 // Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
@@ -369,14 +372,17 @@ export function Documents() {
   const [tablesFor, setTablesFor] = useState<KnowledgeEntry | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
-  // The documents Move to… was opened for, and the place they are in; another place shown
-  // closes it.
-  const [moving, setMoving] = useState<{ from: string; uris: string[] } | null>(null);
-  // Whether the open Move to… dialog moved any document: focus then goes to the search.
+  // The documents Move to… was opened for, the place they are in, and the place picked for
+  // them (a drop on the tree); another place shown closes it.
+  const [moving, setMoving] = useState<{ from: string; uris: string[]; to?: string } | null>(null);
+  // Whether the open Move to… dialog moved any document: prefer the search when it is mounted.
   const movedSome = useRef(false);
-  const openMove = useCallback((from: string, uris: string[]) => {
+  const moveOpener = useRef<HTMLElement | null>(null);
+  const openMove = useCallback((from: string, uris: string[], to?: string) => {
     movedSome.current = false;
-    setMoving({ from, uris });
+    const active = document.activeElement;
+    moveOpener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    setMoving({ from, uris, to });
   }, []);
   useEffect(() => setMoving(null), [place]);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
@@ -812,11 +818,7 @@ export function Documents() {
         if (!ac.signal.aborted) toastError("Open failed", e, { read: true });
       });
   };
-  // The deep-link effect, the rows and the passage panel call the latest render's handlers
-  // without re-firing on them or rendering every row again.
   const onMove = (r: KnowledgeEntry) => openMove(placeOf(r).namespace, [r.source_uri]);
-  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri, onMove });
-  handlers.current = { onOpen, onDownload, onDelete, openByUri, onMove };
   // Stable, so the passage list is not built again on each render of the page.
   const openPassage = useCallback(
     (uri: string, ns?: string) =>
@@ -1060,6 +1062,26 @@ export function Documents() {
     }
     return out;
   };
+  // Documents dragged from the list onto the tree: the row, or the selection when the row is in
+  // it. A selection across places does not drag, as Move to… takes one place at a time.
+  const { held: heldDocs, start: holdDocs, end: endDrag } = useDragHold<{ from: string; uris: string[] }>();
+  const startDrag = (r: KnowledgeEntry, key: string, e: DragEvent) => {
+    let held = { from: placeOf(r).namespace, uris: [r.source_uri] };
+    if (selected.has(key)) {
+      const groups = [...selectedByPlace()];
+      const only = groups.length === 1 ? groups[0] : undefined;
+      if (!only) {
+        e.preventDefault();
+        return;
+      }
+      held = { from: only[0], uris: only[1].map((x) => x.source_uri) };
+    }
+    holdDocs(e, held);
+  };
+  // The deep-link effect, the rows and the passage panel call the latest render's handlers
+  // without re-firing on them or rendering every row again.
+  const handlers = useRef({ onOpen, onDownload, onDelete, openByUri, onMove, startDrag });
+  handlers.current = { onOpen, onDownload, onDelete, openByUri, onMove, startDrag };
 
   const aggregateStats = useMemo(() => {
     if (!rows) return null;
@@ -1136,8 +1158,10 @@ export function Documents() {
       toggle: toggleRow,
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
       openPlace: (p) => goTo(p),
+      dragStart: (r, key, e) => handlers.current.startDrag(r, key, e),
+      dragEnd: endDrag,
     }),
-    [toggleRow, goTo],
+    [toggleRow, goTo, endDrag],
   );
   // Each place's line on a row, once per place, so a memoised row keeps its props.
   const whereOf = useMemo(() => {
@@ -1223,6 +1247,49 @@ export function Documents() {
       besideTree={besideTree}
     />
   );
+
+  // The Library's collections and the one shown, when the list is whole: only then can a
+  // folder be placed where the person looks, so the dialog takes one.
+  const folderTree =
+    collections.rows && !collections.truncated && (!collection || shown)
+      ? { rows: collections.rows, shown }
+      : undefined;
+  // Where documents can go from the place they are in: the header's namespace when the person
+  // adds there, and the collections they write, in tree order; not their own place.
+  const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
+  const placesFrom = useCallback(
+    (from: string): MovePlace[] => {
+      const out: MovePlace[] = [];
+      if (addsToHeader && from !== picked.namespace) {
+        out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
+      }
+      for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
+        if (c.role === "viewer" || c.namespace === from) continue;
+        out.push({
+          namespace: c.namespace,
+          label: c.personal ? collectionTitle(c) : distinctTitle(c, repeated),
+          depth: c.personal ? 0 : depth,
+          kind: c.personal ? "personal" : "collection",
+        });
+      }
+      return out;
+    },
+    [collections.kept, repeated, addsToHeader, picked.namespace],
+  );
+  const movingFrom = moving?.from ?? identity.namespace;
+  const movePlaces = useMemo(() => placesFrom(movingFrom), [placesFrom, movingFrom]);
+  // The tree's places that take the documents held: those Move to… lists for them.
+  const documentDrop = useMemo<DocumentDrop | null>(() => {
+    if (!heldDocs) return null;
+    const { from, uris } = heldDocs;
+    return {
+      targets: new Set(placesFrom(from).map((p) => p.namespace)),
+      onDrop: (to) => {
+        endDrag();
+        openMove(from, uris, to);
+      },
+    };
+  }, [heldDocs, placesFrom, endDrag, openMove]);
   const placesTree = treeHeight !== null && (
     <LibraryTree
       // One per person and org: nothing read or opened in one shows in, or is saved for, another.
@@ -1241,35 +1308,9 @@ export function Documents() {
       onPick={goTo}
       claimCreateVersion={claimCreateVersion}
       onCreated={openCreated}
+      documentDrop={documentDrop}
     />
   );
-
-  // The Library's collections and the one shown, when the list is whole: only then can a
-  // folder be placed where the person looks, so the dialog takes one.
-  const folderTree =
-    collections.rows && !collections.truncated && (!collection || shown)
-      ? { rows: collections.rows, shown }
-      : undefined;
-  // Where documents can go from the place they are in: the header's namespace when the person
-  // adds there, and the collections they write, in tree order; not their own place.
-  const addsToHeader = ownShelf && canCall("knowledge.add", roleRead.role, whoami);
-  const movingFrom = moving?.from ?? identity.namespace;
-  const movePlaces = useMemo<MovePlace[]>(() => {
-    const out: MovePlace[] = [];
-    if (addsToHeader && movingFrom !== picked.namespace) {
-      out.push({ namespace: picked.namespace, label: `Namespace ${picked.namespace}`, depth: 0, kind: "namespace" });
-    }
-    for (const { c, depth } of treeOrder(collections.kept?.rows ?? [])) {
-      if (c.role === "viewer" || c.namespace === movingFrom) continue;
-      out.push({
-        namespace: c.namespace,
-        label: c.personal ? collectionTitle(c) : distinctTitle(c, repeated),
-        depth: c.personal ? 0 : depth,
-        kind: c.personal ? "personal" : "collection",
-      });
-    }
-    return out;
-  }, [collections.kept, repeated, movingFrom, addsToHeader, picked.namespace]);
   const moveDialog = moving && (
     <MoveDocumentsDialog
       org={identity.org}
@@ -1277,6 +1318,7 @@ export function Documents() {
       fromLabel={placeLabel(moving.from)}
       sourceUris={moving.uris}
       places={movePlaces}
+      initialTo={moving.to}
       placesReading={
         collections.kept ? (collections.kept.truncated ? "truncated" : null) : collections.error ? "failed" : "loading"
       }
@@ -1288,9 +1330,12 @@ export function Documents() {
       onClose={() => setMoving(null)}
       onCloseAutoFocus={(e) => {
         if (!movedSome.current) return;
+        const search = searchRef.current;
+        if (!search && moveOpener.current?.isConnected) return;
         // The rows, the menu or the selection bar that opened it may have left.
         e.preventDefault();
-        searchRef.current?.focus();
+        if (search) search.focus();
+        else focusViewHeading();
       }}
     />
   );
@@ -1698,6 +1743,7 @@ export function Documents() {
               actions={rowActions}
               writeReason={reasonFor(r)}
               where={across ? (whereOf.get(placeOf(r).namespace) ?? null) : null}
+              draggable={besideTree}
             />
           ))}
         </div>
@@ -1953,6 +1999,9 @@ interface DocRowActions {
   tag: (tag: string) => void;
   /** Open a place: a collection, or null for the header's namespace. */
   openPlace: (place: string | null) => void;
+  /** A drag of the row (by its key) onto the tree starts, or ends. */
+  dragStart: (r: KnowledgeEntry, key: string, e: DragEvent) => void;
+  dragEnd: () => void;
 }
 
 /** Where a row's document lives, on a list of several places: the place's name and the
@@ -2044,6 +2093,8 @@ interface DocRowProps {
   writeReason: string | null;
   /** Where the document lives, on a list of several places. */
   where: DocPlace | null;
+  /** The tree is beside the list: a row whose writes are available drags onto it. */
+  draggable: boolean;
 }
 
 // Memoised: a hundred rows of Click UI checkboxes, badges, icons and menus rendered again
@@ -2058,11 +2109,13 @@ const DocRow = memo(function DocRow({
   actions,
   writeReason,
   where,
+  draggable,
 }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
   const { replace, edit, remove, move } = actions;
   const toggle = writeReason === null ? actions.toggle : undefined;
+  const drags = draggable && writeReason === null;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
@@ -2088,6 +2141,9 @@ const DocRow = memo(function DocRow({
       data-focus-key={`doc:${rowKey}`}
       active={active}
       checked={checked}
+      draggable={drags || undefined}
+      onDragStart={drags ? (e) => actions.dragStart(r, rowKey, e) : undefined}
+      onDragEnd={drags ? actions.dragEnd : undefined}
       trailing={<RowMenu name={name} items={menu} />}
       leading={
         toggle && (

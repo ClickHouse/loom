@@ -710,23 +710,26 @@ A stored document the complete listing no longer has is rewritten `unread`, with
 entry cleared, then retired on positive evidence, as today. The listing row's start
 lands only once every changed list and every such `unread` rewrite of that listing is
 written, so a row is never newer than the lists it vouches for. These rewrites are
-outside the pass's document cap, bounded only by the listings' share of the deadline.
-Content is fetched only for a file whose revision changed, and a content write carries
-the list of the latest listing that read the file, so a fetch the pass bound deferred
-never writes an older list; a listing row lands only once every document written during
-that listing carries a list it read.
+outside the pass's document cap; the permission reads they need stop at half of what is
+left of the listings' share when a turn starts them, so the turn's new and changed files
+still get time. Content is fetched only for a file whose revision changed, and a content
+write carries the list of the latest listing that read the file, so a fetch the pass
+bound deferred never writes an older list; a listing row lands only once every document
+written during that listing carries a list it read.
 
 A pass runs the listings first, rotating across the mirrored sources, and gives them at
-most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`), while the
-namespace sources' content starts at a fixed point of the pass whatever the listings
-used, so their progress says nothing about a mirror's size; a listing that does not
-finish goes on from its cursor in the next pass, and until it completes the source's
-listing row keeps its older start, so a large source needs a stale bound longer than the
-time to list it all. `inspect` and `loom doctor` report each source's oldest listing
-start, a mirrored source's to a platform admin only (its connected owner sees fresh or
-stale). A stopped sync hides every mirrored document once the stale bound passes. The
-implementing pull request measures the writes of a crawl over 2000 people and puts the
-figures here.
+most a third of the time the pass starts work in (a quarter of
+`knowledge_source_sync_max_pass_seconds`) and their own document bound, while the
+namespace sources then have the rest of the pass under theirs. Mirrored files consume
+none of the namespace sources' document bound. Their earlier work can reduce the time
+left for namespace writes, so namespace progress can vary under the threat model's
+timing exclusion. A listing that does not finish goes on from its cursor in the next
+pass, and until it completes the source's listing row keeps its older start, so a large
+source needs a stale bound longer than the time to list it all. `inspect` and `loom
+doctor` report each source's oldest listing start, a mirrored source's to a platform
+admin only (its connected owner sees fresh or stale). A stopped sync hides every
+mirrored document once the stale bound passes. The implementing pull request measures
+the writes of a crawl over 2000 people and puts the figures here.
 
 How lists from several accounts of one source, a person a crawl stops reading, a stopped
 source's rows, and restores of either store are handled is the implementing pull
@@ -755,10 +758,11 @@ admits someone the store no longer names.
 | A caller injects store query syntax through a filter                              | Filters are fields with patterns, escaped and built by the server; no raw query is taken.                                                                                                                                                                                                                                                                                                                                                                                                                                               | `server/clients/gdrive.py`                                                             |
 | A stolen connected credential changes the store                                   | Only read scopes are accepted; the credential is sealed and never returned.                                                                                                                                                                                                                                                                                                                                                                                                                                                             | the connect callback; `server/core/secrets_at_rest.py`                                 |
 
-Out of scope: response timing, and a resource limit (memory, rows read) that a mirror's
-size can trip on a per-request statement, which like timing depends on how much the
-mirror holds; how fast the shared pass gets to a connected owner's own source, which its
-fresh or stale code and per-item status reflect; that a namespace erasure is still
+Out of scope: response timing, and when a pass reaches the namespace sources, which the
+mirrored sources' turns before them delay; a resource limit (memory, rows read) that a
+mirror's size can trip on a per-request statement, which like timing depends on how much
+the mirror holds; how fast the shared pass gets to a connected owner's own source, which
+its fresh or stale code and per-item status reflect; that a namespace erasure is still
 retrying, which a namespace admin sees whatever its cause; a worker an orchestrating
 agent starts outside a flagged session's process tree; a person who hands their own
 `reads_as_creator` token to a team bot or a CI job, which then reads as them; a session

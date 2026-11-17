@@ -377,7 +377,7 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     published."""
     tag = uuid.uuid4().hex[:8]
     namespaces = [f"pg-{tag}-{i}" for i in range(20)]
-    started = datetime.now(UTC) - timedelta(seconds=1)
+    started = ch_client.query("SELECT toUnixTimestamp64Micro(now64(6))").result_rows[0][0]
     answers = await asyncio.gather(
         *(
             call("memory.set", _set(ns, "k", f"fact {i} of the batch"))
@@ -398,8 +398,9 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     flushes = ch_client.query(
         "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
         "AND query_kind = 'Insert' AND has(tables, 'loom.memory') "
-        "AND startsWith(log_comment, 'pg_batch.flush') AND event_time >= {t:DateTime}",
-        parameters={"t": started.replace(tzinfo=None)},
+        "AND startsWith(log_comment, 'pg_batch.flush') "
+        "AND query_start_time_microseconds >= fromUnixTimestamp64Micro({t:Int64})",
+        parameters={"t": started},
     ).result_rows[0][0]
     assert 0 < flushes < 20, flushes
 

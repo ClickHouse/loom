@@ -823,7 +823,7 @@ describe("Tasks page", () => {
     await screen.findByRole("row", { name: "Task urgent" });
     await user.click(screen.getByRole("button", { name: "Board" }));
     const card = within(screen.getByRole("region", { name: /^To do/ })).getByRole("button", { name: /Task low-late/ });
-    const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
+    const dataTransfer = { setData: vi.fn(), clearData: vi.fn(), effectAllowed: "", dropEffect: "" };
     fireEvent.dragStart(card, { dataTransfer });
     const running = screen.getByRole("region", { name: /^In progress/ });
     await waitFor(() => expect(running).toHaveAttribute("data-drop", "ok"));

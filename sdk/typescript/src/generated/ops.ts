@@ -4775,6 +4775,7 @@ export interface MemorySearchHit {
   valid_at?: string;
   via_path?: string[];
   entities?: string[];
+  agent?: string;
   user_id?: string;
   source?: string;
   parent_memory_key?: string;

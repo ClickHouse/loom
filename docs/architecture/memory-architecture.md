@@ -970,6 +970,12 @@ double claim harmless. With `extraction_queue` off, deferred saves stay `pending
 
 ## `memory.search`
 
+Search hits expose the stored writer as `agent` when the retrieval leg read the
+row identity. It remains empty when unknown. This identity survives parked pages
+and lets a client conditionally delete the exact writer/version without resolving
+a key across authors. Namespace and end-user admission still select readable rows
+before serialization; the field grants no additional read or write access.
+
 `handle_memory_search` (`server/memory/app/search/handler.py`) runs phases, one
 module each. The SQL is in `server/memory/app/retrieval/` and
 `server/memory/domain/search_sql.py`.

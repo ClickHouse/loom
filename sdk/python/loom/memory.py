@@ -426,6 +426,7 @@ class MemorySearchHit:
     source_resource_id: str = ""
     verified: bool = False
     # The identity axes the row was written under, when the server read them.
+    agent: str = field(default="", kw_only=True)
     user_id: str = ""
     session_id: str = ""
     speaker: str = ""
@@ -611,6 +612,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         source_class=str(r.get("source_class") or ""),
         source_resource_id=str(r.get("source_resource_id") or ""),
         verified=bool(r.get("verified") or False),
+        agent=str(r.get("agent") or ""),
         user_id=str(r.get("user_id") or ""),
         session_id=str(r.get("session_id") or ""),
         speaker=str(r.get("speaker") or ""),

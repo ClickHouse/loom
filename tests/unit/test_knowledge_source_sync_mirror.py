@@ -36,6 +36,11 @@ def _mirrored(**kw: Any) -> Any:
     return dataclasses.replace(src, secret_enc=seal("knowledge_sources.secret", KEY))
 
 
+def _own(world: Any) -> dict[str, Any]:
+    """The turn's own state, under the mirror and the source's id."""
+    return _detail(world, _mirrored().source_id)
+
+
 @pytest.fixture
 def mirror(world: Any, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """The namespace's mirror, the listing rows recorded and the list-only rewrites."""
@@ -236,14 +241,14 @@ def test_a_given_up_file_is_tried_again_once_per_full_interval(
     fetches = [r for r in world.requests if r.url.path.endswith("/bad1/export")]
     # One fetch a pass until it is given up, then none until the full interval.
     assert len(fetches) == source_sync._WAIT_PASSES
-    assert list(_detail(world)["file_waits"]) == ["bad1"]
+    assert list(_own(world)["file_waits"]) == ["bad1"]
     monkeypatch.setattr(settings, "knowledge_source_sync_full_interval_seconds", 0)
     _turn(world, _mirrored())
     fetches = [r for r in world.requests if r.url.path.endswith("/bad1/export")]
     assert len(fetches) == source_sync._WAIT_PASSES + 1  # one more try at the interval
     world.files = []
     _turn(world, _mirrored())
-    assert "bad1" not in _detail(world)["file_waits"]
+    assert "bad1" not in _own(world)["file_waits"]
 
 
 def test_lists_read_before_the_pass_runs_out_are_written_and_no_listing_row_lands(
@@ -265,10 +270,11 @@ def test_lists_read_before_the_pass_runs_out_are_written_and_no_listing_row_land
     for f in world.files:
         del f["permissions"]  # a shared drive's files: read one at a time
     listings = len(mirror["listings"])
-    result = _turn(world, _mirrored())
+    _turn(world, _mirrored())
     [row] = mirror["rewrites"]  # the one list read before the deadline
     assert access_list.from_json(row["access_json"]) == access_list.AccessList()
-    assert result.cut and len(world.upserts) == 2 and len(mirror["listings"]) == listings
+    assert _own(world)["lists_cursor"] and len(world.upserts) == 2
+    assert len(mirror["listings"]) == listings
 
 
 def test_a_rate_limit_on_a_stored_copy_s_list_stops_the_turn_before_any_fetch(
@@ -286,7 +292,7 @@ def test_a_rate_limit_on_a_stored_copy_s_list_stops_the_turn_before_any_fetch(
         _file("doc2", DOCS, "2026-01-02T00:00:00.000Z"),  # stored, its list unread
     ]
     _turn(world, _mirrored())
-    assert len(world.upserts) == 1 and _detail(world)["status"] == "rate_limited"
+    assert len(world.upserts) == 1 and _own(world)["status"] == "rate_limited"
 
 
 def test_a_new_mirror_name_has_the_form_no_token_may_name() -> None:
@@ -316,9 +322,9 @@ def test_a_failed_permission_read_reads_unread_and_the_turn_goes_on(
     assert lists["doc1"] == ""
     assert access_list.from_json(lists["doc2"]).emails == ("ann@example.com",)
     # `unread` admits nobody, so the listing still vouches.
-    assert len(mirror["listings"]) == 1 and _detail(world)["status"] == "ok"
+    assert len(mirror["listings"]) == 1 and _own(world)["status"] == "ok"
     # A note, not a mark: the dashboard shows a `listing:` note as a turn cut short.
-    assert _detail(world)["error"] == "permissions: a file's list could not be read"
+    assert _own(world)["error"] == "permissions: a file's list could not be read"
 
 
 def test_a_copy_without_live_chunks_still_takes_the_store_s_list(
@@ -343,7 +349,7 @@ def test_list_rewrites_go_on_past_the_pass_s_document_bound(
         _file("doc2", DOCS, "2026-01-02T00:00:00.000Z", permissions=READERS),
     ]
     _turn(world, _mirrored())
-    monkeypatch.setattr(settings, "knowledge_source_sync_documents_per_pass", 1)
+    monkeypatch.setattr(settings, "knowledge_source_mirror_documents_per_pass", 1)
     for f in world.files:  # both changed: the bound fetches one and defers the other
         f["modifiedTime"] = f["modifiedTime"].replace("2026-01-0", "2026-02-0")
         f["permissions"] = []
@@ -387,7 +393,7 @@ def test_a_rate_limit_on_a_new_file_s_permissions_writes_no_document(
     monkeypatch.setattr(gdrive, "file_permissions", _limited)
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     _turn(world, _mirrored())
-    assert world.upserts == [] and _detail(world)["status"] == "rate_limited"
+    assert world.upserts == [] and _own(world)["status"] == "rate_limited"
     # No stored copy's list was left unread, so the listing still vouches.
     assert len(mirror["listings"]) == 1
 
@@ -399,7 +405,7 @@ def test_a_file_whose_fetch_fails_leaves_the_listing_row_to_land(world: Any, mir
     ]
     world.file_answers["bad1"] = httpx.Response(503)
     _turn(world, _mirrored())
-    assert len(world.upserts) == 1 and _detail(world)["status"] == "failed"
+    assert len(world.upserts) == 1 and _own(world)["status"] == "failed"
     assert len(mirror["listings"]) == 1
 
 
@@ -553,7 +559,7 @@ def test_a_publication_owed_when_the_copies_were_read_records_no_listing_row(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     _turn(world, _mirrored())
     assert len(world.upserts) == 1 and mirror["listings"] == []
-    assert _detail(world)["error"] == "publication: a write is not in ClickHouse yet"
+    assert _own(world)["error"] == "publication: a write is not in ClickHouse yet"
 
 
 def test_a_failed_permission_read_does_not_hold_back_retirement(
@@ -608,7 +614,7 @@ def test_lists_read_before_a_rate_limit_in_the_same_batch_are_written(
     [row] = mirror["rewrites"]
     assert row["source_uri"].split("/")[-2] == "doc1"
     assert access_list.from_json(row["access_json"]) == access_list.AccessList()
-    assert _detail(world)["status"] == "rate_limited"
+    assert _own(world)["status"] == "rate_limited"
 
 
 def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
@@ -631,9 +637,9 @@ def test_a_cut_in_a_later_batch_keeps_the_earlier_batches_writes(
     for f in world.files:
         del f["permissions"]
     listings = len(mirror["listings"])
-    result = _turn(world, _mirrored())
+    _turn(world, _mirrored())
     narrowed = sorted(r["source_uri"] for r in mirror["rewrites"])
-    assert result.cut and narrowed == sorted(world.docs)[:2]  # batches one and two
+    assert _own(world)["lists_cursor"] and narrowed == sorted(world.docs)[:2]  # batches 1, 2
     assert len(mirror["listings"]) == listings
 
 
@@ -658,11 +664,11 @@ def test_past_the_deadline_a_list_the_listing_carried_is_still_written(
     del world.files[0]["permissions"]  # doc1's list needs a read, which the deadline stops
     world.files[1]["permissions"] = []  # doc2's, narrowed, came with the listing
     listings = len(mirror["listings"])
-    result = _turn(world, _mirrored())
+    _turn(world, _mirrored())
     [row] = mirror["rewrites"]
     assert row["source_uri"].split("/")[-2] == "doc2"
     assert access_list.from_json(row["access_json"]) == access_list.AccessList()
-    assert result.cut and len(mirror["listings"]) == listings
+    assert _own(world)["lists_cursor"] and len(mirror["listings"]) == listings
 
 
 def test_a_mirrored_source_without_a_mirror_turn_is_refused_a_turn() -> None:
@@ -694,11 +700,11 @@ def test_no_mirror_is_made_for_a_source_that_cannot_list(
 ) -> None:
     made: list[str] = []
 
-    async def _live(org: str, namespace: str) -> str:
+    async def _ensure(org: str, namespace: str, **kw: Any) -> str:
         made.append(namespace)
         return MIRROR
 
-    monkeypatch.setattr(mirrors, "live_mirror", _live)
+    monkeypatch.setattr(mirrors, "ensure_mirror", _ensure)
     world.fail_listing = 403
     _turn(world, _mirrored())
     assert made == [] and world.upserts == []
@@ -776,7 +782,7 @@ def test_a_viewer_account_s_unread_lists_are_noted(
     ]
     _turn(world, _mirrored())
     assert all(d["access_json"] == "" for d in world.docs.values()) and len(world.docs) == 2
-    assert _detail(world)["error"] == "permissions: the store gave no list for a file"
+    assert _own(world)["error"] == "permissions: the store gave no list for a file"
 
 
 def test_a_copy_behind_its_file_is_never_widened_by_the_store_s_new_list(
@@ -836,7 +842,7 @@ def test_a_copy_another_writer_holds_keeps_its_list_and_no_listing_row_lands(
     listings = len(mirror["listings"])
     _turn(world, _mirrored())
     assert mirror["rewrites"] == [] and len(mirror["listings"]) == listings
-    assert _detail(world)["error"] == "permissions: a stored copy is not this source's to write"
+    assert _own(world)["error"] == "permissions: a stored copy is not this source's to write"
 
 
 def test_a_source_removed_since_its_last_write_lands_no_listing_row(
@@ -891,7 +897,7 @@ def test_a_parked_publication_is_noted_as_needing_an_operator(
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z", permissions=READERS)]
     _turn(world, _mirrored())
     assert mirror["listings"] == []
-    assert "parked; see the knowledge delivery backlog" in _detail(world)["error"]
+    assert "parked; see the knowledge delivery backlog" in _own(world)["error"]
 
 
 def test_a_delivery_owed_at_the_read_and_parked_by_the_end_is_noted_parked_first(
@@ -910,7 +916,7 @@ def test_a_delivery_owed_at_the_read_and_parked_by_the_end_is_noted_parked_first
     world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
     _turn(world, _mirrored())
     assert mirror["listings"] == []
-    assert _detail(world)["error"].startswith("publication: a write is parked")
+    assert _own(world)["error"].startswith("publication: a write is parked")
 
 
 def test_a_parked_publication_is_shown_beside_a_failed_fetch(
@@ -926,7 +932,7 @@ def test_a_parked_publication_is_shown_beside_a_failed_fetch(
     ]
     world.file_answers["bad1"] = httpx.Response(503)
     _turn(world, _mirrored())
-    error = _detail(world)["error"]
+    error = _own(world)["error"]
     assert error.startswith("publication: a write is parked") and "503" in error
 
 

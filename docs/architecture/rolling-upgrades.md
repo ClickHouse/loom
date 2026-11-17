@@ -790,24 +790,41 @@ schema. These rules keep that safe. The operator procedure is in
     none) at `<address>#<source id>`, tagged `source-id:<id>`. Once the turn starts, it
     brings every stored copy's list to the store's (only narrowing a copy behind its
     file's revision), or to `unread` for a copy a whole listing does not have at its
-    address, bounded by the pass's deadline only; then it fetches and writes each new or
-    changed file with its list, and at the full interval retires a copy whose file is
-    gone, with no audit row, since the audit log outlives an erasure. A pass whose
-    document bound is spent before the turn starts reaches no mirrored source. The
-    listing's start goes to `loom.knowledge_source_listings` once every stored copy's
-    list is written. No request can add a mirrored source yet, so N meets none it did
-    not write, and N runs every mirrored `gdrive` source as one shared service account:
-    the build that adds sources of another credential mode stores them in a form
-    `mirror_synced` rejects while N may run. By rule 52, N-1 serves no mirrored source,
-    and it reads no listing row; an N-1 namespace erasure has no listings step, so it
-    leaves the mirror's listing rows (source names and times, no memory content), which
-    the next erasure of the namespace on N removes, since its scope holds every mirror
-    the namespace has had. N counts a document as searchable when its chunks are those
-    of its version or of its revision, which a row-only rewrite (a new list, a metadata
-    edit) keeps, so such a rewrite stays until the file changes; N-1 checks the version
-    alone, so after a metadata edit it fetches and writes the file again, as it does
-    today. `tests/unit/test_knowledge_source_sync_mirror.py` and
+    address (bounded as rule 55 says); then it fetches and writes each new or changed
+    file with its list, and at the full interval retires a copy whose file is gone, with
+    no audit row, since the audit log outlives an erasure. The listing's start goes to
+    `loom.knowledge_source_listings` once every stored copy's list is written. No
+    request can add a mirrored source yet, so N meets none it did not write, and N runs
+    every mirrored `gdrive` source as one shared service account: the build that adds
+    sources of another credential mode stores them in a form `mirror_synced` rejects
+    while N may run. By rule 52, N-1 serves no mirrored source, and it reads no listing
+    row; an N-1 namespace erasure has no listings step, so it leaves the mirror's
+    listing rows (source names and times, no memory content), which the next erasure of
+    the namespace on N removes, since its scope holds every mirror the namespace has
+    had. N counts a document as searchable when its chunks are those of its version or
+    of its revision, which a row-only rewrite (a new list, a metadata edit) keeps, so
+    such a rewrite stays until the file changes; N-1 checks the version alone, so after
+    a metadata edit it fetches and writes the file again, as it does today.
+    `tests/unit/test_knowledge_source_sync_mirror.py` and
     `tests/unit/test_knowledge_source_revisions_sql.py` check N's side.
+55. **The mirrored sources' share of a pass**: N runs the mirrored sources first, until
+    a third of the time the pass starts work in has passed (a quarter of
+    `knowledge_source_sync_max_pass_seconds`) and under their own document bound
+    (`LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`), the one synced longest ago
+    first, a sync request included; the namespace sources then have the rest of the pass
+    under their own bound. A mirrored source's turn keeps its own state under its mirror
+    and source id, leaving only its request, status and time in the namespace row. Its
+    model calls are attributed to the mirror. It reads the lists on from a cursor in
+    that state, in at most half of what is left of the mirrors' share when its turn
+    reaches them, so its new and
+    changed files still get time, and a turn whose list reads stop there is still
+    complete, so it retires gone files and keeps the full interval; a cycle's listing
+    row carries the start of the turn that began it. N-1 runs a mirrored source under
+    the whole pass's bounds and keeps its whole state in the namespace row; N reads
+    neither N-1's fields there nor N-1 the mirror row, so a mixed fleet reads some lists
+    again and retries some waits, and the next N turn drops N-1's fields from the
+    namespace row. No request can add a mirrored source yet.
+    `tests/unit/test_knowledge_source_mirror_pass.py` checks N's side.
 
 ## What checks them
 

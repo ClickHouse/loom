@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
+    field_serializer,
     model_serializer,
 )
 
@@ -470,6 +471,10 @@ _USAGE_FIELDS: tuple[str, ...] = (
 
 
 class _MemorySearchHit(BaseModel):
+    @field_serializer("agent")
+    def _writer_agent(self, value: str) -> str:
+        return self._row_identity[0] if self._row_identity is not None else value
+
     @model_serializer(mode="wrap")
     def _omit_unrequested(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # `tags` is on the wire only when the request asked for it: None = not
@@ -598,6 +603,8 @@ class _MemorySearchHit(BaseModel):
     # `entities` by the pool point-read; "" when not read. A store that writes
     # each actor under its own user_id says "User's Day 2 dinner is …" in the
     # row, so the owner is the only thing that names the actor.
+    # Writer of this readable row, or empty when the search leg has no row identity.
+    agent: str = ""
     user_id: str = ""
     # Retrieval layer: "fact" (loom.memory_embeddings) or "chunk" (verbatim,
     # loom.memory_chunks).

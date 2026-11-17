@@ -1623,6 +1623,7 @@ def test_a_parked_page_keeps_what_its_hits_are_checked_by(monkeypatch: pytest.Mo
     hit._row_chunk, hit._chunk_typed = ("a", "u", 2, "sha"), True
     back = search_pages.unparked(json.loads(json.dumps(search_pages._parked(hit))))
     assert back is not None
+    assert back.model_dump()["agent"] == "a"
     assert (back._row_identity, back._row_chunk, back._chunk_typed) == (
         ("a", "u", "s"),
         ("a", "u", 2, "sha"),

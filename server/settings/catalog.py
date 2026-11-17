@@ -2325,9 +2325,12 @@ class KnowledgeSettings(BaseModel):
     # at three quarters of it. At least 180: 90 for the sync, then 60 of read time for
     # one document's extraction and 30 for its writes before the deadline.
     knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=180)
-    # Documents one pass fetches, writes, retires or mines for decisions across all
-    # sources; the rest wait for the next pass.
+    # Documents one pass fetches, writes, retires or mines for decisions across the
+    # namespace sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents one pass fetches, writes and retires for the mirrored sources, apart from
+    # the namespace sources' per-pass bound, so a mirror's size never takes their share.
+    knowledge_source_mirror_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
     # turn tries no new file, notes how many as `too_many_documents`, and still updates
     # and retires. At most 200,000: each read of the stored copies grows with its square.
