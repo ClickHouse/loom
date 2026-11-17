@@ -9,6 +9,7 @@ import sys
 import pytest
 
 import server.cli.install as cli
+from server.cli.jsonc_edit import JsoncEditError, upsert_object_key
 from server.identity.app.token_clients import MCP_CLIENTS, client_config
 
 
@@ -1355,3 +1356,45 @@ def test_only_zed_settings_writes_skip_newline_translation(
     assert cli._install_codex_capture("https://h", "secret-token", dry_run=False)
     assert seen[1:] == [None, None]
     capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    "text",
+    ['{"note":1\u0661}', '{"note":' + ("1" * 5000) + "}"],
+)
+def test_a_non_ascii_or_huge_number_is_a_jsonc_edit_error(text: str) -> None:
+    with pytest.raises(JsoncEditError):
+        upsert_object_key(text, "context_servers", "loom", {"url": "http://h"})
+
+
+@pytest.mark.parametrize(
+    "original",
+    ['{"note":1\u0661}', '{"note":' + ("1" * 5000) + "}"],
+)
+def test_zed_refuses_a_bad_number_and_still_installs_cursor(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], original: str
+) -> None:
+    import argparse
+
+    zed = tmp_path / "settings.json"
+    cursor = tmp_path / "mcp.json"
+    before = original.encode()
+    zed.write_bytes(before)
+
+    def resolve(client: str):
+        return zed if client == "zed" else cursor
+
+    monkeypatch.setattr(cli, "_resolve_install_path", resolve)
+    parser = argparse.ArgumentParser()
+    cli._add_install_flags(parser)
+    args = parser.parse_args(
+        ["--client", "zed", "cursor", "--token", "T", "--server-url", "http://localhost:7777"]
+    )
+    assert cli._cmd_install(args) == 1
+    assert zed.read_bytes() == before
+    err = capsys.readouterr().err
+    assert "The file was not changed." in err
+    assert "http://localhost:7777/mcp" in err
+    assert json.loads(cursor.read_text())["mcpServers"]["loom"]["headers"]["Authorization"] == (
+        "Bearer T"
+    )

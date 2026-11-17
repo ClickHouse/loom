@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-_NUMBER = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?")
+_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
 # not a setting: nesting past this is refused so the call stack stays bounded
 _MAX_DEPTH = 64
 _ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
@@ -264,7 +264,10 @@ class _Parser:
         if match is None:
             raise JsoncEditError("invalid number")
         self.i = match.end()
-        return json.loads(match.group(0))
+        try:
+            return json.loads(match.group(0))
+        except ValueError as exc:
+            raise JsoncEditError("invalid number") from exc
 
     def _parse_value(self) -> Any:
         self._skip()
