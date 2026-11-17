@@ -177,7 +177,7 @@ class LoomSession:
             if not page.get("truncated"):
                 break
         rows.sort(key=lambda r: str(r["memory_key"]))
-        return rows if limit is None else rows[-limit:] if limit > 0 else []
+        return rows if limit is None else rows[-limit:]
 
     async def _value(self, row: dict[str, Any]) -> TResponseInputItem:
         """A row's item: the listed value, or the whole one by key when the list cut it
