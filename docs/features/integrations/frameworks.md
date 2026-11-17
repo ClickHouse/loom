@@ -15,8 +15,8 @@ or needs another database, vector store or cache.
 | LangChain                      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                     | `BaseRetriever`                                                          |
 | LangChain.js                   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain`     | `BaseRetriever` from `@langchain/core`                                   |
 | LlamaIndex                     | `LoomRetriever`, `LoomMemoryBlock`              | Python, `loom.integrations.llamaindex`                    | `BaseRetriever`, `BaseMemoryBlock`                                       |
-| OpenAI Agents SDK              | `loom_tools`, `LoomSession` | Python, `loom.integrations.openai_agents`                 | `FunctionTool`, the `Session` protocol |
-| OpenAI Agents SDK (TypeScript) | `loomTools`, `LoomSession` | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`, `Session` |
+| OpenAI Agents SDK              | `loom_tools`, `LoomSession`                     | Python, `loom.integrations.openai_agents`                 | `FunctionTool`, the `Session` protocol                                   |
+| OpenAI Agents SDK (TypeScript) | `loomTools`, `LoomSession`                      | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`, `Session`                                |
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                                                   |
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`                                             |
 | AG2                            | `LoomRecallPolicy`, `loom_tools`                | Python, `loom.integrations.ag2`                           | `ag2.assembly.AssemblyPolicy`, `tool()` from `ag2.tools`                 |
