@@ -1,10 +1,11 @@
-use std::{fmt, time::SystemTime};
+use std::time::SystemTime;
 
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use serde_json::Value;
 
 /// An HTTP error carrying the server's code, message and error classification.
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
+#[display("HTTP {status} [{code}] {message}")]
 #[non_exhaustive]
 pub struct ApiError {
     pub status: u16,
@@ -86,40 +87,25 @@ impl ApiError {
     }
 }
 
-impl fmt::Display for ApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HTTP {} [{}] {}", self.status, self.code, self.message)
-    }
-}
-
 impl std::error::Error for ApiError {}
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 #[non_exhaustive]
 pub enum Error {
+    #[display("invalid client configuration: {_0}")]
     Configuration(String),
+    #[display("invalid request: {_0}")]
     Input(String),
+    #[display("HTTP transport failed: {_0}")]
     Transport(reqwest::Error),
+    #[display("invalid JSON response (HTTP {status}): {source}")]
     #[non_exhaustive]
     Protocol {
         status: u16,
         source: serde_json::Error,
     },
+    #[display("{_0}")]
     Api(Box<ApiError>),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Configuration(message) => write!(f, "invalid client configuration: {message}"),
-            Self::Input(message) => write!(f, "invalid request: {message}"),
-            Self::Transport(source) => write!(f, "HTTP transport failed: {source}"),
-            Self::Protocol { status, source } => {
-                write!(f, "invalid JSON response (HTTP {status}): {source}")
-            }
-            Self::Api(error) => error.fmt(f),
-        }
-    }
 }
 
 impl std::error::Error for Error {

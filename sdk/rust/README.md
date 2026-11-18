@@ -28,8 +28,8 @@ clickhouse-loom = { path = "/path/to/loom/sdk/rust" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Rust 1.84+. Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand,
-httpdate and log. The crate name is `clickhouse-loom`; Rust imports it as
+Rust 1.84+. Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand, uuid,
+httpdate, log and derive_more. The crate name is `clickhouse-loom`; Rust imports it as
 `clickhouse_loom`.
 
 ## Use

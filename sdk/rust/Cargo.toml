@@ -16,6 +16,8 @@ reqwest = { version = "0.12.28", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+derive_more = { version = "2", features = ["display"] }
 log = "0.4"
 httpdate = "1"
 tokio = { version = "1", features = ["sync", "time"] }
