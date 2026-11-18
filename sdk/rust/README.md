@@ -7,11 +7,10 @@ This package contains the **client SDK only**. The server runs as the Docker ima
 `ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user
 install, or as a team deployment an operator runs.
 
-The Rust SDK provides async `set`, `get`, `search` and `delete` methods for memory.
-It binds org, namespace and agent once, reuses HTTP connections and returns typed
-responses.
+`Client` provides `set`, `get`, `search` and `delete` memory operations with typed
+responses. Calls are async and use the application's Tokio runtime.
 
-## Install from source
+## Install
 
 From your Rust application's directory, add the SDK from a local Loom checkout:
 
@@ -29,9 +28,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 Rust 1.84+. Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand,
-httpdate and log. Calls require
-the application's Tokio runtime; the SDK creates no runtime. The crate name is
-`clickhouse-loom`; Rust imports it as `clickhouse_loom`.
+httpdate and log. The crate name is `clickhouse-loom`; Rust imports it as
+`clickhouse_loom`.
 
 ## Use
 
@@ -74,12 +72,11 @@ Deployment paths (how an operator stands up the server):
 `Client::builder(org, namespace, agent)` accepts `base_url`, `api_key`, `timeout`,
 `user_id`, `session_id`, `retry`, `pacing` and `ratelimit_max_wait`.
 The default timeout is 60 seconds per attempt. It covers the whole HTTP request
-and response body. When unset,
-the endpoint comes from `LOOM_BASE_URL`, else `http://localhost:7777`;
-the token comes from `LOOM_API_KEY`, else no Authorization header is sent.
+and response body. The server address comes from `LOOM_BASE_URL`, defaulting to
+`http://localhost:7777`. The token comes from `LOOM_API_KEY`; without a token,
+requests carry no Authorization header.
 Explicit settings override the environment. `.api_key("")` disables authorization.
 Empty environment values are treated as unset.
-Login profiles and token files are not read.
 
 Builder user and session values apply to `set`, `get` and `delete`.
 Search defaults to `agent="*"` and omits user, session and namespace-scope filters.
@@ -88,12 +85,12 @@ Set `SearchRequest.agent_id`, `namespace_scope`, `user_id` or `session_id` to
 filter a search explicitly. Org and the addressed namespace remain bound to the client.
 
 Set requests support JSON values, memory type, tags, TTL, confidence and
-`if_match_sha256`. Top-level null is refused because `memory.set` accepts
-objects, arrays, strings, numbers and booleans. Options are sent only when `Some`;
-zero, false and empty collections remain values. The server applies unset defaults.
+`if_match_sha256`. Accepted JSON values are objects, arrays, strings, numbers
+and booleans. Top-level `null` is not accepted. Options are sent only when `Some`;
+zero, false and empty collections remain values. Unset options use server defaults.
 Search requests support top-k, tags, memory type and search mode.
 
-## API compatibility
+## Request and response types
 
 Public request, response and API error structs are `#[non_exhaustive]`.
 Create requests with `new`, then set the options you need:
@@ -109,9 +106,8 @@ also non-exhaustive: include a fallback arm when matching it. Match
 `Error::Protocol { status, source, .. }`. Error codes and categories are strings.
 
 Response decoding ignores unknown JSON fields. Optional fields use `Option<T>`
-or documented defaults.
-Required fields keep strict decoding: an absent `version`, `found`, `results`
-or `tombstoned` in the response that requires it is a protocol error.
+or documented defaults. Missing required response fields produce
+`Error::Protocol`.
 
 ## Results and errors
 
@@ -147,13 +143,16 @@ match bot.get("deploy_window").await {
 
 API errors preserve the server's code, message, optional category and retryable
 flag, retry hints, request ID and raw detail. Unknown error codes and categories
-remain strings. Non-JSON refusals still carry the HTTP status.
-Transport and invalid-success-response errors are separate variants.
+remain strings. An error response without a JSON body still carries the HTTP
+status. `Error::Transport` reports HTTP transport failures; `Error::Protocol`
+reports an invalid successful response.
+
+## Retries and logging
 
 Calls do not follow redirects. Retry and pacing defaults are:
 
 - Up to 3 attempts on connection failures, HTTP 408 and HTTP 500–599.
-  Configuration refusals and the SDK's excluded error codes stop retries;
+  Configuration errors and the SDK's excluded error codes stop retries;
   `retryable=false` alone does not stop a status retry.
 - Exponential backoff starts at 100 ms, doubles to a 5 second ceiling, and uses
   jitter in the range 0.75–1.25 times the delay. A valid `Retry-After` of up to
@@ -164,7 +163,7 @@ Calls do not follow redirects. Retry and pacing defaults are:
   writes by default. `get` and `search` do not retry those failures by default.
 - Pacing is enabled separately from retries. A 429 waits at most 5 seconds per
   round, with a 15 second total sleep budget per call. Missing, invalid or
-  over-cap hints use 1 second; a zero hint returns the refusal immediately.
+  over-cap hints use 1 second; a zero hint returns the error immediately.
   Each pacing round starts a fresh retry budget. Recorded `X-RateLimit-*`
   headers can also delay a subsequent call to the same operation.
 
@@ -196,12 +195,13 @@ Policies are validated on `build` and `with_retry`. `None` for
 To disable both automatic retries and 429 waiting, use
 `.retry(RetryPolicy::disabled()).pacing(false)`.
 
-The SDK emits debug attempt, warning retry/wait, info success and error failure
-records through the `log` facade under the `clickhouse_loom` target.
-The application installs its logger; the SDK does not install one.
-Records contain the operation, request ID, attempts and timing, without tokens,
-request bodies, endpoint URLs or server error text. Every request carries SDK
-identity headers, `X-Request-Id` and a cumulative `X-Loom-Retry-Count` starting at 0.
+The SDK logs through the `log` facade under the `clickhouse_loom` target:
+completed calls at INFO, retries and rate-limit waits at WARN, final failures at
+ERROR and attempts at DEBUG. Your application's logging configuration routes
+these records. Records contain the operation, request ID, attempts and timing.
+Tokens, request bodies, server addresses and server error text are not logged.
+Every request carries SDK identity headers, `X-Request-Id` and a cumulative
+`X-Loom-Retry-Count` starting at 0.
 
 A final transport failure may follow a committed write. An independent call
 generates a different idempotency key; read the result before submitting it again.
@@ -213,19 +213,16 @@ guarantee the server stops processing it.
 
 ## Examples
 
-See the [examples guide](examples/README.md) for configuration and output.
-
-[`examples/memory.rs`](examples/memory.rs) saves a memory, reads it, searches for it,
-deletes it and confirms it is absent. It uses a unique key and attempts exact-key
-cleanup on failure. Run it against an existing namespace:
+[`examples/memory.rs`](examples/memory.rs) — save → read → search → delete →
+confirm absence. Configuration, the call sequence and output are in the
+[examples guide](examples/README.md). Run from the repository root:
 
 ```bash
-LOOM_BASE_URL=http://localhost:7777 LOOM_API_KEY= LOOM_ORG=dev LOOM_NAMESPACE=local cargo run --example memory
+LOOM_BASE_URL=http://localhost:7777 LOOM_API_KEY= LOOM_ORG=dev LOOM_NAMESPACE=local cargo run --manifest-path sdk/rust/Cargo.toml --example memory
 ```
 
-The example uses lexical search to exercise retrieval without a hosted model.
-Use a fresh existing namespace so a semantically identical memory does not cause
-a merge.
+The example uses an existing namespace and lexical search scoped to its agent.
+Memory writes use the server's configured embedding provider.
 
 ## Tests
 

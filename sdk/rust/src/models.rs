@@ -191,7 +191,7 @@ pub struct SearchResponse {
     pub candidates_total: u64,
     #[serde(default)]
     pub next_page: String,
-    /// True when retrieval cannot honestly answer from the returned hits.
+    /// True when the returned hits do not support an answer.
     #[serde(default)]
     pub abstain: bool,
     #[serde(default)]
@@ -206,7 +206,7 @@ pub struct SearchResponse {
     pub term_leg: String,
     /// None means recall credit was not disclosed.
     pub reinforcement: Option<String>,
-    /// Pending saves mean a thin result is not evidence of absence.
+    /// Number of saves whose extraction is still pending.
     #[serde(default)]
     pub pending_extraction: u64,
     #[serde(default)]

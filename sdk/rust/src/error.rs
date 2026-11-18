@@ -3,7 +3,7 @@ use std::{fmt, time::SystemTime};
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use serde_json::Value;
 
-/// An HTTP refusal after retries or pacing, preserving the server's classification.
+/// An HTTP error carrying the server's code, message and error classification.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct ApiError {

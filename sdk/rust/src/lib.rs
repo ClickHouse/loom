@@ -1,4 +1,7 @@
-//! Async HTTP client for Loom's set, get, search and delete memory operations.
+//! Rust SDK for ClickHouse Loom, a self-hosted server that gives AI agents shared
+//! long-term memory, document search and a code index.
+//!
+//! [`Client`] provides async `set`, `get`, `search` and `delete` memory operations.
 //!
 //! Identity is bound once on [`Client`]. Calls return typed responses, and
 //! [`Error::Api`] preserves the server's error classification.
@@ -51,7 +54,7 @@
 //! }
 //! ```
 //!
-//! Constructing a request by listing every field is refused outside this crate:
+//! Request structs cannot be constructed with a struct literal outside this crate:
 //!
 //! ```compile_fail,E0639
 //! use clickhouse_loom::SearchRequest;
@@ -69,7 +72,7 @@
 //! };
 //! ```
 //!
-//! Error matches must allow additional variants:
+//! Match [`Error`] with a fallback arm:
 //!
 //! ```compile_fail,E0004
 //! use clickhouse_loom::Error;
@@ -84,7 +87,7 @@
 //! }
 //! ```
 //!
-//! Protocol error matches must allow additional fields:
+//! Destructure [`Error::Protocol`] with `..`:
 //!
 //! ```compile_fail,E0638
 //! use clickhouse_loom::Error;

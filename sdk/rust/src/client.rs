@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 
 const DEFAULT_URL: &str = "http://localhost:7777";
 
-/// A reusable async client bound to one identity.
+/// A client for ClickHouse Loom, bound to one identity.
 ///
 /// Clones share a connection pool and may issue requests concurrently.
 #[derive(Clone)]

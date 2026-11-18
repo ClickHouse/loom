@@ -1,13 +1,13 @@
 # Examples
 
-Runnable examples for `clickhouse-loom`. Each example uses the application's
-Tokio runtime and connects to an existing Loom namespace. See the
-[SDK README](../README.md) for installation and client configuration.
+Runnable examples for `clickhouse-loom`. The memory example uses an existing
+namespace. See the [SDK README](../README.md) for installation and client
+configuration.
 
 ## memory.rs
 
-[memory.rs](memory.rs) saves a memory, reads it, searches for it, deletes it and
-confirms it is absent.
+An agent that saves a memory, recalls it by key and lexical search, then deletes
+it. The code is in [memory.rs](memory.rs).
 
 Run from the repository root against a local Loom server:
 
@@ -20,8 +20,11 @@ The SDK reads `LOOM_BASE_URL` and `LOOM_API_KEY`; the default address is
 `http://localhost:7777`. For a team server, use its address, a writer token and
 an authorized org and namespace.
 
-`Client::builder(org, namespace, "rust-example")` binds the client's identity.
-The example uses a unique memory key for each invocation.
+`Client::builder(org, namespace, "rust-example")` binds org, namespace and agent
+for the example's calls. Each invocation uses a unique memory key. Memory writes
+use the server's configured embedding provider.
+
+The example runs these steps:
 
 1. `Client::set` — saves the memory and returns its ID and version.
 2. `Client::get` — checks that the saved value is returned.
