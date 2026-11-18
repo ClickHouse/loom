@@ -17,11 +17,16 @@ LOOM_AUTH_REQUIRED=false LOOM_BACKGROUND_WORKERS=off \
 LOOM_EMBEDDING_MODEL=fake-ngram-1024 LOOM_LLM_PROVIDER=fake \
 LOOM_INSTANCE_LABEL=local:integration \
   uvicorn server.main:app --port 7777 --loop asyncio &
-LOOM_BASE_URL=http://localhost:7777 pytest tests/integration -q
+LOOM_BASE_URL=http://localhost:7777 pytest tests/integration -q \
+  --ignore=tests/integration/test_mirror_checked_search_http.py \
+  --ignore=tests/integration/test_mirror_checked_list_http.py
 ```
 
 The CI job (`.github/workflows/ci.yml`, job `integration`) sets these
-variables. Use it as the reference environment.
+variables. Use it as the reference environment. The signed mirror search and list
+HTTP modules require the authenticated profile and assert that prerequisite. CI runs
+them in its auth-on isolation steps under both storage authorities; the ordinary
+profile above excludes them rather than weakening their permission assertions.
 
 ## Dependencies
 

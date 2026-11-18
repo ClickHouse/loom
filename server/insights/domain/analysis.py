@@ -4,8 +4,10 @@ read, and the ClickHouse access entities that hold a statement to them.
 The boundary is the database user, never a parse of the statement. The user
 `loom_analyst` gets column grants on the allowlist below and nothing else, a
 settings profile that pins `readonly`, the caps and the overflow modes, and on
-every allowlisted table a row policy that admits a row only when its `org` and
-`namespace` match the request's signed custom settings. Loom signs the scope
+each physical allowlisted table a row policy that admits a row only when its `org`
+and `namespace` match the request's signed custom settings. The event view masks
+marked protected values and enforces the same signed scope before caller predicates.
+Loom signs the scope
 with HMAC-SHA256 under a random key the first boot made and every replica
 reads (`loom.analysis_secrets`); the policy recomputes the HMAC inside
 ClickHouse, so a statement that sets other scope settings reads no rows.
@@ -30,7 +32,7 @@ from server.core.sql_literal import sql_string
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
 # back its narrower grants over N's (`needs_rewrite`).
-ENTITY_VERSION = 3
+ENTITY_VERSION = 4
 
 # ClickHouse server error codes.
 BAD_ARGUMENTS = 36
@@ -47,7 +49,8 @@ CAPS_PROFILE = "loom_analyst_caps"
 OTHERS_POLICY_NAME = "loom_analyst_others"
 # Tables that left the allowlist: each keeps a policy that reads nothing, so a
 # grant that outlives it (a write cut short) still reads no row.
-RETIRED_TABLES: tuple[str, ...] = ()
+RETIRED_TABLES: tuple[str, ...] = ("agent_events",)
+EVENTS_VIEW = "analysis_agent_events"
 # One row in a reserved scope, under a policy written last with the same key:
 # the probe's signed read of it shows the policies accept this replica's key.
 CANARY_TABLE = "analysis_canary"
@@ -99,6 +102,18 @@ class SettingNames:
 # Logged statement text is cut to "(removed N characters)"; the formatted copy,
 # which the cut misses, is not written. Cloud pins log_queries but not these.
 LOG_TEXT_CUT = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
+
+
+def provisioning_settings(names: SettingNames) -> dict[str, str | int]:
+    """Analyze signed views under an expired empty scope, only for their DDL query."""
+    return {
+        **LOG_TEXT_CUT,
+        names.org: "",
+        names.ns: "",
+        names.exp: "0",
+        names.sig: "",
+    }
+
 
 _BLOCK = 64  # SHA-256 block size, for HMAC's inner and outer pads
 
@@ -239,10 +254,11 @@ TABLES: tuple[Table, ...] = (
         live="superseded_at IS NULL",
     ),
     Table(
-        "agent_events",
-        "the request ledger: one row per op call",
+        EVENTS_VIEW,
+        "the request ledger with protected marked fields withheld",
         "one row per call, append only: filter on ts; upstream_cost_usd is model spend in "
-        "USD; an erased end user's rows read user_id '<erased>'",
+        "USD for ordinary calls; marked spend, model work and outcomes are neutral; "
+        "an erased end user's rows read user_id '<erased>'",
         (
             _c("ts", "DateTime64(3)", "when the call ended"),
             *_IDENTITY,
@@ -273,11 +289,17 @@ def allowlisted_tables() -> tuple[str, ...]:
     return tuple(t.name for t in TABLES)
 
 
+def policy_tables() -> tuple[Table, ...]:
+    """Physical allowlisted tables: the event view enforces the same signed scope itself."""
+    return tuple(t for t in TABLES if t.name != EVENTS_VIEW)
+
+
 def others_policy_tables() -> tuple[str, ...]:
     """Every table `entity_sql` puts the every-other-user policy on: the allowlist, the
-    retired tables and the canary. A foreign permissive policy on any of them would be
+    retired tables and the canary. The event view has its own signed predicate.
+    A foreign permissive policy on a physical table would be
     widened by it (`store.analysis.foreign_policies_sql` looks on each)."""
-    return (*allowlisted_tables(), *RETIRED_TABLES, CANARY_TABLE)
+    return (*(t.name for t in policy_tables()), *RETIRED_TABLES, CANARY_TABLE)
 
 
 def scope_payload(org: str, namespaces: str, exp: int, query_id: str) -> str:
@@ -416,6 +438,7 @@ def profile_settings() -> list[str]:
         "allow_introspection_functions = 0 CONST",
         # Server log lines sent back with a statement can quote the policies.
         "send_logs_level = 'none' CONST",
+        "format_display_secrets_in_show_and_select = 0 CONST",
         "use_query_condition_cache = 0 CONST",
     ]
 
@@ -501,6 +524,23 @@ def policy_sql(db: str, name: str, table: str, using: str, to: str) -> str:
     )
 
 
+def event_view_sql(db: str, names: SettingNames, key: bytes, event_columns: str) -> str:
+    """The typed event mask and signed scope under the provisioner's definer authority.
+
+    `event_columns` is the maintained internal projection, never caller SQL. The analyst
+    has no underlying raw grant. Secret-bearing expressions use the existing hidden
+    argument form; metadata and error disclosure remain subject to native isolation checks.
+    """
+    columns = next(t.columns for t in TABLES if t.name == EVENTS_VIEW)
+    selected = ", ".join(c.name for c in columns)
+    return (
+        f"CREATE OR REPLACE VIEW {db}.{EVENTS_VIEW} "
+        "DEFINER = CURRENT_USER SQL SECURITY DEFINER AS "
+        f"SELECT {selected} FROM (SELECT {event_columns} FROM {db}.agent_events AS raw) "
+        f"WHERE {policy_filter(names, key)} AND NOT match(namespace, '^acl-[0-9a-f]{{24}}$')"
+    )
+
+
 def entity_sql(
     db: str,
     names: SettingNames,
@@ -509,6 +549,8 @@ def entity_sql(
     caps: Caps,
     granted: frozenset[Grant] = frozenset(),
     roles: frozenset[str] = frozenset(),
+    *,
+    event_columns: str,
 ) -> list[str]:
     """Every statement that writes the analyst user, in an order that never
     leaves a granted table without its policy (ClickHouse lets a user with no
@@ -516,7 +558,8 @@ def entity_sql(
     every other user's before the analyst's so no user is ever left without
     one, then every grant and role the user holds outside the allowlist
     (`granted` and `roles` are what it holds now) is revoked, and then the
-    allowlist is granted, since a table's revoke also takes the column grants
+    event view is written, and then the allowlist is granted, since a table's revoke
+    also takes the column grants
     under it. The profile's pins come after every policy, so on an upgrade
     the older profile's `log_queries = 0` holds until no policy has the pads
     in clear, and before every grant, so a new pin is in force before the
@@ -534,7 +577,7 @@ def entity_sql(
         f"CREATE USER IF NOT EXISTS {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
         f"ALTER USER {user} {identified} SETTINGS PROFILE '{CAPS_PROFILE}'",
     ]
-    for t in TABLES:
+    for t in policy_tables():
         out.append(policy_sql(db, OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
         out.append(policy_sql(db, POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
     for name in RETIRED_TABLES:
@@ -547,6 +590,7 @@ def entity_sql(
     out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(profile))
     out += [_revoke(g, user) for g in sorted(granted) if not _allowed(g)]
     out += [f"REVOKE `{role}` FROM {user}" for role in sorted(roles)]
+    out.append(event_view_sql(db, names, key, event_columns))
     out += [
         f"GRANT SELECT({', '.join(c.name for c in t.columns)}) ON {db}.{t.name} TO {user}"
         for t in TABLES
@@ -556,7 +600,7 @@ def entity_sql(
         *profile,
         # A string, as ClickHouse stores a number setting as `UInt64_1`.
         f"{names.version} = '{ENTITY_VERSION}' CONST",
-        f"{names.digest} = {sql_string(_digest(db, profile))} CONST",
+        f"{names.digest} = {sql_string(_digest(db, profile, event_columns))} CONST",
     ]
     out.append(f"ALTER SETTINGS PROFILE {user} SETTINGS " + ", ".join(stamp))
     return out
@@ -592,7 +636,7 @@ def entity_digest(names: SettingNames, sql: list[str]) -> str:
     return ""
 
 
-def structure_digest() -> str:
+def structure_digest(event_columns: str) -> str:
     """The grants and policies a version names, caps aside, spelled with the
     `SQL_` prefix: a server's prefix is not part of a version. A unit test
     pins it to ENTITY_VERSION, so a change to either cannot ship without a
@@ -602,14 +646,15 @@ def structure_digest() -> str:
     parts += [f"retired:{name}" for name in RETIRED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
     parts += [policy_filter(SettingNames("SQL_"), b"\0" * 32), CANARY_TABLE]
+    parts += [event_view_sql("`loom`", SettingNames("SQL_"), b"\0" * 32, event_columns)]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 
 
-def _digest(db: str, profile: list[str]) -> str:
+def _digest(db: str, profile: list[str], event_columns: str) -> str:
     """What the entities hold, caps aside (the caps profile has its own), so a
     boot that would write the same leaves them. The key never changes, so it
     is not part of it."""
-    parts = [db, structure_digest(), *profile]
+    parts = [db, structure_digest(event_columns), *profile]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:32]
 
 

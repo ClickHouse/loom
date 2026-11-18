@@ -22,6 +22,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 class DocumentRow(BaseModel):
@@ -181,6 +182,22 @@ async def current_document_tally(
         params={"org": org, "ns": namespace},
     )
     return (int(row["n"]), row["latest"]) if row else (0, None)
+
+
+async def current_document_counts(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """Live documents directly in each requested namespace, including empty ones."""
+    if not namespaces:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT namespace, count() AS n FROM loom.documents FINAL "
+        "WHERE org = {org:String} AND namespace IN {ns:Array(String)} "
+        "AND superseded_at IS NULL GROUP BY namespace LIMIT {lim:UInt32}",
+        params={"org": org, "ns": namespaces, "lim": len(namespaces)},
+    )
+    return dict.fromkeys(namespaces, 0) | {str(r["namespace"]): int(r["n"]) for r in rows}
 
 
 async def get_many_by_uris(
@@ -819,7 +836,7 @@ async def agent_opens(
         """
         SELECT args['source_uri'] AS source_uri, count() AS reads,
                uniqExact(agent) AS agents, max(ts) AS last_read_at
-        FROM loom.agent_events
+        FROM {masked_events}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ts >= now64(3) - toIntervalDay({days:UInt8})
           AND operation = 'knowledge.get' AND success
@@ -829,7 +846,7 @@ async def agent_opens(
         GROUP BY source_uri
         ORDER BY reads DESC
         LIMIT 200
-        """,
+        """.replace("{masked_events}", MASKED_EVENTS),
         params={
             "org": org,
             "ns": namespace,

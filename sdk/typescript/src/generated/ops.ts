@@ -1920,6 +1920,8 @@ export interface CollectionListInput {
   org: string;
   /** Collections per page. */
   limit?: number;
+  /** Include the live document count directly in each collection; default false. */
+  include_document_counts?: boolean;
   /** The `next_cursor` of the previous page; none for the first. */
   cursor?: string | null;
 }
@@ -1931,6 +1933,8 @@ export interface CollectionEntry {
   role: string;
   description?: string;
   title?: string;
+  /** Live documents directly in this collection, excluding children; null unless requested. */
+  document_count?: number | null;
 }
 
 export interface CollectionListOutput {
@@ -3563,6 +3567,17 @@ export interface KnowledgeFormatsOutput {
   default_format?: string;
 }
 
+export interface KnowledgeGapsDraftInput {
+  org: string;
+  namespace: string;
+  /** The gap to draft, as returned by knowledge.gaps.list. */
+  gap_id: string;
+}
+
+export interface KnowledgeGapsDraftOutput {
+  candidate_id: string;
+}
+
 export interface KnowledgeGapsListInput {
   /** The org. */
   org: string;
@@ -4083,6 +4098,58 @@ export interface KnowledgeQueryOutput {
   receipt: QueryReceipt;
 }
 
+export interface KnowledgeQueryHistoryAddInput {
+  org: string;
+  namespace: string;
+  name: string;
+  host: string;
+  /** The ClickHouse HTTP interface port; default 8443. */
+  port?: number;
+  /** Whether the HTTP connection uses TLS; default true. */
+  secure?: boolean;
+  user: string;
+  password: string;
+  databases: string[];
+  cluster?: string;
+}
+
+export interface KnowledgeQueryHistoryAddOutput {
+  name: string;
+  source_id: string;
+  kind?: "clickhouse_queries";
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  databases: string[];
+  cluster?: string;
+  created_at: string; // date-time
+}
+
+export interface KnowledgeQueryHistoryListInput {
+  fields?: string[] | null;
+  org: string;
+  namespace: string;
+  /** Registered sources to return, at most; default 50. */
+  limit?: number;
+}
+
+export interface KnowledgeQueryHistoryListOutput {
+  enabled?: boolean;
+  sources?: KnowledgeQueryHistoryAddOutput[];
+}
+
+export interface KnowledgeQueryHistoryRemoveInput {
+  org: string;
+  namespace: string;
+  /** The registration name of the query-history source to remove. */
+  name: string;
+}
+
+export interface KnowledgeQueryHistoryRemoveOutput {
+  removed: boolean;
+}
+
 export interface KnowledgeReadsInput {
   org: string;
   namespace: string;
@@ -4333,7 +4400,7 @@ export interface KnowledgeSourceRemoveInput {
   name: string;
   /** Type the source name to confirm. */
   confirm: string;
-  /** Record a request to retire the source's documents (default keep them). */
+  /** Retire a namespace source's documents (default keep); implied for mirrored sources. */
   delete_documents?: boolean;
 }
 
@@ -4517,6 +4584,7 @@ export interface LearningEntry {
   supporters: string[];
   rationale: string;
   source_kind?: string;
+  source_resource_id?: string;
   agent?: string;
   status: "pending" | "promoted" | "rejected";
   proposed_at: string; // date-time
@@ -4761,6 +4829,7 @@ export interface MemorySearchHit {
   distance: number;
   similarity: number;
   below_threshold?: boolean | null;
+  governed?: boolean | null;
   tags?: string[] | null;
   reinforcement_count?: number | null;
   used_count?: number | null;
@@ -4775,6 +4844,7 @@ export interface MemorySearchHit {
   valid_at?: string;
   via_path?: string[];
   entities?: string[];
+  agent?: string;
   user_id?: string;
   source?: string;
   parent_memory_key?: string;
@@ -6810,7 +6880,7 @@ export interface MemorySearchInput {
   exclude_keys?: string[];
   quality_filter?: boolean;
   read_scope?: "namespace" | "own_user" | "own_session";
-  /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
+  /** Up to 64 names; if non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
   /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
@@ -6896,6 +6966,7 @@ export interface MemorySearchOutput {
   score_explanation?: string;
   retrieval_confidence?: number;
   retrieval_risk?: "low" | "medium" | "high" | "abstain";
+  term_leg?: "complete" | "empty" | "capped" | "timed_out" | "failed" | "off";
   route_agreement?: number;
   calibration_explanation?: string;
   fallback_rounds_used?: number;
@@ -6937,7 +7008,7 @@ export interface MemorySearchTraceInput {
   exclude_keys?: string[];
   quality_filter?: boolean;
   read_scope?: "namespace" | "own_user" | "own_session";
-  /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
+  /** Up to 64 names; if non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
   /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
@@ -10407,6 +10478,7 @@ export type OpName =
   | "knowledge.dedup_resolve"
   | "knowledge.delete"
   | "knowledge.formats"
+  | "knowledge.gaps.draft"
   | "knowledge.gaps.list"
   | "knowledge.get"
   | "knowledge.ingest"
@@ -10417,6 +10489,9 @@ export type OpName =
   | "knowledge.move"
   | "knowledge.outline"
   | "knowledge.query"
+  | "knowledge.query_history.add"
+  | "knowledge.query_history.list"
+  | "knowledge.query_history.remove"
   | "knowledge.reads"
   | "knowledge.restore"
   | "knowledge.search"
@@ -10776,6 +10851,7 @@ export interface OpMap {
   "knowledge.dedup_resolve": { input: KnowledgeDedupResolveInput; output: KnowledgeDedupResolveOutput };
   "knowledge.delete": { input: KnowledgeDeleteInput; output: KnowledgeDeleteOutput };
   "knowledge.formats": { input: KnowledgeFormatsInput; output: KnowledgeFormatsOutput };
+  "knowledge.gaps.draft": { input: KnowledgeGapsDraftInput; output: KnowledgeGapsDraftOutput };
   "knowledge.gaps.list": { input: KnowledgeGapsListInput; output: KnowledgeGapsListOutput };
   "knowledge.get": { input: KnowledgeGetInput; output: KnowledgeGetOutput };
   "knowledge.ingest": { input: KnowledgeIngestInput; output: KnowledgeIngestOutput };
@@ -10786,6 +10862,9 @@ export interface OpMap {
   "knowledge.move": { input: KnowledgeMoveInput; output: KnowledgeMoveOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.query": { input: KnowledgeQueryInput; output: KnowledgeQueryOutput };
+  "knowledge.query_history.add": { input: KnowledgeQueryHistoryAddInput; output: KnowledgeQueryHistoryAddOutput };
+  "knowledge.query_history.list": { input: KnowledgeQueryHistoryListInput; output: KnowledgeQueryHistoryListOutput };
+  "knowledge.query_history.remove": { input: KnowledgeQueryHistoryRemoveInput; output: KnowledgeQueryHistoryRemoveOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
   "knowledge.restore": { input: KnowledgeRestoreInput; output: KnowledgeRestoreOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
@@ -11145,6 +11224,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.dedup_resolve", group: "knowledge", method: "dedupResolve", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.delete", group: "knowledge", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "knowledge.formats", group: "knowledge", method: "formats", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5500, audit: false, readOnly: true },
+  { name: "knowledge.gaps.draft", group: "knowledge", method: "gapsDraft", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "knowledge.gaps.list", group: "knowledge", method: "gapsList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "knowledge.get", group: "knowledge", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 30, audit: false, readOnly: true },
   { name: "knowledge.ingest", group: "knowledge", method: "ingest", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
@@ -11155,6 +11235,9 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.move", group: "knowledge", method: "move", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 8000, audit: true, readOnly: false },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
+  { name: "knowledge.query_history.add", group: "knowledge", method: "queryHistoryAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.query_history.list", group: "knowledge", method: "queryHistoryList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
+  { name: "knowledge.query_history.remove", group: "knowledge", method: "queryHistoryRemove", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.restore", group: "knowledge", method: "restore", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
@@ -11383,4 +11466,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 366;
+export const GENERATED_OP_COUNT = 370;

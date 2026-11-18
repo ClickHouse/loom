@@ -10,6 +10,7 @@ subject, grants and namespaces; no new one is made.
 
 from __future__ import annotations
 
+import re
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
@@ -100,6 +101,55 @@ async def link_live(
     return live
 
 
+def hosted_domain(claim: object) -> str:
+    """A signed DNS domain, normalized for exact permission matching."""
+    if not isinstance(claim, str) or not claim or len(claim) > 253:
+        return ""
+    domain = claim.lower()
+    labels = domain.split(".")
+    if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in labels):
+        return ""
+    return domain
+
+
+async def attest_domain(email: str, org: str, owner: str, claims: dict[str, Any]) -> None:
+    """Record verified sign-in evidence only while the same passwordless owner holds it."""
+    from server.auth.grant_claims import account_change
+    from server.core.ch import own_write_reads
+
+    ch = get_client()
+    where = (
+        "org = {org:String} AND owner_email = {owner:String} "
+        "AND contact_email = {email:String} AND active = 1 AND password_hash = ''"
+    )
+    params = {"org": org, "owner": owner, "email": email.strip().lower()}
+    query = "SELECT namespace FROM loom.namespaces FINAL WHERE " + where
+    with own_write_reads():
+        candidates = await ch.query_all(query, params=params)
+        if not candidates:
+            return
+        names = sorted({r["namespace"] for r in candidates})
+        async with AsyncExitStack() as held:
+            for namespace in names:
+                await held.enter_async_context(account_change(org, namespace))
+            rows = await ch.query_all(
+                query + " AND namespace IN {names:Array(String)}",
+                params={**params, "names": names},
+            )
+            if not rows:
+                return
+            issuer = claims.get("iss")
+            await _write(
+                email,
+                [(org, r["namespace"]) for r in rows],
+                owner,
+                linked=1,
+                hosted_domain=hosted_domain(claims.get("hd")),
+                issuer=issuer if isinstance(issuer, str) else "",
+                ch=ch,
+            )
+
+
 async def linked(email: str) -> list[tuple[str, str]]:
     """The (org, namespace) accounts linked to `email`."""
     rows = await get_client().query_all(
@@ -145,7 +195,14 @@ async def unlink(email: str, accounts: list[tuple[str, str]], linked_by: str) ->
 
 
 async def _write(
-    email: str, accounts: list[tuple[str, str]], by: str, *, linked: int, ch: Any = None
+    email: str,
+    accounts: list[tuple[str, str]],
+    by: str,
+    *,
+    linked: int,
+    ch: Any = None,
+    hosted_domain: str = "",
+    issuer: str = "",
 ) -> None:
     """Write the link rows through `ch`; the grant watermark goes through the
     default client (`grant_cache.changed`), as every grant write's does."""
@@ -172,6 +229,8 @@ async def _write(
                         "org": org,
                         "namespace": namespace,
                         "linked": linked,
+                        "hosted_domain": hosted_domain,
+                        "issuer": issuer,
                         "linked_by": by,
                         "linked_at": now,
                         "version": version,

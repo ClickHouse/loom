@@ -5,14 +5,18 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.diagnostics import private_work
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.knowledge.app.source_access import ReadPlan
+from server.knowledge.app.source_search_proofs import SearchProofs
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
-from server.memory.app.agent_rules import request_rule_agent, served_hits
+from server.memory.app.stack_knowledge import StackKnowledge
 
 log = logging.getLogger(__name__)
 
@@ -265,93 +269,24 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
         log.warning("memory.stack: procedure.match fan-out failed (non-fatal): %s", e)
 
 
-async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str) -> None:
-    """Section 5 (optional): the top-K knowledge hits keyed on `seed` that serve this
-    agent (agent_rules.served_hits drops another bot's promoted rules), noise sections
-    left out with `knowledge_noise_filter` on."""
-    try:
-        from server.embedding import get_embedder as _gemb
-        from server.knowledge.app.knowledge_search import not_noise
-        from server.knowledge.app.pg_serving import served_search
-        from server.knowledge.app.search import HybridSearchQuery as _KSQ
-        from server.knowledge.app.search import hybrid_search
-
-        embedder = _gemb()
-        q_vec = await embedder.embed(seed)
-        agent = request_rule_agent(input.agent)
-        top_k = int(input.knowledge_top_k)
-
-        async def ranked(k: int) -> list[Any]:
-            return await hybrid_search(
-                _KSQ(
-                    org=input.org,
-                    namespaces=(input.namespace,),
-                    embedding_model=embedder.model_name,
-                    query_vec=q_vec,
-                    top_k=k,
-                )
+def _render(fill: _StackFill, hits: list[Any]) -> MemoryStackOutput:
+    fill = replace(fill, entries=list(fill.entries), section_counts=dict(fill.section_counts))
+    for hit in hits:
+        value = str(getattr(hit, "content", "") or "")
+        if not value:
+            continue
+        cost = _est_tokens(value)
+        if not fill.fits(cost):
+            break
+        fill.add(
+            _StackEntry(
+                section="knowledge",
+                memory_key=str(getattr(hit, "source_uri", "") or ""),
+                memory_type="knowledge",
+                value=value,
+                tokens=cost,
             )
-
-        async def search(k: int) -> list[Any]:
-            # The ones their documents' current versions serve (`pg_serving`).
-            return (await served_search(input.org, ranked, k))[0]
-
-        # Another bot's promoted rule is not a rule about this agent, and a noise section
-        # (meeting notes, a status report) stays out of a bundle handed over unasked.
-        khits = await served_hits(
-            await search(top_k),
-            search,
-            lambda h: h.tags,
-            agent,
-            top_k,
-            keep=not_noise(),
         )
-        for h in khits:
-            val = str(getattr(h, "content", "") or "")
-            if not val:
-                continue
-            cost = _est_tokens(val)
-            if not fill.fits(cost):
-                break
-            fill.add(
-                _StackEntry(
-                    section="knowledge",
-                    memory_key=str(getattr(h, "source_uri", "") or ""),
-                    memory_type="knowledge",
-                    value=val,
-                    tokens=cost,
-                )
-            )
-    except Exception as e:  # noqa: BLE001 — a failed knowledge section must not fail the stack
-        log.warning("memory.stack: knowledge fan-out failed (non-fatal): %s", e)
-
-
-async def handle_memory_stack(input: MemoryStackInput) -> MemoryStackOutput:
-    """Compose a token-budgeted recall bundle of profile + pinned +
-    recent_recall (+ optional procedure + optional knowledge).
-
-    Per-section ordering:
-      - profile: delegates to profile.render (same format as the SPA)
-      - pinned:  by version DESC
-      - recent_recall: by recall_count + evidence_count, last_recalled_at tiebreak
-      - procedure: top-K via procedure.match when seed_query is set
-      - knowledge: top-K hybrid search keyed on seed_query (else the most-recent
-        recall excerpt), without other bots' promoted rules
-
-    Token estimate is `len(value) // 4` (rough char-to-token approximation).
-    """
-    ch = get_client()
-    fill = _StackFill(budget=input.token_budget)
-    await _stack_profile(input, fill)
-    await _stack_pinned(ch, input, fill)
-    most_recent_excerpt = await _stack_recent(ch, input, fill)
-    # Knowledge/procedure query: seed_query wins, else the most-recent
-    # recall excerpt.
-    seed = (input.seed_query or "").strip() or most_recent_excerpt
-    if input.seed_query and input.procedure_limit > 0:
-        await _stack_procedures(input, fill)
-    if input.include_knowledge and input.knowledge_top_k > 0 and seed:
-        await _stack_knowledge(input, fill, seed)
     return MemoryStackOutput(
         entries=fill.entries,
         tokens_used=fill.used,
@@ -359,3 +294,85 @@ async def handle_memory_stack(input: MemoryStackInput) -> MemoryStackOutput:
         truncated=fill.truncated,
         section_counts=fill.section_counts,
     )
+
+
+@dataclass
+class CheckedStack:
+    _prefix: _StackFill
+    _knowledge: StackKnowledge | None
+    marked: bool
+    _knowledge_used: bool = field(default=False, init=False)
+
+    @property
+    def lost(self) -> bool:
+        return self._knowledge is not None and self._knowledge.lost
+
+    @property
+    def output(self) -> MemoryStackOutput:
+        output = _render(self._prefix, self._knowledge.hits if self._knowledge else [])
+        self._knowledge_used = output != _render(self._prefix, [])
+        return output
+
+    def publication_proofs(self) -> tuple[SearchProofs, ...]:
+        if not self._knowledge_used or self._knowledge is None or self._knowledge.lost:
+            return ()
+        return (self._knowledge.proofs,) if self._knowledge.proofs is not None else ()
+
+    def fresh(self) -> bool:
+        return self._knowledge is None or self._knowledge.fresh()
+
+    async def ordinary(self) -> MemoryStackOutput:
+        if self._knowledge is not None:
+            self._knowledge.ordinary()
+        return self.output
+
+    async def current(self) -> MemoryStackOutput:
+        with private_work() if self.marked else nullcontext():
+            if self._knowledge is not None:
+                await self._knowledge.current()
+            return self.output
+
+
+async def run_checked_stack(input: MemoryStackInput, plan: ReadPlan) -> CheckedStack:
+    if input.org != plan.org:
+        raise ValueError("document read scope changed")
+    input = input.model_copy(deep=True)
+    with private_work() if plan.marked else nullcontext():
+        ch = get_client()
+        fill = _StackFill(budget=input.token_budget)
+        await _stack_profile(input, fill)
+        await _stack_pinned(ch, input, fill)
+        most_recent_excerpt = await _stack_recent(ch, input, fill)
+        seed = (input.seed_query or "").strip() or most_recent_excerpt
+        if input.seed_query and input.procedure_limit > 0:
+            await _stack_procedures(input, fill)
+        knowledge = None
+        if input.include_knowledge and input.knowledge_top_k > 0 and seed:
+            from server.memory.app import stack_knowledge
+
+            try:
+                knowledge = await stack_knowledge.collect(
+                    input.org, input.namespace, input.agent, seed, int(input.knowledge_top_k), plan
+                )
+            except Exception as e:  # noqa: BLE001 — a failed knowledge section must not fail the stack
+                log.warning("memory.stack: knowledge fan-out failed (non-fatal): %s", e)
+        return CheckedStack(fill, knowledge, plan.marked)
+
+
+async def handle_memory_stack(input: MemoryStackInput) -> MemoryStackOutput:
+    """Compose a token-budgeted profile, pinned, recent, procedure and knowledge bundle."""
+    from server.knowledge.app import source_access
+
+    input = input.model_copy(deep=True)
+    plan = (
+        await source_access.prepare(input.org, [input.namespace])
+        if input.include_knowledge and input.knowledge_top_k > 0
+        else ReadPlan(input.org)
+    )
+    from server.knowledge.app import source_publication
+
+    checked = await run_checked_stack(input, plan)
+    output = await checked.current()
+    for proof in checked.publication_proofs():
+        source_publication.retain(proof)
+    return output

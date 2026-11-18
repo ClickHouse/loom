@@ -282,14 +282,16 @@ async def own_grant_lines(
     return [str(line) for (line,) in rows]
 
 
-async def write_entities(statements: list[str], *, ch: _CHClient | None = None) -> None:
+async def write_entities(
+    statements: list[str], *, names: boundary.SettingNames, ch: _CHClient | None = None
+) -> None:
     """Send the entity statements in order; the first refusal stops them.
     They hold the analyst's password and the scope key, so their text stays
     out of system.query_log, and they stay out of the statement capture file."""
     ch = ch or _default_client()
     with uncaptured():
         for sql in statements:
-            await ch.execute(sql, settings=boundary.LOG_TEXT_CUT)
+            await ch.execute(sql, settings=boundary.provisioning_settings(names))
 
 
 def target_database() -> str:
@@ -301,6 +303,8 @@ def target_database() -> str:
 # it holds grants on, so the probe asks for what it must not. LIMIT 1: a
 # LIMIT 0 statement can finish before ClickHouse checks columns.
 REFUSED_READS = {
+    "agent_events": "SELECT count() FROM {db}.agent_events",
+    "agent_events.upstream_cost_usd": "SELECT upstream_cost_usd FROM {db}.agent_events LIMIT 1",
     "system.query_log": "SELECT count() FROM system.query_log",
     "system.users": "SELECT count() FROM system.users",
     "memory.value": "SELECT toString(value) FROM {db}.memory LIMIT 1",

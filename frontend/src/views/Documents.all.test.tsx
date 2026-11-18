@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   searchKnowledge: vi.fn(),
   listMine: vi.fn(),
   listGrants: vi.fn(),
+  moveKnowledge: vi.fn(),
   getKnowledge: vi.fn(async () => ({ found: true, content: "text" })),
   fetchKnowledgePreview: vi.fn(async () => null),
 }));
@@ -138,6 +139,7 @@ describe("All documents", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Services agreement" }));
     const menu = await screen.findByRole("menu", { name: "Actions for Services agreement" });
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toHaveAttribute("aria-disabled", "true");
+    expect(within(menu).getByRole("menuitem", { name: "Add to collection…" })).toHaveAttribute("aria-disabled", "true");
     expect(menu).toHaveTextContent("Legal");
   });
 
@@ -150,6 +152,9 @@ describe("All documents", () => {
     const move = within(bar).getByRole("button", { name: "Move to…" });
     expect(move).toHaveAttribute("aria-disabled", "true");
     expect(move).toHaveAccessibleDescription("Move to… takes documents from one place at a time.");
+    const add = within(bar).getByRole("button", { name: "Add to collection…" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAccessibleDescription("Add to collection… takes documents from one place at a time.");
     await userEvent.click(within(bar).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(api.bulkDeleteKnowledge).toHaveBeenCalledTimes(2));
     expect(api.bulkDeleteKnowledge).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, ["notes/plan.md"]);
@@ -183,6 +188,71 @@ describe("All documents", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
     const own = await screen.findByRole("dialog", { name: "Move 1 document" });
     expect(within(own).getByText("From Namespace team")).toBeInTheDocument();
+  });
+
+  it("offers writable collections for a row and leaves its source intact when Add to collection is cancelled", async () => {
+    render(<Documents />);
+    await screen.findByText("Drain a lane");
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Drain a lane" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Add to collection…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add 1 document to a collection" });
+    expect(within(dialog).getByText("From Engineering")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: /To/ }));
+    const mine = await screen.findByText("My files", { selector: ".collection-depth" });
+    const offered = [...mine.closest("[role=dialog]")!.querySelectorAll(".collection-depth")].map((o) => o.textContent);
+    expect(offered).toEqual(["My files"]);
+    await userEvent.click(mine);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.moveKnowledge).not.toHaveBeenCalled();
+    expect(screen.getByText("Drain a lane")).toBeInTheDocument();
+    expect(
+      within(screen.getByText("Drain a lane").closest("[data-doc-row]") as HTMLElement).getByRole("link", {
+        name: "Engineering",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("adds a bulk selection from its source collection in All documents, and Move still offers the header namespace", async () => {
+    const more = [...EVERY, doc("col-eng", "runbooks/fill.md", "Fill a lane")];
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }, opts: ListOpts) => ({
+      rows: more.filter((r) => [id.namespace, ...(opts.namespaces ?? [])].includes(r.namespace)),
+      next_cursor: null,
+    }));
+    api.moveKnowledge.mockImplementation(async (_id, _to, uris, _signal, onCall) => {
+      const results = uris.map((source_uri: string) => ({ source_uri, moved: true, reason: "" }));
+      onCall(results);
+      return { found: true, results };
+    });
+    render(<Documents />);
+    await screen.findByText("Fill a lane");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Drain a lane" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Fill a lane" }));
+    await userEvent.click(
+      within(screen.getByLabelText("Search and filters")).getByRole("button", { name: "Add to collection…" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add 2 documents to a collection" });
+    expect(
+      within(dialog).getByText("Adding moves 2 documents out of Engineering. Each document lives in one place."),
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: /To/ }));
+    await userEvent.click(await screen.findByText("My files", { selector: ".collection-depth" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(api.moveKnowledge).toHaveBeenCalledWith(
+        { org: "acme", namespace: "col-eng" },
+        "col-me",
+        ["runbooks/drain.md", "runbooks/fill.md"],
+        expect.any(AbortSignal),
+        expect.any(Function),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Drain a lane" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Move to…" }));
+    const move = await screen.findByRole("dialog", { name: "Move 1 document" });
+    await userEvent.click(within(move).getByRole("button", { name: /To/ }));
+    expect(await screen.findByText("Namespace team", { selector: ".collection-depth" })).toBeInTheDocument();
   });
 
   it("says a server that reads one place per call shows only the first, never all of them", async () => {
@@ -830,6 +900,7 @@ describe("The Library's search scope", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for Team plan" }));
     const menu = await screen.findByRole("menu", { name: "Actions for Team plan" });
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toHaveAttribute("aria-disabled", "true");
+    expect(within(menu).getByRole("menuitem", { name: "Add to collection…" })).toHaveAttribute("aria-disabled", "true");
     expect(menu).toHaveTextContent("Your role on this namespace is still loading.");
   });
 

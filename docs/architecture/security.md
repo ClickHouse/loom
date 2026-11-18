@@ -56,6 +56,24 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
   operation transport: 401 `AUTH_INVALID` for a missing, foreign-scheme or failing token;
   503 `AUTH_UNAVAILABLE` with `Retry-After` while revocation or the keyring is not loaded.
 
+**Mirrored reader identity.** `server/auth/reader_identity.py` selects the person a
+credential may read document permission lists as. A primary sign-in token with `sid`
+and no `creator` reads as its own subject. A delegated token reads as its creator only
+with the signed Boolean `reads_as_creator` claim. Missing means false; a non-Boolean
+claim refuses the token. An on-behalf request, an end-user identity and auth-off mode
+name nobody. A subject spelling proves neither a verified email nor a hosted domain.
+
+`POST /v1/me/personal_tokens.create` sets this claim only from a person's primary
+first-party sign-in session. It rejects service accounts, delegated tokens,
+third-party sessions and on-behalf headers before saving anything. Its grant ceilings,
+restricted grants, expiry and revocation follow the service-account mint; its saved
+row has `kind=personal_agent`. Row kind grants no access. The general
+`service_accounts.create` route ignores any body-supplied reader claim. Ordinary
+delegation never copies it. The assistant sets it explicitly for one answer only when
+its caller names the same person as the delegated creator; an answer's child loses it.
+Mirrored source registration remains unavailable while the document-access and session
+protections are incomplete ([document sources](document-sources.md#who-may-read)).
+
 **Signing keys.** `LOOM_JWT_SECRET` is the root secret: it signs as kid `default` and
 seals the private half of every other key in `loom.signing_keys`, so a database reader
 without it cannot mint tokens. Every process loads the keyring at boot and every
@@ -526,6 +544,17 @@ the account's claims and is still reached by a subject revocation
 of an account that registered someone else's address also revokes that address; release
 such an account instead.
 
+The mirrored-reader identity resolver reads verified contact rows without an alias
+cache. A canonical owner remains identifiable without a verified email; neither a raw
+email-shaped subject nor a connected-account address proves an email permission. Direct
+OIDC sign-in records the signed `iss` and valid `hd` in `sso_links`, after the SCIM check,
+under the account's ownership lock and a fresh passwordless-account check. Domain
+permissions require that same active contact and linked row, a passwordless account and
+the configured issuer. Email suffixes and the JIT domain allowlist prove no domain
+membership. A missing domain claim, link change, account release or issuer change denies
+the domain. These identity inputs do not expose mirrored documents; mirrored source
+creation remains unavailable until the read and session protections are complete.
+
 With `LOOM_SCIM_TOKEN` set, the provider deactivates people over SCIM 2.0 (`/scim/v2`,
 `server/auth/scim.py`); that bearer token, compared in constant time, is the only credential
 those routes take. Loom refuses to start with one shorter than 32 characters, and with
@@ -879,8 +908,9 @@ its value.
   check refuses. The sign-in pages under `/oauth/` run no script and send the same policy:
   their URLs can carry a user code or an authorization request, so no other site receives
   them as a referrer, and their form POSTs carry the page's own `Origin`.
-- HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
-  terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
+- HSTS, without `includeSubDomains` or `preload`: browsers reach Loom through a TLS
+  terminator, whether Loom's own port serves plain HTTP or HTTPS (`LOOM_TLS_CERT_FILE`),
+  and a browser ignores the header over plain HTTP and honours it over HTTPS.
 
 **Route policies.** The dashboard page carries a Content-Security-Policy whose
 `script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,

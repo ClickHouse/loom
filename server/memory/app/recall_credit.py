@@ -46,6 +46,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.diagnostics import public_diagnostics
 from server.observability.consumer import (
     CLASS_ANONYMOUS,
     CLASS_SERVICE_ACCOUNT,
@@ -55,6 +56,7 @@ from server.observability.consumer import (
     current_consumer,
     current_consumer_source,
 )
+from server.observability.store.event_reads import MASKED_EVENTS
 
 log = logging.getLogger(__name__)
 
@@ -194,9 +196,10 @@ async def decide_recall_credit(
 # post, via note_closer).
 _CLOSER_CACHE: dict[tuple[str, str], tuple[bool, float]] = {}
 
-_CLOSER_SQL = """
+_CLOSER_SQL = (
+    """
 SELECT 1 AS seen
-FROM loom.agent_events
+FROM {masked_events}
 WHERE org = {org:String}
   AND consumer = {consumer:String}
   AND operation IN {ops:Array(String)}
@@ -204,6 +207,7 @@ WHERE org = {org:String}
   AND ts >= now() - INTERVAL {days:UInt32} DAY
 LIMIT 1
 """
+).replace("{masked_events}", MASKED_EVENTS)
 
 
 def _ttl_seconds() -> float:
@@ -249,6 +253,8 @@ async def consumer_closed_loop(org: str, consumer: str, *, ch: Any | None = None
 def note_closer(org: str, consumer: str | None) -> None:
     """A closer just landed for (org, consumer) on this worker: the next
     read is credited without waiting for the negative cache to expire."""
+    if not public_diagnostics():
+        return
     c = str(consumer or "").strip()
     if not c:
         return

@@ -366,7 +366,7 @@ Raised in `server/memory/app/blacklist.py`.
 
 #### `BLOB_GONE`
 
-Raised in `server/knowledge/app/download_routes.py`.
+Raised in `server/knowledge/app/download_routes.py`, `server/knowledge/app/source_downloads.py`.
 
 #### `BLOCK_PROMOTION_REFUSED`
 
@@ -670,7 +670,7 @@ Raised in `server/code/app/repo_admin.py`.
 
 #### `NOT_FOUND`
 
-Raised in `server/identity/app/me_service_accounts.py`, `server/knowledge/app/download_routes.py`, `server/knowledge/app/writes.py`, `server/memory/app/blacklist.py`.
+Raised in `server/identity/app/me_service_accounts.py`, `server/knowledge/app/download_routes.py`, `server/knowledge/app/source_downloads.py`, `server/knowledge/app/writes.py`, `server/memory/app/blacklist.py`.
 
 #### `NO_CELL`
 
@@ -791,6 +791,10 @@ Raised in `server/code/app/repo_admin.py`.
 #### `REPO_QUOTA`
 
 Raised in `server/code/app/repo_admin.py`.
+
+#### `REQUEST_INTERRUPTED`
+
+Raised in `server/observability/ledger.py`.
 
 #### `RESERVED_BLOB_KEY`
 
@@ -951,6 +955,10 @@ Raised in `server/memory/app/apply.py`, `server/memory/app/lock.py`, `server/mem
 #### `VALIDATION_FAILED`
 
 HTTP 422, raised as `server.core.errors.ValidationError`. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+
+#### `VECTOR_INPUT_TOO_LARGE`
+
+HTTP 422, raised as `server.core.errors.VectorInputTooLargeError`. 422 — an entity filter exceeds 64 raw names, or its canonical aliases or summary seeds exceed 256 distinct names. Category `input`, retryable: no.
 
 #### `VIEWS_NOT_READABLE`
 

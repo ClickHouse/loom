@@ -2,23 +2,26 @@
 
     python -m scripts.i18n.translate check    # exit 1: a page is stale, orphaned, or has a broken
                                               # link, an English label or an old language line
-    python -m scripts.i18n.translate update   # translate the stale pages (needs ANTHROPIC_API_KEY)
+    python -m scripts.i18n.translate update   # translate the stale pages (needs AWS credentials)
     python -m scripts.i18n.translate update --all [--lang ja ...]   # after a prompt change
 
-A short page is sent to the Messages API in one call, a longer one a `## ` section at a
-time (`WHOLE_PAGE_CHARS`). A translation is kept only when its fenced code blocks (in
-order), inline code spans, link targets, URLs, heading anchors and numbers match the
-English; otherwise the call is retried once with the differences named, then the page is
-not written (below). The assembled page is held to the same label rule before it is
-written. Relative links in the prose are rewritten before translation: a page of the set
-links to its translation, anything else to the English file on GitHub. Every heading gets
-an explicit `<a id>` with its English anchor, so `#anchor` links keep working on the
-translated page. The first line of each translation stamps the git blob of the English page
-it was made from; `check` compares that stamp with the file. A change to the model or a
-banner makes every page stale; a change to the prompt does not: regenerate with `--all`.
-The READMEs carry a generated language line that `update` rewrites without translating;
-adding a language changes the English README's line, so its blob, and every README is
-translated again.
+Claude is called on Amazon Bedrock through the `anthropic` package's AnthropicBedrock client
+(scripts/i18n/requirements.txt), which signs each request with the default AWS credential
+chain: on the workflow's self-hosted runner, the instance role; locally, a profile or the
+AWS_* variables. The region comes from AWS_REGION, AWS_DEFAULT_REGION or the profile. A
+short page is sent in one call, a longer one a `## ` section at a time (`WHOLE_PAGE_CHARS`).
+A translation is kept only when its fenced code blocks (in order), inline code spans, link
+targets, URLs, heading anchors and numbers match the English; otherwise the call is retried
+once with the differences named, then the page is not written (below). The assembled page is
+held to the same label rule before it is written. Relative links in the prose are rewritten
+before translation: a page of the set links to its translation, anything else to the English
+file on GitHub. Every heading gets an explicit `<a id>` with its English anchor, so
+`#anchor` links keep working on the translated page. The first line of each translation
+stamps the git blob of the English page it was made from; `check` compares that stamp with
+the file. A change to the model or a banner makes every page stale; a change to the prompt
+does not: regenerate with `--all`. The READMEs carry a generated language line that `update`
+rewrites without translating; adding a language changes the English README's line, so its
+blob, and every README is translated again.
 
 The run estimates its cost before the first call and stops when the estimate, or the
 spend reported by the API, passes LOOM_I18N_MAX_USD (default 5). Every call checks the cap
@@ -30,21 +33,18 @@ after its retry is not written; the other pages go on, and the run then fails na
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import posixpath
 import re
 import subprocess
-import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = "i18n"
@@ -126,12 +126,14 @@ LANGUAGES = (
     ),
 )
 
-# USD per million tokens (input, output). A model missing here is refused: the cost cap
-# needs its price.
+# USD per million tokens (input, output) at Anthropic's list prices. Bedrock bills at its own
+# prices, so the cap is approximate. A model missing here is refused: the cap needs a price.
 PRICES = {"claude-sonnet-5-5": (2.0, 10.0), "claude-opus-5-5": (4.0, 20.0)}
+# The runner's instance role may call this model only (CONTRIBUTING.md#translations): another
+# model needs that role's policy changed first.
 DEFAULT_MODEL = "claude-sonnet-5-5"
-API_URL = "https://api.anthropic.com/v1/messages"
-API_VERSION = "2023-06-01"
+# Bedrock's global inference profile of a model; the stamp keeps the plain name.
+BEDROCK_MODEL_PREFIX = "global.anthropic."
 MAX_TOKENS = 32000
 
 LANGUAGE_LINE = re.compile(r"<!-- languages -->.*?<!-- /languages -->", re.DOTALL)
@@ -144,7 +146,13 @@ LINK_TEXT = re.compile(r"(?<!!)\[([^\[\]\n]+)\]\([^)\s]+")
 # An HTML link's inner text; `<code>` inside it is dropped with its content, other tags
 # (`<b>`) without theirs, before checking.
 HTML_LINK_TEXT = re.compile(r"<a\s[^>]*>(.*?)</a>", re.DOTALL)
-HTML_TAG = re.compile(r"<[^>]+>")
+# A literal comparison is prose; quoted delimiters and comments belong to their tag.
+HTML_TAG = re.compile(
+    r"<!--.*?-->|<\?.*?\?>|<!\[CDATA\[.*?\]\]>"
+    r"|<(?:/?[A-Za-z][^\s/<>\"']*(?=[\s/>])|![A-Za-z])"
+    r"(?:[^<>\"']|\"[^\"]*\"|'[^']*')*>",
+    re.DOTALL,
+)
 HTML_CODE = re.compile(r"<code>.*?</code>", re.DOTALL)
 IMAGE_ALT = re.compile(r"!\[([^\]\n]+)\]\(")
 HTML_ALT = re.compile(r'\balt="([^"]+)"')
@@ -568,55 +576,66 @@ def estimate_usd(model: str, chars: int) -> float:
     return (tokens * price_in + 1.2 * tokens * price_out) / 1e6
 
 
-def call(key: str, model: str, system: str, messages: list[dict[str, str]]) -> dict:
-    body = json.dumps(
-        {
-            "model": model,
-            "max_tokens": MAX_TOKENS,
-            "system": system,
-            "messages": messages,
-            "output_config": {"effort": "low"},
-        }
-    ).encode()
-    headers = {
-        "x-api-key": key,
-        "anthropic-version": API_VERSION,
-        "content-type": "application/json",
-    }
+def bedrock_client() -> Any:
+    """An AnthropicBedrock client with retries off: `call` decides what to retry."""
+    try:
+        from anthropic import AnthropicBedrock
+    except ImportError as e:
+        raise SystemExit(
+            "translations need the anthropic package: "
+            "pip install --require-hashes --no-deps --only-binary=:all: "
+            "-r scripts/i18n/requirements.txt"
+        ) from e
+    try:
+        return AnthropicBedrock(max_retries=0)
+    except ValueError as e:  # no region could be resolved
+        raise SystemExit(f"AnthropicBedrock: {e}; set AWS_REGION") from e
+
+
+def call(client: Any, model: str, system: str, messages: list[dict[str, str]]) -> dict[str, Any]:
+    import anthropic
+
     for attempt in range(4):
-        request = urllib.request.Request(API_URL, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=600) as response:
-                return json.load(response)
-        except urllib.error.HTTPError as e:
-            if e.code not in (429, 500, 502, 503, 529) or attempt == 3:
-                raise SystemExit(
-                    f"Messages API {e.code}: {e.read().decode(errors='replace')[:500]}"
-                ) from e
-        except TimeoutError as e:
+            # An explicit timeout lets a 32k-token reply go without streaming.
+            reply = client.messages.create(
+                model=BEDROCK_MODEL_PREFIX + model,
+                max_tokens=MAX_TOKENS,
+                system=system,
+                messages=messages,
+                output_config={"effort": "low"},
+                # InvokeModel uses Bedrock's request version.
+                extra_body={"anthropic_version": "bedrock-2023-05-31"},
+                timeout=600,
+            )
+            return reply.to_dict()
+        except anthropic.APITimeoutError as e:
             # The request was sent and may be billed; a retry would spend unseen tokens.
-            raise SystemExit(f"Messages API timed out: {e}") from e
-        except urllib.error.URLError as e:
+            raise SystemExit(f"Bedrock timed out: {e}") from e
+        except anthropic.APIStatusError as e:
+            if e.status_code not in (429, 500, 502, 503, 529) or attempt == 3:
+                raise SystemExit(f"Bedrock {e.status_code}: {str(e)[:500]}") from e
+        except anthropic.APIConnectionError as e:
             if attempt == 3:
-                raise SystemExit(f"Messages API unreachable: {e}") from e
+                raise SystemExit(f"Bedrock unreachable: {e}") from e
         time.sleep(5 * 2**attempt)
     raise AssertionError("unreachable")
 
 
-def reply_text(data: dict) -> str:
+def reply_text(data: dict[str, Any]) -> str:
     if data.get("stop_reason") != "end_turn":
         raise SystemExit(f"translation stopped with stop_reason={data.get('stop_reason')!r}")
     return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
 
 
-def translate_text(text: str, lang: Language, key: str, spend: Spend) -> str:
+def translate_text(text: str, lang: Language, client: Any, spend: Spend) -> str:
     if not text.strip():
         return text
     system = SYSTEM.format(language=lang.english, style=lang.style)
     messages = [{"role": "user", "content": text}]
     for _ in range(2):
         spend.before_call()
-        data = call(key, spend.model, system, messages)
+        data = call(client, spend.model, system, messages)
         spend.add(data.get("usage", {}))
         reply = reply_text(data)
         problems = differences(text, reply)
@@ -677,10 +696,10 @@ def english_requests(text: str) -> list[str]:
     return [whole] if len(whole) <= WHOLE_PAGE_CHARS else parts
 
 
-def translate_page(source: str, lang: Language, key: str, spend: Spend) -> None:
+def translate_page(source: str, lang: Language, client: Any, spend: Spend) -> None:
     text, line = prepare(source, lang)
     requests = english_requests(text)
-    body = "\n".join(translate_text(s, lang, key, spend) for s in requests)
+    body = "\n".join(translate_text(s, lang, client, spend) for s in requests)
     # A section can borrow an English label from another part of the page; `check` reads the
     # whole page, so the page is held to the same rule before it is written.
     kept = labels("\n".join(requests)) & labels(body)
@@ -752,11 +771,11 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
             f"estimate over LOOM_I18N_MAX_USD=${spend.cap_usd:.2f}; nothing translated"
         )
     if work:
-        key = os.environ.get("ANTHROPIC_API_KEY") or sys.exit("ANTHROPIC_API_KEY is not set")
+        client = bedrock_client()
         try:
             with ThreadPoolExecutor(WORKERS) as pool:
                 futures = {
-                    pool.submit(translate_page, s, lg, key, spend): target_path(lg.code, s)
+                    pool.submit(translate_page, s, lg, client, spend): target_path(lg.code, s)
                     for s, lg in work
                 }
                 differ: list[str] = []

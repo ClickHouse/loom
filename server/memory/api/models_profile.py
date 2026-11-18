@@ -37,8 +37,8 @@ class ProfileSetInput(_Identity):
     # writes "profile.fold:<label>:<memory ids>" so provenance classes the row `derived`;
     # a client writing a persona leaves it empty (`asserted`).
     source_trace: str = ""
-    # Write only if the section's current content hash equals this (409 otherwise);
-    # empty = no check.
+    # Require this content hash, or 'absent' for no unexpired section under the exact
+    # identity (concrete agent required); mismatch is 409, empty skips checking.
     if_match_sha256: str = ""
 
     @field_validator("source_trace")

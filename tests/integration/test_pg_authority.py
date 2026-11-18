@@ -377,7 +377,7 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     published."""
     tag = uuid.uuid4().hex[:8]
     namespaces = [f"pg-{tag}-{i}" for i in range(20)]
-    started = datetime.now(UTC) - timedelta(seconds=1)
+    started = ch_client.query("SELECT toUnixTimestamp64Micro(now64(6))").result_rows[0][0]
     answers = await asyncio.gather(
         *(
             call("memory.set", _set(ns, "k", f"fact {i} of the batch"))
@@ -398,8 +398,9 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     flushes = ch_client.query(
         "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
         "AND query_kind = 'Insert' AND has(tables, 'loom.memory') "
-        "AND startsWith(log_comment, 'pg_batch.flush') AND event_time >= {t:DateTime}",
-        parameters={"t": started.replace(tzinfo=None)},
+        "AND startsWith(log_comment, 'pg_batch.flush') "
+        "AND query_start_time_microseconds >= fromUnixTimestamp64Micro({t:Int64})",
+        parameters={"t": started},
     ).result_rows[0][0]
     assert 0 < flushes < 20, flushes
 
@@ -1937,6 +1938,8 @@ async def test_a_summary_left_a_source_is_downgraded_with_its_vectors_and_search
     tags = ["consolidated", "src:k1", "src:k2"]
     made = await call("memory.set", _set(ns, "summary", "a summary of k1 and k2", tags=tags))
     assert made.status_code == 200, made.text
+    # The downgrade copies vectors from the summary's initial publication.
+    await _published(pg_conn, org)
     gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k1"})
     assert gone.status_code == 200, gone.text
     assert gone.json().get("dependents_downgraded") == 1, gone.text
@@ -3747,7 +3750,10 @@ async def test_a_write_made_unembedded_over_an_embedded_key_retires_its_vectors(
         body = {"namespace": ns, "agent": "a", "entries": [body]}
     elif op == "memory.update":
         body = {"namespace": ns, "memory_key": "k", "value": value}
-    assert (await call(op, body)).status_code == 200
+    response = await call(op, body)
+    assert response.status_code == 200
+    if op == "memory.update":
+        assert response.json()["updated"] is True
     # The retirement rides the write's publication, after its commit answered.
     await _published(pg_conn, org)
     live = ch_client.query(

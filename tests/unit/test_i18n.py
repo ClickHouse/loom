@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 import time
+import types
 from collections import Counter
 
 import pytest
@@ -166,6 +168,48 @@ def test_alt_texts_html_link_texts_and_table_cells_are_checked() -> None:
     assert "Recall" not in kept[0]
 
 
+@pytest.mark.parametrize("comparison", ["< 3", "<3", "<= 3"])
+def test_html_link_labels_keep_literal_comparisons(comparison: str) -> None:
+    source = f'<a href="#limits">Fewer {comparison} values<b>are ready</b></a>'
+    assert t.labels(source) == Counter({f"Fewer {comparison} values are ready": 1})
+
+
+@pytest.mark.parametrize(
+    "table",
+    ["| values | < 3 |\n| next | 200 |", "| values | < 3      |\n| next | 200     |"],
+)
+def test_html_tokens_do_not_start_at_markdown_comparisons(table: str) -> None:
+    anchor = '<a id="erasure"></a>'
+    assert t.HTML_TAG.findall(f"{table}\n\n{anchor}") == ['<a id="erasure">', "</a>"]
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<span data-limit="1 > 0">',
+        "<span data-limit='1 > 0'>",
+        "</span>",
+        "<!-- preserve > inside a comment -->",
+        "<!DOCTYPE html>",
+        '<?xml version="1.0"?>',
+        "<![CDATA[values > limits]]>",
+    ],
+)
+def test_html_tokens_preserve_complete_markup(markup: str) -> None:
+    assert t.HTML_TAG.findall(f"Before {markup} after") == [markup]
+
+
+@pytest.mark.parametrize("name", ["memory_view-panel", "memory.view-panel", "memory-α"])
+def test_custom_element_labels_and_attributes_remain_checked(name: str) -> None:
+    opening, closing = f'<{name} data-state="ready">', f"</{name}>"
+    changed = opening.replace('"ready"', '"waiting"')
+    assert t.labels(f'<a href="#x">{opening}Get started{closing}</a>') == Counter(
+        {"Get started": 1}
+    )
+    assert t.HTML_TAG.findall(opening + closing) == [opening, closing]
+    assert t.HTML_TAG.findall(changed + closing) != t.HTML_TAG.findall(opening + closing)
+
+
 def test_a_translation_may_write_a_spelled_number_as_digits() -> None:
     assert t.differences("two steps", "2 Schritte") == []
 
@@ -191,10 +235,12 @@ def test_a_label_borrowed_from_another_section_keeps_the_page_unwritten(
     monkeypatch.setattr(t, "ROOT", tmp_path)
     monkeypatch.setattr(t, "prepare", lambda source, lang: (english, ""))
     monkeypatch.setattr(
-        t, "translate_text", lambda text, lang, key, spend: replies["A" if "## A" in text else "B"]
+        t,
+        "translate_text",
+        lambda text, lang, client, spend: replies["A" if "## A" in text else "B"],
     )
     with pytest.raises(t.TranslationDiffers, match="Get a token"):
-        t.translate_page("docs/x.md", t.LANGUAGES[1], "key", t.Spend("claude-sonnet-5-5", 1.0))
+        t.translate_page("docs/x.md", t.LANGUAGES[1], None, t.Spend("claude-sonnet-5-5", 1.0))
     assert not (tmp_path / "i18n").exists()
 
 
@@ -203,12 +249,12 @@ def test_a_page_that_still_differs_lets_the_others_finish(
 ) -> None:
     written: list[str] = []
 
-    def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
+    def fake_page(source: str, lang: t.Language, client: object, spend: t.Spend) -> None:
         if source == t.SOURCES[0]:
             raise t.TranslationDiffers("still differs after a retry")
         written.append(source)
 
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setattr(t, "bedrock_client", lambda: None)
     monkeypatch.setattr(t, "translate_page", fake_page)
     monkeypatch.setattr(t, "write_language_lines", lambda: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
@@ -222,20 +268,20 @@ def test_a_page_that_still_differs_lets_the_others_finish(
 def test_a_fatal_error_after_a_differing_page_still_names_that_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
+    def fake_page(source: str, lang: t.Language, client: object, spend: t.Spend) -> None:
         if source == t.SOURCES[0]:
             raise t.TranslationDiffers("still differs after a retry")
         time.sleep(0.05)
-        raise SystemExit("Messages API 500")
+        raise SystemExit("Bedrock 500")
 
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setattr(t, "bedrock_client", lambda: None)
     monkeypatch.setattr(t, "translate_page", fake_page)
     monkeypatch.setattr(t, "write_language_lines", lambda: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
     with pytest.raises(SystemExit) as stopped:
         t.update(every=True, codes=["ja"])
     message = str(stopped.value)
-    assert "Messages API 500" in message and "not written: i18n/ja/README.md" in message
+    assert "Bedrock 500" in message and "not written: i18n/ja/README.md" in message
 
 
 def test_code_inside_an_html_link_is_not_a_label() -> None:
@@ -253,7 +299,7 @@ def test_a_fatal_error_stops_the_other_pages(
 ) -> None:
     calls: list[str] = []
 
-    def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
+    def fake_page(source: str, lang: t.Language, client: object, spend: t.Spend) -> None:
         if source == t.SOURCES[0]:
             raise SystemExit("boom")
         for _ in range(200):
@@ -261,7 +307,7 @@ def test_a_fatal_error_stops_the_other_pages(
             calls.append(source)
             time.sleep(0.005)
 
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setattr(t, "bedrock_client", lambda: None)
     monkeypatch.setattr(t, "translate_page", fake_page)
     monkeypatch.setattr(t, "write_language_lines", lambda: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
@@ -314,13 +360,13 @@ def test_a_section_that_differs_is_retried_once_with_the_differences(
     replies = iter(["## Lancez\n\nLancez loom up.\n", "## Lancez\n\nLancez `loom up` deux fois.\n"])
     sent: list[list[dict[str, str]]] = []
 
-    def fake_call(key: str, model: str, system: str, messages: list[dict[str, str]]) -> dict:
+    def fake_call(client: object, model: str, system: str, messages: list[dict[str, str]]) -> dict:
         sent.append(list(messages))
         text = next(replies)
         return {"stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": {}}
 
     monkeypatch.setattr(t, "call", fake_call)
-    out = t.translate_text(section, t.LANGUAGES[4], "key", t.Spend("claude-sonnet-5-5", 1.0))
+    out = t.translate_text(section, t.LANGUAGES[4], None, t.Spend("claude-sonnet-5-5", 1.0))
     assert out == "## Lancez\n\nLancez `loom up` deux fois.\n"
     assert len(sent) == 2 and "inline code" in sent[1][-1]["content"]
 
@@ -429,3 +475,108 @@ def test_the_committed_translations_pass_check() -> None:
     """Fresh or not, every committed page keeps its links, anchors and translated labels."""
     assert t.link_problems() == []
     assert t.untranslated_pages() == []
+
+
+class _StatusError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"status {status_code}")
+        self.status_code = status_code
+
+
+class _FakeReply:
+    def to_dict(self) -> dict[str, object]:
+        return {"stop_reason": "end_turn", "content": [], "usage": {}}
+
+
+class _FakeMessages:
+    def __init__(self, errors: list[Exception]) -> None:
+        self.errors = errors
+        self.sent: list[dict[str, object]] = []
+
+    def create(self, **request: object) -> _FakeReply:
+        self.sent.append(request)
+        if self.errors:
+            raise self.errors.pop(0)
+        return _FakeReply()
+
+
+def _fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """A stand-in for the `anthropic` package, which the unit environment does not install."""
+    module = types.ModuleType("anthropic")
+    # As in the SDK, a timeout is a kind of connection error, so `call` must catch it first.
+    connection_error = type("APIConnectionError", (Exception,), {})
+    module.APIConnectionError = connection_error  # type: ignore[attr-defined]
+    module.APITimeoutError = type("APITimeoutError", (connection_error,), {})  # type: ignore[attr-defined]
+    module.APIStatusError = _StatusError  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+    monkeypatch.setattr(t.time, "sleep", lambda seconds: None)
+    return module
+
+
+@pytest.mark.parametrize("model", list(t.PRICES))
+def test_a_call_asks_bedrock_for_the_global_profile_of_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+) -> None:
+    _fake_anthropic(monkeypatch)
+    messages = _FakeMessages([])
+    client = types.SimpleNamespace(messages=messages)
+    reply = t.call(client, model, "system", [{"role": "user", "content": "x"}])
+    assert reply["stop_reason"] == "end_turn"
+    (request,) = messages.sent
+    assert request["model"] == f"global.anthropic.{model}"
+    assert request["extra_body"] == {"anthropic_version": "bedrock-2023-05-31"}
+    assert request["output_config"] == {"effort": "low"} and request["max_tokens"] == t.MAX_TOKENS
+    assert request["system"] == "system" and request["timeout"] == 600
+
+
+def test_a_busy_reply_is_retried_and_a_refusal_is_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_anthropic(monkeypatch)
+    messages = _FakeMessages([_StatusError(503)])
+    t.call(types.SimpleNamespace(messages=messages), "claude-sonnet-5-5", "s", [])
+    assert len(messages.sent) == 2
+    messages = _FakeMessages([_StatusError(403)])
+    with pytest.raises(SystemExit, match="Bedrock 403"):
+        t.call(types.SimpleNamespace(messages=messages), "claude-sonnet-5-5", "s", [])
+    assert len(messages.sent) == 1
+
+
+def test_a_timeout_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _fake_anthropic(monkeypatch)
+    messages = _FakeMessages([module.APITimeoutError("slow")])
+    with pytest.raises(SystemExit, match="timed out"):
+        t.call(types.SimpleNamespace(messages=messages), "claude-sonnet-5-5", "s", [])
+    assert len(messages.sent) == 1
+
+
+def test_the_client_uses_the_default_credential_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _fake_anthropic(monkeypatch)
+    made: list[dict[str, object]] = []
+    module.AnthropicBedrock = lambda **options: made.append(options) or "client"  # type: ignore[attr-defined]
+    assert t.bedrock_client() == "client"
+    # No key, profile or region is passed: the SDK reads the instance role and AWS_REGION.
+    assert made == [{"max_retries": 0}]
+
+
+def test_a_missing_region_or_package_stops_with_what_to_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _fake_anthropic(monkeypatch)
+
+    def no_region(**options: object) -> None:
+        raise ValueError("no region")
+
+    module.AnthropicBedrock = no_region  # type: ignore[attr-defined]
+    with pytest.raises(SystemExit, match="set AWS_REGION"):
+        t.bedrock_client()
+    monkeypatch.setitem(sys.modules, "anthropic", None)
+    with pytest.raises(SystemExit, match="scripts/i18n/requirements.txt"):
+        t.bedrock_client()
+
+
+def test_a_lost_connection_is_retried_up_to_four_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _fake_anthropic(monkeypatch)
+    messages = _FakeMessages([module.APIConnectionError("reset") for _ in range(4)])
+    with pytest.raises(SystemExit, match="unreachable"):
+        t.call(types.SimpleNamespace(messages=messages), "claude-sonnet-5-5", "s", [])
+    assert len(messages.sent) == 4

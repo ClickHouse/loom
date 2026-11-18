@@ -127,6 +127,11 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
     monkeypatch.setattr(app, "store", fake)
     monkeypatch.setattr(settings, "jwt_secret", "unit-test-root-secret")
 
+    async def _no_mirror(src: KnowledgeSource) -> bool:
+        return False
+
+    monkeypatch.setattr(app, "_queue_retirement", _no_mirror)
+
     async def _probe(
         kind: str, config: dict[str, Any], credential: str, *, items: Any = None
     ) -> source_probes.Probe:

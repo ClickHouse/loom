@@ -388,7 +388,9 @@ jobs:
           on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
           extractor=(--set extractor.enabled=true --set secrets.extractorToken="$(openssl rand -hex 24)")
           assistant=(--set assistant.enabled=true --set assistant.existingSecret=ci)
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}" "${assistant[@]}")
+          # TLS on Loom's port, which the assistant (in "all") cannot reach: its own render.
+          tls=(--set tls.secretName=ci --set 'ingress.annotations.alb\.ingress\.kubernetes\.io/backend-protocol=HTTPS' --set workers.enabled=true --set networkPolicy.enabled=true "${on[@]}" "${extractor[@]}")
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set cellProbe.port=8777 --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}" "${assistant[@]}")
           # The PrometheusRule's schema: the CRD catalog at a pinned commit.
           crd='https://raw.githubusercontent.com/datreeio/CRDs-catalog/c86448cbf1a840ca62d119259864863897c8748a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
@@ -400,6 +402,8 @@ jobs:
             helm lint --strict "$chart" "${args[@]}" "${all[@]}"
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
             helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0 -schema-location default -schema-location "$crd"
+            helm lint --strict "$chart" "${args[@]}" "${tls[@]}"
+            helm template loom "$chart" "${args[@]}" "${tls[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
           done
           kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
           # Values the chart must refuse, each with its own message. A refused render
@@ -422,6 +426,8 @@ jobs:
           refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
           refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012
           refused "assistant.existingSecret is required" --set assistant.enabled=true
+          refused "assistant.enabled calls Loom's port over plain HTTP" "${assistant[@]}" --set tls.secretName=ci
+          refused 'set ingress.annotations."alb.ingress.kubernetes.io/backend-protocol" to HTTPS' -f "$chart/values-eks.yaml" --set tls.secretName=ci
           # The release Secret (named after the release here) and envFrom Secrets reach every pod.
           shared="is a Secret every web and workers pod loads"
           refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom
@@ -456,6 +462,11 @@ jobs:
       # The Postgres authority's DSN, password, CA mount and egress, and its refusals.
       - name: postgres
         run: python3 -m scripts.gates.helm_postgres
+      # TLS on Loom's port: the Secret's mount, the settings, HTTPS probes, and the refusals.
+      - name: tls
+        run: python3 -m scripts.gates.helm_tls
+      - name: private cell probe
+        run: python3 -m scripts.gates.helm_cell_probe
 
   agent-plugins:
     name: coding-agent plugins (node --test)
@@ -626,6 +637,17 @@ jobs:
       - name: Apply migrations
         id: migrate
         run: python -m server.core.schema.migrate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.part == '1'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install native framework clients
+        if: matrix.part == '1'
+        run: |
+          uv pip install --python "$PWD/.venv/bin/python" --target "$RUNNER_TEMP/loom-adk-client" './sdk/python[google-adk]'
+          npm --prefix sdk/typescript ci --no-audit --no-fund
       # Provider staging tests create private, UUID-owned copies and run before
       # the web process starts, against this job's disposable migrated database.
       - name: Provider rebuild storage and recovery
@@ -682,6 +704,12 @@ jobs:
           echo "control plane never became healthy"
           tail -100 server.log
           exit 1
+      - name: Mastra native memory against the control plane
+        if: matrix.part == '1'
+        run: |
+          token="$(python -c 'from server.auth import keyring; keyring.sign_with_root_only(); from server.auth.jwt import mint_token; print(mint_token(subject="ci-mastra-memory", org="mastra-memory-ci", namespaces=["native"], roles=["writer"], ttl_seconds=600, is_service_account=True))')"
+          echo "::add-mask::$token"
+          LOOM_API_KEY="$token" LOOM_ORG=mastra-memory-ci LOOM_NAMESPACE=native make test-sdk-mastra-memory-live
       # A local S3-compatible store for the document object-store tests
       # (tests/integration/test_document_object_store_live.py).
       - name: Start a local S3-compatible store
@@ -695,13 +723,19 @@ jobs:
           done
           curl -sf http://127.0.0.1:5000/ >/dev/null
           echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
-      # The whole directory on every pull request, split over the parts; no test
-      # is slow enough to justify a separate merge-only tier.
+      # Split ordinary integration cases over the parts. Signed mirror HTTP cases
+      # run in the authenticated isolation step below on every pull request.
       - name: pytest (this part of tests/integration)
         if: matrix.part != 'isolation'
         env:
           LOOM_TEST_SHARD: ${{ matrix.part }}/4
-        run: pytest tests/integration -q --durations=20
+        run: >-
+          pytest tests/integration -q --durations=20
+          --ignore=tests/integration/test_mirror_checked_search_http.py
+          --ignore=tests/integration/test_mirror_checked_list_http.py
+      - name: Native Google ADK live tests (Python and TypeScript)
+        if: matrix.part == '1'
+        run: python -m tests.integration._google_adk_ci "$RUNNER_TEMP/loom-adk-client"
       # The tenant-isolation gates against a server that enforces auth. The numbered
       # parts run them with auth off, where every token is ignored and no refusal is seen.
       # The three checks of the isolation gates part are independent: a failure in
@@ -740,6 +774,7 @@ jobs:
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_extraction_status_mine.py
           tests/integration/test_token_mint.py
+          tests/integration/_sdk_handoff_ci.py
           tests/integration/test_onboard_tenant.py
           tests/integration/test_session_briefs.py
           tests/integration/test_blacklist.py
@@ -747,6 +782,8 @@ jobs:
           tests/integration/test_run_begin_claims.py
           tests/integration/test_mcp_session_run_scope.py
           tests/integration/test_projection_failures_restricted.py
+          tests/integration/test_mirror_checked_search_http.py
+          tests/integration/test_mirror_checked_list_http.py
       # The statement corpus: every builder's shapes through
       # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
       # with the builders. ~10 s; a rejection here is a statement that would
@@ -899,6 +936,22 @@ jobs:
           tests/integration/test_cell_unset_gate_pg.py
           tests/integration/test_cell_prepare.py
           tests/integration/test_cell_org_triggers_pg.py
+          tests/integration/test_source_access_store.py
+          tests/integration/test_source_document_store.py
+          tests/integration/test_mirror_reader_evidence.py
+          tests/integration/test_mirror_search_chunk_keys.py
+          tests/integration/test_mirror_title_projection.py
+          tests/integration/test_mirror_ask_http.py
+          tests/integration/test_marked_admin_events_native.py
+          tests/integration/test_marked_analytics_export_native.py
+          tests/integration/test_marked_assistant_ledger_native.py
+          tests/integration/test_marked_cost_summary_native.py
+          tests/integration/test_marked_derived_activity_native.py
+          tests/integration/test_marked_event_readers_native.py
+          tests/integration/test_marked_mentor_agents_native.py
+          tests/integration/test_marked_rollup_migration_native.py
+          tests/integration/test_marked_durable_folds_native.py
+          tests/integration/test_marked_sql_surface_native.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).
@@ -908,6 +961,7 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_INSTANCE_LABEL: "ci:integration-postgres-auth"
+          LOOM_CH_ANALYSIS_PROBE_INTERVAL_S: "10"
         run: |
           LOOM_WEB_WORKERS=3 PORT=7778 nohup sh scripts/serve.sh > server-auth.log 2>&1 &
           for _ in $(seq 1 60); do
@@ -927,15 +981,20 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_BASE_URL: http://localhost:7778
+          LOOM_CH_ANALYSIS_PROBE_INTERVAL_S: "10"
         run: >-
           pytest -q
           tests/integration/test_cross_principal_leakage.py
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_session_briefs.py
           tests/integration/test_token_mint.py
+          tests/integration/_sdk_handoff_ci.py
           tests/integration/test_mcp_session_run_scope.py
           tests/integration/test_onboard_tenant.py
           tests/integration/test_blacklist.py
+          tests/integration/test_mirror_checked_search_http.py
+          tests/integration/test_mirror_checked_list_http.py
+          tests/integration/test_analysis_isolation.py
           tests/integration/test_sensitivity_high_canary.py
           tests/integration/test_pg_authority.py
           -k "not test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope

@@ -10,6 +10,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from server.core import lease_writes
 from server.core.ch_params import chunks
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.erasure.store import mutations as erasure_mutations
@@ -302,6 +303,36 @@ async def delete_source_listings_by_namespace(
     )
 
 
+async def delete_query_history_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Remove credentials that would keep drafting into an erased namespace."""
+    async with lease_writes.fenced(f"query_history.writer/{org}", ch=ch) as uncertain:
+        uncertain(True)
+        count = await delete_scoped(
+            "loom.query_history_sources",
+            org=org,
+            scope_where=NS_EQ,
+            params={"ns": namespace},
+            ch=ch,
+        )
+        uncertain(False)
+        return count
+
+
+async def delete_group_members_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """A mirror's source-scoped membership snapshots leave with the namespace."""
+    return await delete_scoped(
+        "loom.knowledge_group_members",
+        org=org,
+        scope_where=NS_EQ,
+        params={"ns": namespace},
+        ch=ch,
+    )
+
+
 async def delete_memory_drops_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
@@ -378,7 +409,11 @@ async def delete_learnings_queue_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """Promotion candidates quote the proposed value; their supporters name users."""
-    return await _delete_many(_LEARNINGS_TABLES, org, NS_EQ, {"ns": namespace}, ch)
+    async with lease_writes.fenced(f"definition.writer/{org}", ch=ch) as uncertain:
+        uncertain(True)
+        count = await _delete_many(_LEARNINGS_TABLES, org, NS_EQ, {"ns": namespace}, ch)
+        uncertain(False)
+        return count
 
 
 async def delete_learnings_queue_by_user(

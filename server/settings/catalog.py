@@ -2238,6 +2238,29 @@ class KnowledgeSettings(BaseModel):
     # Namespaces one pass groups, at most; the ones with the most misses first.
     knowledge_gaps_max_namespaces: Annotated[int, LIVE] = Field(default=500, ge=1)
 
+    # ---- query-history definitions ----
+    # Permit opt-in ClickHouse query-history sources to queue definition drafts.
+    knowledge_query_history_enabled: bool = False
+    # Distinct initial ClickHouse accounts required before drafting a query group.
+    knowledge_query_history_min_users: Annotated[int, LIVE] = Field(default=3, ge=3)
+    # Drafts one source may queue in a worker turn, at most.
+    knowledge_query_history_max_drafts: Annotated[int, LIVE] = Field(default=20, ge=1, le=100)
+    # Most-used query groups inspected per source turn before skipping existing drafts.
+    knowledge_query_history_max_groups: Annotated[int, LIVE] = Field(default=200, ge=1, le=1000)
+    # Days of finished SELECT query history a turn groups.
+    knowledge_query_history_window_days: Annotated[int, LIVE] = Field(default=7, ge=1, le=30)
+    # Seconds allowed for one query-history source read.
+    knowledge_query_history_read_timeout_s: Annotated[float, LIVE] = Field(default=30, gt=0, le=120)
+    # Deadline of one query-history pass; it starts no new group after half this budget.
+    knowledge_query_history_max_pass_seconds: float = Field(default=120.0, ge=30.0, le=600.0)
+    # Seconds between query-history passes.
+    knowledge_query_history_interval_seconds: int = Field(default=3600, ge=300)
+    # Sources one pass reads, at most; each turn is separately time bounded.
+    knowledge_query_history_max_sources: Annotated[int, LIVE] = Field(default=100, ge=1, le=1000)
+
+    # Query-history circuit states kept per process, at most; older sources are evicted first.
+    knowledge_query_history_max_breakers: int = Field(default=1000, ge=1, le=100000)
+
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
     # chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller
@@ -2316,6 +2339,9 @@ class KnowledgeSettings(BaseModel):
     # credential, spends embedding calls on every changed document and model calls
     # mining it for decisions.
     knowledge_source_sync_enabled: bool = False
+    # Mirrored reads require a complete listing and group observation within this
+    # many seconds; missing or older evidence admits nobody.
+    knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
     # Seconds between sync passes while there are sources.
     knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
     # Seconds between passes that found no source to sync; one idle sleep plus one
@@ -2325,9 +2351,15 @@ class KnowledgeSettings(BaseModel):
     # at three quarters of it. At least 180: 90 for the sync, then 60 of read time for
     # one document's extraction and 30 for its writes before the deadline.
     knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=180)
-    # Documents one pass fetches, writes, retires or mines for decisions across all
-    # sources; the rest wait for the next pass.
+    # Documents one pass fetches, writes, retires or mines for decisions across the
+    # namespace sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents one pass fetches, writes and retires for the mirrored sources, apart from
+    # the namespace sources' per-pass bound, so a mirror's size never takes their share.
+    knowledge_source_mirror_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents of stopped mirrored sources retired per cleanup pass, independently of
+    # the content-sync budget. Cleanup continues while syncing is switched off.
+    knowledge_source_retire_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
     # turn tries no new file, notes how many as `too_many_documents`, and still updates
     # and retires. At most 200,000: each read of the stored copies grows with its square.
@@ -2507,6 +2539,9 @@ class MemorySettings(BaseModel):
     # Most shared definitions a namespace holds; a promotion past it is refused
     # (docs/concepts/identities-and-namespaces.md).
     memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
+    # How much longer memory.search waits for its term leg once the other legs are done;
+    # past it the leg adds nothing (docs/concepts/identities-and-namespaces.md).
+    memory_term_leg_wait_ms: Annotated[int, LIVE] = Field(default=100, ge=1)
 
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
@@ -5189,6 +5224,20 @@ class RuntimeSettings(BaseModel):
     # outside trust-network, the dev signing secret or a weak root, gateway or end-user
     # key. Only for a port others cannot reach.
     allow_insecure: bool = False
+    # PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a
+    # renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP.
+    tls_cert_file: str = ""
+    # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused.
+    tls_key_file: str = ""
+    # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3".
+    tls_min_version: Literal["1.2", "1.3"] = "1.2"
+
+    @model_validator(mode="after")
+    def _check_tls_pair(self) -> RuntimeSettings:
+        """A certificate without its key, or a key without its certificate, serves nothing."""
+        if bool(self.tls_cert_file) != bool(self.tls_key_file):
+            raise ValueError("set LOOM_TLS_CERT_FILE and LOOM_TLS_KEY_FILE together, or neither")
+        return self
 
     def workers_mode(self) -> str:
         """`background_workers` as this process runs it: `auto` outside the
@@ -6097,6 +6146,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # most the listing's 5 s bound, and a service it could not read is not waited for
     # again for a minute.
     "knowledge.formats": 5500,
+    "knowledge.gaps.draft": 30000,
+    "knowledge.query_history.add": 30000,
+    "knowledge.query_history.list": 250,
+    "knowledge.query_history.remove": 1000,
     "knowledge.gaps.list": 300,
     "knowledge.get": 30,
     "knowledge.ingest": 60,
@@ -6497,6 +6550,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
 # input stays a formula at its call.
 
 LLM_MAX_TOKENS: dict[str, int] = {
+    # The private metric definition drafted from eligible gap or query-history evidence.
+    "definition_draft": 1600,
     # code.ask: the synthesized answer; part of its cached answers' version, so a change
     # marks them stale.
     "code_answer_synth": 900,

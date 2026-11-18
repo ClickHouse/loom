@@ -49,6 +49,13 @@ class _LeafError(Exception):
     pass
 
 
+class _ProtectedHistory(_LeafError):
+    pass
+
+
+_PROTECTED_HISTORY = "protected history unavailable"
+
+
 def _compare_float(x: float, cmp: Cmp, value: float) -> bool:
     return {
         "gt": x > value,
@@ -72,9 +79,6 @@ async def _eval_leaf(leaf: Any, ctx: CallContext, ch: Any, out: list[LeafResult]
             return False
     else:
         compiled = compile_leaf(leaf, ctx)
-    if compiled is None:
-        out.append(LeafResult(op=leaf.op, holds=False, skipped="args reference unresolved"))
-        return False
     try:
         rows = await ch.query_all(compiled.sql, compiled.params)
     except Exception as e:  # a failed leaf is reported on the decision, then raised
@@ -89,7 +93,14 @@ async def _eval_leaf(leaf: Any, ctx: CallContext, ch: Any, out: list[LeafResult]
             )
         )
         raise _LeafError(msg) from e
-    row = rows[0] if rows else {}
+    row = rows[0] if len(rows) == 1 and isinstance(rows[0], dict) else {}
+    marker = row.get("protected_history")
+    if not isinstance(marker, (bool, int)) or marker != 0:
+        out.append(LeafResult(op=leaf.op, holds=False, error=_PROTECTED_HISTORY))
+        raise _ProtectedHistory(_PROTECTED_HISTORY)
+    if compiled.unresolved:
+        out.append(LeafResult(op=leaf.op, holds=False, skipped="args reference unresolved"))
+        return False
     if compiled.kind == "not_since":
         anchor_ts = row.get("anchor_ts")
         left_ts = row.get("left_ts")
@@ -154,6 +165,7 @@ async def evaluate_rule(
             mode=mode,
             leaves=leaves,
             errors=[str(e)],
+            protected_history=isinstance(e, _ProtectedHistory),
         )
     denies = holds if rule.effect == "forbid" else not holds
     return RuleVerdict(

@@ -276,6 +276,7 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "entity": seed.entity,
         "seed_entity": seed.entity,
         "tags": ["canary"],
+        "databases": [seed.ns],
         "prefix": "canary",
         "memory_key_prefix": "canary",
         "block_key": "scratchpad",

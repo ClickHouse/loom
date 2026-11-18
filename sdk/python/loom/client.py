@@ -1345,6 +1345,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.formats", body, **options),
         )
 
+    async def gaps_draft(
+        self, body: _ops.KnowledgeGapsDraftBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeGapsDraftOutput:
+        """`knowledge.gaps.draft`."""
+        return cast(
+            "_ops.KnowledgeGapsDraftOutput",
+            await self._agent.call("knowledge.gaps.draft", body, **options),
+        )
+
     async def gaps_list(
         self, body: _ops.KnowledgeGapsListBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeGapsListOutput:
@@ -1429,6 +1438,33 @@ class KnowledgeOps:
         """`knowledge.query`."""
         return cast(
             "_ops.KnowledgeQueryOutput", await self._agent.call("knowledge.query", body, **options)
+        )
+
+    async def query_history_add(
+        self, body: _ops.KnowledgeQueryHistoryAddBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryAddOutput:
+        """`knowledge.query_history.add`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryAddOutput",
+            await self._agent.call("knowledge.query_history.add", body, **options),
+        )
+
+    async def query_history_list(
+        self, body: _ops.KnowledgeQueryHistoryListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryListOutput:
+        """`knowledge.query_history.list`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryListOutput",
+            await self._agent.call("knowledge.query_history.list", body, **options),
+        )
+
+    async def query_history_remove(
+        self, body: _ops.KnowledgeQueryHistoryRemoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryRemoveOutput:
+        """`knowledge.query_history.remove`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryRemoveOutput",
+            await self._agent.call("knowledge.query_history.remove", body, **options),
         )
 
     async def reads(

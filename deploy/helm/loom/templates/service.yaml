@@ -15,6 +15,9 @@ spec:
       port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
+      {{- if (include "loom.tls" . | fromYaml).secretName }}
+      appProtocol: https
+      {{- end }}
   selector:
     {{- include "loom.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: web

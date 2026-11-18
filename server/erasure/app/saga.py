@@ -24,6 +24,7 @@ from server.core import pg
 from server.core.background import register_deferred_task
 from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError, OverloadedError, caller_text
+from server.core.naming import is_mirror_name
 from server.core.pg import PostgresUnavailableError
 from server.erasure.api.erasure import (
     ErasureRequestInput,
@@ -41,8 +42,8 @@ from server.erasure.app.saga_steps import (
     authority_steps,
     census_spellings,
     erased_scope,
-    with_mirrors,
 )
+from server.erasure.domain.receipts import audit_subject, receipt_version
 from server.erasure.domain.scopes import (
     applied_purge,
     parse_external_flag,
@@ -114,6 +115,7 @@ def request_row_template(
     actor: str,
     requested_at: datetime,
     attempts: int,
+    mirror_marked: bool = False,
 ) -> RequestRow:
     """Common columns for every erasure_requests row we write. `actor` is the
     request's audit actor (`writer_actor` at request time, '' on a row an older
@@ -127,9 +129,10 @@ def request_row_template(
         "actor": actor,
         "urgency": input.urgency,
         # The scope's mode (a single namespace's: tombstone, whatever was asked); a scope
-        # that holds a mirror is purged anyway (`saga_steps.with_mirrors`).
+        # that holds a mirror is purged anyway (`saga_steps.erased_scope`).
         "purge": applied_purge(input.scope_type, input.scope_value, bool(input.purge)),
         "attempts": attempts,
+        "mirror_marked": mirror_marked,
         "requested_at": requested_at,
     }
 
@@ -155,7 +158,7 @@ async def checkpoint(
         "completed_at": completed_at,
         "steps_completed": steps_completed,
         "last_checkpoint_at": datetime.now(UTC).replace(tzinfo=None),
-        "version": time.time_ns(),
+        "version": receipt_version(time.time_ns(), mirror_marked=bool(row.get("mirror_marked"))),
     }
     await erasure_ledger.insert_request_checkpoint(ck)
 
@@ -303,6 +306,30 @@ async def _reopen_checkpointed_steps(
     return completed
 
 
+class MirrorMarkUnavailable(RuntimeError):
+    """The scope's privacy mark could not be persisted: no census may count it."""
+
+
+async def _mark_mirrored(row: RequestRow, scope: str | Sequence[str], completed: set[str]) -> None:
+    if row.get("mirror_marked") or not any(
+        is_mirror_name(ns) for ns in erasure_mutations.namespaces_of(scope)
+    ):
+        return
+    # Failure paths must already be opaque if persisting the mark fails.
+    row["mirror_marked"] = True
+    try:
+        if pg.enabled():
+            await erasure_pg_ledger.record(row)
+        await checkpoint(
+            row=row,
+            status="in_progress",
+            steps_completed=sorted(completed),
+            current_step=len(completed),
+        )
+    except Exception as e:  # no mirror count precedes its durable privacy mark
+        raise MirrorMarkUnavailable from e
+
+
 async def run_saga(
     *,
     input: ErasureRequestInput,
@@ -407,9 +434,16 @@ async def run_saga(
             # residue under `residue_count = 0`. The tail fills the holder and
             # never replaces the step's error: the reason stays the step's, the
             # residue is evidence beside it.
-            await _census_tail(
-                input.org, census_scope_type, census_scope_value, verify, purge=census_purge
-            )
+            if not isinstance(getattr(e, "cause", e), MirrorMarkUnavailable):
+                await _census_tail(
+                    input.org,
+                    census_scope_type,
+                    census_scope_value,
+                    verify,
+                    purge=census_purge,
+                    row=row,
+                    completed=completed,
+                )
             census = _census(verify)
             completed_at = datetime.now(UTC).replace(tzinfo=None)
             await checkpoint(
@@ -426,12 +460,15 @@ async def run_saga(
                 org=input.org,
                 namespace=audit_namespace(input.scope_type, input.scope_value),
                 actor=audit_actor(row),
-                subject={
-                    "erasure_id": erasure_id,
-                    "requester": input.requester,
-                    "error": reason[:512],
-                    "steps_completed": sorted(completed),
-                },
+                subject=audit_subject(
+                    row,
+                    {
+                        "erasure_id": erasure_id,
+                        "requester": input.requester,
+                        "error": reason[:512],
+                        "steps_completed": sorted(completed),
+                    },
+                ),
                 request_id=erasure_id,
             )
             return ErasureRequestOutput(
@@ -467,22 +504,7 @@ async def run_saga(
     if pg.enabled():
         await _complete_ledger_row(input.org, erasure_id, completed_at)
 
-    await audit.emit(
-        event_type="erasure.completed",
-        org=input.org,
-        namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=audit_actor(row),
-        subject={
-            "erasure_id": erasure_id,
-            "scope_type": input.scope_type,
-            "scope_value": shown_scope(input.scope_type, input.scope_value),
-            "requester": input.requester,
-            "steps": [s.model_dump() for s in steps],
-            # Counts only: a copy of the receipt that outlives the ledger row.
-            "census": census,
-        },
-        request_id=erasure_id,
-    )
+    await _audit_completed(input, row, erasure_id, steps, census)
 
     return ErasureRequestOutput(
         erasure_id=erasure_id,
@@ -496,6 +518,35 @@ async def run_saga(
         census=census,
         purge=census_purge,
         steps_completed=sorted(completed),
+    )
+
+
+async def _audit_completed(
+    input: ErasureRequestInput,
+    row: RequestRow,
+    erasure_id: str,
+    steps: list[_ErasureStepResult],
+    census: dict[str, int] | None,
+) -> None:
+    """The durable receipt is safe for the namespace administrator who reads it."""
+    await audit.emit(
+        event_type="erasure.completed",
+        org=input.org,
+        namespace=audit_namespace(input.scope_type, input.scope_value),
+        actor=audit_actor(row),
+        subject=audit_subject(
+            row,
+            {
+                "erasure_id": erasure_id,
+                "scope_type": input.scope_type,
+                "scope_value": shown_scope(input.scope_type, input.scope_value),
+                "requester": input.requester,
+                "steps": [s.model_dump() for s in steps],
+                # Counts only: a copy of the receipt that outlives the ledger row.
+                "census": census,
+            },
+        ),
+        request_id=erasure_id,
     )
 
 
@@ -539,6 +590,8 @@ async def _census_tail(
     verify: dict[str, Any],
     *,
     purge: bool,
+    row: RequestRow,
+    completed: set[str],
 ) -> None:
     """Run the residue census after a step failure, filling `verify` as the step does
     (`verified_at` only when every store was counted), never raising: residue here is
@@ -549,6 +602,8 @@ async def _census_tail(
         spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
             async with erased_scope(org, scope_type, scope_value) as scope:
+                if scope_type != "user_id":
+                    await _mark_mirrored(row, scope, completed)
                 per_table, unread = await erasure_census.evidence_census(
                     org, scope_type, scope, spellings=spellings
                 )
@@ -722,8 +777,13 @@ async def _saga_namespace(
             )
         )
 
+    async def _marked(fn: Callable[..., Awaitable[int]]) -> int:
+        async with erased_scope(org, "namespace", namespace) as scope:
+            await _mark_mirrored(row, scope, completed)
+            return await fn(org, scope)
+
     for name, fn in authority_steps(NAMESPACE_STEPS):
-        await _step(name, with_mirrors(fn), org, namespace)
+        await _step(name, _marked, fn)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse
@@ -749,5 +809,9 @@ async def _saga_namespace(
         )
     # Verified forgetting: the census is the last step and the
     # only one that can fail the saga on its own evidence.
-    await _step("verify.residue", _step_verify_residue, org, "namespace", namespace, verify)
+    await _step(
+        "verify.residue",
+        _marked,
+        lambda o, ns: _step_verify_residue(o, "namespace", ns, verify),
+    )
     return results

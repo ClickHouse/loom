@@ -83,7 +83,12 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
    (423, `refused_action` `expire`), as in `memory.bulk_set`.
 6. **Proposals and preconditions.** `proposed=true` may not overwrite an established
    fact (`_refuse_proposal_over_fact`). `if_match_sha256` must match the live hash (409
-   `PRECONDITION_FAILED`).
+   `PRECONDITION_FAILED`). `if_match_sha256='absent'` instead requires no unexpired
+   row at the exact identity and key; a concrete agent is required. It uses the strong
+   head already checked by the guards under the key's write lock. An expired physical
+   row stays attached to the write, so its locks and pin still hold and Postgres
+   admission checks that row's exact version before replacing it. Lifecycle status and
+   `valid_to` do not make an exact-key-readable row absent.
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
@@ -970,9 +975,24 @@ double claim harmless. With `extraction_queue` off, deferred saves stay `pending
 
 ## `memory.search`
 
+Search hits expose the stored writer as `agent` when the retrieval leg read the
+row identity. It remains empty when unknown. This identity survives parked pages
+and lets a client conditionally delete the exact writer/version without resolving
+a key across authors. Namespace and end-user admission still select readable rows
+before serialization; the field grants no additional read or write access.
+
 `handle_memory_search` (`server/memory/app/search/handler.py`) runs phases, one
 module each. The SQL is in `server/memory/app/retrieval/` and
 `server/memory/domain/search_sql.py`.
+
+Entity-summary seeds keep the filter's order, followed by query handles and known
+vocabulary tokens, deduplicated case-insensitively. Their union accepts at most 256
+names; the 257th refuses with `VECTOR_INPUT_TOO_LARGE` rather than truncating the
+ranking input. This typed input refusal propagates through optional re-reads, ask
+widening and composed search sections. Other failures retain their documented
+fallbacks. A search joins its cancelled local children before returning a refusal;
+the repository decision pass also joins its sibling when either search fails.
+Local coroutine completion does not prove remote query retirement.
 
 1. **Settle the request** (`request.py`): recipe and namespace `retrieval_defaults`, read
    scope, the `top_k` ceiling. A parked `page` handle is served directly.
@@ -1042,6 +1062,11 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    whether the search abstains.
    Trace, exposure and query-node rows are inserted directly, fire-and-forget (an exposure a
    breadth rule counts is a waited insert before the answer).
+
+Search pages use a versioned payload. A build accepts only its own page version, so a
+build that cannot enforce governed-hit freshness cannot read a page that carries one.
+Page handles may therefore answer `page_expired` across an upgrade or rollback; the
+caller repeats the original search. The payload version changes for all pages together.
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the
@@ -1437,6 +1462,25 @@ supporter that lands between that read and the delete can lose its candidate. A 
 carries no `user_id`, and once a user's supporter rows are gone nothing ties an
 unsupported candidate to that user, so the census counts every unsupported candidate that
 still holds its rule in the org, whichever erasure left it.
+
+Private definition candidates retain their original proposal time in every version.
+Claim, model-completion and review writes share an org lease with the namespace queue
+erasure step and historical candidate redaction. A private review holds this lease from
+its evidence check through source creation, shared promotion and the status insert.
+Before any publication, the writer reads the erasure ledger under that lease;
+an erasure that may cover the evidence and was unfinished at the proposal time refuses
+the write, including one completed since then. User erasures count conservatively because
+the candidate holds no user identities. An unreadable ledger refuses the write. A send
+whose completion is unknown retains the lease until its server deadline has passed, so
+erasure and historical redaction cannot finish while the insert may still land. Draft
+model generation runs outside the lease. Private writes in one org serialize with its
+queue erasure, including erasure of a namespace list.
+
+Query-history registration and removal share a separate org writer lease with registry
+erasure. The ledger check uses the operation's start before its first await. Remote
+credential probes run outside this lease. Successful inserts finish before erasure can
+delete their rows; an insert with an unknown outcome retains its lease until its server
+deadline has passed.
 
 ## Audit rows
 

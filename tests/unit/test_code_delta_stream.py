@@ -388,6 +388,8 @@ async def test_an_apply_cancelled_mid_read_releases_the_file_once_the_read_ends(
         return real(text, index)
 
     monkeypatch.setattr(delta_file, "_entry", slow)
+    # Unrelated cyclic garbage must close its descriptors before the baseline.
+    gc.collect()
     before = _fds()
     task = asyncio.create_task(apply_delta(_Repo(), "o", "code-x", delta))  # type: ignore[arg-type]
     assert await asyncio.to_thread(in_read.wait, 10)

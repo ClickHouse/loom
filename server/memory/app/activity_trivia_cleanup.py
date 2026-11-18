@@ -21,6 +21,7 @@ from typing import Any
 
 from server.memory.api.models_apply import ApplyDemote, ApplyLabel, ApplyTarget, MemoryApplyInput
 from server.memory.domain.activity_facts import is_activity_narration
+from server.observability.store.event_reads import MASKED_EVENTS
 
 LABEL = "activity_narration"
 _READ_BY_NAME_OPS = ("memory.get", "memory.update", "memory.history", "memory.get_by_id")
@@ -34,14 +35,16 @@ WHERE org = {org:String} AND namespace = {ns:String}
 LIMIT {lim:UInt32}
 """
 
-READ_BY_NAME_SQL = """
+READ_BY_NAME_SQL = (
+    """
 SELECT DISTINCT memory_key
-FROM loom.agent_events
+FROM {masked_events}
 WHERE org = {org:String} AND namespace = {ns:String}
   AND operation IN {ops:Array(String)}
   AND memory_key IN {keys:Array(String)}
   AND ts > now() - INTERVAL {days:UInt32} DAY
 """
+).replace("{masked_events}", MASKED_EVENTS)
 
 
 async def find(

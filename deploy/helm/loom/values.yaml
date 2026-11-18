@@ -65,6 +65,12 @@ postgres:
   # (2 by default); a smaller pool fails at boot.
   poolMaxSize: 20
 
+# Private deployment-identity listener on web and workers Deployment pods.
+# 0 disables it; otherwise a whole number from 1 to 65535, except the HTTP port 7777.
+# Configure only here, including when external envFrom sources are used.
+cellProbe:
+  port: 0
+
 embedding:
   # Must match on every pod and cannot roll (see mustMatchChange below).
   # text-embedding-3-* needs OPENAI_API_KEY in secrets.extra; fake-ngram-3072
@@ -118,6 +124,17 @@ extraVolumeMounts: []
 # at loopback behind a proxy, every client counts as the proxy for the per-address
 # sign-in limits, so the chart refuses that with ingress.enabled.
 trustedProxies: "127.0.0.1"
+
+# TLS on Loom's own port. secretName names a kubernetes.io/tls Secret: every web and
+# workers pod mounts its tls.crt and tls.key and serves them (LOOM_TLS_CERT_FILE,
+# LOOM_TLS_KEY_FILE), the port then serves HTTPS only, and the probes use HTTPS. Loom
+# serves a renewed pair without a restart once the kubelet updates the mount. The
+# Ingress or proxy in front must connect over HTTPS (on EKS, the ALB's backend-protocol
+# annotation). "" serves plain HTTP.
+tls:
+  secretName: ""
+  # LOOM_TLS_MIN_VERSION: the lowest TLS version the port accepts, "1.2" or "1.3".
+  minVersion: "1.2"
 
 # Seconds uvicorn keeps an idle connection open. Longer than the idle timeout
 # of the balancer in front, or it reuses a connection Loom just closed (a 502).

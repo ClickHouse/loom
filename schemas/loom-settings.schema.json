@@ -3130,6 +3130,72 @@
           "type": "integer",
           "description": "Seconds a no-row source's chunks must have aged before a delete retires them (a first write's are younger); never less than an ingest pass plus 5 minutes of clock skew."
         },
+        "knowledge_query_history_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Permit opt-in ClickHouse query-history sources to queue definition drafts."
+        },
+        "knowledge_query_history_interval_seconds": {
+          "default": 3600,
+          "minimum": 300,
+          "type": "integer",
+          "description": "Seconds between query-history passes."
+        },
+        "knowledge_query_history_max_breakers": {
+          "default": 1000,
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Query-history circuit states kept per process, at most; older sources are evicted first."
+        },
+        "knowledge_query_history_max_drafts": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Drafts one source may queue in a worker turn, at most."
+        },
+        "knowledge_query_history_max_groups": {
+          "default": 200,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most-used query groups inspected per source turn before skipping existing drafts."
+        },
+        "knowledge_query_history_max_pass_seconds": {
+          "default": 120.0,
+          "maximum": 600.0,
+          "minimum": 30.0,
+          "type": "number",
+          "description": "Deadline of one query-history pass; it starts no new group after half this budget."
+        },
+        "knowledge_query_history_max_sources": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Sources one pass reads, at most; each turn is separately time bounded."
+        },
+        "knowledge_query_history_min_users": {
+          "default": 3,
+          "minimum": 3,
+          "type": "integer",
+          "description": "Distinct initial ClickHouse accounts required before drafting a query group."
+        },
+        "knowledge_query_history_read_timeout_s": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 120,
+          "type": "number",
+          "description": "Seconds allowed for one query-history source read."
+        },
+        "knowledge_query_history_window_days": {
+          "default": 7,
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Days of finished SELECT query history a turn groups."
+        },
         "knowledge_repo_docs_list_ttl_s": {
           "default": 60.0,
           "exclusiveMinimum": 0,
@@ -3178,6 +3244,12 @@
           "type": "integer",
           "description": "How many fused hits a rerank reads (the legs fetch at least this many)."
         },
+        "knowledge_source_acl_stale_seconds": {
+          "default": 3600,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody."
+        },
         "knowledge_source_max_documents": {
           "default": 50000,
           "maximum": 200000,
@@ -3185,12 +3257,24 @@
           "type": "integer",
           "description": "Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square."
         },
+        "knowledge_source_mirror_documents_per_pass": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share."
+        },
         "knowledge_source_probe_timeout_s": {
           "default": 20.0,
           "exclusiveMinimum": 0,
           "maximum": 25.0,
           "type": "number",
           "description": "Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
+        },
+        "knowledge_source_retire_documents_per_pass": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off."
         },
         "knowledge_source_sync_cap_share": {
           "default": 0.25,
@@ -3203,7 +3287,7 @@
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass."
+          "description": "Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass."
         },
         "knowledge_source_sync_enabled": {
           "default": false,
@@ -5026,6 +5110,12 @@
           "type": "number",
           "description": "Seconds the entity vocabulary of a namespace's summaries is cached for the summary read leg."
         },
+        "memory_term_leg_wait_ms": {
+          "default": 100,
+          "minimum": 1,
+          "type": "integer",
+          "description": "How much longer memory.search waits for its term leg once the other legs are done; past it the leg adds nothing (docs/concepts/identities-and-namespaces.md)."
+        },
         "memory_usage_fold_acted_max_rows_per_pass": {
           "default": 5000,
           "minimum": 1,
@@ -6369,6 +6459,25 @@
           "default": "warm",
           "type": "string",
           "description": "Volume named in tiering TTL clauses; must match a volume in the cluster's storage_policies."
+        },
+        "tls_cert_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both \"\", HTTP."
+        },
+        "tls_key_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused."
+        },
+        "tls_min_version": {
+          "default": "1.2",
+          "enum": [
+            "1.2",
+            "1.3"
+          ],
+          "type": "string",
+          "description": "Lowest TLS version the web port accepts with tls_cert_file: \"1.2\" or \"1.3\"."
         },
         "tracker_bisect_component_dirs": {
           "default": 8,

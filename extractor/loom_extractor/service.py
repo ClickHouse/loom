@@ -26,7 +26,6 @@ import asyncio
 import contextlib
 import hmac
 import json
-import logging
 import math
 import os
 import re
@@ -44,8 +43,6 @@ from starlette.routing import Route
 from loom_extractor import child
 from loom_extractor.source import BINARY_PARSED, PARSED_FORMATS
 
-logger = logging.getLogger("loom_extractor")
-
 CONTRACT_VERSION = 1
 NAME = "loom-reference"
 VERSION = "1"  # the service; each artifact names its own parser and parser_version
@@ -54,7 +51,6 @@ _FORMAT_OPTIONS = {fmt: [] if fmt in BINARY_PARSED else ["encoding"] for fmt in 
 }
 _READ_CHUNK = 64 * 1024
 _REAP_S = 5.0  # how long a stopped child's pipes may stay open
-_STDERR_TAIL = 4096
 # The directory holding `loom_extractor`, for a child started with no environment,
 # and the module the child runs.
 _PACKAGE_ROOT = str(Path(child.__file__).resolve().parent.parent)
@@ -158,11 +154,10 @@ _NATIVE_ENV = {
 }
 
 
-async def _tail(stream: asyncio.StreamReader) -> bytes:
-    tail = b""
-    while chunk := await stream.read(_READ_CHUNK):
-        tail = (tail + chunk)[-_STDERR_TAIL:]
-    return tail
+async def _drain(stream: asyncio.StreamReader) -> None:
+    # A parser can put source bytes in stderr; consume them without retaining or logging them.
+    while await stream.read(_READ_CHUNK):
+        pass
 
 
 async def run_child(config: Config, data: bytes, request: dict[str, object]) -> bytes:
@@ -209,14 +204,14 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
 
-    async def run() -> tuple[bytes | None, bytes, int]:
-        _, out, err = await asyncio.gather(
-            feed(), _read_capped(stdout, config.max_artifact_bytes, stop), _tail(stderr)
+    async def run() -> tuple[bytes | None, int]:
+        _, out, _ = await asyncio.gather(
+            feed(), _read_capped(stdout, config.max_artifact_bytes, stop), _drain(stderr)
         )
-        return out, err, await proc.wait()
+        return out, await proc.wait()
 
     try:
-        out, err, code = await asyncio.wait_for(run(), config.timeout_s)
+        out, code = await asyncio.wait_for(run(), config.timeout_s)
     except TimeoutError as e:
         raise _Refused("timeout", f"the extraction took over {config.timeout_s:g} s") from e
     finally:
@@ -229,7 +224,8 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
                     await asyncio.gather(stdout.read(), stderr.read())
                     await proc.wait()
             except TimeoutError:
-                logger.error("extraction %s: its pipes stayed open after it was stopped", proc.pid)
+                # The child is killed. Logging this request would reveal its existence.
+                pass
     if out is None:
         raise _Refused("resource_limit", f"the artifact is over {config.max_artifact_bytes} bytes")
     if code == 0:
@@ -241,8 +237,7 @@ async def run_child(config: Config, data: bytes, request: dict[str, object]) -> 
         raise _Refused("resource_limit", f"the extraction was stopped by signal {-code}")
     # Not the parser (a parser's exception is the child's own `corrupt`): a fault
     # before it ran, such as a refused prctl or a missing import, worth a retry.
-    logger.error("extraction exited %s: %s", code, err.decode(errors="replace"))
-    raise RuntimeError(f"the extraction exited {code}")
+    raise RuntimeError("the extraction failed")
 
 
 async def _disconnected(request: Request) -> None:
@@ -276,7 +271,7 @@ def create_app(config: Config) -> Starlette:
             }
         )
 
-    async def extract(request: Request) -> Response:
+    async def _extract_request(request: Request) -> Response:
         if not authorized(request):
             return _error(401, "unauthorized", "a valid bearer token is required")
         params = dict(request.query_params)
@@ -320,9 +315,13 @@ def create_app(config: Config) -> Starlette:
                 out = extraction.result()
             except _Refused as e:
                 return _error(422, e.code, str(e))
-            except RuntimeError as e:
-                return _error(500, "extractor_error", str(e))
         return Response(out, media_type="application/json")
+
+    async def extract(request: Request) -> Response:
+        try:
+            return await _extract_request(request)
+        except Exception:  # noqa: BLE001 — request faults must not reach server traceback logs
+            return _error(500, "extractor_error", "the extraction failed")
 
     return Starlette(
         routes=[

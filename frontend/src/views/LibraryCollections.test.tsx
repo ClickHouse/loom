@@ -212,6 +212,25 @@ describe("useReadableCollections", () => {
     return <p data-testid="probe">{c.rows === null ? "reading" : c.rows.map((r) => r.namespace).join(",")}</p>;
   }
 
+  it("requests document counts with every collection page", async () => {
+    api.listCollections
+      .mockResolvedValueOnce({ collections: [entry("col-a")], next_cursor: "col-a" })
+      .mockResolvedValueOnce({ collections: [entry("col-b")], next_cursor: null });
+    render(<Probe />);
+    await settle();
+    expect(screen.getByTestId("probe")).toHaveTextContent("col-a,col-b");
+    expect(api.listCollections).toHaveBeenNthCalledWith(
+      1,
+      "acme",
+      expect.objectContaining({ includeDocumentCounts: true, cursor: null }),
+    );
+    expect(api.listCollections).toHaveBeenNthCalledWith(
+      2,
+      "acme",
+      expect.objectContaining({ includeDocumentCounts: true, cursor: "col-a" }),
+    );
+  });
+
   it("asks again for a collection just created until the list names it", async () => {
     let probe: ReadableCollections | null = null;
     function Holder() {

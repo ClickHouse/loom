@@ -7,6 +7,7 @@ export default defineConfig({
     index: "src/index.ts",
     "integrations/ai-sdk": "src/integrations/ai-sdk.ts",
     "integrations/claude-memory": "src/integrations/claude-memory.ts",
+    "integrations/google-adk": "src/integrations/google-adk.ts",
     "integrations/langchain": "src/integrations/langchain.ts",
     "integrations/mastra": "src/integrations/mastra.ts",
     "integrations/openai-agents": "src/integrations/openai-agents.ts",

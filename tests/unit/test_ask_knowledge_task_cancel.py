@@ -11,6 +11,9 @@ import pytest
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import precedents as memory_precedents
 from server.memory.app.ask import pipeline
+from tests.unit.ask_knowledge_fake import ordinary_knowledge_scope as ordinary_knowledge_scope
+
+pytestmark = pytest.mark.usefixtures("ordinary_knowledge_scope")
 
 
 @pytest.mark.asyncio

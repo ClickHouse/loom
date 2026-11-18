@@ -82,6 +82,14 @@ describe("formatMcpConfig — every other client keeps the bare URL", () => {
     expect(loom.command).toBe("npx");
     expect(loom.args).toContain(URL);
   });
+
+  it("zed writes a remote url and headers", () => {
+    const cfg = formatMcpConfig({ client: "zed", token: T, mcpUrl: URL });
+    const loom = rec(rec(cfg.block.context_servers).loom);
+    expect(loom.url).toBe(URL);
+    expect(loom.headers).toEqual({ Authorization: `Bearer ${T}` });
+    expect(loom.command).toBeUndefined();
+  });
 });
 
 describe("formatMcpConfig — Codex", () => {

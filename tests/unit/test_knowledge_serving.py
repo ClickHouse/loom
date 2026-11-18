@@ -322,8 +322,9 @@ async def test_a_memory_stack_serves_only_the_heads_version(
     """`memory.stack` reads chunks itself: under the Postgres authority its knowledge
     section takes the same check and refill as a search."""
     from server.knowledge.app import search
+    from server.knowledge.app.source_access import ReadPlan
     from server.memory.api.models_lifecycle import MemoryStackInput
-    from server.memory.app import stack
+    from server.memory.app import stack, stack_knowledge
 
     class _Embedder:
         model_name = "m"
@@ -350,13 +351,18 @@ async def test_a_memory_stack_serves_only_the_heads_version(
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_documents, "serving", heads)
     fill = stack._StackFill(budget=10_000)
-    await stack._stack_knowledge(
-        MemoryStackInput(
-            org="o", namespace="ns", agent="a", include_knowledge=True, knowledge_top_k=2
-        ),
-        fill,
-        "text",
+    knowledge_input = MemoryStackInput(
+        org="o", namespace="ns", agent="a", include_knowledge=True, knowledge_top_k=2
     )
+    knowledge = await stack_knowledge.collect(
+        knowledge_input.org,
+        knowledge_input.namespace,
+        knowledge_input.agent,
+        "text",
+        int(knowledge_input.knowledge_top_k),
+        ReadPlan(knowledge_input.org),
+    )
+    fill = stack._render(fill, knowledge.hits)
     assert [e.value for e in fill.entries] == ["new text", "other"]
     assert asked[:2] == [2, 4]  # the page of two held a stale hit: fetched again, deeper
 

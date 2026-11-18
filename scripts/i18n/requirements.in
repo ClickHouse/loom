@@ -1,0 +1,3 @@
+# Claude on Amazon Bedrock for scripts/i18n/translate.py; .github/workflows/i18n.yml installs
+# requirements.txt, compiled from this file with the command at its top.
+anthropic[bedrock]==2.3.0

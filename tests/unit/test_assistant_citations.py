@@ -277,6 +277,7 @@ def test_the_key_statement_finds_a_cited_key_and_its_chunks_and_nothing_else() -
 
     ch = LocalCH(
         ddl("memory_exposures"),
+        ddl("agent_events"),
         # A chunk of the cited key, then keys that only look like it.
         row([chunk(key), f"{key}x", chunk(f"{key}x")]),
         # The cited key itself, but under another run, and under another caller.
@@ -287,14 +288,16 @@ def test_the_key_statement_finds_a_cited_key_and_its_chunks_and_nothing_else() -
     found = asyncio.run(ledger.returned_keys("acme", "ns", "r1", "alice", [key, "a/b"], ch=ch))  # type: ignore[arg-type]
     assert found == {key, "a/b"}
     # A key may hold `:`: a chunk of `<key>:v2` is that key's, not the cited one's.
-    colon = LocalCH(ddl("memory_exposures"), row([chunk(f"{key}:v2")]))
+    colon = LocalCH(ddl("memory_exposures"), ddl("agent_events"), row([chunk(f"{key}:v2")]))
     assert asyncio.run(ledger.returned_keys("acme", "ns", "r1", "alice", [key], ch=colon)) == set()  # type: ignore[arg-type]
     both = asyncio.run(
         ledger.returned_keys("acme", "ns", "r1", "alice", [key, f"{key}:v2"], ch=colon)  # type: ignore[arg-type]
     )
     assert both == {f"{key}:v2"}
     # Neither a longer key nor its chunk stands for the cited one.
-    longer = LocalCH(ddl("memory_exposures"), row([f"{key}x", chunk(f"{key}x")]))
+    longer = LocalCH(
+        ddl("memory_exposures"), ddl("agent_events"), row([f"{key}x", chunk(f"{key}x")])
+    )
     alone = asyncio.run(ledger.returned_keys("acme", "ns", "r1", "alice", [key], ch=longer))  # type: ignore[arg-type]
     assert alone == set()
 

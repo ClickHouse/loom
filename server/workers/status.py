@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -77,6 +77,18 @@ class WorkerStatusRegistry:
             s.consecutive_failures += 1
             s.total_runs += 1
 
+    def record_private(self, name: str, *, started: datetime, code: str) -> None:
+        """Retain a private pass's code without duration, outcome or failure counters."""
+        with self._lock:
+            s = self._statuses.setdefault(name, WorkerStatus(name=name))
+            s.last_run_at = started
+            s.last_duration_ms = None
+            s.last_outcome = {"code": code}
+            s.last_error = None if code == "ok" else code
+            s.last_error_kind = None if code == "ok" else code
+            s.consecutive_failures = 0
+            s.total_runs += 1
+
     def snapshot(self) -> dict[str, dict[str, Any]]:
         """Return a JSON-serializable view of all worker statuses."""
         with self._lock:
@@ -120,35 +132,51 @@ class _PassRecord:
 
 
 @contextmanager
-def record_pass(name: str) -> Iterator[_PassRecord]:
-    """Time one worker pass and record it to the registry: ``record_failure``
-    + re-raise on exception, ``record_success(outcome=rec.outcome)`` on clean
-    exit. Set ``rec.outcome`` inside the block before it ends.
+def record_pass(name: str, *, trace_pass: bool = True) -> Iterator[_PassRecord]:
+    """Record a worker pass, retaining codes only after it touched private work.
 
-    Also the worker plane's telemetry hook, since the registry is only a
-    snapshot: each pass emits ``loom.worker.passes{worker, outcome}``
-    and ``loom.worker.pass_duration_ms{worker}`` and runs inside a root span
-    ``worker.<name>.pass`` (no request parent exists here) that the pass's
-    CH/LLM/embedding spans nest under. Every telemetry call is fail-quiet;
-    the registry update and the re-raise are what a worker relies on.
+    A worker that can touch private sources omits its root span with
+    ``trace_pass=False``: a span opened before that work cannot hide its duration.
     """
     rec = _PassRecord()
     started = time.monotonic()
+    wall_started = datetime.now(UTC)
     set_worker_identity(name, fresh=True)
-    with _pass_span(name) as span:
-        try:
-            yield rec
-        except Exception as e:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            get_registry().record_failure(name, duration_ms=duration_ms, exc=e)
-            _finish_span(span, success=False, duration_ms=duration_ms, error=e)
-            _record_metrics(name, success=False, duration_ms=duration_ms)
-            raise
-        duration_ms = int((time.monotonic() - started) * 1000)
+    with pass_context.ensure_pass(name):
+        with _pass_span(name) if trace_pass else nullcontext() as span:
+            try:
+                yield rec
+            except Exception as e:
+                _record_result(name, started, wall_started, rec, span, error=e)
+                raise
+            _record_result(name, started, wall_started, rec, span)
+
+
+def _record_result(
+    name: str,
+    started: float,
+    wall_started: datetime,
+    rec: _PassRecord,
+    span: Any,
+    *,
+    error: BaseException | None = None,
+) -> None:
+    ctx = pass_context.current()
+    if ctx is not None and ctx.private_work:
+        code = "SYNC_FAILED" if error is not None or ctx.count else "ok"
+        get_registry().record_private(name, started=wall_started, code=code)
+        pass_context.record_outcome(name, {"code": code})
+        return
+    duration_ms = int((time.monotonic() - started) * 1000)
+    if error is not None:
+        get_registry().record_failure(name, duration_ms=duration_ms, exc=error)
+    else:
         get_registry().record_success(name, duration_ms=duration_ms, outcome=rec.outcome)
         pass_context.record_outcome(name, rec.outcome)
-        _finish_span(span, success=True, duration_ms=duration_ms, outcome=rec.outcome)
-        _record_metrics(name, success=True, duration_ms=duration_ms)
+    _finish_span(
+        span, success=error is None, duration_ms=duration_ms, error=error, outcome=rec.outcome
+    )
+    _record_metrics(name, success=error is None, duration_ms=duration_ms)
 
 
 def _pass_span(name: str) -> Any:

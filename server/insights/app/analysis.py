@@ -44,6 +44,7 @@ from server.core.errors import (
     error_kind,
 )
 from server.core.secrets_at_rest import seal, unseal
+from server.core.sql_literal import sql_string
 from server.insights.api.models_analysis import (
     AnalysisColumn,
     CatalogColumn,
@@ -56,6 +57,7 @@ from server.insights.api.models_analysis import (
 from server.insights.domain import analysis as boundary
 from server.insights.store import analysis as store
 from server.observability.event_args import text_digest
+from server.observability.store.event_reads import MASKED_EVENT_COLUMNS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -228,7 +230,16 @@ def entity_statements(
 ) -> list[str]:
     """The SQL that writes the analyst user for this deployment, password and key included."""
     db = store.target_database()
-    return boundary.entity_sql(db, _names(), _password(), _key(), caps(), granted, roles)
+    return boundary.entity_sql(
+        db,
+        _names(),
+        _password(),
+        _key(),
+        caps(),
+        granted,
+        roles,
+        event_columns=MASKED_EVENT_COLUMNS,
+    )
 
 
 def printed_checks() -> list[str]:
@@ -252,7 +263,10 @@ def printed_statements(revokes: list[str]) -> list[str]:
     `SET` that cuts the text of the rest from the log."""
     statements = entity_statements()
     first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    cut = ", ".join(f"{name} = {value}" for name, value in boundary.LOG_TEXT_CUT.items())
+    cut = ", ".join(
+        f"{name} = {sql_string(value) if isinstance(value, str) else value}"
+        for name, value in boundary.provisioning_settings(_names()).items()
+    )
     return [f"SET {cut}", *statements[:first], *revokes, *statements[first:]]
 
 
@@ -284,7 +298,7 @@ async def provision() -> bool:
                 statements = await _current_statements()
                 stored = await store.stored_entities(_names())
                 if boundary.needs_rewrite(stored, boundary.entity_digest(_names(), statements)):
-                    await store.write_entities(statements)
+                    await store.write_entities(statements, names=_names())
                     log.info("analyst user: written (version %s)", boundary.ENTITY_VERSION)
                 elif (
                     stored is not None
@@ -292,7 +306,7 @@ async def provision() -> bool:
                     and (await store.stored_caps_digest(_names()) != boundary.caps_digest(caps()))
                 ):
                     # The caps are deployment settings, written apart from the version.
-                    await store.write_entities(boundary.caps_sql(_names(), caps()))
+                    await store.write_entities(boundary.caps_sql(_names(), caps()), names=_names())
         if foreign and foreign[0]:
             _set_problem(*foreign)
             return False  # nothing written: run again, once the policy is dropped
@@ -343,7 +357,7 @@ async def _write_under_lease() -> tuple[str, str]:
             return foreign
         stored = await store.stored_entities(_names())
         if stored is None or stored.version <= boundary.ENTITY_VERSION:
-            await store.write_entities(await _current_statements())
+            await store.write_entities(await _current_statements(), names=_names())
     return "", ""
 
 
@@ -400,7 +414,7 @@ async def rewrite() -> None:
         problem, names = await _foreign_problem()
         if problem:
             raise SetupRefused(f"{problem} ({names})")
-        await store.write_entities(await _current_statements())
+        await store.write_entities(await _current_statements(), names=_names())
 
 
 def scope_ttl_s() -> int:
@@ -605,6 +619,9 @@ async def _probe() -> tuple[str, bool, str]:
         )
     if not await _canary_reads(_loaded):
         return "the analyst's policies do not accept this replica's key", True, ""
+    if await store.own_version(_names(), password=_password(), extra={}) > boundary.ENTITY_VERSION:
+        # The key canary stays mandatory; the newer build owns its changed catalog and grants.
+        return "", False, ""
 
     def reserved() -> dict[str, Any]:
         # One query id per statement: a statement still running past its
@@ -656,9 +673,6 @@ async def _probe() -> tuple[str, bool, str]:
                 error_line(e),
             )
         return f"{boundary.ANALYST_USER} may read {shown}: its grants are too wide", True, ""
-    if await store.own_version(_names(), password=_password(), extra={}) > boundary.ENTITY_VERSION:
-        # A newer build's entities: the allowlist checks below are its to make.
-        return "", False, ""
     for table in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
         if not await _signed_only(table):
             problem = f"{boundary.ANALYST_USER} reads {table} unsigned: it has no scope policy"

@@ -724,6 +724,7 @@ async def test_the_cell_refresh_reads_the_marker_its_pool_sends(
     from server.settings import settings
 
     async with _cell("recording") as (dsn, _conn):
+        await pg.close_pool()
         monkeypatch.setattr(settings, "pg_dsn", dsn)
         monkeypatch.setattr(settings, "cell", loom_cell)
         monkeypatch.setattr(pg, "_expected", None)

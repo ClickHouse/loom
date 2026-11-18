@@ -1,11 +1,11 @@
 # Entity graph
 
-Entity communities are off by default (`LOOM_ENTITY_COMMUNITIES_ENABLED`).
-
 Loom keeps an entity graph beside the memory rows, in the same ClickHouse database. Entities are nodes. Two
 entities named in the same memory share a co-occurrence edge; extraction adds typed `(subject, relation, object)`
 triples as a second edge set. The graph is a projection of memory: every edge traces back to the rows that produced
 it. Use it for questions vector search cannot answer, such as "what is connected to the billing service".
+
+Entity communities are off by default (`LOOM_ENTITY_COMMUNITIES_ENABLED`).
 
 ## What the graph holds
 

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from server.core.ch import get_client, sequential_reads
 from server.embedding import get_embedder
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
-from server.memory.app.search import pg_validation
+from server.memory.app.search import pg_validation, term_leg
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.evidence import _decorate_hits
 from server.memory.app.search.knobs import _ground_relative_excerpts_enabled
@@ -99,6 +99,9 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
+    governed = [h for h in hits if h.governed]
+    unit_counts = await _expand_unit_bodies(governed, input)
+    _apply_bodies(governed, input)
     apply_explain_default(hits, input)
     verdict = _page_verdict(hits, nxt, offset)
     out = MemorySearchOutput(
@@ -113,6 +116,9 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         namespaces_skipped=[ns for ns in payload.get("namespaces_skipped") or [] if ns in readable],
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
+        bodies_returned=unit_counts[0],
+        bodies_elided=unit_counts[1],
+        tokens_returned=unit_counts[2],
         abstain=verdict.abstain,
         abstain_code=verdict.abstain_code,
         abstain_reason=verdict.abstain_reason,
@@ -162,6 +168,16 @@ async def _stale_flags(
     return await pg_validation.stale_flags(input.org, input.namespace, hits)
 
 
+async def _parked_shared_flags(
+    org: str, namespace: str, hits: list[_MemorySearchHit]
+) -> list[bool]:
+    # Governed hits require the stronger bounded refresh, including source labels.
+    ordinary = [(i, hit) for i, hit in enumerate(hits) if not hit.governed]
+    checked = await withheld_definition_flags(org, namespace, [hit for _, hit in ordinary])
+    flags = {i: flag for (i, _), flag in zip(ordinary, checked, strict=True)}
+    return [flags.get(i, False) for i in range(len(hits))]
+
+
 async def _parked_slice(
     input: MemorySearchInput, payload: dict[str, Any], offset: int, readable: set[str]
 ) -> tuple[list[_MemorySearchHit], int, int]:
@@ -189,19 +205,26 @@ async def _parked_slice(
             j += 1
         window_hits = [h for _, h in window]
         # A source relabelled or gone since page one withholds its definition here too.
-        stale, definitions_withheld = await asyncio.gather(
+        stale, definitions_withheld, refreshed = await asyncio.gather(
             _stale_flags(input, payload, window_hits),
-            withheld_definition_flags(input.org, input.namespace, window_hits),
+            _parked_shared_flags(input.org, input.namespace, window_hits),
+            term_leg.refresh_parked(
+                input.org,
+                input.namespace,
+                str(payload.get("query") or ""),
+                window_hits,
+                whole=input.bodies in ("unit", "source"),
+            ),
         )
-        for (at, hit), is_stale, is_withheld in zip(
-            window, stale, definitions_withheld, strict=True
+        for (at, _), is_stale, is_withheld, hit in zip(
+            window, stale, definitions_withheld, refreshed, strict=True
         ):
             if len(hits) == top_k:
                 j = at  # the first row of the next page
                 break
             if is_stale:
                 dropped += 1
-            elif not is_withheld:
+            elif not is_withheld and hit is not None:
                 hits.append(hit)
     return hits, (j if j < len(rows) else -1), dropped
 
@@ -373,6 +396,7 @@ def _build_search_output(
         retrieval_plan=search_plan.explain(),
         retrieval_cost_estimate=run.retrieval_cost_estimate,
         retrieval_work=_actual_work_payload(actual_work, search_budget, clock=_clock),
+        term_leg=ctx.term_leg_status,
     )
     if getattr(input, "render", "") == "reader":
         from server.memory.app.ask.reader_render import reader_instructions, render_reader_block
@@ -484,6 +508,10 @@ def _record_gap_miss(input: MemorySearchInput, output: MemorySearchOutput) -> No
     if not settings.knowledge_gaps_enabled:
         return
     if not memory_missed(output.abstain, output.retrieval_risk) or output.namespaces_skipped:
+        return
+    # A governed definition answers the query, and a leg that did not report complete or
+    # empty (off included) may have held one.
+    if output.term_leg not in ("complete", "empty") or any(h.governed for h in output.results):
         return
     if unsettled(
         degraded=output.degraded,

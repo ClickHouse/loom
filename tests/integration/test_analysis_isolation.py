@@ -17,6 +17,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -237,6 +238,14 @@ def _key_spellings(ch_client) -> list[str]:
 def test_an_error_quotes_no_value_from_another_scope(
     control_plane_url: str, seed: _Seed, ch_client, sql: str
 ) -> None:
+    secret_override = " SETTINGS format_display_secrets_in_show_and_select = 1"
+    if sql.endswith(secret_override):
+        refused = _query(control_plane_url, seed, sql)
+        assert refused.status_code in _REFUSED, refused.text
+        for spelling in _key_spellings(ch_client):
+            assert spelling.lower() not in refused.text.lower(), refused.text[:300]
+        # Retain the conversion-error positive control after checking the new CONST refusal.
+        sql = sql.removesuffix(secret_override)
     request_id = f"quote-{uuid.uuid4().hex[:12]}"
     r = _query(control_plane_url, seed, sql, request_id=request_id)
     assert r.status_code in _REFUSED, r.text
@@ -317,7 +326,9 @@ def test_a_scope_read_inside_one_statement_reads_nothing_from_another(
 
 
 def test_ledger_rows_stay_in_scope(control_plane_url: str, seed: _Seed) -> None:
-    r = _query(control_plane_url, seed, "SELECT DISTINCT org, namespace FROM loom.agent_events")
+    r = _query(
+        control_plane_url, seed, "SELECT DISTINCT org, namespace FROM loom.analysis_agent_events"
+    )
     assert r.status_code == 200, r.text
     assert r.json()["rows"] == [[seed.org_a, seed.ns_a]]
 
@@ -443,7 +454,7 @@ def test_a_statement_during_a_policy_rewrite_reads_the_right_rows(
     own rows and no other org's."""
     import threading
 
-    policies = [_policy(ch_client, t.name) for t in boundary.TABLES]
+    policies = [_policy(ch_client, t.name) for t in boundary.policy_tables()]
     done = threading.Event()
     rewrites: list[int] = []
     failures: list[BaseException] = []
@@ -664,7 +675,7 @@ def test_an_extra_grant_is_revoked_by_the_probe(
     _assert_contained(_query(control_plane_url, seed, "SELECT * FROM loom.signing_keys"), seed)
 
 
-@pytest.mark.parametrize("table", ["agent_events", "analysis_canary"])
+@pytest.mark.parametrize("table", ["memory", "analysis_canary"])
 def test_a_dropped_policy_reads_nothing_and_is_written_again(
     control_plane_url: str, seed: _Seed, ch_client, table: str
 ) -> None:
@@ -677,10 +688,18 @@ def test_a_dropped_policy_reads_nothing_and_is_written_again(
     statement = _policy(ch_client, table)
     ch_client.command(f"DROP ROW POLICY `{boundary.POLICY_NAME}` ON loom.{table}")
     try:
-        r = _query(control_plane_url, seed, "SELECT DISTINCT org FROM loom.agent_events")
+        sql = (
+            "SELECT memory_key, org, namespace FROM loom.memory"
+            if table == "memory"
+            else "SELECT DISTINCT org FROM loom.analysis_agent_events"
+        )
+        r = _query(control_plane_url, seed, sql)
         assert r.status_code in {200, 503}, r.text
         if r.status_code == 200 and hidden:
-            assert r.json()["rows"] in ([], [[seed.org_a]]), r.text
+            if table == "memory":
+                _assert_contained(r, seed)
+            else:
+                assert r.json()["rows"] in ([], [[seed.org_a]]), r.text
         _probed_until(
             control_plane_url,
             seed,
@@ -758,3 +777,275 @@ def test_a_widening_policy_makes_analysis_unavailable(
     finally:
         ch_client.command("DROP ROW POLICY IF EXISTS `widen_test` ON loom.memory")
     _answers_again(control_plane_url, seed)
+
+
+@pytest.mark.parametrize("success", [False, True])
+def test_marked_event_view_masks_before_result_predicates(
+    control_plane_url: str, seed: _Seed, ch_client, success: bool
+) -> None:
+    from server.observability.events import AgentEvent
+
+    ordinary_id, marked_id = uuid.uuid4().hex, uuid.uuid4().hex
+    ordinary = AgentEvent(
+        ts=datetime.now(UTC),
+        org=seed.org_a,
+        namespace=seed.ns_a,
+        agent="reader",
+        user_id="reader",
+        session_id="session",
+        request_id=ordinary_id,
+        operation="memory.ask",
+        latency_ms=7,
+        success=True,
+        upstream_cost_usd=0.25,
+        input_tokens=3,
+        output_tokens=2,
+        model="ordinary",
+    ).to_row()
+    marked = {
+        **ordinary,
+        "request_id": marked_id,
+        "mirror_marked": 1,
+        "success": success,
+        "latency_ms": 13 if success else 997,
+        "input_tokens": 13 if success else 997,
+        "output_tokens": 13 if success else 997,
+        "upstream_cost_usd": 13 if success else 997,
+        "model": "private",
+        "error_code": "PRIVATE_LEFT" if success else "PRIVATE_RIGHT",
+    }
+    assert "mirror_marked" in ordinary, "marked writer prerequisite"
+    rows = [ordinary, marked, {**marked, "org": seed.org_b}, {**marked, "namespace": seed.ns_b}]
+    columns = list(ordinary)
+    ch_client.insert(
+        "loom.agent_events",
+        [[row[c] for c in columns] for row in rows],
+        column_names=columns,
+        settings={"async_insert": 1, "wait_for_async_insert": 1},
+    )
+    where = f"request_id IN ('{ordinary_id}', '{marked_id}')"
+    selected = (
+        "request_id, success, latency_ms, input_tokens, output_tokens, "
+        "upstream_cost_usd, model, error_code, org, namespace"
+    )
+    base = f"SELECT {selected} FROM loom.analysis_agent_events WHERE {where}"
+    r = _query(control_plane_url, seed, base)
+    assert r.status_code == 200, r.text
+    returned = r.json()["rows"]
+    assert len(returned) == 2
+    assert all(row[8:] == [seed.org_a, seed.ns_a] for row in returned)
+    found = {row[0]: row[1:8] for row in returned}
+    assert set(found) == {ordinary_id, marked_id}
+    assert found[ordinary_id][:4] == [True, 7, 3, 2]
+    assert float(found[ordinary_id][4]) == 0.25 and found[ordinary_id][5:] == ["ordinary", ""]
+    assert found[marked_id][:4] == [False, 0, 0, 0]
+    assert float(found[marked_id][4]) == 0 and found[marked_id][5:] == ["", ""]
+    for predicate in ("success", "upstream_cost_usd > 0", "model = 'ordinary'"):
+        r = _query(control_plane_url, seed, base + f" AND ({predicate})")
+        assert r.status_code == 200, r.text
+        assert [row[0] for row in r.json()["rows"]] == [ordinary_id]
+    r = _query(control_plane_url, seed, base + " AND model = 'private'")
+    assert r.status_code == 200 and r.json()["rows"] == [], r.text
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count() FROM loom.agent_events",
+        "SELECT upstream_cost_usd FROM loom.agent_events LIMIT 1",
+        "SELECT a.model FROM loom.analysis_agent_events AS v JOIN loom.agent_events AS a USING request_id LIMIT 1",
+    ],
+)
+def test_analyst_cannot_read_raw_events(control_plane_url: str, seed: _Seed, sql: str) -> None:
+    assert (
+        _query(
+            control_plane_url, seed, "SELECT count() FROM loom.analysis_agent_events"
+        ).status_code
+        == 200
+    )
+    r = _query(control_plane_url, seed, sql)
+    assert r.status_code in _REFUSED, r.text
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT create_table_query, as_select FROM system.tables WHERE database = 'loom' AND name = 'analysis_agent_events'",
+        "SELECT default_expression, comment FROM system.columns WHERE database = 'loom' AND table = 'analysis_agent_events'",
+        "SELECT create_table_query FROM system.tables WHERE database = 'loom' AND name = 'analysis_agent_events' SETTINGS format_display_secrets_in_show_and_select = 1",
+    ],
+)
+def test_masked_view_metadata_discloses_no_signing_key(
+    control_plane_url: str, seed: _Seed, ch_client, sql: str
+) -> None:
+    r = _query(control_plane_url, seed, sql)
+    assert r.status_code in {200, *_REFUSED}, r.text
+    if r.status_code == 200 and "create_table_query" in sql:
+        assert "[HIDDEN]" in r.text, r.text
+    for spelling in _key_spellings(ch_client):
+        assert spelling.lower() not in r.text.lower(), r.text[:300]
+
+
+@pytest.fixture
+def event_scope_canaries(seed: _Seed, ch_client) -> tuple[str, str, str]:
+    from server.observability.events import AgentEvent
+
+    ids = tuple(uuid.uuid4().hex for _ in range(3))
+    own = AgentEvent(
+        ts=datetime.now(UTC),
+        org=seed.org_a,
+        namespace=seed.ns_a,
+        agent="reader",
+        user_id="reader",
+        session_id="session",
+        request_id=ids[0],
+        operation="memory.ask",
+        latency_ms=7,
+        success=True,
+        model="17",
+    ).to_row()
+    rows = [
+        own,
+        {**own, "request_id": ids[1], "org": seed.org_b, "model": "foreign-org"},
+        {**own, "request_id": ids[2], "namespace": seed.ns_b, "model": "foreign-namespace"},
+    ]
+    columns = list(own)
+    ch_client.insert(
+        "loom.agent_events",
+        [[row[c] for c in columns] for row in rows],
+        column_names=columns,
+        settings={"async_insert": 1, "wait_for_async_insert": 1},
+    )
+    return ids
+
+
+def _event_canary_sql(ids: tuple[str, str, str]) -> str:
+    quoted = ", ".join(f"'{item}'" for item in ids)
+    return (
+        "SELECT request_id, org, namespace FROM loom.analysis_agent_events "
+        f"WHERE request_id IN ({quoted})"
+    )
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "{p}loom_org = '{org_b}'",
+        "{p}loom_ns = '{ns_a},{ns_b}'",
+        "{p}loom_sig = '" + "AB" * 32 + "'",
+        "{p}loom_exp = '1'",
+        "{p}loom_exp = 'abc'",
+        "{p}loom_sig = 5",
+    ],
+)
+def test_event_view_refuses_unsigned_scope(
+    control_plane_url: str,
+    seed: _Seed,
+    prefix: str,
+    event_scope_canaries: tuple[str, str, str],
+    setting: str,
+) -> None:
+    sql = _event_canary_sql(event_scope_canaries)
+    own = _query(control_plane_url, seed, sql)
+    assert own.status_code == 200, own.text
+    assert own.json()["rows"] == [[event_scope_canaries[0], seed.org_a, seed.ns_a]]
+    changed = setting.format(p=prefix, org_b=seed.org_b, ns_a=seed.ns_a, ns_b=seed.ns_b)
+    r = _query(control_plane_url, seed, sql + " SETTINGS " + changed)
+    assert r.status_code in {200, *_REFUSED}, r.text
+    if r.status_code == 200:
+        assert r.json()["rows"] == [], r.text
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "max_execution_time = 100000",
+        "readonly = 0",
+        "format_display_secrets_in_show_and_select = 1",
+    ],
+)
+def test_nested_settings_preserve_scope_and_effective_profile_pins(
+    control_plane_url: str,
+    seed: _Seed,
+    event_scope_canaries: tuple[str, str, str],
+    setting: str,
+) -> None:
+    sql = _event_canary_sql(event_scope_canaries)
+    own = _query(control_plane_url, seed, sql + " SETTINGS " + setting)
+    assert own.status_code in {200, *_REFUSED}, own.text
+    if own.status_code == 200:
+        assert own.json()["rows"] == [[event_scope_canaries[0], seed.org_a, seed.ns_a]]
+    effective = (
+        "SELECT toUInt64(getSetting('readonly')), "
+        "toFloat64(getSetting('max_execution_time')), "
+        "toUInt64(getSetting('format_display_secrets_in_show_and_select'))"
+    )
+    baseline = _query(control_plane_url, seed, effective)
+    assert baseline.status_code == 200, baseline.text
+    [read_only, deadline, display_secrets] = baseline.json()["rows"][0]
+    assert read_only == 2 and deadline > 0 and display_secrets == 0
+    changed = _query(control_plane_url, seed, effective + " SETTINGS " + setting)
+    assert changed.status_code in {200, *_REFUSED}, changed.text
+    if changed.status_code == 200:
+        [read_only, bounded_deadline, display_secrets] = changed.json()["rows"][0]
+        assert read_only == 2 and 0 < bounded_deadline <= deadline and display_secrets == 0
+
+
+def test_event_view_scope_signature_cannot_be_replayed(
+    control_plane_url: str,
+    seed: _Seed,
+    prefix: str,
+    event_scope_canaries: tuple[str, str, str],
+) -> None:
+    sql = _event_canary_sql(event_scope_canaries)
+    own = _query(control_plane_url, seed, sql)
+    assert own.status_code == 200, own.text
+    assert own.json()["rows"] == [[event_scope_canaries[0], seed.org_a, seed.ns_a]]
+    r = _query(
+        control_plane_url,
+        seed,
+        f"SELECT getSetting('{prefix}loom_org'), getSetting('{prefix}loom_ns'), "
+        f"getSetting('{prefix}loom_exp'), getSetting('{prefix}loom_sig')",
+    )
+    assert r.status_code == 200, r.text
+    org, ns, exp, sig = r.json()["rows"][0]
+    replay = (
+        sql + f" SETTINGS {prefix}loom_org = '{org}', {prefix}loom_ns = '{ns}', "
+        f"{prefix}loom_exp = '{exp}', {prefix}loom_sig = '{sig}'"
+    )
+    for token, org_called in ((seed.viewer_a, seed.org_a), (seed.writer_b, seed.org_b)):
+        r = _call(
+            control_plane_url,
+            token,
+            "insights.query",
+            {"org": org_called, "namespace": seed.ns_a, "sql": replay},
+        )
+        assert r.status_code in {200, *_REFUSED}, r.text
+        if r.status_code == 200:
+            assert r.json()["rows"] == [], r.text
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "toUInt64(model)",
+        "if(toUInt64(model) > 0, model, '')",
+        "arrayJoin([toUInt64(model)])",
+    ],
+)
+def test_event_view_expressions_do_not_evaluate_foreign_values(
+    control_plane_url: str,
+    seed: _Seed,
+    event_scope_canaries: tuple[str, str, str],
+    expression: str,
+) -> None:
+    quoted = ", ".join(f"'{item}'" for item in event_scope_canaries)
+    sql = (
+        f"SELECT {expression} FROM loom.analysis_agent_events "
+        f"WHERE request_id IN ({quoted}) "
+        "SETTINGS short_circuit_function_evaluation = 'disable', query_plan_merge_filters = 1"
+    )
+    r = _query(control_plane_url, seed, sql)
+    assert r.status_code == 200, r.text
+    expected = [["17"]] if expression.startswith("if(") else [[17]]
+    assert r.json()["rows"] == expected, r.text

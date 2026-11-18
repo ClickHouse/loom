@@ -117,6 +117,8 @@ pub struct SearchHit {
     pub tags: Option<Vec<String>>,
     /// None means the server did not disclose the per-hit threshold decision.
     pub below_threshold: Option<bool>,
+    /// True on a governed definition; None when the server does not disclose it.
+    pub governed: Option<bool>,
     pub reinforcement_count: Option<u64>,
     pub used_count: Option<u64>,
     pub used_cited_count: Option<u64>,
@@ -136,6 +138,9 @@ pub struct SearchHit {
     pub via_path: Vec<String>,
     #[serde(default)]
     pub entities: Vec<String>,
+    /// Writer of the returned row, empty when no row identity is available.
+    #[serde(default)]
+    pub agent: String,
     #[serde(default)]
     pub user_id: String,
     #[serde(default = "default_source")]
@@ -196,6 +201,9 @@ pub struct SearchResponse {
     /// Empty when the response omits the risk label.
     #[serde(default)]
     pub retrieval_risk: String,
+    /// Status of the governed-definition retrieval route, empty when undisclosed.
+    #[serde(default)]
+    pub term_leg: String,
     /// None means recall credit was not disclosed.
     pub reinforcement: Option<String>,
     /// Pending saves mean a thin result is not evidence of absence.

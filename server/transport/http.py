@@ -45,7 +45,13 @@ from server.observability.consumer import (
     explicit_consumer,
     set_current_consumer,
 )
-from server.observability.ledger import current_trace_id, emit_agent_event, set_hint_context
+from server.observability.ledger import (
+    current_trace_id,
+    emit_agent_event,
+    required_call_exit,
+    run_id_of,
+    set_hint_context,
+)
 from server.observability.traffic_class import (
     bind_claimed_class,
     current_traffic_class,
@@ -790,11 +796,19 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
             return replay.hit.body
         await _start_telemetry(op, response, call)
 
-        result, elapsed_ms = await _run_handler(op, payload, call)
-        _success_headers(response, elapsed_ms, op, raw_body, result)
-        return await _finish_success(
-            op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
-        )
+        with required_call_exit(
+            op_name=op.name,
+            identity=ledger_identity(raw_body),
+            request_id=request_id,
+            run_id=run_id_of(raw_body),
+            impersonated_by=(auth.impersonated_by or "") if auth is not None else "",
+            **sli_columns(op.name, "http"),
+        ):
+            result, elapsed_ms = await _run_handler(op, payload, call)
+            _success_headers(response, elapsed_ms, op, raw_body, result)
+            return await _finish_success(
+                op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
+            )
 
     return endpoint
 

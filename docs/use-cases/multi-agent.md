@@ -23,12 +23,38 @@ learn and hand over.
   dead ends and what is done. One agent saves it with `session.brief_save` and the next
   loads it with `session.brief_get`. [Session briefs](../features/conversations-and-sessions.md#session-briefs)
 - **Framework adapters.** The SDKs present Loom through agent frameworks' own memory
-  interfaces. [Agent frameworks](../features/integrations/frameworks.md)
+  interfaces, including [Mastra threads, messages and resource working memory](../features/integrations/frameworks.md#mastra).
+  [Agent frameworks](../features/integrations/frameworks.md)
+
+## Two agents sharing a research note
+
+On one person's laptop, the [single-user quickstart](../getting-started/quickstart.md)
+lets two connected agents read the same namespace. Connect both clients with the
+[connect guide](../getting-started/connect-a-coding-agent.md); for example, use Claude
+Code to collect a finding and Cursor to write from it.
+
+1. In the first client, ask it to use `loom_memory_set` to save
+   `example/research/next-step` with the value “Check the paper's evaluation dataset
+   before adding it to the reading list.” Check the returned `memory_id` and find the
+   row in the dashboard.
+2. In the other client, ask it to use `loom_memory_get` to read that exact key. Require
+   the tool response, including `found`, `value` and `agent`, before it drafts a next
+   step. It should read the first client's value and identify its writer.
+3. Delete the example key from the client that wrote it when finished.
+
+The agents share a saved fact; Loom does not run them or schedule their work. For agents
+on different people's machines, use an [authenticated team deployment](../getting-started/quickstart.md#start-in-multi-user-mode),
+with each person's own token granting access to the same namespace. A local single-user
+run does not test those access controls.
 
 ## Start
 
 [Integrate Loom into an agent](../guides/agent-integration.md) covers the identity each
 agent sends and what to write; [tokens and grants](../guides/tokens-and-grants.md) gives
 each agent its own token.
+
+Run the [planner and worker example](https://github.com/ClickHouse/loom/tree/main/sdk/python/examples#multi_agent_handoffpy)
+to follow a task from posting through fenced completion and read its result with
+provenance. It uses separate tokens and deletes the result memory after the handoff.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

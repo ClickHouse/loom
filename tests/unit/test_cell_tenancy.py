@@ -468,6 +468,7 @@ ROUTES: dict[str, str] = {
     "/v1/knowledge.upload POST": "named",
     "/v1/me/service_accounts GET": "token",
     "/v1/me/service_accounts.create POST": "token",
+    "/v1/me/personal_tokens.create POST": "token",
     "/v1/me/service_accounts.revoke POST": "token",
     "/v1/me/set-default-namespace POST": "token",
     "/v1/me/sharing-summary GET": "token",

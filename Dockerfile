@@ -238,9 +238,11 @@ COPY --from=local-models --chown=loom:loom /models /app/models
 EXPOSE 7777
 # Readiness, not liveness: healthy once the replica can serve (migrations, keys
 # and warm-up loaded), unhealthy while it drains. The start period covers a
-# boot that waits on another replica's migration lease.
+# boot that waits on another replica's migration lease. With LOOM_TLS_CERT_FILE in
+# the container's environment the check uses HTTPS without verifying the
+# certificate: it reads only the readiness answer of its own loopback port.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=900s --retries=3 \
-    CMD python -c "import urllib.request, sys; r=urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','7777')+'/v1/health/ready', timeout=3); sys.exit(0 if r.status==200 else 1)" || exit 1
+    CMD python -c "import os, ssl, sys, urllib.request; tls=bool(os.environ.get('LOOM_TLS_CERT_FILE')); r=urllib.request.urlopen(('https' if tls else 'http')+'://127.0.0.1:'+os.environ.get('PORT','7777')+'/v1/health/ready', timeout=3, context=ssl._create_unverified_context() if tls else None); sys.exit(0 if r.status==200 else 1)" || exit 1
 
 # The web tier: scripts/serve.sh says how it starts and stops. On SIGTERM Loom
 # answers not-ready for LOOM_SHUTDOWN_READY_DELAY_S (15 s) while it serves, uvicorn

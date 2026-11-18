@@ -297,8 +297,14 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
         is_service_account=auth.is_service_account,
         ends_with_session=True,
     )
+    from server.auth.reader_identity import reader_subject
+
+    reader = reader_subject(auth)
     return delegated.mint(
-        auth.subject, consumer=ASSISTANT_CONSUMER, jti=f"{ANSWER_JTI_PREFIX}{new_jti()}"
+        auth.subject,
+        consumer=ASSISTANT_CONSUMER,
+        jti=f"{ANSWER_JTI_PREFIX}{new_jti()}",
+        reads_as_creator=bool(reader and reader == delegated.creator),
     )
 
 

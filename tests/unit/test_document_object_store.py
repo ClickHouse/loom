@@ -1593,7 +1593,9 @@ def test_a_failed_saga_keeps_its_table_counts_when_the_bucket_cannot_be_listed(
     monkeypatch.setattr(saga.erasure_census, "table_residue", tables)
     monkeypatch.setattr(saga.erasure_census, "object_residue", bucket_down)
     verify: dict[str, Any] = {}
-    asyncio.run(saga._census_tail("o", "namespace", "a", verify, purge=False))
+    asyncio.run(
+        saga._census_tail("o", "namespace", "a", verify, purge=False, row={}, completed=set())
+    )
     assert verify["per_table"] == {"loom.chunks": 2} and verify["count"] == 2
     assert "verified_at" not in verify  # the bucket went uncounted
     # The failed checkpoint keeps those counts.

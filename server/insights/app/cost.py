@@ -9,6 +9,7 @@ operations→handlers layering acyclic.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -40,8 +41,36 @@ _SCAN_DIMS = ("memory_key", "user_id", "model", "traffic_class", "instance_label
 _AHEAD_SLACK = timedelta(seconds=5)
 
 
+def _marked_costs_allowed(input: CostSummaryInput) -> bool:
+    """Only a verified operator or complete namespace-day totals include marked spend."""
+    from server.auth.context import current_auth
+    from server.operations.base import Role
+
+    auth = current_auth()
+    if auth is not None and auth.has_role(Role.PLATFORM_ADMIN) and not auth.has_ns_roles():
+        return True
+    dims = set(input.group_by)
+    return (
+        bool(dims)
+        and dims <= {"namespace", "day"}
+        and (bool(input.namespace) or "namespace" in dims)
+        and (input.from_date == input.to_date or "day" in dims)
+        and all(
+            value is None
+            for value in (
+                input.agent,
+                input.operation,
+                named(input.user_id),
+                input.traffic_class,
+                input.instance_label,
+            )
+        )
+    )
+
+
 def _summary_row(r: dict[str, Any], *, scan: bool) -> CostSummaryRow:
-    lat_q = r["lat_q"]  # tuple/array of (p50, p95, p99)
+    # A marked-only total has no ordinary latency samples.
+    lat_q = [float(q) if math.isfinite(float(q)) else 0.0 for q in (r["lat_q"] or [])]
     dims = {d: r.get(d) for d in _SCAN_DIMS} if scan else {}
     return CostSummaryRow(
         namespace=r.get("namespace"),
@@ -114,6 +143,7 @@ async def handle_cost_summary(input: CostSummaryInput) -> CostSummaryOutput:
         dims=dim_cols,
         scan=needs_events_scan,
         include_cache=input.include_cache,
+        include_marked=_marked_costs_allowed(input),
         ch=ch,
     )
 

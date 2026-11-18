@@ -57,7 +57,8 @@ The embedding settings go through `embedding.*`, and the root secret and its pre
 value through `secrets.jwtSecret` and `secrets.jwtSecretPrevious`; the chart guards these
 (below). The root secret can instead live in the `secrets.existingSecret` Secret, whose
 contents the chart cannot check. The chart refuses all of them in `env`, `extraEnv`,
-`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
+`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. The
+deployment probe port goes through `cellProbe.port` below. Every other
 setting goes in `env` (plain values) or `secrets.extra` (keys), named as in
 the [configuration reference](../reference/configuration.md). `settingsFile` takes the same
 settings as the YAML settings file holds them, lowercase and typed:
@@ -78,6 +79,44 @@ in the same upgrade, but it refuses to start on a value only the new build accep
 new choice of an existing setting, a widened bound). Set such a value in the upgrade
 after the one that changes the image. A live setting can also change without a rollout
 ([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.
+
+### Preparing a cell
+
+For [cell preparation](../architecture/cells.md#preparing-a-cell), enable the private
+deployment-identity listener in the release's values:
+
+```yaml
+cellProbe:
+  port: 8777
+```
+
+Upgrade the release and wait for the web and, when enabled, workers Deployments to
+finish rolling before running prepare. Both pod types run the listener; a separate
+workers child does not. The listener requires Postgres and authentication; this
+value does not configure those prerequisites.
+
+The chart creates a ClusterIP Service named `<fullname>-cell-probe`, shortening the
+fullname to keep the suffix within 63 characters. It publishes unready pod addresses
+and selects only those two workload types. Its configured origin is
+`http://<probe-service>.<namespace>.svc:<port>`. A later cell passes that origin as
+`--probe-url`; the router appends `/v1/health/deployment`. For the first cell, put the
+origin in the router's `LOOM_ROUTER_UPSTREAM_PROBE_URL` instead and omit `--probe-url`
+from prepare. The full direct diagnostic endpoint is
+`http://<probe-service>.<namespace>.svc:<port>/v1/health/deployment`.
+
+The default port is zero, which disables the listener and Service. Enabled ports
+must be whole numbers from 1 to 65535 except 7777. Set the port only through
+`cellProbe.port`: the chart refuses it in `env`, `extraEnv`, `secrets.extra` and
+`settingsFile`, and renders an explicit value, including zero, over `envFrom`.
+The endpoint membership label `loom.clickhouse.com/cell-probe` is chart-owned when
+enabled. Application traffic and health probes continue to use the HTTP port.
+
+ClusterIP supplies routing, not authentication. The listener is unauthenticated and
+returns nonsecret deployment identity. With the chart's ingress NetworkPolicy on,
+add a separate ingress policy allowing the probe port from router pods and the CLI's
+location; without ingress isolation, cluster peers can reach it. The chart does not
+add that rule. A load-balanced response does not prove every process was sampled;
+the cell preparation checks remain required.
 
 ### On a laptop
 
@@ -395,6 +434,41 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
 A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps that
 list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`
 (Helm 3.14 or later).
+
+## TLS on the Loom port
+
+`tls.secretName` names a `kubernetes.io/tls` Secret in the release's namespace. Every web
+and workers pod mounts its `tls.crt` and `tls.key` (mode 0440, group
+`podSecurityContext.fsGroup`), serves them on port 7777 with HTTPS only and probes over
+HTTPS; the Service marks the port `appProtocol: https`. `tls.minVersion` sets
+`LOOM_TLS_MIN_VERSION`. The chart refuses the `LOOM_TLS_*` settings anywhere else: the
+mount and the HTTPS probes come with `tls.secretName`.
+
+A controller that renews the Secret in place needs no restart. The kubelet updates the
+mount within its sync period, and each web process serves the new pair from its next
+handshake ([TLS on the Loom port](deployment.md#tls-on-the-loom-port)). The Secret must
+exist before the pods start.
+
+The Ingress or proxy in front then connects over HTTPS. On EKS, add
+`alb.ingress.kubernetes.io/backend-protocol: HTTPS` to `ingress.annotations`: the chart
+refuses an `alb` Ingress without it, or with another `backend-protocol` or
+`healthcheck-protocol` in `ingress.annotations` or `service.annotations` (the controller
+reads both, the Service's first). With ingress-nginx, set
+`nginx.ingress.kubernetes.io/backend-protocol: HTTPS`; other controllers have their own
+setting, which the chart does not check. Setting or
+clearing `tls.secretName` on a running release breaks requests until the rollout ends:
+the balancer and in-cluster clients switch scheme for every pod at once, while the pods
+restart one at a time. Plan a window, or install a second release with TLS and move the
+clients to it. A client in the cluster that calls the Service by URL, such as
+`deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` and trusts the CA
+that issued the certificate. For the `loom` CLI, `SSL_CERT_FILE` names that CA and
+replaces the system roots, so set it on the command that calls the Service only, or point
+it at a bundle of the system roots and the CA. The assistant calls the port
+over plain HTTP, so the chart refuses `assistant.enabled` with `tls.secretName`. The hop
+from Loom to the release's extractor (`extractor.enabled`) stays plain HTTP. Keep
+`tls.minVersion` at `"1.2"` unless every client of the port, the balancer included,
+speaks TLS 1.3. `helm test` calls the Service over HTTPS without verifying the
+certificate.
 
 ## Separate workers
 

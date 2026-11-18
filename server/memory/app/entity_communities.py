@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from server.core.datetimes import naive_utc_now
+from server.observability.store.event_reads import MASKED_EVENTS
 from server.workers import pass_context
 
 log = logging.getLogger(__name__)
@@ -203,7 +204,7 @@ async def _walked_namespaces(ch: _CHClient, cfg: EntityCommunitiesConfig) -> lis
     params.update({"days": int(cfg.walked_days), "ops": list(WALK_OPERATIONS)})
     sql = (
         "SELECT DISTINCT a.org AS org, a.namespace AS namespace "
-        "FROM loom.agent_events AS a "
+        f"FROM {MASKED_EVENTS} AS a "
         "INNER JOIN loom.namespaces AS n FINAL ON a.org = n.org AND a.namespace = n.namespace "
         "WHERE a.ts >= now() - INTERVAL {days:UInt32} DAY "
         "AND a.operation IN {ops:Array(String)} AND a.success = true "

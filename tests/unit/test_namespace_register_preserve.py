@@ -207,3 +207,21 @@ def test_an_account_with_a_login_does_not_change_owner(
     with pytest.raises(PreconditionFailedError, match="owned by 'bob': send that owner_email"):
         asyncio.run(h.handle_namespace_register(inp))
     assert written == []
+
+
+def test_registration_cannot_turn_typed_contact_into_verified_email() -> None:
+    inp = NamespaceRegisterInput.model_validate(
+        {
+            "org": "o",
+            "namespace": "n",
+            "owner_email": "caller",
+            "contact_email": "victim@example.com",
+            "password_hash": "",
+        }
+    )
+    row = h.registry_row(inp, None, NOW)
+    assert row["contact_email"] == row["password_hash"] == ""
+    stored = _existing(contact_email="unverified@example.com", password_hash="hash")
+    carried = h.registry_row(inp, stored, NOW)
+    assert carried["contact_email"] == stored["contact_email"]
+    assert carried["password_hash"] == "hash"

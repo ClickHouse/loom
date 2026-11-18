@@ -7,6 +7,8 @@ docs/concepts/identities-and-namespaces.md#read-scope-inside-a-namespace.
 * The result is a (`user_id`, `session_id`) pair of predicates. Both transports resolve it
   once at admission (`server.transport.gates.read_scope`); every store reader of memory
   rows takes it as a required `scope` argument, so no op can skip it.
+* One exception: `memory.search`'s term leg serves a governed definition, which an admin
+  published for every reader of the namespace, under any read scope.
 """
 
 from __future__ import annotations
@@ -263,7 +265,8 @@ def pin_read_filters[M: BaseModel](input: M, auth: Any) -> tuple[M, bool]:
 # unavailable to it until someone classifies it.
 #
 # Ops whose every read of memory rows (and of what is derived from them)
-# carries the request's read scope.
+# carries the request's read scope, but for the governed definitions memory.search's term
+# leg serves, which every reader of the namespace reads.
 SCOPED_OPS = frozenset(
     {
         "context.pack",
@@ -501,7 +504,7 @@ def with_read_identity[M: BaseModel](input: M, scope: ReadFilters) -> M:
 
 # Ops under a NARROW_SAFE_OPS prefix that still refuse a narrowed token: a knowledge
 # gap lists other people's questions.
-NARROW_REFUSED_PREFIXES: tuple[str, ...] = ("knowledge.gaps.",)
+NARROW_REFUSED_PREFIXES: tuple[str, ...] = ("knowledge.gaps.", "knowledge.query_history.")
 
 
 def honours_read_scope(op_name: str) -> bool:

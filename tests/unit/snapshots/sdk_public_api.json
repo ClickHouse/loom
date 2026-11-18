@@ -874,6 +874,10 @@
               "body",
               "options"
             ],
+            "gaps_draft": [
+              "body",
+              "options"
+            ],
             "gaps_list": [
               "body",
               "options"
@@ -911,6 +915,18 @@
               "options"
             ],
             "query": [
+              "body",
+              "options"
+            ],
+            "query_history_add": [
+              "body",
+              "options"
+            ],
+            "query_history_list": [
+              "body",
+              "options"
+            ],
+            "query_history_remove": [
               "body",
               "options"
             ],

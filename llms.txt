@@ -9,7 +9,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
 - [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
 - [Set up Loom with your coding agent](docs/getting-started/agent-setup.md): This page is for a coding agent, Claude Code or Codex, asked to install Loom on the machine it runs on and to prove that the install works.
-- [Connect a coding agent](docs/getting-started/connect-a-coding-agent.md): This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom server.
+- [Shared memory for Claude Code, Codex and Cursor](docs/getting-started/connect-a-coding-agent.md): Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP tools connected to the same self-hosted server.
 - [Evaluate Loom](docs/getting-started/evaluate.md): Evaluate the decision you need to make, not every harness in the repository.
 - [Your first agent](docs/getting-started/first-agent.md): This tutorial builds a small agent with the Python SDK.
 - [Configure models and API keys](docs/getting-started/models-and-keys.md): Your coding agent, Loom's internal LLM and Loom's embedding model are separate choices.
@@ -45,13 +45,13 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 - [Conversations and sessions](docs/features/conversations-and-sessions.md): Loom keeps three kinds of session state, each in its own plane:
 - [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at its root URL.
-- [Entity graph](docs/features/entity-graph.md): Entity communities are off by default (`LOOM_ENTITY_COMMUNITIES_ENABLED`).
+- [Entity graph](docs/features/entity-graph.md): Loom keeps an entity graph beside the memory rows, in the same ClickHouse database.
 - [Knowledge documents](docs/features/knowledge.md): A knowledge document is text an agent looks things up in: a runbook, a specification, a README.
 - [Namespaces and sharing](docs/features/namespaces-and-sharing.md): A namespace is the unit of isolation and sharing inside an org.
 - [Runs](docs/features/runs.md): A run is one execution of a task, such as "triage issue 1234".
 - [Tasks, decisions and policies](docs/features/tasks-and-decisions.md): Three planes sit beside memory for coordination between agents.
-- [Unified search and context packs](docs/features/unified-search.md): `loom_search` searches memory, profile, knowledge and past conversations across the caller's namespaces in one round trip.
-- [Code index](docs/features/code-index/overview.md): The code workers are off by default; a deployment turns them on per repository (repositories).
+- [Unified search and context packs](docs/features/unified-search.md): `loom_search` searches memory, profile, knowledge, past conversations and readable issues and PRs across the caller's namespaces in one round trip.
+- [Code index for coding agents over MCP](docs/features/code-index/overview.md): With code workers enabled for a repository, Loom indexes it into ClickHouse and answers structure questions through the `code.*` operations: where a symbol is defined, who calls it, what a change reaches, which merged PR touched a line.
 - [Code index freshness](docs/features/code-index/freshness.md): The index trails the repository: it indexes merged commits on a configured branch, pass by pass, and each tier advances its own watermark.
 - [History, PRs and releases](docs/features/code-index/history-and-prs.md): These ops need merged-PR history; the `code_pr_history` worker is off by default (`LOOM_CODE_PR_HISTORY_ENABLED`).
 - [Code operations](docs/features/code-index/operations.md): This page maps questions to `code.*` ops.
@@ -81,7 +81,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Audit log](docs/features/observability/audit.md): Audit rows, the `audit_verifier` worker and the checkpoint chain are on by default.
 - [Cost and usage](docs/features/observability/cost-and-usage.md): Loom records every upstream dollar it spends on embedding and LLM calls against the operation that spent it, in the per-operation ledger `loom.agent_events`.
 - [Telemetry](docs/features/observability/telemetry.md): Loom reports on itself in three layers:
-- [Tracker plane](docs/features/tracker/overview.md): Nothing serves until `LOOM_TRACKER_ORG` is set and a source is registered.
+- [Issue duplicate checks and regression candidates for agents](docs/features/tracker/overview.md): With `LOOM_TRACKER_ORG` set and a registered source, Loom lets agents check whether a bug is already reported and rank changes that may have introduced a regression, using tracker records and indexed PR history.
 - [Tracker record contract](docs/features/tracker/record-contract.md): The `tracker.*` ops, and the tracker legs of `code.*` and `loom_search`, read a team's issues, pull requests and incidents live from the team's own ClickHouse with a read-only credential.
 
 ## Guides
@@ -140,17 +140,24 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Architecture
 
 - [Microsoft Agent Framework context provider](docs/architecture/agent-framework-adapter.md): `LoomContextProvider` implements the framework's context-provider interface over the asynchronous Python SDK.
+- [Agno user-memory database](docs/architecture/agno-adapter.md): The Agno adapter implements the user-memory methods of its 3.2 `BaseDb` interface through the synchronous Loom SDK.
 - [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
 - [Cells](docs/architecture/cells.md): A deployment's memory can outgrow one Postgres primary and one ClickHouse service, and an org may want its memory in services of its own.
 - [Claude API memory file tree](docs/architecture/claude-memory-adapter.md): The Claude API memory adapter implements the framework's Python memory-tool bases and TypeScript memory handlers through Loom knowledge documents.
 - [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes in an optional S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live memory, knowledge state and the records beside them.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
+- [Definition drafts](docs/architecture/definition-drafts.md): Needs `knowledge_gaps_enabled` for gap drafts or `knowledge_query_history_enabled` for query history.
+- [Dify tools adapter](docs/architecture/dify-adapter.md): The Dify plugin calls Loom through the Python SDK and stores no content locally.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Document sources](docs/architecture/document-sources.md): A document source pulls files from a document store (a shared-folder store, a page store, a project tracker, a meeting store) into a namespace's documents and keeps them in step, on any shared namespace or collection.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
+- [Google ADK memory service](docs/architecture/google-adk-adapter.md): The Google ADK adapter implements the framework's memory service through Loom's Python and TypeScript SDKs.
+- [Haystack document store and retriever](docs/architecture/haystack-adapter.md): The optional Haystack 3.5 adapter implements its document-store protocol and a native retrieval component through the synchronous Loom SDK.
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
+- [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
+- [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.
 - [Provider reconfiguration](docs/architecture/provider-reconfiguration.md): Loom stores dashboard model configuration as encrypted, versioned rows in `loom.provider_configuration`.
 - [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.

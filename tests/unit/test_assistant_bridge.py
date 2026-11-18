@@ -108,7 +108,16 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         return w.over_cap
 
     class _Delegated:
-        def mint(self, subject: str, *, consumer: str | None = None, jti: str | None = None) -> str:
+        creator = "alice"
+
+        def mint(
+            self,
+            subject: str,
+            *,
+            consumer: str | None = None,
+            jti: str | None = None,
+            reads_as_creator: bool = False,
+        ) -> str:
             w.delegated["minted"] = (subject, consumer)
             return "answer-token"
 
@@ -1254,7 +1263,16 @@ def test_an_answer_token_carries_the_id_its_children_are_told_by(
     minted: dict[str, Any] = {}
 
     class _Delegated:
-        def mint(self, subject: str, *, consumer: str | None = None, jti: str | None = None) -> str:
+        creator = "alice"
+
+        def mint(
+            self,
+            subject: str,
+            *,
+            consumer: str | None = None,
+            jti: str | None = None,
+            reads_as_creator: bool = False,
+        ) -> str:
             minted.update(subject=subject, consumer=consumer, jti=jti)
             return "answer-token"
 
@@ -1728,3 +1746,52 @@ def test_the_step_poll_names_its_reads(world: _World, monkeypatch: pytest.Monkey
     monkeypatch.setattr(bridge.ledger, "live_rows", live_rows)
     _streamed(world, live=True)
     assert tags and set(tags) == {"assistant.steps"}
+
+
+@pytest.mark.asyncio
+async def test_signed_personal_answer_and_its_child_are_refused_by_the_chat_route(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+    from server.auth.bearer import verify_bearer_header
+    from server.auth.delegation import Delegated
+    from server.auth.jwt import verify_token
+
+    # Use real mint/verification with fixed delegated bounds: the HTTP route must
+    # refuse both the signed answer and its child before any provider work.
+    async def delegate(parent: AuthInfo, **kwargs: Any) -> Delegated:
+        return Delegated(
+            org=ORG,
+            namespaces=[NS],
+            roles=["viewer"],
+            ns_roles=None,
+            write_namespaces=None,
+            read_scope="",
+            read_user_id="",
+            ttl_seconds=60,
+            parents=[*parent.parents, parent.token_id],
+            parent_subjects=[*parent.parent_subjects, parent.subject],
+            parent_iats=[*parent.parent_iats, parent.issued_at or 0],
+            creator=parent.creator or parent.subject,
+            is_service_account=False,
+        )
+
+    monkeypatch.setattr(bridge, "delegate", delegate)
+    monkeypatch.setattr(routes, "verify_bearer_header", verify_bearer_header)
+    parent = _caller(session_id="sid", first_party=True)
+    answer = await bridge.answer_token(parent, ORG, NS)
+    answer_auth = verify_token(answer)
+    assert answer_auth.reads_as_creator
+    delegated = await delegate(answer_auth)
+    child = delegated.mint("sa:answer-child")
+    assert not verify_token(child).reads_as_creator
+    http, rows = client
+    for token in (answer, child):
+        response = http.post(
+            ROUTE,
+            headers={**HEADERS, "Authorization": f"Bearer {token}"},
+            json={"messages": QUESTION},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "ASSISTANT_SELF_CALL"
+    assert len(rows) == 2 and world.librechat_body == {}

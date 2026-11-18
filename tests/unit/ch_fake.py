@@ -130,6 +130,8 @@ class RecordingCH:
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None = None,
+        *,
+        required_columns: frozenset[str] = frozenset(),
         **_: Any,
     ) -> None:
         self.calls.append(

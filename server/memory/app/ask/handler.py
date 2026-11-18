@@ -23,6 +23,7 @@ from server.memory.app import after_write
 
 if TYPE_CHECKING:
     from server.memory.app.ask.result import MemoryAskResult
+    from server.memory.app.ask.source_context import PreparedKnowledge
 
 log = logging.getLogger(__name__)
 
@@ -219,15 +220,32 @@ def _ask_precedent(input: MemoryAskInput, llm: Any, settings: Any) -> tuple[str,
 
 
 async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
+    from server.memory.app.ask.source_context import prepare_knowledge
+    from server.memory.domain.ask_routing import is_corpus_task
+
+    input = input.model_copy(deep=True)
+    if input.allow_synthesis:
+        refuse_synthesis("memory.ask", "allow_synthesis=false")
+    prepared = await prepare_knowledge(
+        input,
+        input.query,
+        enabled=input.knowledge,
+        corpus=(input.allow_synthesis and input.as_of is None and is_corpus_task(input.query)),
+    )
+    with prepared.scope():
+        return await _handle_prepared_ask(input, prepared)
+
+
+async def _handle_prepared_ask(
+    input: MemoryAskInput, prepared: PreparedKnowledge
+) -> MemoryAskOutput:
     from server.memory.app.ask import ask
     from server.settings import settings
 
-    if input.allow_synthesis:
-        refuse_synthesis("memory.ask", "allow_synthesis=false")
     # A summary-shaped question over documents goes to the whole-document pass, not to
     # fifteen memories. Deterministic detector, then one knowledge.search to find which
     # documents; falls through when nothing concentrates or the flag is off.
-    routed = await _maybe_route_to_synthesize(input)
+    routed = await _maybe_route_to_synthesize(input, prepared)
     if routed is not None:
         return routed
 
@@ -264,6 +282,7 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
 
         scratchpad = await render_run_blocks(input.org, input.namespace, rid)
 
+    pending = await _pending_extraction(input) if prepared.plan.marked else None
     res = await ask(
         search_input,
         question=input.query,
@@ -295,11 +314,13 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
         route_prior=(input.route_prior or None),
         route_prior_max_cheap=input.route_prior_max_cheap,
         default_answer_chars=input.default_answer_chars,
+        prepared_knowledge=prepared,
     )
 
-    _schedule_cited_used(input, res)
-    _record_contradiction(input, res)
-    _schedule_deferred_consistency(input, res)
+    if not prepared.plan.marked:
+        _schedule_cited_used(input, res)
+        _record_contradiction(input, res)
+        _schedule_deferred_consistency(input, res)
 
     _grounding = _grounding_for(res, retrieval_query, input)
     return MemoryAskOutput(
@@ -320,7 +341,7 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
         gate_mode=res.gate_mode,
         gate_kept=res.gate_kept,
         gate_dropped=res.gate_dropped,
-        pending_extraction=await _pending_extraction(input),
+        pending_extraction=pending if pending is not None else await _pending_extraction(input),
         pending_evidence=int(res.pending_evidence or 0),
         retrieval_query=retrieval_query if scaffold else "",
         facets=list(res.facets),
@@ -337,7 +358,7 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
         depth=res.depth,  # type: ignore[arg-type]
         **_deep_fields(res),
         synth_calls=int(res.synth_calls or 0),
-        **_synth_accounting(res.synth_model),
+        **_synth_accounting("" if prepared.plan.marked else res.synth_model),
         deep_fired=res.deep_fired,
         decomposed=list(res.decomposed or []),
         decomposed_parts=len(list(res.decomposed or [])),
@@ -378,7 +399,21 @@ def _grounding_for(res: MemoryAskResult, retrieval_query: str, input: MemoryAskI
         return Grounding()
 
 
-async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput | None:
+async def _maybe_route_to_synthesize(
+    input: MemoryAskInput, prepared: PreparedKnowledge
+) -> MemoryAskOutput | None:
+    from server.core import request_tail
+
+    with request_tail.publication_group() as publication:
+        result = await _route_to_synthesize(input, prepared)
+        if result is not None:
+            publication.commit()
+        return result
+
+
+async def _route_to_synthesize(
+    input: MemoryAskInput, prepared: PreparedKnowledge
+) -> MemoryAskOutput | None:
     """None = not routed (the caller asked for memories only or for an as-of
     replay, not a corpus task, no document concentrates, or the whole-document pass
     abstained); otherwise the whole-document answer as an ask result whose `route_reason`
@@ -394,31 +429,31 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
     if not ask_routing.is_corpus_task(input.query):
         return None
     try:
+        from dataclasses import replace
+
         from server.knowledge.api.models_knowledge import (
-            KnowledgeSearchInput,
             KnowledgeSynthesizeInput,
         )
-        from server.knowledge.app.knowledge_search import handle_knowledge_search
+        from server.knowledge.app.knowledge_search import run_checked_search
         from server.knowledge.app.synthesize import handle_knowledge_synthesize
         from server.memory.api.models_ask import MemoryAskOutput
         from server.memory.app.agent_rules import request_rule_agent, served_hits
 
         async def search(top_k: int) -> list[Any]:
-            found = await handle_knowledge_search(
-                KnowledgeSearchInput(
-                    org=input.org,
-                    namespace=input.namespace,
-                    query=input.query,
-                    top_k=top_k,
-                    namespace_scope="this",
-                    collapse_sections=False,
-                    # The ask's hard tag filter reaches every leg.
-                    tags=_hard_tags(input),
-                    # It only counts documents for the route: no rerank call.
-                    rerank="none",
-                )
+            if prepared.request is None:
+                return []
+            request = replace(
+                prepared.request,
+                input=prepared.request.input.model_copy(
+                    update={"top_k": top_k, "collapse_sections": False}
+                ),
             )
-            return list(found.results)
+            found = await run_checked_search(request, prepared.plan)
+            output = await found.current()
+            from server.knowledge.app import source_publication
+
+            source_publication.retain(found.proofs)
+            return list(output.results)
 
         top_k = 20  # not a setting: the hit pool pick_documents narrows to a few documents
         # Another bot's promoted rule is not a rule about this agent.
@@ -453,7 +488,7 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
             results=[],
             synth_model=synth.model,
             route_tier="strong",
-            route_reason=ask_routing.route_reason(docs),
+            route_reason=ask_routing.route_reason(synth.documents),
         )
     except Exception as e:  # noqa: BLE001 - the memory path is always available
         log.debug("memory.ask synthesize route skipped: %s", e)

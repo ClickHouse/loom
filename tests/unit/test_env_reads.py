@@ -22,6 +22,7 @@ ALLOWED: dict[str, str] = {
     "server/observability/instance.py": "the host name and the process's own instance label",
     "server/core/provider_process.py": "the Kubernetes downward API (pod name and namespace)",
     "server/core/runtime_files.py": "XDG_RUNTIME_DIR",
+    "server/core/web_server.py": "uvicorn's UVICORN_* option variables, which it refuses",
     "server/core/webhooks.py": "webhook secrets, each named by its registration or inbox row",
     "server/workers/child.py": "the environment handed to the workers child process",
     "server/code/app/index/gitrepo.py": "the environment handed to git",

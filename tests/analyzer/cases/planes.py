@@ -609,6 +609,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await K.delete_versions(ORG, NS, [("doc://a", 5)], ch=ch)
     await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
+    await D.current_document_counts(ORG, [NS, "n2"], ch=ch)
     await D.list_with_chunk_counts(
         ORG,
         [NS],
@@ -1075,6 +1076,25 @@ async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 _ORG_ROLLUPS = frozenset({"cost", "learnings", "audit", "agents"})
 
 
+async def _definition_draft_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import gaps, query_history
+    from server.memory.store import learnings
+
+    await gaps.gap_for_draft(ORG, NS, "gap")
+    await gaps.draft_queries(ORG, NS, ["revenue"], 3)
+    await query_history.find(ORG, NS, "metrics", ch=ch)
+    await query_history.list_sources(ORG, NS, 10, ch=ch)
+    await query_history.active_after(_UUID, 10)
+    await learnings.list_by_status(
+        ORG, NS, "pending", exclude_source_kinds=("query_history",), ch=ch
+    )
+    await learnings.private_candidate_namespaces("org = {org:String}", {"org": ORG})
+    await learnings.quality_by_namespace("org = {org:String}", {"org": ORG}, [])
+    await learnings.private_candidates_after(ORG, NS, "")
+    await learnings.scrub_private_candidate(ORG, NS, _UUID)
+    await learnings.delete_candidate_through(ORG, NS, _UUID, 1)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -1096,6 +1116,14 @@ def cases() -> list[Case]:
             _conversation_threads,
             {"fields": (None, ["msg_count"], ["last_role"]), "agent": ("*", AGENT)},
             rows=_HANDLER_ROWS,
+        )
+    )
+    out.append(
+        Case(
+            "definition_draft_reads",
+            "server.knowledge.store.query_history",
+            _definition_draft_reads,
+            {},
         )
     )
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))

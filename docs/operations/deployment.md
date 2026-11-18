@@ -908,7 +908,11 @@ ledger row.
 
 ## Proxy and TLS
 
-The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
+Put a TLS-terminating proxy or load balancer in front: it holds the certificate clients
+see, and the checks below assume it. The image serves plain HTTP on its port unless
+`LOOM_TLS_CERT_FILE` and `LOOM_TLS_KEY_FILE` name a certificate and key; then the port
+serves HTTPS only, which encrypts the hop from the proxy to Loom
+([TLS on the Loom port](#tls-on-the-loom-port)).
 
 - Loom sends `Strict-Transport-Security` itself, with `max-age` from
   `LOOM_HSTS_MAX_AGE_SECONDS` (default `31536000`, one year); a browser honours it only
@@ -974,6 +978,46 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
 | `X-Forwarded-Proto` from the terminator | Keeps the client-facing scheme, so Loom hands clients `https://` URLs.                        |
 | `access_log off`                        | The request ledger (`loom.agent_events`) is the access log.                                   |
 
+### TLS on the Loom port
+
+- `LOOM_TLS_CERT_FILE` is a PEM certificate chain and `LOOM_TLS_KEY_FILE` its PEM key, not
+  encrypted (a key that needs a passphrase is refused); set both or neither. With both, the
+  port answers TLS only: a plain HTTP request gets no answer, so the proxy and every health
+  check use `https://`.
+- Turning TLS on or off on a running deployment changes the port for every client at once:
+  a replica that restarted answers only the new scheme, one that did not only the old. Plan
+  a window for the switch, or start a second deployment with TLS on and move the clients to
+  it.
+- `LOOM_TLS_MIN_VERSION` is the lowest TLS version the port accepts: `1.2` (the default)
+  or `1.3`. Choose `1.3` when every client of the port speaks it.
+- Each web process checks both files at every handshake and loads them again after a
+  change, so a renewed pair is served without a restart; a connection already open keeps
+  the certificate it started with. A pair that does not load (a key that does not match
+  the certificate, or one file replaced before the other) logs a warning and leaves the
+  last good pair in place until the files change again; files the server cannot read yet
+  (their mode, a missing file) leave it in place until a handshake can read them. Replace
+  each file in one rename, or both at once as a Kubernetes Secret mount does. A server
+  that starts while the pair does not load refuses to start. A web process that uvicorn
+  starts in place of one that exited, while the pair does not load, logs it, waits 10 s
+  and exits, and uvicorn starts it again; the other web processes keep serving their last
+  pair.
+- A key file every user on the host can read logs a warning at start.
+- The pair is loaded once before the web processes start, so one that does not load stops
+  the start. `scripts/serve.sh` (the image) and `loom serve` serve it; a server started
+  another way (`uvicorn server.main:app`, `make server`) refuses to start with the
+  settings set rather than serve plain HTTP.
+- The server's user must be able to read both files (`loom`, uid 999, in the image).
+- The image's health check reads `LOOM_TLS_CERT_FILE` from the container's environment
+  to choose `https://`, and does not verify the certificate of its own loopback port:
+  set the pair in the environment, not only in a settings file, or the check fails.
+- The compose files serve plain HTTP: their health checks, which replace the image's, and
+  `loom up` use `http://`.
+- The proxy verifies Loom's certificate against the CA that issued it, under the name it
+  connects to. With nginx: `proxy_ssl_verify on`, `proxy_ssl_trusted_certificate`,
+  `proxy_ssl_name` and `proxy_ssl_server_name on`.
+- The cell probe listener (`LOOM_CELL_PROBE_PORT`) serves plain HTTP, and `loom router
+serve` refuses to start with the settings set.
+
 ## Container images
 
 The repository [`Dockerfile`](../../Dockerfile) builds the server image every rung uses:
@@ -987,9 +1031,10 @@ The repository [`Dockerfile`](../../Dockerfile) builds the server image every ru
 | `node-builder`     | pinned Node, scip-typescript and pnpm for the TypeScript compiler tier; scip-python for the Python tier                                                                             |
 | runtime            | Python 3.12, non-root user `loom` (uid/gid 999), `git`, the `dev/` operator tools, the migrations, `bench/fixtures` for `code.calibrate`, the `local-models` files in `/app/models` |
 
-The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval), and
-runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`
-processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
+The runtime exposes 7777, has a built-in `/v1/health/ready` healthcheck (10 s interval,
+over HTTPS when `LOOM_TLS_CERT_FILE` is in its environment), and
+runs `scripts/serve.sh`, which starts uvicorn through `python -m server.core.web_server`
+(which also serves the TLS pair) with `LOOM_WEB_WORKERS` processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
 (`asyncio`, `auto`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
 that script. Unset, the loop is `asyncio`, in `loom serve` and `make server` too: the
 workers and the code ops spawn git, and uvloop forks the whole process for each spawn,

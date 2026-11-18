@@ -129,6 +129,10 @@ means an empty response may precede a completed save. `reinforcement` is `None`
 when recall credit was not disclosed. An omitted risk label is an empty string;
 it does not imply low risk.
 
+`SearchHit.agent` names the row's writer. For governed definitions, inspect
+`SearchHit.governed` and `SearchResponse.term_leg`; `retrieval_risk` describes the
+other hits.
+
 ```rust
 use clickhouse_loom::Error;
 

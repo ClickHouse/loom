@@ -2721,6 +2721,41 @@ settings:
   # Namespaces one pass groups, at most; the ones with the most misses first. [live]
   # knowledge_gaps_max_namespaces: 500
 
+  # --- query-history definitions ---
+
+  # Permit opt-in ClickHouse query-history sources to queue definition drafts. [restart]
+  # knowledge_query_history_enabled: false
+
+  # Distinct initial ClickHouse accounts required before drafting a query group. [live]
+  # knowledge_query_history_min_users: 3
+
+  # Drafts one source may queue in a worker turn, at most. [live]
+  # knowledge_query_history_max_drafts: 20
+
+  # Most-used query groups inspected per source turn before skipping existing drafts.
+  # [live]
+  # knowledge_query_history_max_groups: 200
+
+  # Days of finished SELECT query history a turn groups. [live]
+  # knowledge_query_history_window_days: 7
+
+  # Seconds allowed for one query-history source read. [live]
+  # knowledge_query_history_read_timeout_s: 30
+
+  # Deadline of one query-history pass; it starts no new group after half this budget.
+  # [restart]
+  # knowledge_query_history_max_pass_seconds: 120.0
+
+  # Seconds between query-history passes. [restart]
+  # knowledge_query_history_interval_seconds: 3600
+
+  # Sources one pass reads, at most; each turn is separately time bounded. [live]
+  # knowledge_query_history_max_sources: 100
+
+  # Query-history circuit states kept per process, at most; older sources are evicted
+  # first. [restart]
+  # knowledge_query_history_max_breakers: 1000
+
   # --- chunking ---
 
   # Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one
@@ -2809,6 +2844,10 @@ settings:
   # it for decisions. [restart]
   # knowledge_source_sync_enabled: false
 
+  # Mirrored reads require a complete listing and group observation within this many
+  # seconds; missing or older evidence admits nobody. [restart]
+  # knowledge_source_acl_stale_seconds: 3600
+
   # Seconds between sync passes while there are sources. [restart]
   # knowledge_source_sync_interval_seconds: 900
 
@@ -2821,9 +2860,18 @@ settings:
   # document's extraction and 30 for its writes before the deadline. [restart]
   # knowledge_source_sync_max_pass_seconds: 600
 
-  # Documents one pass fetches, writes, retires or mines for decisions across all
-  # sources; the rest wait for the next pass. [live]
+  # Documents one pass fetches, writes, retires or mines for decisions across the
+  # namespace sources; the rest wait for the next pass. [live]
   # knowledge_source_sync_documents_per_pass: 40
+
+  # Documents one pass fetches, writes and retires for the mirrored sources, apart from
+  # the namespace sources' per-pass bound, so a mirror's size never takes their share.
+  # [live]
+  # knowledge_source_mirror_documents_per_pass: 40
+
+  # Documents of stopped mirrored sources retired per cleanup pass, independently of the
+  # content-sync budget. Cleanup continues while syncing is switched off. [live]
+  # knowledge_source_retire_documents_per_pass: 40
 
   # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
   # turn tries no new file, notes how many as `too_many_documents`, and still updates
@@ -2940,6 +2988,10 @@ settings:
   # Most shared definitions a namespace holds; a promotion past it is refused
   # (docs/concepts/identities-and-namespaces.md). [live]
   # memory_shared_definitions_max: 500
+
+  # How much longer memory.search waits for its term leg once the other legs are done;
+  # past it the leg adds nothing (docs/concepts/identities-and-namespaces.md). [live]
+  # memory_term_leg_wait_ms: 100
 
   # --- prompt safety and search priors ---
 
@@ -4944,6 +4996,19 @@ settings:
   # outside trust-network, the dev signing secret or a weak root, gateway or end-user
   # key. Only for a port others cannot reach. [restart]
   # allow_insecure: false
+
+  # PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only
+  # and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both
+  # "", HTTP. [restart]
+  # tls_cert_file: ""
+
+  # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is
+  # refused. [restart]
+  # tls_key_file: ""
+
+  # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3".
+  # [restart]
+  # tls_min_version: "1.2"
 
   # --- outbound HTTP ---
 

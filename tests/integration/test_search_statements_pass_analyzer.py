@@ -1415,12 +1415,25 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
     from server.erasure.store import mutations as erasure_mutations
     from server.erasure.store import steps_graph as graph_steps
     from server.erasure.store import steps_ledgers as ledger_steps
+    from tests.unit.claims_fake import FakeLockTable
 
     class _One(_RecordingCH):
+        def __init__(self):
+            super().__init__()
+            self.leases = FakeLockTable()
+
         async def query_one(self, sql, params=None):
             self.calls.append((sql, params or {}))
+            if "loom._migration_lock" in sql:
+                return await self.leases.query_one(sql, params)
             # `engine` makes the run-claims step see its KeeperMap table and submit its delete.
             return {"n": 1, "engine": "KeeperMap"}
+
+        async def execute(self, sql, params=None):
+            if "loom._migration_lock" in sql:
+                await self.leases.execute(sql, params)
+            else:
+                await super().execute(sql, params)
 
     mutations: list[tuple[str, str, dict[str, Any]]] = []
 
@@ -1462,6 +1475,7 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
         await fn("o", "alice", ch=ch)  # type: ignore[arg-type]
     await erasure_census.residue_census("o", "namespace", ns, ch=ch)  # type: ignore[arg-type]
     await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
+    assert ch.leases.keys == {}
     assert len(mutations) >= 29 and len(ch.calls) >= 29 + 50 + 31
     for i, (sql, params) in enumerate(ch.calls):
         try:

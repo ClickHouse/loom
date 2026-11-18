@@ -48,6 +48,7 @@ def ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_fix", "")
     monkeypatch.setattr(app, "_running", {})
     monkeypatch.setattr(app.store, "target_database", lambda: "`loom`")
+    monkeypatch.setattr(app.store, "own_version", _returns(boundary.ENTITY_VERSION))
 
 
 def _failing(message: str):
@@ -357,7 +358,10 @@ def test_the_printed_sql_revokes_what_show_grants_lists_before_granting(
     first_grant = next(i for i, s in enumerate(printed) if s.startswith("GRANT "))
     assert printed[first_grant - len(revokes) : first_grant] == revokes
     # The file is run in one session, whose first statement cuts the rest from the log.
-    assert printed[0] == "SET log_queries_cut_to_length = 1, log_formatted_queries = 0"
+    assert printed[0] == (
+        "SET log_queries_cut_to_length = 1, log_formatted_queries = 0, "
+        "SQL_loom_org = '', SQL_loom_ns = '', SQL_loom_exp = '0', SQL_loom_sig = ''"
+    )
 
 
 def test_a_column_grant_in_another_database_is_outside_the_allowlist(
@@ -598,6 +602,8 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
 ) -> None:
     # /v1/health shows this text: no SQL, and no database name.
     async def run(sql: str, **_: Any) -> Any:
+        if ".agent_events" in sql:
+            raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
         if sql.startswith("SELECT count()") and "system." not in sql:
             return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
         if "system." in sql:
@@ -1161,3 +1167,30 @@ def test_a_server_that_takes_neither_prefix_is_refused(monkeypatch: pytest.Monke
     monkeypatch.setattr(app.store, "setting_prefix", _returns(None))
     with pytest.raises(app.SetupRefused, match="custom_settings_prefixes"):
         asyncio.run(app.load_secrets(may_draw=True))
+
+
+@pytest.mark.parametrize("canary", [False, True])
+def test_a_newer_boundary_is_trusted_only_after_its_key_canary(
+    monkeypatch: pytest.MonkeyPatch, ready: None, canary: bool
+) -> None:
+    seen = []
+
+    async def own_version(*args: Any, **kwargs: Any) -> int:
+        seen.append("version")
+        return boundary.ENTITY_VERSION + 1
+
+    async def obsolete(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("an older replica must not probe a newer catalog's retired grants")
+
+    monkeypatch.setattr(app, "_canary_reads", _returns(canary))
+    monkeypatch.setattr(app.store, "own_version", own_version)
+    monkeypatch.setattr(app.store, "count_rows", obsolete)
+    monkeypatch.setattr(app.store, "read_refused", obsolete)
+    monkeypatch.setattr(app, "_signed_only", obsolete)
+    monkeypatch.setattr(app.store, "own_grants", obsolete)
+    result = asyncio.run(app._probe())
+    if canary:
+        assert result == ("", False, "") and seen == ["version"]
+    else:
+        assert result == ("the analyst's policies do not accept this replica's key", True, "")
+        assert seen == []

@@ -17,6 +17,8 @@ import { createTool } from "@mastra/core/tools";
 import type { Agent, Scope } from "../agent.js";
 import { AgentTools, type AgentToolsOptions } from "../tools.js";
 
+export { LoomMemoryStorage, type LoomMemoryStorageOptions } from "./mastra-memory.js";
+
 /** The schema a Mastra tool takes; Loom's JSON schema is one of its forms. */
 type InputSchema = NonNullable<Parameters<typeof createTool>[0]["inputSchema"]>;
 

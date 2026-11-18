@@ -184,7 +184,8 @@ def test_statements_export_no_content_and_no_person(entity: str) -> None:
     sql = ENTITIES[entity]
     for column in _NEVER:
         assert not re.search(rf"\b{column}\b", sql), column
-    rest = re.sub(r"uniqExactIf\((user_id|session_id), \1 != '-'\)", "", sql)
+    rest = re.sub(r"uniqExactIf\((user_id|session_id), mirror_marked = 0 AND \1 != '-'\)", "", sql)
+    rest = re.sub(r"raw\.(user_id|session_id) AS \1", "", rest)
     assert not re.search(r"\b(user_id|session_id)\b", rest)
 
 

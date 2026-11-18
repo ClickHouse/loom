@@ -562,6 +562,14 @@ call it directly, on any transport, and it joins the
 `read_scope` is narrower than its namespaces is refused it, as every op outside
 `SCOPED_OPS` and `NARROW_SAFE_OPS` is.
 
+The event catalog relation is `loom.analysis_agent_events`. It retains authorized request
+participation and neutralizes marked model, spend, work and outcome fields before caller
+filters, joins or aggregates. The analyst has no grant on raw `loom.agent_events`, even
+for a count. The view's definer query applies the same signed org/namespace predicate as
+the physical tables' row policies; it does not use SQL-account grants. The typed projection
+is passed from the maintained event reader definition into the pure access-entity builder.
+Its shape, signed predicate and security mode are part of the entity version digest.
+
 ### The boundary is the database user
 
 The statement runs as a dedicated ClickHouse user, `loom_analyst`, never as Loom's own
@@ -575,7 +583,7 @@ grants, settings profile and row policies are:
 | What the statement tries                                            | What stops it                                                                                              |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | a table or column outside the allowlist (tokens, secrets, keys)     | grants: `SELECT(col, …)` on each allowlisted table, nothing else                                           |
-| another org or namespace, through a filter, `JOIN` or subquery      | a row policy on every allowlisted table, checked on each row read (below)                                  |
+| another org or namespace, through a filter, `JOIN` or subquery      | a row policy on each physical table and the same signed predicate inside the masked event view             |
 | a deleted or erased row, or a version a later one replaced          | the row policy carries the table's live predicate and applies after `FINAL` (below)                        |
 | `system.*`, `information_schema`, `SHOW`, `DESCRIBE`, `KILL QUERY`  | no grant on `system` tables, `SHOW COLUMNS` or `system.processes`                                          |
 | `EXPLAIN`, whose estimates count other orgs' rows                   | inside the subquery, `EXPLAIN` needs `CREATE TEMPORARY TABLE`, which the user lacks                        |
@@ -598,7 +606,7 @@ two requests, of one tenant or two, from sharing an id (a probe outside a reques
 a random UUID). The client's retry of a statement resends the same id with
 `replace_running_query = 1`, so it replaces its own attempt ClickHouse still runs. The
 expiry covers every attempt the client's retry ladder can make at the time cap
-(`scope_ttl_s` in `server/insights/app/analysis.py`). Each allowlisted table's policy,
+(`scope_ttl_s` in `server/insights/app/analysis.py`). Each physical allowlisted table's policy,
 `TO loom_analyst`, admits a row only when its `org` and `namespace` match the settings,
 the expiry is in the future, and the signature matches the hash ClickHouse computes with
 the key written into the policy. A statement may set custom settings itself (`readonly =
@@ -656,6 +664,10 @@ reseals them, so the policies never change key; when the key cannot be read,
 [provisioning](#provisioning) says what happens. The analyst user cannot read the key:
 it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and it cannot
 run `EXPLAIN`.
+The masked view's signed predicate uses the same hidden-argument expressions. The
+analyst profile pins `format_display_secrets_in_show_and_select = 0`, and the analyst
+has no display-secrets privilege. Native isolation checks cover the view's metadata,
+result predicates and raw-table denial as well as policy and query-log secrecy.
 
 **What the query log holds.** Loom never turns query logging off: ClickHouse Cloud pins
 `log_queries` for the service's users and refuses a statement or a settings profile that
@@ -736,7 +748,7 @@ per-statement settings on an access statement, and a console that sends them one
 would log the key in `system.query_log`.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
-the grants, the policies and the catalog come from one definition. The rules a write
+the grants, the policies, the masked event view and the catalog come from one definition. The rules a write
 keeps:
 
 - **One writer at a time.** A write holds the cluster lease `analysis.entities`
@@ -856,19 +868,22 @@ A replica probes the analyst user at boot and then every `ch_analysis_probe_inte
 (a minute by default), in the background, as the analyst itself, so the probe needs no
 access management:
 
-- a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
-  empty org and namespace, which `insights.query` refuses as a request's scope) under a
-  policy with the same key, must return that row: the policies accept the key;
+A signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
+empty org and namespace, which `insights.query` refuses as a request's scope) under a
+policy with the same key, must return that row: the policies accept the key.
+
+After that check, a stored entity version newer than this build's skips the remaining
+catalog and grant checks: the newer build checks its own entities. A current, older or
+absent version continues with these checks:
+
 - a signed read of each allowlisted table in that reserved scope must count no rows: no
   extra policy widens what the analyst reads (under the server default a table with no
   analyst policy counts rows too, which a write repairs; a write is never made over a
   permissive policy Loom did not write, which is named instead);
 - a `system` table, and a column outside the allowlist (`memory.value`), must be refused;
-- unless the stored version is newer than this build's: an unsigned read of each
-  allowlisted table and of the canary must fail for want of the scope settings (the
-  table has a policy that reads them), and the analyst's own `SHOW GRANTS` must name
-  nothing but the allowlist and the canary. A newer build's entities are its own to
-  check.
+- an unsigned read of each allowlisted table and of the canary must fail for want of
+  the scope settings (the table has a policy that reads them), and the analyst's own
+  `SHOW GRANTS` must name nothing but the allowlist and the canary.
 
 A failed check answers `ANALYSIS_UNAVAILABLE`, which no client resends, and is a
 `loom doctor` problem. Every ClickHouse answer that is not a clean probe is a finding, a

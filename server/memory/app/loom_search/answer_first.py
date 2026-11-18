@@ -94,12 +94,13 @@ def _defect_answer(payload: dict[str, Any]) -> bool:
 
     echoes = drop_loom_output(payload)
     withheld = verdict_leads(payload)
+    verdict = bool((payload.get("tracker") or {}).get("verdict"))
     if echoes:
         withheld["loom_output"] = echoes
     if withheld:
-        reason = "tracker_verdict_leads" if payload.get("tracker") else "loom_output"
+        reason = "tracker_verdict_leads" if verdict else "loom_output"
         payload["withheld"] = {**withheld, "reason": reason}
-    return bool(payload.get("tracker"))
+    return verdict
 
 
 def precision_floor() -> float:
@@ -206,21 +207,72 @@ def answer_first(
 
     if explain:
         return payload
+    # No floor or rule below reads a governed definition: it leads the memory section.
+    governed = _take_governed(payload)
+    _answer_first(payload, home_ns, margin=margin, home_margin=home_margin, moved=moved)
+    _restore_governed(payload, governed)
+    return payload
+
+
+def _take_governed(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Remove the governed definitions from the memory section and return them."""
+    mem = payload.get("memory")
+    if not isinstance(mem, dict) or not isinstance(mem.get("results"), list):
+        return []
+    governed = [h for h in mem["results"] if _governed(h)]
+    if governed:
+        mem["results"] = [h for h in mem["results"] if not _governed(h)]
+    return governed
+
+
+def _governed(h: Any) -> bool:
+    return isinstance(h, dict) and bool(h.get("governed"))
+
+
+def _restore_governed(payload: dict[str, Any], governed: list[dict[str, Any]]) -> None:
+    """Put the governed definitions back first. When the tracker verdict leads, they count
+    within its memory cap, and the other rows are cut first."""
+    from server.tracker.domain.defect_answer import VERDICT_MEMORY_MAX
+
+    if not governed:
+        return
+    from server.memory.domain.search_types import governed_after_computed
+
+    mem = payload["memory"]
+    rows = governed_after_computed(governed + mem["results"])
+    tracker = payload.get("tracker")
+    verdict = isinstance(tracker, dict) and bool(tracker.get("verdict"))
+    if verdict and len(rows) > VERDICT_MEMORY_MAX:
+        withheld = payload.setdefault("withheld", {})
+        withheld["memory"] = withheld.get("memory", 0) + len(rows) - VERDICT_MEMORY_MAX
+        withheld["reason"] = "tracker_verdict_leads"
+        rows = rows[:VERDICT_MEMORY_MAX]
+    mem["results"] = rows
+
+
+def _answer_first(
+    payload: dict[str, Any],
+    home_ns: str,
+    *,
+    margin: float,
+    home_margin: float,
+    moved: frozenset[int],
+) -> None:
     _below = apply_precision_floor(payload, home_ns)
     if _defect_answer(payload):  # a tracker verdict leads instead
         if _below:
             payload.setdefault("withheld", {})["below_precision_floor"] = _below
-        return payload
+        return
     mem = payload.get("memory")
     if not isinstance(mem, dict):
-        return payload
+        return
     _below += cap_chunks_behind_fact(payload, home_ns, moved)
     hits = [h for h in (mem.get("results") or []) if isinstance(h, dict)]
     lead = leading_home_fact(hits, home_ns, moved=moved)
     if lead is None:
         if _below:
             payload["withheld"] = {"memory": _below, "reason": "below_precision_floor"}
-        return payload
+        return
     lead_sim = float(lead.get("similarity") or 0.0)
     # The lead comes first whatever rank said, and a row that is
     # itself a Loom recall is withheld outright — every lookup writes one,
@@ -259,7 +311,6 @@ def answer_first(
             "reason": "home_fact_leads",
             "lead": str(lead.get("memory_key") or ""),
         }
-    return payload
 
 
 def withheld_note(payload: dict[str, Any]) -> str:

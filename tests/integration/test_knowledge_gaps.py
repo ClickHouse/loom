@@ -87,6 +87,57 @@ async def test_a_build_lists_only_what_enough_users_asked() -> None:
     assert (gaps[0]["askers"], gaps[0]["asks"]) == (3, 3)
 
 
+async def test_gap_draft_rereads_eligible_questions_and_claims_one_model_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from server.knowledge.api.models_gaps import KnowledgeGapsDraftInput
+    from server.knowledge.app.gap_drafts import handle_gap_draft
+    from server.llm import client
+    from server.llm.fake import FakeLLMClient
+    from server.memory.store import learnings
+    from server.settings import settings
+
+    model = FakeLLMClient()
+    calls: list[dict[str, Any]] = []
+    complete = model.complete
+
+    async def counted(system: str, user: str, **kwargs: Any) -> Any:
+        calls.append(json.loads(user))
+        return await complete(system, user, **kwargs)
+
+    monkeypatch.setattr(model, "complete", counted)
+    monkeypatch.setattr(client, "get_llm_client", lambda: model)
+    org = unique_org("gaps-draft")
+    await _seed(org)
+    assert await worker.build_namespace(org, NS) == 1
+    gap = (await _list(org))[0]
+    request = KnowledgeGapsDraftInput(org=org, namespace=NS, gap_id=gap["gap_id"])
+    first = await handle_gap_draft(request)
+    repeated = await handle_gap_draft(request)
+    assert first.candidate_id == repeated.candidate_id
+    assert calls == [{"queries": ["what is arr"]}]
+    row = await learnings.find_candidate(org, NS, first.candidate_id)
+    assert row is not None and row["source_kind"] == "knowledge_gap"
+    provenance = json.loads(row["proposed_value"])["rests_on"]
+    assert provenance["gap_id"] == gap["gap_id"]
+    assert set(provenance) == {"gap_id", "tables", "columns"}
+    monkeypatch.setattr(settings, "knowledge_gaps_min_askers", 4)
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as refused:
+        await handle_gap_draft(request)
+    assert refused.value.status_code == 404
+    assert len(calls) == 1
+    version = int(row["version"])
+    await learnings.delete_candidate_through(org, NS, first.candidate_id, version - 1)
+    retained = await learnings.find_candidate(org, NS, first.candidate_id)
+    assert retained is not None and int(retained["version"]) == version
+    await learnings.delete_candidate_through(org, NS, first.candidate_id, version)
+    assert await learnings.find_candidate(org, NS, first.candidate_id) is None
+
+
 async def test_a_user_erasure_removes_the_users_misses_and_gaps() -> None:
     org = unique_org("gapse")
     await _seed(org)

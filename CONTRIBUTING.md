@@ -142,6 +142,58 @@ The HTTP and MCP transports discover registered operations; you don't touch tran
 
 An operation or field may be renamed or removed. Say so in the PR description and tell the consumers that call it. A client that still sends a removed field is served, with the field named in `ignored_args` ([HTTP API](./docs/reference/http-api.md#unknown-and-removed-fields)). Retiring a flag deletes the setting, its branch and any per-request field that carried it, in one change.
 
+## Translations
+
+`i18n/<lang>/` holds machine translations of the README, the quickstart and the use-case pages. `scripts/i18n/translate.py` writes them and `.github/workflows/i18n.yml` runs it on main after an English page changes; never edit a translation by hand.
+
+The script calls Claude Sonnet 5.5 on Amazon Bedrock through the `anthropic` package's `AnthropicBedrock` client, which signs each request with the default AWS credential chain. To run it yourself, sign in to an AWS account where Bedrock serves the model and install the pinned client:
+
+```bash
+# A separate virtualenv: the lock pins versions that differ from Loom's own.
+python -m venv .venv-i18n && . .venv-i18n/bin/activate
+python -m pip install --require-hashes --no-deps --only-binary=:all: -r scripts/i18n/requirements.txt
+aws sso login
+export AWS_REGION=<region>
+python -m scripts.i18n.translate update
+```
+
+The workflow stores no credential in GitHub. Its job runs on a self-hosted runner in AWS, and the SDK signs with that runner's EC2 instance role, which may invoke the one model and nothing else. Every step of the job can use the role, so the job only runs on a push to main or a manual run on main, never on a pull request. The runner group's selected-workflow rule keeps every other workflow off the runner; the job's environment `i18n`, limited to main, records each run. While the repository variable `LOOM_I18N_RUNNER` is empty, the job is skipped.
+
+To turn translations on:
+
+1. Create the environment `i18n` with deployment branches set to `main` only (Settings → Environments).
+2. Get a runner group for this repository with "Allow public repositories" ticked (a group serves only private repositories otherwise, and the job would wait in the queue) and access limited to the selected workflow `ClickHouse/loom/.github/workflows/i18n.yml@refs/heads/main` (runner group settings → Workflow access → Selected workflows), so no other workflow and no fork's pull request can schedule a job on it. The runner image needs an OS that `actions/setup-python` supports, `git`, `bash` and the `gh` CLI.
+3. Give the runners' instance role the policy below. In the account, accept Bedrock's model access for Claude Sonnet 5.5 once: the first call can otherwise fail with an access-denied error about `aws-marketplace:Subscribe`, and the role is not granted those Marketplace actions.
+4. Set the repository variable `LOOM_I18N_RUNNER` to the runner group's labels as a JSON list, for example `["self-hosted","<label>"]`.
+
+The job calls the model's global inference profile from the runner's `AWS_REGION`, else its `AWS_DEFAULT_REGION`, else `us-east-1`. Bedrock authorizes a call through a global profile on three resources: the profile, the model in the calling region, and the model with no region. The policy names each; `<region>` is the calling region:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": "arn:aws:bedrock:<region>:<account-id>:inference-profile/global.anthropic.claude-sonnet-5-5"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-5-5",
+        "arn:aws:bedrock:::foundation-model/anthropic.claude-sonnet-5-5"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": "arn:aws:bedrock:<region>:<account-id>:inference-profile/global.anthropic.claude-sonnet-5-5"
+        }
+      }
+    }
+  ]
+}
+```
+
 ## The open-source copy rule
 
 Repository text (code, comments, tests, docs, fixtures) stays product-neutral and timeless. `tests/unit/test_public_copy.py` enforces the lists:

@@ -153,7 +153,8 @@ def test_key_match_and_descent_read_the_same_clause_as_before() -> None:
 def test_row_owner_rides_privately_and_never_on_the_wire() -> None:
     hit = _hit("k", "anchor", agent="other")
     assert hit._row_agent == "other" and hit._row_scope == "private"
-    assert "_row_agent" not in hit.model_dump() and "agent" not in hit.model_dump()
+    assert "_row_agent" not in hit.model_dump()
+    assert hit.model_dump()["agent"] == ""  # The belt marker is not the row identity.
 
 
 def test_belt_drops_a_stamped_anchor_row_of_another_agent_and_says_so() -> None:

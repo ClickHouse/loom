@@ -491,7 +491,10 @@ def test_the_ledger_views_read_their_window_and_no_other_view_has_one(view: str)
     if view in _LEDGER:
         assert after.startswith(_WINDOW), (view, after[:80])
         rest = after[len(_WINDOW) :].strip()
-        assert rest == "" or rest.startswith("GROUP BY"), (view, rest[:80])
+        if view == "sql_v1_usage_daily":
+            assert rest == ") GROUP BY day, org, namespace, agent, operation, kind", (view, rest)
+        else:
+            assert rest == "", (view, rest)
     else:
         assert "INTERVAL" not in flat, view
 

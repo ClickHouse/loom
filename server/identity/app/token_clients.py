@@ -8,7 +8,7 @@ import re
 # stdio-only clients need the `mcp-remote` npx shim to reach a remote HTTP MCP server;
 # the rest speak remote MCP natively (URL + headers, with `type: "http"` for
 # claude-code / vscode). When a client gains native HTTP support, drop it from here.
-_STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
+_STDIO_VIA_NPX = {"claude-desktop", "cline"}
 
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
 # (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS) and `loom install` does.
@@ -55,9 +55,9 @@ CONFIG_PATHS = {
         "win32": "%USERPROFILE%\\.codeium\\windsurf\\mcp_config.json",
     },
     "zed": {
-        "darwin": "~/.config/zed/mcp.json",
-        "linux": "~/.config/zed/mcp.json",
-        "win32": "%APPDATA%\\Zed\\mcp.json",
+        "darwin": "~/.config/zed/settings.json",
+        "linux": "~/.config/zed/settings.json",
+        "win32": "%APPDATA%\\Zed\\settings.json",
     },
 }
 

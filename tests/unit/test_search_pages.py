@@ -140,6 +140,42 @@ async def test_load_page_reads_by_namespace_and_rejects_foreign_shapes() -> None
 
 
 @pytest.mark.asyncio
+async def test_previous_build_cannot_load_a_parked_governed_definition(monkeypatch) -> None:
+    hit = _hit("definition/mrr", 0.9).model_copy(update={"governed": True})
+    content = _encode(1, 2, [hit])
+    current = await sp.load_page(_CH(content), org="o", namespace="n", blob_key="page/x")
+    assert current and current["hits"][0]["governed"] is True
+
+    # The previous reader has the same loader and accepts only its format version.
+    monkeypatch.setattr(sp, "PAGE_VERSION", 1)
+    assert await sp.load_page(_CH(content), org="o", namespace="n", blob_key="page/x") is None
+
+
+@pytest.mark.asyncio
+async def test_previous_page_format_expires_through_the_search_handler(monkeypatch) -> None:
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search as h
+
+    legacy = json.loads(_encode(1, 2, [_hit("b", 0.8, ns="n")]))
+    legacy["v"] = 1
+    legacy["hits"][0].pop("governed", None)
+    content = json.dumps(legacy)
+    _callers_namespaces(monkeypatch, ["n"])
+    patch_handler_name(monkeypatch, "get_client", lambda: _CH(content))
+    result = await h.handle_memory_search(
+        MemorySearchInput(
+            org="o",
+            namespace="n",
+            agent="*",
+            query="q",
+            top_k=1,
+            page=sp.make_handle(sp.page_blob_key(content), 0),
+        )
+    )
+    assert result.results == [] and result.abstain and result.abstain_code == "page_expired"
+
+
+@pytest.mark.asyncio
 async def test_serve_parked_page_slices_and_hands_back_the_next_handle(monkeypatch) -> None:
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app import search as h

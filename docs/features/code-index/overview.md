@@ -1,16 +1,19 @@
-# Code index
+# Code index for coding agents over MCP
 
-The code workers are off by default; a deployment turns them on per repository
-([repositories](repositories.md)). The default `core` MCP toolset lists no code tools
-unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
-
-Loom indexes git repositories into ClickHouse and answers structure questions through
+With code workers enabled for a repository, Loom indexes it into ClickHouse and answers structure questions through
 the `code.*` operations: where a symbol is defined, who calls it, what a change
 reaches, which merged PR touched a line. Agents call them over MCP, HTTP
 (`POST /v1/code.<op>`) or the Python SDK (`agent.code`). Every agent reads the same
 rows, so a repository is parsed and embedded once per merge, not once per session. How
 the index is built is in
 [code index architecture](../../architecture/code-index-architecture.md).
+
+The [language support table](#language-support) distinguishes fast-tier symbols and
+edges from compiler-tier coverage.
+
+The code workers are off by default; a deployment turns them on per repository
+([repositories](repositories.md)). The default `core` MCP toolset lists no code tools
+unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 
 ![The Repositories page: an indexed repository, its branches and its tracker](../../images/dashboard-repositories.png)
 
@@ -25,15 +28,15 @@ the index is built is in
 | What does my change reach, and which tests must run?           | `code.impact`, `code.test_gate`                         |
 | Which merged PR touched this line, and what did reviewers say? | `code.blame_range`, `code.history`, `code.review_brief` |
 | Does a PR like the one I am about to open already exist?       | `code.pr_check`                                         |
-| Is the index current enough to answer?                         | `code.index_status`, the `as_of` block on every answer  |
+| Is the index current enough to answer?                         | `code.index_status`, `as_of` when returned              |
 
 Every op, grouped by task, is on [operations.md](operations.md).
 
 ## One namespace is one branch
 
-A code namespace is one repository branch at one commit. Loom keeps a bare git mirror,
-walks the branch's first-parent history, and stores what it extracts in `loom.code_*`
-tables keyed by `(org, namespace)`.
+A code namespace tracks one repository branch. Each index tier advances its own commit
+watermark. Loom keeps a bare git mirror, walks the branch's first-parent history, and
+stores what it extracts in `loom.code_*` tables keyed by `(org, namespace)`.
 
 - Nothing is read from an agent's checkout. Uncommitted and unpushed changes are never
   in the index. A feature branch is indexed only when configured as its own entry.
@@ -242,8 +245,10 @@ answers call-graph edges with `epistemic` (`exact` or `lower_bound`) and its `ca
 inside a structured response with citations. The Python and TypeScript SDKs carry types
 generated from the same schemas.
 
-- **Freshness.** Every conversational answer carries `as_of`. Gate on `as_of.stale`,
-  not on whether the first build finished ([freshness.md](freshness.md#the-as_of-block)).
+- **Freshness.** Inspect `as_of.stale` when the answer returns `as_of`. Otherwise use
+  `code.index_status` and the relevant tier's watermark; missing metadata is unknown.
+  A completed first build does not establish freshness
+  ([freshness.md](freshness.md#the-as_of-block)).
 - **`abstain_code` before the hits.** An abstain is a statement about the question:
 
   | `abstain_code`                                 | Meaning                                                                               | Do                                         |

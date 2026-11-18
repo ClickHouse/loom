@@ -7,6 +7,10 @@ from types import SimpleNamespace
 import pytest
 
 from server.memory.domain import ask_routing
+from tests.unit.ask_knowledge_fake import checked_reply, route_scope
+from tests.unit.ask_knowledge_fake import ordinary_knowledge_scope as ordinary_knowledge_scope
+
+pytestmark = pytest.mark.usefixtures("ordinary_knowledge_scope")
 
 
 @pytest.mark.parametrize(
@@ -37,7 +41,7 @@ def test_needle_questions_not_routed(q):
 
 
 def _hits(*uris):
-    return [SimpleNamespace(source_uri=u) for u in uris]
+    return [SimpleNamespace(source_uri=u, tags=[]) for u in uris]
 
 
 def test_pick_documents_takes_the_concentrated_ones_in_order():
@@ -65,9 +69,9 @@ async def test_handler_routes_only_when_flag_on_and_documents_concentrate(monkey
 
     calls: list[str] = []
 
-    async def fake_search(inp):
+    async def fake_search(request, _plan):
         calls.append("search")
-        return SimpleNamespace(results=_hits("doc://r", "doc://r", "doc://x"))
+        return checked_reply(SimpleNamespace(results=_hits("doc://r", "doc://r", "doc://x")))
 
     async def fake_synth(inp):
         calls.append("synth:" + ",".join(inp.source_uris))
@@ -83,11 +87,11 @@ async def test_handler_routes_only_when_flag_on_and_documents_concentrate(monkey
     import server.knowledge.app.knowledge_search as ks
     import server.knowledge.app.synthesize as ksyn
 
-    monkeypatch.setattr(ks, "handle_knowledge_search", fake_search)
+    monkeypatch.setattr(ks, "run_checked_search", fake_search)
     monkeypatch.setattr(ksyn, "handle_knowledge_synthesize", fake_synth)
     inp = MemoryAskInput(org="o", namespace="n", query="summarize the report")
 
-    out = await h._maybe_route_to_synthesize(inp)
+    out = await h._maybe_route_to_synthesize(inp, await route_scope(inp))
     assert out is not None
     assert out.answer == "The report says X."
     assert out.route_reason == "knowledge_synthesize:1_docs"
@@ -99,17 +103,17 @@ async def test_handler_routes_only_when_flag_on_and_documents_concentrate(monkey
     no_synth = MemoryAskInput(
         org="o", namespace="n", query="summarize the report", allow_synthesis=False
     )
-    assert await h._maybe_route_to_synthesize(no_synth) is None
+    assert await h._maybe_route_to_synthesize(no_synth, await route_scope(no_synth)) is None
     replay = MemoryAskInput(
         org="o", namespace="n", query="summarize the report", as_of="2026-01-01T00:00:00Z"
     )
-    assert await h._maybe_route_to_synthesize(replay) is None
+    assert await h._maybe_route_to_synthesize(replay, await route_scope(replay)) is None
     assert calls == []
 
     # A needle question never reaches the knowledge plane.
     calls.clear()
     needle = MemoryAskInput(org="o", namespace="n", query="who wrote the report")
-    assert await h._maybe_route_to_synthesize(needle) is None
+    assert await h._maybe_route_to_synthesize(needle, await route_scope(needle)) is None
     assert calls == []
 
 
@@ -121,8 +125,8 @@ async def test_handler_falls_through_when_synthesis_abstains(monkeypatch):
     from server.memory.api.models_ask import MemoryAskInput
     from server.memory.app.ask import handler as h
 
-    async def fake_search(inp):
-        return SimpleNamespace(results=_hits("doc://r", "doc://r"))
+    async def fake_search(request, _plan):
+        return checked_reply(SimpleNamespace(results=_hits("doc://r", "doc://r")))
 
     async def fake_synth(inp):
         return KnowledgeSynthesizeOutput(
@@ -135,7 +139,31 @@ async def test_handler_falls_through_when_synthesis_abstains(monkeypatch):
             abstain_reason="no_content",
         )
 
-    monkeypatch.setattr(ks, "handle_knowledge_search", fake_search)
+    monkeypatch.setattr(ks, "run_checked_search", fake_search)
     monkeypatch.setattr(ksyn, "handle_knowledge_synthesize", fake_synth)
     inp = MemoryAskInput(org="o", namespace="n", query="overview of the report")
-    assert await h._maybe_route_to_synthesize(inp) is None
+    assert await h._maybe_route_to_synthesize(inp, await route_scope(inp)) is None
+
+
+@pytest.mark.asyncio
+async def test_route_count_only_names_documents_the_synthesis_actually_read(monkeypatch):
+    import server.knowledge.app.knowledge_search as search
+    import server.knowledge.app.synthesize as synthesize
+    from server.knowledge.api.models_knowledge import KnowledgeSynthesizeOutput
+    from server.memory.api.models_ask import MemoryAskInput
+    from server.memory.app.ask import handler
+
+    async def find(_request, _plan):
+        return checked_reply(SimpleNamespace(results=_hits("a", "a", "b", "b", "c", "d")))
+
+    async def synthesize_one(input):
+        assert input.source_uris == ["a", "b"]
+        return KnowledgeSynthesizeOutput(
+            answer="One retained document", documents=1, windows=1, chunks_read=1, reduce_rounds=1
+        )
+
+    monkeypatch.setattr(search, "run_checked_search", find)
+    monkeypatch.setattr(synthesize, "handle_knowledge_synthesize", synthesize_one)
+    input = MemoryAskInput(org="o", namespace="n", query="summarize these reports")
+    result = await handler._maybe_route_to_synthesize(input, await route_scope(input))
+    assert result is not None and result.route_reason == "knowledge_synthesize:1_docs"

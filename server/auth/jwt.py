@@ -157,6 +157,8 @@ class AuthInfo:
     parent_subjects: tuple[str, ...] = ()
     parent_iats: tuple[int, ...] = ()
     creator: str = ""
+    # Explicit personal-agent or answer token; delegation never inherits this claim.
+    reads_as_creator: bool = False
     # `saves_to` claim: where a list token's calls that name no namespace save,
     # chosen at mint and read by `caller_home._pick_default`; '' = none recorded.
     saves_to: str = ""
@@ -260,6 +262,7 @@ def mint_token(
     parent_subjects: list[str] | None = None,
     parent_iats: list[int] | None = None,
     creator: str | None = None,
+    reads_as_creator: bool = False,
     saves_to: str | None = None,
     issued_at: int | None = None,
 ) -> str:
@@ -342,6 +345,8 @@ def mint_token(
         payload["parent_iats"] = list(parent_iats)
     if creator:
         payload["creator"] = creator
+    if reads_as_creator:
+        payload["reads_as_creator"] = True
     if saves_to:
         payload["saves_to"] = saves_to
     if ttl_seconds is not None:
@@ -455,6 +460,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
         parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
+        reads_as_creator=_bool_claim(decoded, "reads_as_creator"),
         saves_to=_optional_str_claim(decoded, "saves_to"),
         session_id=_optional_str_claim(decoded, "sid"),
         first_party=_bool_claim(decoded, "fps"),

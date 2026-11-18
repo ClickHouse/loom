@@ -8,12 +8,17 @@
 They agree byte-for-byte: `if_match_sha256` and `content_sha256` are compared on the
 wire, and the canonical form (`sort_keys=True`, compact separators) lives here so no
 caller can drift.
+
+The text forms those hashes and comparisons read live here too: `canonical_document_text`
+for documents and chunks, and `query_text` and `valid_unicode` for a query, which the
+knowledge-gap grouping and the term leg read alike.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from typing import Any
 
 
@@ -53,10 +58,23 @@ def canonical_document_text(text: str) -> str:
 
     Callers pass `f"{title}\n{content}"` for a document and the bare text for
     a chunk."""
-    import unicodedata
-
     norm = unicodedata.normalize("NFKC", text.strip())
     return " ".join(norm.split())
+
+
+def query_text(text: str) -> str:
+    """The form a query and a name are compared in: format characters (Unicode category
+    Cf) dropped, then `canonical_document_text`."""
+    return canonical_document_text("".join(c for c in text if unicodedata.category(c) != "Cf"))
+
+
+def valid_unicode(text: str) -> bool:
+    """Whether `text` encodes as UTF-8 (holds no lone surrogate)."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def sha256_document_text(text: str) -> str:

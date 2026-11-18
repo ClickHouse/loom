@@ -4,11 +4,15 @@ server/memory/api/models_loom_search.py; the legs and assembly in memory/app/loo
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from typing import Any
 
 from server.code.app.repo_scope import repo_namespace_in_scope
+from server.core.diagnostics import private_work
+from server.core.request_work import mirror_marked
 from server.memory.api.models_loom_search import SearchInput, SearchOutput
 from server.memory.app.loom_search.fanout import search_sections
+from server.memory.app.loom_search.tracker_leg import prepare_tracker_search
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +23,7 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     memory-kind namespaces; when they cannot be resolved it narrows to
     `namespace`, never widens. Prompt text is captured at the most
     restrictive consent of every namespace read, the code scope's repository
-    namespace included."""
+    namespace and every planned tracker namespace included."""
     from server.auth.fanout import namespaces_to_search
     from server.observability.capture_consent import narrow_to
 
@@ -34,7 +38,15 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     # Under a code scope the repository's documents and decisions are read too (on a later
     # page, its documents only).
     repo_namespace = await repo_namespace_in_scope(input.org)
-    await narrow_to(input.org, [*read, repo_namespace] if repo_namespace else read)
+    tracker_plan = await prepare_tracker_search(input.query, org=input.org, top_k=input.top_k)
+    consent_namespaces = [*read, repo_namespace] if repo_namespace else list(read)
+    if tracker_plan and tracker_plan.org == input.org:
+        consent_namespaces.extend(
+            ns for ns in tracker_plan.namespaces if ns not in consent_namespaces
+        )
+    await narrow_to(input.org, consent_namespaces)
+    if tracker_plan and tracker_plan.org != input.org:
+        await narrow_to(tracker_plan.org, list(tracker_plan.namespaces))
     payload = await search_sections(
         org=input.org,
         namespace=input.namespace,
@@ -48,9 +60,11 @@ async def handle_search(input: SearchInput) -> SearchOutput:
         page=input.page.strip(),
         explain=input.explain,
         repo_namespace=repo_namespace,
+        tracker_plan=tracker_plan,
     )
-    _record_gap_miss(input, payload, repo_namespace or "")
-    return SearchOutput.model_validate(payload)
+    with private_work() if mirror_marked() else nullcontext():
+        _record_gap_miss(input, payload, repo_namespace or "")
+        return SearchOutput.model_validate(payload)
 
 
 # The `withheld` reasons that mean an answer led and the rest was set aside.
@@ -73,12 +87,14 @@ def _record_gap_miss(input: SearchInput, payload: dict[str, Any], repo_namespace
     if withheld.get("reason") in _ANSWER_LED:
         return  # an answer led and withheld the rest
     if payload.get("tracker") or payload.get("namespaces_skipped"):
-        return  # a tracker verdict answered, or the fan-out stopped short
+        return  # tracker evidence answered, or the fan-out stopped short
     memory = payload.get("memory") or {}
     others = [payload.get(k) or {} for k in ("knowledge", "profile", "conversations")]
     if any(s.get("error") for s in (memory, *others)) or any(s.get("results") for s in others):
         return
     hits = memory.get("results") or []
+    if memory.get("term_leg") not in ("complete", "empty") or any(h.get("governed") for h in hits):
+        return  # a governed definition answers, or a term leg not complete or empty may hold one
     if repo_namespace and repo_namespace != input.namespace:
         if any(h.get("namespace") == repo_namespace for h in hits):
             return  # a decision merged from the scoped repository answers

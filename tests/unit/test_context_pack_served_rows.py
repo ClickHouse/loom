@@ -13,6 +13,7 @@ import pytest
 from server.memory.api.models_context import ContextPackInput
 from server.memory.app.context_pack import handle_context_pack
 from server.memory.domain.context_layout import served_rows
+from tests.unit.checked_pack_fakes import install_pack_stack, install_pack_target
 
 
 def test_served_rows_keeps_the_rows_whose_lines_survive_each_cut() -> None:
@@ -43,12 +44,12 @@ def _stub_all_but_the_stack(monkeypatch: pytest.MonkeyPatch, entries: list[Any])
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
         "server.knowledge.app.conversations.handle_conversation_search",
     ):
-        monkeypatch.setattr(target, _dead)
+        install_pack_target(monkeypatch, target, _dead)
 
     async def _stack(*a: Any, **k: Any) -> Any:
         return NS(entries=entries, tokens_used=0, tokens_budget=0, truncated=False)
 
-    monkeypatch.setattr("server.memory.app.stack.handle_memory_stack", _stack)
+    install_pack_stack(monkeypatch, _stack)
 
 
 def _entry(section: str, key: str, width: int, namespace: str = "") -> NS:

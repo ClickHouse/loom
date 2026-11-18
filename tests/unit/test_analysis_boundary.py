@@ -14,6 +14,7 @@ from server.core.sql_literal import sql_string
 from server.erasure.store import census
 from server.insights.domain import analysis as boundary
 from server.insights.store import analysis as store
+from server.observability.store.event_reads import MASKED_EVENT_COLUMNS
 from tests.unit import clickhouse_local
 
 CAPS = boundary.Caps(
@@ -27,7 +28,9 @@ CAPS = boundary.Caps(
 )
 KEY = bytes(range(32))
 NAMES = boundary.SettingNames("SQL_")
-SQL = boundary.entity_sql("`loom`", NAMES, "pw-current", KEY, CAPS)
+SQL = boundary.entity_sql(
+    "`loom`", NAMES, "pw-current", KEY, CAPS, event_columns=MASKED_EVENT_COLUMNS
+)
 
 
 def _grants() -> dict[str, list[str]]:
@@ -57,8 +60,8 @@ def test_grants_are_the_allowlist_and_the_canary() -> None:
 def test_a_version_names_one_set_of_grants_and_policies() -> None:
     # Changing a grant, a policy, a live predicate or a retired table changes
     # this digest: bump ENTITY_VERSION and record the new digest here.
-    assert {boundary.ENTITY_VERSION: boundary.structure_digest()} == {
-        3: "3952974042653382ca11f607559494f5"
+    assert {boundary.ENTITY_VERSION: boundary.structure_digest(MASKED_EVENT_COLUMNS)} == {
+        4: "1336fef6f782dd375938a514e02d43cf"
     }
 
 
@@ -108,7 +111,16 @@ def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants
             grant("SELECT", "", "", "", False),
         }
     )
-    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS, held, frozenset({"bi_reader"}))
+    sql = boundary.entity_sql(
+        "`loom`",
+        NAMES,
+        "pw",
+        KEY,
+        CAPS,
+        held,
+        frozenset({"bi_reader"}),
+        event_columns=MASKED_EVENT_COLUMNS,
+    )
     revokes = [s for s in sql if s.startswith("REVOKE")]
     assert sorted(revokes) == sorted(
         [
@@ -128,7 +140,11 @@ def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants
 
 
 def test_every_other_users_policy_is_written_before_the_analysts() -> None:
-    for name in [*(t.name for t in boundary.TABLES), boundary.CANARY_TABLE]:
+    for name in [
+        *(t.name for t in boundary.policy_tables()),
+        *boundary.RETIRED_TABLES,
+        boundary.CANARY_TABLE,
+    ]:
         others = next(
             i
             for i, s in enumerate(SQL)
@@ -153,7 +169,7 @@ def test_the_payload_counts_bytes_as_clickhouse_length_does() -> None:
 
 def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
     monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
-    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS)
+    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS, event_columns=MASKED_EVENT_COLUMNS)
     assert (
         "CREATE ROW POLICY OR REPLACE `loom_analyst_scope` ON `loom`.old_table "
         "AS permissive FOR SELECT USING 0 TO `loom_analyst`"
@@ -171,7 +187,7 @@ def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
 
 def test_every_table_policy_carries_scope_signature_and_live_predicate() -> None:
     scoped = _policies(boundary.POLICY_NAME)
-    for t in boundary.TABLES:
+    for t in boundary.policy_tables():
         policy = scoped[t.name]
         assert policy.startswith(f"AS permissive FOR SELECT USING ({t.live}) AND org = ")
         assert "has(splitByChar(',', toString(getSetting('SQL_loom_ns'))), namespace)" in policy
@@ -182,7 +198,9 @@ def test_other_users_keep_reading_every_table() -> None:
     # The canary too: once it has the analyst's policy, every other user would read none of
     # its rows.
     others = _policies(boundary.OTHERS_POLICY_NAME)
-    assert set(others) == {t.name for t in boundary.TABLES} | {boundary.CANARY_TABLE}
+    assert set(others) == {t.name for t in boundary.policy_tables()} | set(
+        boundary.RETIRED_TABLES
+    ) | {boundary.CANARY_TABLE}
     assert set(others.values()) == {"AS permissive FOR SELECT USING 1 TO ALL EXCEPT `loom_analyst`"}
 
 
@@ -190,7 +208,7 @@ def test_the_foreign_policy_check_looks_on_every_table_the_others_policy_widens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
-    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS)
+    sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS, event_columns=MASKED_EVENT_COLUMNS)
     head = rf"CREATE ROW POLICY OR REPLACE `{boundary.OTHERS_POLICY_NAME}` ON `loom`\.(\w+) "
     widened = {m.group(1) for s in sql if (m := re.match(head, s))}
     assert widened == set(boundary.others_policy_tables())
@@ -215,7 +233,8 @@ def test_tombstoning_tables_are_read_live() -> None:
 def test_every_allowlisted_table_is_reached_by_erasure() -> None:
     classified = census.classified_tables()
     for t in boundary.TABLES:
-        assert f"loom.{t.name}" in classified, t.name
+        table = "agent_events" if t.name == boundary.EVENTS_VIEW else t.name
+        assert f"loom.{table}" in classified, table
     assert classified["loom.analysis_secrets"] == "no_memory_content"
 
 
@@ -233,10 +252,16 @@ def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
         async def execute(self, sql: str, settings: dict[str, object], **_: object) -> None:
             sent.append((sql, settings))
 
-    asyncio.run(store.write_entities(SQL, ch=_Client()))  # type: ignore[arg-type]
+    names = boundary.SettingNames("SQL_")
+    asyncio.run(store.write_entities(SQL, names=names, ch=_Client()))  # type: ignore[arg-type]
     assert [sql for sql, _ in sent] == SQL
     cut = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
-    assert all(settings == cut for _, settings in sent)
+    empty_scope = {names.org: "", names.ns: "", names.exp: "0", names.sig: ""}
+    assert all(settings == {**cut, **empty_scope} for _, settings in sent)
+    # The defaults affect DDL analysis, never the stored view's request-time scope.
+    view = next(sql for sql in SQL if sql.startswith("CREATE OR REPLACE VIEW"))
+    assert "getSetting('SQL_loom_org')" in view
+    assert " SETTINGS " not in view
 
 
 def test_profile_pins_what_a_statement_could_widen() -> None:
@@ -257,6 +282,7 @@ def test_profile_pins_what_a_statement_could_widen() -> None:
         "max_result_rows = 51 MIN 1 MAX 51",
         "max_threads = 2 MIN 1 MAX 2",
         "send_logs_level = 'none' CONST",
+        "format_display_secrets_in_show_and_select = 0 CONST",
         "use_query_condition_cache = 0 CONST",
     ):
         assert pinned in profile, pinned
@@ -270,7 +296,9 @@ def test_one_password_and_one_key() -> None:
 
 
 def test_the_digest_leaves_out_the_key_which_never_changes() -> None:
-    other = boundary.entity_sql("`loom`", NAMES, "pw-other", bytes(32), CAPS)
+    other = boundary.entity_sql(
+        "`loom`", NAMES, "pw-other", bytes(32), CAPS, event_columns=MASKED_EVENT_COLUMNS
+    )
     assert boundary.entity_digest(NAMES, other) == boundary.entity_digest(NAMES, SQL)
     assert KEY.hex() not in SQL[-1]
 
@@ -366,7 +394,9 @@ def test_revokes_for_skips_a_line_that_is_not_a_grant() -> None:
 def test_a_cloud_prefix_names_every_setting_the_entities_and_the_scope_use() -> None:
     # ClickHouse Cloud takes custom settings under custom_, not SQL_.
     cloud = boundary.SettingNames("custom_")
-    sql = " ".join(boundary.entity_sql("`loom`", cloud, "pw", KEY, CAPS))
+    sql = " ".join(
+        boundary.entity_sql("`loom`", cloud, "pw", KEY, CAPS, event_columns=MASKED_EVENT_COLUMNS)
+    )
     assert "SQL_" not in sql
     for name in (cloud.org, cloud.ns, cloud.exp, cloud.sig, cloud.version, cloud.digest):
         assert name in sql, name

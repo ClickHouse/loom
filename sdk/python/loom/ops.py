@@ -173,6 +173,7 @@ OpName = Literal[
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.formats",
+    "knowledge.gaps.draft",
     "knowledge.gaps.list",
     "knowledge.get",
     "knowledge.ingest",
@@ -183,6 +184,9 @@ OpName = Literal[
     "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
+    "knowledge.query_history.add",
+    "knowledge.query_history.list",
+    "knowledge.query_history.remove",
     "knowledge.reads",
     "knowledge.restore",
     "knowledge.search",
@@ -542,6 +546,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.formats",
+    "knowledge.gaps.draft",
     "knowledge.gaps.list",
     "knowledge.get",
     "knowledge.ingest",
@@ -552,6 +557,9 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
+    "knowledge.query_history.add",
+    "knowledge.query_history.list",
+    "knowledge.query_history.remove",
     "knowledge.reads",
     "knowledge.restore",
     "knowledge.search",
@@ -2385,6 +2393,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "knowledge.gaps.draft": OpSpec(
+        "knowledge.gaps.draft",
+        "KnowledgeGapsDraftInput",
+        "KnowledgeGapsDraftBody",
+        "KnowledgeGapsDraftOutput",
+        True,
+        "admin",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
     "knowledge.gaps.list": OpSpec(
         "knowledge.gaps.list",
         "KnowledgeGapsListInput",
@@ -2504,6 +2524,42 @@ OPS: dict[str, OpSpec] = {
         1500,
         False,
         True,
+    ),
+    "knowledge.query_history.add": OpSpec(
+        "knowledge.query_history.add",
+        "KnowledgeQueryHistoryAddInput",
+        "KnowledgeQueryHistoryAddBody",
+        "KnowledgeQueryHistoryAddOutput",
+        False,
+        "admin",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.query_history.list": OpSpec(
+        "knowledge.query_history.list",
+        "KnowledgeQueryHistoryListInput",
+        "KnowledgeQueryHistoryListBody",
+        "KnowledgeQueryHistoryListOutput",
+        True,
+        "admin",
+        "experimental",
+        250,
+        False,
+        False,
+    ),
+    "knowledge.query_history.remove": OpSpec(
+        "knowledge.query_history.remove",
+        "KnowledgeQueryHistoryRemoveInput",
+        "KnowledgeQueryHistoryRemoveBody",
+        "KnowledgeQueryHistoryRemoveOutput",
+        True,
+        "admin",
+        "experimental",
+        1000,
+        True,
+        False,
     ),
     "knowledge.reads": OpSpec(
         "knowledge.reads",
@@ -8043,6 +8099,7 @@ class CollectionListInput(TypedDict, total=False):
 
     org: Required[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -8051,6 +8108,7 @@ class CollectionListBody(TypedDict, total=False):
 
     org: NotRequired[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -8066,6 +8124,7 @@ class CollectionEntry(TypedDict, total=False):
     role: Required[str]
     description: NotRequired[str]
     title: NotRequired[str]
+    document_count: NotRequired[Optional[int]]
 
 
 class CollectionMoveInput(TypedDict, total=False):
@@ -10578,6 +10637,26 @@ class KnowledgeFormat(TypedDict, total=False):
     available: NotRequired[Optional[bool]]
 
 
+class KnowledgeGapsDraftInput(TypedDict, total=False):
+    "Draft a definition from a knowledge gap for an admin to review."
+
+    org: Required[str]
+    namespace: Required[str]
+    gap_id: Required[str]
+
+
+class KnowledgeGapsDraftBody(TypedDict, total=False):
+    "Draft a definition from a knowledge gap for an admin to review."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    gap_id: Required[str]
+
+
+class KnowledgeGapsDraftOutput(TypedDict, total=False):
+    candidate_id: Required[str]
+
+
 class KnowledgeGapsListInput(TypedDict, total=False):
     "The questions people keep asking in a namespace that nothing answers."
 
@@ -11281,6 +11360,92 @@ class QuerySnapshot(TypedDict, total=False):
     schema_state: Required[str]
 
 
+class KnowledgeQueryHistoryAddInput(TypedDict, total=False):
+    "Register a read-only ClickHouse query-history source for definition drafts."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    host: Required[str]
+    port: NotRequired[int]
+    secure: NotRequired[bool]
+    user: Required[str]
+    password: Required[str]
+    databases: Required[list[str]]
+    cluster: NotRequired[str]
+
+
+class KnowledgeQueryHistoryAddBody(TypedDict, total=False):
+    "Register a read-only ClickHouse query-history source for definition drafts."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    host: Required[str]
+    port: NotRequired[int]
+    secure: NotRequired[bool]
+    user: Required[str]
+    password: Required[str]
+    databases: Required[list[str]]
+    cluster: NotRequired[str]
+
+
+class KnowledgeQueryHistoryAddOutput(TypedDict, total=False):
+    name: Required[str]
+    source_id: Required[str]
+    kind: NotRequired[Literal["clickhouse_queries"]]
+    host: Required[str]
+    port: Required[int]
+    secure: Required[bool]
+    user: Required[str]
+    databases: Required[list[str]]
+    cluster: NotRequired[str]
+    created_at: Required[str]  # date-time as ISO-8601 text
+
+
+class KnowledgeQueryHistoryListInput(TypedDict, total=False):
+    "List the namespace's registered query-history sources."
+
+    fields: NotRequired[Optional[list[str]]]
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeQueryHistoryListBody(TypedDict, total=False):
+    "List the namespace's registered query-history sources."
+
+    fields: NotRequired[Optional[list[str]]]
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeQueryHistoryListOutput(TypedDict, total=False):
+    enabled: NotRequired[bool]
+    sources: NotRequired[list["KnowledgeQueryHistoryAddOutput"]]
+
+
+class KnowledgeQueryHistoryRemoveInput(TypedDict, total=False):
+    "Remove a query-history source registration from the namespace."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+
+
+class KnowledgeQueryHistoryRemoveBody(TypedDict, total=False):
+    "Remove a query-history source registration from the namespace."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+
+
+class KnowledgeQueryHistoryRemoveOutput(TypedDict, total=False):
+    removed: Required[bool]
+
+
 class KnowledgeReadsInput(TypedDict, total=False):
     "How often agents opened each document over the last `days` (`knowledge.get`"
 
@@ -11891,6 +12056,7 @@ class LearningEntry(TypedDict, total=False):
     supporters: Required[list[str]]
     rationale: Required[str]
     source_kind: NotRequired[str]
+    source_resource_id: NotRequired[str]
     agent: NotRequired[str]
     status: Required[Literal["pending", "promoted", "rejected"]]
     proposed_at: Required[str]  # date-time as ISO-8601 text
@@ -12351,6 +12517,7 @@ class MemorySearchHit(TypedDict, total=False):
     distance: Required[float]
     similarity: Required[float]
     below_threshold: NotRequired[Optional[bool]]
+    governed: NotRequired[Optional[bool]]
     tags: NotRequired[Optional[list[str]]]
     reinforcement_count: NotRequired[Optional[int]]
     used_count: NotRequired[Optional[int]]
@@ -12365,6 +12532,7 @@ class MemorySearchHit(TypedDict, total=False):
     valid_at: NotRequired[str]
     via_path: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    agent: NotRequired[str]
     user_id: NotRequired[str]
     source: NotRequired[str]
     parent_memory_key: NotRequired[str]
@@ -15410,6 +15578,7 @@ class MemorySearchOutput(TypedDict, total=False):
     score_explanation: NotRequired[str]
     retrieval_confidence: NotRequired[float]
     retrieval_risk: NotRequired[Literal["low", "medium", "high", "abstain"]]
+    term_leg: NotRequired[Literal["complete", "empty", "capped", "timed_out", "failed", "off"]]
     route_agreement: NotRequired[float]
     calibration_explanation: NotRequired[str]
     fallback_rounds_used: NotRequired[int]

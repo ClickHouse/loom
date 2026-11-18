@@ -59,6 +59,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 def _serve(
     monkeypatch: pytest.MonkeyPatch, row: DocumentRow | None, blobs: dict[str, bytes] | None = None
 ) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.knowledge.store import source_access
+
+    monkeypatch.setattr(source_access, "active_sources", AsyncMock(return_value=[]))
+
     async def fake_get_one(
         org: str, namespace: str, source_uri: str, **_: Any
     ) -> DocumentRow | None:

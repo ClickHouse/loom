@@ -879,6 +879,7 @@ class _AccessDenied(Exception):
 def _looms_policies() -> list[dict[str, Any]]:
     """The row policies Loom's analyst setup writes, as `system.row_policies` lists them."""
     from server.insights.domain import analysis
+    from server.observability.store.event_reads import MASKED_EVENT_COLUMNS
 
     caps = analysis.Caps(
         max_execution_s=10,
@@ -889,7 +890,14 @@ def _looms_policies() -> list[dict[str, Any]]:
         max_concurrent=4,
         max_threads=2,
     )
-    sql = analysis.entity_sql("`loom`", analysis.SettingNames("SQL_"), "pw", b"\0" * 32, caps)
+    sql = analysis.entity_sql(
+        "`loom`",
+        analysis.SettingNames("SQL_"),
+        "pw",
+        b"\0" * 32,
+        caps,
+        event_columns=MASKED_EVENT_COLUMNS,
+    )
     shape = re.compile(
         r"CREATE ROW POLICY OR REPLACE `(\w+)` ON `loom`\.(\w+) AS (\w+) FOR SELECT "
         r"USING (.*) TO (ALL EXCEPT )?`(\w+)`$"

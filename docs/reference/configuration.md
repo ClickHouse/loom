@@ -908,6 +908,21 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_GAPS_MAX_IN_FLIGHT` | `int` | `256` | live | Miss recordings in flight in one process, at most; past it a miss is dropped and counted, so a burst of abstentions cannot pile up background reads. |
 | `LOOM_KNOWLEDGE_GAPS_MAX_NAMESPACES` | `int` | `500` | live | Namespaces one pass groups, at most; the ones with the most misses first. |
 
+### Query-history definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_ENABLED` | `bool` | `False` |  | Permit opt-in ClickHouse query-history sources to queue definition drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MIN_USERS` | `int` | `3` | live | Distinct initial ClickHouse accounts required before drafting a query group. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_DRAFTS` | `int` | `20` | live | Drafts one source may queue in a worker turn, at most. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_GROUPS` | `int` | `200` | live | Most-used query groups inspected per source turn before skipping existing drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_WINDOW_DAYS` | `int` | `7` | live | Days of finished SELECT query history a turn groups. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_READ_TIMEOUT_S` | `float` | `30` | live | Seconds allowed for one query-history source read. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_PASS_SECONDS` | `float` | `120.0` |  | Deadline of one query-history pass; it starts no new group after half this budget. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between query-history passes. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_SOURCES` | `int` | `100` | live | Sources one pass reads, at most; each turn is separately time bounded. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_BREAKERS` | `int` | `1000` |  | Query-history circuit states kept per process, at most; older sources are evicted first. |
+
 ### Chunking
 
 | Variable | Type | Default | Live | Meaning |
@@ -955,10 +970,13 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |
 | `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` | `int` | `3600` |  | Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share. |
+| `LOOM_KNOWLEDGE_SOURCE_RETIRE_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off. |
 | `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` | `int` | `50000` | live | Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
@@ -996,6 +1014,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SHARED_DEFINITIONS_MAX` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
+| `LOOM_MEMORY_TERM_LEG_WAIT_MS` | `int` | `100` | live | How much longer memory.search waits for its term leg once the other legs are done; past it the leg adds nothing (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 
@@ -1748,6 +1767,9 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks in the deployment guide's "Proxy and TLS" section. |
 | `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` |  | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. Required behind a load balancer: at the default every client counts as the balancer's address for the sign-in and sign-up limits. |
 | `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach. |
+| `LOOM_TLS_CERT_FILE` | `str` | `''` |  | PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP. |
+| `LOOM_TLS_KEY_FILE` | `str` | `''` |  | PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused. |
+| `LOOM_TLS_MIN_VERSION` | `'1.2' \| '1.3'` | `'1.2'` |  | Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3". |
 
 ### Outbound HTTP
 

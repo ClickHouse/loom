@@ -18,6 +18,7 @@ from tests.unit.schema_ddl import column_names
 
 # (repository module, constant, table, columns the DDL fills and no writer sends)
 CASES: list[tuple[str, str, str, frozenset[str]]] = [
+    ("server.knowledge.store.query_history", "_COLUMNS", "loom.query_history_sources", frozenset()),
     (
         "server.tracker.store.daily",
         "TRACKER_TEST_DAILY_COLS",

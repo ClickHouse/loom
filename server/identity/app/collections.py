@@ -39,6 +39,7 @@ from server.identity.domain import collection_names
 from server.identity.store import collections as collections_repo
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
+from server.knowledge.app.document_reads import document_counts
 from server.operations.base import Role
 
 
@@ -366,10 +367,10 @@ async def handle_collection_list(input: CollectionListInput) -> CollectionListOu
         roles: dict[str, Role | None] = dict.fromkeys(page, Role.ADMIN)
     else:
         roles = await sharing.roles(auth, input.org, page)
+    authorized = [ns for ns in page if roles.get(ns) is not None]
     with own_write_reads():  # a collection created on another replica a moment ago
-        labels = await namespaces_repo.labels(
-            input.org, [ns for ns in page if roles.get(ns) is not None]
-        )
+        labels = await namespaces_repo.labels(input.org, authorized)
+    counts = await document_counts(input.org, authorized) if input.include_document_counts else {}
     entries = [
         _CollectionEntry(
             namespace=ns,
@@ -378,6 +379,7 @@ async def handle_collection_list(input: CollectionListInput) -> CollectionListOu
             role=role.name.lower(),
             description=labels.get(ns, {}).get("description", ""),
             title=labels.get(ns, {}).get("title", ""),
+            document_count=counts.get(ns),
         )
         for ns in page
         if (role := roles.get(ns)) is not None

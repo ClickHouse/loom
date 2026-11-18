@@ -9,6 +9,34 @@ from loom.memory import MemorySearchHit, _parse_search_hit
 
 from server.memory.api.models_search import _MemorySearchHit
 
+_POSITIONAL_HIT_FIELDS = (
+    "memory_key memory_type content_excerpt distance similarity namespace code_state "
+    "rank_score below_threshold temporal_anchor temporal_confidence valid_at source "
+    "parent_memory_key via_path tags score_components explanation status superseded_by "
+    "superseded_at resolved_from version created_at source_class source_resource_id "
+    "verified user_id session_id speaker about_other entities derived_from body_truncated "
+    "next reinforcement_count used_count used_cited_count harm_count evidence_count acted_count pinned"
+).split()
+
+
+def test_hit_positional_constructor_preserves_user_and_session() -> None:
+    defaults = MemorySearchHit("key", "semantic", "content")
+    values = {name: getattr(defaults, name) for name in _POSITIONAL_HIT_FIELDS}
+    values.update(user_id="case-user", session_id="case-session", speaker="assistant")
+    hit = MemorySearchHit(*(values[name] for name in _POSITIONAL_HIT_FIELDS))
+    assert (hit.user_id, hit.session_id, hit.speaker, hit.agent) == (
+        "case-user",
+        "case-session",
+        "assistant",
+        "",
+    )
+
+
+def test_hit_positional_pattern_preserves_existing_fields() -> None:
+    assert MemorySearchHit.__match_args__ == tuple(_POSITIONAL_HIT_FIELDS)
+    hit = MemorySearchHit("key", "semantic", "content", agent="writer")
+    assert hit.agent == "writer"
+
 
 def test_hit_fields_match_the_server_hit() -> None:
     assert {f.name for f in fields(MemorySearchHit)} == set(_MemorySearchHit.model_fields)

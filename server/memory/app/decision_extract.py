@@ -230,7 +230,7 @@ async def cites_document(org: str, resource_id: str, namespace: str, source_uri:
     heading holding a `#` ("C# bindings") still cites this document, and `doc#v2#Intro`
     cites `doc#v2` once that document exists, live or deleted."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
-    from server.knowledge.app.document_reads import handle_knowledge_get
+    from server.knowledge.app.document_reads import ordinary_get
 
     prefix = source_resource_id(namespace, source_uri, "")
     if not resource_id.startswith(prefix):
@@ -239,7 +239,7 @@ async def cites_document(org: str, resource_id: str, namespace: str, source_uri:
     for i, ch in enumerate(rest):
         if ch != "#":
             continue
-        longer = await handle_knowledge_get(
+        longer = await ordinary_get(
             KnowledgeGetInput(
                 org=org,
                 namespace=namespace,
@@ -458,7 +458,7 @@ async def extract_document(
     pass is not stopped and it holds the source's lease); each such unit runs whole, held
     in `writes` (a fresh set when none is given) for `finish_writes`."""
     from server.knowledge.api.models_knowledge import KnowledgeGetInput
-    from server.knowledge.app.document_reads import document_chunks, handle_knowledge_get
+    from server.knowledge.app.document_reads import document_chunks, ordinary_get
 
     report = ExtractReport(source_uri, dry_run)
     if error := no_model_error():
@@ -468,9 +468,7 @@ async def extract_document(
     if isinstance(t, str):
         report.error = t
         return report
-    doc = await handle_knowledge_get(
-        KnowledgeGetInput(org=org, namespace=namespace, source_uri=source_uri)
-    )
+    doc = await ordinary_get(KnowledgeGetInput(org=org, namespace=namespace, source_uri=source_uri))
     if not doc.found:
         report.error = f"no live document {source_uri!r} in {org}/{namespace}"
         return report

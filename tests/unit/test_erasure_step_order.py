@@ -253,7 +253,15 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
-    ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
+    (
+        "learnings_queue.delete",
+        (
+            ("OTHER", "INSERT"),
+            (D, "loom.learnings_supporters"),
+            (D, "loom.learnings_queue"),
+            (D, "loom._migration_lock"),
+        ),
+    ),
     ("namespace_guides.delete", ((D, "loom.namespace_guides"),)),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
@@ -266,6 +274,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
     ("knowledge_source_listings.delete", ((D, "loom.knowledge_source_listings"),)),
+    ("knowledge_group_members.delete", ((D, "loom.knowledge_group_members"),)),
     ("knowledge_mirrors.forget", ()),
 ]
 
@@ -361,7 +370,15 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
-    ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
+    (
+        "learnings_queue.delete",
+        (
+            ("OTHER", "INSERT"),
+            (D, "loom.learnings_supporters"),
+            (D, "loom.learnings_queue"),
+            (D, "loom._migration_lock"),
+        ),
+    ),
     ("namespace_guides.delete", ((D, "loom.namespace_guides"),)),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
@@ -374,6 +391,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
     ("knowledge_source_listings.delete", ((D, "loom.knowledge_source_listings"),)),
+    ("knowledge_group_members.delete", ((D, "loom.knowledge_group_members"),)),
     ("knowledge_mirrors.forget", ()),
 ]
 
@@ -580,7 +598,18 @@ async def test_user_purge_saga_trace(run: Any) -> None:
 async def test_namespace_saga_trace(
     run: Any, scope_type: str, scope_value: str, backends: list[str]
 ) -> None:
-    want = [_SOURCES_RETIRE, *_with_tail(NS_TRACE, backends)]
+    want = [
+        _SOURCES_RETIRE,
+        (
+            "query_history_sources.delete",
+            (
+                ("OTHER", "INSERT"),
+                (D, "loom.query_history_sources"),
+                (D, "loom._migration_lock"),
+            ),
+        ),
+        *_with_tail(NS_TRACE, backends),
+    ]
     assert await run(scope_type, scope_value) == want
 
 
@@ -589,7 +618,18 @@ async def test_namespace_purge_saga_trace(run: Any, external: bool) -> None:
     """Under purge every tombstone becomes a delete: the wide tables by a
     lightweight DELETE, the narrow ones by an ALTER DELETE. Same steps."""
     got = await run("namespace_list", _ns_list(purge=True, external=external))
-    assert got == [_SOURCES_RETIRE, *_with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else [])]
+    assert got == [
+        _SOURCES_RETIRE,
+        (
+            "query_history_sources.delete",
+            (
+                ("OTHER", "INSERT"),
+                (D, "loom.query_history_sources"),
+                (D, "loom._migration_lock"),
+            ),
+        ),
+        *_with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else []),
+    ]
 
 
 @pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])
