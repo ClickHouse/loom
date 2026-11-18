@@ -14,7 +14,7 @@ reqwest = { version = "0.12.28", default-features = false, features = [
   "rustls-tls",
 ] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 rand = "0.8"
 log = "0.4"
 httpdate = "1"

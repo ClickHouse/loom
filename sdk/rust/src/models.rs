@@ -193,7 +193,7 @@ pub struct SearchResponse {
     pub abstain_reason: String,
     #[serde(default)]
     pub abstain_code: String,
-    /// Empty when an older response omitted the risk label, as in the Python SDK.
+    /// Empty when the response omits the risk label.
     #[serde(default)]
     pub retrieval_risk: String,
     /// None means recall credit was not disclosed.

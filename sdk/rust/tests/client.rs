@@ -316,6 +316,52 @@ async fn values_preserve_all_supported_json_shapes() {
 }
 
 #[tokio::test]
+async fn get_then_set_preserves_arbitrary_precision_json_integers() {
+    let integers = [
+        "18446744073709551615",
+        "18446744073709551617",
+        "-9223372036854775808",
+        "-9223372036854775809",
+        "123456789012345678901234567890123456789012345678901234567890",
+        "-123456789012345678901234567890123456789012345678901234567890",
+    ];
+    let server = Server::new(
+        integers
+            .iter()
+            .flat_map(|number| {
+                [
+                    response(
+                        200,
+                        format!(
+                            r#"{{"found":true,"value":{{"id":{number},"items":[{number},{{"n":{number}}}]}}}}"#
+                        ),
+                        "",
+                    ),
+                    response(200, json!({"version": VERSION}), ""),
+                ]
+            })
+            .collect(),
+    );
+    let client = server.client();
+    for number in integers {
+        let memory = client.get("key").await.unwrap();
+        assert_eq!(memory.value["id"].to_string(), number);
+        assert_eq!(memory.value["items"][0].to_string(), number);
+        assert_eq!(memory.value["items"][1]["n"].to_string(), number);
+        client
+            .set(SetRequest::new("key", memory.value))
+            .await
+            .unwrap();
+        assert!(server.request().await.line.contains("memory.get"));
+        let written = server.request().await;
+        assert!(written.line.contains("memory.set"));
+        assert_eq!(written.body["value"]["id"].to_string(), number);
+        assert_eq!(written.body["value"]["items"][0].to_string(), number);
+        assert_eq!(written.body["value"]["items"][1]["n"].to_string(), number);
+    }
+}
+
+#[tokio::test]
 async fn a_merge_keeps_its_noop_and_canonical_key() {
     let server = Server::new(vec![response(
         200,

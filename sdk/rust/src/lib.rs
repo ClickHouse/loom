@@ -17,16 +17,14 @@
 //! Dropping a call future cancels its retries and waits, but cannot undo a write.
 //! Logs use the `log` facade without installing a logger or recording payloads.
 //!
-//! # Extensible types
+//! # Using public types
 //!
-//! Request, response and API error structs are non-exhaustive so fields can be added.
+//! Request, response and API error structs are non-exhaustive.
 //! Construct requests with `new`, then set their public options. Destructure responses
-//! with `..`. Match errors with a fallback arm; error variants can be added, and
-//! [`Error::Protocol`] can gain fields.
+//! with `..`. Match errors with a fallback arm and [`Error::Protocol`] with `..`.
 //!
-//! Response decoding ignores unknown JSON fields. Added fields must allow omission
-//! with `Option<T>` or a serde default matching the wire contract. Required fields
-//! remain required; missing them produces [`Error::Protocol`].
+//! Response decoding ignores unknown JSON fields. Missing required fields produce
+//! [`Error::Protocol`].
 //!
 //! ```
 //! use clickhouse_loom::{ApiError, Error, GetResponse, SearchRequest, SetRequest};

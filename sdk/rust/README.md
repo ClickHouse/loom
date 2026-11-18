@@ -74,7 +74,7 @@ Deployment paths (how an operator stands up the server):
 `Client::builder(org, namespace, agent)` accepts `base_url`, `api_key`, `timeout`,
 `user_id`, `session_id`, `retry`, `pacing` and `ratelimit_max_wait`.
 The default timeout is 60 seconds per attempt. It covers the whole HTTP request
-and response body; Python's 60 second default applies to individual I/O phases. When unset,
+and response body. When unset,
 the endpoint comes from `LOOM_BASE_URL`, else `http://localhost:7777`;
 the token comes from `LOOM_API_KEY`, else no Authorization header is sent.
 Explicit settings override the environment. `.api_key("")` disables authorization.
@@ -82,8 +82,8 @@ Empty environment values are treated as unset.
 Login profiles and token files are not read.
 
 Builder user and session values apply to `set`, `get` and `delete`.
-Search defaults to `agent="*"` and omits user, session and namespace-scope filters,
-matching the Python SDK. The server chooses its default namespace scope.
+Search defaults to `agent="*"` and omits user, session and namespace-scope filters.
+The server chooses its default namespace scope.
 Set `SearchRequest.agent_id`, `namespace_scope`, `user_id` or `session_id` to
 filter a search explicitly. Org and the addressed namespace remain bound to the client.
 
@@ -95,8 +95,7 @@ Search requests support top-k, tags, memory type and search mode.
 
 ## API compatibility
 
-Public request, response and API error structs are `#[non_exhaustive]`, allowing
-additional fields while callers keep using constructors and partial patterns.
+Public request, response and API error structs are `#[non_exhaustive]`.
 Create requests with `new`, then set the options you need:
 
 ```rust
@@ -107,25 +106,12 @@ let hits = bot.search(request).await?;
 
 Read response fields directly, or include `..` when destructuring. `Error` is
 also non-exhaustive: include a fallback arm when matching it. Match
-`Error::Protocol { status, source, .. }` to allow additional protocol error fields.
-Error codes and categories remain strings so server additions do not require
-new enum variants.
+`Error::Protocol { status, source, .. }`. Error codes and categories are strings.
 
-Response decoding has a separate compatibility contract. Unknown JSON fields
-are ignored. An added response field must use `Option<T>` when omission means
-the server did not disclose it, or `#[serde(default)]` when the wire contract
-defines a default. A nonzero default uses a named function, as `DeleteResponse.found`
-does for `true`. Test both omission and an explicit value before adding the field.
+Response decoding ignores unknown JSON fields. Optional fields use `Option<T>`
+or documented defaults.
 Required fields keep strict decoding: an absent `version`, `found`, `results`
 or `tombstoned` in the response that requires it is a protocol error.
-
-Additional operations can use separate methods and types while the four memory
-methods retain their signatures and typed results. Richer call options or
-response metadata can use separate methods. Search scope and identity filters
-are explicit request options.
-
-These extension points allow additive changes; changing existing field types,
-method signatures or behavior still requires a breaking release.
 
 ## Results and errors
 
@@ -140,8 +126,8 @@ and usage fields. Use a chunk's `parent_memory_key` to fetch or credit its paren
 Check `SearchResponse.abstain`, `abstain_code`, `retrieval_risk`, `degraded` and
 `pending_extraction` before treating the hits as an answer. Pending extraction
 means an empty response may precede a completed save. `reinforcement` is `None`
-when recall credit was not disclosed. An omitted risk label is an empty string,
-matching Python; it does not imply low risk.
+when recall credit was not disclosed. An omitted risk label is an empty string;
+it does not imply low risk.
 
 ```rust
 use clickhouse_loom::Error;
@@ -160,11 +146,10 @@ flag, retry hints, request ID and raw detail. Unknown error codes and categories
 remain strings. Non-JSON refusals still carry the HTTP status.
 Transport and invalid-success-response errors are separate variants.
 
-Calls do not follow redirects. Retry and pacing defaults match the Python SDK
-for these four operations:
+Calls do not follow redirects. Retry and pacing defaults are:
 
 - Up to 3 attempts on connection failures, HTTP 408 and HTTP 500–599.
-  Configuration refusals and the Python SDK's excluded error codes stop retries;
+  Configuration refusals and the SDK's excluded error codes stop retries;
   `retryable=false` alone does not stop a status retry.
 - Exponential backoff starts at 100 ms, doubles to a 5 second ceiling, and uses
   jitter in the range 0.75–1.25 times the delay. A valid `Retry-After` of up to
@@ -224,6 +209,8 @@ guarantee the server stops processing it.
 
 ## Examples
 
+See the [examples guide](examples/README.md) for configuration and output.
+
 [`examples/memory.rs`](examples/memory.rs) saves a memory, reads it, searches for it,
 deletes it and confirms it is absent. It uses a unique key and attempts exact-key
 cleanup on failure. Run it against an existing namespace:
@@ -253,9 +240,8 @@ CI runs these checks on Rust 1.84.1 and stable and compares the packaged license
 with the repository license. Tests cover response compatibility
 and use a local fake HTTP server; they require neither Loom nor a database.
 
-On older Cargo versions, use the resolver setting above to select dependencies
-compatible with your Rust version before creating a lockfile. A consuming
-application controls its own dependency lockfile.
+The resolver setting selects dependencies compatible with your Rust version.
+A consuming application controls its own dependency lockfile.
 
 ## License
 
