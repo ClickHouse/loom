@@ -3050,6 +3050,18 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_connected_oauth_response_max_bytes": {
+          "default": 65536,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing."
+        },
+        "knowledge_connected_oauth_timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound."
+        },
         "knowledge_gaps_enabled": {
           "default": false,
           "type": "boolean",

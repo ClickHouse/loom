@@ -968,6 +968,8 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |
+| `LOOM_KNOWLEDGE_CONNECTED_OAUTH_RESPONSE_MAX_BYTES` | `int` | `65536` |  | Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing. |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |
 | `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |

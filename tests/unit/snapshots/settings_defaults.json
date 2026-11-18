@@ -548,6 +548,8 @@
  "knowledge_bm25_corpus_ttl_s": 300.0,
  "knowledge_chunk_size": 1500,
  "knowledge_chunk_stride": 1230,
+ "knowledge_connected_oauth_response_max_bytes": 65536,
+ "knowledge_connected_oauth_timeout_s": 30.0,
  "knowledge_gaps_enabled": false,
  "knowledge_gaps_interval_seconds": 86400,
  "knowledge_gaps_max_askers_per_group": 10000,

@@ -321,31 +321,35 @@
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:c46e32f3eefe99915e48:1": {
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:2867fea41a6f183773a4:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:e0dce3b9737ab01e82cb:1": {
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:eb941504445424a83e8d:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/integrations/openai-agents.ts:memory.get:4e8a7ce81ee0de3db05c:1": {
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.get:187e0c61ffa21a4bc206:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/integrations/openai-agents.ts:memory.list:ebbc475746d850677f30:1": {
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.list:a0b7b4d4892d4bd750af:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/session.ts:context.fetch:a6492a425ee430fbbb56:1": {
+    "sdk/typescript/src/session.ts:<dynamic>:f81d27efc95e87cdbb46:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body from separately scanned session capture producers without selecting additional content; this module pins transcript, carry-over, query and thread builders."
+    },
+    "sdk/typescript/src/session.ts:context.fetch:ccacc88667bf0eca248c:1": {
       "category": "explicit",
       "reason": "Forwards the content, blob key or pattern supplied to the explicit session offload or fetch method."
     },
-    "sdk/typescript/src/session.ts:context.offload:fed367fa2d6b139d98d8:1": {
+    "sdk/typescript/src/session.ts:context.offload:6852f9b32930b2d7354e:1": {
       "category": "explicit",
       "reason": "Forwards the content, blob key or pattern supplied to the explicit session offload or fetch method."
     },
-    "sdk/typescript/src/session.ts:conversation.get:0e0b97851ba6397b9e61:1": {
+    "sdk/typescript/src/session.ts:conversation.get:972c9a651a04c958355b:1": {
       "category": "reference",
       "reason": "Reads history using the thread identity and fixed limits, without sending transcript text."
     }
@@ -383,9 +387,9 @@
     "sdk/python/loom/integrations/claude_memory.py": "970aff889f2aa9d948457de51d58d8d32a6c0d7f91acbf390c25ac1230419f36",
     "sdk/python/loom/integrations/google_adk.py": "237251456c2c18423f64419826a7296758d087aa3e05b11c6d1b37f06709f53a",
     "sdk/python/loom/integrations/haystack.py": "d81b7e445fa139a889e64127d13f3f9982dea9786ffc1de8bfd3970bfcaa46af",
-    "sdk/python/loom/integrations/langgraph.py": "2cfde5319386f3866667f6ec89ccd4d5c25e63883dd851c852ec24e2e81dc96c",
+    "sdk/python/loom/integrations/langgraph.py": "5d68e6ab1645d868477a13b14aa6d734c72f72057464cac9a21aa707add17e7b",
     "sdk/python/loom/integrations/llamaindex.py": "46f226f75befdb7870fae48a3ae860517bbda651767d8861651ebed00ab89bc2",
-    "sdk/python/loom/integrations/openai_agents.py": "edf61c0aa6d46778fcfcb7459f7bcc343a0364ec4a76a5e427a5e8f79136e748",
+    "sdk/python/loom/integrations/openai_agents.py": "e6fe0384a361c2c5e48db26837d8c454e52b5f7fb010fd7f6541f24a22459a7a",
     "sdk/python/loom/memory.py": "3ba359cd1034aacaddc5f0c2605df20fa11b55a304d230863fceb5756cabf0d4",
     "sdk/python/loom/run.py": "3d408cedd849fe9c16a9cb1a57dbe88367993aa225f6a8b23bac8c644e04723b",
     "sdk/python/loom/session.py": "5f0fd61fcfdbf9d60888b111887fca8f32e24eb51ca9ff04a256901657c3202b",
@@ -393,7 +397,7 @@
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
     "sdk/typescript/src/integrations/mastra-memory.ts": "83c20da9e1d9c1d8cf3adf05759275d139959b811711ba0647653f6c0acc0e9b",
-    "sdk/typescript/src/integrations/openai-agents.ts": "cc284291bc50fad8948272868f00750d0a9cb92097b9ec209f6d11a05eea75be",
-    "sdk/typescript/src/session.ts": "d1f658c713cd20055043d299418406f9bd4430c6ebc9a48641761b434e772a9b"
+    "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
+    "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
   }
 }

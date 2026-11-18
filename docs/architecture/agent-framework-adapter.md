@@ -20,6 +20,22 @@ erasure and rolling-schema rules. No database, cache or local history is added.
 Errors propagate through the framework's provider hooks, including errors after
 a model reply. Concurrent writes follow the server's normal conflict rules.
 
+## Conversation protection
+
+A provider serves one logical conversation family. It retains the application-owned
+protection handles present at construction and callback entry, including ambient
+contributors and each later bound client handle. Native user and session ids route
+requests; they do not create or replace this authority. Restore reopens the existing
+capsule before constructing the provider.
+
+Owned recall and extraction run in the SDK's automatic capture context. The transport
+rechecks every retained family after credentials and before dispatch, observes replies
+before conversion, and durably marks all contributors before releasing a marked reply.
+The first marked recall may reach the model. Later automatic work refuses, and each
+extraction batch is checked before the next one can start. A refusal after a model reply
+propagates through the native provider lifecycle; it cannot undo the answer or tool effects.
+The provider adds no capability declaration or restored-host qualification.
+
 ## Source entry points
 
 - `sdk/python/loom/integrations/agent_framework.py`: `LoomContextProvider`.

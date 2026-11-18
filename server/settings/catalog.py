@@ -2330,6 +2330,12 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
+    # Seconds one connected-account OAuth request may take, including its response.
+    # The caller's remaining deadline can shorten this bound.
+    knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)
+    # Bytes read from a connected-account token or identity response; larger metadata
+    # replies are refused before parsing.
+    knowledge_connected_oauth_response_max_bytes: int = Field(default=64 * 1024, ge=1024)
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)

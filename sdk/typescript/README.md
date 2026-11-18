@@ -115,11 +115,36 @@ produce `SessionProtectionUnavailable` and protect all known handles. A local
 monotonic latch suppresses concurrent automatic calls while persistence is pending;
 it never substitutes for durable acknowledgement before content returns.
 
-This control covers JSON transport observation and explicit invocation ownership.
-It does not qualify Session buffers, framework callbacks, restored host lineage or
-a concrete storage backend. Bound raw streams refuse and cancel their response
-until a streaming observer is available. Binding a handle does not send a session
-protection capability declaration or enable mirrored-source creation.
+Bound event streams observe complete SSE frames before exposing their original
+bytes. Readers, body methods and clones share that guarded body; a marked frame
+waits for every contributing record's durable acknowledgement. CR, LF, CRLF,
+multiline data and split UTF-8 are supported. An unfinished frame is limited to
+4 MiB. Invalid frames, incomplete EOF, unsupported media types and compressed
+responses protect the retained handles and refuse. Early cancellation and read
+failures also protect them and join bounded owned cleanup. Verified ordinary EOF
+leaves clean handles unchanged. BYOB readers are unsupported and refuse; use the
+default reader or a standard body method. Native clone queues follow the platform's
+tee behavior and are separate from the observer's unfinished-frame limit.
+
+`loom.assistant.stream` accepts `capture` alongside its question for an automatic
+invocation. It retains all contributing handles, preserves protection failures and
+requires the completion marker before returning an answer. It keeps draining after
+that marker so later response metadata is observed.
+
+`Session` retains its constructor's optional `capture` and every transport handle
+that later contributes to it. Automatic resume, transcript and extraction calls
+check their retained authority before dispatch. A first marked recall can return;
+optional history is then omitted. Protection discards pending and carry-over turns
+instead of retrying them. The synchronous `buffered` getter discards known local
+taint; asynchronous owner boundaries also perform bounded durable checks.
+Explicit offload, fetch and note remain available and observe all retained handles.
+For an explicit call outside Session, `observe: new SessionCapture(roots)` retains
+response observers without making the call automatic.
+
+This control covers JSON/SSE transport observation and Session buffer ownership.
+It does not qualify framework callbacks, restored host lineage or a concrete storage
+backend. Binding a handle does not send a session protection capability declaration
+or enable mirrored-source creation.
 
 ## Errors
 

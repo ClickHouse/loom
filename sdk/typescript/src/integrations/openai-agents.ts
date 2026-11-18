@@ -19,8 +19,17 @@
 import { type AgentInputItem, type FunctionTool, type Session, tool } from "@openai/agents";
 import type { Agent, Scope } from "../agent.js";
 import { LoomError } from "../errors.js";
+import {
+  boundProtection,
+  requireAutomaticAllowed,
+  requireAutomaticLocallyAllowed,
+  responseRoots,
+  SessionCapture,
+  type SessionProtection,
+} from "../session-protection.js";
 import { trimSlashes } from "../slashes.js";
 import { AgentTools, type AgentToolsOptions } from "../tools.js";
+import type { CallOptions } from "../transport.js";
 import { hasIdentityWhitespace } from "../whitespace.js";
 
 /** The JSON-schema parameters a non-strict `tool()` takes (the type is not exported). */
@@ -78,12 +87,14 @@ export class LoomSession implements Session {
   private readonly prefix: string;
   private readonly userId?: string;
   private loomSession?: Promise<string>;
+  private producers: readonly SessionProtection[];
 
   constructor(
     private readonly agent: Agent,
     private readonly sessionId: string,
     opts: LoomSessionOptions = {},
   ) {
+    this.producers = responseRoots(agent.client.transport.sessionProtection);
     if (!sessionId) throw new Error("sessionId names the session");
     const user = opts.userId;
     if (user !== undefined && (["", "-"].includes(user) || hasIdentityWhitespace(user))) {
@@ -96,7 +107,31 @@ export class LoomSession implements Session {
   }
 
   async getSessionId(): Promise<string> {
+    this.rememberProducers();
     return this.sessionId;
+  }
+
+  private rememberProducers(): void {
+    this.producers = Object.freeze([
+      ...new Set([...this.producers, ...responseRoots(this.agent.client.transport.sessionProtection)]),
+    ]);
+  }
+
+  private control(automatic: boolean): CallOptions | undefined {
+    this.rememberProducers();
+    if (!this.producers.length) return undefined;
+    const control = new SessionCapture(this.producers);
+    return automatic ? { capture: control } : { observe: control };
+  }
+
+  private async requireAllowed(): Promise<void> {
+    this.rememberProducers();
+    await boundProtection(
+      requireAutomaticAllowed(this.producers, true),
+      this.producers,
+      this.agent.client.transport.timeoutMs,
+    );
+    requireAutomaticLocallyAllowed(this.producers, true);
   }
 
   private scope(): Promise<Scope> {
@@ -112,7 +147,8 @@ export class LoomSession implements Session {
    * order can differ from writer keys, so even a limited read scans every page
    * before selecting the key-ordered suffix.
    */
-  private async latest(limit?: number): Promise<ItemRow[]> {
+  private async latest(limit?: number, automatic = true): Promise<ItemRow[]> {
+    this.rememberProducers();
     if (limit !== undefined && limit <= 0) return [];
     const scope = await this.scope();
     const rows: ItemRow[] = [];
@@ -129,6 +165,7 @@ export class LoomSession implements Session {
           fields: ["memory_key", "value", "value_truncated"],
         },
         scope,
+        this.control(automatic),
       );
       const entries = page.entries as ItemRow[];
       // The server may cap a viewer's page or filter stale projected rows.
@@ -147,9 +184,14 @@ export class LoomSession implements Session {
   }
 
   /** A row's item: the listed value, or the whole one by key when the list cut it (or sent none). */
-  private async value(row: ItemRow): Promise<AgentInputItem> {
+  private async value(row: ItemRow, automatic = true): Promise<AgentInputItem> {
     if (row.value_truncated || row.value === undefined || row.value === null) {
-      const full = await this.agent.call("memory.get", { memory_key: row.memory_key }, await this.scope());
+      const full = await this.agent.call(
+        "memory.get",
+        { memory_key: row.memory_key },
+        await this.scope(),
+        this.control(automatic),
+      );
       const value = (full as { value?: unknown }).value;
       if (value === undefined || value === null) {
         throw new LoomError("Session item is unavailable; retry reading history");
@@ -160,6 +202,7 @@ export class LoomSession implements Session {
   }
 
   async getItems(limit?: number): Promise<AgentInputItem[]> {
+    this.rememberProducers();
     const rows = await this.latest(limit);
     const out: AgentInputItem[] = [];
     for (const row of rows) out.push(await this.value(row));
@@ -167,6 +210,7 @@ export class LoomSession implements Session {
   }
 
   async addItems(items: AgentInputItem[]): Promise<void> {
+    this.rememberProducers();
     const scope = await this.scope();
     for (const entry of items) {
       const clock = BigInt(Date.now()) * 1_000_000n;
@@ -180,22 +224,26 @@ export class LoomSession implements Session {
           memory_type: "episodic",
         },
         scope,
+        this.control(true),
       );
+      await this.requireAllowed();
     }
   }
 
   async popItem(): Promise<AgentInputItem | undefined> {
-    const [last] = await this.latest(1);
+    this.rememberProducers();
+    const [last] = await this.latest(1, false);
     if (!last) return undefined;
-    const popped = await this.value(last);
-    await this.agent.call("memory.delete", { memory_key: last.memory_key }, await this.scope());
+    const popped = await this.value(last, false);
+    await this.agent.call("memory.delete", { memory_key: last.memory_key }, await this.scope(), this.control(false));
     return popped;
   }
 
   async clearSession(): Promise<void> {
+    this.rememberProducers();
     const scope = await this.scope();
-    for (const row of await this.latest()) {
-      await this.agent.call("memory.delete", { memory_key: row.memory_key }, scope);
+    for (const row of await this.latest(undefined, false)) {
+      await this.agent.call("memory.delete", { memory_key: row.memory_key }, scope, this.control(false));
     }
   }
 }

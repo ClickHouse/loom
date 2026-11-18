@@ -18,6 +18,7 @@ from typing import Literal
 
 from scripts.i18n import chunks
 from scripts.i18n.context import SourceContext
+from scripts.i18n.origins import SourceOrigins, counterpart_ranges
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,7 @@ def reconcile_completed_units(
     faults: tuple[UnitFault, ...] = (),
     pair_refused: bool = False,
     bounded_new_request_bytes: int = chunks.MAX_BYTES,
+    source_origins: SourceOrigins | None = None,
 ) -> Reconciliation:
     """Keep unique monotone whole units; bound only genuine new gaps and replacements.
 
@@ -185,6 +187,8 @@ def reconcile_completed_units(
     no-completion attestation, not permission inferred from missing cache files.
     Incomplete gaps use the bounded planner outside retained completed ranges.
     Changed input carries fault IDs but must never replay an old-input assistant.
+    Optional raw source origins prove total counterparts for completed originals;
+    callers authenticate those Git bytes, locale and paid preparation evidence.
     """
     chunks.validate_request_bound(bounded_new_request_bytes)
     if pair_refused:
@@ -229,10 +233,21 @@ def reconcile_completed_units(
         and units[0].reply_ref is not None
         and (not anchors or fault_ids[units[0].reply_ref])
         and historical.english != current.english
+        and source_origins is None
     ):
         return _failure(
             current, "whole_page_replacement", "a completed whole page cannot be replaced", units
         )
+    if source_origins is not None:
+        try:
+            anchors = [
+                (i, start, end)
+                for i, (start, end) in enumerate(
+                    counterpart_ranges(historical, current, units, source_origins)
+                )
+            ]
+        except ValueError as error:
+            return _failure(current, "boundary", str(error), units)
     return _plan(
         historical,
         current,
@@ -307,17 +322,22 @@ def _plan(
         if index < len(units):
             original = units[index]
             ids = fault_ids[original.reply_ref]
-            if ids and len(current.english[start:end].encode()) > bounded_new_request_bytes:
+            changed = (
+                current.english[start:end] != historical.english[original.start : original.end]
+            )
+            if (ids or changed) and len(
+                current.english[start:end].encode()
+            ) > bounded_new_request_bytes:
                 return _failure(
                     current,
                     "boundary",
-                    "faulty original unit exceeds the new-request bound",
+                    "original counterpart exceeds the new-request bound",
                     (original,),
                 )
             planned.append(
                 PlannedUnit(
                     SourceContext(current.path, current.english, start, end),
-                    "correction" if ids else "reuse",
+                    "changed" if changed else "correction" if ids else "reuse",
                     original,
                     ids,
                 )

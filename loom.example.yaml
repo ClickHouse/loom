@@ -2833,6 +2833,14 @@ settings:
 
   # --- document sources ---
 
+  # Seconds one connected-account OAuth request may take, including its response. The
+  # caller's remaining deadline can shorten this bound. [restart]
+  # knowledge_connected_oauth_timeout_s: 30.0
+
+  # Bytes read from a connected-account token or identity response; larger metadata
+  # replies are refused before parsing. [restart]
+  # knowledge_connected_oauth_response_max_bytes: 65536
+
   # Active document sources (knowledge.source.add) one namespace may register; an add
   # past it is refused with SOURCE_QUOTA. [live]
   # knowledge_sources_max_per_namespace: 8

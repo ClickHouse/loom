@@ -619,7 +619,9 @@ class _Names:
         }
 
 
-def _extract(path: str, source: bytes) -> tuple[object, bool]:
+def _extract(
+    path: str, source: bytes, *, diagnostics: dict[str, str] | None = None
+) -> tuple[object, bool]:
     """What the ingest derives from one file without the store: the parse, its chunks
     and facets, its call edges, and a tree-less lane's own edges against a name table,
     under the recursion limit the edge stage retries with. A parse that fails or a walk
@@ -639,32 +641,46 @@ def _extract(path: str, source: bytes) -> tuple[object, bool]:
     from server.code.domain.extract.lang_prisma import prisma_edges
 
     pf, err = parse_for_ingest(path, source)
+    if diagnostics is not None and err:
+        diagnostics["parse"] = err
     if err.startswith("parse: MemoryError"):
         raise MemoryError(err)  # the parse reports it as a failed file
     if pf is None:
         return None, False
     repo = _Names()
     steps = [
-        lambda: _chunks_for(pf, path, source, 6000),
-        lambda: extract_edges_and_misses(pf, {}, None),
+        ("chunks", lambda: _chunks_for(pf, path, source, 6000)),
+        ("edges", lambda: extract_edges_and_misses(pf, {}, None)),
     ]
     if pf.lang in _LANE_INCLUDE_LANGS:
-        steps.append(lambda: asyncio.run(ingest_edges._simple_lane_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
+        steps.append(
+            (
+                "simple_lane_edges",
+                lambda: asyncio.run(ingest_edges._simple_lane_edges(repo, "o", "n", pf)),
+            )
+        )  # type: ignore[arg-type]
     if pf.lang in LANE_UNIT_LANGS:
-        steps.append(lambda: asyncio.run(ingest_edges._lane_site_edges(repo, "o", "n", pf)))  # type: ignore[arg-type]
+        steps.append(
+            (
+                "lane_site_edges",
+                lambda: asyncio.run(ingest_edges._lane_site_edges(repo, "o", "n", pf)),
+            )
+        )  # type: ignore[arg-type]
     if pf.lang == "prisma":
-        steps.append(lambda: prisma_edges(pf))
+        steps.append(("prisma_edges", lambda: prisma_edges(pf)))
     finished = True
     before = sys.getrecursionlimit()
     sys.setrecursionlimit(ingest_edges._DEEP_RECURSION_LIMIT)
     try:
-        for step in steps:
+        for name, step in steps:
             try:
                 step()
             except MemoryError:
                 raise
-            except Exception:  # noqa: BLE001 — the guard times walks; a crash is another test's
+            except Exception as error:  # noqa: BLE001 — the guard times walks; a crash is another test's
                 finished = False
+                if diagnostics is not None:
+                    diagnostics[name] = type(error).__name__
     finally:
         sys.setrecursionlimit(before)
     return pf, finished and not err
@@ -723,7 +739,9 @@ def judged_step(
     return "4N", big, huge, bb, bh
 
 
-def registry_cost(lang: str) -> list[tuple[str, str, float, float, int, int]]:
+def registry_cost(
+    lang: str, *, diagnostics: dict[str, list[dict[str, object]]] | None = None
+) -> list[tuple[str, str, float, float, int, int]]:
     """`judged_step` per shape the lane reads as its own (a manifest shape can read as a
     template), with the shape's name first. The parses' time is not counted, since each
     has its own CPU deadline (`bounded_parse`); the bytes they read are returned, so a walk
@@ -734,14 +752,17 @@ def registry_cost(lang: str) -> list[tuple[str, str, float, float, int, int]]:
     real = bounded_parse.parse
     # the tree-sitter parses of one file: their time, the bytes they read, whether one raised
     parse_s, parse_bytes, parse_raised = 0.0, 0, False
+    errors: dict[str, str] = {}
 
     def timed(parser: object, source: bytes) -> object:
         nonlocal parse_s, parse_bytes, parse_raised
         t0 = time.process_time()
         try:
             return real(parser, source)
-        except BaseException:
+        except BaseException as error:
             parse_raised = True
+            if diagnostics is not None:
+                errors.setdefault("native_parse", type(error).__name__)
             raise
         finally:
             parse_s += time.process_time() - t0
@@ -749,15 +770,36 @@ def registry_cost(lang: str) -> list[tuple[str, str, float, float, int, int]]:
 
     bounded_parse.parse = timed  # type: ignore[assignment]
 
-    def cost(text: Callable[[int], str], n: int) -> tuple[float, int, bool, bool]:
-        nonlocal parse_s, parse_bytes, parse_raised
+    def cost(
+        text: Callable[[int], str], n: int, *, samples: list[dict[str, object]] | None = None
+    ) -> tuple[float, int, bool, bool]:
+        nonlocal parse_s, parse_bytes, parse_raised, errors
         source = (head + text(n)).encode()
         parse_s, parse_bytes, parse_raised = 0.0, 0, False
+        errors = {}
         with untraced():
             t0 = time.process_time()  # CPU time, as in `walk_cost`
-            pf, walked = _extract(path, source)
+            if samples is None:
+                pf, walked = _extract(path, source)
+            else:
+                pf, walked = _extract(path, source, diagnostics=errors)
             took = time.process_time() - t0 - parse_s
-        return took, parse_bytes, getattr(pf, "lang", "") == as_lang, walked and not parse_raised
+        lane, finished = getattr(pf, "lang", "") == as_lang, walked and not parse_raised
+        if samples is not None:
+            # Keep every attempt: the judge can select CPU minima from separate runs.
+            samples.append(
+                {
+                    "n": n,
+                    "source_bytes": len(source),
+                    "cpu_s": took,
+                    "parsed_bytes": parse_bytes,
+                    "lane": lane,
+                    "finished": finished,
+                    "tree": getattr(pf, "tree", None) is not None,
+                    "errors": errors,
+                }
+            )
+        return took, parse_bytes, lane, finished
 
     cost(lambda n: "a\n", 1)  # the first file of a lane loads its grammar and imports
     out = []
@@ -766,7 +808,8 @@ def registry_cost(lang: str) -> list[tuple[str, str, float, float, int, int]]:
         # speed, under the timer's floor at 20,000 characters
         n = 4 * _REGISTRY_N if name.startswith("numbered") else _REGISTRY_N
         listed = name in KNOWN_SLOW.get(lang, ())
-        got = judged_step(functools.partial(cost, text), n, listed)
+        samples = diagnostics.setdefault(name, []) if diagnostics is not None else None
+        got = judged_step(functools.partial(cost, text, samples=samples), n, listed)
         if got is not None:
             out.append((name, *got))
     return out

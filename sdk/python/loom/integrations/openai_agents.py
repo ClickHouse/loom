@@ -46,6 +46,8 @@ except ImportError as e:  # the framework is an optional extra
     ) from e
 
 from loom.errors import LoomError
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import require_automatic_allowed
 from loom.tools import AgentTools
 
 if TYPE_CHECKING:
@@ -116,6 +118,11 @@ class LoomSession:
     has the same name reads the same Python history for the same session id and user.
     TypeScript sessions have a separate history because their item formats differ. The mapping is in
     ``docs/features/integrations/frameworks.md`` (OpenAI Agents SDK).
+
+    Bind the application's existing protection family before construction. The
+    session retains constructor and callback contributors across client rebinding;
+    native user/session ids only route history. Native reads and additions are
+    automatic work; explicit pop/clear keep observing without capture suppression.
     """
 
     def __init__(
@@ -136,6 +143,7 @@ class LoomSession:
         self.session_id = session_id
         self.session_settings = session_settings or SessionSettings()
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._user_id = user_id
         self._prefix = key_prefix.strip("/") + "/"
         if self._prefix == "/":
@@ -190,36 +198,41 @@ class LoomSession:
         return _item(row["value"])
 
     async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
-        rows = await self._latest(resolve_session_limit(limit, self.session_settings))
-        return [await self._value(row) for row in rows]
+        with self._protection.automatic(self._agent.transport.session_protection):
+            rows = await self._latest(resolve_session_limit(limit, self.session_settings))
+            return [await self._value(row) for row in rows]
 
     async def add_items(self, items: list[TResponseInputItem]) -> None:
         global _last_stamp
-        for item in items:
-            # The clock or one past this process's last stamp, never less: keys keep order.
-            _last_stamp = max(time.time_ns(), _last_stamp + 1)
-            # One memory.set per item: a batch folds a value identical to a live row.
-            await self._agent.call(
-                "memory.set",
-                {
-                    "memory_key": f"{self._prefix}{_last_stamp:020d}-{secrets.token_hex(4)}",
-                    "value": json.dumps(item),
-                    "memory_type": "episodic",
-                },
-                **self._scope(),
-            )
+        with self._protection.automatic(self._agent.transport.session_protection):
+            for item in items:
+                # The clock or one past this process's last stamp, never less: keys keep order.
+                _last_stamp = max(time.time_ns(), _last_stamp + 1)
+                # One memory.set per item: a batch folds a value identical to a live row.
+                await self._agent.call(
+                    "memory.set",
+                    {
+                        "memory_key": f"{self._prefix}{_last_stamp:020d}-{secrets.token_hex(4)}",
+                        "value": json.dumps(item),
+                        "memory_type": "episodic",
+                    },
+                    **self._scope(),
+                )
+                require_automatic_allowed(self._agent.transport.session_protection)
 
     async def pop_item(self) -> TResponseInputItem | None:
-        rows = await self._latest(1)
-        if not rows:
-            return None
-        item = await self._value(rows[-1])
-        await self._agent.memory.delete(str(rows[-1]["memory_key"]), **self._scope())
-        return item
+        with self._protection.observing(self._agent.transport.session_protection):
+            rows = await self._latest(1)
+            if not rows:
+                return None
+            item = await self._value(rows[-1])
+            await self._agent.memory.delete(str(rows[-1]["memory_key"]), **self._scope())
+            return item
 
     async def clear_session(self) -> None:
-        for row in await self._latest(None):
-            await self._agent.memory.delete(str(row["memory_key"]), **self._scope())
+        with self._protection.observing(self._agent.transport.session_protection):
+            for row in await self._latest(None):
+                await self._agent.memory.delete(str(row["memory_key"]), **self._scope())
 
 
 def _item(value: Any) -> TResponseInputItem:

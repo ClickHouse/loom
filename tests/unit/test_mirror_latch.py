@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -10,6 +11,47 @@ from server.core import request_work
 from server.core.ch import current_query_tag, query_tag, statement_settings
 from server.knowledge.store import mirror_latch as store
 from tests.unit.mirror_latch_fake import A, B, KeeperWorld
+
+
+@pytest.mark.parametrize(
+    "operation, stage, method",
+    [
+        (store.enabled, "enabled.engines", "query_one"),
+        (store.ensure, "ensure.set", "execute"),
+    ],
+)
+async def test_refusal_logs_only_stage_exception_type_and_numeric_code(
+    operation, stage, method, caplog, monkeypatch
+):
+    world = KeeperWorld()
+    error = RuntimeError("Code: 999. private-body SELECT secret https://example.invalid/token")
+    monkeypatch.setattr(world, method, AsyncMock(side_effect=error))
+    with (
+        caplog.at_level("WARNING", logger=store.__name__),
+        pytest.raises(
+            store.LatchUnavailable, match="^Session protection state could not be confirmed$"
+        ),
+    ):
+        await operation(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args == (stage, "RuntimeError", 999)
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "private-body" not in caplog.text and "example.invalid" not in caplog.text
+    assert not world.leases
+
+
+async def test_nonce_mismatch_logs_its_stage_and_keeps_the_refusal_and_cleanup(caplog):
+    world = KeeperWorld()
+    world.fault = "expired_nonce"
+    with caplog.at_level("WARNING", logger=store.__name__), pytest.raises(store.LatchUnavailable):
+        await store.enabled(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args == ("enabled.nonce_confirm", "LatchUnavailable", None)
+    assert not world.leases and world.counts["release"] == 1
 
 
 async def test_an_absent_latch_is_never_a_cached_negative_decision():

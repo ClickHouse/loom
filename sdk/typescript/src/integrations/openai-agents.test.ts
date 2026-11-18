@@ -1,6 +1,8 @@
 import type { AgentInputItem } from "@openai/agents";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../agent.js";
+import { LoomClient } from "../client.js";
+import { AutomaticCaptureSuppressed, SessionProtection } from "../session-protection.js";
 import { LOOM_TOOL_SPECS } from "../tools.js";
 import { LoomSession, loomTools } from "./openai-agents.js";
 
@@ -123,6 +125,189 @@ function rowsHarness(unserved = 0, cap = 100) {
 }
 
 const msg = (role: "user" | "assistant", content: string) => ({ role, content }) as never;
+
+function historyFamily(beforeCommit: () => Promise<void> = async () => {}) {
+  const state = { value: "clean" as "clean" | "protected", marks: 0 };
+  const root = new SessionProtection({
+    async read() {
+      return state.value;
+    },
+    async mark() {
+      state.marks++;
+      await beforeCommit();
+      state.value = "protected";
+    },
+  });
+  return { root, state };
+}
+
+const historyKey = "openai-agents/00000000000000000001-00000001";
+
+function protectedHistoryHarness(
+  root: SessionProtection,
+  reply: (op: string, body: Record<string, unknown>) => unknown = () => ({ entries: [], truncated: false }),
+  token?: () => Promise<string>,
+) {
+  const calls: Array<{ op: string; body: Record<string, unknown> }> = [];
+  const client = new LoomClient({
+    baseUrl: "http://inert.invalid",
+    sessionProtection: root,
+    ...(token ? { tokenProvider: { origin: "http://inert.invalid", token } } : {}),
+    fetch: async (url, init) => {
+      const op = url.split("/v1/")[1];
+      const body = JSON.parse(init.body as string) as Record<string, unknown>;
+      calls.push({ op, body });
+      return new Response(JSON.stringify(reply(op, body)), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+    logLevel: "off",
+  });
+  return { client, calls, agent: new Agent("o", "n", "bot", client) };
+}
+
+describe("LoomSession conversation protection", () => {
+  it.each(["getItems", "addItems"] as const)("suppresses protected native %s before HTTP", async (method) => {
+    const family = historyFamily();
+    const { agent, calls } = protectedHistoryHarness(family.root);
+    const session = new LoomSession(agent, "s1");
+    family.state.value = "protected";
+    const call = method === "getItems" ? session.getItems() : session.addItems([msg("user", "private")]);
+    await expect(call).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(calls).toEqual([]);
+  });
+
+  it.each(["getItems", "addItems"] as const)(
+    "retains the constructor family for native %s after rebinding",
+    async (method) => {
+      const first = historyFamily();
+      const original = protectedHistoryHarness(first.root);
+      const session = new LoomSession(original.agent, "s1");
+      const current = protectedHistoryHarness(historyFamily().root);
+      Object.defineProperty(original.agent, "client", { value: current.client });
+      first.state.value = "protected";
+      const call = method === "getItems" ? session.getItems() : session.addItems([msg("user", "private")]);
+      await expect(call).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+      expect([...original.calls, ...current.calls]).toEqual([]);
+    },
+  );
+
+  it("acknowledges both retained and rebound families before returning marked history", async () => {
+    let release: (() => void) | undefined;
+    const commit = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = historyFamily(() => commit);
+    const original = protectedHistoryHarness(first.root);
+    const session = new LoomSession(original.agent, "s1");
+    let entered: (() => void) | undefined;
+    const observed = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const second = historyFamily(async () => {
+      entered?.();
+    });
+    const current = protectedHistoryHarness(second.root, () => ({
+      mirrored: true,
+      entries: [{ memory_key: historyKey, value: msg("user", "private") }],
+      truncated: false,
+    }));
+    Object.defineProperty(original.agent, "client", { value: current.client });
+    let returned = false;
+    const read = session.getItems().then((items) => {
+      returned = true;
+      return items;
+    });
+    try {
+      await observed;
+      expect(first.state.marks).toBe(1);
+      expect(returned).toBe(false);
+    } finally {
+      release?.();
+      await read;
+    }
+    expect(await read).toEqual([msg("user", "private")]);
+    expect(first.state.value).toBe("protected");
+    expect(second.state.value).toBe("protected");
+  });
+
+  it("stops the next native history write after the first marked acknowledgement", async () => {
+    const family = historyFamily();
+    const { agent, calls } = protectedHistoryHarness(family.root, () => ({ mirrored: true }));
+    const session = new LoomSession(agent, "s1");
+    await expect(session.addItems([msg("user", "first"), msg("assistant", "second")])).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(calls.map((call) => call.op)).toEqual(["memory.set"]);
+    expect(family.state.value).toBe("protected");
+  });
+
+  it("stops native history pagination after a marked page", async () => {
+    const family = historyFamily();
+    const { agent, calls } = protectedHistoryHarness(family.root, (_op, body) => ({
+      mirrored: body.offset === 0,
+      entries: [],
+      truncated: body.offset === 0,
+    }));
+    await expect(new LoomSession(agent, "s1").getItems()).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(calls.map((call) => call.op)).toEqual(["memory.list"]);
+    expect(family.state.value).toBe("protected");
+  });
+
+  it("stops native history hydration after a marked truncated item", async () => {
+    const family = historyFamily();
+    const { agent, calls } = protectedHistoryHarness(family.root, (op) =>
+      op === "memory.list"
+        ? {
+            mirrored: true,
+            entries: [{ memory_key: historyKey, value: null, value_truncated: true }],
+            truncated: false,
+          }
+        : { found: true, value: msg("user", "private") },
+    );
+    await expect(new LoomSession(agent, "s1").getItems()).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(calls.map((call) => call.op)).toEqual(["memory.list"]);
+    expect(family.state.value).toBe("protected");
+  });
+
+  it("rechecks the retained native history family after credentials mark and rebind it", async () => {
+    const first = historyFamily();
+    const current = protectedHistoryHarness(historyFamily().root);
+    const original = protectedHistoryHarness(first.root, undefined, async () => {
+      await first.root.mark();
+      Object.defineProperty(original.agent, "client", { value: current.client });
+      return "token";
+    });
+    await expect(new LoomSession(original.agent, "s1").getItems()).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect([...original.calls, ...current.calls]).toEqual([]);
+  });
+
+  it.each(["popItem", "clearSession"] as const)(
+    "keeps explicit native %s usable and observes the retained family",
+    async (method) => {
+      const first = historyFamily();
+      const original = protectedHistoryHarness(first.root);
+      const session = new LoomSession(original.agent, "s1");
+      const second = historyFamily();
+      const current = protectedHistoryHarness(second.root, (op) =>
+        op === "memory.list"
+          ? {
+              mirrored: true,
+              entries: [{ memory_key: historyKey, value: msg("user", "private") }],
+              truncated: false,
+            }
+          : {},
+      );
+      Object.defineProperty(original.agent, "client", { value: current.client });
+      first.state.value = "protected";
+      const result = await session[method]();
+      expect(result).toEqual(method === "popItem" ? msg("user", "private") : undefined);
+      expect(current.calls.map((call) => call.op)).toEqual(["memory.list", "memory.delete"]);
+      expect(first.state.marks).toBe(1);
+      expect(second.state.marks).toBe(1);
+    },
+  );
+});
 
 describe("LoomSession (OpenAI Agents SDK session)", () => {
   it.each(["before", "after"])(

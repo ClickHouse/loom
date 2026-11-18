@@ -275,17 +275,53 @@ the redirect URI registered with the store is built from it, never from a reques
     files picked in a Loom page, never a folder's later files or the recordings folder,
     so it is not offered. The store's device grant does not issue Drive scopes.
   - `notion`: the public-integration OAuth, where the person picks the pages to share on
-    the consent page. The store reports no scopes; the operator registers the
-    integration with read-content capability only, and that registration is the bound.
-  - `linear`: an OAuth application with the `read` scope.
+    the consent page. The operator registers read-content capability only, without
+    write, comment or user-information capabilities. The OAuth flow has no documented
+    scope parameter; token introspection can report an opaque scope, without a
+    documented mapping to capabilities. Neither that value nor its absence proves the
+    registration is read-only. The registration is the permission bound; a display
+    email is optional because reading it needs a separate user-information capability.
+  - `linear`: an OAuth application with the `read` scope and `actor=user`.
 - `GET /v1/connect/<kind>/callback` exchanges the code. Each granted scope is mapped to
   its canonical name, and a granted scope outside the kind's set refuses the connection.
   The callback stores in `loom.connected_accounts` the canonical subject, the kind, the
-  store account's id and email (shown to the person, never used as their identity), the
-  scopes, and the long-lived credential: the refresh token, or for a store that issues
-  none (`notion`) its long-lived access token. That credential is sealed under the
-  purpose `connected_accounts.credential`, which `loom secrets reseal` covers. A short
-  access token is held in memory only.
+  store account's id, optional display email, scopes and refresh token. The store id and
+  email describe the connected account; neither changes the person's Loom identity or
+  grants namespace access. A usable refresh token is required for ongoing sync,
+  including for `notion`; a missing token refuses the connection instead of falling
+  back to storing an access token. The refresh token is sealed under the purpose
+  `connected_accounts.credential`, which `loom secrets reseal` covers. An access token
+  is held in memory only.
+- Refresh for a source retains its account generation and source binding across provider
+  work. One refresh owns that generation at a time; replacement refresh material is
+  persisted only while both remain active and current. Disconnect, replacement, erasure or
+  deactivation cannot be undone by an older refresh. A cancellation or lost response
+  does not prove the provider left its token unchanged, so a retry needs the provider's
+  documented recovery guarantee. Missing expiry metadata does not justify an invented
+  lifetime or permanent access-token fallback.
+- Provider token contracts differ:
+  - `gdrive` can omit a replacement refresh token. Retain the existing refresh token in
+    that case. Revoking a token affects the person's grant across the OAuth project's
+    clients. Use a project dedicated to document connections; unrelated applications
+    must not share that revocation boundary. Other affected connections stop when
+    refresh is refused.
+  - `notion` refresh replaces both access and refresh tokens. The authorization guide
+    requires the pair, while the response reference permits a null refresh token; a
+    reply without usable replacement material is unavailable. The documented REST flow
+    supplies no token lifetime, PKCE or lost-response recovery guarantee to assume.
+  - `linear` refresh replaces both tokens and renews the refresh token's 30-day lifetime.
+    Track access expiry from `expires_in`. The provider documents a 30-minute recovery
+    window for a lost successful refresh response, excluding revoked or replaced
+    credentials; this does not permit retrying another provider's rotation.
+
+  These contracts follow the stores' authorization references:
+  [Drive](https://developers.google.com/identity/protocols/oauth2/web-server),
+  [page-store authorization](https://developers.notion.com/guides/authorization/overview),
+  [page-store refresh](https://developers.notion.com/reference/refresh-a-token),
+  [capabilities](https://developers.notion.com/reference/capabilities),
+  [token introspection](https://developers.notion.com/reference/introspect-token) and
+  [tracker authorization](https://linear.app/developers/oauth-2-0-authentication).
+
 - A connection belongs to the subject that made it, and only that subject's sources use
   it. `connection.list` and `connection.disconnect` act on the caller's own; an erasure
   of the person deletes its connections and retires their sources
@@ -300,8 +336,16 @@ the redirect URI registered with the store is built from it, never from a reques
   clears the sealed credential and marks every source that uses it inactive (the part
   that fails closed), and only then revokes at the store with the token in memory, best
   effort, under a short timeout and outside any lease or claim, as SCIM revokes tokens
-  past its leases; a revoke that hangs or fails leaves the credential cleared. The sync
-  worker then retires those sources' mirrored documents. A turn also checks the owner: a
+  past its leases; a revoke that hangs or fails leaves the credential cleared. Local
+  disconnection is complete independently of remote revocation. The page store's
+  [revocation reference](https://developers.notion.com/reference/revoke-token) documents
+  access-token revocation, without promising refresh-token or whole-grant revocation.
+  An access-token revoke therefore cannot be reported as invalidating its refresh
+  family. If only refresh material is available, bounded refresh solely to obtain an
+  access token for revocation may follow local inactivation; no replacement credential
+  is persisted. An unavailable or unproven remote revocation remains so, and the person
+  can remove the integration's grant at the store. The sync worker then retires those
+  sources' mirrored documents. A turn also checks the owner: a
   source whose owner subject is revoked, deactivated, or no longer holds `writer` on the
   source's namespace is stopped (written inactive under the source lease,
   `status: owner_inactive`) and goes as a removed source does, so a missed hook fails
@@ -1272,6 +1316,11 @@ The redirect URI to register with each store is
 - `server/knowledge/app/source_access.py`: the permission check and the mirror legs.
 - `server/auth/connected_accounts.py`: the connect routes and their store.
 - `server/clients/gdrive.py`, `notion.py`, `linear.py`, `recording.py`: the stores.
+- `server/clients/connected_oauth.py` (`OAuthClient`): fixed-provider consent, code
+  exchange, refresh, account metadata and revocation requests. Calls share the caller's
+  deadline, cap response bodies, refuse redirects and never retry. The caller consumes
+  browser-bound state before exchange, authorizes the Loom owner/source and commits
+  refresh generations; this HTTP helper neither supplies nor bypasses those checks.
 
 ## Tests
 

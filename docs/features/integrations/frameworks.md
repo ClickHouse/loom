@@ -259,6 +259,18 @@ the same name reads the same Python history for the same session id and user, an
 handoff between agents of one run keeps it. Python and TypeScript histories are separate
 because the frameworks use different item formats.
 
+Bind the application's existing protection family before constructing either
+native session. The instance retains constructor and callback client families,
+including after rebinding. Python also retains contributors active in the
+callback's context. Use one instance per logical conversation family; restore it
+with the same application-owned protection capsule. The native user and session
+ids select history, without establishing protection authority. History reads and
+additions are automatic work: a marked reply protects every contributor before
+returning and suppresses later automatic calls. An initial complete history reply
+may return; follow-up pages, hydration and batch writes stop. Explicit pop, clear
+and model-selected tools remain available, with reply observation retained for the
+session's manual deletions.
+
 ```python
 from loom.integrations.openai_agents import LoomSession
 
@@ -496,6 +508,17 @@ input, so after the first the memories match the loop's prompt, not the user's r
 Extraction runs under a Loom session derived from the user and the Agent Framework session
 (`maf-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and
 a caller may choose its session ids.
+
+With an application-owned `SessionProtection` bound to the Loom agent, use one
+provider per logical conversation family. The provider retains constructor and callback
+contributors, including ambient automatic contributors, across callbacks and client
+rebinding. Native user and session ids provide routing, not protection authority. The
+application reopens the same durable capsule when restoring a family.
+
+A first marked recall can reach the model after durable protection. Later automatic
+recall and extraction raise `AutomaticCaptureSuppressed`; a marked extraction response
+stops later batches. Suppression after the model answers fails the run without undoing
+that answer or any tool effects.
 
 | `LoomContextProvider` argument | Default  | Effect                                                                                                                                                                                      |
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -926,6 +949,15 @@ the package.
 
 ## LangGraph
 
+A store retains application-owned constructor and callback conversation contributors
+across client rebinding. Bind complete contributor authority before construction and
+use one store per logical conversation family; restore that family's existing capsule.
+An existing automatic SDK context makes only that invocation automatic, with every
+retained family checked before dispatch. Direct calls and model-selected tools remain
+explicit, including after an automatic invocation ends. All calls retain response
+observation, so a marked or malformed reply protects earlier contributors before
+returning or refusing. Namespace, thread and user ids supply no protection authority.
+
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
 every graph node reaches it through `get_store()`.
 
@@ -1061,6 +1093,18 @@ Extraction runs under a Loom session derived from the user and the service's `se
 (`pipecat-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone,
 and a caller may choose its session ids. When `session_id` is omitted, the service mints one
 for its lifetime, so the turns of one call share a session.
+
+Bind the application's existing `SessionProtection` before creating the service, and
+use one service per logical conversation family. The service retains constructor and
+callback contributors before native processing awaits, including committed context
+frames whose capture happens later. Client rebinding cannot drop an earlier contributor.
+Native user and session ids provide routing, not protection authority.
+
+A first marked recall can enter the native context after durable protection. Later
+automatic recall and capture are suppressed while native frames keep flowing. Protection
+discards only the service's retry references and write tracking; it does not clear
+application-owned history or acknowledge unsent extraction. These controls do not declare
+fleet support or initialize a capsule during restore.
 
 | `LoomMemoryService` argument | Default  | Effect                                                                                                                                                                                      |
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
