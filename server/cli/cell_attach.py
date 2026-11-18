@@ -46,8 +46,9 @@ from server.cli import cell_attach_beats as beats
 from server.cli import cell_attach_pg as apg
 from server.cli import cell_control, cell_scan, cell_scim
 from server.cli._ch import writes
-from server.cli.cell_ch import Refusal, Refused, read_topology
-from server.core import cell, cell_triggers
+from server.core import cell, cell_sync, cell_triggers
+from server.core.cell_ch import Refusal, Refused, read_topology
+from server.insights.store import cell_catalog
 from server.settings import settings
 
 _WAIT_S = 600  # not a setting: a flag's default
@@ -324,7 +325,7 @@ class Run:
         topology = await read_topology(self.ch)
         if refusals := topology.refusals():
             return refusals, topology, {}
-        names = await cell_writers.host_names(self.ch, topology) if topology.multi else {}
+        names = await cell_catalog.host_names(self.ch, topology) if topology.multi else {}
         allowed = cell_writers.Allowed(
             users=frozenset(self.args.ch_allow_user),
             user_directories=frozenset(self.args.ch_allow_user_directory),
@@ -406,7 +407,7 @@ class Run:
     # -- the scans ---------------------------------------------------------------------
 
     async def scan(self, topology: Any, listed: cell_scan.TableList) -> cell_scan.ScanResult:
-        budget = cell_scan.Budget(self.args.scan_budget)
+        budget = cell_sync.Budget(self.args.scan_budget)
         current, nxt = self.own_fp
         return await cell_scan.scan(
             self.ch, listed, topology, budget, cell_scan.configured_orgs(current, nxt)

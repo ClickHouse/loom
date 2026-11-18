@@ -12,9 +12,9 @@ import pytest
 
 from server.auth import scim
 from server.cli import cell_control, cell_update_participants, cell_update_probe, cell_update_run
-from server.cli.cell_ch import Refused
 from server.cli.cell_update_pg import State
 from server.core import cell, pg_profile
+from server.core.cell_ch import Refused
 from server.settings import settings
 from tests.unit.cell_control_owner import owner
 from tests.unit.test_cell_scim_precondition import provisioned_run as provisioned_run
