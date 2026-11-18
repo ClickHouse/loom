@@ -53,8 +53,9 @@ failure introduced by the diff.
 
 `sdk/typescript/src/transport.property.test.ts` uses `fast-check` to exercise the transport's
 origin binding, credential handling and request-ID header boundary through public requests.
-The suite generates at most 100 cases per property, bounds generated strings and uses mocked
-fetch and token providers. It needs no server, live credential or network access. Run it with:
+The suite uses 100 generated trials per property, bounds generated strings and uses mocked
+fetch and token providers. Failures additionally run shrinking and replay evaluations over
+those bounded inputs. It needs no server, live credential or network access. Run it with:
 
 ```bash
 npm --prefix sdk/typescript test -- src/transport.property.test.ts
