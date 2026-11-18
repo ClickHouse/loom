@@ -126,6 +126,16 @@ describe("dist", () => {
     expect(cjs.GENERATED_OP_COUNT).toBe(esm.GENERATED_OP_COUNT);
   });
 
+  it("the langgraph subpath loads in both formats and leaves the checkpoint package to the app", async () => {
+    const esm = (await import(join(dist, "integrations/langgraph.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/langgraph.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toContain("LoomStore");
+    expect(readFileSync(join(dist, "integrations/langgraph.mjs"), "utf8")).toMatch(
+      /from "@langchain\/langgraph-checkpoint"/,
+    );
+  }, 30_000); // loading @langchain/langgraph-checkpoint in both module formats can take seconds
+
   it("the strands subpath loads in both formats", async () => {
     const esm = (await import(join(dist, "integrations/strands.mjs"))) as object;
     const cjs = require(join(dist, "integrations/strands.cjs")) as object;

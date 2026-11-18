@@ -3,8 +3,8 @@
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
 interface. An adapter needs its framework: in Python, the SDK extra its section names
 (`pip install 'clickhouse-loom[langchain]'` and so on); in TypeScript, the framework
-package, an optional peer dependency. The LangGraph and Strands adapters import without
-their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
+package, an optional peer dependency. The Python LangGraph adapter and the Strands adapters
+import without their framework; the TypeScript LangGraph adapter extends the framework's `BaseStore`. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
 Loom's namespace authorization. Every adapter calls your Loom server through the SDK: the
 data is stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
@@ -30,6 +30,7 @@ or needs another database, vector store or cache.
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                                                       |
 | n8n                            | Loom Chat Memory, Loom                          | `@clickhouse/n8n-nodes-loom`                              | AI Memory sub-node and action/tool node                                  |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                                                              |
+| LangGraph.js                   | `LoomStore`                                     | TypeScript, `@clickhouse/loom/integrations/langgraph`     | `BaseStore` from `@langchain/langgraph-checkpoint`                       |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol                                               |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
 | Pipecat                        | `LoomMemoryService`                             | Python, `loom.integrations.pipecat`                       | recall and capture `FrameProcessor`s                                     |
@@ -1078,6 +1079,27 @@ write and caps the rows one ranked search asks for.
 `list_namespaces` page through `memory.list`; `filter` applies to each page. Without
 `langgraph` installed, the module still imports (structural twins of `Item`,
 `SearchItem` and the op types).
+
+**LangGraph.js.** `LoomStore` from `@clickhouse/loom/integrations/langgraph` is the same
+store for the TypeScript SDK: a `BaseStore` from `@langchain/langgraph-checkpoint`
+(re-exported by `@langchain/langgraph`), an optional peer dependency. It writes the same
+keys and tags, so a Python graph and a TypeScript graph on one namespace read each
+other's items.
+
+```ts
+import { LoomStore } from "@clickhouse/loom/integrations/langgraph";
+
+const store = new LoomStore(agent, { tags: ["tenant:acme"] });
+const graph = builder.compile({ store });
+
+await store.put(["users", userId], "prefs", { seat: "aisle" });
+await store.search(["users", userId], { query: "seating preference", limit: 3 });
+```
+
+`batch` handles every operation type the installed package defines: get, search, put, a
+put with a `null` value (delete) and list namespaces. A `ttl` on a put operation, in
+minutes, becomes `ttl_seconds`. The mapping, the limits and `searchTopKCap` (default 50)
+are the Python store's, above.
 
 ## Strands Agents
 

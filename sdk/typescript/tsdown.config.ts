@@ -9,6 +9,7 @@ export default defineConfig({
     "integrations/claude-memory": "src/integrations/claude-memory.ts",
     "integrations/google-adk": "src/integrations/google-adk.ts",
     "integrations/langchain": "src/integrations/langchain.ts",
+    "integrations/langgraph": "src/integrations/langgraph.ts",
     "integrations/mastra": "src/integrations/mastra.ts",
     "integrations/openai-agents": "src/integrations/openai-agents.ts",
     "integrations/strands": "src/integrations/strands.ts",

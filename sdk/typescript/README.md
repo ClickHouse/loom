@@ -512,6 +512,20 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 
 Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
+## LangGraph.js
+
+```ts
+import { LoomStore } from "@clickhouse/loom/integrations/langgraph";
+const store = new LoomStore(bot, { tags: ["tenant:acme"] });
+// builder.compile({ store }) from @langchain/langgraph; nodes reach it through the config's store
+await store.put(["users", "alice"], "prefs", { seat: "aisle" });
+const items = await store.search(["users", "alice"], { query: "seating preference", limit: 3 });
+```
+
+`LoomStore` is a LangGraph.js `BaseStore` from `@langchain/langgraph-checkpoint` (re-exported by `@langchain/langgraph`), an optional peer dependency (1.2.x). It uses the Python `LoomStore`'s keys and tags, so a Python graph and a TypeScript graph on one namespace read each other's items: namespace `["users", "alice"]` and key `prefs` are the memory key `lg/users/alice/prefs` with tags `lg:users` and `lg:users/alice`. `put` is `memory.set` (`index: false` stores the row as `episodic`; a `ttl` on the operation, in minutes, becomes `ttl_seconds`); a put with a `null` value is `memory.delete`. A search with a `query` is `memory.search` followed by one `memory.bulk_get`, and without one is `memory.list`; `filter` takes `$eq $ne $gt $gte $lt $lte` on the stored value; `listNamespaces` derives the tuples from the keys under `lg/`.
+
+A ranked search asks for at most `searchTopKCap` (default 50) rows, so `offset + limit` past it returns fewer items. A search without a query and `listNamespaces` page through `memory.list`; `filter` applies to each page read.
+
 ## Mastra
 
 ```ts

@@ -26,7 +26,7 @@ The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
 other built-ins it needs on first use. The framework adapters are their own entry
 points: `@clickhouse/loom/integrations/ai-sdk`, `@clickhouse/loom/integrations/langchain`,
-`@clickhouse/loom/integrations/mastra`, `@clickhouse/loom/integrations/openai-agents` and
+`@clickhouse/loom/integrations/langgraph`, `@clickhouse/loom/integrations/mastra`, `@clickhouse/loom/integrations/openai-agents` and
 `@clickhouse/loom/integrations/strands`.
 
 ## Credentials
@@ -285,6 +285,15 @@ older servers safely refuse creation. Deletes use exact observed versions and re
 concurrent rewrites. The adapter provides no transaction, resource reassignment,
 cloning, run fencing or atomic working-memory merge. See
 [Frameworks](../features/integrations/frameworks.md#mastra).
+
+## LangGraph.js adapter
+
+`LoomStore` from `@clickhouse/loom/integrations/langgraph` is a LangGraph.js
+`BaseStore` from `@langchain/langgraph-checkpoint`, an optional peer dependency. It
+writes the keys and tags the Python `LoomStore` writes, so a Python graph and a
+TypeScript graph on one namespace read each other's items. A ranked search asks for
+at most `searchTopKCap` (50) rows; a search without a query and `listNamespaces` page
+through `memory.list`. See [Frameworks](../features/integrations/frameworks.md#langgraph).
 
 ## OpenAI Agents SDK adapter
 
