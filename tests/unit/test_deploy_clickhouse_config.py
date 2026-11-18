@@ -92,7 +92,7 @@ def test_query_and_text_logs_keep_30_days() -> None:
 
 
 def test_the_helm_dev_clickhouse_keeps_the_same_log_retention() -> None:
-    template = CFG.parents[1] / "deploy" / "helm" / "loom" / "templates" / "dev-clickhouse.yaml"
+    template = CFG.parent / "helm" / "loom" / "templates" / "dev-clickhouse.yaml"
     text = template.read_text(encoding="utf-8")
     block = re.search(r"^  system_logs\.xml: \|\n((?:    .*\n)+)", text, re.M)
     assert block, "the dev ClickHouse ConfigMap has no system_logs.xml"
