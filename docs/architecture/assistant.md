@@ -1201,17 +1201,17 @@ token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                                            | How it is deleted                                                                     |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                 |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                 |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                 |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                                                   |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                                               |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                                                  |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days                                   |
-| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | 30 days on the bundled server, none by default; erasure reaches neither               |
-| the dashboard                               | the person's conversations, in the browser's local storage                                           | 30 days from last use; deleted at sign-out, by another person's sign-in, or by Delete |
+| Where                                       | What the assistant leaves                                                                            | How it is deleted                                                                                                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                                                                                                                    |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                                                                                                                    |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                                                                                                                    |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                                                                                                                                                      |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                                                                                                                                                  |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                                                                                                                                                     |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days                                                                                                                                      |
+| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | `system.query_log` and `system.text_log`: 30 days on the bundled and dev ClickHouse, no TTL in ClickHouse's default configuration; the file log rotates by size; erasure reaches neither |
+| the dashboard                               | the person's conversations, in the browser's local storage                                           | 30 days from last use; deleted at sign-out, by another person's sign-in, or by Delete                                                                                                    |
 
 An error ClickHouse raises on a statement can quote the value it failed on: a
 `toUInt64(title)` refused on a title quotes the title. That value is one of the caller's
@@ -1221,7 +1221,8 @@ log (`system.text_log` included), which records every error whatever `log_querie
 on every install. ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot
 be left out of `system.query_log` there, and Loom writes one profile for every install.
 Erasure does not reach either log. The bundled ClickHouse and the Helm chart's dev
-ClickHouse keep 30 days of each (`deploy/clickhouse-config/system_logs.xml`).
+ClickHouse keep 30 days of `system.query_log` and `system.text_log`
+(`deploy/clickhouse-config/system_logs.xml`).
 ClickHouse's default configuration sets no TTL on either one, so on a self-managed server
 the rows stay until an operator bounds them
 ([log retention](../operations/deployment.md#log-retention)). Both are
