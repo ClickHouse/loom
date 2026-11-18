@@ -78,6 +78,13 @@ export { DEFAULT_RETRY_AFTER_S, MAX_RETRY_AFTER_S, parseRetryAfter, retryAfterFr
 export { runtimeIdent } from "./runtime.js";
 export type { FetchOptions, OffloadOptions, Resumed, ResumeOptions, SessionOptions, Turn } from "./session.js";
 export { Session } from "./session.js";
+export type { SessionProtectionStore } from "./session-protection.js";
+export {
+  AutomaticCaptureSuppressed,
+  SessionCapture,
+  SessionProtection,
+  SessionProtectionUnavailable,
+} from "./session-protection.js";
 export type { TokenClaims } from "./token.js";
 export { decodeTokenClaims, ROLE_RANK, roleOn, roleSatisfies } from "./token.js";
 export type {

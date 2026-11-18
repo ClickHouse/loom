@@ -65,7 +65,11 @@ async def readable_tracker_namespaces(
     then every configured tracker namespace the principal may read joins up to
     `cap`. A namespace that fails the gate is left out in silence."""
     from server.identity.app.namespace_kinds import kind_map
-    from server.tracker.app.binding import authorized_tracker_namespace, operator_repositories
+    from server.tracker.app.binding import (
+        authorized_tracker_namespace,
+        operator_repositories,
+        refresh_overrides,
+    )
     from server.tracker.domain.namespaces import configured_namespaces, tracker_namespace
 
     out: list[str] = [bound] if bound else []
@@ -73,8 +77,9 @@ async def readable_tracker_namespaces(
         if ns and ns not in out:
             out.append(ns)
     cap = max(cap, len(out))
-    if cap <= 1 and not requested:
+    if cap <= 1 and out and not requested:
         return out
+    await refresh_overrides()
     if requested:
         operator = operator_repositories()  # once for every requested name
         for raw in requested:

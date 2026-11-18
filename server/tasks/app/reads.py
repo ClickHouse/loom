@@ -26,6 +26,7 @@ from server.tasks.app.common import (
     _loads,
     _payload,
     _readable,
+    _warning_read_filters,
 )
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.store import repo as repo
@@ -130,6 +131,7 @@ async def handle_task_updates(input: TaskUpdatesInput) -> TaskUpdatesOutput:
         key = task_wakeups.poster_key(input.org, subject)
     started = time.monotonic()
     deadline = started + input.wait_seconds
+    warning_scope = _warning_read_filters()
     while True:
         rows = await repo.events_since(
             input.org,
@@ -137,6 +139,7 @@ async def handle_task_updates(input: TaskUpdatesInput) -> TaskUpdatesOutput:
             lag_s=task_cursors.LAG_SECONDS,
             inbox=input.inbox,
             from_subject=subject,
+            warning_scope=warning_scope,
             limit=input.limit,
         )
         remaining = deadline - time.monotonic()

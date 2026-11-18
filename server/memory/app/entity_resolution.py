@@ -16,12 +16,16 @@ from typing import Any, cast
 
 from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
+from server.core.errors import VectorInputTooLargeError
+from server.memory.api.models_search import SEARCH_ENTITY_FILTER_MAX
 from server.memory.domain.graph_quality import canonical_entity_text
 
 _MIN_FUZZY_SCORE = 0.95
 _MAX_NORMALIZED_ENTROPY = 0.55
 _MIN_TOP_GAP = 0.02
 _MAX_NAMESPACE_CANDIDATES = 5000
+# not a setting: the documented entity-filter contract accepts at most 256 effective names.
+_MAX_EFFECTIVE_ENTITY_FILTER = 256
 
 
 @dataclass(frozen=True)
@@ -496,6 +500,8 @@ async def lookup_canonical_entities(
 ) -> list[str]:
     """Return raw canonical texts plus namespace-local resolved aliases."""
 
+    if len(entity_texts) > SEARCH_ENTITY_FILTER_MAX:
+        raise VectorInputTooLargeError("entity_filter accepts at most 64 raw names")
     # Input order is kept (a cited entity precedes a mentioned
     # one, and the bodies="unit" budget reads the list in order); resolved aliases
     # that were not mentioned follow, sorted.
@@ -511,12 +517,13 @@ async def lookup_canonical_entities(
     try:
         rows = await ch.query_all(
             """
-            SELECT canonical_text
+            SELECT DISTINCT canonical_text
             FROM loom.entity_canonical_map FINAL
             WHERE org = {org:String}
               AND namespace IN {namespaces:Array(String)}
               AND mention_text IN {mentions:Array(String)}
               AND tombstoned_at IS NULL
+            LIMIT 257
             """,
             params={
                 "org": org,
@@ -524,12 +531,19 @@ async def lookup_canonical_entities(
                 "mentions": mentions,
             },
         )
+    except VectorInputTooLargeError:
+        raise
     except Exception:  # noqa: BLE001 — a failed alias read keeps the given entities
         return ordered
+    # A full sentinel page cannot prove that omitted aliases fit the bound.
+    if len(rows) > _MAX_EFFECTIVE_ENTITY_FILTER:
+        raise VectorInputTooLargeError("entity alias expansion exceeds 256 names")
     for row in rows:
         canon = canonical_entity_text(str(row.get("canonical_text") or ""))
         if canon:
             out.add(canon)
+    if len(out) > _MAX_EFFECTIVE_ENTITY_FILTER:
+        raise VectorInputTooLargeError("entity alias expansion exceeds 256 names")
     return ordered + sorted(out - set(ordered))
 
 

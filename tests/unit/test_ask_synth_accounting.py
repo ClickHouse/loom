@@ -68,7 +68,7 @@ def make_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             embedding_model="fake-embed",
         )
 
-    async def fake_over_cap(org: str, ns: str) -> bool:
+    async def fake_over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     async def fake_fetch(**kw: Any) -> list[Any]:

@@ -106,6 +106,7 @@ knowledge_upsert = Operation(
 
 knowledge_search = Operation(
     name="knowledge.search",
+    session_content=True,
     input_model=KnowledgeSearchInput,
     output_model=KnowledgeSearchOutput,
     handler=handle_knowledge_search,

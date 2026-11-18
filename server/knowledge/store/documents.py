@@ -22,6 +22,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 class DocumentRow(BaseModel):
@@ -835,7 +836,7 @@ async def agent_opens(
         """
         SELECT args['source_uri'] AS source_uri, count() AS reads,
                uniqExact(agent) AS agents, max(ts) AS last_read_at
-        FROM loom.agent_events
+        FROM {masked_events}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ts >= now64(3) - toIntervalDay({days:UInt8})
           AND operation = 'knowledge.get' AND success
@@ -845,7 +846,7 @@ async def agent_opens(
         GROUP BY source_uri
         ORDER BY reads DESC
         LIMIT 200
-        """,
+        """.replace("{masked_events}", MASKED_EVENTS),
         params={
             "org": org,
             "ns": namespace,

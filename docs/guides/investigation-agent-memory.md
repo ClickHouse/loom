@@ -73,14 +73,14 @@ while the writer is changed. It deletes nothing.
 
 | Question                           | Call                                                                                                                                               |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "What do we know about X?"         | `memory.search` with a natural-language query and `tags=["case:<id>"]`; documents are lifted by the chunk leg                                      |
+| "What do we know about X?"         | `search.query` with a natural-language query and `tags=["case:<id>"]`; memory and knowledge return in separate sections                            |
 | "What is field F of record R?"     | `memory.record.query`                                                                                                                              |
 | "Walk the model"                   | `memory.backlinks` / `memory.related` from a node row; edges are `memory.link` rows (`relation=derived_from` from a node to the evidence it cites) |
 | "Where are we?"                    | `working_memory.get block_key=lease/<case>`                                                                                                        |
 | "Resume attempt N"                 | `context.fetch blob_key=sre/steps/<case>/<attempt>`                                                                                                |
 | "Load everything for this session" | `context.pack` with a `token_budget`                                                                                                               |
 
-Over MCP, `loom_search` answers the first row: it searches memory, knowledge and
+Over MCP, [`loom_search`](../features/unified-search.md#loom_search) answers the first row: it searches memory, knowledge and
 conversations in one call.
 
 ## Related

@@ -56,6 +56,7 @@ EXEMPT: dict[str, str] = {
     # requests
     "loom.agent_cost_rollup_daily": _REQUEST,
     "loom.agent_events": _REQUEST,
+    "loom.agent_events_private": _REQUEST,
     "loom.agent_turn_usage": _REQUEST,
     "loom.audit_log": _REQUEST,
     "loom.policy_decisions": _REQUEST,

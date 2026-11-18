@@ -385,7 +385,8 @@ class _Delegated:
     def writes(self, namespace: str) -> bool:
         return False  # a viewer token: it saves nowhere
 
-    def mint(self, subject: str) -> str:
+    def mint(self, subject: str, *, reads_as_creator: bool = False) -> str:
+        assert reads_as_creator is False  # Ordinary service accounts do not identify a reader.
         return "jwt"
 
     def expires_at(self, now: Any) -> None:

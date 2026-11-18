@@ -349,6 +349,21 @@ def require_identity_settings() -> None:
     cell.require_settings()
 
 
+async def require_session_protection(ch: Any) -> None:
+    """Persist an on switch before startup can admit clients or start workers."""
+    from server.knowledge.app.session_admission import reassert_local_switch
+
+    await reassert_local_switch(ch)
+
+
+async def refresh_instance_state(ch: Any) -> None:
+    """Reassert privacy state on the existing beat before reading the workers lease."""
+    from server.workers import leader
+
+    await require_session_protection(ch)
+    await leader.read_holder(ch)
+
+
 async def require_storage_authority(ch: Any) -> None:
     """The memory authority this replica is configured for, checked against the
     deployment's record (`server.core.pg_profile`); the Postgres profile first opens

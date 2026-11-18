@@ -123,6 +123,12 @@ class _Store:
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
+    from server.knowledge.store import source_push as push_store
+
+    async def no_push(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(push_store, "get", no_push)
     fake = _Store()
     monkeypatch.setattr(app, "store", fake)
     monkeypatch.setattr(settings, "jwt_secret", "unit-test-root-secret")
@@ -153,7 +159,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
     monkeypatch.setattr(leases, "holding", _holding)
     monkeypatch.setattr(leases, "has_live_holder", _has_live_holder)
 
-    async def _open(org: str) -> list[dict[str, Any]]:
+    async def _open(org: str, *, ch=None) -> list[dict[str, Any]]:
         return list(fake.erasures)
 
     from server.erasure.app import ledger_reads

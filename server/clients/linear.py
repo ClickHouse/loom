@@ -233,6 +233,18 @@ async def documents_page(
     return nodes, cursor
 
 
+async def organization_id(api_key: str) -> str:
+    """The credential's organization, for binding incoming notifications."""
+    data = await _query(
+        api_key, "query { organization { id } }", {}, "push identity", max_bytes=4096
+    )
+    org = data.get("organization")
+    value = org.get("id") if isinstance(org, dict) else None
+    if not isinstance(value, str) or not value:
+        raise LinearError("push identity", "no_organization")
+    return value
+
+
 async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any]]:
     """Every document of a project, every page read and paced; a failure on any page
     raises."""

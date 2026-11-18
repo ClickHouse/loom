@@ -927,10 +927,11 @@ async def test_chunk_provenance_and_rollup_statements_pass_the_analyzer(ch_clien
         from server.core.ch import get_client as _real_get_client
 
         cost_h.get_client = _real_get_client  # type: ignore[assignment]
-    # The default readout also issues the cache-totals
-    # statement (no UNION), so two readouts are four statements.
+    # Both readouts issue a rollup/live-tail merge and a cache-totals read.
+    # Each reads the ordinary/private source union.
     assert len(cost_ch.calls) == 4
-    assert sum("UNION ALL" in sql for sql, _ in cost_ch.calls) == 2
+    assert [sql.count("UNION ALL") for sql, _ in cost_ch.calls] == [2, 1, 2, 1]
+    assert all("FROM loom.agent_events_private)" in sql for sql, _ in cost_ch.calls)
     assert sum(cost_store.CACHE_SELECT in sql for sql, _ in cost_ch.calls) == 2
     statements += cost_ch.calls
     assert len(statements) >= 1 + 3 + 2 + 4

@@ -70,7 +70,7 @@ def steps_of(rows: list[CallRow]) -> tuple[list[Step], bool]:
     kept, cut = kept_rows(rows)
     for r in kept:
         words = STEP_TEXT.get(r.operation)
-        if words is None:
+        if words is None or r.protected:
             continue
         done, failed = words
         steps.append(Step(r.operation, done if r.success else failed, r.success))

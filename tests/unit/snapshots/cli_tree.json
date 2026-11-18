@@ -5550,11 +5550,21 @@
        "dests": [
         "help",
         "print_sql",
-        "print_analyst_sql"
+        "print_analyst_sql",
+        "apply_analyst_sql"
        ]
       }
      ],
-     "mutually_exclusive": [],
+     "mutually_exclusive": [
+      {
+       "required": false,
+       "dests": [
+        "print_sql",
+        "print_analyst_sql",
+        "apply_analyst_sql"
+       ]
+      }
+     ],
      "arguments": [
       {
        "option_strings": [
@@ -5599,7 +5609,22 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Print the SQL that writes insights.query's analyst user, for an admin where LOOM_CH_USER lacks access management. It holds the user's password and the scope key stored sealed in loom.analysis_secrets (drawn when there is none; where LOOM_CH_USER cannot list users, a missing row is drawn again, which moves the key): run it in full with `clickhouse-client --multiquery --queries-file <file>`, do not store it.",
+       "help": "Refuse unchecked analyst SQL files and name the guarded apply command.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--apply-analyst-sql"
+       ],
+       "dest": "apply_analyst_sql",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Apply only the analyst user with configured access-management credentials, after live policy, writer and private-event checks. Does not prepare the reader.",
        "metavar": null
       }
      ]
@@ -13340,6 +13365,527 @@
       }
      ]
     },
+    "tracker-feed": {
+     "prog": "loom tracker-feed",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "feed_command"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "feed_command",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "init": {
+         "prog": "loom tracker-feed init",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.tracker_feed:_command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "writer_user",
+            "writer_password_env",
+            "host",
+            "port",
+            "database",
+            "insecure"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-user"
+           ],
+           "dest": "writer_user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-password-env"
+           ],
+           "dest": "writer_password_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_WRITER_PASSWORD",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--host"
+           ],
+           "dest": "host",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--port"
+           ],
+           "dest": "port",
+           "action": "_StoreAction",
+           "default": 8443,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--database"
+           ],
+           "dest": "database",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--insecure"
+           ],
+           "dest": "insecure",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Use HTTP for a private development record",
+           "metavar": null
+          }
+         ]
+        },
+        "configure": {
+         "prog": "loom tracker-feed configure",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.tracker_feed:_command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "writer_user",
+            "writer_password_env",
+            "source",
+            "repo",
+            "token_env",
+            "read_only_token",
+            "max_pages"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-user"
+           ],
+           "dest": "writer_user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-password-env"
+           ],
+           "dest": "writer_password_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_WRITER_PASSWORD",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source"
+           ],
+           "dest": "source",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--repo"
+           ],
+           "dest": "repo",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "A repository in the source's allowlist",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--token-env"
+           ],
+           "dest": "token_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_GITHUB_TOKEN",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--read-only-token"
+           ],
+           "dest": "read_only_token",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Attest the token has only read permissions",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--max-pages"
+           ],
+           "dest": "max_pages",
+           "action": "_StoreAction",
+           "default": 5,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Pages per stream, from 2 to 100",
+           "metavar": null
+          }
+         ]
+        },
+        "sync": {
+         "prog": "loom tracker-feed sync",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.tracker_feed:_command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "writer_user",
+            "writer_password_env",
+            "source",
+            "repo"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-user"
+           ],
+           "dest": "writer_user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-password-env"
+           ],
+           "dest": "writer_password_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_WRITER_PASSWORD",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source"
+           ],
+           "dest": "source",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--repo"
+           ],
+           "dest": "repo",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "A repository in the source's allowlist",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "init": "loom tracker-feed init",
+        "configure": "loom tracker-feed configure",
+        "sync": "loom tracker-feed sync"
+       },
+       "choices_help": []
+      }
+     ]
+    },
     "namespaces-adopt": {
      "prog": "loom namespaces-adopt",
      "usage": null,
@@ -15437,6 +15983,7 @@
     "tracker-contract-check": "loom tracker-contract-check",
     "tracker-dupcheck-fit": "loom tracker-dupcheck-fit",
     "tracker-embed-reset": "loom tracker-embed-reset",
+    "tracker-feed": "loom tracker-feed",
     "namespaces-adopt": "loom namespaces-adopt",
     "sensitivity-sweep": "loom sensitivity-sweep",
     "integrity-repair": "loom integrity-repair",
@@ -15701,6 +16248,11 @@
      "dest": "tracker-embed-reset",
      "help": "Clear the tracker_embed pass cursors of one tracker namespace so the next pass re-walks the window and re-embeds every item whose text recipe changed. Dry run by default (prints the cursors); --apply clears them.",
      "metavar": "tracker-embed-reset"
+    },
+    {
+     "dest": "tracker-feed",
+     "help": "Maintain a team's GitHub tracker record",
+     "metavar": "tracker-feed"
     },
     {
      "dest": "namespaces-adopt",

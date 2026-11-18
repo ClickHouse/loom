@@ -149,7 +149,8 @@ async def test_private_spend_is_written_under_mirror_without_shared_accounting(
 
     async def insert(table: str, batch: list[dict[str, Any]], **kwargs: Any) -> None:
         assert diagnostics.codes_only()
-        assert table == "loom.agent_events"
+        assert table == "loom.agent_events_private"
+        assert kwargs["required_columns"] == frozenset({"mirror_marked"})
         rows.extend(batch)
 
     monkeypatch.setattr(events, "get_client", lambda: SimpleNamespace(insert=insert))

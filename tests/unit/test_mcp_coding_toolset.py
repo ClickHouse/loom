@@ -245,7 +245,10 @@ def test_activation_triggers_are_one_list_on_both_tiers():
     core_s = next(d for d in synthetic_descriptors("core") if d["name"] == "loom_search")
     coding_s = next(d for d in synthetic_descriptors("coding") if d["name"] == "loom_search")
     assert coding_s["description"] == coding_search_description(core_s["description"])
-    assert "profile, knowledge and past conversations" in coding_s["description"]
+    assert (
+        "profile, knowledge, past conversations and readable issues and pull requests"
+        in coding_s["description"]
+    )
     assert "(uploaded documents)" in core_s["description"]
     for must in (
         "One call per question",

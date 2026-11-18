@@ -419,16 +419,13 @@ def _set_up(ch: Any, user: str, reader: str | None) -> int:
     return 0
 
 
-def _analyst_sql() -> list[str]:
-    """The analyst user's SQL with this deployment's key and password, which
-    the first call makes and stores (sealed) when there are none yet."""
-    from server.insights.app import analysis
+def _apply_analyst() -> None:
+    """Apply only the analyst boundary using the explicitly configured credentials."""
+    from server.insights.app.analysis import rewrite
 
-    async def _go(_ch: Any) -> list[str]:
-        await analysis.load_for_print()
-        return analysis.printed_statements(await analysis.own_grant_revokes())
-
-    return run_connected(_go, org_free=writes("ClickHouse users and grants, no tenant rows"))
+    run_connected(
+        lambda _ch: rewrite(), org_free=writes("ClickHouse users and grants, no tenant rows")
+    )
 
 
 def _write_analyst() -> None:
@@ -451,12 +448,13 @@ def _write_analyst() -> None:
         if isinstance(e, SetupRefused):
             advice = ""  # a refusal Loom wrote names its own next step
         else:
-            # The printed SQL carries the same password, so a cause with its own fix replaces it.
+            # Prefer a specific native fix before the guarded administrative command.
             _, fix = shown_cause(e)
             advice = (
                 f"; {fix}"
                 if fix
-                else "; have an admin run the SQL `loom ch-setup --print-analyst-sql` prints"
+                else "; run `loom ch-setup --apply-analyst-sql` with existing "
+                "access-management credentials"
             )
         print(f"· loom_analyst (insights.query): not written ({line}){advice}")
         return
@@ -472,25 +470,27 @@ def _cmd_ch_setup(args: argparse.Namespace) -> int:
     opted_out = "LOOM_CH_READER_USER" in os.environ and not settings.ch_reader_user
     reader = None if opted_out else settings.ch_reader_user or DEFAULT_READER
     if args.print_analyst_sql:
-        from server.insights.app import analysis
-
-        try:
-            statements = _analyst_sql()
-        except Exception as e:  # noqa: BLE001 — every refusal is one line, not a traceback
-            print(f"✗ {error_line(e)}", file=sys.stderr)
-            return 2
         print(
-            "-- Holds the analyst password and scope key: save it to a file and run it in one "
-            "session,\n-- clickhouse-client --multiquery --queries-file <file>: its first "
-            "statement keeps\n-- the text of the rest out of system.query_log.\n-- First run "
-            "these two checks. The first lists permissive row policies Loom did not write "
-            "on\n-- the analysis tables: drop or make restrictive any it returns, since the "
-            "policy below for\n-- every other user would widen them. The second lists other "
-            "Loom databases on this server\n-- writing the same analyst user: analysis needs "
-            "one Loom per ClickHouse service.\n-- " + "\n-- ".join(analysis.printed_checks())
+            "✗ Analyst SQL requires live writer-policy observations; run "
+            "`loom ch-setup --apply-analyst-sql` with existing access-management credentials.",
+            file=sys.stderr,
         )
-        for stmt in statements:
-            print(f"{stmt};")
+        return 2
+    if args.apply_analyst_sql:
+        try:
+            _apply_analyst()
+        except Exception as error:  # noqa: BLE001 — administrative failures need one safe line
+            from server.insights.app.analysis import SetupRefused, shown_cause
+            from server.insights.store.event_cutover import EventCutoverUnavailable
+
+            cause = (
+                error_line(error)
+                if isinstance(error, (SetupRefused, EventCutoverUnavailable))
+                else shown_cause(error)[0]
+            )
+            print(f"✗ {cause}", file=sys.stderr)
+            return 2
+        print("✓ loom_analyst (insights.query): written")
         return 0
     # The reader and admin SQL name these users.
     if not _NAME.match(user):
@@ -531,22 +531,23 @@ _HELP = (
 
 def register_ch_setup_cli(sub: Any) -> None:
     p = sub.add_parser("ch-setup", help=_HELP, description=__doc__)
-    p.add_argument(
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
         "--print-sql",
         action="store_true",
         help="Print the SQL for an admin (password as a placeholder); change nothing.",
     )
-    p.add_argument(
+    mode.add_argument(
         "--print-analyst-sql",
         action="store_true",
+        help="Refuse unchecked analyst SQL files and name the guarded apply command.",
+    )
+    mode.add_argument(
+        "--apply-analyst-sql",
+        action="store_true",
         help=(
-            "Print the SQL that writes insights.query's analyst user, for an admin where "
-            "LOOM_CH_USER lacks access management. It holds the user's password and the "
-            "scope key stored sealed in loom.analysis_secrets (drawn when there is none; "
-            "where LOOM_CH_USER cannot list users, a missing row is drawn again, which moves "
-            "the key): run it in full with "
-            "`clickhouse-client --multiquery --queries-file <file>`, do not "
-            "store it."
+            "Apply only the analyst user with configured access-management credentials, "
+            "after live policy, writer and private-event checks. Does not prepare the reader."
         ),
     )
     p.set_defaults(func=_cmd_ch_setup)

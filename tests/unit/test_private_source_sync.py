@@ -80,7 +80,7 @@ def test_mirrored_embedding_spend_lands_only_in_its_mirror(
 
     async def insert(table: str, batch: list[dict[str, Any]], **kwargs: Any) -> None:
         assert diagnostics.codes_only()
-        assert table == "loom.agent_events"
+        assert table == "loom.agent_events_private"
         rows.extend(batch)
 
     monkeypatch.setattr(writes, "handle_knowledge_upsert", upsert)

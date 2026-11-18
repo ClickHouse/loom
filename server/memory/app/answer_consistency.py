@@ -16,9 +16,8 @@ probabilities for entailment and contradiction. The consistency score is
 neutral, 0.0 contradicted.
 
 Design notes
-- Pure parsing and scoring here; ``check`` is the only I/O and it fails OPEN:
-  any error yields an empty label and the ask proceeds unchanged. A
-  consistency check must never turn an answer into an error.
+- Pure parsing and scoring here; ordinary check failures yield an empty label.
+  Lost access propagates so the caller discards the generated answer.
 - The judge sees only the CITED memories (the answer's own evidence), not
   the whole grounding window: the question is "does the answer say what its
   sources say", which is what a reader can verify.
@@ -35,6 +34,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from server.knowledge.app.source_corpus import LostCorpus
 from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ def build_user_prompt(question: str, answer: str, cited: list[Any]) -> str:
 
 
 async def check(llm: Any, question: str, answer: str, cited: list[Any]) -> Verdict:
-    """One judge call; fails open to the empty Verdict on any error."""
+    """One judge call; ordinary failures return an empty Verdict, access loss propagates."""
     if llm is None or not (answer or "").strip() or not cited:
         return Verdict()
     from server.observability.genai import llm_stage
@@ -169,6 +169,8 @@ async def check(llm: Any, question: str, answer: str, cited: list[Any]) -> Verdi
                 response_format={"type": "json_object"},
             )
         return parse_verdict(str(getattr(res, "text", "") or ""))
+    except LostCorpus:
+        raise
     except Exception as e:  # noqa: BLE001 — a check never blocks an answer
         log.warning("answer consistency check failed (open): %s", e)
         return Verdict()

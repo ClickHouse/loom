@@ -1,0 +1,4 @@
+{% set language = page.meta.theme_language if page and page.meta.theme_language else config.theme.language %}
+{% import "partials/languages/" ~ language ~ ".html" as localized %}
+{% import "partials/languages/en.html" as fallback %}
+{% macro t(key) %}{{ localized.t(key) or fallback.t(key) or key }}{% endmacro %}

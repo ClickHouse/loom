@@ -195,6 +195,9 @@ OpName = Literal[
     "knowledge.source.inspect",
     "knowledge.source.list",
     "knowledge.source.parse_links",
+    "knowledge.source.push_configure",
+    "knowledge.source.push_confirm",
+    "knowledge.source.push_status",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
@@ -568,6 +571,9 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.inspect",
     "knowledge.source.list",
     "knowledge.source.parse_links",
+    "knowledge.source.push_configure",
+    "knowledge.source.push_confirm",
+    "knowledge.source.push_status",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
@@ -2656,6 +2662,42 @@ OPS: dict[str, OpSpec] = {
         50,
         False,
         True,
+    ),
+    "knowledge.source.push_configure": OpSpec(
+        "knowledge.source.push_configure",
+        "KnowledgeSourcePushConfigureInput",
+        "KnowledgeSourcePushConfigureBody",
+        "PushStatusOutput",
+        False,
+        "admin",
+        "experimental",
+        60000,
+        True,
+        False,
+    ),
+    "knowledge.source.push_confirm": OpSpec(
+        "knowledge.source.push_confirm",
+        "KnowledgeSourcePushConfirmInput",
+        "KnowledgeSourcePushConfirmBody",
+        "PushStatusOutput",
+        False,
+        "admin",
+        "experimental",
+        1000,
+        True,
+        False,
+    ),
+    "knowledge.source.push_status": OpSpec(
+        "knowledge.source.push_status",
+        "KnowledgeSourcePushStatusInput",
+        "KnowledgeSourcePushStatusBody",
+        "PushStatusOutput",
+        False,
+        "admin",
+        "experimental",
+        1000,
+        False,
+        False,
     ),
     "knowledge.source.remove": OpSpec(
         "knowledge.source.remove",
@@ -5325,6 +5367,7 @@ class AssistantAskBody(TypedDict, total=False):
 
 
 class AssistantAskOutput(TypedDict, total=False):
+    mirrored: NotRequired[bool]
     answer: NotRequired[str]
     run_id: NotRequired[str]
     model: NotRequired[str]
@@ -9113,19 +9156,25 @@ class CostAgentSummaryRow(TypedDict, total=False):
 class CostBudgetStatusInput(TypedDict, total=False):
     org: Required[str]
     namespace: NotRequired[Optional[str]]
+    user_id: NotRequired[Optional[str]]
 
 
 class CostBudgetStatusBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[Optional[str]]
+    user_id: NotRequired[Optional[str]]
 
 
 class CostBudgetStatusOutput(TypedDict, total=False):
     namespace: Required[str]
-    spent_24h_usd: Required[float]
+    user_id: NotRequired[Optional[str]]
+    spent_24h_usd: Required[Optional[float]]
     cap_usd: Required[float]
-    cap_source: Required[Literal["namespace", "global", "uncapped", "org"]]
+    cap_source: Required[
+        Literal["namespace", "global", "namespace_user", "global_user", "uncapped", "org"]
+    ]
     over_cap: Required[bool]
+    namespace_over_cap: NotRequired[Optional[bool]]
     pct_of_cap: NotRequired[Optional[float]]
     namespaces_with_spend: NotRequired[int]
 
@@ -11771,6 +11820,83 @@ class KnowledgeSourceParsedLink(TypedDict, total=False):
     unreadable: NotRequired[str]
 
 
+class KnowledgeSourcePushConfigureInput(TypedDict, total=False):
+    "Enable provider sync hints for an existing source, or disable its setup."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    enabled: NotRequired[bool]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+
+
+class KnowledgeSourcePushConfigureBody(TypedDict, total=False):
+    "Enable provider sync hints for an existing source, or disable its setup."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    enabled: NotRequired[bool]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+
+
+class PushStatusOutput(TypedDict, total=False):
+    enabled: NotRequired[bool]
+    status: NotRequired[str]
+    provider: NotRequired[str]
+    generation: NotRequired[str]
+    callback_url: NotRequired[str]
+    provider_id: NotRequired[str]
+    challenge_fingerprint: NotRequired[str]
+    verification_token: NotRequired[str]
+    channels: NotRequired[int]
+    expires_at: NotRequired[float]
+
+
+class KnowledgeSourcePushConfirmInput(TypedDict, total=False):
+    "Activate the exact pending setup."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    generation: Required[str]
+    challenge_fingerprint: NotRequired[str]
+    signing_secret: NotRequired[str]
+
+
+class KnowledgeSourcePushConfirmBody(TypedDict, total=False):
+    "Activate the exact pending setup."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    generation: Required[str]
+    challenge_fingerprint: NotRequired[str]
+    signing_secret: NotRequired[str]
+
+
+class KnowledgeSourcePushStatusInput(TypedDict, total=False):
+    "Read push setup as a namespace admin."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    reveal_challenge: NotRequired[bool]
+
+
+class KnowledgeSourcePushStatusBody(TypedDict, total=False):
+    "Read push setup as a namespace admin."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    reveal_challenge: NotRequired[bool]
+
+
 class KnowledgeSourceRemoveInput(TypedDict, total=False):
     "Retire a registered document source: its registry row goes inactive and its"
 
@@ -11884,6 +12010,7 @@ class KnowledgeSynthesizeInput(TypedDict, total=False):
 
     org: Required[str]
     namespace: Required[str]
+    user_id: NotRequired[str]
     source_uris: NotRequired[list[str]]
     datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
@@ -11897,6 +12024,7 @@ class KnowledgeSynthesizeBody(TypedDict, total=False):
 
     org: NotRequired[str]
     namespace: NotRequired[str]
+    user_id: NotRequired[str]
     source_uris: NotRequired[list[str]]
     datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
@@ -16722,6 +16850,8 @@ class NamespaceGetOutput(TypedDict, total=False):
     coverage_sweep: NotRequired[Optional[bool]]
     consolidation_enabled: NotRequired[Optional[bool]]
     daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[Optional[int]]
     warm_days: NotRequired[Optional[int]]
@@ -16952,6 +17082,8 @@ class NamespaceEntry(TypedDict, total=False):
     active: Required[bool]
     consolidation_enabled: NotRequired[bool]
     daily_cost_cap_usd: NotRequired[float]
+    daily_user_cost_cap_usd: NotRequired[float]
+    budget_alert_inbox: NotRequired[str]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[int]
     warm_days: NotRequired[int]
@@ -17072,6 +17204,8 @@ class NamespaceRegisterInput(TypedDict, total=False):
     coverage_sweep: NotRequired[Optional[bool]]
     consolidation_enabled: NotRequired[Optional[bool]]
     daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[Optional[int]]
     warm_days: NotRequired[Optional[int]]
@@ -17145,6 +17279,8 @@ class NamespaceRegisterBody(TypedDict, total=False):
     coverage_sweep: NotRequired[Optional[bool]]
     consolidation_enabled: NotRequired[Optional[bool]]
     daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[Optional[int]]
     warm_days: NotRequired[Optional[int]]

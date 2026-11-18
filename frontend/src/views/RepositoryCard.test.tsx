@@ -900,7 +900,7 @@ describe("RepositoryCard — sources", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["Check", "Sync now", "Rotate credential", "Retire"]);
+    ).toEqual(["Check", "Sync now", "Push notifications", "Rotate credential", "Retire"]);
   });
 });
 

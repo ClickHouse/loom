@@ -339,26 +339,21 @@ def test_analyst_statements_carry_no_traffic_class_settings(
         traffic_class_var.reset(token)
 
 
-def test_the_printed_sql_revokes_what_show_grants_lists_before_granting(
-    monkeypatch: pytest.MonkeyPatch, ready: None
-) -> None:
-    lines = [
-        "GRANT SELECT(org, namespace) ON loom.memory TO loom_analyst",
-        "GRANT SELECT ON loom.signing_keys TO loom_analyst WITH GRANT OPTION",
-        "GRANT bi_reader TO loom_analyst",
-    ]
-    monkeypatch.setattr(app.store, "own_grant_lines", _returns(lines))
-    revokes = asyncio.run(app.own_grant_revokes())
-    assert revokes == [
-        "REVOKE SELECT(org, namespace) ON loom.memory FROM loom_analyst",
-        "REVOKE SELECT ON loom.signing_keys FROM loom_analyst",
-        "REVOKE bi_reader FROM loom_analyst",
-    ]
-    printed = app.printed_statements(revokes)
-    first_grant = next(i for i, s in enumerate(printed) if s.startswith("GRANT "))
-    assert printed[first_grant - len(revokes) : first_grant] == revokes
-    # The file is run in one session, whose first statement cuts the rest from the log.
-    assert printed[0] == "SET log_queries_cut_to_length = 1, log_formatted_queries = 0"
+def test_unchecked_analyst_sql_refuses_before_any_connection_or_secret_draw(monkeypatch, capsys):
+    import argparse
+
+    from server.cli import ch_setup
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Unchecked print must not connect, draw keys or grant access")
+
+    monkeypatch.setattr(ch_setup, "run_connected", forbidden)
+    args = argparse.Namespace(print_analyst_sql=True, apply_analyst_sql=False, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 2
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "--apply-analyst-sql" in out.err
+    assert len(out.err.strip().splitlines()) == 1
 
 
 def test_a_column_grant_in_another_database_is_outside_the_allowlist(
@@ -382,13 +377,40 @@ def test_analyst_statements_send_no_time_cap_of_their_own() -> None:
         assert "max_execution_time" not in ch.statement_settings("SELECT 1")
 
 
-def test_the_printed_checks_name_looms_database(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The admin's session may sit in another database: the checks never read currentDatabase().
-    monkeypatch.setattr(app.store, "database", lambda: "loom_prod")
-    checks = app.printed_checks()
-    assert all("currentDatabase" not in c for c in checks)
-    assert "database = 'loom_prod'" in checks[0]
-    assert "database != 'loom_prod'" in checks[1]
+def test_guarded_analyst_apply_does_not_prepare_the_reader(monkeypatch, capsys):
+    import argparse
+
+    from server.cli import ch_setup
+
+    called = []
+
+    async def rewrite():
+        called.append("rewrite")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Analyst-only apply must not prepare reader grants or profiles")
+
+    monkeypatch.setattr(app, "rewrite", rewrite)
+    monkeypatch.setattr(ch_setup, "run_connected", lambda fn, **declared: asyncio.run(fn(None)))
+    monkeypatch.setattr(ch_setup, "_set_up", forbidden)
+    monkeypatch.setattr(ch_setup, "caps_problem", forbidden)
+    args = argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=True, print_sql=False)
+    assert ch_setup._cmd_ch_setup(args) == 0
+    assert called == ["rewrite"]
+    assert "written" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("printing", ["--print-sql", "--print-analyst-sql"])
+def test_analyst_apply_cannot_be_combined_with_a_print_only_mode(printing):
+    import argparse
+
+    from server.cli import ch_setup
+
+    parser = argparse.ArgumentParser()
+    ch_setup.register_ch_setup_cli(parser.add_subparsers())
+    with pytest.raises(SystemExit) as error:
+        parser.parse_args(["ch-setup", printing, "--apply-analyst-sql"])
+    assert error.value.code == 2
 
 
 def test_the_per_org_count_comes_back_down_when_a_statement_fails(
@@ -400,100 +422,47 @@ def test_the_per_org_count_comes_back_down_when_a_statement_fails(
     assert app._running == {}
 
 
-def test_print_sql_refuses_a_new_key_beside_a_live_analyst_user(
-    monkeypatch: pytest.MonkeyPatch, ready: None
-) -> None:
-    drew: list[bool] = []
-    monkeypatch.setattr(app, "lease", _NoLease)
-    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
-    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
-    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
-    monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
-
-    async def load(*, may_draw: bool) -> None:
-        drew.append(may_draw)
-
-    monkeypatch.setattr(app, "load_secrets", load)
-    with pytest.raises(RuntimeError, match="DROP USER"):
-        asyncio.run(app.load_for_print())
-    assert not drew
-
-
-def test_print_sql_draws_where_it_cannot_see_the_users(
-    monkeypatch: pytest.MonkeyPatch, ready: None
-) -> None:
-    drew: list[bool] = []
-
-    async def load(*, may_draw: bool) -> None:
-        drew.append(may_draw)
-
-    monkeypatch.setattr(app, "lease", _NoLease)
-    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
-    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
-    monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
-    monkeypatch.setattr(app, "load_secrets", load)
-    asyncio.run(app.load_for_print())
-    assert drew == [True]
-
-
-def test_ch_setup_prints_a_refusal_as_one_line_and_nothing_to_stdout(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_guarded_apply_refusal_is_actionable_without_stdout(monkeypatch, capsys):
     import argparse
 
     from server.cli import ch_setup
 
-    def refuse() -> list[str]:
-        raise RuntimeError("the key the replicas hold is lost")
+    def refuse():
+        raise app.SetupRefused(
+            "ordinary event storage is not confirmed private-free on every writer"
+        )
 
-    monkeypatch.setattr(ch_setup, "_analyst_sql", refuse)
-    monkeypatch.setattr(ch_setup, "caps_problem", lambda: "")
-    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
+    monkeypatch.setattr(ch_setup, "_apply_analyst", refuse)
+    args = argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=True, print_sql=False)
     assert ch_setup._cmd_ch_setup(args) == 2
     out = capsys.readouterr()
-    assert out.out == ""
-    assert out.err.strip() == "✗ the key the replicas hold is lost"
+    assert not out.out
+    assert (
+        out.err.strip() == "✗ ordinary event storage is not confirmed private-free on every writer"
+    )
 
 
-def test_print_sql_is_not_gated_on_the_reader_users_settings(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import argparse
-
-    from server.cli import ch_setup
-
-    monkeypatch.setattr(ch_setup, "_analyst_sql", lambda: ["SELECT 1"])
-    monkeypatch.setattr(app.store, "database", lambda: "loom")
-    monkeypatch.setattr(ch_setup, "caps_problem", lambda: "a caller-shaped cap is below its floor")
-    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
-    assert ch_setup._cmd_ch_setup(args) == 0
-    assert capsys.readouterr().out.rstrip().endswith("SELECT 1;")
-
-
-@pytest.mark.parametrize("path", ["rewrite", "load_for_print"])
-def test_before_the_first_boot_migrates_both_paths_say_to_run_again(
-    monkeypatch: pytest.MonkeyPatch, path: str
+def test_rewrite_before_the_first_boot_says_to_run_again(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(app.store, "secrets_table_exists", _returns(False))
     with pytest.raises(RuntimeError, match="first boot has applied its migrations"):
-        asyncio.run(getattr(app, path)())
+        asyncio.run(app.rewrite())
 
 
-def test_ch_setup_prints_a_clickhouse_error_as_one_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_guarded_apply_does_not_disclose_raw_policy_or_stack_text(monkeypatch, capsys):
     import argparse
 
     from server.cli import ch_setup
 
-    def fail() -> list[str]:
-        raise RuntimeError("Code: 60. DB::Exception: Unknown table\nStack trace:\n0. frame")
+    def fail():
+        raise RuntimeError("secret policy expression\nStack trace: secret")
 
-    monkeypatch.setattr(ch_setup, "_analyst_sql", fail)
-    args = argparse.Namespace(print_analyst_sql=True, print_sql=False)
+    monkeypatch.setattr(ch_setup, "_apply_analyst", fail)
+    args = argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=True, print_sql=False)
     assert ch_setup._cmd_ch_setup(args) == 2
     out = capsys.readouterr()
-    assert out.out == ""
+    assert not out.out and "secret" not in out.err and "Stack" not in out.err
     assert len(out.err.strip().splitlines()) == 1
 
 
@@ -522,7 +491,7 @@ def test_a_standing_problem_is_logged_once(
         (RuntimeError(_CLOUD_PASSWORD_REFUSAL), False, True),
     ],
 )
-def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
+def test_ch_setups_analyst_line_advises_guarded_apply_only_where_no_fix_fits(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     error: Exception,
@@ -539,7 +508,7 @@ def test_ch_setups_analyst_line_advises_the_printed_sql_only_where_no_fix_fits(
     ch_setup._write_analyst()
     line = capsys.readouterr().out.strip()
     assert line.startswith("· loom_analyst (insights.query): not written (")
-    assert ("--print-analyst-sql" in line) is advised
+    assert ("--apply-analyst-sql" in line) is advised
     assert ("DROP USER IF EXISTS loom_analyst" in line) is own_fix
 
 
@@ -599,6 +568,8 @@ def test_an_unrefused_probe_is_named_by_the_column_not_the_sql(
 ) -> None:
     # /v1/health shows this text: no SQL, and no database name.
     async def run(sql: str, **_: Any) -> Any:
+        if ".agent_events_private" in sql:
+            raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
         if sql.startswith("SELECT count()") and "system." not in sql:
             return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
         if "system." in sql:
@@ -1189,3 +1160,40 @@ def test_a_newer_boundary_is_trusted_only_after_its_key_canary(
     else:
         assert result == ("the analyst's policies do not accept this replica's key", True, "")
         assert seen == []
+
+
+def test_guarded_apply_refuses_a_new_key_beside_a_live_analyst_user(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    drew: list[bool] = []
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(True))
+    monkeypatch.setattr(app.store, "analyst_user_absent", _returns(False))
+
+    async def load(*, may_draw: bool) -> None:
+        drew.append(may_draw)
+
+    monkeypatch.setattr(app, "load_secrets", load)
+    with pytest.raises(RuntimeError, match="DROP USER"):
+        asyncio.run(app.rewrite())
+    assert not drew
+
+
+def test_guarded_apply_cannot_draw_without_access_management(
+    monkeypatch: pytest.MonkeyPatch, ready: None
+) -> None:
+    drew: list[bool] = []
+
+    async def load(*, may_draw: bool) -> None:
+        drew.append(may_draw)
+
+    monkeypatch.setattr(app, "lease", _NoLease)
+    monkeypatch.setattr(app.store, "secrets_table_exists", _returns(True))
+    monkeypatch.setattr(app.store, "sealed_secrets", _returns(None))
+    monkeypatch.setattr(app.store, "can_manage_access", _returns(False))
+    monkeypatch.setattr(app, "load_secrets", load)
+    with pytest.raises(app.SetupRefused, match="access-management credentials"):
+        asyncio.run(app.rewrite())
+    assert drew == []

@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 191 tables + 5 views + 19 materialized views.
+-- Counts: 195 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (191)
+-- Tables (195)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -52,7 +52,11 @@ CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily
     `errors_state` AggregateFunction(sum, UInt64),
     `latency_sum_state` AggregateFunction(sum, UInt64),
     `latency_quantile_state` AggregateFunction(quantiles(0.5, 0.95, 0.99), UInt32),
-    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
+    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3),
+    `marked_cost_usd_state` AggregateFunction(sum, Decimal(18, 6)),
+    `marked_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_embed_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_ops_state` AggregateFunction(count)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
@@ -98,6 +102,56 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
     `status_class` LowCardinality(String) DEFAULT '',
     `budget_ms` UInt32 DEFAULT 0,
     `ingested_at` DateTime64(3) DEFAULT now64(3),
+    `mirror_marked` UInt8 DEFAULT 0,
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX ingested_at_idx ingested_at TYPE minmax GRANULARITY 1,
+    CONSTRAINT ordinary_events_only CHECK (mirror_marked = 0) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (org, namespace, agent, ts)
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.agent_events_private
+CREATE TABLE IF NOT EXISTS loom.agent_events_private
+(
+    `ts` DateTime64(3) DEFAULT now64(),
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String DEFAULT '',
+    `operation` LowCardinality(String),
+    `request_id` String,
+    `trace_id` String DEFAULT '',
+    `latency_ms` UInt32,
+    `input_tokens` UInt32 DEFAULT 0,
+    `output_tokens` UInt32 DEFAULT 0,
+    `embedding_tokens` UInt32 DEFAULT 0,
+    `upstream_cost_usd` Decimal(18, 6) DEFAULT 0,
+    `bytes_written` UInt64 DEFAULT 0,
+    `success` Bool,
+    `error_code` LowCardinality(String) DEFAULT '',
+    `memory_key` String DEFAULT '',
+    `impersonated_by` String DEFAULT '',
+    `kind` LowCardinality(String) DEFAULT '',
+    `args` Map(LowCardinality(String), String) DEFAULT map(),
+    `model` LowCardinality(String) DEFAULT '',
+    `llm_calls` UInt16 DEFAULT 0,
+    `build_commit` LowCardinality(String) DEFAULT '',
+    `instance` LowCardinality(String) DEFAULT '',
+    `instance_label` LowCardinality(String) DEFAULT '',
+    `consumer` LowCardinality(String) DEFAULT '',
+    `response_tokens` UInt32 DEFAULT 0,
+    `traffic_class` LowCardinality(String) DEFAULT '',
+    `subject` LowCardinality(String) DEFAULT '',
+    `transport` LowCardinality(String) DEFAULT '',
+    `slo_class` LowCardinality(String) DEFAULT '',
+    `status_class` LowCardinality(String) DEFAULT '',
+    `budget_ms` UInt32 DEFAULT 0,
+    `ingested_at` DateTime64(3) DEFAULT now64(3),
+    `mirror_marked` UInt8 DEFAULT 0,
     INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1,
     INDEX ingested_at_idx ingested_at TYPE minmax GRANULARITY 1
 )
@@ -1626,7 +1680,9 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `coverage` String DEFAULT '',
     `ingestion_id` String DEFAULT '',
     `access_json` String DEFAULT '',
-    INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
+    `access_keys` Array(String) MATERIALIZED arrayDistinct(arrayConcat(arrayMap(x -> concat('e:', lowerUTF8(trimBoth(x, char(9, 10, 11, 12, 13, 28, 29, 30, 31, 32)))), JSONExtract(access_json, 'emails', 'Array(String)')), arrayMap(x -> concat('d:', lowerUTF8(trimBoth(x, char(9, 10, 11, 12, 13, 28, 29, 30, 31, 32)))), JSONExtract(access_json, 'domains', 'Array(String)')), if(JSONExtractString(access_json, 'owner') != '', ['owner'], []), if(notEmpty(JSONExtract(access_json, 'groups', 'Array(String)')), ['group'], []), if(JSONExtractBool(access_json, 'anyone'), ['anyone'], []), if(arrayExists(x -> (NOT isASCII(x)), JSONExtract(access_json, 'emails', 'Array(String)')), ['email_unicode'], []), if(arrayExists(x -> (NOT isASCII(x)), JSONExtract(access_json, 'domains', 'Array(String)')), ['domain_unicode'], []))),
+    INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1,
+    INDEX access_keys_bloom access_keys TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(ingested_at)
@@ -2076,6 +2132,23 @@ ORDER BY (org, namespace, build, gap_id)
 TTL built_at + toIntervalDay(7)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.knowledge_group_members
+CREATE TABLE IF NOT EXISTS loom.knowledge_group_members
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `source_id` String,
+    `group` String,
+    `name` String,
+    `members` Array(String),
+    `read_at` DateTime64(3, 'UTC'),
+    `deleted` Bool DEFAULT false,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, source_id, group)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.knowledge_ingest_cancels
 CREATE TABLE IF NOT EXISTS loom.knowledge_ingest_cancels
 (
@@ -2138,6 +2211,16 @@ ORDER BY (org, namespace, ingestion_id)
 TTL toDateTime(updated_at) + toIntervalDay(30)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
 
+-- loom.knowledge_mirror_latch
+CREATE TABLE IF NOT EXISTS loom.knowledge_mirror_latch
+(
+    `id` UInt8,
+    `set_at` DateTime64(3),
+    CONSTRAINT one_deployment CHECK id = 0
+)
+ENGINE = KeeperMap('/loom/knowledge_mirror_latch')
+PRIMARY KEY id;
+
 -- loom.knowledge_mirrors
 CREATE TABLE IF NOT EXISTS loom.knowledge_mirrors
 (
@@ -2159,6 +2242,31 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_source_listings
     `source_id` String,
     `name` String,
     `started_at` DateTime64(3),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, source_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_source_push
+CREATE TABLE IF NOT EXISTS loom.knowledge_source_push
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `name` String,
+    `source_id` String,
+    `provider` LowCardinality(String),
+    `generation` String,
+    `fingerprint` String,
+    `provider_id` String DEFAULT '',
+    `status` LowCardinality(String) DEFAULT 'pending',
+    `secret_enc` String DEFAULT '',
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT 'derived',
+    `updated_at` DateTime64(3) DEFAULT now64(3),
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
 )
 ENGINE = ReplacingMergeTree(version)
@@ -3376,7 +3484,9 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `retrieval_defaults` String DEFAULT '',
     `proposal_policy` String DEFAULT '',
     `code_change_policy` LowCardinality(String) DEFAULT '',
-    `released_aliases` Array(String) DEFAULT []
+    `released_aliases` Array(String) DEFAULT [],
+    `daily_user_cost_cap_usd` Float64 DEFAULT 0,
+    `budget_alert_inbox` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org
@@ -4068,7 +4178,9 @@ CREATE TABLE IF NOT EXISTS loom.sso_links
     `linked` UInt8,
     `linked_by` String,
     `linked_at` DateTime64(3, 'UTC'),
-    `version` UInt64
+    `version` UInt64,
+    `hosted_domain` String DEFAULT '',
+    `issuer` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (email, org, namespace)
@@ -4131,6 +4243,9 @@ CREATE TABLE IF NOT EXISTS loom.task_events
     `patch` String DEFAULT '{}',
     `note` String DEFAULT '',
     `ts` DateTime64(3) DEFAULT now64(3),
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `source_class` LowCardinality(String) DEFAULT '',
     INDEX idx_from_subject from_subject TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree
@@ -4451,7 +4566,168 @@ SELECT
     consumer,
     subject,
     transport
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        raw.ts AS ts,
+        raw.org AS org,
+        raw.namespace AS namespace,
+        raw.agent AS agent,
+        raw.user_id AS user_id,
+        raw.session_id AS session_id,
+        raw.run_id AS run_id,
+        raw.operation AS operation,
+        raw.request_id AS request_id,
+        raw.trace_id AS trace_id,
+        raw.memory_key AS memory_key,
+        raw.impersonated_by AS impersonated_by,
+        raw.kind AS kind,
+        raw.build_commit AS build_commit,
+        raw.instance AS instance,
+        raw.instance_label AS instance_label,
+        raw.consumer AS consumer,
+        raw.traffic_class AS traffic_class,
+        raw.subject AS subject,
+        raw.transport AS transport,
+        raw.slo_class AS slo_class,
+        raw.budget_ms AS budget_ms,
+        raw.ingested_at AS ingested_at,
+        raw.mirror_marked AS mirror_marked,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.latency_ms), 'UInt32') AS latency_ms,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.input_tokens), 'UInt32') AS input_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.output_tokens), 'UInt32') AS output_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.embedding_tokens), 'UInt32') AS embedding_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST('0', 'Decimal(18, 6)'), raw.upstream_cost_usd), 'Decimal(18, 6)') AS upstream_cost_usd,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt64'), raw.bytes_written), 'UInt64') AS bytes_written,
+        CAST(if(raw.mirror_marked != 0, CAST(false, 'Bool'), raw.success), 'Bool') AS success,
+        CAST(if(raw.mirror_marked != 0, CAST('', 'LowCardinality(String)'), raw.error_code), 'LowCardinality(String)') AS error_code,
+        CAST(if(raw.mirror_marked != 0, CAST(map(), 'Map(LowCardinality(String), String)'), raw.args), 'Map(LowCardinality(String), String)') AS args,
+        CAST(if(raw.mirror_marked != 0, CAST('', 'LowCardinality(String)'), raw.model), 'LowCardinality(String)') AS model,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt16'), raw.llm_calls), 'UInt16') AS llm_calls,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.response_tokens), 'UInt32') AS response_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST('', 'LowCardinality(String)'), raw.status_class), 'LowCardinality(String)') AS status_class
+    FROM
+    (
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+        UNION ALL
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events_private
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+    ) AS raw
+    WHERE NOT match(raw.namespace, '^acl-[0-9a-f]{24}$')
+)
 WHERE (((org, namespace) IN (
     SELECT
         org,
@@ -4772,9 +5048,9 @@ CREATE VIEW IF NOT EXISTS loom.sql_v1_usage_daily
     `day` Date,
     `org` LowCardinality(String),
     `namespace` LowCardinality(String),
-    `agent` LowCardinality(String),
-    `operation` LowCardinality(String),
-    `kind` LowCardinality(String),
+    `agent` String,
+    `operation` String,
+    `kind` String,
     `ops` UInt64,
     `errors` UInt64,
     `input_tokens` UInt64,
@@ -4822,36 +5098,174 @@ SELECT
     operation,
     kind,
     count() AS ops,
-    countIf(NOT success) AS errors,
+    countIf((mirror_marked = 0) AND (NOT success)) AS errors,
     sum(input_tokens) AS input_tokens,
     sum(output_tokens) AS output_tokens,
     sum(embedding_tokens) AS embedding_tokens,
-    sum(llm_calls) AS llm_calls,
+    sumIf(llm_calls, mirror_marked = 0) AS llm_calls,
     sum(upstream_cost_usd) AS upstream_cost_usd,
-    sum(bytes_written) AS bytes_written,
-    sum(latency_ms) AS latency_sum_ms,
-    (quantiles(0.5, 0.95)(latency_ms) AS q)[1] AS latency_p50_ms,
-    q[2] AS latency_p95_ms
-FROM loom.agent_events
-WHERE (((org, namespace) IN (
+    sumIf(bytes_written, mirror_marked = 0) AS bytes_written,
+    sumIf(latency_ms, mirror_marked = 0) AS latency_sum_ms,
+    ifNotFinite((quantilesIf(0.5, 0.95)(latency_ms, mirror_marked = 0) AS q)[1], 0) AS latency_p50_ms,
+    ifNotFinite(q[2], 0) AS latency_p95_ms
+FROM
+(
     SELECT
-        org,
-        namespace
-    FROM scope
-)) OR (org IN (
-    SELECT org
-    FROM scope
-    WHERE namespace = '*'
-)) OR ((
-    SELECT count()
-    FROM scope
-    WHERE org = '*'
-) > 0)) AND ((org, namespace) NOT IN (
-    SELECT
-        org,
-        namespace
-    FROM restricted
-)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+        raw.ts AS ts,
+        raw.org AS org,
+        raw.namespace AS namespace,
+        if(raw.mirror_marked = 0, raw.agent, '-') AS agent,
+        if(raw.mirror_marked = 0, raw.operation, '-') AS operation,
+        if(raw.mirror_marked = 0, raw.kind, '-') AS kind,
+        raw.mirror_marked AS mirror_marked,
+        raw.success AS success,
+        raw.input_tokens AS input_tokens,
+        raw.output_tokens AS output_tokens,
+        raw.embedding_tokens AS embedding_tokens,
+        raw.llm_calls AS llm_calls,
+        raw.upstream_cost_usd AS upstream_cost_usd,
+        raw.bytes_written AS bytes_written,
+        raw.latency_ms AS latency_ms
+    FROM
+    (
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+        UNION ALL
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events_private
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+    ) AS raw
+    WHERE (((org, namespace) IN (
+        SELECT
+            org,
+            namespace
+        FROM scope
+    )) OR (org IN (
+        SELECT org
+        FROM scope
+        WHERE namespace = '*'
+    )) OR ((
+        SELECT count()
+        FROM scope
+        WHERE org = '*'
+    ) > 0)) AND ((org, namespace) NOT IN (
+        SELECT
+            org,
+            namespace
+        FROM restricted
+    )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+)
 GROUP BY
     day,
     org,
@@ -4880,6 +5294,10 @@ REFRESH EVERY 1 MINUTE APPEND TO loom.agent_cost_rollup_daily
     `errors_state` AggregateFunction(sum, UInt64),
     `latency_sum_state` AggregateFunction(sum, UInt64),
     `latency_quantile_state` AggregateFunction(quantiles(0.5, 0.95, 0.99), UInt32),
+    `marked_cost_usd_state` AggregateFunction(sum, Decimal(18, 6)),
+    `marked_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_embed_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_ops_state` AggregateFunction(count),
     `ts_hwm` DateTime64(3)
 )
 DEFINER = loom SQL SECURITY DEFINER
@@ -4889,15 +5307,100 @@ AS SELECT
     agent,
     toDate(ts) AS day,
     operation,
-    sumState(upstream_cost_usd) AS cost_usd_state,
-    sumState(toUInt64(input_tokens) + toUInt64(output_tokens)) AS tokens_state,
-    sumState(toUInt64(embedding_tokens)) AS embed_tokens_state,
-    countState() AS ops_state,
-    sumStateIf(toUInt64(1), success = false) AS errors_state,
-    sumState(toUInt64(latency_ms)) AS latency_sum_state,
-    quantilesState(0.5, 0.95, 0.99)(latency_ms) AS latency_quantile_state,
+    sumStateIf(upstream_cost_usd, mirror_marked = 0) AS cost_usd_state,
+    sumStateIf(toUInt64(input_tokens) + toUInt64(output_tokens), mirror_marked = 0) AS tokens_state,
+    sumStateIf(toUInt64(embedding_tokens), mirror_marked = 0) AS embed_tokens_state,
+    countStateIf(mirror_marked = 0) AS ops_state,
+    sumStateIf(toUInt64(1), (mirror_marked = 0) AND (success = false)) AS errors_state,
+    sumStateIf(toUInt64(latency_ms), mirror_marked = 0) AS latency_sum_state,
+    quantilesStateIf(0.5, 0.95, 0.99)(latency_ms, mirror_marked = 0) AS latency_quantile_state,
+    sumStateIf(upstream_cost_usd, mirror_marked != 0) AS marked_cost_usd_state,
+    sumStateIf(toUInt64(input_tokens) + toUInt64(output_tokens), mirror_marked != 0) AS marked_tokens_state,
+    sumStateIf(toUInt64(embedding_tokens), mirror_marked != 0) AS marked_embed_tokens_state,
+    countStateIf(mirror_marked != 0) AS marked_ops_state,
     max(ts) AS ts_hwm
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events
+    UNION ALL
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events_private
+)
 WHERE (ts > (
     SELECT max(ts_hwm)
     FROM loom.agent_cost_rollup_daily
@@ -4928,7 +5431,7 @@ AS SELECT
     now() AS df_added_at
 FROM loom.chunks
 ARRAY JOIN arrayDistinct(arrayFilter(t -> (length(t) >= 3), arrayMap(t -> lowerUTF8(t), splitByNonAlpha(context)))) AS term
-WHERE (content != '') AND (context != '') AND (doc_superseded_at IS NULL)
+WHERE (content != '') AND (context != '') AND (doc_superseded_at IS NULL) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     namespace,
@@ -4953,7 +5456,7 @@ AS SELECT
     now() AS df_added_at
 FROM loom.chunks
 ARRAY JOIN arrayDistinct(arrayFilter(t -> (length(t) >= 3), arrayMap(t -> lowerUTF8(t), splitByNonAlpha(content)))) AS term
-WHERE (content != '') AND (doc_superseded_at IS NULL)
+WHERE (content != '') AND (doc_superseded_at IS NULL) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     namespace,
@@ -5522,12 +6025,93 @@ AS SELECT
     subject,
     maxState(ts) AS last_seen,
     max(ts) AS ts_hwm
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events
+    UNION ALL
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events_private
+)
 WHERE (subject != '') AND (ts > (
     SELECT max(ts_hwm)
     FROM loom.subject_last_seen
     WHERE (org = '') AND (subject = '')
-)) AND (ts <= (now64(3) - toIntervalSecond(10)))
+)) AND (ts <= (now64(3) - toIntervalSecond(10))) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     subject
@@ -5537,7 +6121,88 @@ SELECT
     '' AS subject,
     maxState(toDateTime64(0, 3)) AS last_seen,
     max(ts) AS ts_hwm
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events
+    UNION ALL
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events_private
+)
 WHERE (ts > (
     SELECT max(ts_hwm)
     FROM loom.subject_last_seen
@@ -5591,7 +6256,7 @@ SELECT
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok') AS latency,
     fold_to AS ingested_hwm
 FROM loom.agent_events
-WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to)
+WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to) AND (mirror_marked = 0) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     minute,
     slo_class,

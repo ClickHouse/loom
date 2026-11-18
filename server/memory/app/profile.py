@@ -28,6 +28,7 @@ from server.memory.api.models_profile import (
     ProfileSetInput,
 )
 from server.memory.domain.context_layout import escape_data
+from server.observability.store.event_reads import MASKED_EVENTS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -449,13 +450,14 @@ async def handle_profile_activity(
     ch = _get_ch()
     try:
         rows = await ch.query_all(
-            """
+            (
+                """
             SELECT
               agent AS agent,
               max(ts) AS last_ts,
               count() AS n,
               groupUniqArray(operation) AS ops
-            FROM loom.agent_events
+            FROM {masked_events}
             WHERE org = {org:String}
               AND namespace = {ns:String}
               AND operation IN ({ops:Array(String)})
@@ -465,7 +467,8 @@ async def handle_profile_activity(
             GROUP BY agent
             ORDER BY last_ts DESC
             LIMIT 20
-            """,
+            """
+            ).replace("{masked_events}", MASKED_EVENTS),
             params={
                 "org": input.org,
                 "ns": input.namespace,

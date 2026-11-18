@@ -84,6 +84,8 @@ export interface AssistantCitation {
 }
 
 export interface AssistantAskOutput {
+  /** True when this answer is private to the caller's protected session; false by default. */
+  mirrored?: boolean;
   answer?: string;
   run_id?: string;
   model?: string;
@@ -2545,14 +2547,17 @@ export interface CostAgentSummaryOutput {
 export interface CostBudgetStatusInput {
   org: string;
   namespace?: string | null;
+  user_id?: string | null;
 }
 
 export interface CostBudgetStatusOutput {
   namespace: string;
-  spent_24h_usd: number;
+  user_id?: string | null;
+  spent_24h_usd: number | null;
   cap_usd: number;
-  cap_source: "namespace" | "global" | "uncapped" | "org";
+  cap_source: "namespace" | "global" | "namespace_user" | "global_user" | "uncapped" | "org";
   over_cap: boolean;
+  namespace_over_cap?: boolean | null;
   pct_of_cap?: number | null;
   namespaces_with_spend?: number;
 }
@@ -4391,6 +4396,62 @@ export interface KnowledgeSourceParseLinksOutput {
   links?: KnowledgeSourceParsedLink[];
 }
 
+export interface KnowledgeSourcePushConfigureInput {
+  /** The org. */
+  org: string;
+  /** The source's namespace. */
+  namespace: string;
+  /** The registered source name. */
+  name: string;
+  /** Enable a fresh setup; false disables push. */
+  enabled?: boolean;
+  /** The configuring agent, default '-'. */
+  agent?: string;
+  /** The configuring user, default '-'. */
+  user_id?: string;
+  /** The configuring session, default '-'. */
+  session_id?: string;
+}
+
+export interface PushStatusOutput {
+  enabled?: boolean;
+  status?: string;
+  provider?: string;
+  generation?: string;
+  callback_url?: string;
+  provider_id?: string;
+  challenge_fingerprint?: string;
+  verification_token?: string;
+  channels?: number;
+  expires_at?: number;
+}
+
+export interface KnowledgeSourcePushConfirmInput {
+  /** The org. */
+  org: string;
+  /** The source's namespace. */
+  namespace: string;
+  /** The registered source name. */
+  name: string;
+  /** The pending setup generation. */
+  generation: string;
+  /** The inspected Notion challenge's SHA-256 fingerprint; empty for Linear. */
+  challenge_fingerprint?: string;
+  /** The Linear webhook signing secret; empty for Notion. */
+  signing_secret?: string;
+}
+
+export interface KnowledgeSourcePushStatusInput {
+  /** The org. */
+  org: string;
+  /** The source's namespace. */
+  namespace: string;
+  /** The registered source name. */
+  name: string;
+  /** Reveal a pending Notion challenge, default false. */
+  reveal_challenge?: boolean;
+}
+
 export interface KnowledgeSourceRemoveInput {
   /** The org. */
   org: string;
@@ -4474,6 +4535,7 @@ export interface KnowledgeSourceUpdateOutput {
 export interface KnowledgeSynthesizeInput {
   org: string;
   namespace: string;
+  user_id?: string;
   source_uris?: string[];
   datasets?: QueryDataset[];
   task: string;
@@ -6880,7 +6942,7 @@ export interface MemorySearchInput {
   exclude_keys?: string[];
   quality_filter?: boolean;
   read_scope?: "namespace" | "own_user" | "own_session";
-  /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
+  /** Up to 64 names; if non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
   /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
@@ -7008,7 +7070,7 @@ export interface MemorySearchTraceInput {
   exclude_keys?: string[];
   quality_filter?: boolean;
   read_scope?: "namespace" | "own_user" | "own_session";
-  /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
+  /** Up to 64 names; if non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
   /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
@@ -7718,6 +7780,8 @@ export interface NamespaceGetOutput {
   coverage_sweep?: boolean | null;
   consolidation_enabled?: boolean | null;
   daily_cost_cap_usd?: number | null;
+  daily_user_cost_cap_usd?: number | null;
+  budget_alert_inbox?: string | null;
   conflict_threshold?: number | null;
   retention_days?: number | null;
   warm_days?: number | null;
@@ -7886,6 +7950,8 @@ export interface NamespaceEntry {
   active: boolean;
   consolidation_enabled?: boolean;
   daily_cost_cap_usd?: number;
+  daily_user_cost_cap_usd?: number;
+  budget_alert_inbox?: string;
   conflict_threshold?: number | null;
   retention_days?: number;
   warm_days?: number;
@@ -8010,6 +8076,8 @@ export interface NamespaceRegisterInput {
   coverage_sweep?: boolean | null;
   consolidation_enabled?: boolean | null;
   daily_cost_cap_usd?: number | null;
+  daily_user_cost_cap_usd?: number | null;
+  budget_alert_inbox?: string | null;
   conflict_threshold?: number | null;
   retention_days?: number | null;
   warm_days?: number | null;
@@ -10500,6 +10568,9 @@ export type OpName =
   | "knowledge.source.inspect"
   | "knowledge.source.list"
   | "knowledge.source.parse_links"
+  | "knowledge.source.push_configure"
+  | "knowledge.source.push_confirm"
+  | "knowledge.source.push_status"
   | "knowledge.source.remove"
   | "knowledge.source.rotate"
   | "knowledge.source.sync_now"
@@ -10873,6 +10944,9 @@ export interface OpMap {
   "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
   "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
   "knowledge.source.parse_links": { input: KnowledgeSourceParseLinksInput; output: KnowledgeSourceParseLinksOutput };
+  "knowledge.source.push_configure": { input: KnowledgeSourcePushConfigureInput; output: PushStatusOutput };
+  "knowledge.source.push_confirm": { input: KnowledgeSourcePushConfirmInput; output: PushStatusOutput };
+  "knowledge.source.push_status": { input: KnowledgeSourcePushStatusInput; output: PushStatusOutput };
   "knowledge.source.remove": { input: KnowledgeSourceRemoveInput; output: KnowledgeSourceRemoveOutput };
   "knowledge.source.rotate": { input: KnowledgeSourceRotateInput; output: KnowledgeSourceRotateOutput };
   "knowledge.source.sync_now": { input: KnowledgeSourceSyncNowInput; output: KnowledgeSourceSyncNowOutput };
@@ -11246,6 +11320,9 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
+  { name: "knowledge.source.push_configure", group: "knowledge", method: "sourcePushConfigure", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
+  { name: "knowledge.source.push_confirm", group: "knowledge", method: "sourcePushConfirm", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
+  { name: "knowledge.source.push_status", group: "knowledge", method: "sourcePushStatus", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: false, readOnly: false },
   { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
@@ -11466,4 +11543,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 370;
+export const GENERATED_OP_COUNT = 373;

@@ -24,7 +24,10 @@ def test_a_changed_page_maps_to_the_url_the_site_serves_it_at() -> None:
     assert indexnow.page_url("docs/benchmarks/results.csv") is None
 
 
-def test_only_changed_pages_are_submitted_when_the_build_did_not_change() -> None:
+def test_only_changed_pages_are_submitted_without_translation_dependencies(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(indexnow, "DOCS", tmp_path / "docs")
     urls = indexnow.urls_for(["docs/a.md", "docs/a.md", "README.md", "docs/b/index.md"])
     assert urls == [SITE + "a/", SITE + "b/"]
 
@@ -43,6 +46,9 @@ def test_a_change_to_the_build_submits_every_page() -> None:
     for path in (
         "mkdocs.yml",
         "scripts/docs_site/overrides/main.html",
+        "scripts/docs_site/locales.py",
+        "scripts/docs_site/video_labels.py",
+        "scripts/docs_site/paths.py",
         "scripts/docs_site/hooks.py",
         "scripts/docs_site/requirements.txt",
         "scripts/codegen/page_summary.py",
@@ -64,7 +70,14 @@ def test_every_submitted_url_is_on_the_key_files_host_and_under_its_directory() 
     assert all(urlsplit(u).hostname == body["host"] for u in body["urlList"])
 
 
-def test_main_posts_only_the_changed_pages_and_posts_nothing_when_none_changed(monkeypatch) -> None:
+def test_main_posts_only_the_changed_pages_and_posts_nothing_when_none_changed(
+    tmp_path, monkeypatch
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    key = "a" * 32
+    (docs / f"{key}.txt").write_text(key)
+    monkeypatch.setattr(indexnow, "DOCS", docs)
     sent: list[dict] = []
 
     class _Resp:
@@ -86,3 +99,10 @@ def test_main_posts_only_the_changed_pages_and_posts_nothing_when_none_changed(m
     assert sent == []
     assert indexnow.main(["docs/a.md"]) == 0
     assert [s["urlList"] for s in sent] == [[SITE + "a/"]]
+
+
+def test_shared_language_route_mapping_is_a_render_input() -> None:
+    from scripts.docs_site import locales
+
+    helper = Path(locales.page_path.__code__.co_filename).resolve().relative_to(ROOT)
+    assert indexnow.urls_for([helper.as_posix()]) == indexnow.every_page()

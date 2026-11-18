@@ -28,6 +28,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from server.core.ch_names import otel_table
+from server.core.diagnostics import public_only
 from server.observability.otel_exporters import (
     _SPAN_SCHEDULE_DELAY_MS,
     _make_clickhouse_log_exporter,
@@ -89,8 +90,15 @@ def _instrument_fastapi(app: Any) -> None:
     Never raises: telemetry must not fail a boot."""
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.metrics import get_meter_provider
 
-        FastAPIInstrumentor.instrument_app(app, excluded_urls=_fastapi_excluded_urls())
+        from server.observability.otel_privacy import asgi_meter_provider
+
+        FastAPIInstrumentor.instrument_app(
+            app,
+            excluded_urls=_fastapi_excluded_urls(),
+            meter_provider=asgi_meter_provider(get_meter_provider()),
+        )
     except Exception as e:  # noqa: BLE001 — instrumentation is optional; boot continues without it
         log.warning("FastAPIInstrumentor.instrument_app failed: %s", e)
 
@@ -231,10 +239,14 @@ def _start_tracing(exporter_mode: str, endpoint: str) -> tuple[Any, Any, Any] | 
     provider = TracerProvider(resource=resource)
     # 3000ms (vs the 5000ms default) bounds the span-loss window before
     # SIGTERM while still batching enough per export to be efficient.
+    from server.observability.otel_privacy import public_span_processor
+
     provider.add_span_processor(
-        BatchSpanProcessor(
-            span_exporter,
-            schedule_delay_millis=_SPAN_SCHEDULE_DELAY_MS,
+        public_span_processor(
+            BatchSpanProcessor(
+                span_exporter,
+                schedule_delay_millis=_SPAN_SCHEDULE_DELAY_MS,
+            )
         )
     )
     # Second, independent processor. Deliberately after the ClickHouse one and
@@ -431,6 +443,7 @@ def langfuse_processor_status() -> dict[str, Any]:
     }
 
 
+@public_only
 def record_op(
     op_name: str,
     *,

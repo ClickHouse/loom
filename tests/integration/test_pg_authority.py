@@ -1938,6 +1938,8 @@ async def test_a_summary_left_a_source_is_downgraded_with_its_vectors_and_search
     tags = ["consolidated", "src:k1", "src:k2"]
     made = await call("memory.set", _set(ns, "summary", "a summary of k1 and k2", tags=tags))
     assert made.status_code == 200, made.text
+    # The downgrade copies vectors from the summary's initial publication.
+    await _published(pg_conn, org)
     gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k1"})
     assert gone.status_code == 200, gone.text
     assert gone.json().get("dependents_downgraded") == 1, gone.text
@@ -1973,6 +1975,8 @@ async def test_a_summary_left_no_source_is_tombstoned_with_its_vectors_holding_n
     tags = ["consolidated", "src:k1"]
     made = await call("memory.set", _set(ns, "summary", "a summary of k1", tags=tags))
     assert made.status_code == 200, made.text
+    # The retirement needs the summary's initial vectors to have published.
+    await _published(pg_conn, org)
     gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k1"})
     assert gone.status_code == 200, gone.text
     assert gone.json().get("dependents_tombstoned") == 1, gone.text
@@ -2911,6 +2915,8 @@ async def test_a_redaction_reads_a_live_claims_lease_and_leaves_a_parked_one_par
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
@@ -3322,6 +3328,8 @@ async def test_reconcile_status_holds_back_what_the_authority_has_not_published(
         assert (
             await call("memory.set", _set(ns, k, f"an embedded fact about {k}"))
         ).status_code == 200
+    # The divergence cases need both initial memory rows and their vectors.
+    await _published(pg_conn, org)
     ident = {k: (org, ns, "a", "-", "-", k) for k in keys}
 
     def statuses() -> dict[str, str]:
@@ -3741,6 +3749,15 @@ async def test_a_write_made_unembedded_over_an_embedded_key_retires_its_vectors(
     after."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "an embedded fact"))).status_code == 200
+    # Establish the embedded head: the first write answers before its publication.
+    await _published(pg_conn, org)
+    initial_live = ch_client.query(
+        "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
+        "AND namespace = {n:String} AND memory_key = 'k' AND tombstoned_at IS NULL",
+        settings=_SEQUENTIAL,
+        parameters={"o": org, "n": ns},
+    ).result_rows[0][0]
+    assert initial_live > 0
     # memory.update takes no level: the detector makes its new value 'high'.
     value = "the ssn is 123-45-6789" if op == "memory.update" else "the same fact, changed"
     body: dict[str, Any] = {**_set(ns, "k", value), **change}
@@ -5443,6 +5460,8 @@ async def test_a_cleared_head_is_sent_from_its_head_row_and_a_cleared_older_vers
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "the first version"))).status_code == 200
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     head = (await call("memory.set", _set(ns, "k", "the second version"))).json()
     await _published(pg_conn, org)
     await pg_conn.execute(
@@ -5588,6 +5607,8 @@ async def test_a_revision_past_the_horizon_that_clickhouse_holds_loses_its_paylo
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before revisions can hand its delivery to the worker.
+    await _published(pg_conn, org)
     second = (await call("memory.set", _set(ns, "k", "the token was rotated"))).json()
     assert (await call("memory.set", _set(ns, "k", "the token is in the vault"))).status_code == 200
     for key in ("k2", "kp", "ko", "kd"):

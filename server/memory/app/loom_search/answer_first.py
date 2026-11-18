@@ -94,12 +94,13 @@ def _defect_answer(payload: dict[str, Any]) -> bool:
 
     echoes = drop_loom_output(payload)
     withheld = verdict_leads(payload)
+    verdict = bool((payload.get("tracker") or {}).get("verdict"))
     if echoes:
         withheld["loom_output"] = echoes
     if withheld:
-        reason = "tracker_verdict_leads" if payload.get("tracker") else "loom_output"
+        reason = "tracker_verdict_leads" if verdict else "loom_output"
         payload["withheld"] = {**withheld, "reason": reason}
-    return bool(payload.get("tracker"))
+    return verdict
 
 
 def precision_floor() -> float:

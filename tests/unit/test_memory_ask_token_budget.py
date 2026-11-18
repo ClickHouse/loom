@@ -93,7 +93,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def fake_search(search_input: Any) -> MemorySearchOutput:
         return e.search_output
 
-    async def fake_over_cap(org: str, ns: str) -> bool:
+    async def fake_over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     monkeypatch.setattr(hsearch, "handle_memory_search", fake_search)

@@ -25,6 +25,7 @@ from server.operations.base import MCP_HIDDEN
 
 
 SEARCH_TOP_K_MAX = 500  # not a setting: the wire bound of memory.search's top_k
+SEARCH_ENTITY_FILTER_MAX = 64  # not a setting: the raw entity-filter input bound
 
 
 class MemorySearchInput(BaseModel):
@@ -196,7 +197,8 @@ class MemorySearchInput(BaseModel):
     read_scope: Literal["namespace", "own_user", "own_session"] = "namespace"
     entity_filter: list[str] = Field(
         default_factory=list,
-        description="If non-empty, OR-match against extracted entities — "
+        max_length=SEARCH_ENTITY_FILTER_MAX,
+        description="Up to 64 names; if non-empty, OR-match against extracted entities — "
         "rows whose `entities` array intersects this list are "
         "boosted alongside cosine matches.",
     )

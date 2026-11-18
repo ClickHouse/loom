@@ -94,10 +94,39 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{- /* The settings every pod must share, as env names: the embedding space and the root
-secret. A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
+{{/* The probe is chart-owned even when disabled: an envFrom source cannot enable it. */}}
+{{- define "loom.cellProbePort" -}}
+{{- $block := dict -}}
+{{- if hasKey .Values "cellProbe" -}}
+{{- $raw := get .Values "cellProbe" -}}
+{{- if not (kindIs "invalid" $raw) -}}
+{{- if not (kindIs "map" $raw) -}}{{ fail "cellProbe must be a map" }}{{- end -}}
+{{- $block = $raw -}}
+{{- end -}}
+{{- end -}}
+{{- $port := int64 0 -}}
+{{- if hasKey $block "port" -}}
+{{- $raw := get $block "port" -}}
+{{- if not (kindIs "invalid" $raw) -}}
+{{- if not (and (has (kindOf $raw) (list "int" "int64" "float64")) (regexMatch "^(0|[1-9][0-9]*)$" (toString $raw))) -}}
+{{- fail "cellProbe.port must be a whole number from 0 to 65535, except 7777" -}}
+{{- end -}}
+{{- $port = int64 $raw -}}
+{{- if or (lt $port 0) (gt $port 65535) (eq $port 7777) -}}
+{{- fail "cellProbe.port must be a whole number from 0 to 65535, except 7777" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (ne $port 0) (hasKey .Values.podLabels "loom.clickhouse.com/cell-probe") -}}
+{{- fail "podLabels cannot set loom.clickhouse.com/cell-probe beside cellProbe.port" -}}
+{{- end -}}
+{{- printf "%d" $port -}}
+{{- end -}}
+
+{{- /* Chart-owned settings, as env names.
+A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
 {{- define "loom.guardedNames" -}}
-["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS"]
+["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS", "LOOM_CELL_PROBE_PORT"]
 {{- end -}}
 
 {{- /* Where a setting the chart guards is set instead: the root secret and its previous
@@ -107,7 +136,8 @@ settings-file name> "root" $). */}}
 {{- define "loom.guardedThrough" -}}
 {{- $key := upper .key | trimPrefix "LOOM_" -}}
 {{- $values := dict "JWT_SECRET" "secrets.jwtSecret" "JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious" -}}
-{{- if not (hasKey $values $key) -}}embedding.*, which the chart guards
+{{- if eq $key "CELL_PROBE_PORT" -}}cellProbe.port
+{{- else if not (hasKey $values $key) -}}embedding.*, which the chart guards
 {{- else if .root.Values.secrets.existingSecret -}}the Secret {{ .root.Values.secrets.existingSecret }} (secrets.existingSecret)
 {{- else -}}{{ get $values $key }}, which the chart guards
 {{- end -}}
@@ -175,6 +205,7 @@ they need: set anywhere else, the probes would still use HTTP. */}}
 {{- if has (printf "LOOM_%s" (upper $k)) $tlsNames }}{{ fail (printf "set %s through tls.*, not settingsFile" $k) }}{{ end }}
 {{- end }}
 LOOM_DEPLOYMENT: "1"
+LOOM_CELL_PROBE_PORT: {{ include "loom.cellProbePort" . | quote }}
 LOOM_PUBLIC_BASE_URL: {{ required "publicBaseUrl is required" .Values.publicBaseUrl | quote }}
 {{- if not (hasKey .Values.env "LOOM_OAUTH_ISSUER") }}
 LOOM_OAUTH_ISSUER: {{ .Values.publicBaseUrl | quote }}
@@ -565,6 +596,11 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     - name: http
       containerPort: 7777
       protocol: TCP
+    {{- if ne (include "loom.cellProbePort" $) "0" }}
+    - name: cell-probe
+      containerPort: {{ include "loom.cellProbePort" $ }}
+      protocol: TCP
+    {{- end }}
   envFrom:
     - secretRef:
         name: {{ include "loom.secretName" $ }}

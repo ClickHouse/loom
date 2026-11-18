@@ -14,6 +14,7 @@ import pytest
 
 from server.auth.fanout import Fanout
 from server.observability import capture_consent, genai
+from tests.unit.checked_repo_search_fakes import install_repo_search
 
 
 @pytest.fixture(autouse=True)
@@ -468,7 +469,7 @@ async def _loom_search_capture_levels_seen(
     monkeypatch.setattr(
         "server.knowledge.app.conversations.handle_conversation_search", _search_leg
     )
-    monkeypatch.setattr(loom_search_fanout, "knowledge_with_repo_docs", _failed)
+    install_repo_search(monkeypatch, _failed)
     monkeypatch.setattr(loom_search_fanout, "search_profile", _empty)
     monkeypatch.setattr(loom_search_fanout, "tracker_leg", _empty)
     for mod in (mcp_call, mcp_outcome):

@@ -20,6 +20,7 @@ import {
   NETWORK_ERROR_CODE,
   TimeoutError,
 } from "./errors.js";
+import { type SessionCapture, SessionProtectionUnavailable } from "./session-protection.js";
 import type { Transport } from "./transport.js";
 
 export const ASSISTANT_ROUTE = "/v1/assistant/chat/completions";
@@ -87,6 +88,8 @@ export interface AskInput {
   signal?: AbortSignal;
   /** How long the request, and then each read, waits for data (`DEFAULT_READ_TIMEOUT_MS`). */
   readTimeoutMs?: number;
+  /** Contributing conversations retained for an automatic invocation. */
+  capture?: SessionCapture;
 }
 
 /** The methods bound to a transport; `LoomClient` merges them into `loom.assistant`. */
@@ -134,7 +137,7 @@ export function assistantChat(transport: Transport): AssistantChat {
       touch();
       let res: Response;
       try {
-        res = await transport.stream(ASSISTANT_ROUTE, body, { headers, signal: cut.signal });
+        res = await transport.stream(ASSISTANT_ROUTE, body, { headers, signal: cut.signal, capture: input.capture });
       } catch (e) {
         throw timedOut(e);
       }
@@ -151,9 +154,14 @@ export function assistantChat(transport: Transport): AssistantChat {
         steps: [],
         stepsCut: false,
       };
+      let complete = false;
       try {
         for await (const data of events(res, transport.baseUrl, requestId, cut.signal, touch)) {
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") {
+            complete = true;
+            continue;
+          }
+          if (complete) continue;
           const event = parse(data);
           if (!event) continue;
           if (isObject(event.error)) {
@@ -173,6 +181,7 @@ export function assistantChat(transport: Transport): AssistantChat {
       }
       if (!answer.runId)
         throw new LoomError(`${ASSISTANT_ROUTE}: the stream ended before the answer began`, { requestId });
+      if (!complete) throw new LoomError(`${ASSISTANT_ROUTE}: the stream ended before completion`, { requestId });
       pause();
       yield { type: "answer", answer };
     } finally {
@@ -196,6 +205,8 @@ async function* events(
   if (!reader) return;
   const decoder = new TextDecoder();
   let buffered = "";
+  let skipLF = false;
+  let fields: string[] = [];
   try {
     for (;;) {
       let chunk: ReadableStreamReadResult<Uint8Array>;
@@ -203,6 +214,7 @@ async function* events(
         chunk = await reader.read();
         touch();
       } catch (e) {
+        if (e instanceof SessionProtectionUnavailable) throw e;
         if (signal?.aborted) {
           const aborted = new LoomError(`${ASSISTANT_ROUTE}: aborted by caller`, {
             op: ASSISTANT_ROUTE,
@@ -219,18 +231,33 @@ async function* events(
         });
         throw classed(cut, "dependency", false);
       }
-      buffered += decoder.decode(chunk.value, { stream: !chunk.done });
-      let end = buffered.indexOf("\n\n");
-      while (end >= 0) {
-        for (const line of buffered.slice(0, end).split("\n")) if (line.startsWith("data: ")) yield line.slice(6);
-        buffered = buffered.slice(end + 2);
-        end = buffered.indexOf("\n\n");
+      for (const character of decoder.decode(chunk.value, { stream: !chunk.done })) {
+        if (skipLF) {
+          skipLF = false;
+          if (character === "\n") continue;
+        }
+        if (character !== "\r" && character !== "\n") {
+          buffered += character;
+          continue;
+        }
+        skipLF = character === "\r";
+        const line = buffered;
+        buffered = "";
+        if (!line) {
+          if (fields.length) yield fields.join("\n");
+          fields = [];
+        } else if (line === "data") fields.push("");
+        else if (line.startsWith("data:")) {
+          const value = line.slice(5);
+          fields.push(value.startsWith(" ") ? value.slice(1) : value);
+        }
       }
       if (chunk.done) return;
     }
   } finally {
     // A caller that stops reading closes the answer: the server stops it too.
     await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

@@ -6,7 +6,9 @@ in step, on any shared namespace or collection. This page is the design of sourc
 many items given as pasted links, per-user connected accounts, an org-wide crawl, and
 access that follows the store's own permissions. The caller's view of today's sources is
 in [knowledge: document sources](../features/knowledge.md#document-sources); parsing is
-in [document extraction](document-extraction.md).
+in [document extraction](document-extraction.md). Optional provider notifications
+request the same sync path; [source push](source-push.md) describes their setup,
+authentication and lifecycle.
 
 ## What changes
 
@@ -273,17 +275,53 @@ the redirect URI registered with the store is built from it, never from a reques
     files picked in a Loom page, never a folder's later files or the recordings folder,
     so it is not offered. The store's device grant does not issue Drive scopes.
   - `notion`: the public-integration OAuth, where the person picks the pages to share on
-    the consent page. The store reports no scopes; the operator registers the
-    integration with read-content capability only, and that registration is the bound.
-  - `linear`: an OAuth application with the `read` scope.
+    the consent page. The operator registers read-content capability only, without
+    write, comment or user-information capabilities. The OAuth flow has no documented
+    scope parameter; token introspection can report an opaque scope, without a
+    documented mapping to capabilities. Neither that value nor its absence proves the
+    registration is read-only. The registration is the permission bound; a display
+    email is optional because reading it needs a separate user-information capability.
+  - `linear`: an OAuth application with the `read` scope and `actor=user`.
 - `GET /v1/connect/<kind>/callback` exchanges the code. Each granted scope is mapped to
   its canonical name, and a granted scope outside the kind's set refuses the connection.
   The callback stores in `loom.connected_accounts` the canonical subject, the kind, the
-  store account's id and email (shown to the person, never used as their identity), the
-  scopes, and the long-lived credential: the refresh token, or for a store that issues
-  none (`notion`) its long-lived access token. That credential is sealed under the
-  purpose `connected_accounts.credential`, which `loom secrets reseal` covers. A short
-  access token is held in memory only.
+  store account's id, optional display email, scopes and refresh token. The store id and
+  email describe the connected account; neither changes the person's Loom identity or
+  grants namespace access. A usable refresh token is required for ongoing sync,
+  including for `notion`; a missing token refuses the connection instead of falling
+  back to storing an access token. The refresh token is sealed under the purpose
+  `connected_accounts.credential`, which `loom secrets reseal` covers. An access token
+  is held in memory only.
+- Refresh for a source retains its account generation and source binding across provider
+  work. One refresh owns that generation at a time; replacement refresh material is
+  persisted only while both remain active and current. Disconnect, replacement, erasure or
+  deactivation cannot be undone by an older refresh. A cancellation or lost response
+  does not prove the provider left its token unchanged, so a retry needs the provider's
+  documented recovery guarantee. Missing expiry metadata does not justify an invented
+  lifetime or permanent access-token fallback.
+- Provider token contracts differ:
+  - `gdrive` can omit a replacement refresh token. Retain the existing refresh token in
+    that case. Revoking a token affects the person's grant across the OAuth project's
+    clients. Use a project dedicated to document connections; unrelated applications
+    must not share that revocation boundary. Other affected connections stop when
+    refresh is refused.
+  - `notion` refresh replaces both access and refresh tokens. The authorization guide
+    requires the pair, while the response reference permits a null refresh token; a
+    reply without usable replacement material is unavailable. The documented REST flow
+    supplies no token lifetime, PKCE or lost-response recovery guarantee to assume.
+  - `linear` refresh replaces both tokens and renews the refresh token's 30-day lifetime.
+    Track access expiry from `expires_in`. The provider documents a 30-minute recovery
+    window for a lost successful refresh response, excluding revoked or replaced
+    credentials; this does not permit retrying another provider's rotation.
+
+  These contracts follow the stores' authorization references:
+  [Drive](https://developers.google.com/identity/protocols/oauth2/web-server),
+  [page-store authorization](https://developers.notion.com/guides/authorization/overview),
+  [page-store refresh](https://developers.notion.com/reference/refresh-a-token),
+  [capabilities](https://developers.notion.com/reference/capabilities),
+  [token introspection](https://developers.notion.com/reference/introspect-token) and
+  [tracker authorization](https://linear.app/developers/oauth-2-0-authentication).
+
 - A connection belongs to the subject that made it, and only that subject's sources use
   it. `connection.list` and `connection.disconnect` act on the caller's own; an erasure
   of the person deletes its connections and retires their sources
@@ -298,8 +336,16 @@ the redirect URI registered with the store is built from it, never from a reques
   clears the sealed credential and marks every source that uses it inactive (the part
   that fails closed), and only then revokes at the store with the token in memory, best
   effort, under a short timeout and outside any lease or claim, as SCIM revokes tokens
-  past its leases; a revoke that hangs or fails leaves the credential cleared. The sync
-  worker then retires those sources' mirrored documents. A turn also checks the owner: a
+  past its leases; a revoke that hangs or fails leaves the credential cleared. Local
+  disconnection is complete independently of remote revocation. The page store's
+  [revocation reference](https://developers.notion.com/reference/revoke-token) documents
+  access-token revocation, without promising refresh-token or whole-grant revocation.
+  An access-token revoke therefore cannot be reported as invalidating its refresh
+  family. If only refresh material is available, bounded refresh solely to obtain an
+  access token for revocation may follow local inactivation; no replacement credential
+  is persisted. An unavailable or unproven remote revocation remains so, and the person
+  can remove the integration's grant at the store. The sync worker then retires those
+  sources' mirrored documents. A turn also checks the owner: a
   source whose owner subject is revoked, deactivated, or no longer holds `writer` on the
   source's namespace is stopped (written inactive under the source lease,
   `status: owner_inactive`) and goes as a removed source does, so a missed hook fails
@@ -364,16 +410,27 @@ same code for any cause. The exceptions are these:
    - Its spend (input, output and embedding tokens, and cost) depends only on what
      exception 1 lets the answer depend on: no model or embedding call runs, or is
      chosen, on a mirror candidate before the check. It counts in its namespace's totals
-     and cap. Below a platform admin it shows only in the per-namespace-day total and in
-     `cost.budget_status`'s live total, and every other `cost.summary` dimension leaves
+     and cap. Except to a verified platform admin without namespace-role restrictions,
+     it shows only in the per-namespace-day total and in
+     `cost.budget_status`'s live namespace or org total, and every other `cost.summary` dimension leaves
      it out. The fold carries ops, those tokens and cost only, and leaves marked
      requests out of `errors` and the latency figures. A viewer can still difference a
      live or daily total around another person's marked request and so learn that
-     request's spend; that residual is accepted.
+     request's spend; that residual is accepted. Named-user caps also count marked
+     spend. Their public status exposes the cap and whether the user or namespace
+     ceiling is reached, but exact user spend and percentage are `null` except to that
+     operator. User warnings expose the selected user, cap, warning share and threshold
+     crossing, with exact spend withheld from every recipient, including an operator's
+     configured inbox or webhook. Namespace warnings retain the allowed namespace
+     total. These policy signals expose bounds; an admin changing caps can infer tighter
+     bounds. That residual is accepted, not a claim of full noninterference or a grant
+     to marked work, models or outcome fields.
    - Its work figures (statements, rows and bytes read, chunks injected, `llm_calls`,
      `response_tokens`, the stored duration), its `model` and the outcome fields a model
      call can change (`success`, `error_code`, `status_class`) go to a platform admin
      only, and the error-rate and model metrics leave marked requests out.
+     The stored argument map keeps only numeric statement/read/injection work fields.
+     Result identifiers, document tags, argument digests and error prose are omitted.
 3. A connected source's per-item and per-file codes and `too_many_documents`, to its
    owner, and its listing age, to its owner as a code (fresh or stale).
 4. A platform admin's view of a mirror's sources (every mirrored source's status, the
@@ -432,6 +489,22 @@ document; an N-1 replica has no mirror leg, and the rollback procedure keeps it 
 mirror that holds rows. A permission column on `loom.documents` read by every path would
 make the opposite the default; [sharing](sharing.md#alternatives-not-taken) rejected
 that for collections, since one missed path leaks.
+
+Search discovers chunk keys and scores without returning chunk text. Each leg checks
+candidates in batches of at most 64 until its admitted pool fills or its stream ends;
+denied candidates consume no pool position or fusion rank. Content reads bind the
+exact admitted namespace, address, chunk index, version and revision under the requested
+embedding model. A missing key is omitted without substituting a later version.
+Duplicate or unexpected rows discard all mirrored legs. Permissions are checked again
+after content is fetched. Listing evidence and any group membership relied on must
+still be fresh before the content leaves the checked leg. Independent email, owner, domain or public grants
+can admit a document whose group evidence expired.
+
+A marked private-first search gathers both possible passes from its authorized
+namespace list and visibility settings before choosing which to return. It refreshes
+all retained mirror permissions and reranks before applying the first-pass similarity
+threshold. A provisional private hit that loses permission therefore cannot suppress
+the public fallback. No reranking provider receives the provisional pools.
 
 - **Legs with the check:** `knowledge.search`, `get`, `outline`, `list`, `download`,
   `synthesize`, `knowledge.inspect` (titles), `knowledge.source.inspect` (a mirrored
@@ -534,17 +607,75 @@ that for collections, since one missed path leaks.
   (`/v1/admin/`, outside the gate) leave a mirror's ledger rows out whole: until the
   fold below carries a marked request's spend, a mirror's spend is in no fleet or
   consumer total.
-- **Every `agent_events` read is folded and masked.** The analytics export and
-  `sql_v1_usage_daily` fold a marked request's spend into a row per namespace and day
-  with agent and operation `-`, and every read of `agent_events` rows for anyone below a
-  platform admin, and every worker that derives rows a viewer reads from them, goes
-  through the fold and the mask: `sql_v1_agent_events` masks every field of a marked row
-  whose value can depend on an admitted item (`model`, the tokens, cost and work fields,
-  `llm_calls`, and the outcome fields a model call can change: `success`, `error_code`,
-  `status_class`), and `insights.query`'s analyst has a grant on a masked view only,
-  never on the table, with the same signed scope policy on the view (the implementing
-  pull request updates the isolation proof in [the assistant page](assistant.md)), which
-  exception 2 accepts as a cost beside `cost.summary`'s.
+- **Private events have separate physical storage.** Ordinary events stay in
+  `agent_events`; marked requests and mirror workers write `agent_events_private`.
+  The ordinary table's CHECK excludes marked rows and mirror namespaces. An analyst
+  keeps ordinary signed, namespace-scoped reads and cannot read the private table or
+  its physical metadata. Provisioning verifies the CHECK on every writer, drains
+  the finite set of prepared INSERTs and refuses any existing private contamination
+  before granting access. Checked per-writer HTTP sessions read the native access
+  catalog and prove that policies cannot hide the process or event populations.
+  Unknown visibility, writer routes or metadata refuse. It preserves existing rows
+  for operator resolution. Administrative application uses
+  `loom ch-setup --apply-analyst-sql`; unchecked analyst SQL files refuse.
+- **Private event reads are folded and masked.** The analytics export and
+  `sql_v1_usage_daily` union both stores and fold marked spend into a namespace/day row
+  with agent and operation `-`. `sql_v1_agent_events` and the signed
+  `analysis_agent_events` view mask every field that can depend on an admitted item
+  before predicates run: model, tokens, cost, work, `llm_calls`, success, error code
+  and status class. Trusted budget and history-policy reads cover both streams too.
+  User erasure scrubs both stores under `agent_events.scrub`; the private store has
+  the ordinary ledger's retention and tiering policy. The
+  [storage cutover](rolling-upgrades.md#analyst-event-storage-cutover) preserves
+  ordinary analysis across builds. The [assistant boundary](assistant.md) describes
+  the view and key-hiding requirements. Exception 2 accepts this fold beside
+  `cost.summary`'s.
+
+History predicates cannot use a marked call's outcome or projected arguments. A
+potentially matching marked event in a rule's identity, operation and time scope makes
+that leaf unknown before success or argument filters run. This includes an unresolved
+argument reference and a negated condition. Breadth rules check marked participation
+under the same principal pin because marked reads write no exposure row. The compiler
+reads coarse participation and the ordinary aggregate in one statement. Protected
+unknown carries one fixed reason and no count or timestamp; every affected enforcing
+operation refuses, reads included. Shadow rules retain their non-enforcing behavior.
+`policy.check` uses the same protected-history decision. Ordinary trace-backend errors
+keep their existing read-availability policy.
+
+A checked answer retains its access proofs through required policy witnesses and
+other work that must finish before publication. All provider work for its complete
+ordinary alternative finishes before cost and event snapshots. After required tail
+work, publication renews the exact private dependencies of the already selected frame
+and checks every retained deadline after the last renewal await. This boundary does
+not render, rerank, call a provider or choose an ordinary alternative. A lost proof
+refuses the whole frame; removing a citation from private prose is insufficient.
+After awaiting the response headers, publication renews access again before sending
+the body. A checked-proof or publication failure after headers aborts with a constant
+failure and sends no unchecked body. Discarded candidate widths and optional sections
+retain no publication guard; returned metadata, counts and cursor lookahead retain
+their contributing proofs. A raw download owns the same required marked accounting
+attempt as a registered operation. Cancellation and disconnects still propagate
+through owned cleanup. These checks end at the server's response-send boundary.
+
+The assistant's incremental stream has a terminal accounting boundary because final
+usage is unavailable before its early text. Its server-owned first event is
+`data: {"mirrored":true}` when marked. Partial text remains provisional until the
+response closes and joins its producers, captures final usage and confirms its
+required private cost row before `[DONE]` or a terminal error. Disconnect cleanup
+retains and joins that required delivery. Whole answers and checked source frames
+keep the accounting-before-publication boundary above. The answer token's distinct
+`answer_mirrors` bit fixes mirror admission before model work, so a source activated
+during a negative answer cannot introduce an unmarked tool leg. Missing admission is
+false; ordinary delegation drops it. See the
+[assistant boundary](assistant.md#the-bridge-each-callers-own-identity).
+
+A multi-entry MCP batch refuses every response-bearing marked entry with the same
+instruction to send it individually, including denied and empty entries. Notifications
+remain silent. It discards each marked entry's complete frame before buffering it or
+awaiting another entry. Single calls and one-entry arrays
+retain checked reads. Each entry gets fresh local state before routing or screening;
+the enclosing HTTP request keeps a monotonic mark through later ordinary entries,
+streaming and cleanup. Middleware task boundaries do not clear that owner.
 
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
@@ -585,7 +716,7 @@ that copy's, with the item flag. Otherwise the mirror copy is dropped.
 
 A session-content op records a session's text, or a figure derived from it, that a hook
 or client sends without the agent choosing it; an op the agent calls with text it chose
-(`memory.set`, `knowledge.add`, a task op) is the reader's own write. Each op declares
+is the reader's own write. Each op declares
 its class in the op registry (`server/operations/registry.py`), and an op both a hook
 and an agent call is session content. They include `conversation.append` (which the
 CLI's `ingest-transcript` calls), `conversation.save_message`, the `title` and
@@ -594,7 +725,12 @@ CLI's `ingest-transcript` calls), `conversation.save_message`, the `title` and
 `observe.crystallize`, `working_memory.set`, `working_memory.append`, `run.begin`,
 `run.complete`, `code.outcome`, `cost.record_turns` and `ui.vitals`, and every read a
 hook sends with a session's prompt, files or transcript (`context.pack`, `code.search`,
-`code.impact`, `memory.for_file`, `namespace.validate`). The rule decides; the
+`code.impact`, `memory.for_file`, `namespace.validate`). Framework callbacks also send
+the latest user message through `memory.search` and persist conversation items through
+`memory.set`, so both are session content. Its coalesced delivery through
+`memory.bulk_set` has the same class. Automatic tool interception also sends
+`code.test_gate`, `code.symbol`, `code.enclosing` and `tracker.duplicate_check` with
+session-derived inputs. The rule decides; the
 registry's classes and a test over what the shipped hooks send pin the full set.
 
 Once a session has seen the flag, no Loom hook sends any op from it, reads included, and
@@ -616,8 +752,12 @@ The refusal: from the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is se
 it is off again and the mirror-erase command has run, every session-content op refuses a
 client that does not declare the flag, in every org, whatever mix of clients and tokens
 a session runs; the declaration is the client's promise, carried by the transport and
-never by an op argument a model fills in (an assistant answer token carries its caller's
-declaration as a claim the bridge fixes at delegation), and a client that does not make
+never by an op argument a model fills in. The exact transport declaration is one
+`X-Loom-Session-Protection: v1` header; missing, repeated or unknown values declare
+nothing. An assistant answer token carries its caller's declaration in the Boolean
+`session_protection` claim the bridge fixes at delegation. An answer or its descendant
+cannot replace that claim with its own header, and ordinary delegation does not inherit
+the claim. A client that does not make
 it (a third-party MCP client connected straight to Loom) is refused like any other. The
 condition is the one row of `loom.knowledge_mirror_latch` or the process's own switch: a
 process refuses while its switch is on, row or no row, and writes the row whenever it
@@ -628,6 +768,32 @@ process reports the switch on. The check fails closed: a process that cannot rea
 row refuses, and the first mirrored `add` waits until every live process reports the
 switch on, as the schema check does. Since the refusal lifts only then, it says nothing
 of when another org's mirrors went.
+
+A process with the switch on confirms durable protection before startup can admit
+clients or start workers. Its existing instance heartbeat reasserts that state, so a
+lost row is repaired without waiting for a session-content call. Startup refuses an
+unconfirmed write. The common gate runs after token verification. HTTP checks before
+reading the operation body; MCP checks after resolving the operation and before
+content validation, identity defaults, history, replay or implicit session runs. Its fixed `SESSION_PROTECTION_REQUIRED` refusal is HTTP 409 and is not
+retryable without changing the client or completing the documented cleanup.
+
+The latch is one fixed `id = 0` KeeperMap row on the default Keeper ensemble, with
+`set_at` and no TTL, tenant identity or content. It is deployment protection, so tenant
+erasure never removes it. A fresh negative check uses a checked HTTP session under the
+service principal. It validates the local latch and lease engines, primes the latch,
+and brackets an acknowledged nonempty strict write to a unique expiring lease key and
+the latch read with the same live Keeper client identity. Every proof SELECT returns
+its execution's server UUID, including an empty latch, and the barrier INSERT computes
+the writer's UUID into its own lease row. The final exact holder and write UUID must
+match. This matters because a retried initial HTTP session creation can leave the same
+session name on two backends; the name alone does not pin execution. Query caches are
+disabled within this protocol. Any missing metadata, changed identity, uncertain write,
+expired nonce or cleanup failure refuses the negative decision. Only its exact own
+lease is disposable; a cleanup fault leaves an expiring row and never admits a request.
+A positive repair computes its fixed row key in the INSERT from a check of the writing
+server's UUID against the validated backend. A differently routed write refuses; an
+acknowledged strict insert or duplicate is followed by a fresh validated positive read.
+No negative result is cached. The named-session transport alone is not a Keeper proof.
 
 Mirrored sources are off for a deployment until an operator turns them on, after every
 Loom client and hook that sends session content honours the flag. Each pull request that
@@ -690,21 +856,71 @@ A reader sees a mirrored document when all of these hold:
 The reader's verified emails are its subject's directory emails that
 `VERIFIED_EMAIL_SQL` admits (an SSO account's or a linked one's,
 `server/core/grant_sql.py`), and nothing else: a subject that merely spells an address
-is not one, and neither is a connection's store email. The predicate's first arm admits
-any password-less row's `contact_email`; the implementing pull request confirms that
-only an SSO sign-in or a link writes such a row's `contact_email`, or narrows the
-predicate for this check. A domain matches only through the person's SSO account record,
-whose identity provider vouches for that domain (the store's hosted-domain claim, or the
-org's configured SSO domain), never a linked account's email or a bare verified address.
+is not one, and neither is a connection's store email. The predicate's passwordless
+arm covers nonempty contacts from verified SSO provisioning or operator linking.
+Password signup hashes the supplied password before storing its claimed address;
+ordinary namespace registration cannot write a contact address or password hash.
+The internal reader resolver retains the uncached canonical subject independently of
+verified emails and reads actual active contact rows for email proof.
+
+Signed hosted-domain evidence lives in `sso_links.hosted_domain` and `issuer`, written
+after the final SCIM check under the account ownership lock. A domain matches only
+through a current linked row naming the active passwordless account's contact, with the
+configured issuer and its signed hosted-domain claim. Empty defaults, missing claims,
+issuer changes and generic link changes deny domain access. Neither a linked password
+account's email nor a bare verified address proves domain membership. These identity
+inputs alone expose no mirrored document.
+A request keeps a monotonic mirror mark in its existing work bag, shared with child
+legs. An unbound direct helper serves no mirrored content. Active registrations, mirror
+bindings and listing starts are read in sequence before candidate permissions. A failed
+unconditional read marks `mirror_unread`; a failed candidate read invalidates the whole
+mirror plan without that marker. Checked adapters cover search, get, outline, download
+and listing. Other readers, marked-request sinks and session protections remain
+prerequisites to enabling mirrored sources.
+
+`documents.access_keys` and its bloom index select coarse candidates under the
+ClickHouse authority. Owner and group buckets retain candidates needing identity
+resolution; Unicode buckets retain matches whose database and Python normalization
+can differ. Every candidate still needs the current strict permission check. Under
+the Postgres authority these keys do not filter candidates: an unpublished head may
+widen permission. Both chunk-frequency views exclude mirrors, and a lexical-statistics
+rebuild refuses their names before reading or writing statistics. Mirrored lexical
+scores use fixed corpus constants.
+
+The checked list projection reads title, description, tags, blob metadata and the
+stored preview only at an admitted live document version and revision. Under Postgres,
+the current head supplies these fields and computes only the first 220 content bytes
+in the database, including for encoded text; no full body crosses into the list reader.
+Chunk counts belong to that same storage copy and revision. They count distinct
+embedding-model and section-index pairs, including sections awaiting embeddings. A
+Postgres count also requires the head's recorded chunk version; a current revision
+without recorded chunks counts zero. Permission and serving-state proofs must remain
+current through the list's final read before any count or lookahead is returned.
+Metadata discovery groups complete public address families before a public cursor or
+limit. Postgres reads internal pages of 64 rows, releasing the connection before
+permission checks; it reads every page without a candidate cutoff. Ordinary shadow
+checks read bounded batches independently of public filters and cursors. They cover
+the ordinary listing's published rows and its unpublished Postgres heads; requesting
+superseded rows also lets an ordinary tombstone shadow a mirrored copy. Mirrored
+candidates remain live-only.
+Listing chooses the newest admitted complete copy of a public address, with a stable
+storage-identity tie break, before applying public tags, URI prefixes or the cursor.
+An ordinary copy wins its entire family before these filters. Selection retains only
+one current family, bounded shadow batches and the requested page plus one lookahead.
+After selected projections and counts are read, ordinary shadows, permissions, identity,
+document versions and recorded chunk serving state are checked again for every retained
+copy, including the lookahead. A lost proof drops the whole mirrored leg, so it cannot
+leave a stale cursor or reveal a removed row through the page's continuation.
+
 A token reads as one person, for both the `owner` entry and the emails, or as nobody:
 
 - a person's own session token (a primary token whose own `sid` claim names a sign-in
   session, with no `creator` claim) reads as that person; a token minted for a subject
   without one reads as nobody;
 - a token minted for one person alone that says so (a `reads_as_creator` claim, which
-  only the person's own signed-in session can mint, through the dashboard's flow that
-  connects their own agent, which the coding-agent plugins use; delegation never copies
-  it) reads as its creator;
+  only the person's own primary first-party sign-in session can mint through
+  `POST /v1/me/personal_tokens.create`, for the dashboard's own-agent connection flow;
+  delegation never copies it) reads as its creator;
 - the assistant's answer token, delegated from the caller's for that answer alone,
   carries a reads-as claim that the bridge sets at delegation to the person the caller's
   token reads as, or to nobody, and reads as that; the check never infers it from the
@@ -1100,6 +1316,11 @@ The redirect URI to register with each store is
 - `server/knowledge/app/source_access.py`: the permission check and the mirror legs.
 - `server/auth/connected_accounts.py`: the connect routes and their store.
 - `server/clients/gdrive.py`, `notion.py`, `linear.py`, `recording.py`: the stores.
+- `server/clients/connected_oauth.py` (`OAuthClient`): fixed-provider consent, code
+  exchange, refresh, account metadata and revocation requests. Calls share the caller's
+  deadline, cap response bodies, refuse redirects and never retry. The caller consumes
+  browser-bound state before exchange, authorizes the Loom owner/source and commits
+  refresh generations; this HTTP helper neither supplies nor bypasses those checks.
 
 ## Tests
 
@@ -1288,7 +1509,7 @@ Each implementing pull request lists its own; these pin the model:
       row.
     - A mirror-erase run with the switch still on refused, a restore that loses the
       deployment row, and a mirrored `add` after either, with the refusal still holding.
-    - A viewer's `insights.query` over `agent_events` after another person's marked
+    - A viewer's `insights.query` over `analysis_agent_events` after another person's marked
       request finding its tokens, cost, `model` and outcome fields only as the mask
       allows, the caller's own rows included.
     - A caller admitted to nothing seeing no work figure on its own marked row over a

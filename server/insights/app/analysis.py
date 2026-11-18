@@ -56,6 +56,7 @@ from server.insights.api.models_analysis import (
 from server.insights.domain import analysis as boundary
 from server.insights.store import analysis as store
 from server.observability.event_args import text_digest
+from server.observability.store.event_reads import MASKED_EVENT_COLUMNS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -228,32 +229,16 @@ def entity_statements(
 ) -> list[str]:
     """The SQL that writes the analyst user for this deployment, password and key included."""
     db = store.target_database()
-    return boundary.entity_sql(db, _names(), _password(), _key(), caps(), granted, roles)
-
-
-def printed_checks() -> list[str]:
-    """What `loom ch-setup --print-analyst-sql` tells an admin to run first."""
-    return store.printed_checks()
-
-
-async def own_grant_revokes() -> list[str]:
-    """A REVOKE for each grant the analyst's own SHOW GRANTS lists, for the
-    printed SQL, whose writer cannot read system.grants. The allowlist is
-    granted after them. None before the user exists."""
-    try:
-        lines = await store.own_grant_lines(password=_password(), extra={})
-    except Exception:  # noqa: BLE001 — no user yet, or it refuses this password: nothing to revoke
-        return []
-    return boundary.revokes_for(lines)
-
-
-def printed_statements(revokes: list[str]) -> list[str]:
-    """The entity statements with `revokes` before the first grant, after a
-    `SET` that cuts the text of the rest from the log."""
-    statements = entity_statements()
-    first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    cut = ", ".join(f"{name} = {value}" for name, value in boundary.LOG_TEXT_CUT.items())
-    return [f"SET {cut}", *statements[:first], *revokes, *statements[first:]]
+    return boundary.entity_sql(
+        db,
+        _names(),
+        _password(),
+        _key(),
+        caps(),
+        granted,
+        roles,
+        event_columns=MASKED_EVENT_COLUMNS,
+    )
 
 
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
@@ -284,7 +269,7 @@ async def provision() -> bool:
                 statements = await _current_statements()
                 stored = await store.stored_entities(_names())
                 if boundary.needs_rewrite(stored, boundary.entity_digest(_names(), statements)):
-                    await store.write_entities(statements)
+                    await store.write_entities(statements, names=_names())
                     log.info("analyst user: written (version %s)", boundary.ENTITY_VERSION)
                 elif (
                     stored is not None
@@ -292,7 +277,7 @@ async def provision() -> bool:
                     and (await store.stored_caps_digest(_names()) != boundary.caps_digest(caps()))
                 ):
                     # The caps are deployment settings, written apart from the version.
-                    await store.write_entities(boundary.caps_sql(_names(), caps()))
+                    await store.write_entities(boundary.caps_sql(_names(), caps()), names=_names())
         if foreign and foreign[0]:
             _set_problem(*foreign)
             return False  # nothing written: run again, once the policy is dropped
@@ -343,7 +328,7 @@ async def _write_under_lease() -> tuple[str, str]:
             return foreign
         stored = await store.stored_entities(_names())
         if stored is None or stored.version <= boundary.ENTITY_VERSION:
-            await store.write_entities(await _current_statements())
+            await store.write_entities(await _current_statements(), names=_names())
     return "", ""
 
 
@@ -358,23 +343,6 @@ _LOST_ROW = (
 )
 
 
-async def load_for_print() -> None:
-    """Load the secrets for `loom ch-setup --print-analyst-sql`, drawing them
-    when there are none. Where Loom's user can see that the analyst user
-    exists, a lost row is refused as `rewrite` refuses it; where it cannot, a
-    missing row is drawn again, which moves the key."""
-    if not await store.secrets_table_exists():
-        raise SetupRefused(NOT_MIGRATED)
-    async with lease():
-        if (
-            await store.sealed_secrets() is None
-            and await store.can_manage_access()
-            and not await store.analyst_user_absent()
-        ):
-            raise SetupRefused(_LOST_ROW)
-        await load_secrets(may_draw=True)
-
-
 async def rewrite() -> None:
     """Write the analyst user whatever is stored (`loom ch-setup`). It draws
     the secrets only while no analyst user exists, so a lost row never puts
@@ -385,8 +353,8 @@ async def rewrite() -> None:
         if not await store.can_manage_access():
             raise SetupRefused(
                 "LOOM_CH_USER cannot manage access entities, so `loom ch-setup` cannot write "
-                "the analyst user: have an admin run the SQL `loom ch-setup "
-                "--print-analyst-sql` prints"
+                "the analyst user: run `loom ch-setup --apply-analyst-sql` with existing "
+                "access-management credentials"
             )
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
             raise SetupRefused(_LOST_ROW)
@@ -400,7 +368,7 @@ async def rewrite() -> None:
         problem, names = await _foreign_problem()
         if problem:
             raise SetupRefused(f"{problem} ({names})")
-        await store.write_entities(await _current_statements())
+        await store.write_entities(await _current_statements(), names=_names())
 
 
 def scope_ttl_s() -> int:

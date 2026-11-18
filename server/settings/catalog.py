@@ -678,6 +678,9 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
+    # Additional trusted writer HTTP origins for analyst setup policy observations.
+    # Uses the configured service credentials; missing or duplicate writers refuse.
+    ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
     # A statement that carries a secret, or one run as the analyst, gets its
@@ -2327,6 +2330,12 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
+    # Seconds one connected-account OAuth request may take, including its response.
+    # The caller's remaining deadline can shorten this bound.
+    knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)
+    # Bytes read from a connected-account token or identity response; larger metadata
+    # replies are refused before parsing.
+    knowledge_connected_oauth_response_max_bytes: int = Field(default=64 * 1024, ge=1024)
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
@@ -2339,6 +2348,24 @@ class KnowledgeSettings(BaseModel):
     # credential, spends embedding calls on every changed document and model calls
     # mining it for decisions.
     knowledge_source_sync_enabled: bool = False
+    # Require protected automatic session capture and persist deployment privacy state.
+    # Off does not lift protection while the deployment latch remains set.
+    knowledge_mirrored_sources_enabled: bool = False
+    # Mirrored reads require a complete listing and group observation within this
+    # many seconds; missing or older evidence admits nobody.
+    knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
+    # Enable optional source push setup, callbacks and Drive renewal; false keeps polling only.
+    knowledge_source_push_enabled: bool = False
+    # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
+    knowledge_source_push_interval_seconds: int = Field(default=300, ge=60)
+    # Seconds one push setup or Drive renewal may spend on provider work, before cleanup.
+    knowledge_source_push_provider_timeout_s: float = Field(default=40.0, gt=0)
+    # Seconds allowed to stop one superseded or unpublished Drive channel.
+    knowledge_source_push_stop_timeout_s: float = Field(default=2.0, gt=0)
+    # Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait.
+    knowledge_source_push_cleanup_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows.
+    knowledge_source_push_max_pass_seconds: float = Field(default=120.0, gt=0)
     # Seconds between sync passes while there are sources.
     knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
     # Seconds between passes that found no source to sync; one idle sleep plus one
@@ -2388,6 +2415,31 @@ class KnowledgeSettings(BaseModel):
             return {}
         items = json_map_items(raw, "document_extractor_tokens_json", strings_only=True)
         return {url.rstrip("/"): token for url, token in items}
+
+    @model_validator(mode="after")
+    def _check_source_push_budgets(self) -> KnowledgeSettings:
+        provider = self.knowledge_source_push_provider_timeout_s
+        cleanup = self.knowledge_source_push_cleanup_timeout_s
+        if self.knowledge_source_push_stop_timeout_s > cleanup:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S must not exceed "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
+            )
+        # holding() permits work for 40% of renew_drive's 120-second lease.
+        # Keep this window in sync with leases.work_left; the regression checks both.
+        if provider + cleanup >= 48:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S must stay below the "
+                "48-second renewal work window"
+            )
+        if provider + 2 * cleanup >= self.knowledge_source_push_max_pass_seconds:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS must exceed "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus twice "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_document_extractors(self) -> KnowledgeSettings:
@@ -5131,6 +5183,11 @@ class RuntimeSettings(BaseModel):
     # namespace whose rolling 24 h cost reached it. Overridden per namespace by
     # loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers.
     default_daily_cost_cap_usd: float = 1.0
+    # Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it.
+    # A namespace's daily_user_cost_cap_usd overrides this default when positive.
+    default_daily_user_cost_cap_usd: Annotated[float, LIVE] = Field(default=0.0, ge=0)
+    # Fraction of a cap that warns its namespace's configured inbox on the next check.
+    cost_budget_alert_share: Annotated[float, LIVE] = Field(default=0.8, gt=0, le=1)
     # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
     # embeddings, and rerank only as named, since a reranker is a model call.
     reads_llm_free: bool = False
@@ -6179,6 +6236,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,
     "knowledge.source.sync_now": 300,
+    "knowledge.source.push_configure": 60000,
+    "knowledge.source.push_status": 1000,
+    "knowledge.source.push_confirm": 1000,
     "knowledge.source.update": 60000,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,

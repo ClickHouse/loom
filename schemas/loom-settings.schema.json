@@ -319,6 +319,14 @@
           "type": "integer",
           "description": "Threads one statement may use (pinned as a MAX, so a statement cannot take the host)."
         },
+        "ch_analysis_observer_urls": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array",
+          "description": "Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse."
+        },
         "ch_analysis_probe_interval_s": {
           "default": 60.0,
           "maximum": 3600,
@@ -2349,6 +2357,13 @@
           "type": "string",
           "description": "Comma-separated origin list. \"*\" allows all (acceptable when auth_required=True). Empty disables CORS entirely."
         },
+        "cost_budget_alert_share": {
+          "default": 0.8,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "type": "number",
+          "description": "Fraction of a cap that warns its namespace's configured inbox on the next check."
+        },
         "dashboard_redirect_url": {
           "default": "",
           "type": "string",
@@ -2358,6 +2373,12 @@
           "default": 1.0,
           "type": "number",
           "description": "Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers."
+        },
+        "default_daily_user_cost_cap_usd": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it. A namespace's daily_user_cost_cap_usd overrides this default when positive."
         },
         "default_namespace": {
           "default": "local",
@@ -3029,6 +3050,18 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_connected_oauth_response_max_bytes": {
+          "default": 65536,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing."
+        },
+        "knowledge_connected_oauth_timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound."
+        },
         "knowledge_gaps_enabled": {
           "default": false,
           "type": "boolean",
@@ -3118,6 +3151,11 @@
           "minimum": 60,
           "type": "integer",
           "description": "Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts."
+        },
+        "knowledge_mirrored_sources_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set."
         },
         "knowledge_noise_filter": {
           "default": true,
@@ -3244,6 +3282,12 @@
           "type": "integer",
           "description": "How many fused hits a rerank reads (the legs fetch at least this many)."
         },
+        "knowledge_source_acl_stale_seconds": {
+          "default": 3600,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody."
+        },
         "knowledge_source_max_documents": {
           "default": 50000,
           "maximum": 200000,
@@ -3263,6 +3307,41 @@
           "maximum": 25.0,
           "type": "number",
           "description": "Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
+        },
+        "knowledge_source_push_cleanup_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait."
+        },
+        "knowledge_source_push_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Enable optional source push setup, callbacks and Drive renewal; false keeps polling only."
+        },
+        "knowledge_source_push_interval_seconds": {
+          "default": 300,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds between bounded channel-renewal pages; channels renew a day before expiry."
+        },
+        "knowledge_source_push_max_pass_seconds": {
+          "default": 120.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows."
+        },
+        "knowledge_source_push_provider_timeout_s": {
+          "default": 40.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one push setup or Drive renewal may spend on provider work, before cleanup."
+        },
+        "knowledge_source_push_stop_timeout_s": {
+          "default": 2.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds allowed to stop one superseded or unpublished Drive channel."
         },
         "knowledge_source_retire_documents_per_pass": {
           "default": 40,

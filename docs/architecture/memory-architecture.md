@@ -985,6 +985,15 @@ before serialization; the field grants no additional read or write access.
 module each. The SQL is in `server/memory/app/retrieval/` and
 `server/memory/domain/search_sql.py`.
 
+Entity-summary seeds keep the filter's order, followed by query handles and known
+vocabulary tokens, deduplicated case-insensitively. Their union accepts at most 256
+names; the 257th refuses with `VECTOR_INPUT_TOO_LARGE` rather than truncating the
+ranking input. This typed input refusal propagates through optional re-reads, ask
+widening and composed search sections. Other failures retain their documented
+fallbacks. A search joins its cancelled local children before returning a refusal;
+the repository decision pass also joins its sibling when either search fails.
+Local coroutine completion does not prove remote query retirement.
+
 1. **Settle the request** (`request.py`): recipe and namespace `retrieval_defaults`, read
    scope, the `top_k` ceiling. A parked `page` handle is served directly.
 2. **Read-your-writes** (`consistency.py`): a namespace this process just wrote re-reads

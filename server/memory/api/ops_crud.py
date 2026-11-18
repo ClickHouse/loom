@@ -80,6 +80,7 @@ memory_get = Operation(
 
 memory_set = Operation(
     name="memory.set",
+    session_content=True,
     input_model=MemorySetInput,
     output_model=MemorySetOutput,
     handler=handle_memory_set,

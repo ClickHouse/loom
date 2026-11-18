@@ -55,6 +55,7 @@ from server.operations.base import Operation, Role
 
 conversation_create = Operation(
     name="conversation.create",
+    session_content=True,
     maturity="experimental",
     input_model=ConversationCreateInput,
     output_model=ConversationCreateOutput,
@@ -66,6 +67,7 @@ conversation_create = Operation(
 
 conversation_append = Operation(
     name="conversation.append",
+    session_content=True,
     input_model=ConversationAppendInput,
     output_model=ConversationAppendOutput,
     handler=handle_conversation_append,
@@ -76,6 +78,7 @@ conversation_append = Operation(
 
 conversation_save_message = Operation(
     name="conversation.save_message",
+    session_content=True,
     maturity="experimental",
     input_model=ConversationSaveMessageInput,
     output_model=ConversationSaveMessageOutput,
@@ -131,6 +134,7 @@ conversation_get = Operation(
 
 conversation_update = Operation(
     name="conversation.update",
+    session_content=True,
     maturity="experimental",
     input_model=ConversationUpdateInput,
     output_model=ConversationUpdateOutput,

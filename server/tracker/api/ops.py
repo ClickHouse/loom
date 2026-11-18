@@ -150,6 +150,7 @@ tracker_similar = Operation(
 
 tracker_duplicate_check = Operation(
     name="tracker.duplicate_check",
+    session_content=True,
     input_model=TrackerDuplicateCheckInput,
     output_model=TrackerDuplicateCheckOutput,
     handler=handle_tracker_duplicate_check,

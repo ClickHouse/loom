@@ -74,7 +74,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             embedding_model="fake-embed",
         )
 
-    async def fake_over_cap(org: str, ns: str) -> bool:
+    async def fake_over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     async def fake_fetch(**kw: Any) -> list[Any]:
@@ -175,7 +175,7 @@ async def test_selector_runs_on_the_cheap_client_when_configured(env, monkeypatc
     def for_model(model: str | None) -> Any:
         return {"strong-model": strong, "cheap-model": cheap}[model]
 
-    async def ratio(org: str, ns: str) -> float:
+    async def ratio(org: str, ns: str, *, user_id: str = "") -> float:
         return 0.1
 
     monkeypatch.setattr(llm_client, "get_llm_client_for_model", for_model)

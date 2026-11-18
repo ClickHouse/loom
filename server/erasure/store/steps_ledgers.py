@@ -10,8 +10,10 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from server.core import lease_writes
+from server.core import lease_writes, leases, rmt_carry
 from server.core.ch_params import chunks
+from server.core.errors import BackendUnavailableError
+from server.core.lease_writes import fenced
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
@@ -25,10 +27,28 @@ from server.erasure.store.predicates import (
     UID,
 )
 from server.erasure.store.steps_pg import delete_pg_idempotency
+from server.knowledge.domain.source_push import writer_lease_name as push_writer_lease_name
 from server.observability import events_stream
+from server.observability.budget_notifications import writer_lease_name
 from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+
+async def delete_source_push_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """Retirement fenced new setup; settle deletion of every sealed version."""
+    total = 0
+    for ns in namespaces_of(namespace):
+        async with fenced(push_writer_lease_name(org, ns), ch=ch) as uncertain:
+            uncertain(True)
+            total += await delete_scoped(
+                "loom.knowledge_source_push", org=org, scope_where=NS_EQ, params={"ns": ns}, ch=ch
+            )
+            uncertain(False)
+    return total
+
 
 # ---------------------------------------------------------------------------
 # Steps for the ledger, trace and queue tables. Every `loom.*` table is a census row,
@@ -320,6 +340,19 @@ async def delete_query_history_by_namespace(
         return count
 
 
+async def delete_group_members_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """A mirror's source-scoped membership snapshots leave with the namespace."""
+    return await delete_scoped(
+        "loom.knowledge_group_members",
+        org=org,
+        scope_where=NS_EQ,
+        params={"ns": namespace},
+        ch=ch,
+    )
+
+
 async def delete_memory_drops_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
@@ -381,12 +414,34 @@ async def delete_memory_webhook_outbox_by_user(
 _TASK_TABLES = ("loom.tasks", "loom.task_events")
 
 
+async def delete_task_events_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
+    async with leases.holding(
+        writer_lease_name(org),
+        ttl_s=lease_writes.lease_ttl_s(rmt_carry.send_bound_s()),
+        wait_s=30,
+        ch=ch,
+    ) as held:
+        if not held:
+            raise BackendUnavailableError("budget warning writes have not settled; retry erasure")
+        return await delete_scoped(
+            "loom.task_events", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+        )
+
+
 async def delete_tasks_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """Task briefs, notes and outcomes quote code and issue text.
     Both tables key on the inbox's owner namespace."""
-    return await _delete_many(_TASK_TABLES, org, NS_EQ, {"ns": namespace}, ch)
+    async with leases.holding(
+        writer_lease_name(org),
+        ttl_s=lease_writes.lease_ttl_s(rmt_carry.send_bound_s()),
+        wait_s=30,
+        ch=ch,
+    ) as held:
+        if not held:
+            raise BackendUnavailableError("budget warning writes have not settled; retry erasure")
+        return await _delete_many(_TASK_TABLES, org, NS_EQ, {"ns": namespace}, ch)
 
 
 _LEARNINGS_TABLES = ("loom.learnings_supporters", "loom.learnings_queue")

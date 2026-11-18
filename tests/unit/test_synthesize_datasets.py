@@ -289,7 +289,7 @@ class Stores:
         self.queries: list[Any] = []
         self.refuse: list[str] = []
 
-        async def _over_cap(org: str, ns: str) -> bool:
+        async def _over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
             return False
 
         async def _get(input: Any) -> KnowledgeDatasetGetOutput:

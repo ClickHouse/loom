@@ -3,6 +3,7 @@
   <title>{{ (loom_title if page else config.site_name) | e }}</title>
 {% endblock %}
 {% block extrahead %}
+  {% include "partials/locales-head.html" %}
   {% set desc = page.meta.description if page and page.meta and page.meta.description else config.site_description %}
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{{ config.site_name }}">
@@ -16,11 +17,16 @@
   {% endif %}
   {% if page and page.file %}
   {# The page's Markdown copy, served beside it by hooks.py for agents that read Markdown. #}
-  <link rel="alternate" type="text/markdown" href="{{ config.site_url ~ page.file.src_uri }}">
+  <link rel="alternate" type="text/markdown" href="{{ config.site_url ~ (page.file.src_uri | urlencode) }}">
   {% endif %}
   {% if page and page.is_homepage %}
   {# Search-console ownership proof for https://clickhouse.github.io/loom/; read on the home page only. #}
   <meta name="google-site-verification" content="g4QRiv4z-PIoUloea55ghrJnNw7SPpEYQlDKiqsQIG0">
   <meta name="yandex-verification" content="70cf01be4a510ac5">
   {% endif %}
+{% endblock %}
+
+{% block content %}
+  {% include "partials/locales-switch.html" %}
+  {{ super() }}
 {% endblock %}

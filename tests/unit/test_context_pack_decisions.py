@@ -14,6 +14,7 @@ import pytest
 
 from server.memory.api.models_context import ContextPackInput
 from server.memory.app.context_pack import handle_context_pack
+from tests.unit.checked_pack_fakes import install_pack_target
 
 _FACT = NS(
     namespace="ns",
@@ -74,7 +75,7 @@ def _dead_other_sections(monkeypatch: pytest.MonkeyPatch) -> None:
         "server.memory.app.profile.handle_profile_render",
         "server.memory.app.procedure.handle_procedure_match",
     ):
-        monkeypatch.setattr(target, _empty)
+        install_pack_target(monkeypatch, target, _empty)
 
 
 def test_decision_hits_render_as_their_own_section(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,7 +171,7 @@ def test_only_sections_skips_every_other_plane(monkeypatch: pytest.MonkeyPatch) 
         ("server.knowledge.app.knowledge_search.handle_knowledge_search", "knowledge"),
         ("server.knowledge.app.conversations.handle_conversation_search", "conversations"),
     ):
-        monkeypatch.setattr(target, _tracking(name))
+        install_pack_target(monkeypatch, target, _tracking(name))
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_stub([_FACT]))
 
     async def _match(*a: Any, **k: Any) -> Any:

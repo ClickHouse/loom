@@ -190,8 +190,8 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
     embedder = get_embedder()
     actual_work, _clock = await _start_actual_work(input)
     run = _launch_scope_reads(input)
-    # Every task this pass launches is cancelled on the way out if it is still running.
-    try:
+    # Every task this pass launches is joined on the way out.
+    async with run:
         (
             obs_date,
             parsed_intent,
@@ -361,8 +361,6 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         )
         await _finish_search_output(ctx, _output, final_hits)
         return _output
-    finally:
-        run.close()
 
 
 async def _verdict(

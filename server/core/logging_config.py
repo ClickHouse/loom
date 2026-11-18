@@ -93,9 +93,39 @@ class _TextFormatter(logging.Formatter):
 _configured = False
 
 
+def _drop_verbose_asgi(record: logging.LogRecord) -> bool:
+    """Request-message tracing can run before classification and after owner reset."""
+    try:
+        return record.name != "uvicorn.asgi" and not record.name.startswith("uvicorn.asgi.")
+    except Exception:  # noqa: BLE001 — an unreadable source drops the record before formatting
+        return False
+
+
+def _install_privacy_filters() -> None:
+    from server.core.diagnostics import public_log
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        if name != "uvicorn" and public_log not in logger.filters:
+            logger.addFilter(public_log)
+        for handler in logger.handlers:
+            if public_log not in handler.filters:
+                handler.addFilter(public_log)
+    verbose = logging.getLogger("uvicorn.asgi")
+    if _drop_verbose_asgi not in verbose.filters:
+        verbose.addFilter(_drop_verbose_asgi)
+    for handler in verbose.handlers:
+        if _drop_verbose_asgi not in handler.filters:
+            handler.addFilter(_drop_verbose_asgi)
+    for public_handler in (*logging.getLogger().handlers, logging.lastResort):
+        if public_handler is not None and public_log not in public_handler.filters:
+            public_handler.addFilter(public_log)
+
+
 def configure_logging() -> None:
     """Install JSON or text formatter based on settings. Idempotent."""
     global _configured
+    _install_privacy_filters()
     if _configured:
         return
     from server.settings import settings
