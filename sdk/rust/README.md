@@ -1,11 +1,12 @@
 # clickhouse-loom
 
-Rust SDK for [ClickHouse Loom](https://clickhouse.github.io/loom/), a self-hosted
-server that gives AI agents shared long-term memory, document search and a code index.
+Use [ClickHouse Loom](https://clickhouse.github.io/loom/) from Rust. Loom is a
+self-hosted server for shared long-term AI agent memory, document search and
+code indexing.
 
-This package contains the **client SDK only**. The server runs as the Docker image
-`ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user
-install, or as a team deployment an operator runs.
+This crate connects to a separately deployed Loom server backed by ClickHouse.
+The server image is `ghcr.io/clickhouse/loom`. Use a local single-user installation
+or connect to a team deployment managed by your operator.
 
 `Client` provides `set`, `get`, `search` and `delete` memory operations with typed
 responses. Calls are async and use the application's Tokio runtime.
@@ -33,8 +34,8 @@ httpdate and log. The crate name is `clickhouse-loom`; Rust imports it as
 
 ## Use
 
-Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
-on this machine (`http://localhost:7777`, the `dev/local` namespace, no token):
+For a local [single-user installation](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md),
+connect to `http://localhost:7777` with org `dev`, namespace `local` and no token:
 
 ```rust
 use clickhouse_loom::{Client, SearchRequest, SetRequest};
@@ -59,13 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-For a team server, set `.base_url(...)` (or `LOOM_BASE_URL`) and use your account's
-org and namespace. Pass a writer token from **Settings → Tokens**, or one your
-operator mints, as `.api_key(...)` or `LOOM_API_KEY`. A token is the right choice
-for CI and services.
+For a team deployment, use your account's org and namespace with a writer token.
+Set the server address through `.base_url(...)` or `LOOM_BASE_URL`, and the token
+through `.api_key(...)` or `LOOM_API_KEY`. Obtain a token from **Settings → Tokens**
+or ask your operator to mint one. CI and service processes can supply the address
+and token through the environment.
 
-Deployment paths (how an operator stands up the server):
-[docs/operations/deployment.md](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
+Server setup is covered in the
+[deployment guide](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
 
 ## Configuration
 

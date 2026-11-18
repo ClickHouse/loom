@@ -1,7 +1,8 @@
-//! Rust SDK for ClickHouse Loom, a self-hosted server that gives AI agents shared
-//! long-term memory, document search and a code index.
+//! Use ClickHouse Loom's memory operations from Rust.
 //!
-//! [`Client`] provides async `set`, `get`, `search` and `delete` memory operations.
+//! Loom is a self-hosted server for shared long-term AI agent memory, document
+//! search and code indexing. This crate exposes async `set`, `get`, `search` and
+//! `delete` operations through [`Client`].
 //!
 //! Identity is bound once on [`Client`]. Calls return typed responses, and
 //! [`Error::Api`] preserves the server's error classification.

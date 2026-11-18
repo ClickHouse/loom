@@ -1,13 +1,12 @@
 # Examples
 
-Runnable examples for `clickhouse-loom`. The memory example uses an existing
-namespace. See the [SDK README](../README.md) for installation and client
-configuration.
+Run these examples with Cargo against an existing Loom namespace. Installation
+and client configuration are covered in the [SDK README](../README.md).
 
 ## memory.rs
 
-An agent that saves a memory, recalls it by key and lexical search, then deletes
-it. The code is in [memory.rs](memory.rs).
+The [memory.rs](memory.rs) example saves a value under an agent identity, reads
+it by key, finds it with lexical search and deletes it.
 
 Run from the repository root against a local Loom server:
 
