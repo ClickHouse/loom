@@ -36,6 +36,7 @@ or needs another database, vector store or cache.
 | Dify                           | Remember, Recall, Search knowledge              | `integrations/dify` standalone plugin                     | Native Dify tools                                                        |
 | Haystack                       | `LoomDocumentStore`, `LoomRetriever`            | Python, `loom.integrations.haystack`                      | `DocumentStore` protocol, retrieval component                            |
 | Agno                           | `LoomMemoryDb`                                  | Python, `loom.integrations.agno`                          | `BaseDb` user-memory methods                                             |
+| Langflow                       | Loom                                            | `integrations/langflow` custom component                  | Langflow `Component`                                                     |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -1070,6 +1071,18 @@ for its lifetime, so the turns of one call share a session.
 | `top_k`                      | 5        | memories per turn, from 1 to 500                                                                                                                                                            |
 | `honour_abstain`             | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                                                           |
 | `defer`                      | `True`   | queue the extraction on the server instead of waiting                                                                                                                                       |
+
+## Langflow
+
+The [Loom Langflow component](../../../integrations/langflow/README.md) saves a memory,
+searches memories, and searches knowledge documents from a Langflow flow. It is a
+Langflow `Component` with typed inputs for the namespace, the user, and the query, plus
+an action dropdown (`save`, `search memory`, `search documents`). Install
+`clickhouse-loom` in Langflow's Python environment and load
+`integrations/langflow/loom_component.py` as a custom component. The component
+constructs a `SyncAgent` and calls `memory.set`, `memory.search`, or `knowledge.search`;
+the user input is `user_id` on the memory write and search. Knowledge search is
+namespace-scoped. Data stays in your Loom deployment; the component adds no store.
 
 ## Agent orchestrators
 
