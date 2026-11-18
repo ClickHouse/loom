@@ -305,19 +305,19 @@
       "category": "explicit",
       "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
     },
-    "sdk/typescript/src/integrations/mastra-memory.ts:<dynamic>:92469ce75e8bcc2cd8c2:1": {
+    "sdk/typescript/src/integrations/mastra-memory.ts:<dynamic>:e26e447e7b608a59dc2c:1": {
       "category": "delivery",
       "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
     },
-    "sdk/typescript/src/integrations/mastra-memory.ts:memory.delete_version:601c7be2c9a26e4b1682:1": {
+    "sdk/typescript/src/integrations/mastra-memory.ts:memory.delete_version:8c2bd6e71c77b60bb568:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/integrations/mastra-memory.ts:memory.get:836c905aa23ea9604f7e:1": {
+    "sdk/typescript/src/integrations/mastra-memory.ts:memory.get:47e2aa636d2314464a46:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
-    "sdk/typescript/src/integrations/mastra-memory.ts:memory.list:6713eb1aa63016f20a98:1": {
+    "sdk/typescript/src/integrations/mastra-memory.ts:memory.list:c222b5596bfa1b84be91:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
@@ -396,7 +396,7 @@
     "sdk/typescript/src/integrations/claude-memory.ts": "c846f0011d7cf1ba4b30e99fbfd8adb6b29abff56856d0dbe14fba620007f6bc",
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
-    "sdk/typescript/src/integrations/mastra-memory.ts": "83c20da9e1d9c1d8cf3adf05759275d139959b811711ba0647653f6c0acc0e9b",
+    "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
     "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
     "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
   }

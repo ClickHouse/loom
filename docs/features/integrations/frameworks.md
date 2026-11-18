@@ -812,7 +812,10 @@ const assistant = new MastraAgent({
 
 `LoomMemoryStorage` implements the native `MemoryStorage` domain. It keeps mutable
 threads, complete message payloads and resource working memory in Loom through the SDK.
-Install `@mastra/core` 1.83.x and `@mastra/memory` alongside `@clickhouse/loom`:
+Install `@mastra/core` 1.83.x and `@mastra/memory` alongside `@clickhouse/loom`.
+
+For automatic native memory, the app supplies `conversationCapture`, a `SessionCapture`
+restored for the complete logical conversation family:
 
 ```ts
 import { MastraCompositeStore } from "@mastra/core/storage";
@@ -823,7 +826,11 @@ const memory = new Memory({
   storage: new MastraCompositeStore({
     id: "loom",
     domains: {
-      memory: new LoomMemoryStorage(agent, { resourceId: "alice", storeId: "assistant" }),
+      memory: new LoomMemoryStorage(agent, {
+        resourceId: "alice",
+        storeId: "assistant",
+        capture: conversationCapture,
+      }),
     },
   }),
   options: {
@@ -841,6 +848,20 @@ resource argument remain scoped to that bound user. Cross-resource writes are re
 cross-resource reads return missing or empty results. Keep the same Loom agent and
 `storeId` across processes to resume the same data. A store must not be shared across
 users, and resource reassignment is unsupported.
+
+With `capture`, construct a separate storage and `Memory` instance for each complete
+conversation family. Keep its durable protection state across reconnects and restarts;
+resource, store and thread IDs identify rows and do not restore protection authority.
+The adapter retains the supplied capture and the client's contributing families before
+asynchronous work. A marked recall returns only after every contributing family commits
+protection. Later automatic callbacks raise `AutomaticCaptureSuppressed`, including
+batch continuation, conditional-update retries and pending thread timestamp updates.
+A marked write also refuses the callback, so a failed batch can leave earlier writes
+stored. The refusal propagates through native `Memory` methods.
+
+Omit `capture` only for explicitly owned CRUD. Those calls retain response observers
+without becoming automatic. Model-selected `loomTools` calls remain explicit. The
+adapter does not supply durable protection storage or create a conversation family.
 
 Native listing supports thread/resource filters, date and metadata filters, ordering,
 pagination and included message context across that user's threads. Lists scan the

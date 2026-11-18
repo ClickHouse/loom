@@ -113,6 +113,11 @@ def counterpart_ranges(historical, current, units, sources: SourceOrigins):
     """
     if any(unit.reply_ref is None for unit in units):
         raise ValueError("source origin correspondence requires completed original units")
+    return partition_counterparts(historical, current, units, sources)
+
+
+def partition_counterparts(historical, current, units, sources: SourceOrigins):
+    """Project a caller-validated complete partition without claiming completions."""
     old = _prepared_positions(sources.historical_raw, historical, sources.language)
     new = _prepared_positions(sources.current_raw, current, sources.language)
     inverse, ambiguous = {}, set()
