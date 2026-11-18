@@ -183,6 +183,7 @@
     "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
     "ai": "7.0.172",
+    "fast-check": "4.10.2",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
     "typedoc": "^0.28.20",

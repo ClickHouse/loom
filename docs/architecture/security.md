@@ -1616,6 +1616,11 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   `sha256:<digest>/<length>`, not text (`server/observability/event_args.py`).
 - **Errors.** A 500 carries only the request id, never exception text.
 - **Repository.** `make lint` runs `scripts/gates/check_no_secrets.py` over tracked files.
+- **SDK boundaries.** Bounded [transport property tests](../development/testing.md#sdk-transport-properties)
+  generate origin variants, credential-header casing and request IDs. They assert that a refused
+  origin reads no provider token and sends nothing, requests carry one selected credential,
+  inspection and logs omit that credential, and request IDs fit the wire header boundary.
+  The property-testing dependency runs only in the development suite, through mocked requests.
 
 ## Invariants
 
