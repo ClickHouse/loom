@@ -327,3 +327,49 @@ func TestACanceledContextStopsTheCall(t *testing.T) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 }
+
+func TestARedirectIsNotFollowed(t *testing.T) {
+	var reached bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"memory_id":"m-1","version":1}`)
+	}))
+	t.Cleanup(target.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+
+	_, err := New(Config{BaseURL: origin.URL, APIKey: "tok", Org: "acme"}).Set(context.Background(), "k", "private", nil)
+
+	var e *Error
+	if !errors.As(err, &e) || e.Status != http.StatusTemporaryRedirect {
+		t.Fatalf("error = %v, want an *Error with status 307", err)
+	}
+	if reached {
+		t.Error("the redirect target received the request and its token")
+	}
+}
+
+func TestNewLeavesTheCallersClientAlone(t *testing.T) {
+	own := &http.Client{}
+	New(Config{HTTPClient: own})
+	New(Config{})
+	if own.CheckRedirect != nil || http.DefaultClient.CheckRedirect != nil {
+		t.Error("New changed a client it was given or http.DefaultClient")
+	}
+}
+
+func TestACallersRedirectPolicyIsKept(t *testing.T) {
+	target, _ := fakeServer(t, 200, `{"found":false}`, nil)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+	follow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
+
+	if _, err := New(Config{BaseURL: origin.URL, HTTPClient: follow}).Get(context.Background(), "k"); err != nil {
+		t.Fatalf("a client that allows redirects should follow one: %v", err)
+	}
+}

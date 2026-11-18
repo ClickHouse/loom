@@ -35,7 +35,9 @@ type Config struct {
 	Namespace string
 	Agent     string
 
-	// HTTPClient sends the requests; nil uses http.DefaultClient.
+	// HTTPClient sends the requests; nil uses http.DefaultClient. The Client
+	// uses a copy that answers a redirect with an *Error instead of following
+	// it, unless this client sets its own CheckRedirect.
 	HTTPClient *http.Client
 }
 
@@ -57,16 +59,22 @@ type identity struct {
 // New returns a Client for cfg.
 func New(cfg Config) *Client {
 	baseURL := firstNonBlank(cfg.BaseURL, os.Getenv("LOOM_BASE_URL"), DefaultBaseURL)
-	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
+	httpClient := http.DefaultClient
+	if cfg.HTTPClient != nil {
+		httpClient = cfg.HTTPClient
+	}
+	// A copy, so the caller's client and http.DefaultClient keep their own redirect policy.
+	client := *httpClient
+	if client.CheckRedirect == nil {
+		// Following one would resend the memory body and the bearer token to wherever it points.
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		// An exported but empty LOOM_API_KEY must not send "Bearer " and turn a clear 401 into a puzzle.
 		apiKey:   firstNonBlank(cfg.APIKey, os.Getenv("LOOM_API_KEY")),
 		identity: identity{Org: cfg.Org, Namespace: cfg.Namespace, Agent: cfg.Agent},
-		http:     httpClient,
+		http:     &client,
 	}
 }
 

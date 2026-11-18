@@ -55,7 +55,8 @@ org, namespace and agent in its body.
 | `Org`, `Namespace`, `Agent` | Left out of the body when blank, so the server's defaults apply |
 | `HTTPClient`                | `http.DefaultClient`                                            |
 
-The client sends one request per call and never retries.
+The client sends one request per call and never retries. It does not follow redirects, so a
+memory body and token never go to another origin: a 3xx answer comes back as a `*loom.Error`.
 
 ## Errors
 
