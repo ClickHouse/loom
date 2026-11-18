@@ -132,6 +132,16 @@ def begin() -> RequestWork:
     return bag
 
 
+@contextmanager
+def bind(bag: RequestWork) -> Iterator[None]:
+    """Restore a logical owner's bag when a stream closes in another context."""
+    token = _current.set(bag)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
 def current() -> RequestWork | None:
     return None if codes_only() else _current.get()
 
@@ -159,6 +169,13 @@ def mark_mirrored(*, unread: bool = False) -> bool:
 def mirror_marked() -> bool:
     bag = _current.get()
     return bag is not None and bag.mirror_marked
+
+
+def flag_response(body: dict[str, Any]) -> dict[str, Any]:
+    """Place the server-owned privacy flag before a marked logical call's fields."""
+    if not mirror_marked():
+        return body
+    return {"mirrored": True, **{k: v for k, v in body.items() if k != "mirrored"}}
 
 
 def marked_event_pending() -> bool:

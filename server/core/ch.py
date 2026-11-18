@@ -19,6 +19,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Set
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import FrameType
 from typing import Any, cast
@@ -42,6 +43,11 @@ from server.core.ch_errors import (
     strip_quantized_setting,
 )
 from server.core.ch_names import NamedClient, qualify, split_table
+from server.core.ch_observer import (
+    ObservationUnavailable,
+    PolicyObserver,
+    observer_origins,
+)
 from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest, statement_shape
@@ -167,6 +173,37 @@ _analyst_var: ContextVar[tuple[str, str, dict[str, Any]] | None] = ContextVar(
 )
 
 
+class CoordinationSessionLost(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("ClickHouse coordination session was not preserved")
+
+
+@dataclass
+class _CoordinationSession:
+    owner: CHClient
+    driver: AsyncClient
+    generation: int
+    identifier: str
+    checked: bool = False
+    closed: bool = False
+
+    def check(self, client: CHClient | None = None) -> None:
+        if (
+            self.closed
+            or (client is not None and client is not self.owner)
+            or self.owner.generation != self.generation
+            or self.owner.client is not self.driver
+            or _analyst_var.get() is not None
+        ):
+            self.closed = True
+            raise CoordinationSessionLost()
+
+
+_coordination_session: ContextVar[_CoordinationSession | None] = ContextVar(
+    "ch_coordination_session", default=None
+)
+
+
 @contextmanager
 def as_analyst(user: str, password: str, extra: dict[str, Any]) -> Iterator[None]:
     """Every statement in this block logs in as `user` and carries `extra`
@@ -201,6 +238,9 @@ def _reader_auth() -> dict[str, Any]:
     Only the query path sends it, where every statement is read-class and so
     carries the caller-shaped ceilings too. Inside `as_analyst` it sends the
     analyst user instead, always."""
+    if session := _coordination_session.get():
+        session.check()
+        return {}
     analyst = _analyst_var.get()
     if analyst is not None:
         user, password = analyst[0], analyst[1]
@@ -512,6 +552,9 @@ def statement_settings(
     LOOM_CH_SETTINGS_BY_TRAFFIC_CLASS (`priority`, `max_threads`, …) — the
     caller's own `extra` wins on a name it already sets, and neither setting
     changes which rows the statement returns."""
+    session = _coordination_session.get()
+    if session is not None:
+        session.check()
     out = query_settings(extra)
     cls = cls or statement_class(sql)
     _apply_class_timeout(out, cls)
@@ -540,6 +583,14 @@ def statement_settings(
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
     _apply_caller_ceilings(out, cls)
+    if session is not None:
+        out.update(
+            session_id=session.identifier,
+            session_check=int(session.checked),
+            session_timeout=30,
+            use_query_cache=0,
+            use_query_condition_cache=0,
+        )
     return _with_request_query_id(out)
 
 
@@ -812,6 +863,25 @@ class CHClient:
         if "_reconnect_lock" not in d:
             d["_reconnect_lock"] = asyncio.Lock()
 
+    @asynccontextmanager
+    async def coordination_session(self) -> AsyncIterator[None]:
+        """Keep a checked named session, service principal and local client identity.
+
+        Creation can retry, so callers also attest the backend at each proof step.
+        Later queries require the named session; errors and client changes invalidate it.
+        """
+        if _coordination_session.get() is not None or _analyst_var.get() is not None:
+            raise CoordinationSessionLost()
+        session = _CoordinationSession(self, self.client, self.generation, uuid.uuid4().hex)
+        token = _coordination_session.set(session)
+        try:
+            await self.query_one("SELECT 1 AS coordination_ready")
+            session.checked = True
+            yield
+        finally:
+            session.closed = True
+            _coordination_session.reset(token)
+
     @property
     def connected(self) -> bool:
         return self._client is not None
@@ -820,8 +890,9 @@ class CHClient:
         limit = int(settings.ch_pool_maxsize)
         # Streaming reads have connections of their own beside the pool; 0 is unbounded.
         connector_limit = limit + STREAM_SLOTS if limit > 0 else 0
+        configuration = connection_kwargs()
         driver = await clickhouse_connect.get_async_client(
-            **connection_kwargs(),
+            **configuration,
             compress=True,
             # The driver's read timeout is the outer backstop
             # at the largest class bound (the driver's own 300 s when that
@@ -862,6 +933,7 @@ class CHClient:
         # Settled before any task can use it: a reconnect publishes it only now.
         await _turn_off_unsafe_condition_cache(client)
         self._client = client
+        self._connection_config = configuration
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:
@@ -887,6 +959,80 @@ class CHClient:
     def generation(self) -> int:
         self._ensure_state()
         return int(self._generation)
+
+    @asynccontextmanager
+    async def policy_observers(self) -> AsyncIterator[tuple[PolicyObserver, ...]]:
+        """Read native access policy authority without replaying a session bootstrap."""
+        self._ensure_state()
+        owner, generation = self.client, self.generation
+        configuration = connection_kwargs()
+        origins = tuple(settings.ch_analysis_observer_urls)
+        if (
+            self.__dict__.get("_connection_config") != configuration
+            or _analyst_var.get() is not None
+            or str(configuration["username"]) == "loom_analyst"
+        ):
+            raise ObservationUnavailable()
+        normalized = observer_origins(configuration, origins)
+
+        async def guarded(
+            sql: str, send: Callable[[], Awaitable[list[dict[str, Any]]]]
+        ) -> list[dict[str, Any]]:
+            def unchanged() -> None:
+                if (
+                    self.client is not owner
+                    or self.generation != generation
+                    or connection_kwargs() != configuration
+                    or tuple(settings.ch_analysis_observer_urls) != origins
+                    or _analyst_var.get() is not None
+                ):
+                    raise ObservationUnavailable()
+
+            unchanged()
+            await guard_pending_schema("policy_observer", sql, "read")
+            took = await self._acquire_slot("policy_observer")
+            try:
+                unchanged()
+                result: list[dict[str, Any]] = await self._bounded("policy_observer", "read", send)
+                unchanged()
+                return result
+            finally:
+                if took:
+                    self._release_slot()
+
+        def options(sql: str) -> dict[str, Any]:
+            # Native policy bodies can contain access keys. Keep local capture and
+            # statement heads out of this channel.
+            with uncaptured():
+                return statement_settings(sql, cls="read")
+
+        observers: list[PolicyObserver] = []
+        failed = False
+        try:
+            for origin in normalized:
+                observer = PolicyObserver(
+                    origin,
+                    str(configuration["username"]),
+                    str(configuration["password"]),
+                    str(configuration["database"]),
+                    guarded,
+                    options,
+                )
+                # Register ownership before a bootstrap can fail or be cancelled.
+                observers.append(observer)
+                await observer.bootstrap()
+            yield tuple(observers)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            # Concurrent bounded closes give one cleanup interval for all routes.
+            # A primary refusal/cancellation stands even if its session never formed.
+            results = await asyncio.gather(
+                *(observer.close() for observer in observers), return_exceptions=True
+            )
+            if not failed and any(isinstance(result, BaseException) for result in results):
+                raise ObservationUnavailable()
 
     async def _reconnect(self, seen: int | None = None) -> None:
         """Replace the shared client with a fresh one.
@@ -1004,6 +1150,26 @@ class CHClient:
         if self._slots is not None:
             self._slots.release()
 
+    async def _guard_schema(
+        self, op_name: str, sql: str, cls: str, *, insert_table: str | None = None
+    ) -> None:
+        session = _coordination_session.get()
+        if session is None:
+            await guard_pending_schema(op_name, sql, cls, insert_table=insert_table)
+            return
+        try:
+            session.check(self)
+            # The advisory ledger refresh uses the global client, outside the proof.
+            token = _coordination_session.set(None)
+            try:
+                await guard_pending_schema(op_name, sql, cls, insert_table=insert_table)
+            finally:
+                _coordination_session.reset(token)
+            session.check(self)
+        except BaseException:
+            session.closed = True
+            raise
+
     async def _with_retry(  # type: ignore[no-untyped-def]
         self,
         op_name: str,
@@ -1017,9 +1183,22 @@ class CHClient:
         retried batch lands once); a replica-bound server error gets up to two
         more connections; a class deadline and every other error raise at once."""
         self._ensure_state()
-        took = await self._acquire_slot(op_name)
+        session = _coordination_session.get()
+        took = False
         try:
+            if session is not None:
+                session.check(self)
+            took = await self._acquire_slot(op_name)
+            if session is not None:
+                session.check(self)
+                result = await self._bounded(op_name, cls, fn)
+                session.check(self)
+                return result
             return await self._retry_ladder(op_name, fn, cls=cls)
+        except BaseException:
+            if session is not None:
+                session.closed = True
+            raise
         finally:
             if took:
                 self._release_slot()
@@ -1110,7 +1289,7 @@ class CHClient:
             note_result_summary(res)
             return res
 
-        await guard_pending_schema(op_name, sql, "read")
+        await self._guard_schema(op_name, sql, "read")
         try:
             return await self._with_retry(op_name, lambda: _q(sql), cls="read")
         except Exception as e:
@@ -1168,7 +1347,7 @@ class CHClient:
                 **_reader_auth(),
             )
 
-        await guard_pending_schema("raw_bytes", sql, "read")
+        await self._guard_schema("raw_bytes", sql, "read")
         return bytes(await self._with_retry("raw_bytes", _q, cls="read"))
 
     @asynccontextmanager
@@ -1184,6 +1363,9 @@ class CHClient:
         of the `STREAM_SLOTS` until the block exits, not a pool slot, since the client sets
         how long that takes. `settings` are this statement's own ClickHouse settings."""
 
+        if session := _coordination_session.get():
+            session.closed = True
+            raise CoordinationSessionLost()
         held: list[int] = []  # the generation whose client opened the stream
 
         async def _open() -> Any:
@@ -1203,7 +1385,7 @@ class CHClient:
             return stream
 
         self._ensure_state()
-        await guard_pending_schema("raw_stream", sql, "read")
+        await self._guard_schema("raw_stream", sql, "read")
         await acquire_slot(self._stream_slots, "streaming read")
         try:
             stream = await self._retry_ladder("raw_stream", _open, cls="read")
@@ -1249,7 +1431,7 @@ class CHClient:
             )
             note_result_summary(res)
 
-        await guard_pending_schema("execute", sql, cls)
+        await self._guard_schema("execute", sql, cls)
         await self._with_retry("execute", _q, cls=cls)
 
     async def insert(
@@ -1279,7 +1461,10 @@ class CHClient:
         _validate_required_insert_columns(table, rows, required)
         # Before the DESCRIBE — that read is the first statement
         # to raise code 60 against a table the service does not have yet.
-        await guard_pending_schema("insert", "", "write", insert_table=table)
+        if session := _coordination_session.get():
+            session.closed = True
+            raise CoordinationSessionLost()
+        await self._guard_schema("insert", "", "write", insert_table=table)
         from server.core import rmt_carry
 
         if not rmt_carry.carries(table):
@@ -1399,10 +1584,11 @@ class CHClient:
         settings = dedup_settings(token, settings)
         from server.core import rmt_carry
 
+        send_clock = None
         if rmt_carry.sent_under_lease() and not rmt_carry.carries(table):
-            # Its start deadline is on the server's clock, which a carried insert's
-            # admission measures: measured here, before the send holds a slot.
-            await rmt_carry.measure_server_clock(self)
+            # An external record can have a different server clock from the
+            # deployment. Measure its receiver before the send holds a slot.
+            send_clock = await rmt_carry.measure_send_clock(self)
 
         async def _q() -> None:
             attempt = query_settings(settings)
@@ -1431,7 +1617,11 @@ class CHClient:
                 fenced["query_id"] = rmt_carry.carry_query_id(
                     str(fenced.get("query_id") or uuid.uuid4().hex)
                 )
-                deadline = rmt_carry.send_deadline()
+                deadline = (
+                    rmt_carry.clock_send_deadline(send_clock)
+                    if send_clock is not None
+                    else rmt_carry.send_deadline()
+                )
                 rmt_carry.note_send(
                     str(fenced["query_id"]), deadline, float(fenced["max_execution_time"])
                 )
@@ -1602,6 +1792,47 @@ PROJECTED_TABLES: frozenset[str] = frozenset(
 )
 # (table, column) pairs already warned about — one line per process.
 _PROJECTION_WARNED: set[tuple[str, str]] = set()
+
+
+class ExternalCHClient(CHClient):
+    """The statement wrapper for an operator's separately owned record database."""
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        secure: bool,
+        database: str,
+        username: str,
+        password: str,
+        address: str = "",
+    ) -> None:
+        super().__init__()
+        self._connection: dict[str, Any] = dict(
+            host=address or host,
+            server_host_name=host if address else None,
+            port=port,
+            secure=secure,
+            database=database,
+            username=username,
+            password=password,
+        )
+        self._slots = asyncio.Semaphore(2)
+
+    async def connect(self) -> None:
+        # A record database has no Loom schema or vector-capability probes.
+        client = await clickhouse_connect.get_async_client(
+            **self._connection,
+            compress=True,
+            tz_source="server",
+            send_receive_timeout=_driver_read_timeout_s(),
+            connector_limit=2,
+            connector_limit_per_host=2,
+            settings={"session_timezone": "UTC", "async_insert": 0, "wait_for_async_insert": 1},
+        )
+        client.server_tz = UTC
+        self._client = client
 
 
 def describe_cache_clear() -> None:

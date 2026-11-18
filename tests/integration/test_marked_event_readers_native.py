@@ -16,6 +16,7 @@ from server.insights.store import ops
 from server.knowledge.store import documents
 from server.memory.store import inspect
 from server.observability.events import AgentEvent
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -63,7 +64,8 @@ async def insert(client: CHClient, *, success: bool) -> str:
         "error_code": "PRIVATE_LEFT" if success else "PRIVATE_RIGHT",
         "args": {"out_found": "true" if success else "false", "source_uri": "private://file"},
     }
-    await client.insert(
+    await insert_event_rows(
+        client,
         "loom.agent_events",
         [
             ordinary,

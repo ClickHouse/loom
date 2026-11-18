@@ -81,7 +81,7 @@ def _row(operation: str, *, ago_s: float, at_ms: int | None = None, **kw: object
 
 
 def _live(run_id: str, started: float, *rows: str) -> list[str]:
-    ch = LocalCH(ddl("agent_events"), *rows)
+    ch = LocalCH(ddl("agent_events"), ddl("agent_events_private"), *rows)
     got = asyncio.run(
         ledger.live_rows("acme", run_id, "alice", namespace="ns", started=started, ch=ch)  # type: ignore[arg-type]
     )

@@ -18,8 +18,10 @@ from server.core.ch_writes import async_insert_settings
 from server.insights.api.models_cost import CostSummaryInput
 from server.insights.app import cost as handlers
 from server.insights.store import cost
+from server.observability.budget import budget_snapshot
 from server.observability.events import AgentEvent
 from server.operations.base import Role
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -95,7 +97,8 @@ class CostWorld:
             "latency_ms": 13,
             "args": {},
         }
-        await self.client.insert(
+        await insert_event_rows(
+            self.client,
             f"{self.database}.agent_events",
             [
                 ordinary,
@@ -152,6 +155,9 @@ async def world(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[CostWorld]:
         attempted = True
         await client.execute(f"CREATE DATABASE {database} UUID '{database_uuid}' ENGINE = Atomic")
         await client.execute(f"CREATE TABLE {database}.agent_events AS loom.agent_events")
+        await client.execute(
+            f"CREATE TABLE {database}.agent_events_private AS loom.agent_events_private"
+        )
         await client.execute(
             f"CREATE TABLE {database}.agent_cost_rollup_daily AS loom.agent_cost_rollup_daily"
         )
@@ -274,5 +280,6 @@ async def test_marked_only_totals_have_no_latency_or_cache_samples(
     assert out.total_cost_usd == 5 and out.total_ops == 1 and out.total_errors == 0
     assert out.cache_hits == 0 and out.cache_saved_usd == 0
     assert out.rows[0].latency_p50_ms == out.rows[0].latency_p99_ms == 0
-    assert await cost.namespace_spend_24h(world.org, "notes", ch=world.reader) == 5.25
+    snapshot = await budget_snapshot(world.org, "notes", read_uncapped=True, ch=world.reader)
+    assert snapshot.spent == 5.25
     assert await cost.org_spend_24h(world.org, "", {}, ch=world.reader) == (10.25, 2)

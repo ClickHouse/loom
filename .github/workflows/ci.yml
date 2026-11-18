@@ -6,6 +6,12 @@ on:
     branches: [main, "release/**"]
   pull_request:
     branches: [main, "release/**"]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact generated translation commit to validate
+        required: true
+        type: string
 
 # A new push to a pull request cancels its superseded run. Every push (to main
 # or a release/X.Y line) runs to completion in its own group, so a failure on
@@ -25,7 +31,26 @@ env:
   UV_VERSION: "0.12.19"
 
 jobs:
+  validate-ref:
+    name: validate requested commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Bind a dispatched run to its generated commit
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            test "$REF" = "refs/heads/i18n/update"
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            test "$SHA" = "$EXPECTED_SHA"
+          fi
+
   clickhouse:
+    needs: validate-ref
     name: the ClickHouse release this run tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,6 +68,7 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
   lint:
+    needs: validate-ref
     name: ruff + mypy-gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -112,7 +138,7 @@ jobs:
   # coverage data and applies the floors.
   unit:
     name: pytest unit part ${{ matrix.part }}
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -186,7 +212,7 @@ jobs:
 
   unit-coverage:
     name: pytest unit coverage, floors and bench
-    needs: unit
+    needs: [validate-ref, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -244,6 +270,7 @@ jobs:
           path: coverage.xml
 
   sandbox:
+    needs: validate-ref
     name: repository-job sandbox (real bubblewrap)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -279,7 +306,7 @@ jobs:
 
   schema-check:
     name: schema.sql in sync with migrations
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -318,6 +345,7 @@ jobs:
         run: make schema-check
 
   ts-typecheck:
+    needs: validate-ref
     name: tsc (frontend)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -340,6 +368,7 @@ jobs:
         run: npm run budget
 
   format:
+    needs: validate-ref
     name: format (biome, prettier, taplo, shfmt)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -366,6 +395,7 @@ jobs:
         run: git ls-files '*.sh' ':!tests/fixtures' | xargs shfmt -d
 
   helm:
+    needs: validate-ref
     name: helm chart (lint, kubeconform)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -469,6 +499,7 @@ jobs:
         run: python3 -m scripts.gates.helm_cell_probe
 
   agent-plugins:
+    needs: validate-ref
     name: coding-agent plugins (node --test)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -500,6 +531,7 @@ jobs:
   # The dashboard's vitest and Playwright suites share nothing but `npm ci`, so
   # each runs as its own job, split into parts on separate runners.
   frontend-vitest:
+    needs: validate-ref
     name: frontend vitest part ${{ matrix.part }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -526,6 +558,7 @@ jobs:
 
   # With fullyParallel: false, --shard splits by spec file per project, not by test.
   frontend-e2e:
+    needs: validate-ref
     name: frontend playwright part ${{ matrix.part }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -568,7 +601,7 @@ jobs:
   # analyzer corpus.
   integration:
     name: pytest integration ${{ matrix.part == 'isolation' && 'isolation gates' || format('part {0} of 4', matrix.part) }}
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -803,7 +836,7 @@ jobs:
 
   integration-postgres:
     name: pytest integration (Postgres ${{ matrix.postgres }} memory authority)
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # The oldest supported major and the newest.
@@ -939,6 +972,7 @@ jobs:
           tests/integration/test_source_access_store.py
           tests/integration/test_source_document_store.py
           tests/integration/test_mirror_reader_evidence.py
+          tests/integration/test_mirror_session_latch_native.py
           tests/integration/test_mirror_search_chunk_keys.py
           tests/integration/test_mirror_title_projection.py
           tests/integration/test_mirror_ask_http.py
@@ -1014,9 +1048,12 @@ jobs:
             server-auth.log
 
   mixed-version:
+    needs: [validate-ref, clickhouse]
     name: builds N-1 and N on one ClickHouse
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1046,8 +1083,11 @@ jobs:
       # target branch's tip can carry a newer migration by the time the run starts.
       - name: Mixed-version gate
         run: python scripts/gates/mixed_version.py --require --base HEAD~1
+      - name: Published build ordinary-event compatibility
+        run: python scripts/gates/mixed_version.py --require --base 1cbaf0411114512957b96ec5ea7bbb8058828543
 
   sdk-rust:
+    needs: validate-ref
     name: rust sdk (${{ matrix.rust }}, fmt, tests, clippy, docs, package)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1090,6 +1130,7 @@ jobs:
           done
 
   sdk-typescript:
+    needs: validate-ref
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1134,6 +1175,7 @@ jobs:
         run: npm run check:dist
 
   sdk-python-adapters:
+    needs: validate-ref
     name: python sdk adapters (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1161,6 +1203,7 @@ jobs:
         run: make test-sdk-adapters SDK_ADAPTERS_PYTHON="$(which python)" SDK_ADAPTERS_RESOLUTION="${{ matrix.lowest && 'lowest-direct' || 'highest' }}"
 
   sdk-python-package:
+    needs: validate-ref
     name: python sdk wheel (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 15

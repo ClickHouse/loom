@@ -15,6 +15,7 @@ from server.core.ch import CHClient
 from server.core.ch_writes import async_insert_settings
 from server.insights.store import admin
 from server.observability.events import AgentEvent
+from tests.integration._event_fixtures import insert_event_rows
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
@@ -30,6 +31,9 @@ async def reader() -> AsyncIterator[Any]:
         attempted = True
         await client.execute(f"CREATE DATABASE {database} UUID '{database_uuid}' ENGINE = Atomic")
         await client.execute(f"CREATE TABLE {database}.agent_events AS loom.agent_events")
+        await client.execute(
+            f"CREATE TABLE {database}.agent_events_private AS loom.agent_events_private"
+        )
 
         async def query_all(sql: str, params: Any = None) -> Any:
             return await client.query_all(
@@ -62,7 +66,8 @@ async def reader() -> AsyncIterator[Any]:
             "latency_ms": 999,
             "upstream_cost_usd": 13,
         }
-        await client.insert(
+        await insert_event_rows(
+            client,
             f"{database}.agent_events",
             [ordinary, marked, {**marked, "namespace": "acl-" + "a" * 24}],
             async_insert_settings(),

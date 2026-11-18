@@ -25,13 +25,14 @@ import html
 import posixpath
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.codegen.page_summary import SECTIONS, page_key, page_summary, shorten  # noqa: E402
-from scripts.docs_site.indexnow import page_path  # noqa: E402
+from scripts.docs_site.paths import page_path  # noqa: E402
 
 BLOB = "https://github.com/ClickHouse/loom/blob/main/"
 RAW = "https://raw.githubusercontent.com/ClickHouse/loom/main/"
@@ -133,6 +134,27 @@ def on_page_markdown(markdown, page, config, files):
     if _WHOLLY_GENERATED.search(markdown):
         page.edit_url = None
     return _rewrite_links(markdown, page.file.src_uri, config["site_url"], to_site=False)
+
+
+class _RenderedAnchors(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids = set()
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            if value is not None and (name == "id" or (tag == "a" and name == "name")):
+                self.ids.add(value)
+
+
+def on_page_content(html, page, config, files):
+    # Raw Markdown code literals can hide later anchors from MkDocs' HTML collector.
+    # Validate against the rendered elements, excluding escaped code and comments.
+    parser = _RenderedAnchors()
+    parser.feed(html)
+    parser.close()
+    page.present_anchor_ids = parser.ids
+    return html
 
 
 # Files at the repository root that the site serves itself (on_post_build).

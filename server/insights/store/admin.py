@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.ch_names import SCHEMA, database, logical, telemetry_database
+from server.core.event_source import ALL_EVENTS
 from server.core.naming import not_mirror_sql
 from server.core.repo_base import _CHClient, _default_client
 from server.observability.store.event_reads import MASKED_EVENTS
@@ -125,7 +126,7 @@ async def events_tail(
         f"""
         SELECT ts, org, namespace, agent, operation, latency_ms,
                success, error_code, request_id, trace_id
-        FROM {"loom.agent_events" if operator else MASKED_EVENTS}
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE {" AND ".join(where)}
         ORDER BY ts DESC
         LIMIT {{lim:UInt32}}
@@ -225,7 +226,7 @@ async def consumers(
                round(sumIf(upstream_cost_usd, args['consumer_source'] = 'claimed'), 6)
                                                                 AS claimed_spend_usd,
                max(ts)                                          AS last_seen
-        FROM {"loom.agent_events" if operator else MASKED_EVENTS}
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE kind = 'request'
           {"" if operator else "AND mirror_marked = 0"}
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
@@ -276,7 +277,7 @@ async def consumer_tagging(
                            {consumer_key} NOT IN {{untagged:Array(String)}}) AS tagged_ops,
                uniqExactIf(operation,
                            {consumer_key} IN {{untagged:Array(String)}})     AS untagged_ops
-        FROM {"loom.agent_events" if operator else MASKED_EVENTS}
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE kind = 'request'
           {"" if operator else "AND mirror_marked = 0"}
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
@@ -352,7 +353,7 @@ async def fleet_cost(
             count()                AS total_calls,
             uniqExact(operation)   AS ops_distinct
             {namespaces_select}
-        FROM {"loom.agent_events" if operator else MASKED_EVENTS}
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE ts >= now() - INTERVAL {{since:UInt32}} SECOND AND {not_mirror_sql()}
           {"" if operator else "AND mirror_marked = 0"}
         GROUP BY {group_by}

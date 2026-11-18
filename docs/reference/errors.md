@@ -856,6 +856,10 @@ Raised in `server/auth/self_signup.py`.
 
 HTTP 422, raised as `server.core.errors.SensitiveDefinitionRefusedError`. 422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is not promoted: the shared layer serves it to every reader of the namespace. Category `input`, retryable: no.
 
+#### `SESSION_PROTECTION_REQUIRED`
+
+HTTP 409, raised as `server.core.errors.SessionProtectionRequiredError`. 409 — session-content operations need the client's protection promise. Category `configuration`, retryable: no.
+
 #### `SHARED_CONFLICT`
 
 Raised in `server/memory/app/promote.py`.

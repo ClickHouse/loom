@@ -26,7 +26,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def fake_search(search_input: Any):
         return _search_output([_hit("m1", excerpt="favorite color: blue")])
 
-    async def fake_over_cap(org: str, ns: str) -> bool:
+    async def fake_over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     async def fake_blocks(org: str, ns: str, run_id: str, **kw: Any) -> str:

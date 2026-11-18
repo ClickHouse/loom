@@ -16,6 +16,7 @@ from server.operations.base import Operation, Role
 
 observe_record = Operation(
     name="observe.record",
+    session_content=True,
     input_model=ObserveRecordInput,
     output_model=ObserveRecordOutput,
     handler=handle_observe_record,
@@ -27,6 +28,7 @@ observe_record = Operation(
 
 observe_crystallize = Operation(
     name="observe.crystallize",
+    session_content=True,
     input_model=ObserveCrystallizeInput,
     output_model=ObserveCrystallizeOutput,
     handler=handle_observe_crystallize,

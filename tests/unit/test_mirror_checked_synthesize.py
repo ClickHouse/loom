@@ -50,7 +50,7 @@ def world(monkeypatch):
         assert org == "acme" and namespaces == ["team"]
         return plan
 
-    async def budget(*_):
+    async def budget(org: str, ns: str, *, user_id: str = ""):
         events.append("budget")
         return False
 

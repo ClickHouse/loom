@@ -43,6 +43,12 @@ ACTIVATION_TRIGGERS: tuple[str, ...] = (
 )
 
 
+REPOSITORY_MEMORY_TAGS = (
+    "For a fact about the primer's repository, add its `repo:<id>` tag; "
+    "omit that tag for unrelated facts."
+)
+
+
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "memory.set": (
         "Save a fact to Loom — shared across every AI tool the user runs; "
@@ -52,23 +58,20 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "'save'.** Declarative statements ARE save triggers: 'my X is Y', "
         "'I prefer X over Y', 'we decided X', 'we're at X', 'I deploy on X' — "
         "one call per fact.\n\n"
-        "**Don't search before saving.** A stated fact is a write, not a "
-        "recall; the server dedups. "
+        "**Don't search before saving.** A stated fact is a write; the server dedups. "
         + revision_policy("memory.update")
         + "\n\n**Other writes:** memory.pin guards a fact from later conflicting "
         "writes, memory.lock from change or deletion; memory.apply changes many.\n\n"
-        "**Auto-tag from scope words**: 'for billing, X is Y' → "
-        "`tags=['billing']`; same for person / topic mentions.\n\n"
-        "Do NOT save: questions, code help, world knowledge, acknowledgements, "
-        "hypotheticals, echoes of your own words.\n\n"
-        "Writes land in ONE namespace (the caller's home); pass "
+        "**Auto-tag** scope words: billing → tags=['billing']. " + REPOSITORY_MEMORY_TAGS + "\n\n"
+        "Do NOT save questions, code help, world knowledge, acknowledgements, "
+        "hypotheticals or your own echoes.\n\n"
+        "Writes land in ONE namespace (your home); pass "
         "`namespace=<name>` only to write elsewhere. Don't override "
         "`memory_type` (defaults `semantic`); use "
         "`tags` for classification. Cite the response's `namespace` and "
         "`memory_key` in your confirmation; `conflict_verdict`, `peers` and "
         "`next` say what the store held (`dry_run=true` checks without "
-        "writing). `value` is stored verbatim — never base64 (kills search; "
-        "see `advisories`).\n\n"
+        "writing). `value` is stored verbatim; never base64 (see `advisories`).\n\n"
         "**A fact with a natural lifetime gets one at write time.** A "
         "deadline, a temporary state ('on call this week'), a rotating value: "
         "pass `ttl_seconds` AND `on_expire` (tombstone | demote | anonymize) "
@@ -2153,7 +2156,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "hold changed. " + revision_policy("memory.set") + "\n"
         "WHEN NOT: Task-local state — put that in working_memory.set.\n"
         "ARGS: memory_key, value (plain text or JSON — never base64; stored "
-        "verbatim); memory_type (semantic|procedural|preference)."
+        "verbatim); memory_type (semantic|procedural|preference). " + REPOSITORY_MEMORY_TAGS
     ),
     "memory.get": (
         "WHAT: READ one memory by its exact memory_key.\n"

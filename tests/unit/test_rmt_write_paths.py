@@ -38,6 +38,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "delete_version_checks": ("builder", "test_delete_version_sql.py"),
     "memory_webhooks": ("builder", "test_memory_webhooks.py"),
     "knowledge_sources": ("builder", "test_knowledge_sources.py"),
+    "knowledge_source_push": ("builder", "test_repository_column_sets_match_schema.py"),
     "query_history_sources": ("builder", "test_repository_column_sets_match_schema.py"),
     "knowledge_mirrors": ("builder", "test_knowledge_mirrors.py"),
     "knowledge_source_listings": ("builder", "test_knowledge_mirrors.py"),

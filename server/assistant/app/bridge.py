@@ -16,7 +16,7 @@ import itertools
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Iterator
 from dataclasses import asdict, dataclass, field
 from typing import Any, NoReturn
 
@@ -28,11 +28,15 @@ from server.assistant.domain.steps import Step, steps_of
 from server.assistant.domain.support import UNCHECKED
 from server.assistant.store import ledger
 from server.auth import fail_closed, sharing
+from server.auth.answer_tokens import ANSWER_JTI_PREFIX, is_answer_token
 from server.auth.authz import CachedGate, check_authorized
 from server.auth.delegation import delegate
 from server.auth.directory import directory
 from server.auth.jwt import AuthInfo, new_jti
+from server.auth.session_protection import protected_for
+from server.core import request_tail, request_work, shielded
 from server.core.ch import set_query_tag
+from server.core.diagnostics import private_work
 from server.core.errors import (
     AssistantSelfCallError,
     AssistantUnavailableError,
@@ -47,6 +51,7 @@ from server.core.errors import (
     error_kind,
 )
 from server.identity.domain.read_scope import request_read_narrowed
+from server.knowledge.app import source_access
 from server.llm.customer import ModelCallsDisabled, switched_off
 from server.observability import cost_accumulator
 from server.observability.budget import operation_over_share
@@ -88,6 +93,7 @@ class Ticket:
     # Loom's line about the caller's credential (`asker_line`), the last line of the
     # question LibreChat is sent.
     asker: str
+    mirrored: bool = False
 
     def release(self) -> None:
         """Give the answer's slot back; a second call does nothing."""
@@ -98,6 +104,7 @@ class Ticket:
 class Answer:
     """What one answer produced, filled while it streams."""
 
+    mirrored: bool = False
     run_id: str = ""
     text: list[str] = field(default_factory=list)
     prompt_tokens: int = 0
@@ -151,17 +158,10 @@ def refuse_org_wide(auth: AuthInfo) -> None:
         )
 
 
-# Every answer token's id starts with this, so a token delegated from one names it among
-# its parents: that is how a descendant is told from the caller's own token.
-ANSWER_JTI_PREFIX = "assistant-answer-"
-
-
 def refuse_self_call(auth: AuthInfo) -> None:
     """ASSISTANT_SELF_CALL for an answer's own token (consumer `loom-assistant`) or any
     token delegated from one: calls go one way, so an answer never asks the assistant."""
-    if auth.consumer == ASSISTANT_CONSUMER or any(
-        p.startswith(ANSWER_JTI_PREFIX) for p in auth.parents
-    ):
+    if is_answer_token(auth):
         raise AssistantSelfCallError("an assistant answer's token cannot ask the assistant")
 
 
@@ -284,7 +284,7 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     return answering
 
 
-async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
+async def answer_token(auth: AuthInfo, org: str, namespace: str, *, mirrored: bool = False) -> str:
     """The token one answer's tool calls read under: delegated from the caller's,
     `viewer` on the namespace alone, no longer-lived than an answer may run, and ended
     with the caller's token, subject or sign-in session."""
@@ -305,6 +305,8 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
         consumer=ASSISTANT_CONSUMER,
         jti=f"{ANSWER_JTI_PREFIX}{new_jti()}",
         reads_as_creator=bool(reader and reader == delegated.creator),
+        session_protection=protected_for(auth),
+        answer_mirrors=mirrored and protected_for(auth),
     )
 
 
@@ -326,15 +328,41 @@ async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
     answer's slot, its token and its asker line, run before anything streams, so a
     refused request is an HTTP error and pays for no line. The stream gives the slot
     back; so does `Ticket.release` on a refusal after this."""
-    agent_id, api_key = await _afford(org, namespace)
-    slot = _take_slot(org, namespace)
+    mirrored = await _mirror_admission(org, namespace)
+    with private_work() if mirrored else contextlib.nullcontext():
+        agent_id, api_key = await _afford(org, namespace)
+        slot = _take_slot(org, namespace)
+        try:
+            token = await answer_token(auth, org, namespace, mirrored=mirrored)
+            asker = await asker_line(auth, org, namespace)
+        except BaseException:
+            _give_back(org, namespace, slot)
+            raise
+    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject, asker, mirrored)
+
+
+async def _mirror_admission(org: str, namespace: str) -> bool:
+    """Fix the answer's privacy before model work, without reading private evidence."""
+    if not settings.auth_actually_required():
+        return False  # mirror reads require authenticated serving
+    set_query_tag("assistant.mirror.admission")
     try:
-        token = await answer_token(auth, org, namespace)
-        asker = await asker_line(auth, org, namespace)
-    except BaseException:
-        _give_back(org, namespace, slot)
-        raise
-    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject, asker)
+        sources = await source_access.has_active_mirrored_sources(org, namespace)
+    except Exception:  # noqa: BLE001 — unknown admission must never become an ordinary answer
+        request_work.mark_mirrored(unread=True)
+        with private_work():
+            pass
+        raise BackendUnavailableError(
+            "the assistant's source access could not be checked"
+        ) from None
+    if not sources:
+        return False
+    if not request_work.mark_mirrored():
+        raise BackendUnavailableError("the assistant's source access could not be checked")
+    # Install diagnostic filters before the marked answer's first further await.
+    with private_work():
+        pass
+    return True
 
 
 def _with_asker(messages: list[dict[str, str]], asker: str) -> list[dict[str, str]]:
@@ -481,6 +509,60 @@ async def stream(
     the whole list so far; a `loom.text_done` event says the text is complete before the
     checks start; the `loom.citations` event then carries the steps of one read of the run
     after it ends."""
+    answer.mirrored = ticket.mirrored
+    if ticket.mirrored:
+        yield b'data: {"mirrored":true}\n\n'
+    chunks = _stream(ticket, messages, answer, live=live)
+    try:
+        while True:
+            with private_work() if ticket.mirrored else contextlib.nullcontext():
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    break
+            yield chunk
+    finally:
+        with private_work() if ticket.mirrored else contextlib.nullcontext():
+            if ticket.mirrored:
+                await _close_owned(chunks.aclose(), name="assistant.stream.producer")
+            else:
+                await chunks.aclose()
+
+
+@contextlib.asynccontextmanager
+async def _answer_client(
+    ticket: Ticket, http_timeout: httpx.Timeout
+) -> AsyncIterator[httpx.AsyncClient]:
+    client = httpx.AsyncClient(base_url=str(settings.assistant_librechat_url), timeout=http_timeout)
+    try:
+        yield client
+    finally:
+        if ticket.mirrored:
+            await _close_owned(client.aclose(), name="assistant.stream.client")
+        else:
+            await client.aclose()
+
+
+async def _close_upstream(response: httpx.Response, tasks: list[asyncio.Task[None]]) -> None:
+    for task in tasks:
+        task.cancel()
+    try:
+        await response.aclose()
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _close_owned(action: Awaitable[None], *, name: str) -> None:
+    async def bounded() -> None:
+        async with asyncio.timeout(request_tail.REQUIRED_STEP_TIMEOUT_S):
+            await action
+
+    await shielded.to_its_end(bounded(), name=name)
+
+
+async def _stream(
+    ticket: Ticket, messages: list[dict[str, str]], answer: Answer, *, live: bool
+) -> AsyncGenerator[bytes]:
     body = {
         "model": ticket.agent_id,
         "messages": _with_asker(messages, ticket.asker),
@@ -497,9 +579,7 @@ async def stream(
     started = time.time()
     answered = False  # LibreChat's stream ended: the slot is held through the checks
     try:
-        async with httpx.AsyncClient(
-            base_url=str(settings.assistant_librechat_url), timeout=timeout
-        ) as client:
+        async with _answer_client(ticket, timeout) as client:
             async with asyncio.timeout_at(deadline):
                 r = await client.send(
                     client.build_request(
@@ -522,16 +602,12 @@ async def stream(
                     async for chunk in relayed:
                         yield chunk
             finally:
-                # The request closes first (a cancellation delivered again at every await,
-                # as in an anyio scope, then cannot skip it), then the cancelled reader and
-                # poll are awaited. Under such a cancellation the await is cut short too:
-                # neither catches the cancellation, so both end on the loop's next pass.
-                for t in tasks:
-                    t.cancel()
-                try:
-                    await r.aclose()
-                finally:
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                # A marked answer joins response, reader and poll cleanup despite
+                # repeated cancellation, before final usage can be captured.
+                if ticket.mirrored:
+                    await _close_owned(_close_upstream(r, tasks), name="assistant.stream.upstream")
+                else:
+                    await _close_upstream(r, tasks)
         answered = True
     except httpx.HTTPError as e:
         log.warning("reaching LibreChat for an answer failed: %s", e)
@@ -722,7 +798,7 @@ async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer
     kept = admitted_messages(messages)
     await authorize(auth, org, namespace)
     ticket = await open_answer(auth, org, namespace)
-    answer = Answer()
+    answer = Answer(mirrored=ticket.mirrored)
     try:
         async for _ in stream(ticket, kept, answer):
             pass

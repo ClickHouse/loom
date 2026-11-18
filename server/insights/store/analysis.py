@@ -171,13 +171,6 @@ def other_deployments_sql(db: str) -> str:
     )
 
 
-def printed_checks() -> list[str]:
-    """Both checks naming Loom's database, for an admin whose session may
-    sit in another one."""
-    db = sql_string(database())
-    return [f"{foreign_policies_sql(db)};", f"{other_deployments_sql(db)};"]
-
-
 async def foreign_policies(*, ch: _CHClient | None = None) -> list[str]:
     ch = ch or _default_client()
     rows = await ch.query_all(foreign_policies_sql("currentDatabase()"))
@@ -272,16 +265,6 @@ async def own_grants(
     return frozenset(out)
 
 
-async def own_grant_lines(
-    *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
-) -> list[str]:
-    """The analyst's own SHOW GRANTS, line by line, read as the analyst."""
-    ch = ch or _analyst_client()
-    with as_analyst(boundary.ANALYST_USER, password, extra):
-        _, _, rows = await ch.query_columns("SHOW GRANTS")
-    return [str(line) for (line,) in rows]
-
-
 async def write_entities(
     statements: list[str], *, names: boundary.SettingNames, ch: _CHClient | None = None
 ) -> None:
@@ -289,6 +272,10 @@ async def write_entities(
     They hold the analyst's password and the scope key, so their text stays
     out of system.query_log, and they stay out of the statement capture file."""
     ch = ch or _default_client()
+    if any(sql.startswith("GRANT ") for sql in statements):
+        from server.insights.store.event_cutover import confirm_ordinary_events
+
+        await confirm_ordinary_events(ch=ch)
     with uncaptured():
         for sql in statements:
             await ch.execute(sql, settings=boundary.provisioning_settings(names))
@@ -303,8 +290,10 @@ def target_database() -> str:
 # it holds grants on, so the probe asks for what it must not. LIMIT 1: a
 # LIMIT 0 statement can finish before ClickHouse checks columns.
 REFUSED_READS = {
-    "agent_events": "SELECT count() FROM {db}.agent_events",
-    "agent_events.upstream_cost_usd": "SELECT upstream_cost_usd FROM {db}.agent_events LIMIT 1",
+    "agent_events_private": "SELECT count() FROM {db}.agent_events_private",
+    "agent_events_private.upstream_cost_usd": (
+        "SELECT upstream_cost_usd FROM {db}.agent_events_private LIMIT 1"
+    ),
     "system.query_log": "SELECT count() FROM system.query_log",
     "system.users": "SELECT count() FROM system.users",
     "memory.value": "SELECT toString(value) FROM {db}.memory LIMIT 1",

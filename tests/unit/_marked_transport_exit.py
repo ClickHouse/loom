@@ -73,7 +73,7 @@ def prepare(monkeypatch, transport):
     target = gates.Target("org-a", "team-a", None, "team-a")
 
     async def insert(table, data, *, settings, required_columns):
-        assert table == "loom.agent_events"
+        assert table == "loom.agent_events_private"
         assert settings["async_insert"] == settings["wait_for_async_insert"] == 1
         assert required_columns == frozenset({"mirror_marked"})
         world.insert_started.set()

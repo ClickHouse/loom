@@ -485,11 +485,12 @@ def test_the_ledger_views_read_their_window_and_no_other_view_has_one(view: str)
     bounds a ledger read must sit in the view's own WHERE, right after the admit
     clause."""
     flat = " ".join(_views()[view].split())
-    admit = _ADMIT.search(flat)
-    assert admit, view
-    after = flat[admit.end() :].lstrip()
+    admits = list(_ADMIT.finditer(flat))
+    assert admits, view
+    after = flat[admits[-1].end() :].lstrip()
     if view in _LEDGER:
-        assert after.startswith(_WINDOW), (view, after[:80])
+        assert len(admits) == 3, "both physical branches and the outer scope stay bounded"
+        assert all(flat[a.end() :].lstrip().startswith(_WINDOW) for a in admits), view
         rest = after[len(_WINDOW) :].strip()
         if view == "sql_v1_usage_daily":
             assert rest == ") GROUP BY day, org, namespace, agent, operation, kind", (view, rest)

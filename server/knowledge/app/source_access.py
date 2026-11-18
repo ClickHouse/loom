@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.aliases import canonical_subject
+from server.auth.answer_tokens import is_answer_token
 from server.auth.authz import check_authorized
 from server.auth.context import current_auth
 from server.auth.reader_identity import ReaderIdentity, reader_subject, resolve_reader
@@ -246,6 +247,11 @@ def _head_serves(head: store.ReadHead, candidate: dict[str, Any], chunks: bool) 
     )
 
 
+async def has_active_mirrored_sources(org: str, namespace: str) -> bool:
+    """Read public registration presence after the caller authorizes the namespace."""
+    return bool(await store.active_sources(org, [namespace]))
+
+
 async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
     """Read public registrations first, then bind one marked, fail-closed mirror plan."""
     plan = ReadPlan(org)
@@ -254,6 +260,7 @@ async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
         auth is None
         or not settings.auth_actually_required()
         or any(is_mirror_name(ns) for ns in namespaces)
+        or (is_answer_token(auth) and not (auth.session_protection and auth.answer_mirrors))
     ):
         return plan
     set_query_tag("knowledge.mirror.prepare")

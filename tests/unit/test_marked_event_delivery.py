@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from contextlib import nullcontext
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -21,7 +22,7 @@ def world(monkeypatch):
     rows, queued, held = [], [], []
 
     async def insert(table, data, *, settings, required_columns):
-        assert table == "loom.agent_events"
+        assert table == "loom.agent_events_private"
         assert required_columns == frozenset({"mirror_marked"})
         assert settings["async_insert"] == settings["wait_for_async_insert"] == 1
         rows.extend(copy.deepcopy(data))
@@ -190,6 +191,32 @@ def test_ordinary_event_still_uses_the_existing_queue(world):
     assert len(world.queued) == len(world.held) == 1
     assert world.queued[0].mirror_marked is False
     assert world.rows == []
+
+
+@pytest.mark.parametrize("marked", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_ordinary_flush_excludes_private_rows_and_their_loss_counts(world, marked, failed):
+    emit()
+    ordinary = world.queued[0]
+    private = replace(
+        ordinary,
+        namespace=ordinary.namespace if marked else "acl-" + "a" * 24,
+        mirror_marked=marked,
+        request_id="private-request-canary",
+    )
+    emitter = events.EventEmitter()
+    emitter.emit(private)
+    assert emitter.queue.empty() and all(v == 0 for v in emitter.stats().values())
+    # The flush boundary also rejects a private row inserted around emit's guard.
+    emitter.queue.put_nowait(private)
+    emitter.emit(ordinary)
+    world.client.insert.side_effect = RuntimeError("ordinary insert failed") if failed else None
+    await emitter._flush_once()
+    args, _ = world.client.insert.call_args
+    assert args == ("loom.agent_events", [ordinary.to_row()])
+    assert emitter.queue.empty() and emitter._inflight == 0
+    assert emitter.dropped_flush_failed == int(failed)
+    assert emitter.dropped_queue_full == emitter.dropped_batch_repeat == 0
 
 
 @pytest.mark.parametrize("marked", [False, True])

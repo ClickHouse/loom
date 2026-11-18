@@ -34,7 +34,7 @@ async def test_private_costs_are_confined_to_the_mirror() -> None:
             assert outer.embed_tokens == 2 and outer.cost_usd == 0.0
             assert bag.ch_statements == bag.ch_read_bytes == 0
         rows = await client.query_all(
-            "SELECT * FROM loom.agent_events WHERE org = {org:String}",
+            "SELECT * FROM loom.agent_events_private WHERE org = {org:String}",
             {"org": org},
         )
         assert len(rows) == 1
@@ -50,6 +50,12 @@ async def test_private_costs_are_confined_to_the_mirror() -> None:
         assert int(row["llm_calls"]) == 1
         assert float(row["upstream_cost_usd"]) == 0.25
         assert row["operation"] == "worker.knowledge_source_sync"
+        assert (
+            await client.query_all(
+                "SELECT * FROM loom.agent_events WHERE org = {org:String}", {"org": org}
+            )
+            == []
+        )
         assert events.get_emitter().stats() == before
     finally:
         await client.disconnect()

@@ -18,9 +18,10 @@ class _CH:
         self.cap, self.spent = cap, spent
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        assert params == {"org": "o", "ns": "n"}
         if "daily_cost_cap_usd" in sql:
+            assert params == {"org": "o", "ns": "n"}
             return None if self.cap is None else {"daily_cost_cap_usd": self.cap}
+        assert params == {"org": "o", "ns": "n", "op": "", "uid": ""}
         return {"spent": self.spent}
 
 

@@ -102,6 +102,17 @@ The existing `test_memories_follow_their_code`
 [integration regression](https://github.com/ClickHouse/loom/blob/main/tests/integration/test_memory_code_links.py)
 checks these states across commits. It also checks a pure move (`moved`), removed code
 (`missing`) and a release branch whose unchanged definition still reads `fresh`.
+
+The packaged [MCP smoke](https://github.com/ClickHouse/loom/blob/main/scripts/gates/docker_code_smoke.py)
+saves a lesson, verifies `fresh`, commits a body edit and waits for the indexing and link
+workers to return `changed` with that exact commit. The
+[quickstart harness](https://github.com/ClickHouse/loom/blob/main/scripts/gates/docker_quickstart_smoke.py)
+restarts the Loom service, checks the link again and deletes the test memory.
+[CI](https://github.com/ClickHouse/loom/actions/workflows/docker-smoke.yml) runs these checks
+on amd64 and arm64 with authentication off, a local embedder and a fake model provider.
+These checks verify code-link state; authenticated clients, answer quality and agent
+tool selection are not tested.
+
 For removal, held-memory exceptions and model-backed revision, see the
 [link policies](../concepts/memory.md#memories-linked-to-code).
 

@@ -192,10 +192,15 @@ async def test_a_parked_governed_definition_is_withheld_when_its_approval_lapses
         deadline = time.monotonic() + 15
         while True:
             page = await r.call("memory.search", page_args)
-            if page.get("abstain_code") != "page_expired" or time.monotonic() >= deadline:
+            # A bounded approval refresh can withhold a hit before either mutation.
+            if (
+                page.get("results")
+                or page.get("abstain_code") not in ("page_expired", "no_match")
+                or time.monotonic() >= deadline
+            ):
                 break
             await asyncio.sleep(0.1)
-        assert (
+        assert page["results"] and (
             page["results"][0]["memory_key"] == "definition/mrr" and page["results"][0]["governed"]
         )
         assert page["results"][0]["body_truncated"] and page["bodies_elided"] == 1

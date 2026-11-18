@@ -89,9 +89,41 @@ const status = await loom.knowledge.ingestFile({
 
 `OpMap` binds every operation name (`GENERATED_OP_COUNT` of them) to its input and output interface; `OPS` is the table of specs (group, method, required role, idempotency, maturity, latency budget). An op the SDK does not know yet (a newer server) is reachable through `loom.callRaw(name, body)`.
 
+## Application-owned session protection
+
+`LoomClient` and `Transport` accept a `sessionProtection` handle backed by an
+application-owned `SessionProtectionStore`. Every client and concurrent callback
+participating in one logical conversation in the same process must reuse the same
+handle, including its pending-mark latch. Across restarts, restore the same durable
+authority. The application provisions
+the record and restores the same authority after restart; the SDK never creates,
+resets or repairs a missing record. `read()` must reject missing, damaged or
+inaccessible state. `mark()` resolves only after committing a monotonic protected
+state. An in-memory store does not meet this contract.
+
+For an automatic invocation, pass `capture: new SessionCapture(roots)` in its call
+options, outside the operation's wire arguments. Include every contributing
+conversation handle; `capture.with(root)` retains existing handles. The transport
+checks them after credential waits and immediately before sending each attempt.
+Protection suppresses automatic invocations with `AutomaticCaptureSuppressed`;
+explicit calls remain available and still observe their responses.
+
+Bound JSON responses are observed before status handling, retry, hints or typed
+return. A mirrored response waits for every contributing record's durable mark
+and readback before returning content. Invalid envelopes or an unconfirmed store
+produce `SessionProtectionUnavailable` and protect all known handles. A local
+monotonic latch suppresses concurrent automatic calls while persistence is pending;
+it never substitutes for durable acknowledgement before content returns.
+
+This control covers JSON transport observation and explicit invocation ownership.
+It does not qualify Session buffers, framework callbacks, restored host lineage or
+a concrete storage backend. Bound raw streams refuse and cancel their response
+until a streaming observer is available. Binding a handle does not send a session
+protection capability declaration or enable mirrored-source creation.
+
 ## Errors
 
-Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
+Server and network failures use `LoomError`, with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
 
 | class                                                   | when                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -103,7 +135,7 @@ Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`
 | `BackendUnavailable`                                    | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
 | `TimeoutError`                                          | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                                                                                              |
 
-A 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body.
+For an unbound client, a 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body. Bound clients withhold the body and raise `SessionProtectionUnavailable`.
 
 ```ts
 import { NotFound, RateLimited } from "@clickhouse/loom";

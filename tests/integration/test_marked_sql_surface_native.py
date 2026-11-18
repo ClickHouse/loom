@@ -13,6 +13,7 @@ from server.core.ch_writes import async_insert_settings
 from server.insights.app import sql_access
 from server.insights.domain.sql_surface import Scope
 from server.observability.events import AgentEvent
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import ch_client_from_env, unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -85,7 +86,8 @@ async def test_sql_account_masks_before_predicates_and_folds_before_fine_dimensi
     }
     try:
         await client.connect()
-        await client.insert(
+        await insert_event_rows(
+            client,
             "loom.agent_events",
             [
                 ordinary,

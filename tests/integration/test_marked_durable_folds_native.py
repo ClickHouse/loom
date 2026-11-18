@@ -13,6 +13,7 @@ import pytest_asyncio
 from server.core.ch import CHClient
 from server.core.ch_writes import async_insert_settings
 from server.observability.events import AgentEvent
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -60,7 +61,8 @@ class FoldWorld:
             mirror_marked=marked,
         ).to_row()
         row.update(ingested_at=self.stamp + timedelta(seconds=offset), **extra)
-        await self.client.insert(
+        await insert_event_rows(
+            self.client,
             f"{self.database}.agent_events",
             [row],
             async_insert_settings(),
@@ -99,7 +101,12 @@ async def world() -> AsyncIterator[FoldWorld]:
         await client.connect()
         attempted = True
         await client.execute(f"CREATE DATABASE {database} UUID '{database_uuid}' ENGINE = Atomic")
-        for source in ("loom.agent_events", "loom.subject_last_seen", "loom_telemetry.sli_minute"):
+        for source in (
+            "loom.agent_events",
+            "loom.agent_events_private",
+            "loom.subject_last_seen",
+            "loom_telemetry.sli_minute",
+        ):
             await client.execute(f"CREATE TABLE {database}.{source.split('.')[1]} AS {source}")
         row = await client.query_one("SELECT now64(3) AS stamp")
         assert row

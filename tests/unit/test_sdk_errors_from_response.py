@@ -127,6 +127,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "PRECONDITION_FAILED": PreconditionFailed,
     "GRANT_WOULD_DOWNGRADE": PreconditionFailed,
     "READS_LLM_FREE": PreconditionFailed,
+    "SESSION_PROTECTION_REQUIRED": PreconditionFailed,
     "OVERLOADED": Overloaded,
     "RATE_LIMITED": RateLimited,
     "BACKEND_UNAVAILABLE": BackendUnavailable,

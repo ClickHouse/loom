@@ -285,6 +285,7 @@ _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("code_index.purge", _step_purge_code_index_by_ns),
 )
 _LATE_STEPS_USER: tuple[UserStep, ...] = (
+    ("tasks.delete", ledger_steps.delete_task_events_by_user),
     ("conversations.tombstone", ledger_steps.tombstone_conversations_by_user),
     ("context_blobs.tombstone", ledger_steps.tombstone_context_blobs_by_user),
     ("session_briefs.delete", ledger_steps.delete_session_briefs_by_user),
@@ -380,6 +381,7 @@ USER_STEPS: tuple[UserStep, ...] = (
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("knowledge_sources.retire", _step_retire_knowledge_sources_by_ns),
+    ("knowledge_source_push.delete", ledger_steps.delete_source_push_by_namespace),
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_namespace),
     ("pg_knowledge.delete", pg_steps.delete_pg_knowledge_by_namespace),
     ("query_history_sources.delete", ledger_steps.delete_query_history_by_namespace),

@@ -74,7 +74,7 @@ def ask_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         env.search_inputs.append(search_input)
         return env.search_output
 
-    async def fake_over_cap(org: str, ns: str) -> bool:
+    async def fake_over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return env.over_cap
 
     async def fake_knowledge(_input: Any) -> KnowledgeSearchOutput:
@@ -376,7 +376,7 @@ def cascade_env(ask_env, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     def for_model(model: str | None) -> Any:
         return {"strong-model": ask_env.strong, "cheap-model": ask_env.cheap}[model]
 
-    async def fake_ratio(org: str, ns: str) -> float:
+    async def fake_ratio(org: str, ns: str, *, user_id: str = "") -> float:
         return ask_env.budget_ratio
 
     monkeypatch.setattr(llm_client, "get_llm_client_for_model", for_model)

@@ -26,13 +26,14 @@ import re
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from server.core.event_source import event_source
 from server.core.sql_literal import sql_string
 
 # Bumped whenever the allowlist, the profile or the policy shape changes. The
 # profile carries it, and a build writes the entities only when its version is
 # at least the stored one, so during a rolling upgrade build N-1 never puts
 # back its narrower grants over N's (`needs_rewrite`).
-ENTITY_VERSION = 4
+ENTITY_VERSION = 5
 
 # ClickHouse server error codes.
 BAD_ARGUMENTS = 36
@@ -47,9 +48,9 @@ CAPS_PROFILE = "loom_analyst_caps"
 # policy on: the allowlist, a retired table and the canary, so no table reads short for
 # anyone else (the first attach's org scan refuses a table whose rows it cannot all read).
 OTHERS_POLICY_NAME = "loom_analyst_others"
-# Tables that left the allowlist: each keeps a policy that reads nothing, so a
-# grant that outlives it (a write cut short) still reads no row.
-RETIRED_TABLES: tuple[str, ...] = ("agent_events",)
+# Private physical tables keep a deny policy, so a partial grant reconciliation
+# cannot make their rows available to the analyst.
+REFUSED_TABLES: tuple[str, ...] = ("agent_events_private",)
 EVENTS_VIEW = "analysis_agent_events"
 # One row in a reserved scope, under a policy written last with the same key:
 # the probe's signed read of it shows the policies accept this replica's key.
@@ -157,6 +158,30 @@ _WRITER = (
 # memory.ask or knowledge.search, which apply their own scope and sensitivity
 # rules. Every table here is deleted from by the erasure saga or listed in the
 # census as holding no memory content (tests/unit/test_analysis_boundary.py).
+_EVENT_COLUMNS = (
+    _c("ts", "DateTime64(3)", "when the call ended"),
+    *_IDENTITY,
+    *_WRITER,
+    _c("run_id", "String", "the run the call belonged to"),
+    _c("operation", "LowCardinality(String)", "the op name, e.g. memory.search"),
+    _c("request_id", "String", "the request id"),
+    _c("latency_ms", "UInt32", "server time in ms"),
+    _c("success", "Bool", "whether the call succeeded"),
+    _c("error_code", "LowCardinality(String)", "the error code, '' on success"),
+    _c("status_class", "LowCardinality(String)", "ok, client_error, server_error, ..."),
+    _c("memory_key", "String", "the key the call addressed, '' for none"),
+    _c("kind", "LowCardinality(String)", "the row kind: '' for a request, worker, ..."),
+    _c("input_tokens", "UInt32", "model input tokens the call spent"),
+    _c("output_tokens", "UInt32", "model output tokens the call spent"),
+    _c("upstream_cost_usd", "Decimal(18, 6)", "model spend in USD"),
+    _c("model", "LowCardinality(String)", "the model the call used most"),
+    _c("consumer", "LowCardinality(String)", "the client the call came from"),
+    _c("subject", "LowCardinality(String)", "the token subject that called"),
+    _c("transport", "LowCardinality(String)", "http or mcp"),
+    _c("build_commit", "LowCardinality(String)", "the server build that served it"),
+)
+
+
 TABLES: tuple[Table, ...] = (
     Table(
         "memory",
@@ -254,33 +279,19 @@ TABLES: tuple[Table, ...] = (
         live="superseded_at IS NULL",
     ),
     Table(
+        "agent_events",
+        "ordinary request and worker events",
+        "one ordinary row per call: mirrored source and marked request events are absent",
+        _EVENT_COLUMNS,
+        live="mirror_marked = 0 AND NOT match(namespace, '^acl-[0-9a-f]{24}$')",
+    ),
+    Table(
         EVENTS_VIEW,
         "the request ledger with protected marked fields withheld",
         "one row per call, append only: filter on ts; upstream_cost_usd is model spend in "
         "USD for ordinary calls; marked spend, model work and outcomes are neutral; "
         "an erased end user's rows read user_id '<erased>'",
-        (
-            _c("ts", "DateTime64(3)", "when the call ended"),
-            *_IDENTITY,
-            *_WRITER,
-            _c("run_id", "String", "the run the call belonged to"),
-            _c("operation", "LowCardinality(String)", "the op name, e.g. memory.search"),
-            _c("request_id", "String", "the request id"),
-            _c("latency_ms", "UInt32", "server time in ms"),
-            _c("success", "Bool", "whether the call succeeded"),
-            _c("error_code", "LowCardinality(String)", "the error code, '' on success"),
-            _c("status_class", "LowCardinality(String)", "ok, client_error, server_error, ..."),
-            _c("memory_key", "String", "the key the call addressed, '' for none"),
-            _c("kind", "LowCardinality(String)", "the row kind: '' for a request, worker, ..."),
-            _c("input_tokens", "UInt32", "model input tokens the call spent"),
-            _c("output_tokens", "UInt32", "model output tokens the call spent"),
-            _c("upstream_cost_usd", "Decimal(18, 6)", "model spend in USD"),
-            _c("model", "LowCardinality(String)", "the model the call used most"),
-            _c("consumer", "LowCardinality(String)", "the client the call came from"),
-            _c("subject", "LowCardinality(String)", "the token subject that called"),
-            _c("transport", "LowCardinality(String)", "http or mcp"),
-            _c("build_commit", "LowCardinality(String)", "the server build that served it"),
-        ),
+        _EVENT_COLUMNS,
     ),
 )
 
@@ -296,10 +307,10 @@ def policy_tables() -> tuple[Table, ...]:
 
 def others_policy_tables() -> tuple[str, ...]:
     """Every table `entity_sql` puts the every-other-user policy on: the allowlist, the
-    retired tables and the canary. The event view has its own signed predicate.
+    private tables and the canary. The event view has its own signed predicate.
     A foreign permissive policy on a physical table would be
     widened by it (`store.analysis.foreign_policies_sql` looks on each)."""
-    return (*(t.name for t in policy_tables()), *RETIRED_TABLES, CANARY_TABLE)
+    return (*(t.name for t in policy_tables()), *REFUSED_TABLES, CANARY_TABLE)
 
 
 def scope_payload(org: str, namespaces: str, exp: int, query_id: str) -> str:
@@ -504,18 +515,6 @@ def _revoke(g: Grant, user: str) -> str:
     return f"REVOKE {what} ON {on} FROM {user}"
 
 
-def revokes_for(grant_lines: list[str]) -> list[str]:
-    """A REVOKE for each line of SHOW GRANTS, for SQL whose writer cannot read
-    system.grants; the allowlist is granted after them."""
-    out = []
-    for line in grant_lines:
-        bare = line.replace(" WITH GRANT OPTION", "").replace(" WITH ADMIN OPTION", "")
-        if bare.startswith("GRANT ") and " TO " in bare:
-            what, _, to = bare[len("GRANT ") :].rpartition(" TO ")
-            out.append(f"REVOKE {what} FROM {to}")
-    return out
-
-
 def policy_sql(db: str, name: str, table: str, using: str, to: str) -> str:
     """One row policy, replaced in place; `db` is already quoted."""
     return (
@@ -528,15 +527,16 @@ def event_view_sql(db: str, names: SettingNames, key: bytes, event_columns: str)
     """The typed event mask and signed scope under the provisioner's definer authority.
 
     `event_columns` is the maintained internal projection, never caller SQL. The analyst
-    has no underlying raw grant. Secret-bearing expressions use the existing hidden
-    argument form; metadata and error disclosure remain subject to native isolation checks.
+    has ordinary-row grants but no grant on the physical private stream. Secret-bearing
+    expressions use the existing hidden argument form; metadata and error disclosure remain
+    subject to native isolation checks.
     """
     columns = next(t.columns for t in TABLES if t.name == EVENTS_VIEW)
     selected = ", ".join(c.name for c in columns)
     return (
         f"CREATE OR REPLACE VIEW {db}.{EVENTS_VIEW} "
         "DEFINER = CURRENT_USER SQL SECURITY DEFINER AS "
-        f"SELECT {selected} FROM (SELECT {event_columns} FROM {db}.agent_events AS raw) "
+        f"SELECT {selected} FROM (SELECT {event_columns} FROM {event_source(db)} AS raw) "
         f"WHERE {policy_filter(names, key)} AND NOT match(namespace, '^acl-[0-9a-f]{{24}}$')"
     )
 
@@ -563,7 +563,7 @@ def entity_sql(
     under it. The profile's pins come after every policy, so on an upgrade
     the older profile's `log_queries = 0` holds until no policy has the pads
     in clear, and before every grant, so a new pin is in force before the
-    grant it guards. A retired table keeps a policy that reads nothing. The
+    grant it guards. A private table keeps a policy that reads nothing. The
     stamp comes last, so a write cut short is written again by the next boot.
     `db` is already quoted."""
     user = f"`{ANALYST_USER}`"
@@ -580,7 +580,7 @@ def entity_sql(
     for t in policy_tables():
         out.append(policy_sql(db, OTHERS_POLICY_NAME, t.name, "1", f"ALL EXCEPT {user}"))
         out.append(policy_sql(db, POLICY_NAME, t.name, f"({t.live}) AND {condition}", user))
-    for name in RETIRED_TABLES:
+    for name in REFUSED_TABLES:
         out.append(policy_sql(db, OTHERS_POLICY_NAME, name, "1", f"ALL EXCEPT {user}"))
         out.append(policy_sql(db, POLICY_NAME, name, "0", user))
     out.append(f"INSERT INTO {db}.{CANARY_TABLE} (id) VALUES (0)")
@@ -643,7 +643,7 @@ def structure_digest(event_columns: str) -> str:
     new version."""
     # Every other user's policy goes on each table the analyst has one on.
     parts = [f"others:{t}" for t in others_policy_tables()]
-    parts += [f"retired:{name}" for name in RETIRED_TABLES]
+    parts += [f"refused:{name}" for name in REFUSED_TABLES]
     parts += [f"{t.name}:{t.live}:{','.join(c.name for c in t.columns)}" for t in TABLES]
     parts += [policy_filter(SettingNames("SQL_"), b"\0" * 32), CANARY_TABLE]
     parts += [event_view_sql("`loom`", SettingNames("SQL_"), b"\0" * 32, event_columns)]

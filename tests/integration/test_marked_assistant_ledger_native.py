@@ -22,6 +22,7 @@ from server.observability.consumer import ASSISTANT_CONSUMER
 from server.observability.event_args import text_digest
 from server.observability.events import AgentEvent
 from server.settings import settings
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -81,7 +82,8 @@ async def test_marked_outcomes_keep_one_public_support_result(events: CHClient, 
     left = event(org, "left", marked=True, success=True, hits="31", digest="left", ts=ts)
     right = event(org, "right", marked=True, success=False, hits="89", digest="right", ts=ts)
     right.update(model="different-private-model", input_tokens=997, latency_ms=12345)
-    await events.insert(
+    await insert_event_rows(
+        events,
         "loom.agent_events",
         [left, right],
         async_insert_settings(),
@@ -101,8 +103,12 @@ async def test_ordinary_support_and_sql_digest_remain_visible(events: CHClient, 
     org = unique_org("ordinary-assistant")
     ts = datetime.now(UTC)
     row = event(org, "ordinary", marked=False, success=True, hits="7", digest="ordinary", ts=ts)
-    await events.insert(
-        "loom.agent_events", [row], async_insert_settings(), required_columns={"mirror_marked"}
+    await insert_event_rows(
+        events,
+        "loom.agent_events",
+        [row],
+        async_insert_settings(),
+        required_columns={"mirror_marked"},
     )
     expected = {"ordinary"} if mode == "digests" else [CallRow("insights.query", True, "true", "7")]
     assert await read(events, mode, org, "ordinary", ts) == expected
@@ -116,7 +122,8 @@ async def test_assistant_support_keeps_org_and_subject_scope(events: CHClient) -
     own = event(org, "shared", marked=False, success=True, hits="7", digest="own", ts=ts)
     other_subject = {**own, "subject": "other", "request_id": "other"}
     other_org = {**own, "org": foreign, "request_id": "foreign"}
-    await events.insert(
+    await insert_event_rows(
+        events,
         "loom.agent_events",
         [own, other_subject, other_org],
         async_insert_settings(),
@@ -143,8 +150,12 @@ async def test_citations_use_persisted_unknown_or_ordinary_positive_evidence(
     )
     if kind == "memory":
         row["operation"] = "memory.search"
-    await events.insert(
-        "loom.agent_events", [row], async_insert_settings(), required_columns={"mirror_marked"}
+    await insert_event_rows(
+        events,
+        "loom.agent_events",
+        [row],
+        async_insert_settings(),
+        required_columns={"mirror_marked"},
     )
     # Protected calls leave no outcome-bearing exposure; an ordinary call records its key.
     if not marked and kind == "memory":
@@ -207,8 +218,12 @@ async def test_key_evidence_keeps_namespace_org_actor_and_run_scope(events: CHCl
             row.update(namespace=namespace, subject=actor, operation="memory.search")
             protected.append(row)
     await events.insert("loom.memory_exposures", exposures, async_insert_settings())
-    await events.insert(
-        "loom.agent_events", protected, async_insert_settings(), required_columns={"mirror_marked"}
+    await insert_event_rows(
+        events,
+        "loom.agent_events",
+        protected,
+        async_insert_settings(),
+        required_columns={"mirror_marked"},
     )
     # Foreign participation cannot hide this scope's ordinary evidence or verify its keys.
     assert await ledger.returned_keys(

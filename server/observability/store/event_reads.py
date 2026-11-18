@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from server.core.event_source import ALL_EVENTS
 from server.core.naming import not_mirror_sql
 
 # This explicit projection never publishes an added column by default.
@@ -61,6 +62,6 @@ MASKED_EVENT_COLUMNS = ", ".join(
 
 # Scope and result predicates belong outside this projection; its fields are masked first.
 MASKED_EVENTS = (
-    f"(SELECT {MASKED_EVENT_COLUMNS} FROM loom.agent_events AS raw "
+    f"(SELECT {MASKED_EVENT_COLUMNS} FROM {ALL_EVENTS} AS raw "
     f"WHERE {not_mirror_sql('raw.namespace')})"
 )

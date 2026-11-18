@@ -82,6 +82,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Cost and usage](docs/features/observability/cost-and-usage.md): Loom records every upstream dollar it spends on embedding and LLM calls against the operation that spent it, in the per-operation ledger `loom.agent_events`.
 - [Telemetry](docs/features/observability/telemetry.md): Loom reports on itself in three layers:
 - [Issue duplicate checks and regression candidates for agents](docs/features/tracker/overview.md): With `LOOM_TRACKER_ORG` set and a registered source, Loom lets agents check whether a bug is already reported and rank changes that may have introduced a regression, using tracker records and indexed PR history.
+- [Maintain a GitHub tracker record](docs/features/tracker/github-feed.md): `loom tracker-feed` copies repository issues, pull requests, issue comments and inline review comments into a team's dedicated ClickHouse database.
 - [Tracker record contract](docs/features/tracker/record-contract.md): The `tracker.*` ops, and the tracker legs of `code.*` and `loom_search`, read a team's issues, pull requests and incidents live from the team's own ClickHouse with a read-only credential.
 
 ## Guides
@@ -146,11 +147,14 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Claude API memory file tree](docs/architecture/claude-memory-adapter.md): The Claude API memory adapter implements the framework's Python memory-tool bases and TypeScript memory handlers through Loom knowledge documents.
 - [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes in an optional S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live memory, knowledge state and the records beside them.
 - [Code index architecture](docs/architecture/code-index-architecture.md): This page is the inside view of the code index: how files become chunks, symbols and edges, and how the two tiers stay current.
+- [Cost budgets](docs/architecture/cost-budgets.md): Namespace and named-user caps use the rolling 24-hour cost ledger in `agent_events`.
 - [Definition drafts](docs/architecture/definition-drafts.md): Needs `knowledge_gaps_enabled` for gap drafts or `knowledge_query_history_enabled` for query history.
 - [Dify tools adapter](docs/architecture/dify-adapter.md): The Dify plugin calls Loom through the Python SDK and stores no content locally.
 - [Document extraction](docs/architecture/document-extraction.md): An uploaded original is parsed into one shape, the extraction artifact, by an extractor service: a separate process with its own dependencies, never the Loom server.
 - [Document sources](docs/architecture/document-sources.md): A document source pulls files from a document store (a shared-folder store, a page store, a project tracker, a meeting store) into a namespace's documents and keeps them in step, on any shared namespace or collection.
+- [Documentation translation requests](docs/architecture/documentation-translation.md): The translation generator splits prepared English text into bounded requests, then checks the assembled translation before writing it.
 - [Failure and recovery](docs/architecture/failure-and-recovery.md): The primary write and every access decision fail closed.
+- [GitHub tracker feed](docs/architecture/github-feed.md): The GitHub feed maintains a team's tracker record in the team's ClickHouse database.
 - [Google ADK memory service](docs/architecture/google-adk-adapter.md): The Google ADK adapter implements the framework's memory service through Loom's Python and TypeScript SDKs.
 - [Haystack document store and retriever](docs/architecture/haystack-adapter.md): The optional Haystack 3.5 adapter implements its document-store protocol and a native retrieval component through the synchronous Loom SDK.
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
@@ -163,6 +167,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
 - [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
+- [Document source push notifications](docs/architecture/source-push.md): Needs `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED=true` to request document source syncs from provider notifications.
 - [Storage authority: Postgres for live memory, ClickHouse for search](docs/architecture/storage-authority.md): Loom runs with one of two memory authorities, chosen per deployment by `LOOM_STORAGE_AUTHORITY`.
 - [Storage layout: which store holds each table, and why](docs/architecture/storage-layout.md): Each Loom table belongs in Postgres or ClickHouse by how it is read and written; this page places every table, with the wave that moves it.
 - [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and ClickHouse, with Postgres as an option for live memory and knowledge state.

@@ -9,7 +9,7 @@ the driver reads them as ``uuid.UUID``, the handlers write them as ``str``.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from uuid import UUID
 
 from server.tasks.domain.states import Disclosure, PolicyMode, RunStatus, TaskStatus
@@ -114,6 +114,10 @@ class TaskEventRow(TypedDict):
     patch: str
     note: str
     ts: datetime
+    # Ordinary task writes use the DDL defaults; budget warnings set their scope.
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[str]
 
 
 class StaleTriageRow(TypedDict):

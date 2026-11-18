@@ -182,7 +182,8 @@ def test_formerly_compiles_to_one_pinned_point_query():
     assert "args[{p_ak0:String}] = {p_av0:String}" in sql
     assert c.params["p_ak0"] == "memory_key" and c.params["p_av0"] == "prefs"
     assert c.params["p_ops"] == ["memory.get"]
-    assert "session_id" not in sql and "user_id" not in sql
+    assert "session_id =" not in sql and "user_id =" not in sql
+    assert not any(k.startswith(("p_session", "p_user")) for k in c.params)
     # no literal from the call is ever spliced into the SQL text
     assert "acme" not in sql and "prefs" not in sql
 

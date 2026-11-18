@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextvars
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -42,6 +43,12 @@ SENTINEL = "-"
 from loom.errors import from_response  # noqa: E402
 from loom.records import MemoryRecordClient, MemorySchemaClient  # noqa: E402
 from loom.run import credit_answer, current_run_id  # noqa: E402  (after the module constants)
+from loom.session_protection import (  # noqa: E402
+    SessionProtection,
+    automatic_for,
+    automatic_roots,
+    require_automatic_allowed,
+)
 
 # Set coalescing. From the COALESCE_MIN_BURST-th `set` inside
 # one COALESCE_WINDOW_S window per identity, sets are gathered and flushed at
@@ -76,10 +83,14 @@ _IDENTITY_KEYS = ("org", "namespace", "agent", "user_id", "session_id", "run_id"
 
 
 class _CoalesceWindow:
-    __slots__ = ("t0", "count", "pending", "timer", "identity", "first_sets")
+    __slots__ = ("t0", "count", "pending", "timer", "identity", "first_sets", "roots", "context")
 
-    def __init__(self, t0: float, identity: dict[str, str]) -> None:
+    def __init__(
+        self, t0: float, identity: dict[str, str], roots: tuple[SessionProtection, ...]
+    ) -> None:
         self.t0 = t0
+        self.roots = roots
+        self.context = contextvars.copy_context()
         self.count = 0
         self.pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         self.timer: asyncio.TimerHandle | None = None
@@ -121,19 +132,21 @@ class _SetCoalescer:
         loop = asyncio.get_running_loop()
         now = loop.time()
         key = self._key(identity)
+        roots = automatic_roots(getattr(self._transport, "session_protection", None))
+        require_automatic_allowed(getattr(self._transport, "session_protection", None))
         window = self._windows.get(key)
-        if window is not None and now - window.t0 >= COALESCE_WINDOW_S:
+        if window is not None and (now - window.t0 >= COALESCE_WINDOW_S or window.roots != roots):
             self._close(key, window)  # its timer has not run yet: its flush goes first
             window = None
         if window is None:
-            window = _CoalesceWindow(now, identity)
+            window = _CoalesceWindow(now, identity, roots)
             self._windows[key] = window
             # It ends at its time, flushed if it gathered sets, so an idle one is not kept.
             window.timer = loop.call_later(COALESCE_WINDOW_S, self._close, key, window)
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
             first = self._after(
-                [self._flushes.get(key)], lambda: self._transport.post("/v1/memory.set", payload)
+                [self._flushes.get(key)], lambda: self._post("/v1/memory.set", payload), window
             )
             window.first_sets.append(first)
             self._inflight.add(first)
@@ -158,7 +171,9 @@ class _SetCoalescer:
         batch, window.pending = window.pending, []
         first_sets, window.first_sets = window.first_sets, []
         task = self._after(
-            [self._flushes.get(key), *first_sets], lambda: self._flush(window.identity, batch)
+            [self._flushes.get(key), *first_sets],
+            lambda: self._flush(window.identity, batch),
+            window,
         )
         self._flushes[key] = task
         self._inflight.add(task)
@@ -166,7 +181,10 @@ class _SetCoalescer:
         task.add_done_callback(lambda done: self._flush_done(key, done, batch))
 
     def _after(
-        self, before: list[asyncio.Task[Any] | None], request: Callable[[], Awaitable[_T]]
+        self,
+        before: list[asyncio.Task[Any] | None],
+        request: Callable[[], Awaitable[_T]],
+        window: _CoalesceWindow,
     ) -> asyncio.Task[_T]:
         """A task that runs `request()` once every task in `before` is done."""
 
@@ -174,9 +192,17 @@ class _SetCoalescer:
             waits = [t for t in before if t is not None]
             if waits:
                 await asyncio.wait(waits)
-            return await request()
+            with automatic_for(window.roots):
+                return await request()
 
-        return asyncio.get_running_loop().create_task(run())
+        # Manual flush callers cannot replace a producer's family or SDK run context.
+        return asyncio.get_running_loop().create_task(run(), context=window.context.copy())
+
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        require_automatic_allowed(getattr(self._transport, "session_protection", None))
+        out: dict[str, Any] = await self._transport.post(path, payload)
+        require_automatic_allowed(getattr(self._transport, "session_protection", None))
+        return out
 
     def _flush_done(
         self,
@@ -239,7 +265,7 @@ class _SetCoalescer:
         `sizes`, by future) of the ones it did check."""
         payload: dict[str, Any] = dict(identity)
         payload["entries"] = [entry for entry, _ in batch]
-        res = await self._transport.post("/v1/memory.bulk_set", payload)
+        res = await self._post("/v1/memory.bulk_set", payload)
         # Results are matched by key, in order, not by position: an older server leaves
         # a blacklisted entry out of `written`, which would shift every later result.
         rows_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -284,7 +310,7 @@ class _SetCoalescer:
     ) -> None:
         """Send one entry as a memory.set and hand its caller the answer."""
         try:
-            res = await self._transport.post("/v1/memory.set", {**identity, **entry})
+            res = await self._post("/v1/memory.set", {**identity, **entry})
         except Exception as e:  # noqa: BLE001 — hand the caller its own failure
             if not fut.done():
                 fut.set_exception(e)

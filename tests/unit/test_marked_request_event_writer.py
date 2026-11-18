@@ -101,7 +101,7 @@ async def test_waited_writer_preserves_row_and_omits_process_clock(monkeypatch, 
     assert event == original
     assert len(writer.rows) == 1
     table, rows, settings = writer.rows[0]
-    assert table == "loom.agent_events" and rows == [expected]
+    assert table == "loom.agent_events_private" and rows == [expected]
     assert "ts" not in rows[0] and rows[0]["mirror_marked"] == 1
     assert settings["wait_for_async_insert"] == 1
     assert settings["async_insert"] == int(batching)
@@ -211,3 +211,15 @@ async def test_worker_writer_still_refuses_an_ordinary_namespace(writer):
     with private_work(), pytest.raises(ValueError, match="require a mirror"):
         await events.write_private_event(captured_event(kind="worker"))
     writer.client.insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mirror_worker_uses_private_storage_even_without_request_marker(writer):
+    event = captured_event(kind="worker", namespace="acl-" + "a" * 24, mirror_marked=False)
+    expected = event.to_row()
+    with private_work():
+        await events.write_private_event(event)
+    table, rows, _ = writer.rows[0]
+    assert table == "loom.agent_events_private"
+    assert rows == [expected] and rows[0]["mirror_marked"] == 0
+    assert writer.emitter.queue.empty()

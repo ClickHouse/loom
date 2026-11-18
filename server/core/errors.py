@@ -71,6 +71,16 @@ class AuthInsufficientError(LoomServerError, PermissionError):
     status_code = 403
 
 
+class SessionProtectionRequiredError(LoomServerError):
+    """409 — session-content operations need the client's protection promise."""
+
+    code = "SESSION_PROTECTION_REQUIRED"
+    status_code = 409
+
+    def __init__(self) -> None:
+        super().__init__("This operation requires a client that protects session content")
+
+
 class IdentityIncompleteError(LoomServerError):
     """A scoped token was presented without org+namespace in the request
     body. NOT a permissions failure — the token may be perfectly
@@ -558,6 +568,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     # Committed already, and its message says not to make the write again.
     "PUBLICATION_PENDING": ("dependency", False),
     # Only an operator's fix ends these; resending changes nothing.
+    "SESSION_PROTECTION_REQUIRED": ("configuration", False),
     "SCHEMA_PENDING": ("configuration", False),
     "TENANCY_REFUSED": ("configuration", False),
     "OVERRIDE_NOT_STORED": ("configuration", False),
@@ -675,12 +686,14 @@ def register_exception_handler(app: FastAPI) -> None:
     from fastapi.responses import JSONResponse, Response
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
+    from server.core.request_work import flag_response, mirror_marked
+
     @app.exception_handler(LoomServerError)
     async def _handle_loom_error(_: Request, exc: LoomServerError) -> JSONResponse:
         detail = classified(exc.to_detail(), exc.status_code)
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": detail},
+            content=flag_response({"detail": detail}),
             headers=_with_help_link(exc.headers(), detail),
         )
 
@@ -690,6 +703,12 @@ def register_exception_handler(app: FastAPI) -> None:
         detail = exc.detail
         if isinstance(detail, dict) and detail.get("code"):
             detail = classified(detail, exc.status_code)
+        if mirror_marked() and exc.status_code not in (204, 304):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=flag_response({"detail": detail}),
+                headers=headers,
+            )
         # Never write onto exc: a module-level HTTPException is raised on every request.
         answer = StarletteHTTPException(exc.status_code, detail=detail, headers=headers)
         return await http_exception_handler(request, answer)
@@ -699,4 +718,4 @@ def register_exception_handler(app: FastAPI) -> None:
         # FastAPI's own 422, except that a non-finite input (`1e400`) is echoed as a
         # string: JSON has no inf, and the response would fail as a 500.
         errors = loads_keeping_non_finite(json.dumps(jsonable_encoder(exc.errors())))
-        return JSONResponse(status_code=422, content={"detail": errors})
+        return JSONResponse(status_code=422, content=flag_response({"detail": errors}))

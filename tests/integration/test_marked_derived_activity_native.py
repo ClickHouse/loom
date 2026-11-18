@@ -15,6 +15,7 @@ from server.core.ch_writes import async_insert_settings
 from server.memory.app import activity_trivia_cleanup, entity_communities, recall_credit
 from server.observability.events import AgentEvent
 from server.tasks.store import runs
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -60,7 +61,8 @@ async def test_historical_closer_cache_retains_only_ordinary_positive_evidence(
     client: CHClient, success: bool
 ) -> None:
     org = unique_org("closer-history")
-    await client.insert(
+    await insert_event_rows(
+        client,
         "loom.agent_events",
         [
             event(org, marked=True, success=success),
@@ -83,7 +85,8 @@ async def test_marked_participation_keeps_only_its_own_subject_run_busy(
 ) -> None:
     org = unique_org("marked-busy")
     run = "mcp-" + uuid4().hex + uuid4().hex[:8]
-    await client.insert(
+    await insert_event_rows(
+        client,
         "loom.agent_events",
         [event(org, marked=True, success=success, run_id=run)],
         async_insert_settings(),
@@ -102,7 +105,8 @@ async def test_maintenance_preserves_named_participation_and_excludes_private_wo
 ) -> None:
     org = unique_org("marked-maintenance")
     mirror = "acl-" + uuid4().hex[:24]
-    await client.insert(
+    await insert_event_rows(
+        client,
         "loom.agent_events",
         [
             event(org, marked=True, success=False, operation="memory.get"),
@@ -131,7 +135,8 @@ async def test_graph_worker_selects_ordinary_success_but_no_private_success_worl
         ],
         async_insert_settings(),
     )
-    await client.insert(
+    await insert_event_rows(
+        client,
         "loom.agent_events",
         [
             event(

@@ -96,6 +96,7 @@ _DATA_TABLES = frozenset(
         "loom.knowledge_ingestions",
         "loom.knowledge_mirrors",
         "loom.knowledge_source_listings",
+        "loom.knowledge_source_push",
         "loom.knowledge_sources",
         "loom.knowledge_uploads",
         "loom.learnings_queue",

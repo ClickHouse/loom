@@ -270,7 +270,7 @@ async def test_public_ask_rebuilds_the_whole_ordinary_answer_after_loss(world, p
             output.route_agreement = 0.95
             return output
 
-        async def ratio(*args):
+        async def ratio(org: str, ns: str, *, user_id: str = ""):
             return 0.0
 
         monkeypatch.setattr(search, "handle_memory_search", routed_search)

@@ -136,11 +136,21 @@ async def test_two_sets_go_out_as_two_point_writes(agent: Agent) -> None:
     assert r1["memory_id"] == "id-a" and "coalesced" not in r2
 
 
-async def test_third_set_inside_the_window_starts_a_bulk(agent: Agent) -> None:
+async def test_third_set_inside_the_window_starts_a_bulk(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     t.row_verdicts = {"d": "merge", "e": "conflict"}
     t.bulk_extra = {"merged": ["d"], "conflicted": ["e"]}
-    results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    pending = asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     assert sorted(t.paths()) == ["/v1/memory.bulk_set", "/v1/memory.set", "/v1/memory.set"]
     bulk = [p for path, p in t.calls if path == "/v1/memory.bulk_set"][0]
     assert [e["memory_key"] for e in bulk["entries"]] == ["c", "d", "e"]

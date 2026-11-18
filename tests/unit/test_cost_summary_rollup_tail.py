@@ -55,9 +55,10 @@ def test_rollup_read_unions_the_live_tail_and_merges(monkeypatch) -> None:
     )
     assert cost_store.ROLLUP_STATES in sql
     # ... UNION ALL the view's aggregation over the events newer than the mark ...
-    assert "UNION ALL" in sql
+    assert sql.count("UNION ALL") == 2
+    assert "FROM loom.agent_events UNION ALL" in sql
     assert (
-        "FROM loom.agent_events WHERE org = {org:String} AND ts > (SELECT max(ts_hwm) FROM loom.agent_cost_rollup_daily)"
+        "FROM loom.agent_events_private) WHERE org = {org:String} AND ts > (SELECT max(ts_hwm) FROM loom.agent_cost_rollup_daily)"
         in sql
     )
     assert "toDate(ts) BETWEEN {from_d:Date} AND {to_d:Date}" in sql
@@ -85,7 +86,8 @@ def test_events_only_dimensions_keep_the_direct_scan(monkeypatch) -> None:
     ch = _CH([])
     _run(monkeypatch, ch, group_by=["model"])
     sql, _ = ch.calls[0]
-    assert "agent_cost_rollup_daily" not in sql and "UNION ALL" not in sql
+    assert "agent_cost_rollup_daily" not in sql and sql.count("UNION ALL") == 1
+    assert "FROM loom.agent_events_private)" in sql
     assert "FROM loom.agent_events" in sql
 
 

@@ -20,7 +20,12 @@ from pydantic import BaseModel, ValidationError
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
-from server.core.errors import LoomServerError, WrongCellError, unverified_class
+from server.core.errors import (
+    LoomServerError,
+    SessionProtectionRequiredError,
+    WrongCellError,
+    unverified_class,
+)
 from server.core.errors import ValidationError as LoomValidationError
 from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
@@ -219,8 +224,8 @@ async def _call_tool(
     toolset: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
-    resolve the tool → bind the caller's identity → stamp the session run's
-    id → argument refusal + validation → authorization → admission (traffic
+    resolve the tool → session-content admission → bind the caller's identity →
+    stamp the session run's id → argument refusal + validation → authorization → admission (traffic
     class, policy, rate limit) → the session run begins → idempotency replay
     (only for an admitted caller) → open the trace → span identity
     (inline) → the handler → success telemetry → the response. Every phase
@@ -241,6 +246,9 @@ async def _call_tool(
     if isinstance(tool, dict):
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
+
+    if (refused := await _session_content_refusal(req_id, op, auth)) is not None:
+        return refused
 
     refused = await _another_cells_org(req_id, op, arguments, auth)
     if refused is not None:
@@ -365,6 +373,15 @@ async def _call_tool(
         return await _success_response(
             call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
         )
+
+
+async def _session_content_refusal(req_id: Any, op: Operation, auth: Any) -> dict[str, Any] | None:
+    """Refuse session content before identity, validation, replay or implicit writes."""
+    try:
+        await gates.session_content(op, auth)
+    except SessionProtectionRequiredError as error:
+        return _ok(req_id, refusal_result(error))
+    return None
 
 
 def _stamp_session_run(

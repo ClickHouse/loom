@@ -13,7 +13,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "Agent.methods": {
     "call": [
@@ -98,7 +99,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "SyncAgent.__init__": [
     "org",
@@ -115,7 +117,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "clients": {
     "account": {
@@ -959,6 +962,18 @@
               "options"
             ],
             "source_parse_links": [
+              "body",
+              "options"
+            ],
+            "source_push_configure": [
+              "body",
+              "options"
+            ],
+            "source_push_confirm": [
+              "body",
+              "options"
+            ],
+            "source_push_status": [
               "body",
               "options"
             ],
@@ -2680,7 +2695,8 @@
           "datasets",
           "window_chars",
           "max_answer_chars",
-          "max_windows"
+          "max_windows",
+          "user_id"
         ],
         "upload": [
           "data",

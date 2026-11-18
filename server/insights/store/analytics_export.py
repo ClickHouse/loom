@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date
 
 from server.core.ch import CHClient
+from server.core.event_source import ALL_EVENTS
 from server.core.naming import not_mirror_sql
 
 # One row per (org, namespace, agent, operation, kind, transport, traffic
@@ -77,7 +78,7 @@ FROM (
         raw.embedding_tokens AS embedding_tokens, raw.upstream_cost_usd AS upstream_cost_usd,
         raw.llm_calls AS llm_calls, raw.bytes_written AS bytes_written,
         raw.user_id AS user_id, raw.session_id AS session_id
-    FROM loom.agent_events AS raw
+    FROM {ALL_EVENTS} AS raw
     WHERE raw.ts >= toDateTime64({{day:Date}}, 3, 'UTC')
       AND raw.ts < toDateTime64({{day:Date}} + 1, 3, 'UTC')
       AND {not_mirror_sql("raw.namespace")}

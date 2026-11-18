@@ -338,6 +338,31 @@ describe("loom.assistant.stream", () => {
     await expect(collect(loom)).rejects.toThrow(/before the answer began/);
   });
 
+  it("keeps partial text incomplete when EOF arrives without DONE", async () => {
+    const { loom, sent } = client(() => new Response(ANSWER.replace(/data: \[DONE\]\n\n$/, "")));
+    const seen: AssistantEvent[] = [];
+    const read = async () => {
+      for await (const event of loom.assistant.stream({ question: "q" })) seen.push(event);
+    };
+    await expect(read()).rejects.toThrow(/before completion/);
+    expect(seen).toEqual([
+      { type: "text", text: "Deploys freeze " },
+      { type: "text", text: "on Fridays." },
+    ]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("ignores text received after DONE", async () => {
+    const { loom } = client(() => new Response(ANSWER + sse(chunk("discarded"))));
+    const out = await collect(loom);
+    expect(out.slice(0, 2)).toEqual([
+      { type: "text", text: "Deploys freeze " },
+      { type: "text", text: "on Fridays." },
+    ]);
+    expect(out).toHaveLength(3);
+    expect(out[2]?.type === "answer" && out[2].answer.text).toBe("Deploys freeze on Fridays.");
+  });
+
   it("throws a connection cut mid-stream as NETWORK", async () => {
     const { loom } = client(() => new Response(body(sse(chunk("Deploys ")), [5], new Error("reset"))));
     const err = await collect(loom).then(

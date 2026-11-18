@@ -340,6 +340,7 @@ Thresholds, legs, judge, rerank, bisect scope and test-signal settings are in th
 
 ## Related
 
+- [GitHub feed](github-feed.md): maintain a team-owned record with a scheduled CLI job
 - [Record contract](record-contract.md): tables, columns, aliases, mapping mode, sources
 - [History and PRs](../code-index/history-and-prs.md): the code-plane ops that read a tracker
 - [Adding repositories](../code-index/repositories.md)

@@ -119,6 +119,10 @@ async def world() -> AsyncIterator[RollupWorld]:
         await client.execute(f"CREATE DATABASE {database} UUID '{database_uuid}' ENGINE = Atomic")
         world = RollupWorld(client, database)
         await client.execute(f"CREATE TABLE {database}.agent_events AS loom.agent_events")
+        # This fixture replays the historical marker migration before the physical split.
+        await client.execute(
+            f"ALTER TABLE {database}.agent_events DROP CONSTRAINT IF EXISTS ordinary_events_only"
+        )
         baseline = split_statements((MIGRATIONS / "016_baseline.sql").read_text())
         for name in ("agent_cost_rollup_daily", "agent_cost_rollup_refresh"):
             statement = next(

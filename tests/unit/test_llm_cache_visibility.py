@@ -110,7 +110,7 @@ class _CH:
     async def query_all(self, sql, params=None):
         flat = " ".join(sql.split())
         self.calls.append((flat, dict(params or {})))
-        if "cache_hits" in flat and "UNION ALL" not in flat and "count()" not in flat:
+        if "cache_hits" in flat and "agent_cost_rollup_daily" not in flat and "count()" not in flat:
             return self.cache_rows
         return self.rows
 
@@ -145,7 +145,8 @@ def test_rollup_path_reads_the_cache_totals_in_one_bounded_statement(monkeypatch
         "the roll-up read is unchanged"
     )
     assert cache_sql.startswith("SELECT " + " ".join(cost_store.CACHE_SELECT.split()))
-    assert "FROM loom.agent_events WHERE org = {org:String}" in cache_sql
+    assert "FROM loom.agent_events UNION ALL" in cache_sql
+    assert "FROM loom.agent_events_private) WHERE org = {org:String}" in cache_sql
     assert "toDate(ts) BETWEEN {from_d:Date} AND {to_d:Date}" in cache_sql
     assert "operation = 'memory.ask'" in cache_sql and "namespace = {ns:String}" in cache_sql
     assert "PREWHERE" not in cache_sql
@@ -183,7 +184,9 @@ def test_events_scan_path_folds_the_cache_columns_into_its_statement(monkeypatch
     out = _run(monkeypatch, ch, group_by=["model"])
     assert len(ch.calls) == 1, "the scan path pays nothing extra"
     sql = ch.calls[0][0]
-    assert "toUInt64OrZero(args['out_llm_cache_hits'])" in sql and "UNION ALL" not in sql
+    assert "toUInt64OrZero(args['out_llm_cache_hits'])" in sql
+    assert sql.count("UNION ALL") == 1 and "agent_cost_rollup_daily" not in sql
+    assert "FROM loom.agent_events UNION ALL" in sql and "FROM loom.agent_events_private)" in sql
     assert [r.cache_hits for r in out.rows] == [2, 3]
     assert out.cache_hits == 5 and abs(out.cache_saved_usd - 0.3) < 1e-9
 

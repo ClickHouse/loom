@@ -44,7 +44,6 @@ from server.core.errors import (
     error_kind,
 )
 from server.core.secrets_at_rest import seal, unseal
-from server.core.sql_literal import sql_string
 from server.insights.api.models_analysis import (
     AnalysisColumn,
     CatalogColumn,
@@ -242,34 +241,6 @@ def entity_statements(
     )
 
 
-def printed_checks() -> list[str]:
-    """What `loom ch-setup --print-analyst-sql` tells an admin to run first."""
-    return store.printed_checks()
-
-
-async def own_grant_revokes() -> list[str]:
-    """A REVOKE for each grant the analyst's own SHOW GRANTS lists, for the
-    printed SQL, whose writer cannot read system.grants. The allowlist is
-    granted after them. None before the user exists."""
-    try:
-        lines = await store.own_grant_lines(password=_password(), extra={})
-    except Exception:  # noqa: BLE001 — no user yet, or it refuses this password: nothing to revoke
-        return []
-    return boundary.revokes_for(lines)
-
-
-def printed_statements(revokes: list[str]) -> list[str]:
-    """The entity statements with `revokes` before the first grant, after a
-    `SET` that cuts the text of the rest from the log."""
-    statements = entity_statements()
-    first = next(i for i, s in enumerate(statements) if s.startswith("GRANT "))
-    cut = ", ".join(
-        f"{name} = {sql_string(value) if isinstance(value, str) else value}"
-        for name, value in boundary.provisioning_settings(_names()).items()
-    )
-    return [f"SET {cut}", *statements[:first], *revokes, *statements[first:]]
-
-
 def _scope_extra(org: str, namespaces: list[str], key: bytes | None = None) -> dict[str, Any]:
     """The scope one statement carries, signed with `key` (the stored one by
     default). It sends no cap: the caps profile's apply, so a replica whose
@@ -372,23 +343,6 @@ _LOST_ROW = (
 )
 
 
-async def load_for_print() -> None:
-    """Load the secrets for `loom ch-setup --print-analyst-sql`, drawing them
-    when there are none. Where Loom's user can see that the analyst user
-    exists, a lost row is refused as `rewrite` refuses it; where it cannot, a
-    missing row is drawn again, which moves the key."""
-    if not await store.secrets_table_exists():
-        raise SetupRefused(NOT_MIGRATED)
-    async with lease():
-        if (
-            await store.sealed_secrets() is None
-            and await store.can_manage_access()
-            and not await store.analyst_user_absent()
-        ):
-            raise SetupRefused(_LOST_ROW)
-        await load_secrets(may_draw=True)
-
-
 async def rewrite() -> None:
     """Write the analyst user whatever is stored (`loom ch-setup`). It draws
     the secrets only while no analyst user exists, so a lost row never puts
@@ -399,8 +353,8 @@ async def rewrite() -> None:
         if not await store.can_manage_access():
             raise SetupRefused(
                 "LOOM_CH_USER cannot manage access entities, so `loom ch-setup` cannot write "
-                "the analyst user: have an admin run the SQL `loom ch-setup "
-                "--print-analyst-sql` prints"
+                "the analyst user: run `loom ch-setup --apply-analyst-sql` with existing "
+                "access-management credentials"
             )
         if await store.sealed_secrets() is None and not await store.analyst_user_absent():
             raise SetupRefused(_LOST_ROW)

@@ -54,7 +54,9 @@ async def test_search_publication_never_outlives_selected_access(monkeypatch, lo
     )
 
     async def insert(table, rows, *, settings, required_columns):
-        assert table == "loom.agent_events" and required_columns == frozenset({"mirror_marked"})
+        assert table == "loom.agent_events_private" and required_columns == frozenset(
+            {"mirror_marked"}
+        )
         await asyncio.sleep(0)
         access.writes += 1
         if loss_at == "write":

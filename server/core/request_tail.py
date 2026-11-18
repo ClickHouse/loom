@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from typing import Any
 
@@ -354,6 +354,33 @@ async def settle_current() -> None:
     tail = _tail.get()
     if tail is not None:
         await settle(tail)
+
+
+@asynccontextmanager
+async def streaming_scope() -> AsyncIterator[None]:
+    """Own final streamed usage after the HTTP header tail has closed.
+
+    The caller settles before its terminal event. Cancellation still joins the
+    owned required delivery before this scope returns.
+    """
+    tail = _Tail()
+    token = _tail.set(tail)
+    group_token = _publication_group.set(None)
+    primary: BaseException | None = None
+    try:
+        yield
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            await settle(tail)
+        except BaseException:
+            if primary is None:
+                raise
+        finally:
+            _publication_group.reset(group_token)
+            _tail.reset(token)
 
 
 class RequestTailMiddleware:

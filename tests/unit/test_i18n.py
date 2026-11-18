@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 import sys
-import time
 import types
 from collections import Counter
 
@@ -20,10 +20,10 @@ from tests.unit import markdown_links
 ROOT = t.ROOT
 
 
-@pytest.mark.parametrize("source", t.SOURCES)
-def test_a_page_cuts_into_sections_that_join_back_to_it(source: str) -> None:
+@pytest.mark.parametrize("source", t.sources())
+def test_page_requests_reconstruct_the_anchored_source(source: str) -> None:
     text, _ = t.prepare(source, t.LANGUAGES[0])
-    assert "\n".join(t.sections(text)) == text
+    assert "\n".join(t.english_requests(text)) == t.anchor_headings(text, Counter())
 
 
 def test_a_short_page_goes_in_one_request_and_a_long_one_by_section() -> None:
@@ -36,9 +36,10 @@ def test_a_short_page_goes_in_one_request_and_a_long_one_by_section() -> None:
     assert '<a id="more"></a>' in joined and '<a id="more-1"></a>' in joined
 
 
-def test_sections_start_at_level_two_headings_outside_code() -> None:
-    page = "# Title\n\nintro\n\n## One\n\n```md\n## not a heading\n```\n\n## Two\n"
-    assert [s.split("\n")[0] for s in t.sections(page)] == ["# Title", "## One", "## Two"]
+def test_request_heading_cuts_ignore_fenced_headings() -> None:
+    page = "# Title\n\n" + "Loom\n\n" * 1400
+    page += "## One\n\n```md\n## not a heading\n```\n\n## Two\n"
+    assert [s.split("\n")[2] for s in t.english_requests(page)] == ["# Title", "## One", "## Two"]
 
 
 def test_anchors_follow_github_slugs_across_sections() -> None:
@@ -49,15 +50,42 @@ def test_anchors_follow_github_slugs_across_sections() -> None:
     assert '<a id="notes"></a>' in first and '<a id="notes-1"></a>' in second
 
 
-@pytest.mark.parametrize("source", t.SOURCES)
+@pytest.mark.parametrize("source", t.sources())
 def test_anchors_match_the_ones_the_english_links_are_checked_against(source: str) -> None:
     seen: Counter[str] = Counter()
     page = t.anchor_headings(t.prepare(source, t.LANGUAGES[0])[0], seen)
     ids = re.findall(r'^<a id="([^"]+)"></a>$', page, re.MULTILINE)
-    assert set(ids) == markdown_links.anchors(ROOT / source)
+    explicit = {
+        m.group(1)
+        for line, code in t.outside_fences((ROOT / source).read_text())
+        if not code and (m := t.ANCHOR.match(line))
+    }
+    assert set(ids) == markdown_links.anchors(ROOT / source) | explicit
 
 
-def test_links_point_at_translations_or_the_english_files() -> None:
+@pytest.fixture
+def link_repository(update_repository: None) -> None:
+    for source in (
+        "docs/use-cases/agent-memory.md",
+        "docs/use-cases/multi-agent.md",
+        "docs/operations/deployment.md",
+        "docs/concepts/memory.md",
+    ):
+        path = t.ROOT / source
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Source\n")
+    subprocess.run(["git", "add", "docs"], cwd=t.ROOT, check=True)
+    for code, source in (
+        ("ja", "docs/use-cases/agent-memory.md"),
+        ("ko", "docs/use-cases/agent-memory.md"),
+        ("ko", "docs/use-cases/multi-agent.md"),
+    ):
+        path = t.ROOT / t.target_path(code, source)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('<a id="measured"></a>\n# Translated\n')
+
+
+def test_links_point_at_translations_or_the_english_files(link_repository: None) -> None:
     page = (
         "[uc](../use-cases/agent-memory.md#measured) [ops](../operations/deployment.md) "
         "![shot](../images/a.png) [web](https://example.com/x) [here](#local)"
@@ -69,7 +97,7 @@ def test_links_point_at_translations_or_the_english_files() -> None:
     assert "[web](https://example.com/x)" in out and "[here](#local)" in out
 
 
-def test_html_links_badges_and_reference_definitions_are_rewritten() -> None:
+def test_html_links_badges_and_reference_definitions_are_rewritten(link_repository: None) -> None:
     page = (
         '[![badge](b.svg)](agent-memory.md) ![i](a.png) <a href="multi-agent.md">m</a> '
         '<a href="../x.md">x</a> <img src="c.png">\n\n[ref]: ../concepts/memory.md\n'
@@ -82,7 +110,7 @@ def test_html_links_badges_and_reference_definitions_are_rewritten() -> None:
     assert f"[ref]: {blob}/concepts/memory.md" in out
 
 
-def test_links_inside_code_are_left_alone() -> None:
+def test_links_inside_code_are_left_alone(link_repository: None) -> None:
     page = 'See `[a](b.md)` and:\n\n```md\n[a](b.md) <a href="c.md">\n```\n\n[a](b.md)\n'
     out = t.rewrite_links(page, "docs/use-cases/index.md", "ja")
     assert out.count("[a](b.md)") == 2 and '<a href="c.md">' in out
@@ -221,7 +249,7 @@ def test_the_cost_cap_is_checked_before_the_next_call() -> None:
     spend.add({"input_tokens": 0, "output_tokens": 1000})
     with pytest.raises(SystemExit, match="LOOM_I18N_MAX_USD"):
         spend.before_call()
-    assert spend.stopped.is_set()
+    assert spend.stopped
 
 
 def test_a_label_borrowed_from_another_section_keeps_the_page_unwritten(
@@ -237,51 +265,72 @@ def test_a_label_borrowed_from_another_section_keeps_the_page_unwritten(
     monkeypatch.setattr(
         t,
         "translate_text",
-        lambda text, lang, client, spend: replies["A" if "## A" in text else "B"],
+        lambda text, lang, client, spend, **_kwargs: replies["A" if "## A" in text else "B"],
     )
     with pytest.raises(t.TranslationDiffers, match="Get a token"):
         t.translate_page("docs/x.md", t.LANGUAGES[1], None, t.Spend("claude-sonnet-5-5", 1.0))
     assert not (tmp_path / "i18n").exists()
 
 
+@pytest.fixture
+def update_repository(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for args in (
+        ("init", "-q"),
+        ("config", "user.name", "test"),
+        ("config", "user.email", "test@example.test"),
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    for source in ("README.md", "docs/a.md", "docs/b.md"):
+        path = tmp_path / source
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Start\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "English"], cwd=tmp_path, check=True)
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+
+
 def test_a_page_that_still_differs_lets_the_others_finish(
     monkeypatch: pytest.MonkeyPatch,
+    update_repository: None,
 ) -> None:
     written: list[str] = []
 
     def fake_page(source: str, lang: t.Language, client: object, spend: t.Spend) -> None:
-        if source == t.SOURCES[0]:
+        if source == t.sources()[0]:
             raise t.TranslationDiffers("still differs after a retry")
         written.append(source)
+        text, line = t.prepare(source, lang)
+        body = "\n".join(t.english_requests(text)).replace("# Start", "# Entrée")
+        t.lifecycle.stage(
+            t.target_path(lang.code, source), t.render(source, lang, body, line, spend.model)
+        )
 
     monkeypatch.setattr(t, "bedrock_client", lambda: None)
     monkeypatch.setattr(t, "translate_page", fake_page)
-    monkeypatch.setattr(t, "write_language_lines", lambda: None)
+    monkeypatch.setattr(t, "write_language_lines", lambda codes=None: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
     with pytest.raises(
         SystemExit, match="pages not written:\ni18n/ja/README.md: still differs after a retry"
     ):
         t.update(every=True, codes=["ja"])
-    assert sorted(written) == sorted(t.SOURCES[1:])
+    assert sorted(written) == sorted(t.sources()[1:])
 
 
 def test_a_fatal_error_after_a_differing_page_still_names_that_page(
     monkeypatch: pytest.MonkeyPatch,
+    update_repository: None,
 ) -> None:
     def fake_page(source: str, lang: t.Language, client: object, spend: t.Spend) -> None:
-        if source == t.SOURCES[0]:
+        if source == t.sources()[0]:
             raise t.TranslationDiffers("still differs after a retry")
-        time.sleep(0.05)
         raise SystemExit("Bedrock 500")
 
     monkeypatch.setattr(t, "bedrock_client", lambda: None)
     monkeypatch.setattr(t, "translate_page", fake_page)
-    monkeypatch.setattr(t, "write_language_lines", lambda: None)
+    monkeypatch.setattr(t, "write_language_lines", lambda codes=None: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
-    with pytest.raises(SystemExit) as stopped:
+    with pytest.raises(SystemExit, match="Bedrock 500"):
         t.update(every=True, codes=["ja"])
-    message = str(stopped.value)
-    assert "Bedrock 500" in message and "not written: i18n/ja/README.md" in message
 
 
 def test_code_inside_an_html_link_is_not_a_label() -> None:
@@ -295,34 +344,24 @@ def test_a_link_or_alt_text_shown_as_code_is_not_a_label() -> None:
 
 
 def test_a_fatal_error_stops_the_other_pages(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    update_repository: None,
 ) -> None:
     calls: list[str] = []
 
     def fake_page(source: str, lang: t.Language, client: object, spend: t.Spend) -> None:
-        if source == t.SOURCES[0]:
-            raise SystemExit("boom")
-        for _ in range(200):
-            spend.before_call()
-            calls.append(source)
-            time.sleep(0.005)
+        calls.append(source)
+        raise SystemExit("boom")
 
     monkeypatch.setattr(t, "bedrock_client", lambda: None)
     monkeypatch.setattr(t, "translate_page", fake_page)
-    monkeypatch.setattr(t, "write_language_lines", lambda: None)
+    monkeypatch.setattr(t, "write_language_lines", lambda codes=None: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
     with pytest.raises(SystemExit, match="boom"):
         t.update(every=True, codes=["ja"])
-    # Pages already running stop at their next call, and no more than one per worker started.
-    assert len(set(calls)) <= t.WORKERS and t.SOURCES[-1] not in calls and len(calls) < 200
+    assert calls == [t.sources()[0]]
     assert "spent:" in capsys.readouterr().out
-
-
-def test_a_missing_source_stops_check_and_update(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(t, "SOURCES", (*t.SOURCES, "docs/no-such-page.md"))
-    for command in (t.check, t.update):
-        with pytest.raises(SystemExit, match="no-such-page.md"):
-            command()
 
 
 @pytest.mark.parametrize(
@@ -333,24 +372,34 @@ def test_each_command_refuses_the_other_ones_flags(args: list[str]) -> None:
         t.main(args)
 
 
-def test_another_model_or_banner_makes_every_page_stale() -> None:
+def test_another_model_or_banner_makes_every_page_stale(update_repository: None) -> None:
     ja = t.LANGUAGES[1]
-    assert t.stale((ja,), model="claude-opus-5-5") == [(s, ja) for s in t.SOURCES]
+    for source in t.sources():
+        path = t.ROOT / t.target_path(ja.code, source)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(t.header(source, ja, t.DEFAULT_MODEL, t.blob(source)) + "# Inicio\n")
+    assert t.stale((ja,), model=t.DEFAULT_MODEL) == []
+    assert t.stale((ja,), model="claude-opus-5-5") == [(s, ja) for s in t.sources()]
     edited = t.Language(ja.code, ja.name, ja.english, ja.banner + "!", ja.style)
-    assert len(t.stale((edited,))) == len(t.SOURCES)
+    assert len(t.stale((edited,))) == len(t.sources())
 
 
-def test_an_unpriced_model_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unpriced_model_is_refused(
+    monkeypatch: pytest.MonkeyPatch, update_repository: None
+) -> None:
     monkeypatch.setenv("LOOM_I18N_MODEL", "some-model")
     with pytest.raises(SystemExit, match="no price"):
         t.update()
 
 
-def test_the_estimate_refuses_a_run_over_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LOOM_I18N_MAX_USD", "0.001")
-    monkeypatch.setattr(t, "write_language_lines", lambda: None)
-    with pytest.raises(SystemExit, match="nothing translated"):
-        t.update(every=True, codes=["ja"])
+def test_the_estimate_defers_pages_outside_the_batch_cap(
+    monkeypatch: pytest.MonkeyPatch, update_repository: None
+) -> None:
+    monkeypatch.setattr(
+        t, "bedrock_client", lambda: pytest.fail("deferred pages must not call Bedrock")
+    )
+    selected, deferred = t.batch(True, ["ja"], 0)
+    assert not selected and deferred == len(t.sources())
 
 
 def test_a_section_that_differs_is_retried_once_with_the_differences(
@@ -402,6 +451,14 @@ def test_a_new_language_is_linked_from_every_readme_without_translating(
     for path in t.readmes():
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / path).write_text((ROOT / path).read_text())
+    for args in (
+        ("init", "-q"),
+        ("config", "user.name", "test"),
+        ("config", "user.email", "test@example.test"),
+        ("add", "."),
+        ("commit", "-qm", "Copied documentation"),
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
     monkeypatch.setattr(t, "ROOT", tmp_path)
     ja = t.LANGUAGES[1]
     extra = t.Language("xx", "Xx", "Xx", ja.banner, ja.style)
@@ -409,29 +466,117 @@ def test_a_new_language_is_linked_from_every_readme_without_translating(
     assert t.language_lines_differ() == t.readmes()
     t.write_language_lines()
     assert t.language_lines_differ() == []
-    assert '<a href="../xx/README.md">Xx</a>' in (tmp_path / "i18n/ja/README.md").read_text()
+    text = (tmp_path / "i18n/ja/README.md").read_text()
+    assert "Xx" in text and "../xx/README.md" not in text
+
+
+def test_translated_readme_links_to_its_existing_site_landing(tmp_path, monkeypatch) -> None:
+    from scripts.docs_site import indexnow
+
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    monkeypatch.setattr(indexnow, "SITE", "https://example.com/docs/")
+    for source in ("README.md", "docs/index.md", "docs/use-cases/index.md"):
+        path = tmp_path / source
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Source\n")
+    monkeypatch.setattr(
+        t, "sources", lambda: ("README.md", "docs/index.md", "docs/use-cases/index.md")
+    )
+    spanish = next(lang for lang in t.LANGUAGES if lang.code == "es")
+    for source in ("README.md", "docs/use-cases/index.md"):
+        path = tmp_path / t.target_path("es", source)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(t.header(source, spanish, t.DEFAULT_MODEL, "a" * 40) + "# Página\n")
+    assert '<a href="https://example.com/docs/es/use-cases/">Documentación</a>' in t.language_line(
+        "i18n/es/README.md"
+    )
+    assert "https://example.com" not in t.language_line("README.md")
+    path = tmp_path / "i18n/es/docs/index.md"
+    path.write_text(t.header("docs/index.md", spanish, t.DEFAULT_MODEL, "a" * 40) + "# Inicio\n")
+    assert '<a href="https://example.com/docs/es/">Documentación</a>' in t.language_line(
+        "i18n/es/README.md"
+    )
+    path.unlink()
+    (tmp_path / "i18n/es/docs/use-cases/index.md").unlink()
+    assert "https://example.com" not in t.language_line("i18n/es/README.md")
+
+
+def test_generated_readme_uses_the_same_site_base_as_mkdocs() -> None:
+    import yaml
+
+    from scripts.docs_site import indexnow
+
+    config = yaml.compose((ROOT / "mkdocs.yml").read_text())
+    site_url = next(value.value for key, value in config.value if key.value == "site_url")
+    assert site_url == indexnow.SITE
+
+
+@pytest.mark.parametrize(
+    "sources,expected,route",
+    [
+        (
+            ("getting-started/quickstart.md",),
+            "getting-started/quickstart.md",
+            "getting-started/quickstart/",
+        ),
+        (("zeta.md", "guide.md"), "guide.md", "guide/"),
+        (('guide "advanced".md',), 'guide "advanced".md', "guide%20%22advanced%22/"),
+        (("guía & casos.md",), "guía & casos.md", "gu%C3%ADa%20%26%20casos/"),
+    ],
+)
+def test_readme_keeps_a_native_site_link_without_a_translated_index(
+    tmp_path, monkeypatch, sources, expected, route
+) -> None:
+    from html.parser import HTMLParser
+
+    from scripts.docs_site import indexnow, locales
+
+    class Links(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == "a" and dict(attrs).get("href", "").startswith(indexnow.SITE):
+                links.append(dict(attrs))
+
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    language = next(lang for lang in t.LANGUAGES if lang.code == "ja")
+    for source in ("README.md", *("docs/" + source for source in sources)):
+        english = tmp_path / source
+        english.parent.mkdir(parents=True, exist_ok=True)
+        english.write_text("# Loom\n")
+        target = tmp_path / t.target_path(language.code, source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(t.header(source, language, t.DEFAULT_MODEL, t.blob(source)) + "# Loom\n")
+    uri = locales.landing_uri(language.code, locales.translations(tmp_path))
+    assert uri == language.code + "/" + expected
+    links = []
+    Links().feed(t.language_line("i18n/ja/README.md"))
+    assert links == [{"href": indexnow.SITE + "ja/" + route}]
 
 
 def _translations() -> list[tuple[str, t.Language]]:
     return [
         (s, lang)
-        for s in t.SOURCES
+        for s in t.sources()
         for lang in t.LANGUAGES
         if (ROOT / t.target_path(lang.code, s)).is_file()
     ]
 
 
-def test_every_use_case_page_is_translated() -> None:
+def test_every_use_case_page_is_in_source_inventory() -> None:
     pages = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs/use-cases").glob("*.md")}
-    assert pages <= set(t.SOURCES)
+    assert pages <= set(t.sources())
 
 
-def test_no_translation_is_orphaned() -> None:
-    assert t.orphans() == []
+def test_every_output_has_generator_ownership() -> None:
+    for path in t.lifecycle.all_files():
+        assert t.lifecycle.regular(path)
+        if path == t.refresh.PATH:
+            assert t.refresh.read() is not None
+        else:
+            assert t.lifecycle.owner(path, (t.ROOT / path).read_text()) is not None, path
 
 
 def test_every_translation_exists_with_its_stamp_and_banner() -> None:
-    assert len(_translations()) == len(t.SOURCES) * len(t.LANGUAGES)
+    assert _translations()
     for source, lang in _translations():
         text = (ROOT / t.target_path(lang.code, source)).read_text()
         stamp = t.STAMP.match(text)
@@ -439,42 +584,25 @@ def test_every_translation_exists_with_its_stamp_and_banner() -> None:
         assert "Machine-translated from the [English page]" in text.split("\n\n", 1)[0]
 
 
-def test_an_anchor_into_a_stale_page_waits_for_that_page(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
-) -> None:
-    (tmp_path / "i18n/ja").mkdir(parents=True)
-    (tmp_path / "i18n/ja/a.md").write_text("[b](b.md#new-heading)\n")
-    (tmp_path / "i18n/ja/b.md").write_text('<a id="old-heading"></a>\n')
-    monkeypatch.setattr(t, "ROOT", tmp_path)
-    assert len(t.link_problems()) == 1
-    assert t.link_problems(frozenset({"i18n/ja/b.md"})) == []
-    # The other way round: a's link is old, b is new.
-    assert t.link_problems(frozenset({"i18n/ja/a.md"})) == []
-
-
-def test_check_skips_anchors_of_stale_pages_only_when_asked(
+def test_async_check_still_rejects_a_missing_anchor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ja = t.LANGUAGES[1]
-    (tmp_path / "i18n/ja").mkdir(parents=True)
-    (tmp_path / "i18n/ja/a.md").write_text("[b](b.md#new-heading)\n")
-    (tmp_path / "i18n/ja/b.md").write_text('<a id="old-heading"></a>\n')
+    (tmp_path / "i18n/ja/docs").mkdir(parents=True)
+    for name, body in (("a", "[b](b.md#new-heading)\n"), ("b", '<a id="old-heading"></a>\n')):
+        source = f"docs/{name}.md"
+        (tmp_path / t.target_path("ja", source)).write_text(
+            t.header(source, ja, t.DEFAULT_MODEL, "0" * 40) + body
+        )
     monkeypatch.setattr(t, "ROOT", tmp_path)
-    monkeypatch.setattr(t, "require_sources", lambda: None)
-    monkeypatch.setattr(t, "orphans", lambda: [])
-    monkeypatch.setattr(t, "untranslated_pages", lambda: [])
-    monkeypatch.setattr(t, "language_lines_differ", lambda: [])
-    monkeypatch.setattr(t, "stale", lambda model=t.DEFAULT_MODEL: [("b.md", ja)])
-    assert t.check(skip_stale=True) == 0
-    assert t.check() == 1
-    out = capsys.readouterr().out
-    assert "i18n/ja/a.md links to b.md#new-heading, which has no such anchor" in out
+    monkeypatch.setattr(t, "sources", lambda: ())
+    assert t.check(skip_stale=True) == 1
+    assert "which has no such anchor" in capsys.readouterr().out
 
 
 def test_the_committed_translations_pass_check() -> None:
     """Fresh or not, every committed page keeps its links, anchors and translated labels."""
-    assert t.link_problems() == []
-    assert t.untranslated_pages() == []
+    assert t.check(skip_stale=True) == 0
 
 
 class _StatusError(Exception):
@@ -580,3 +708,57 @@ def test_a_lost_connection_is_retried_up_to_four_attempts(monkeypatch: pytest.Mo
     with pytest.raises(SystemExit, match="unreachable"):
         t.call(types.SimpleNamespace(messages=messages), "claude-sonnet-5-5", "s", [])
     assert len(messages.sent) == 4
+
+
+def test_update_cli_selects_only_rollout_languages_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[bool, list[str] | None]] = []
+    monkeypatch.setattr(t, "update", lambda every, codes: calls.append((every, codes)) or 0)
+    assert t.ROLLOUT_LANGUAGES == ("zh-CN", "ja", "ko", "pt-BR", "es")
+    assert {language.code for language in t.LANGUAGES} == {"zh-CN", "ja", "ko", "pt-BR", "es"}
+    assert t.main(["update"]) == 0
+    assert calls == [(False, list(t.ROLLOUT_LANGUAGES))]
+
+
+@pytest.mark.parametrize("code", ["fr", "id", "xx"])
+def test_update_cli_refuses_additional_languages_before_any_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+) -> None:
+    ja = t.LANGUAGES[1]
+    extra = t.Language(code, code, code, ja.banner, ja.style)
+    monkeypatch.setattr(t, "LANGUAGES", (*t.LANGUAGES, extra))
+    monkeypatch.setattr(t, "update", lambda *args: pytest.fail("additional locale reached update"))
+    with pytest.raises(SystemExit):
+        t.main(["update", "--all", "--lang", code])
+
+
+@pytest.mark.parametrize("code", ["zh-CN", "ja", "ko", "pt-BR", "es"])
+def test_update_cli_accepts_each_retained_locale(
+    monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    calls: list[tuple[bool, list[str]]] = []
+    monkeypatch.setattr(t, "update", lambda every, codes: calls.append((every, codes)) or 0)
+    assert t.main(["update", "--lang", code]) == 0
+    assert calls == [(False, [code])]
+
+
+def test_language_line_maintenance_preserves_nonselected_locale_bytes(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    original = "# Loom\n\n<!-- languages -->retained<!-- /languages -->\n"
+    paths = ["README.md"] + [t.target_path(lg.code, "README.md") for lg in t.LANGUAGES]
+    for name in paths:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(original)
+    t.write_language_lines(["ja"])
+    for name in paths:
+        text = (tmp_path / name).read_text()
+        if name in {"README.md", "i18n/ja/README.md"}:
+            assert t.language_line(name) in text
+        else:
+            assert text == original

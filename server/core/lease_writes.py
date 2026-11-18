@@ -12,6 +12,15 @@ from server.core import leases, rmt_carry
 from server.core.errors import BackendUnavailableError
 
 
+class FenceUnavailableError(BackendUnavailableError):
+    """The writer cannot enter because its holder is busy or its lease expired."""
+
+
+def lease_ttl_s(send_bound_s: float) -> float:
+    """Keep the last admitted send's finish bound before an unrenewed lease expires."""
+    return max(60.0, (send_bound_s + 5.0) / 0.6)
+
+
 @asynccontextmanager
 async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool], None]]:
     """Mark uncertain before a send and clear only after its completion is known.
@@ -19,10 +28,10 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
     An uncertain send retains the durable holder until every admitted server send
     has finished or expired. Every eraser of the written table takes this lease too.
     """
-    ttl = max(60.0, (rmt_carry.send_bound_s() + 5.0) / 0.6)
+    ttl = lease_ttl_s(rmt_carry.send_bound_s())
     lease = await leases.take(name, ttl_s=ttl, ch=ch)
     if lease is None:
-        raise BackendUnavailableError("a previous leased write is still settling")
+        raise FenceUnavailableError("a previous leased write is still settling")
     uncertain = False
 
     def mark_uncertain(value: bool) -> None:
@@ -32,7 +41,7 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
     try:
         left = leases.work_left(lease, ttl)
         if left <= 0:
-            raise BackendUnavailableError("the write lease expired")
+            raise FenceUnavailableError("the write lease expired")
         async with asyncio.timeout(left):
             with rmt_carry.under_lease(time.monotonic() + left):
                 yield mark_uncertain

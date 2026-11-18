@@ -754,7 +754,7 @@ async def _finish_success(
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
     async def endpoint(request: Request, response: Response) -> Any:
         # The phases run in this order and each refusal raises its own HTTP
-        # error: token, body, validation, authorization, policy, rate limit,
+        # error: token, session protection, body, validation, authorization, policy, rate limit,
         # idempotency replay, then the handler. Nothing after a gate runs
         # when it refuses; a replay is served only to an admitted caller.
         call = _HttpCall(request_id=_begin_request(op, request, response))
@@ -772,6 +772,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
 
         set_current_auth(auth)
         bind_claimed_class(auth)
+        await gates.session_content(op, auth)
         body = await _read_body(op, request, request_id, auth)
         call.raw_body = raw_body = await gates.with_single_user_identity(op, body, auth)
 

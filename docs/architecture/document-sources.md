@@ -6,7 +6,9 @@ in step, on any shared namespace or collection. This page is the design of sourc
 many items given as pasted links, per-user connected accounts, an org-wide crawl, and
 access that follows the store's own permissions. The caller's view of today's sources is
 in [knowledge: document sources](../features/knowledge.md#document-sources); parsing is
-in [document extraction](document-extraction.md).
+in [document extraction](document-extraction.md). Optional provider notifications
+request the same sync path; [source push](source-push.md) describes their setup,
+authentication and lifecycle.
 
 ## What changes
 
@@ -364,12 +366,21 @@ same code for any cause. The exceptions are these:
    - Its spend (input, output and embedding tokens, and cost) depends only on what
      exception 1 lets the answer depend on: no model or embedding call runs, or is
      chosen, on a mirror candidate before the check. It counts in its namespace's totals
-     and cap. Below a platform admin it shows only in the per-namespace-day total and in
-     `cost.budget_status`'s live total, and every other `cost.summary` dimension leaves
+     and cap. Except to a verified platform admin without namespace-role restrictions,
+     it shows only in the per-namespace-day total and in
+     `cost.budget_status`'s live namespace or org total, and every other `cost.summary` dimension leaves
      it out. The fold carries ops, those tokens and cost only, and leaves marked
      requests out of `errors` and the latency figures. A viewer can still difference a
      live or daily total around another person's marked request and so learn that
-     request's spend; that residual is accepted.
+     request's spend; that residual is accepted. Named-user caps also count marked
+     spend. Their public status exposes the cap and whether the user or namespace
+     ceiling is reached, but exact user spend and percentage are `null` except to that
+     operator. User warnings expose the selected user, cap, warning share and threshold
+     crossing, with exact spend withheld from every recipient, including an operator's
+     configured inbox or webhook. Namespace warnings retain the allowed namespace
+     total. These policy signals expose bounds; an admin changing caps can infer tighter
+     bounds. That residual is accepted, not a claim of full noninterference or a grant
+     to marked work, models or outcome fields.
    - Its work figures (statements, rows and bytes read, chunks injected, `llm_calls`,
      `response_tokens`, the stored duration), its `model` and the outcome fields a model
      call can change (`success`, `error_code`, `status_class`) go to a platform admin
@@ -552,20 +563,29 @@ the public fallback. No reranking provider receives the provisional pools.
   (`/v1/admin/`, outside the gate) leave a mirror's ledger rows out whole: until the
   fold below carries a marked request's spend, a mirror's spend is in no fleet or
   consumer total.
-- **Every `agent_events` read is folded and masked.** The analytics export and
-  `sql_v1_usage_daily` fold a marked request's spend into a row per namespace and day
-  with agent and operation `-`, and every read of `agent_events` rows for anyone below a
-  platform admin, and every worker that derives rows a viewer reads from them, goes
-  through the fold and the mask: `sql_v1_agent_events` masks every field of a marked row
-  whose value can depend on an admitted item (`model`, the tokens, cost and work fields,
-  `llm_calls`, and the outcome fields a model call can change: `success`, `error_code`,
-  `status_class`). The `insights.query` catalog exposes `analysis_agent_events`, a
-  masked view with signed org, namespace, expiry and statement-id checks. Its analyst
-  has no raw `agent_events` grant. SQL naming the raw relation is refused; statements
-  use the catalog's view name. Deploy the canary-first probe version check across the
-  fleet before retiring that grant, so an older replica leaves newer access entities
-  to their owning build. The [assistant boundary](assistant.md) describes the view and
-  key-hiding requirements. Exception 2 accepts this fold beside `cost.summary`'s.
+- **Private events have separate physical storage.** Ordinary events stay in
+  `agent_events`; marked requests and mirror workers write `agent_events_private`.
+  The ordinary table's CHECK excludes marked rows and mirror namespaces. An analyst
+  keeps ordinary signed, namespace-scoped reads and cannot read the private table or
+  its physical metadata. Provisioning verifies the CHECK on every writer, drains
+  the finite set of prepared INSERTs and refuses any existing private contamination
+  before granting access. Checked per-writer HTTP sessions read the native access
+  catalog and prove that policies cannot hide the process or event populations.
+  Unknown visibility, writer routes or metadata refuse. It preserves existing rows
+  for operator resolution. Administrative application uses
+  `loom ch-setup --apply-analyst-sql`; unchecked analyst SQL files refuse.
+- **Private event reads are folded and masked.** The analytics export and
+  `sql_v1_usage_daily` union both stores and fold marked spend into a namespace/day row
+  with agent and operation `-`. `sql_v1_agent_events` and the signed
+  `analysis_agent_events` view mask every field that can depend on an admitted item
+  before predicates run: model, tokens, cost, work, `llm_calls`, success, error code
+  and status class. Trusted budget and history-policy reads cover both streams too.
+  User erasure scrubs both stores under `agent_events.scrub`; the private store has
+  the ordinary ledger's retention and tiering policy. The
+  [storage cutover](rolling-upgrades.md#analyst-event-storage-cutover) preserves
+  ordinary analysis across builds. The [assistant boundary](assistant.md) describes
+  the view and key-hiding requirements. Exception 2 accepts this fold beside
+  `cost.summary`'s.
 
 History predicates cannot use a marked call's outcome or projected arguments. A
 potentially matching marked event in a rule's identity, operation and time scope makes
@@ -592,6 +612,18 @@ retain no publication guard; returned metadata, counts and cursor lookahead reta
 their contributing proofs. A raw download owns the same required marked accounting
 attempt as a registered operation. Cancellation and disconnects still propagate
 through owned cleanup. These checks end at the server's response-send boundary.
+
+The assistant's incremental stream has a terminal accounting boundary because final
+usage is unavailable before its early text. Its server-owned first event is
+`data: {"mirrored":true}` when marked. Partial text remains provisional until the
+response closes and joins its producers, captures final usage and confirms its
+required private cost row before `[DONE]` or a terminal error. Disconnect cleanup
+retains and joins that required delivery. Whole answers and checked source frames
+keep the accounting-before-publication boundary above. The answer token's distinct
+`answer_mirrors` bit fixes mirror admission before model work, so a source activated
+during a negative answer cannot introduce an unmarked tool leg. Missing admission is
+false; ordinary delegation drops it. See the
+[assistant boundary](assistant.md#the-bridge-each-callers-own-identity).
 
 A multi-entry MCP batch refuses every response-bearing marked entry with the same
 instruction to send it individually, including denied and empty entries. Notifications
@@ -640,7 +672,7 @@ that copy's, with the item flag. Otherwise the mirror copy is dropped.
 
 A session-content op records a session's text, or a figure derived from it, that a hook
 or client sends without the agent choosing it; an op the agent calls with text it chose
-(`memory.set`, `knowledge.add`, a task op) is the reader's own write. Each op declares
+is the reader's own write. Each op declares
 its class in the op registry (`server/operations/registry.py`), and an op both a hook
 and an agent call is session content. They include `conversation.append` (which the
 CLI's `ingest-transcript` calls), `conversation.save_message`, the `title` and
@@ -649,7 +681,12 @@ CLI's `ingest-transcript` calls), `conversation.save_message`, the `title` and
 `observe.crystallize`, `working_memory.set`, `working_memory.append`, `run.begin`,
 `run.complete`, `code.outcome`, `cost.record_turns` and `ui.vitals`, and every read a
 hook sends with a session's prompt, files or transcript (`context.pack`, `code.search`,
-`code.impact`, `memory.for_file`, `namespace.validate`). The rule decides; the
+`code.impact`, `memory.for_file`, `namespace.validate`). Framework callbacks also send
+the latest user message through `memory.search` and persist conversation items through
+`memory.set`, so both are session content. Its coalesced delivery through
+`memory.bulk_set` has the same class. Automatic tool interception also sends
+`code.test_gate`, `code.symbol`, `code.enclosing` and `tracker.duplicate_check` with
+session-derived inputs. The rule decides; the
 registry's classes and a test over what the shipped hooks send pin the full set.
 
 Once a session has seen the flag, no Loom hook sends any op from it, reads included, and
@@ -671,8 +708,12 @@ The refusal: from the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is se
 it is off again and the mirror-erase command has run, every session-content op refuses a
 client that does not declare the flag, in every org, whatever mix of clients and tokens
 a session runs; the declaration is the client's promise, carried by the transport and
-never by an op argument a model fills in (an assistant answer token carries its caller's
-declaration as a claim the bridge fixes at delegation), and a client that does not make
+never by an op argument a model fills in. The exact transport declaration is one
+`X-Loom-Session-Protection: v1` header; missing, repeated or unknown values declare
+nothing. An assistant answer token carries its caller's declaration in the Boolean
+`session_protection` claim the bridge fixes at delegation. An answer or its descendant
+cannot replace that claim with its own header, and ordinary delegation does not inherit
+the claim. A client that does not make
 it (a third-party MCP client connected straight to Loom) is refused like any other. The
 condition is the one row of `loom.knowledge_mirror_latch` or the process's own switch: a
 process refuses while its switch is on, row or no row, and writes the row whenever it
@@ -683,6 +724,32 @@ process reports the switch on. The check fails closed: a process that cannot rea
 row refuses, and the first mirrored `add` waits until every live process reports the
 switch on, as the schema check does. Since the refusal lifts only then, it says nothing
 of when another org's mirrors went.
+
+A process with the switch on confirms durable protection before startup can admit
+clients or start workers. Its existing instance heartbeat reasserts that state, so a
+lost row is repaired without waiting for a session-content call. Startup refuses an
+unconfirmed write. The common gate runs after token verification. HTTP checks before
+reading the operation body; MCP checks after resolving the operation and before
+content validation, identity defaults, history, replay or implicit session runs. Its fixed `SESSION_PROTECTION_REQUIRED` refusal is HTTP 409 and is not
+retryable without changing the client or completing the documented cleanup.
+
+The latch is one fixed `id = 0` KeeperMap row on the default Keeper ensemble, with
+`set_at` and no TTL, tenant identity or content. It is deployment protection, so tenant
+erasure never removes it. A fresh negative check uses a checked HTTP session under the
+service principal. It validates the local latch and lease engines, primes the latch,
+and brackets an acknowledged nonempty strict write to a unique expiring lease key and
+the latch read with the same live Keeper client identity. Every proof SELECT returns
+its execution's server UUID, including an empty latch, and the barrier INSERT computes
+the writer's UUID into its own lease row. The final exact holder and write UUID must
+match. This matters because a retried initial HTTP session creation can leave the same
+session name on two backends; the name alone does not pin execution. Query caches are
+disabled within this protocol. Any missing metadata, changed identity, uncertain write,
+expired nonce or cleanup failure refuses the negative decision. Only its exact own
+lease is disposable; a cleanup fault leaves an expiring row and never admits a request.
+A positive repair computes its fixed row key in the INSERT from a check of the writing
+server's UUID against the validated backend. A differently routed write refuses; an
+acknowledged strict insert or duplicate is followed by a fresh validated positive read.
+No negative result is cached. The named-session transport alone is not a Keeper proof.
 
 Mirrored sources are off for a deployment until an operator turns them on, after every
 Loom client and hook that sends session content honours the flag. Each pull request that

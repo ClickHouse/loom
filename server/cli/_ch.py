@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from server.core.ch import CHClient
+    from server.core.ch import CHClient, ExternalCHClient
 
 
 class OrgNotHeld(SystemExit):
@@ -322,6 +322,17 @@ async def connect_checked(
     authority than the deployment's, as a replica refuses: an erasure or an import run
     against the wrong one would leave or write the other store's rows."""
     await connect_declared(ch, orgs=orgs, org_free=org_free, check_authority=True)
+
+
+async def connect_external(
+    ch: ExternalCHClient, *, deployment: CHClient, orgs: Iterable[str | None]
+) -> None:
+    """Gate the deployment and its orgs before connecting a separate record database.
+
+    The external record does not carry the deployment's authority metadata.
+    """
+    await connect_checked(deployment, orgs=orgs)
+    await ch.connect()
 
 
 async def disconnect(ch: CHClient) -> None:

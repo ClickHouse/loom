@@ -226,10 +226,21 @@ async def test_signed_search_permissions_follow_current_heads(mode, mint_test_to
                 access="mirrored",
                 active=True,
             )
+            await write_document(namespace, "ordinary:visible", query + " ordinary")
+            inactive_baselines = (
+                await listing(outsider),
+                await search(outsider),
+                await get(outsider),
+                await synthesize(outsider),
+                await outline(outsider),
+            )
+            inactive_inspect_baseline = await inspect(outsider)
+            inactive_download_baseline = await download(outsider)
+            for ordinary in (*inactive_baselines, inactive_inspect_baseline):
+                assert "mirrored" not in ordinary
             await sources.insert_source(registration)
             await mirrors.add_mirror(org, namespace, mirror)
             await mirrors.record_listing(org, mirror, source, "checked", now)
-            await write_document(namespace, "ordinary:visible", query + " ordinary")
             baseline = await search(outsider)
             assert [r["source_uri"] for r in baseline["results"]] == ["ordinary:visible"]
             ordinary_list = await listing(outsider)
@@ -412,14 +423,44 @@ async def test_signed_search_permissions_follow_current_heads(mode, mint_test_to
             assert len((await listing(owner_bot))["rows"]) == 2
             assert len((await inspect(owner_bot))["listed"]) == 2
             assert len((await source_inspect(owner_bot))["documents"]) == 1
+            # An anyone-readable ACL cannot widen an answer's pre-output admission.
+            for promise, admission in [(True, False), (False, True), (True, True)]:
+                answer = mint_token(
+                    "source-owner",
+                    org,
+                    [namespace],
+                    ["viewer"],
+                    ttl_seconds=600,
+                    is_service_account=False,
+                    session_id=str(uuid4()),
+                    consumer="loom-assistant",
+                    jti="assistant-answer-" + str(uuid4()),
+                    session_protection=promise,
+                    answer_mirrors=admission,
+                )
+                found = await search(answer)
+                addresses = [r["source_uri"] for r in found["results"]]
+                assert "ordinary:visible" in addresses
+                document = await get(answer)
+                if promise and admission:
+                    assert public_uri in addresses and document["content"] == private_content
+                    assert found["mirrored"] is True and document["mirrored"] is True
+                else:
+                    assert public_uri not in addresses and not document["found"]
+                    assert private_content not in json.dumps(found)
+                    assert found.get("mirrored") is not True
+                    assert document.get("mirrored") is not True
             await sources.insert_source(replace(registration, active=False))
-            assert await listing(owner) == ordinary_list
-            assert (await inspect(owner))["listed"] == ordinary_inspect["listed"]
-            assert await search(owner) == baseline
-            assert await get(owner) == missing_get
-            assert await synthesize(owner) == missing_synthesis
-            assert await outline(owner) == missing_outline
-            assert await download(owner) == missing_download
+            inactive_responses = (
+                await listing(owner),
+                await search(owner),
+                await get(owner),
+                await synthesize(owner),
+                await outline(owner),
+            )
+            assert inactive_responses == inactive_baselines
+            assert await inspect(owner) == inactive_inspect_baseline
+            assert await download(owner) == inactive_download_baseline
             await sources.insert_source(registration)
             assert (await get(owner))["found"]
             stale = now - timedelta(seconds=settings.knowledge_source_acl_stale_seconds + 1)

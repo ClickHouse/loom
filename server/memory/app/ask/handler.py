@@ -142,12 +142,16 @@ async def _ask_clients(
             # the binary cap, and one ratio read answers both questions.
             from server.observability.budget import namespace_budget_ratio
 
-            budget_ratio = await namespace_budget_ratio(input.org, input.namespace)
+            budget_ratio = await namespace_budget_ratio(
+                input.org, input.namespace, user_id=input.user_id or ""
+            )
             budget_capped = budget_ratio >= 1.0
         else:
             from server.observability.budget import namespace_over_cap
 
-            budget_capped = await namespace_over_cap(input.org, input.namespace)
+            budget_capped = await namespace_over_cap(
+                input.org, input.namespace, user_id=input.user_id or ""
+            )
         if not budget_capped:
             synth_model = _s.memory_ask_synth_model.strip()
             if synth_model:
@@ -474,6 +478,7 @@ async def _route_to_synthesize(
             KnowledgeSynthesizeInput(
                 org=input.org,
                 namespace=input.namespace,
+                user_id=input.user_id or "-",
                 source_uris=docs,
                 task=input.query,
             )

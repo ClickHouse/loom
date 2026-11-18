@@ -15,6 +15,7 @@ from server.core.ch_writes import async_insert_settings
 from server.insights.app import mentor as mentor_app
 from server.insights.store import agents, mentor
 from server.observability.events import AgentEvent
+from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.usefixtures("ch_target_required")
@@ -78,8 +79,12 @@ async def worlds(client: CHClient) -> tuple[str, str, datetime]:
                 }
             )
         rows.append({**ordinary, "namespace": "hidden", "ts": ts - timedelta(days=1)})
-    await client.insert(
-        "loom.agent_events", rows, async_insert_settings(), required_columns={"mirror_marked"}
+    await insert_event_rows(
+        client,
+        "loom.agent_events",
+        rows,
+        async_insert_settings(),
+        required_columns={"mirror_marked"},
     )
     return left, right, ts
 

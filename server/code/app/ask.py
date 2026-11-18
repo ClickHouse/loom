@@ -60,7 +60,7 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
         from server.observability.budget import namespace_over_cap
         from server.settings import settings
 
-        if not await namespace_over_cap(org, ns):
+        if not await namespace_over_cap(org, ns, user_id=input.user_id or ""):
             override = settings.code_ask_llm_model
             llm = get_llm_client_for_model(override) if override else get_llm_client()
 

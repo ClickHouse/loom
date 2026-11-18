@@ -1538,6 +1538,33 @@ class KnowledgeOps:
             await self._agent.call("knowledge.source.parse_links", body, **options),
         )
 
+    async def source_push_configure(
+        self, body: _ops.KnowledgeSourcePushConfigureBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_configure`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_configure", body, **options),
+        )
+
+    async def source_push_confirm(
+        self, body: _ops.KnowledgeSourcePushConfirmBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_confirm`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_confirm", body, **options),
+        )
+
+    async def source_push_status(
+        self, body: _ops.KnowledgeSourcePushStatusBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_status`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_status", body, **options),
+        )
+
     async def source_remove(
         self, body: _ops.KnowledgeSourceRemoveBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeSourceRemoveOutput:

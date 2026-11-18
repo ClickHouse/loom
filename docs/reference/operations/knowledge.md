@@ -719,6 +719,89 @@ Read pasted links as a source's items, with no request to any store and nothing 
 | --- | --- | --- |
 | `links` | `list[KnowledgeSourceParsedLink]` | Each link, in the order given. |
 
+## `knowledge.source.push_configure`
+
+Enable provider sync hints for an existing source, or disable its setup.
+
+`POST /v1/knowledge.source.push_configure` · MCP `loom_knowledge_source_push_configure` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The source's namespace. |
+| `name` | `str` | required | The registered source name. |
+| `enabled` | `bool` | `True` | Enable a fresh setup; false disables push. |
+| `agent` | `str` | `'-'` | The configuring agent, default '-'. |
+| `user_id` | `str` | `'-'` | The configuring user, default '-'. |
+| `session_id` | `str` | `'-'` | The configuring session, default '-'. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` |  |
+| `status` | `str` |  |
+| `provider` | `str` |  |
+| `generation` | `str` |  |
+| `callback_url` | `str` |  |
+| `provider_id` | `str` |  |
+| `challenge_fingerprint` | `str` |  |
+| `verification_token` | `str` |  |
+| `channels` | `int` |  |
+| `expires_at` | `float` |  |
+
+## `knowledge.source.push_confirm`
+
+Activate the exact pending setup.
+
+`POST /v1/knowledge.source.push_confirm` · MCP `loom_knowledge_source_push_confirm` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The source's namespace. |
+| `name` | `str` | required | The registered source name. |
+| `generation` | `str` | required | The pending setup generation. |
+| `challenge_fingerprint` | `str` | `''` | The inspected Notion challenge's SHA-256 fingerprint; empty for Linear. |
+| `signing_secret` | `str` | `''` | The Linear webhook signing secret; empty for Notion. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` |  |
+| `status` | `str` |  |
+| `provider` | `str` |  |
+| `generation` | `str` |  |
+| `callback_url` | `str` |  |
+| `provider_id` | `str` |  |
+| `challenge_fingerprint` | `str` |  |
+| `verification_token` | `str` |  |
+| `channels` | `int` |  |
+| `expires_at` | `float` |  |
+
+## `knowledge.source.push_status`
+
+Read push setup as a namespace admin.
+
+`POST /v1/knowledge.source.push_status` · MCP `loom_knowledge_source_push_status` · role `admin` · write · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The source's namespace. |
+| `name` | `str` | required | The registered source name. |
+| `reveal_challenge` | `bool` | `False` | Reveal a pending Notion challenge, default false. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` |  |
+| `status` | `str` |  |
+| `provider` | `str` |  |
+| `generation` | `str` |  |
+| `callback_url` | `str` |  |
+| `provider_id` | `str` |  |
+| `challenge_fingerprint` | `str` |  |
+| `verification_token` | `str` |  |
+| `channels` | `int` |  |
+| `expires_at` | `float` |  |
+
 ## `knowledge.source.remove`
 
 Retire a registered document source: its registry row goes inactive and its credential is cleared.
@@ -812,6 +895,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
+| `user_id` | `str` | `'-'` | Named user whose synthesis spend is checked; a token's user pin takes precedence. |
 | `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50; this, `datasets` or both); unknown URIs contribute nothing. |
 | `datasets` | `list[QueryDataset]` | *(computed)* | Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is proposed for the task, checked against their schemas and run over every row. |
 | `task` | `str` | required | What to do with the documents and datasets: a question to answer or a summary to write. |

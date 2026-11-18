@@ -819,7 +819,13 @@ def test_marked_event_view_masks_before_result_predicates(
     columns = list(ordinary)
     ch_client.insert(
         "loom.agent_events",
-        [[row[c] for c in columns] for row in rows],
+        [[ordinary[c] for c in columns]],
+        column_names=columns,
+        settings={"async_insert": 1, "wait_for_async_insert": 1},
+    )
+    ch_client.insert(
+        "loom.agent_events_private",
+        [[row[c] for c in columns] for row in rows[1:]],
         column_names=columns,
         settings={"async_insert": 1, "wait_for_async_insert": 1},
     )
@@ -840,6 +846,9 @@ def test_marked_event_view_masks_before_result_predicates(
     assert float(found[ordinary_id][4]) == 0.25 and found[ordinary_id][5:] == ["ordinary", ""]
     assert found[marked_id][:4] == [False, 0, 0, 0]
     assert float(found[marked_id][4]) == 0 and found[marked_id][5:] == ["", ""]
+    raw = _query(control_plane_url, seed, f"SELECT {selected} FROM loom.agent_events WHERE {where}")
+    assert raw.status_code == 200, raw.text
+    assert raw.json()["rows"] == [next(row for row in returned if row[0] == ordinary_id)]
     for predicate in ("success", "upstream_cost_usd > 0", "model = 'ordinary'"):
         r = _query(control_plane_url, seed, base + f" AND ({predicate})")
         assert r.status_code == 200, r.text
@@ -851,12 +860,14 @@ def test_marked_event_view_masks_before_result_predicates(
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT count() FROM loom.agent_events",
-        "SELECT upstream_cost_usd FROM loom.agent_events LIMIT 1",
-        "SELECT a.model FROM loom.analysis_agent_events AS v JOIN loom.agent_events AS a USING request_id LIMIT 1",
+        "SELECT count() FROM loom.agent_events_private",
+        "SELECT upstream_cost_usd FROM loom.agent_events_private LIMIT 1",
+        "SELECT a.model FROM loom.analysis_agent_events AS v JOIN loom.agent_events_private AS a USING request_id LIMIT 1",
     ],
 )
-def test_analyst_cannot_read_raw_events(control_plane_url: str, seed: _Seed, sql: str) -> None:
+def test_analyst_cannot_read_private_event_storage(
+    control_plane_url: str, seed: _Seed, sql: str
+) -> None:
     assert (
         _query(
             control_plane_url, seed, "SELECT count() FROM loom.analysis_agent_events"
@@ -865,6 +876,30 @@ def test_analyst_cannot_read_raw_events(control_plane_url: str, seed: _Seed, sql
     )
     r = _query(control_plane_url, seed, sql)
     assert r.status_code in _REFUSED, r.text
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT name, total_rows, total_bytes FROM system.tables "
+        "WHERE database = 'loom' AND name = 'agent_events_private'",
+        "SELECT name, type, default_expression FROM system.columns "
+        "WHERE database = 'loom' AND table = 'agent_events_private'",
+    ],
+)
+def test_private_physical_event_metadata_is_not_visible(
+    control_plane_url: str, seed: _Seed, ch_client, statement: str
+) -> None:
+    assert ch_client.query(
+        "SELECT count() FROM system.tables "
+        "WHERE database = 'loom' AND name = 'agent_events_private'"
+    ).result_rows == [(1,)]
+    ordinary = _query(control_plane_url, seed, "SELECT count() FROM loom.agent_events")
+    assert ordinary.status_code == 200, ordinary.text
+    response = _query(control_plane_url, seed, statement)
+    assert response.status_code in {200, *_REFUSED}, response.text
+    if response.status_code == 200:
+        assert response.json()["rows"] == [], response.text
 
 
 @pytest.mark.parametrize(

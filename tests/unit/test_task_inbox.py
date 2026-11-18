@@ -286,7 +286,15 @@ class FakeRepo:
         return [e for e in self.events if e["org"] == org and e["task_id"] == str(task_id)][:limit]
 
     async def events_since(
-        self, org, *, since_seq, lag_s, inbox=None, from_subject=None, limit=200
+        self,
+        org,
+        *,
+        since_seq,
+        lag_s,
+        warning_scope=None,
+        inbox=None,
+        from_subject=None,
+        limit=200,
     ):
         rows = [e for e in self.events if e["org"] == org and e["seq"] > since_seq]
         if inbox:

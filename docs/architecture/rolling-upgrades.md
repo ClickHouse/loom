@@ -865,8 +865,8 @@ schema. These rules keep that safe. The operator procedure is in
     mirrored source creation remains refused until every process implements the read,
     session and enablement protections. Before N-1 can serve after enablement, stop
     writers, settle outstanding inserts and sagas, scrub marked receipts and audit
-    figures, and erase every mirror store, including `agent_events` and
-    `agent_cost_rollup_daily`, before clearing the enablement latch. Stopping a client
+    figures, and erase every mirror store, including `agent_events`,
+    `agent_events_private` and `agent_cost_rollup_daily`, before clearing the enablement latch. Stopping a client
     after its timeout does not prove a sent insert has completed.
 
 59. **Personal-agent reader claims and verified directory evidence** (migration
@@ -901,6 +901,22 @@ schema. These rules keep that safe. The operator procedure is in
     output columns. Both views exclude mirror namespaces for either build. Mirror creation remains
     refused until the read, request, session and deployment protections are complete.
 
+62. **User cost caps and private budget warnings** (migration
+    `107_user_cost_budgets.sql`): activate the global and namespace user caps and alert
+    inboxes only after every serving build supports the migration; keep them disabled
+    and do not rely on user caps while any build is older or unknown. N-1 cannot enforce
+    user caps, filters no private warning events, and has no user-erasure step for those
+    events. Before the first N-1 process starts, the operator stops all warning producers
+    for maintenance, settles scheduled and uncertain writes and their writer leases,
+    deletes only `budget.warning` task events, and verifies completed deletion and zero
+    warning rows on every storage replica. There is no interval in which N-1 serves
+    with private warnings stored. Save policy before rollback: N-1 namespace writes omit
+    the user-cap and alert-inbox columns, so their defaults replace the saved values.
+    Restore and verify the global default and namespace policies only after every
+    serving build supports the migration again. The [activation and rollback
+    procedure](cost-budgets.md#activation-and-rollback) defines the maintenance boundary;
+    the warning fleet check alone does not make a downgrade safe.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
@@ -926,21 +942,63 @@ than `default` (rule 5), new revocation keys (rule 18), an `/assistant` history 
 (rule 46), or a process killed mid-migration. It skips with exit 0 where docker is
 unreachable; CI passes `--require`, which fails there instead.
 
-### Analyst event-view cutover
+### Analyst event storage cutover
 
-The marked-event boundary replaces the analyst's raw event grant with the signed,
-typed `analysis_agent_events` view and advances the entity version. The raw table
-keeps a deny policy for the analyst while interrupted provisioning repairs its grants.
-The entity stamp is written after the view and grants, under the existing access lease.
+The CHECK proof requires ClickHouse with `system.constraints`, as supplied by the
+pinned deployment release. Upgrade the database before provisioning the event catalog;
+a server without that metadata refuses the cutover.
 
-Deploy the probe ordering described in [Analyst probes across catalog versions](#analyst-probes-across-catalog-versions)
-across the fleet before this cutover. A capable older probe checks the key canary,
-then trusts the newer catalog; supported ordinary statements keep working without
-restoring raw access. Earlier probes count their raw event grant first and can refuse
-`insights.query` until rolled forward. Complete the fleet while mirrored creation is
-disabled. Raw SQL statements must use the catalog's masked relation. Starting an older
-build after enablement still requires the marked-event rollback cleanup; regranting
-raw access cannot substitute for it.
+`agent_events` retains ordinary event rows, its columns and the analyst's signed,
+namespace-scoped grant. Both builds can insert and query ordinary events while the
+entity catalog advances to version 5. The `ordinary_events_only` CHECK rejects marked
+rows and reserved mirror namespaces. Ordinary namespaces matching the reserved
+mirror spelling are refused too; they cannot be used as an alternate private sink.
+
+Marked requests and mirror workers write `agent_events_private`, which has no analyst
+grant. The typed, signed `analysis_agent_events` view unions both stores and masks
+private fields before predicates run. Trusted cost, budget and history-policy reads
+also cover both stores. A row policy on a shared physical table cannot replace this
+split: table metadata could disclose private rows even when a SELECT returns none.
+
+Before granting access, provisioning verifies the exact CHECK and both table UUIDs
+on every configured writer, freezes the identities of all running INSERTs, waits
+for that finite set to finish, and counts forbidden ordinary rows. Internal async
+flushes participate even after their submitting client disconnects. Queued requests
+that have not prepared a pipeline encounter the installed CHECK when they execute.
+An ALTER alone does not settle old pipelines. Missing writers, changed topology,
+unknown metadata, a deadline or any surviving forbidden row refuses provisioning;
+existing rows remain untouched. Writers continue accepting valid ordinary inserts.
+
+Negative observations use a checked administrative HTTP session on each writer.
+The configured service origin is included; `LOOM_CH_ANALYSIS_OBSERVER_URLS` adds
+explicit trusted HTTP origins using the same existing service credentials. Every
+writer UUID needs exactly one route. Missing routes, aliases to the same backend,
+redirects, backend changes and incomplete replies refuse. Routes must preserve
+non-replaying POST semantics, including any intermediary. HTTPS cannot downgrade.
+The proof never discovers another credential or derives HTTP ports from native
+cluster addresses.
+
+Each writer supplies its complete native `SHOW CREATE ROW POLICIES` catalog. A
+SELECT from `system.row_policies` cannot establish visibility because policies can
+filter that catalog too. Policies on process, topology or CHECK metadata sources,
+database-wide policies and unknown event policies refuse. Generated analyst event
+policies require their matching unrestricted policy for other users: an analyst-only
+policy can implicitly hide every row from another user. The observer cannot be the
+analyst user or hold its enabled role. Catalog, backend, principal and table identities
+remain fixed through the drain and census. The complete proof has a ten-second
+deadline; exact owned sessions close concurrently with one bounded cleanup interval.
+
+Run `loom ch-setup --apply-analyst-sql` with explicitly configured existing
+access-management credentials to apply only the analyst boundary. It uses the same
+live proof and lease without rebuilding the reader user. `--print-analyst-sql` refuses
+with a nonzero result and prints no grants or secrets: an unchecked SQL file cannot
+enforce the native policy-catalog observation. General `--print-sql` still prints
+database and reader preparation with a password placeholder.
+
+Mirrored creation remains disabled until the fleet, read and session protections
+and enablement procedure are complete. Before an older build serves after enablement,
+the rollback procedure must settle writes and erase every mirror store, including
+`agent_events_private`; restoring a grant or downgrading the schema is insufficient.
 
 ### Analyst probes across catalog versions
 

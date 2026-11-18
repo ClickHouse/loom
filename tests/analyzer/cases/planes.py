@@ -564,6 +564,14 @@ def _logged_turn_rows(embedded: bool):
     )
 
 
+async def _source_push(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import source_push
+
+    await source_push.get(ORG, NS, _UUID, ch=ch)
+    await source_push.drive_page(("", "", ""), ch=ch)
+    await source_push.sealed_page(("", "", ""), ch=ch)
+
+
 async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.knowledge.api.models_conversations import ConversationSaveMessageInput
     from server.knowledge.app.conversations import handle_conversation_save_message
@@ -863,6 +871,15 @@ async def _conversation_threads(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
 
+async def _budget_warning_events(ch: RecordingCH, _v: dict[str, Any]) -> None:
+    from server.tasks.store import budget_notifications
+
+    await budget_notifications.event_seqs(ORG, "warnings", _UUID, ch=ch)
+    row = {"org": ORG, "inbox": "warnings", "task_id": _UUID, "seq": 1}
+    await budget_notifications.insert_event(row, ch=ch)
+    await budget_notifications.remove_event(row, ch=ch)
+
+
 async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The session-run ledger reads: the run under an id, the idle sweep, a
     run's spend over its window, and the time a re-sent turn is recorded with."""
@@ -1129,6 +1146,14 @@ def cases() -> list[Case]:
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
     out.append(
         Case(
+            "budget_warnings.events",
+            "server.tasks.store.budget_notifications",
+            _budget_warning_events,
+            {},
+        )
+    )
+    out.append(
+        Case(
             "provider_rebuild.session_chunks",
             "server.insights.store.provider_staging",
             _rebuild_session_chunks,
@@ -1255,6 +1280,7 @@ def cases() -> list[Case]:
                 }
             ),
         ),
+        Case("source_push_repos", "server.knowledge.store.source_push", _source_push, {}),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
         Case(
             "plane_services",

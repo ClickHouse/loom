@@ -53,6 +53,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
+from server.core.event_source import ALL_EVENTS
+
 log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
@@ -412,14 +414,14 @@ def compile_leaf(leaf: Formerly | CountWithin | NotSince, ctx: CallContext) -> C
             f"maxOrNullIf(ts, ({ordinary}) AND operation IN {{p_anchor:Array(String)}})"
             " AS anchor_ts, "
             f"maxOrNullIf(ts, ({ordinary}) AND operation IN {{p_left:Array(String)}}) AS left_ts "
-            "FROM loom.agent_events WHERE " + " AND ".join(where)
+            f"FROM {ALL_EVENTS} WHERE " + " AND ".join(where)
         )
         return CompiledLeaf(sql=sql, params=params, kind="not_since", unresolved=unresolved)
     params["p_ops"] = list(leaf.operation)
     where.append("operation IN {p_ops:Array(String)}")
     sql = (
         f"SELECT max(mirror_marked) AS protected_history, countIf({ordinary}) AS n "
-        "FROM loom.agent_events WHERE " + " AND ".join(where)
+        f"FROM {ALL_EVENTS} WHERE " + " AND ".join(where)
     )
     return CompiledLeaf(sql=sql, params=params, kind=leaf.op, unresolved=unresolved)
 
@@ -465,7 +467,7 @@ def compile_breadth(leaf: BreadthWithin, ctx: CallContext) -> CompiledLeaf | Non
         "SELECT uniqExact(k) AS n, "
         "(SELECT count() FROM loom.memory FINAL WHERE org = {p_org:String} "
         "AND namespace = {p_ns:String} AND tombstoned_at IS NULL) AS total, "
-        "(SELECT max(mirror_marked) FROM loom.agent_events WHERE "
+        f"(SELECT max(mirror_marked) FROM {ALL_EVENTS} WHERE "
         f"{history}) AS protected_history "
         f"FROM {EXPOSURES_TABLE} ARRAY JOIN returned_keys AS k WHERE {where}"
     )

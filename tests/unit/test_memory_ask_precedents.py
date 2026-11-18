@@ -204,7 +204,7 @@ def prec_env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def fake_search(search_input: Any):
         return _search_output(list(env.hits))
 
-    async def fake_over_cap(org: str, ns: str) -> bool:
+    async def fake_over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     class _CH:

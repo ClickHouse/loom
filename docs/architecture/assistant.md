@@ -71,6 +71,45 @@ session and components, and links verified citations into the memory and documen
 
 ## The bridge: each caller's own identity
 
+Before checking model spend, the bridge reads the authorized namespace's public
+mirrored-source registrations. Any active registration marks the complete answer,
+even when its tools admit no document. The chat route sends `data: {"mirrored":true}`
+as its first SSE event, or `mirrored: true` as its whole response's first field.
+`assistant.ask` carries the same first field. A marked refusal carries it too. This
+decision also routes the answer's cost row to private storage and suppresses public
+diagnostics before subsequent model, budget or tool work.
+
+Marked operation results carry the same server-owned flag after their typed output is
+serialized. HTTP success responses retain it before post-handler rows. MCP success
+responses retain it in the outer envelope, tool result, structured content and canonical
+JSON text. The search tool's prose summary follows a separate first JSON marker block,
+so consuming its text blocks in order observes protection before the summary. Ordinary
+unmarked results keep their existing shapes.
+
+The answer token keeps the caller's `session_protection` promise and a separate
+`answer_mirrors` admission bit. Only an already marked answer for a declared caller
+receives positive admission. Missing or false admission disables its mirror legs,
+including when a source becomes active during an initially ordinary answer. Ordinary
+namespace reads retain their authorization. Current ACL checks still decide each
+mirrored item; the bit grants no access by itself. Ordinary delegated children omit
+both claims and cannot regain mirror admission through a request header. An answer
+token or any descendant cannot start another assistant answer.
+
+Streaming output is provisional until `[DONE]`. The response owns its required
+accounting lifetime beyond HTTP headers: it closes and joins model and citation work,
+captures final usage once, and confirms private cost delivery before sending `[DONE]`
+or a terminal error. Disconnects join producer cleanup and required delivery before
+propagating cancellation. A failed cost write cannot publish a completed answer.
+Whole answers and checked tool responses retain their accounting-before-publication
+boundary. Incremental text precedes final usage, so its completion boundary is the
+terminal event. A streaming client must reject EOF without `[DONE]` as incomplete.
+
+Mirrored-source creation stays unavailable until every serving build and consumer
+implements the admission, first-output marker, session and accounting boundaries.
+An older verifier accepting an unknown claim does not enforce it; schema equality
+does not establish this capability. The fleet and rollback requirements in
+[rolling upgrades](rolling-upgrades.md) still apply.
+
 LibreChat's agents API authenticates a LibreChat API key and runs the agent as that
 key's LibreChat user. The agent's tools are Loom's MCP server, and what they may read is
 decided by the token on each tool call, never by the LibreChat user. LibreChat v0.8.8
@@ -564,8 +603,11 @@ call it directly, on any transport, and it joins the
 
 The event catalog relation is `loom.analysis_agent_events`. It retains authorized request
 participation and neutralizes marked model, spend, work and outcome fields before caller
-filters, joins or aggregates. The analyst has no grant on raw `loom.agent_events`, even
-for a count. The view's definer query applies the same signed org/namespace predicate as
+filters, joins or aggregates. It unions ordinary `loom.agent_events` with
+`loom.agent_events_private`; the analyst has no grant on the private table. The
+ordinary table retains signed, namespace-scoped access for both serving builds and
+rejects marked events and reserved mirror namespaces through its permanent CHECK.
+The view's definer query applies the same signed org/namespace predicate as
 the physical tables' row policies; it does not use SQL-account grants. The typed projection
 is passed from the maintained event reader definition into the pure access-entity builder.
 Its shape, signed predicate and security mode are part of the entity version digest.
@@ -721,31 +763,20 @@ stored key. Elsewhere an admin uses one of two commands:
   only when there is none and no analyst user exists; over a lost row with the user
   still there, it refuses: until the rotation of [part 2](#build-order), the recovery is
   to drop the analyst user and run it again.
-- `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
-  no access management to print (where `--print-sql` prints the admin SQL
-  `loom ch-setup` would run, with the reader's password as a placeholder). It draws the
-  secrets on a first install and otherwise prints the stored key's entity set; over a
-  lost row it refuses where Loom's user can see that the analyst user exists, and where
-  it cannot it draws again, which moves the key. The SQL comes with a `REVOKE` before
-  the grants for each grant the analyst's own `SHOW GRANTS` lists, headed by the command
-  that runs it in one session and by two checks the admin runs first: the permissive
-  policies Loom did not write, and other databases carrying the analyst's scope policy.
-  With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below
-  does, draws a fresh key and password, and prints a complete rotation, in the order of
-  a write, with the command that runs it in one session
-  (`clickhouse-client --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
-  the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
-  new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
-  the `INSERT` of the new sealed row at a version from ClickHouse's clock in
-  nanoseconds. Run in full, it starts analysis on a first install, recovers it after a
-  lost row and rotates a healthy key alike. It is outside the lease and the rules below,
-  so it is printed by the newest build's CLI, and it is run, not kept.
+- `loom ch-setup --apply-analyst-sql`, run with explicitly configured existing
+  access-management credentials, applies only the analyst entities under the same
+  lease and lost-key rules. It does not rebuild the reader user. Its live
+  [event cutover](rolling-upgrades.md#analyst-event-storage-cutover) proves writer,
+  CHECK and policy visibility before grants. Additional writer HTTP routes come
+  from `LOOM_CH_ANALYSIS_OBSERVER_URLS`; their credentials are the configured service
+  credentials, and unavailable or duplicate writers refuse.
 
-A printed rotation run only in part leaves analysis unavailable, by the order of a write
-below. Its statements must run in that one session, after its first statement,
-`SET log_queries_cut_to_length = 1, log_formatted_queries = 0`: ClickHouse takes no
-per-statement settings on an access statement, and a console that sends them one by one
-would log the key in `system.query_log`.
+`loom ch-setup --print-analyst-sql` refuses with a nonzero result and prints no
+statements or secrets. An unchecked SQL file cannot enforce the native access-catalog
+proof, including a catalog hidden by its own policies. General `--print-sql` still
+prints database and reader preparation with a password placeholder. Entity writes
+cut their query-log text and disable local statement capture so policy expressions
+and passwords do not enter either log.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
 the grants, the policies, the masked event view and the catalog come from one definition. The rules a write

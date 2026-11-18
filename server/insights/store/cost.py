@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from typing import Any
 
+from server.core.event_source import ALL_EVENTS
 from server.core.repo_base import _CHClient, _default_client
 
 # The roll-up's grain and state columns, and the same
@@ -141,7 +142,7 @@ async def summary_rows(
         )
         sql = f"""
             SELECT {select_dims_scan + (", " if select_dims_scan else "")}{base_select}
-            FROM loom.agent_events
+            FROM {ALL_EVENTS}
             WHERE org = {{org:String}}
               AND toDate(ts) BETWEEN {{from_d:Date}} AND {{to_d:Date}}
               {"" if include_marked else "AND mirror_marked = 0"}
@@ -175,7 +176,7 @@ async def summary_rows(
                   {where}
                 UNION ALL
                 SELECT org, namespace, agent, toDate(ts) AS day, operation, {TAIL_STATES}
-                FROM loom.agent_events
+                FROM {ALL_EVENTS}
                 WHERE org = {{org:String}}
                   AND ts > (SELECT max(ts_hwm) FROM loom.agent_cost_rollup_daily)
                   AND toDate(ts) BETWEEN {{from_d:Date}} AND {{to_d:Date}}
@@ -200,7 +201,7 @@ async def ask_cache_totals(
     rows = await ch.query_all(
         f"""
             SELECT {CACHE_SELECT}
-            FROM loom.agent_events
+            FROM {ALL_EVENTS}
             WHERE org = {{org:String}}
               AND toDate(ts) BETWEEN {{from_d:Date}} AND {{to_d:Date}}
               AND operation = 'memory.ask'
@@ -213,35 +214,6 @@ async def ask_cache_totals(
     return int(rows[0].get("cache_hits") or 0), float(rows[0].get("cache_saved_usd") or 0.0)
 
 
-async def namespace_spend_24h(org: str, namespace: str, *, ch: _CHClient | None = None) -> float:
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-            SELECT sum(upstream_cost_usd) AS spent
-            FROM loom.agent_events
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND ts > now() - INTERVAL 1 DAY
-            """,
-        params={"org": org, "ns": namespace},
-    )
-    return float((row or {}).get("spent") or 0.0)
-
-
-async def namespace_cap(org: str, namespace: str, *, ch: _CHClient | None = None) -> Any:
-    """The namespace's own `daily_cost_cap_usd`; None without a namespaces row."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-            SELECT daily_cost_cap_usd
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-            """,
-        params={"org": org, "ns": namespace},
-    )
-    return (row or {}).get("daily_cost_cap_usd")
-
-
 async def org_spend_24h(
     org: str, scope_where: str, scope_params: dict[str, Any], *, ch: _CHClient | None = None
 ) -> tuple[float, int]:
@@ -251,7 +223,7 @@ async def org_spend_24h(
         f"""
         SELECT sum(upstream_cost_usd) AS spent,
                countDistinct(namespace) AS ns_count
-        FROM loom.agent_events
+        FROM {ALL_EVENTS}
         WHERE org = {{org:String}}
           AND upstream_cost_usd > 0
           AND ts > now() - INTERVAL 1 DAY

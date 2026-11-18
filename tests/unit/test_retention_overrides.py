@@ -111,7 +111,7 @@ def test_compute_alters_per_namespace_override_uses_multiif() -> None:
         ],
     )
     # Override applies to every managed table — one ALTER per table.
-    assert len(out) == 7
+    assert len(out) == 8
     audit_alter = next(s for t, s, _ in out if t.table == "loom.audit_log")
     assert "multiIf" in audit_alter
     assert "org = 'clickhouse'" in audit_alter
@@ -220,6 +220,7 @@ def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
     tables = sorted(t.table for t, _, _ in out)
     assert tables == [
         "loom.agent_events",
+        "loom.agent_events_private",
         "loom.audit_log",
         "loom.chunks",
         "loom.conversations",
@@ -251,7 +252,7 @@ async def test_apply_uses_provided_overrides_without_ch_query() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
-    """One namespace override → one ALTER per managed table (7)."""
+    """One namespace override → one ALTER per managed table (8)."""
     ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(),
@@ -261,7 +262,7 @@ async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
         ],
         leader=True,
     )
-    assert n == 7
+    assert n == 8
 
 
 @pytest.mark.asyncio
@@ -588,17 +589,23 @@ async def test_mutation_queue_read_failure_is_fail_open() -> None:
 
 
 def test_every_managed_table_reads_its_own_retention_and_tiering_settings() -> None:
-    """Each target's accessors read the settings named after its table: set
-    one table's pair alone and the plan alters that table only."""
+    """Each setting pair reaches exactly its managed physical tables; both event
+    streams share the agent-events retention and tiering settings."""
     from server.settings import Settings
 
     assert retention_overrides.compute_alters(Settings()) == []
     for target in retention_overrides.TARGETS:
         leaf = target.table.removeprefix("loom.")
-        fake = _FakeSettings(**{f"retention_{leaf}_days": 30, f"tiering_{leaf}_warm_days": 7})
+        source = "agent_events" if leaf == "agent_events_private" else leaf
+        fake = _FakeSettings(**{f"retention_{source}_days": 30, f"tiering_{source}_warm_days": 7})
         plan = retention_overrides.compute_alters(fake)
-        assert [t.table for t, _, _ in plan] == [target.table]
-        assert plan[0][2]["retention_global"] == 30 and plan[0][2]["tiering_global"] == 7
+        expected = (
+            ["loom.agent_events", "loom.agent_events_private"]
+            if source == "agent_events"
+            else [target.table]
+        )
+        assert [t.table for t, _, _ in plan] == expected
+        assert all(p["retention_global"] == 30 and p["tiering_global"] == 7 for _, _, p in plan)
 
 
 def test_no_ttl_deletes_memory_or_its_vectors_under_the_postgres_authority(

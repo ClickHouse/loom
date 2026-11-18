@@ -61,7 +61,7 @@ def test_a_version_names_one_set_of_grants_and_policies() -> None:
     # Changing a grant, a policy, a live predicate or a retired table changes
     # this digest: bump ENTITY_VERSION and record the new digest here.
     assert {boundary.ENTITY_VERSION: boundary.structure_digest(MASKED_EVENT_COLUMNS)} == {
-        4: "1336fef6f782dd375938a514e02d43cf"
+        5: "888884fc88f3e8f461626942bedca1cd"
     }
 
 
@@ -142,7 +142,7 @@ def test_every_grant_and_role_outside_the_allowlist_is_revoked_before_the_grants
 def test_every_other_users_policy_is_written_before_the_analysts() -> None:
     for name in [
         *(t.name for t in boundary.policy_tables()),
-        *boundary.RETIRED_TABLES,
+        *boundary.REFUSED_TABLES,
         boundary.CANARY_TABLE,
     ]:
         others = next(
@@ -167,8 +167,8 @@ def test_the_payload_counts_bytes_as_clickhouse_length_does() -> None:
     assert boundary.scope_payload("é", "a", 1, "q") == "2:é1:a1:1q"
 
 
-def test_a_retired_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
-    monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
+def test_a_private_table_keeps_a_policy_that_reads_nothing(monkeypatch) -> None:
+    monkeypatch.setattr(boundary, "REFUSED_TABLES", ("old_table",))
     sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS, event_columns=MASKED_EVENT_COLUMNS)
     assert (
         "CREATE ROW POLICY OR REPLACE `loom_analyst_scope` ON `loom`.old_table "
@@ -199,7 +199,7 @@ def test_other_users_keep_reading_every_table() -> None:
     # its rows.
     others = _policies(boundary.OTHERS_POLICY_NAME)
     assert set(others) == {t.name for t in boundary.policy_tables()} | set(
-        boundary.RETIRED_TABLES
+        boundary.REFUSED_TABLES
     ) | {boundary.CANARY_TABLE}
     assert set(others.values()) == {"AS permissive FOR SELECT USING 1 TO ALL EXCEPT `loom_analyst`"}
 
@@ -207,7 +207,7 @@ def test_other_users_keep_reading_every_table() -> None:
 def test_the_foreign_policy_check_looks_on_every_table_the_others_policy_widens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(boundary, "RETIRED_TABLES", ("old_table",))
+    monkeypatch.setattr(boundary, "REFUSED_TABLES", ("old_table",))
     sql = boundary.entity_sql("`loom`", NAMES, "pw", KEY, CAPS, event_columns=MASKED_EVENT_COLUMNS)
     head = rf"CREATE ROW POLICY OR REPLACE `{boundary.OTHERS_POLICY_NAME}` ON `loom`\.(\w+) "
     widened = {m.group(1) for s in sql if (m := re.match(head, s))}
@@ -245,7 +245,13 @@ def test_no_entity_statement_changes_what_cloud_pins() -> None:
     assert not any(pinned.search(stmt) for stmt in SQL)
 
 
-def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
+def test_entity_statements_are_sent_with_their_text_cut_from_the_log(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.insights.store import event_cutover
+
+    fence = AsyncMock()
+    monkeypatch.setattr(event_cutover, "confirm_ordinary_events", fence)
     sent: list[tuple[str, dict[str, object]]] = []
 
     class _Client:
@@ -254,6 +260,7 @@ def test_entity_statements_are_sent_with_their_text_cut_from_the_log() -> None:
 
     names = boundary.SettingNames("SQL_")
     asyncio.run(store.write_entities(SQL, names=names, ch=_Client()))  # type: ignore[arg-type]
+    fence.assert_awaited_once()
     assert [sql for sql, _ in sent] == SQL
     cut = {"log_queries_cut_to_length": 1, "log_formatted_queries": 0}
     empty_scope = {names.org: "", names.ns: "", names.exp: "0", names.sig: ""}
@@ -383,12 +390,6 @@ def test_the_stamp_is_written_last() -> None:
     assert SQL[-1].startswith("ALTER SETTINGS PROFILE `loom_analyst` SETTINGS ")
     assert NAMES.digest in SQL[-1]
     assert all(NAMES.digest not in s for s in SQL[:-1])
-
-
-def test_revokes_for_skips_a_line_that_is_not_a_grant() -> None:
-    assert boundary.revokes_for(["not a grant", "GRANT r TO loom_analyst"]) == [
-        "REVOKE r FROM loom_analyst"
-    ]
 
 
 def test_a_cloud_prefix_names_every_setting_the_entities_and_the_scope_use() -> None:
