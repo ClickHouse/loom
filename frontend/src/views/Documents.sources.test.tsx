@@ -6,6 +6,8 @@ import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { PHONE_QUERY } from "../lib/useMedia";
 import { Documents } from "./Documents";
+import { listQueryHistory } from "../api/queryHistory";
+import { axeViolations } from "../test/axe";
 
 // The Library's Sources section: the sources of the place in view, with Add for its
 // admins only.
@@ -19,6 +21,12 @@ const sources = vi.hoisted(() => ({ listKnowledgeSources: vi.fn() }));
 vi.mock("../api/knowledgeSources", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/knowledgeSources")>()),
   ...sources,
+}));
+
+vi.mock("../api/queryHistory", () => ({
+  listQueryHistory: vi.fn(),
+  addQueryHistory: vi.fn(),
+  removeQueryHistory: vi.fn(),
 }));
 
 const whoami: WhoAmI = { authenticated: true, subject: "alice", org: "acme", roles: ["WRITER"], namespaces: ["team"] };
@@ -70,6 +78,7 @@ describe("Library sources", () => {
   beforeEach(() => {
     resetNamespaceRoleCache();
     sources.listKnowledgeSources.mockResolvedValue(LISTED);
+    vi.mocked(listQueryHistory).mockResolvedValue({ enabled: false, sources: [] });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -78,6 +87,39 @@ describe("Library sources", () => {
     vi.clearAllMocks();
     useStore.setState({ identity: null, whoami: null, myNamespaces: null });
   });
+
+  it.each([false, true])(
+    "keeps query history in the header and portals its focused panel (phone=%s)",
+    async (phone) => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: phone && query === PHONE_QUERY,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }));
+      show("admin");
+      const user = userEvent.setup();
+      const toggle = await screen.findByRole("button", { name: "Query history" });
+      const header = toggle.closest("[data-page-header]");
+      expect(header).not.toBeNull();
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(screen.queryByRole("region", { name: "Query history" })).toBeNull();
+      if (phone) expect(toggle).not.toHaveTextContent("Query history");
+      await user.click(toggle);
+      const panel = await screen.findByRole("region", { name: "Query history" });
+      const heading = within(panel).getByRole("heading", { name: "Query history" });
+      expect(header).not.toContainElement(panel);
+      expect(toggle).toHaveAttribute("aria-controls", panel.id);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await waitFor(() => expect(heading).toHaveFocus());
+      await within(panel).findByText("No query-history sources");
+      expect(listQueryHistory).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, expect.anything());
+      expect(await axeViolations(panel)).toEqual([]);
+      await user.click(toggle);
+      expect(panel).not.toBeInTheDocument();
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(toggle).toHaveFocus();
+    },
+  );
 
   it("lists the namespace's sources and offers Add to its admins", async () => {
     show("admin");
@@ -183,7 +225,7 @@ describe("Library sources", () => {
     sources.listKnowledgeSources.mockRejectedValue(new Error("boom"));
     show("admin");
     await openSources();
-    expect(await screen.findByText(/Couldn't list the document sources/)).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load document sources")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sources" })).toBeInTheDocument();
   });
 

@@ -1,33 +1,43 @@
 """The loom_search fan-out: one question over every plane that could answer it.
 
 Memory (plus the scoped repository's decisions), knowledge (plus the scoped
-repository's documents), profile and conversations are searched in parallel,
-and — for a defect report under a code scope — the tracker record; the
+repository's documents), profile, conversations and authorized tracker records
+are searched in parallel after their capture consent is resolved; the
 sections are assembled into one payload and trimmed by the answer-first
-rules (answer_first.py). A leg that fails returns
+rules (answer_first.py). An ordinary leg failure returns
 `{"error": ..., "results": []}` under its section and the others still
-answer. The MCP `loom_search` tool renders this payload as its text and
-lean result; the `search` operation returns it as is.
+answer. Typed input refusals propagate instead of producing partial results.
+The MCP `loom_search` tool renders this payload as its text and lean result;
+the `search` operation returns it as is.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Literal
+from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, Any, Literal
 
-from server.core.errors import LoomServerError, caller_text
+from server.core import request_tail
+from server.core.ch import set_query_tag
+from server.core.diagnostics import private_work
+from server.core.errors import LoomServerError, VectorInputTooLargeError, caller_text
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
-from server.knowledge.app.repo_docs import knowledge_with_repo_docs
+from server.knowledge.app import repo_docs, source_publication
+from server.knowledge.app.source_access import ReadPlan, prepare
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.agent_rules import request_rule_agent, served_hits
 from server.memory.app.ask.reader_render import render_reader_block
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.repo_decisions import memory_with_repo_decisions
-from server.memory.app.loom_search.tracker_leg import tracker_leg
+from server.memory.app.loom_search.tracker_leg import TrackerSearchPlan, tracker_leg
 from server.memory.app.profile_search import search_profile
 from server.memory.domain import code_change
+
+if TYPE_CHECKING:
+    from server.knowledge.api.models_knowledge import KnowledgeSearchInput, KnowledgeSearchOutput
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +196,129 @@ async def _conversation_leg(conv_input: Any, scope: ReadFilters) -> Any:
     return await handle_conversation_search(conv_input)
 
 
+async def _prepare_knowledge(
+    input: KnowledgeSearchInput, repo_namespace: str
+) -> tuple[repo_docs.RepoSearchRequest | Exception, ReadPlan]:
+    try:
+        request = await repo_docs.resolve_repo_search(input, repo_namespace=repo_namespace)
+        return request, await prepare(input.org, request.namespaces)
+    except Exception as error:  # noqa: BLE001 — a failed knowledge scope leaves other sections available
+        return error, ReadPlan(input.org)
+
+
+async def _run_knowledge(
+    prepared: repo_docs.RepoSearchRequest | Exception, plan: ReadPlan
+) -> repo_docs.RepoSearch:
+    if isinstance(prepared, Exception):
+        raise prepared
+    return await repo_docs.run_repo_search(prepared, plan)
+
+
+async def _filtered_knowledge(
+    first: KnowledgeSearchOutput,
+    widen: Callable[[int], Awaitable[KnowledgeSearchOutput]],
+    agent: str,
+    top_k: int,
+) -> dict[str, Any]:
+    know = first.model_dump()
+
+    async def expanded(k: int) -> list[dict[str, Any]]:
+        wider = await widen(k)
+        # Widening changes the served reranker; other metadata belongs to the first pass.
+        know["reranked_by"] = wider.reranked_by
+        return list(wider.model_dump()["results"])
+
+    know["results"] = await served_hits(
+        know["results"], expanded, lambda hit: hit["tags"], request_rule_agent(agent), top_k
+    )
+    return knowledge_above_floor(know)
+
+
+async def _ordinary_knowledge(
+    first: repo_docs.RepoSearch,
+    wider: repo_docs.RepoSearch | None,
+    agent: str,
+) -> dict[str, Any]:
+    await first.ordinary()
+
+    async def expanded(k: int) -> KnowledgeSearchOutput:
+        if wider is not None:
+            # A wider fallback is additive; served_hits keeps the first on failure.
+            await wider.ordinary()
+            return wider.output
+        request = first.request.wider(k)
+        # The saved authorized scopes run without any new mirror discovery.
+        ordinary = await repo_docs.run_repo_search(request, ReadPlan(request.base.input.org))
+        return await ordinary.current()
+
+    return await _filtered_knowledge(
+        first.output, expanded, agent, int(first.request.base.input.top_k)
+    )
+
+
+async def _knowledge_section(
+    first: repo_docs.RepoSearch, plan: ReadPlan, agent: str
+) -> dict[str, Any]:
+    wider: repo_docs.RepoSearch | None = None
+    widening_error: Exception | None = None
+    top_k = int(first.request.base.input.top_k)
+
+    async def expanded(k: int) -> KnowledgeSearchOutput:
+        nonlocal wider, widening_error
+        try:
+            wider = await repo_docs.run_repo_search(first.request.wider(k), plan)
+        except Exception as error:
+            widening_error = error
+            raise
+        return wider.output
+
+    if not plan.marked:
+        return await _filtered_knowledge(first.output, expanded, agent, top_k)
+    set_query_tag("knowledge.mirror.fanout")
+    await first.current()
+    if not first.fresh():
+        return await _ordinary_knowledge(first, None, agent)
+    initial = await _filtered_knowledge(first.output, expanded, agent, top_k)
+    if wider is None and widening_error is None:
+        if first.fresh():
+            for proof in first.publication_proofs:
+                source_publication.retain(proof)
+            return initial
+        return await _ordinary_knowledge(first, None, agent)
+    await first.current()
+    if not first.fresh():
+        return await _ordinary_knowledge(first, wider, agent)
+    used_wider = False
+
+    async def cached(_k: int) -> KnowledgeSearchOutput:
+        nonlocal used_wider
+        used_wider = True
+        if widening_error is not None:
+            raise widening_error
+        assert wider is not None
+        # Renew only when the renewed first pass still needs the wider result.
+        await wider.current()
+        return wider.output
+
+    final = await _filtered_knowledge(first.output, cached, agent, top_k)
+    if not first.fresh() or (used_wider and wider is not None and not wider.fresh()):
+        return await _ordinary_knowledge(first, wider, agent)
+    for result in (first, wider) if used_wider and wider is not None else (first,):
+        for proof in result.publication_proofs:
+            source_publication.retain(proof)
+    return final
+
+
+async def _published_knowledge(
+    first: repo_docs.RepoSearch, plan: ReadPlan, agent: str
+) -> dict[str, Any]:
+    with request_tail.publication_group() as publication:
+        section = await _knowledge_section(first, plan, agent)
+        # answer_first retains section metadata and counts withheld hits.
+        publication.commit()
+        return section
+
+
 async def search_sections(
     *,
     org: str,
@@ -200,6 +333,7 @@ async def search_sections(
     page: str,
     explain: bool,
     repo_namespace: str,
+    tracker_plan: TrackerSearchPlan | None,
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
     (`org`, `namespace`); every leg reads the namespaces `namespaces_to_search`
@@ -252,88 +386,94 @@ async def search_sections(
         top_k=top_k,
         namespace_scope=namespace_scope,
     )
-    mem_result, know_result, profile_rows, conv_result, t_section = await asyncio.gather(
-        # A later page continues the home search alone; the knowledge leg re-runs on
-        # every page and keeps the repository's documents.
-        memory_with_repo_decisions(mem_input, repo_namespace="" if page else repo_namespace),
-        knowledge_with_repo_docs(know_input, repo_namespace=repo_namespace),
-        search_profile(  # By words, then by meaning
-            org, namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
-        ),
-        _conversation_leg(conv_input, scope),
-        tracker_leg(query, top_k=top_k),  # A defect-shaped query under a code scope
-        return_exceptions=True,
-    )
+    prepared, plan = await _prepare_knowledge(know_input, repo_namespace)
 
-    # The QA verdict leads when the question is a defect report.
-    payload: dict[str, Any] = {"tracker": t_section} if isinstance(t_section, dict) else {}
-    payload["namespaces_skipped"] = skipped
-    # Each dumped row and its search model, by the row's id. Holding the row keeps its
-    # id from being reused, so a step that copied a row would fail the lookup.
-    models: dict[int, tuple[dict[str, Any], _MemorySearchHit]] = {}
-    # The input the memory search ran (the block renders with its sanitized query,
-    # as memory.search does); None for a parked page, which searched nothing.
-    settled: MemorySearchInput | None = None
-    moved: frozenset[int] = frozenset()  # id() of the memory dicts the search moved
-    if isinstance(mem_result, Exception):
-        payload["memory"] = {"error": _leg_error("memory", mem_result), "results": []}
-    else:
-        memory = mem_result.model_dump()
-        models = {id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)}
-        settled = mem_result._settled_input
-        moved = frozenset(i for i, (_, m) in models.items() if code_change.moved_for_stale_code(m))
-        payload["memory"] = drop_flagged_hits(memory)
-    if isinstance(know_result, Exception):
-        payload["knowledge"] = {"error": _leg_error("knowledge", know_result), "results": []}
-    else:
-        know = know_result.model_dump()
-
-        async def widen(k: int) -> list[dict[str, Any]]:
-            wider = await knowledge_with_repo_docs(
-                know_input.model_copy(update={"top_k": k}), repo_namespace=repo_namespace
-            )
-            # The served hits are the wider search's; so is the reranker that ordered them.
-            know["reranked_by"] = wider.reranked_by
-            results: list[dict[str, Any]] = wider.model_dump()["results"]
-            return results
-
-        # Another bot's promoted rule is not a rule about this agent.
-        know["results"] = await served_hits(
-            know["results"], widen, lambda h: h["tags"], request_rule_agent(agent), top_k
+    with private_work() if plan.marked else nullcontext():
+        mem_result, know_result, profile_rows, conv_result, t_section = await asyncio.gather(
+            # A later page continues the home search alone; the knowledge leg re-runs on
+            # every page and keeps the repository's documents.
+            memory_with_repo_decisions(mem_input, repo_namespace="" if page else repo_namespace),
+            _run_knowledge(prepared, plan),
+            search_profile(  # By words, then by meaning
+                org, namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
+            ),
+            _conversation_leg(conv_input, scope),
+            tracker_leg(query, plan=tracker_plan, top_k=top_k),
+            return_exceptions=True,
         )
-        payload["knowledge"] = knowledge_above_floor(know)
-    payload["profile"] = {
-        "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)
-    }
 
-    # Conversations: thread-history search, bundled so "have we discussed X"
-    # lands in the same call.
-    conv_hits: list[dict[str, Any]] = []
-    if isinstance(conv_result, Exception):
-        payload["conversations"] = {
-            "error": _leg_error("conversations", conv_result),
-            "results": [],
+        fatal = next(
+            (
+                result
+                for result in (mem_result, know_result, profile_rows, conv_result, t_section)
+                if isinstance(result, VectorInputTooLargeError)
+                or (isinstance(result, BaseException) and not isinstance(result, Exception))
+            ),
+            None,
+        )
+        if fatal is not None:
+            raise fatal
+
+        # The QA verdict leads when the question is a defect report.
+        payload: dict[str, Any] = {
+            **({"tracker": t_section} if isinstance(t_section, dict) else {}),
+            "namespaces_skipped": skipped,
         }
-    else:
-        conv_dump = conv_result.model_dump()
-        conv_hits = conv_dump.get("results") or conv_dump.get("hits") or []
-        # One list, not the same hits twice under `hits` and `results`.
-        conv_dump.pop("hits", None)
-        payload["conversations"] = {**conv_dump, "results": conv_hits}
+        # Each dumped row and its search model, by the row's id. Holding the row keeps its
+        # id from being reused, so a step that copied a row would fail the lookup.
+        models: dict[int, tuple[dict[str, Any], _MemorySearchHit]] = {}
+        # The input the memory search ran (the block renders with its sanitized query,
+        # as memory.search does); None for a parked page, which searched nothing.
+        settled: MemorySearchInput | None = None
+        moved: frozenset[int] = frozenset()  # id() of the memory dicts the search moved
+        if isinstance(mem_result, Exception):
+            payload["memory"] = {"error": _leg_error("memory", mem_result), "results": []}
+        else:
+            memory = mem_result.model_dump()
+            models = {
+                id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)
+            }
+            settled = mem_result._settled_input
+            moved = frozenset(
+                i for i, (_, m) in models.items() if code_change.moved_for_stale_code(m)
+            )
+            payload["memory"] = drop_flagged_hits(memory)
+        if not isinstance(know_result, Exception):
+            try:
+                payload["knowledge"] = await _published_knowledge(know_result, plan, agent)
+            except Exception as error:  # noqa: BLE001 — a failed knowledge renewal leaves other sections available
+                know_result = error
+        if isinstance(know_result, Exception):
+            payload["knowledge"] = {"error": _leg_error("knowledge", know_result), "results": []}
+        payload["profile"] = {
+            "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)
+        }
 
-    payload = answer_first(payload, namespace, explain=explain, moved=moved)
-    if settled is not None:
-        # The block is rendered from the rows left after trimming, through their models:
-        # the dumps hide the score_components the restatement notes read. The
-        # repository's rows are labelled, unless the search is addressed to it.
-        mem = payload["memory"]
-        served = []
-        for h in mem["results"]:
-            _row, model = models[id(h)]
-            served.append(model)
-        label = "" if repo_namespace == namespace else repo_namespace
-        mem["reader_block"] = render_reader_block(served, settled.query, label_namespace=label)
-    return payload
+        # Conversations: thread-history search, bundled so "have we discussed X"
+        # lands in the same call.
+        conv_hits: list[dict[str, Any]] = []
+        if isinstance(conv_result, Exception):
+            payload["conversations"] = {
+                "error": _leg_error("conversations", conv_result),
+                "results": [],
+            }
+        else:
+            conv_dump = conv_result.model_dump()
+            conv_hits = conv_dump.get("results") or conv_dump.get("hits") or []
+            # One list, not the same hits twice under `hits` and `results`.
+            conv_dump.pop("hits", None)
+            payload["conversations"] = {**conv_dump, "results": conv_hits}
+
+        payload = answer_first(payload, namespace, explain=explain, moved=moved)
+        if settled is not None:
+            # The block is rendered from the rows left after trimming, through their models:
+            # the dumps hide the score_components the restatement notes read. The
+            # repository's rows are labelled, unless the search is addressed to it.
+            mem = payload["memory"]
+            served = [models[id(hit)][1] for hit in mem["results"]]
+            label = "" if repo_namespace == namespace else repo_namespace
+            mem["reader_block"] = render_reader_block(served, settled.query, label_namespace=label)
+        return payload
 
 
 def _leg_error(leg: str, e: Exception) -> str:

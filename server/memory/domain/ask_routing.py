@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from typing import Any
 
 _CORPUS_TASK = re.compile(
@@ -70,5 +70,5 @@ def pick_documents(
     return chosen
 
 
-def route_reason(docs: Sequence[str]) -> str:
-    return f"knowledge_synthesize:{len(docs)}_docs"
+def route_reason(document_count: int) -> str:
+    return f"knowledge_synthesize:{document_count}_docs"

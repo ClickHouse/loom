@@ -95,7 +95,7 @@ def test_actor_pin_without_a_token_cannot_hold():
 
 
 def test_evaluates_count_and_fraction_forms():
-    ch = _CH([{"n": 120, "total": 1500}])
+    ch = _CH([{"protected_history": 0, "n": 120, "total": 1500}])
     out: list = []
     leaf = rules.BreadthWithin(op="breadth_within", within="1h", cmp="gt", value=100)
     assert asyncio.run(pol._eval_leaf(leaf, _ctx(), ch, out)) is True
@@ -106,7 +106,7 @@ def test_evaluates_count_and_fraction_forms():
     leaf_f2 = rules.BreadthWithin(op="breadth_within", within="1h", cmp="gt", fraction=0.10)
     assert asyncio.run(pol._eval_leaf(leaf_f2, _ctx(), ch, out)) is False
     # Empty namespace: fraction is 0, never holds on gt.
-    ch0 = _CH([{"n": 0, "total": 0}])
+    ch0 = _CH([{"protected_history": 0, "n": 0, "total": 0}])
     assert asyncio.run(pol._eval_leaf(leaf_f, _ctx(), ch0, out)) is False
 
 
@@ -119,9 +119,13 @@ def test_forbid_rule_denies_when_breadth_exceeds_the_budget():
             "condition": {"op": "breadth_within", "within": "1h", "cmp": "gt", "fraction": 0.05},
         }
     )
-    verdict = asyncio.run(pol.evaluate_rule(rule, _ctx(), _CH([{"n": 90, "total": 1000}])))
+    verdict = asyncio.run(
+        pol.evaluate_rule(rule, _ctx(), _CH([{"protected_history": 0, "n": 90, "total": 1000}]))
+    )
     assert verdict.denies is True
-    verdict2 = asyncio.run(pol.evaluate_rule(rule, _ctx(), _CH([{"n": 40, "total": 1000}])))
+    verdict2 = asyncio.run(
+        pol.evaluate_rule(rule, _ctx(), _CH([{"protected_history": 0, "n": 40, "total": 1000}]))
+    )
     assert verdict2.denies is False
 
 

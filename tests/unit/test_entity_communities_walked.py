@@ -23,6 +23,7 @@ from server.memory.app.entity_communities import (
     run_entity_communities,
     summarize_communities,
 )
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 class _CH:
@@ -68,9 +69,9 @@ async def test_selection_is_the_union_of_opted_in_and_walked() -> None:
     optin_sql, _ = ch.calls[0]
     walked_sql, walked_params = ch.calls[1]
     assert "consolidation_enabled = true" in optin_sql
-    assert "FROM loom.agent_events AS a" in walked_sql
+    assert f"FROM {MASKED_EVENTS} AS a" in walked_sql
     # the ts range leads the predicate (agent_events is partitioned by month)
-    where = walked_sql.split("WHERE", 1)[1]
+    where = walked_sql.rsplit("WHERE", 1)[1]
     assert where.lstrip().startswith("a.ts >= now() - INTERVAL {days:UInt32} DAY")
     assert "a.operation IN {ops:Array(String)}" in walked_sql
     assert "a.success = true" in walked_sql and "n.active = true" in walked_sql

@@ -46,11 +46,18 @@ _EXT = f"lower(extract({_PATH}, '[.]([A-Za-z0-9]{{1,10}})$'))"
 # markdown, slides, or the extractor's pdf, pptx or docx), else the stored content
 # type, else ".<extension>", else '(none)'.
 _SYNCED = "JSONExtractString(metadata, 'ingested_format')"
-FORMAT_SQL = (
-    f"if(format != '', toString(format), if({_SYNCED} != '', {_SYNCED}, "
-    f"if(blob_content_type != '', toString(blob_content_type), "
-    f"if({_EXT} != '', concat('.', {_EXT}), {_NONE}))))"
-)
+
+
+def format_sql(synced_sql: str) -> str:
+    """Document format precedence with a SQL expression for the sync format."""
+    return (
+        f"if(format != '', toString(format), if({synced_sql} != '', {synced_sql}, "
+        f"if(blob_content_type != '', toString(blob_content_type), "
+        f"if({_EXT} != '', concat('.', {_EXT}), {_NONE}))))"
+    )
+
+
+FORMAT_SQL = format_sql(_SYNCED)
 
 _DOCS = "FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String}"
 _LIVE_CHUNKS = (

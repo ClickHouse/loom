@@ -101,6 +101,16 @@ async def page(token: str, page_id: str) -> dict[str, Any]:
     return await _call("GET", f"/pages/{_checked(page_id)}", token, f"page {page_id}")
 
 
+async def workspace_id(token: str) -> str:
+    """The bot credential's workspace, for binding incoming notifications."""
+    answer = await _call("GET", "/users/me", token, "push identity")
+    bot = answer.get("bot")
+    value = bot.get("workspace_id") if isinstance(bot, dict) else None
+    if not isinstance(value, str) or not valid_id(value):
+        raise VendorError("push identity unavailable")
+    return value
+
+
 async def block(token: str, block_id: str) -> dict[str, Any]:
     """A block, with its parent (a page, another block or the workspace)."""
     return await _call("GET", f"/blocks/{_checked(block_id)}", token, f"block {block_id}")

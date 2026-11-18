@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.tasks.domain import cursors
 from server.tasks.store import repo
 from tests.unit.test_task_inbox import _post, _register, fake  # noqa: F401 — fixture
@@ -47,7 +48,14 @@ async def test_server_version_reads_the_server_clock_and_beats_the_row() -> None
 @pytest.mark.asyncio
 async def test_the_cursor_read_is_sequential_and_lags_the_server_clock() -> None:
     ch = _RecordingCH()
-    await repo.events_since("acme", since_seq=5, lag_s=cursors.LAG_SECONDS, inbox="bot", ch=ch)  # type: ignore[arg-type]
+    await repo.events_since(
+        "acme",
+        since_seq=5,
+        lag_s=cursors.LAG_SECONDS,
+        warning_scope=WHOLE_NAMESPACE,
+        inbox="bot",
+        ch=ch,  # type: ignore[arg-type]
+    )
     sql, params = ch.sql[-1]
     assert "select_sequential_consistency = 1" in sql
     assert "ts <= now64(3) - toIntervalSecond({lag:Int32})" in sql

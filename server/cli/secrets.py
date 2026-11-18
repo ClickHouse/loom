@@ -26,6 +26,7 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.qa_sources", "password_enc", (), "qa_sources.password", ""),
     ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
     ("loom.knowledge_sources", "secret_enc", (), "knowledge_sources.secret", ""),
+    ("loom.knowledge_source_push", "secret_enc", (), "knowledge_source_push.secret", ""),
     ("loom.provider_configuration", "envelope", (), "model-provider-configuration", ""),
     (
         "loom.provider_configuration",
@@ -53,6 +54,7 @@ _KEYS = {
     "loom.code_repos": ("org", "namespace"),
     "loom.qa_sources": ("org", "name"),
     "loom.knowledge_sources": ("org", "namespace", "name"),
+    "loom.knowledge_source_push": ("org", "namespace", "source_id"),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
     "loom.analysis_secrets": ("id",),
@@ -144,6 +146,16 @@ async def reseal_all(
     counts: dict[str, int] = {}
     lost: dict[str, list[str]] = {}
     for table, column, path, purpose, where in SEALED:
+        if table == "loom.knowledge_source_push":
+            # This registry is physically erased. Its writer fence and re-read
+            # under the source lease prevent a scanned row from reviving it.
+            from server.knowledge.app.source_push import reseal_registry
+
+            n, missing = await reseal_registry(dry_run=dry_run, ch=ch)
+            counts[f"{table}.{column}"] = n
+            if missing:
+                lost[f"{table}.{column}"] = missing
+            continue
         async with contextlib.AsyncExitStack() as held:
             if table in _LEASED:
                 # One writer of the row at a time, reading the newest copy.

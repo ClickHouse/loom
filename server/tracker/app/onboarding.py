@@ -112,7 +112,9 @@ class GrantReview:
         return " ".join(why)
 
 
-def review_grants(lines: list[str], enabled: list[dict[str, Any]]) -> GrantReview:
+def review_grants(
+    lines: list[str], enabled: list[dict[str, Any]], *, allow_remote: bool = False
+) -> GrantReview:
     """Review `SHOW GRANTS` output and the `system.enabled_roles` rows.
 
     `GRANT <types> ON <scope> TO <user>` lines name access types; `GRANT
@@ -148,7 +150,9 @@ def review_grants(lines: list[str], enabled: list[dict[str, Any]]) -> GrantRevie
             rev.refused.append("WITH GRANT OPTION")
         for t in names:
             name = _ACCESS_TYPE.fullmatch(_QUOTED.sub("_", t))
-            if name is None or name.group(1).strip().upper() not in _READ_ACCESS:
+            if name is None or name.group(1).strip().upper() not in (
+                _READ_ACCESS | ({"REMOTE"} if allow_remote else set())
+            ):
                 rev.refused.append(t)
     enabled_names = {str(r.get("role_name")) for r in enabled}
     rev.not_enabled.extend(r for r in rev.roles if r not in enabled_names)

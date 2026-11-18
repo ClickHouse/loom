@@ -142,6 +142,67 @@ The HTTP and MCP transports discover registered operations; you don't touch tran
 
 An operation or field may be renamed or removed. Say so in the PR description and tell the consumers that call it. A client that still sends a removed field is served, with the field named in `ignored_args` ([HTTP API](./docs/reference/http-api.md#unknown-and-removed-fields)). Retiring a flag deletes the setting, its branch and any per-request field that carried it, in one change.
 
+## Translations
+
+The translation inventory includes every tracked `README.md` and `docs/**/*.md`, including generated references. `i18n/<lang>/` holds the available machine translations. Edit English or its generator; never edit translations by hand. Inventory discovery includes nested additions and renames and excludes untracked or deleted files.
+
+English is canonical and the default. Simplified Chinese (`zh-CN`), Japanese (`ja`), Korean (`ko`), Brazilian Portuguese (`pt-BR`) and Spanish (`es`) are the five active translation locales for default generation and localized website rollout. An additional language requires evidence that its relevant developer audience expects local-language technical documentation. Keep English for an audience that expects English technical documentation. Country, native language and developer population do not establish a translation need. This evidence requirement governs future additions.
+
+With an allowance and the restricted runner configured, translation follows an English merge to main. It is asynchronous: the English PR can merge while coverage is pending. The workflow queues a bounded batch after relevant main pushes and every six hours. Changed existing translations precede missing pages. Relative links use an available translated target and anchor, otherwise the English page. A verified replacement that would break surviving links waits in `i18n/.pending/<lang>/`; later batches reuse it. Obsolete pages are removed only after surviving inbound links are repaired, and only with a matching generator stamp, language and source path. Unknown files are refused. A source deletion that breaks a published English fallback must include the generated link repair: run `LOOM_I18N_MAX_USD=0 python -m scripts.i18n.translate update` to repair links without provider calls. Repair uses a published translation only when its requested anchor exists; otherwise validation blocks the deletion until the incoming page is repaired.
+
+`python -m scripts.i18n.translate check` reports every missing, stale and obsolete page across all five translation locales. `check --skip-stale` permits pending coverage but still checks present stamps, banners, links, anchors and translated labels, plus the content invariants of current output. Ordinary PR tests follow this asynchronous contract. A changed prompt requires an explicit `update --all`; a generated refresh receipt tracks that request across bounded scheduled batches and pending-branch reuse. Completed source/output proofs prevent repeated calls; the receipt stays until main contains those results. A concurrent main translation is preserved when it differs from the refresh's recorded base output. Model and banner changes invalidate stamps automatically.
+
+The updater imports only validated generated blobs from `i18n/update`, preserving fresh main output. Owned output outside a selected batch can remain as hidden checkpoint data after its English source changes or disappears. Such archives never become publication routes; activation still requires current source, model and content validation. A conflicting existing checkpoint refuses replacement so both versions remain recoverable. It executes no code from that branch. It dispatches hosted CI for the exact bot commit because PR events created with `GITHUB_TOKEN` do not start CI. A hosted finalizer checks the successful commit, generated diff, current main parent, current language approval and repository review requirements before merging. Required human reviews remain required. After merge it explicitly dispatches the docs-site workflow; publication also requires the site's deployment configuration. A newer main commit defers merging until the producer composes another batch.
+
+The script calls Claude Sonnet 5.5 on Amazon Bedrock through `AnthropicBedrock`. Local runs also spend money and require separate authorization. For an authorized run:
+
+```bash
+python -m venv .venv-i18n && . .venv-i18n/bin/activate
+python -m pip install --require-hashes --no-deps --only-binary=:all: -r scripts/i18n/requirements.txt
+aws sso login
+export AWS_REGION=<region>
+python -m scripts.i18n.translate update
+```
+
+One batch shares an approximate USD 5 usage cap across every language. Before any workflow provider call, the updater books a conservative allowance covering every selected request, verifier retry, API retry and maximum output in the append-only `i18n/budget` branch. These reservations can greatly exceed the expected bill and are never refunded automatically, including after failures. `LOOM_I18N_TOTAL_USD` is the cumulative reservation ceiling, defaults to zero, and does not reset between runs or languages. An exhausted allowance defers work. A missing or invalid ledger refuses paid work. `LOOM_I18N_LANGUAGES` optionally restricts a batch to a space-separated subset of the five active translation locales. Unset or empty selects all five, as does the local update command by default. Other locale codes are refused. Manual language requests must stay within the configured subset and govern pending import, generation and publication together. Published output and checkpoints outside a selected batch stay intact. Automated maintenance changes only selected locales; present-link validation still covers retained files. A first translated README waits if publishing it would require changing an excluded locale or repairing a stale or conflicted README. Other selected pages continue. When a pending batch changes the English README’s generated language bar, importing it requires all affected locales. A partial run stops before generation or publication and retains the pending batch. An English deletion that breaks an unselected file requires a coordinated repair before it can pass validation. Raising the ceiling authorizes additional spending; a schedule cannot raise it.
+
+The workflow stores no AWS credential in GitHub. Only main push, schedule and manual events may reach the role-bearing runner. Hosted CI and completion events cannot reach it. To activate authorized translation:
+
+1. Create environment `i18n` with deployment branches limited to `main`.
+2. Configure a runner group for this repository with public-repository access and selected-workflow access limited to `ClickHouse/loom/.github/workflows/i18n.yml@refs/heads/main`. Its image needs a supported OS, `git`, `bash` and `gh`.
+3. Give its instance role the policy below and accept the model's Bedrock access once. The role has no Marketplace subscription permissions.
+4. Initialize the ledger once with an authorized repository writer: `python -m scripts.i18n.automation init-budget`. Preserve this branch; never recreate it to reset usage.
+5. Leave `LOOM_I18N_LANGUAGES` unset for all five active locales, or set an explicit subset for a batch. Set `LOOM_I18N_TOTAL_USD` to an explicitly approved cumulative allowance and `LOOM_I18N_RUNNER` to the registered runner labels as a JSON list. Empty runner labels skip the updater; a zero allowance permits only free maintenance.
+6. Allow Actions to create pull requests and retain branch protections and review requirements. Set the site's deployment configuration as described in the docs-site workflow. Hosted validation and merge need repository contents, pull-request and Actions write permissions; the instance role still grants only the model invocation.
+
+The job calls the model's global inference profile from the runner's `AWS_REGION`, else its `AWS_DEFAULT_REGION`, else `us-east-1`. Bedrock authorizes a call through a global profile on three resources: the profile, the model in the calling region, and the model with no region. The policy names each; `<region>` is the calling region:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": "arn:aws:bedrock:<region>:<account-id>:inference-profile/global.anthropic.claude-sonnet-5-5"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": [
+        "arn:aws:bedrock:<region>::foundation-model/anthropic.claude-sonnet-5-5",
+        "arn:aws:bedrock:::foundation-model/anthropic.claude-sonnet-5-5"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": "arn:aws:bedrock:<region>:<account-id>:inference-profile/global.anthropic.claude-sonnet-5-5"
+        }
+      }
+    }
+  ]
+}
+```
+
 ## The open-source copy rule
 
 Repository text (code, comments, tests, docs, fixtures) stays product-neutral and timeless. `tests/unit/test_public_copy.py` enforces the lists:

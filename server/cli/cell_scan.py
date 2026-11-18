@@ -58,6 +58,7 @@ from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
 LOG_TABLES = frozenset(
     {
         "loom.agent_events",
+        "loom.agent_events_private",
         # A request refused at validation writes its row with the org it named.
         "loom.code_search_trace",
         # Refreshable views reading loom.agent_events.

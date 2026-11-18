@@ -1,12 +1,11 @@
 # The grep shim
 
-Needs Node 18 or later, a viewer token, and a repository in the
-[code index](../code-index/overview.md).
-
 The grep shim is a `grep`/`rg` wrapper that appends each hit's enclosing function, from
-the code index, to the match line. It is for agents that only use shell grep, or run
-where hooks do not (`claude --bare` skips the [Claude Code plugin's](./claude-code.md)
-code shunt). The agent, its prompt and its harness stay unchanged.
+the code index, to the match line; it needs Node 18 or later, a viewer token and a
+repository in the [code index](../code-index/overview.md). It is for agents that only use
+shell grep, or run where hooks do not (`claude --bare` skips the
+[Claude Code plugin's](./claude-code.md) code shunt). The agent, its prompt and its
+harness stay unchanged.
 
 ```text
 $ grep -rn "getSettingsRef().max_threads" src/Processors

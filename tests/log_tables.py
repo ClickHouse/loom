@@ -9,7 +9,7 @@ from collections.abc import Iterable
 
 # The tables a request writes with the org it named, before any check: `LOG_TABLES` holds
 # them and every table a view fills from one of them.
-LOGGED = frozenset({"loom.agent_events", "loom.code_search_trace"})
+LOGGED = frozenset({"loom.agent_events", "loom.agent_events_private", "loom.code_search_trace"})
 
 
 def closure(roots: Iterable[str], views: Iterable[tuple[set[str], str]]) -> set[str]:

@@ -740,6 +740,29 @@ def project_result(result: Any, *, op_name: str = "") -> dict[str, str]:
         return {}
 
 
+def marked_request_args(args: dict[str, str]) -> dict[str, str]:
+    """A marked row keeps numeric work, never result identifiers or error prose."""
+    integer_fields = (
+        "out_ch_statements",
+        "out_ch_read_rows",
+        "out_ch_read_bytes",
+        "out_injected_facts",
+        "out_injected_chunks",
+    )
+    kept = {
+        key: value
+        for key in integer_fields
+        if isinstance(value := args.get(key), str)
+        and len(value) <= 32
+        and value.isascii()
+        and value.isdigit()
+    }
+    elapsed = args.get("out_ch_elapsed_ms")
+    if isinstance(elapsed, str) and re.fullmatch(r"[0-9]{1,20}(?:\.[0-9]{1,6})?", elapsed):
+        kept["out_ch_elapsed_ms"] = elapsed
+    return kept
+
+
 def response_tokens_of(result: Any) -> int:
     """Tokens the agent has to read for this response: len(JSON) / 4, the
     same chars/4 estimate the MCP listing budget uses. A pydantic model is
@@ -763,6 +786,7 @@ __all__ = [
     "RESULT_PREFIX",
     "TEXT_KEYS",
     "bounded_error",
+    "marked_request_args",
     "project_args",
     "project_result",
     "request_work_columns",

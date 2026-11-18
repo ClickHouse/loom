@@ -524,7 +524,7 @@ def _event(operation: str, args: dict[str, str], **kw: Any) -> str:
 
 
 def _run_rows(*rows: str) -> list[rule.CallRow]:
-    ch = LocalCH(ddl("agent_events"), *rows)
+    ch = LocalCH(ddl("agent_events"), ddl("agent_events_private"), *rows)
     return asyncio.run(ledger.run_rows("acme", "r1", "alice", ch=ch))  # type: ignore[arg-type]
 
 

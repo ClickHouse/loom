@@ -94,7 +94,8 @@ async def test_cancelling_the_pass_kills_the_harness_and_its_children(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _harness)
     task = asyncio.create_task(call())
     async with asyncio.timeout(10):
-        while not (pidfile.exists() and pidfile.read_text().strip()):  # noqa: ASYNC110 — another process writes it
+        # The shell can write its PID before subprocess creation returns.
+        while not (procs and pidfile.exists() and pidfile.read_text().strip()):  # noqa: ASYNC110 — another process writes it
             await asyncio.sleep(0.02)
     grandchild = int(pidfile.read_text())
     task.cancel()

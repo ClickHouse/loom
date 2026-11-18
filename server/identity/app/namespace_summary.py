@@ -20,6 +20,7 @@ from server.identity.api.models_namespace_catalog import (
 )
 from server.memory.domain.graph_quality import is_lexical_junk_entity
 from server.observability.consumer import INSPECTOR_CONSUMERS
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 @functools.cache
@@ -90,7 +91,8 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
 
     async def _activity() -> dict[str, Any] | None:
         return await ch.query_one(
-            """
+            (
+                """
             SELECT
                 countIf(operation IN ('memory.set', 'memory.bulk_set',
                                        'memory.set_from_messages',
@@ -99,7 +101,7 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
                 countIf(operation = 'memory.search')      AS recalls,
                 uniqExact(agent)                          AS agents,
                 max(ts)                                   AS last_at
-            FROM loom.agent_events
+            FROM {masked_events}
             WHERE org = {org:String}
               AND namespace = {ns:String}
               AND ts >= now() - INTERVAL {win:UInt32} SECOND
@@ -107,7 +109,8 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
               -- a change to a memory from the dashboard (a set, a delete, a pin) uses it
               AND (operation IN {memory_changes:Array(String)}
                    OR consumer NOT IN {inspectors:Array(String)})
-            """,
+            """
+            ).replace("{masked_events}", MASKED_EVENTS),
             params={
                 **params,
                 "win": int(input.activity_seconds),

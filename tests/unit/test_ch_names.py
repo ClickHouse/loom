@@ -259,7 +259,7 @@ _CLIENT_MODULES = {
 _UNWRAPPED = {
     "server/cli/ch_setup.py",
     "server/cli/sql_access.py",
-    "server/tracker/store/source/qa_intel.py",
+    "server/core/remote_ch.py",
 }
 
 

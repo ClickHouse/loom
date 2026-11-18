@@ -349,3 +349,13 @@ def test_call_counts_only_with_the_flag(monkeypatch, capsys):
 
     assert mod.call_counts(9) == {"memory.set": {"calls": 7, "last_ts": "2000-01-01", "agents": 2}}
     assert seen == [(mod.CALLS_SQL, {"days": 9})]
+
+
+def test_census_ignores_installed_and_bundled_dependencies(tmp_path):
+    from scripts.codegen.op_reach_census import _files
+
+    for rel in ["node.ts", "node_modules/sdk/client.ts", "dist/bundle.js", ".venv/lib/client.py"]:
+        target = tmp_path / "integrations" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('call("memory.set")')
+    assert [p.name for p in _files(tmp_path, "integrations", (".ts", ".js", ".py"))] == ["node.ts"]

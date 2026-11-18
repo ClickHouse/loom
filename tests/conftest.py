@@ -122,27 +122,33 @@ def _load_repo_dotenv():
 
 @pytest.fixture(autouse=True)
 def _seed_test_api_key(_load_repo_dotenv):
-    """Mint SDK fallback credentials per test so long suites do not outlive them.
+    """Own the test client's offline signer and remint fallback credentials.
 
+    In-process handlers may load a serving keyring snapshot without owning its
+    refresh worker. That snapshot must not leak into another test's issuer.
     A caller-supplied LOOM_API_KEY remains in place.
     """
-    if os.environ.get("LOOM_API_KEY"):
-        yield
-        return
-    # Defer import so import-time of conftest stays cheap when JWT keys are absent.
+    from server.auth import keyring
     from server.auth.jwt import mint_token
 
-    tok = mint_token(
-        subject="test-suite",
-        org="*",
-        namespaces=["*"],
-        roles=["writer"],
-        ttl_seconds=3600,
-        is_service_account=True,
-    )
-    os.environ["LOOM_API_KEY"] = tok
-    yield
-    os.environ.pop("LOOM_API_KEY", None)
+    with pytest.MonkeyPatch.context() as signer:
+        signer.setattr(keyring, "_view", keyring._View(loaded=True))
+        if os.environ.get("LOOM_API_KEY"):
+            yield
+            return
+        tok = mint_token(
+            subject="test-suite",
+            org="*",
+            namespaces=["*"],
+            roles=["writer"],
+            ttl_seconds=3600,
+            is_service_account=True,
+        )
+        os.environ["LOOM_API_KEY"] = tok
+        try:
+            yield
+        finally:
+            os.environ.pop("LOOM_API_KEY", None)
 
 
 @pytest.fixture

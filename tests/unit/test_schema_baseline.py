@@ -155,6 +155,17 @@ def test_the_journal_files() -> None:
         "097_mirror_names_reserved.sql",
         "098_knowledge_mirrors.sql",
         "099_document_access_lists.sql",
+        "100_knowledge_source_listings.sql",
+        "101_erasure_mirror_mark.sql",
+        "102_query_history_sources.sql",
+        "103_sso_domain_evidence.sql",
+        "104_knowledge_group_members.sql",
+        "105_mirror_access_candidates.sql",
+        "106_marked_request_measures.sql",
+        "107_user_cost_budgets.sql",
+        "108_knowledge_mirror_latch.sql",
+        "109_knowledge_source_push.sql",
+        "110_private_event_storage.sql",
     ]
 
 

@@ -4,6 +4,7 @@ table: the key, the wait, renewal and loss."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,6 +12,54 @@ import pytest
 from server.core import leases
 from server.core.errors import BackendUnavailableError
 from tests.unit.claims_fake import FakeLockTable
+from tests.unit.clock_fake import ManualClock
+
+
+class _ScheduledLockTable(FakeLockTable):
+    """Run real renewals while the test controls both clocks and each wake."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.clock = ManualClock(t=1000.0)
+        self.sleeps: asyncio.Queue[tuple[float, asyncio.Future[None]]] = asyncio.Queue()
+        self.pending: tuple[float, asyncio.Future[None]] | None = None
+
+    def now(self) -> float:
+        return self.clock.monotonic() + self.offset
+
+    async def sleep(self, delay: float) -> None:
+        wake = asyncio.get_running_loop().create_future()
+        self.sleeps.put_nowait((delay, wake))
+        await wake
+
+    async def wake(self, *, elapsed: float | None = None) -> None:
+        delay, wake = self.pending or await self.sleeps.get()
+        self.pending = None
+        self.clock.advance(delay if elapsed is None else elapsed)
+        wake.set_result(None)
+
+    async def renew_once(self) -> None:
+        before = self.sql.count(leases.LOCK_RENEW)
+        await self.wake()
+        # The next sleep starts only after the real renewal and ownership read finish.
+        self.pending = await self.sleeps.get()
+        assert self.sql.count(leases.LOCK_RENEW) == before + 1
+
+
+@pytest.fixture
+def scheduled_lock_table(monkeypatch: Any) -> _ScheduledLockTable:
+    ch = _ScheduledLockTable()
+
+    class LeaseAsyncio:
+        sleep = staticmethod(ch.sleep)
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(asyncio, name)
+
+    # Patch module bindings, never the event loop's shared time or asyncio modules.
+    monkeypatch.setattr(leases, "time", SimpleNamespace(monotonic=ch.clock.monotonic))
+    monkeypatch.setattr(leases, "asyncio", LeaseAsyncio())
+    return ch
 
 
 def _inserts(ch: FakeLockTable) -> list[str]:
@@ -137,13 +186,25 @@ async def test_a_store_that_cannot_answer_is_unavailable_not_busy() -> None:
     assert not issubclass(leases.LeaseUnavailable, leases.LeaseBusy)
 
 
-async def test_a_lease_is_renewed_while_its_block_runs() -> None:
-    ch = FakeLockTable()
+async def test_a_lease_is_renewed_while_its_block_runs(scheduled_lock_table) -> None:
+    ch = scheduled_lock_table
     async with leases.cluster_lease("job", ttl_s=0.6, ch=ch) as lease:
-        ch.advance(0.4)  # the server's clock: past the TTL of the first stamp
-        await asyncio.sleep(0.5)
+        initial = dict(ch.keys["job"])
+        ch.advance(0.4)
+        for _ in range(8):
+            await ch.renew_once()
+        assert ch._stale(initial) and ch.keys["job"]["renewed"] > initial["renewed"]
         assert lease.held and not ch._stale(ch.keys["job"])
     assert ch.keys == {}
+
+
+async def test_a_delayed_renewal_wake_still_cancels_the_block(scheduled_lock_table) -> None:
+    ch = scheduled_lock_table
+    with pytest.raises(leases.LeaseLost):
+        async with leases.cluster_lease("job", ttl_s=0.6, ch=ch):
+            await ch.wake(elapsed=0.31)
+            await asyncio.Future()
+    assert leases.LOCK_RENEW not in ch.sql and ch.keys == {}
 
 
 async def test_a_lease_taken_over_cancels_its_block() -> None:
@@ -187,12 +248,15 @@ async def test_a_pause_past_half_the_ttl_counts_as_lost_without_a_call() -> None
     assert not lease.held
 
 
-async def test_a_renewed_claim_outlives_its_ttl_until_released() -> None:
-    ch = FakeLockTable()
+async def test_a_renewed_claim_outlives_its_ttl_until_released(scheduled_lock_table) -> None:
+    ch = scheduled_lock_table
     lease = await leases.take("idem:k", ttl_s=0.6, renew=True, ch=ch)
     assert lease is not None
+    initial = dict(ch.keys["idem:k"])
     ch.advance(0.4)
-    await asyncio.sleep(0.8)
+    for _ in range(8):
+        await ch.renew_once()
+    assert ch._stale(initial) and ch.keys["idem:k"]["renewed"] > initial["renewed"]
     assert lease.held and not ch._stale(ch.keys["idem:k"])
     await lease.release()
     assert ch.keys == {}

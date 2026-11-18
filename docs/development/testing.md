@@ -254,12 +254,12 @@ paths it leaves out, and why, are in the workflow's header.
 weekly and on demand. It publishes the score the README badge shows and adds the findings
 to code scanning; it does not run on pull requests and blocks no merge.
 
-`.github/workflows/docs-site.yml` builds the documentation site with `mkdocs build
---strict` on pull requests into `main` that touch `docs/`, `mkdocs.yml`,
-`scripts/docs_site/`, `scripts/codegen/page_summary.py` or the workflow itself, and on
-every push to `main`, so a broken link or anchor fails the `docs site / build` check. It
-publishes the site to GitHub Pages from `main` only while the repository variable
-`DOCS_SITE_ENABLED` is `true`.
+`.github/workflows/docs-site.yml` builds the documentation site with `mkdocs build --strict`
+on pull requests into `main` that touch `docs/`, `mkdocs.yml`, `llms.txt`,
+`llms-install.md`, `scripts/docs_site/`, `scripts/codegen/page_summary.py` or the workflow
+itself, and on every push to `main`, so a broken link or anchor fails the
+`docs site / build` check. It publishes the site to GitHub Pages from `main` only while the
+repository variable `DOCS_SITE_ENABLED` is `true`.
 
 A pull request stacked on another branch gets no checks until it is retargeted to `main` or
 a `release/X.Y` line, and a pull request with a merge conflict gets none either: "no checks

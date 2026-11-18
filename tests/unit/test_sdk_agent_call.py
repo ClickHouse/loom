@@ -138,6 +138,12 @@ async def test_knowledge_synthesize_sends_datasets_with_or_without_documents() -
     assert t.calls[2][1]["source_uris"] == ["doc://a"] and "datasets" not in t.calls[2][1]
 
 
+async def test_knowledge_synthesis_names_the_user_whose_budget_it_uses() -> None:
+    a, t = _agent()
+    await a.knowledge.synthesize(["doc://a"], "Summarize", user_id="alice")
+    assert t.calls[0][1]["user_id"] == "alice"
+
+
 def test_identity_helper() -> None:
     a, _ = _agent()
     assert a.identity() == {

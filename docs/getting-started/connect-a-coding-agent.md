@@ -1,8 +1,9 @@
-# Connect a coding agent
+# Shared memory for Claude Code, Codex and Cursor
 
-This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
-server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. The next session starts with what the agent saved. What the Claude Code and Codex
+Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP
+tools connected to the same self-hosted server. Give each teammate a token with access
+to the team's namespace so their agents can find the facts others save. Install the
+plugin or MCP entry below; the next session can recall what an agent saved. What the Claude Code and Codex
 plugins send to Loom is in [data
 handling](../features/integrations/claude-code.md#data-handling). Conversation recording
 is off by default; the namespace owner turns it on with the **Record conversations**
@@ -28,7 +29,13 @@ Loom with your coding agent](agent-setup.md)).
   On a server with self-signup open, the Claude Code plugin can sign the machine up by
   itself on the first session. See [what happens with no credential](#no-token-yet).
 
-## Claude Code
+<a id="claude-code"></a>
+
+## How do I give Claude Code shared memory?
+
+Install the Loom plugin with the server URL and a writer token for the namespace you
+want to share. The plugin loads relevant memories at session start and gives the agent
+tools to save and search facts.
 
 ```bash
 claude plugin marketplace add ClickHouse/loom
@@ -49,7 +56,13 @@ session. Loom's session primer arrives at the top, and from then on:
 Everything the plugin installs, and how to configure it, is on the
 [Claude Code](../features/integrations/claude-code.md) page.
 
-## Codex
+<a id="codex"></a>
+
+## How do I give Codex shared memory?
+
+Install the Loom plugin, connect its hooks and MCP entry to the same server, and use a
+token with access to the shared namespace. The plugin loads a memory primer when a
+session starts; its hooks need the approval described below.
 
 ```bash
 codex plugin marketplace add ClickHouse/loom
@@ -67,7 +80,17 @@ The Codex plugin ships the same hooks and skills; the differences are on the
 [Codex](../features/integrations/codex.md) page. Don't also run `codex mcp add loom` with
 the plugin installed: an entry with the same name replaces the plugin's.
 
-## Cursor and other MCP clients
+<a id="cursor-and-other-mcp-clients"></a>
+
+## How do I give Cursor or another MCP client shared memory?
+
+Connect the client to Loom's MCP endpoint with a token for the shared namespace, then
+add the agent instructions linked below. The tools save and recall facts; capturing
+the session transcript also needs the client's hook integration.
+
+On a Cursor Teams or Enterprise plan, a team admin can import the [Cursor
+plugin](../features/integrations/cursor.md#plugin) (untested in Cursor), which carries the
+MCP entry and Loom's skills.
 
 For Cursor or VS Code against a single-user server on the same machine, no token is needed:
 use the [Cursor](../features/integrations/cursor.md#mcp-tools) or

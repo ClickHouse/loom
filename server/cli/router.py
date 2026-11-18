@@ -49,6 +49,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     if refusal := _refusal():
         print(f"loom router serve: {refusal}", file=sys.stderr)
         return 2
+    if settings.tls_cert_file:
+        # The TLS pair is the web port's; the router would serve plain HTTP beside it.
+        print(
+            "loom router serve: LOOM_TLS_CERT_FILE is set, but the router serves plain HTTP: "
+            "unset it for the router",
+            file=sys.stderr,
+        )
+        return 2
     os.environ.setdefault("LOOM_INSTANCE_LABEL", f"cli:router:{args.port}")
     uvicorn.run(
         build_app(),

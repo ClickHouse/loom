@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
+    field_serializer,
     model_serializer,
 )
 
@@ -24,6 +25,7 @@ from server.operations.base import MCP_HIDDEN
 
 
 SEARCH_TOP_K_MAX = 500  # not a setting: the wire bound of memory.search's top_k
+SEARCH_ENTITY_FILTER_MAX = 64  # not a setting: the raw entity-filter input bound
 
 
 class MemorySearchInput(BaseModel):
@@ -68,7 +70,8 @@ class MemorySearchInput(BaseModel):
     # memory_type for any discrimination finer than the coarse type enum.
     tags: list[str] = Field(default_factory=list)
     # Which rows to read: "private" = per-agent rows (narrowed to `agent` when it names
-    # one), "shared" = rows promoted to the namespace's shared scope.
+    # one), "shared" = rows promoted to the namespace's shared scope. Under either, a
+    # governed definition whose term or alias the query names is served first.
     scope: Literal["private", "shared"] = "private"
     # "this" reads input.namespace only; "all_mine" also the caller's own
     # namespaces, see docs/concepts/identities-and-namespaces.md#reading-several-namespaces.
@@ -194,7 +197,8 @@ class MemorySearchInput(BaseModel):
     read_scope: Literal["namespace", "own_user", "own_session"] = "namespace"
     entity_filter: list[str] = Field(
         default_factory=list,
-        description="If non-empty, OR-match against extracted entities — "
+        max_length=SEARCH_ENTITY_FILTER_MAX,
+        description="Up to 64 names; if non-empty, OR-match against extracted entities — "
         "rows whose `entities` array intersects this list are "
         "boosted alongside cosine matches.",
     )
@@ -469,7 +473,15 @@ _USAGE_FIELDS: tuple[str, ...] = (
 )
 
 
+# What memory.search's term leg did (`MemorySearchOutput.term_leg`).
+TermLegStatus = Literal["complete", "empty", "capped", "timed_out", "failed", "off"]
+
+
 class _MemorySearchHit(BaseModel):
+    @field_serializer("agent")
+    def _writer_agent(self, value: str) -> str:
+        return self._row_identity[0] if self._row_identity is not None else value
+
     @model_serializer(mode="wrap")
     def _omit_unrequested(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # `tags` is on the wire only when the request asked for it: None = not
@@ -485,6 +497,9 @@ class _MemorySearchHit(BaseModel):
         # is set.
         if self.below_threshold is None:
             data.pop("below_threshold", None)
+        # `governed` rides only on a governed definition the term leg served.
+        if self.governed is None:
+            data.pop("governed", None)
         # `resolved_from` rides only on a hit seated for a
         # hidden duplicate.
         if self.resolved_from is None:
@@ -551,6 +566,10 @@ class _MemorySearchHit(BaseModel):
     # a derived / computed evidence row, or a record-plane row whose
     # `distance` is not a cosine.
     below_threshold: bool | None = None
+    # True on a governed definition the term leg served first because the query names its
+    # term or an alias (an admin promoted it and its source still holds the promoted
+    # text); off the wire on every other hit.
+    governed: bool | None = None
     # The row's tags, present only under `include_tags=true`:
     # a list (possibly empty for chunk / digest / derived hits) when asked,
     # absent from the payload otherwise.
@@ -598,6 +617,8 @@ class _MemorySearchHit(BaseModel):
     # `entities` by the pool point-read; "" when not read. A store that writes
     # each actor under its own user_id says "User's Day 2 dinner is …" in the
     # row, so the owner is the only thing that names the actor.
+    # Writer of this readable row, or empty when the search leg has no row identity.
+    agent: str = ""
     user_id: str = ""
     # Retrieval layer: "fact" (loom.memory_embeddings) or "chunk" (verbatim,
     # loom.memory_chunks).
@@ -796,6 +817,11 @@ class MemorySearchOutput(BaseModel):
     # Risk label from `retrieval_confidence`: "low" (>= 0.75), "medium"
     # (>= 0.55), "high" (below), "abstain" (below the abstain thresholds).
     retrieval_risk: Literal["low", "medium", "high", "abstain"] = "abstain"
+    # What the term leg did: "complete"; "empty" (the namespace holds no definition);
+    # "capped" or "timed_out" past its bounds; "failed" (a read failed, so no definition
+    # was served); "off" (a page handle or a field asking for other rows turned it off).
+    # `retrieval_confidence` and `retrieval_risk` describe the hits that are not governed.
+    term_leg: TermLegStatus = "off"
     # Share of the retrieval routes that ran (semantic, graph, triples, evidence,
     # extra legs) that also found support, 0 to 1.
     route_agreement: float = 0.0

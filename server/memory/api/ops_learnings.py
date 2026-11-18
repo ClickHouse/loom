@@ -14,6 +14,7 @@ from server.memory.app.learnings import (
     handle_learnings_list,
     handle_learnings_quality,
     handle_learnings_review,
+    learnings_review_audit_subject,
 )
 from server.operations.base import Operation, Role
 
@@ -37,6 +38,7 @@ learnings_review = Operation(
     idempotent=True,  # second 'promote' on already-promoted is a no-op
     required_role=Role.ADMIN,
     audit=True,
+    audit_subject=learnings_review_audit_subject,
 )
 
 

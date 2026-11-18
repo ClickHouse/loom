@@ -22,6 +22,7 @@ from server.operations.base import Operation, Role
 
 session_brief_save = Operation(
     name="session.brief_save",
+    session_content=True,
     maturity="experimental",
     input_model=SessionBriefSaveInput,
     output_model=SessionBriefSaveOutput,

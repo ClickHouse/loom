@@ -13,7 +13,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "Agent.methods": {
     "call": [
@@ -98,7 +99,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "SyncAgent.__init__": [
     "org",
@@ -115,7 +117,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "clients": {
     "account": {
@@ -874,6 +877,10 @@
               "body",
               "options"
             ],
+            "gaps_draft": [
+              "body",
+              "options"
+            ],
             "gaps_list": [
               "body",
               "options"
@@ -914,6 +921,18 @@
               "body",
               "options"
             ],
+            "query_history_add": [
+              "body",
+              "options"
+            ],
+            "query_history_list": [
+              "body",
+              "options"
+            ],
+            "query_history_remove": [
+              "body",
+              "options"
+            ],
             "reads": [
               "body",
               "options"
@@ -943,6 +962,18 @@
               "options"
             ],
             "source_parse_links": [
+              "body",
+              "options"
+            ],
+            "source_push_configure": [
+              "body",
+              "options"
+            ],
+            "source_push_confirm": [
+              "body",
+              "options"
+            ],
+            "source_push_status": [
               "body",
               "options"
             ],
@@ -2637,7 +2668,9 @@
           "include_superseded",
           "limit",
           "cursor",
-          "namespaces"
+          "namespaces",
+          "uri_prefix",
+          "fields"
         ],
         "outline": [
           "source_uri",
@@ -2662,7 +2695,8 @@
           "datasets",
           "window_chars",
           "max_answer_chars",
-          "max_windows"
+          "max_windows",
+          "user_id"
         ],
         "upload": [
           "data",

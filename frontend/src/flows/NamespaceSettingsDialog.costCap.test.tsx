@@ -111,3 +111,21 @@ describe("NamespaceSettingsDialog cost cap", () => {
     expect(api.reregisterNamespace).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  ["Daily cap per user (USD)", "40", "0"],
+  ["Budget warning inbox", "other-inbox", ""],
+])("Escape cancels %s before closing its dialog", async (label, draft, stored) => {
+  const onOpenChange = vi.fn();
+  await openDialog(onOpenChange);
+  const field = screen.getByLabelText(label);
+  field.focus();
+  fireEvent.change(field, { target: { value: draft } });
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(onOpenChange).not.toHaveBeenCalled();
+  expect(field).toHaveValue(label.includes("USD") ? Number(stored) : stored);
+  await act(async () => fireEvent.blur(field));
+  expect(api.reregisterNamespace).not.toHaveBeenCalled();
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+});

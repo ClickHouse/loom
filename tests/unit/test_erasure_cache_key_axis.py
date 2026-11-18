@@ -397,7 +397,11 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     async def _profiles(org, namespace, user_id, memory_id):
         return []
 
+    async def _no_shared_copies(org, namespace, source):
+        return []
+
     monkeypatch.setattr(memory_repo, "profile_keys_built_from", _profiles)
+    monkeypatch.setattr(memory_repo, "shared_copies", _no_shared_copies)
     monkeypatch.setattr(memory_repo, "redact_versions", _redact_versions)
     monkeypatch.setattr(memory_repo, "next_version", _stamp)
     announced: list[tuple[str, int]] = []
@@ -449,34 +453,42 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
 # ---------------------------------------------------------------------------
 
 
-def test_events_scrub_rewrites_memory_key_and_the_identifier_args_in_one_mutation() -> None:
+def test_events_scrub_rewrites_memory_key_and_identifier_args_in_both_streams() -> None:
     from server.observability.event_args import IDENTITY_KEYS
 
     ch = _RecCH(count=5)
     n = asyncio.run(memory_steps.scrub_events_by_user("o", "alice", ch=ch))
-    assert n == 5
-    sql, params = ch.commands[0]
-    assert sql.startswith(
-        "ALTER TABLE loom.agent_events UPDATE user_id = '<erased>', memory_key = if(memory_key = '', '', '<erased>'), args = mapApply((k, v) -> (k, if(k IN ("
-    )
-    for key in (
-        "memory_key",
-        "memory_keys",
-        "memory_id",
-        "thread_id",
-        "block_key",
-        "handoff_id",
-        "entity",
-        "subject",
+    assert n == 10
+    assert len(ch.commands) == 2
+    for table, (sql, params) in zip(
+        ("loom.agent_events", "loom.agent_events_private"), ch.commands, strict=True
     ):
-        assert f"'{key}'" in sql, key
-    # A gateway's end user is named by its subject too.
-    assert "WHERE (org = {org:String} AND (user_id = {uid:String} OR subject = {p:String}))" in sql
-    assert "subject = if(subject = {p:String}, '<erased>', subject)" in sql
-    assert (params["uid"], params["p"]) == ("alice", "user:alice")
+        assert sql.startswith(
+            f"ALTER TABLE {table} UPDATE user_id = '<erased>', memory_key = if(memory_key = '', '', '<erased>'), args = mapApply((k, v) -> (k, if(k IN ("
+        )
+        for key in (
+            "memory_key",
+            "memory_keys",
+            "memory_id",
+            "thread_id",
+            "block_key",
+            "handoff_id",
+            "entity",
+            "subject",
+        ):
+            assert f"'{key}'" in sql, key
+        # A gateway's end user is named by its subject too.
+        assert (
+            "WHERE (org = {org:String} AND (user_id = {uid:String} OR subject = {p:String}))" in sql
+        )
+        assert "subject = if(subject = {p:String}, '<erased>', subject)" in sql
+        assert (params["uid"], params["p"]) == ("alice", "user:alice")
     # the identity tuple never reaches args (event_args strips it); the scrub list is the rest
     assert not (set(memory_steps.ARGS_SCRUB_KEYS) & IDENTITY_KEYS)
-    assert erasure_census.STEP_ONLY_TABLES["agent_events.scrub"] == ("loom.agent_events",)
+    assert erasure_census.STEP_ONLY_TABLES["agent_events.scrub"] == (
+        "loom.agent_events",
+        "loom.agent_events_private",
+    )
 
 
 @pytest.mark.parametrize("scope", ["namespace", "user_id"])

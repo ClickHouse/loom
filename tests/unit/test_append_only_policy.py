@@ -30,6 +30,7 @@ async def _check(**kw: Any) -> conflict_rules.ConflictResult:
         memory_key="run-2/report",
         new_value="DC change impact: cluster-a IMPROVED",
         new_embedding=[0.1, 0.2, 0.3],
+        new_user_id="-",
         **kw,
     )
 

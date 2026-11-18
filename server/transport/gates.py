@@ -85,6 +85,14 @@ END_USER_ORG_OPS = frozenset(
 ROLE_REFUSAL_CODE: Final = "AUTH_INSUFFICIENT"
 
 
+async def session_content(op: Operation, auth: AuthInfo | None) -> None:
+    """Run deployment session protection before any content-bearing side effect."""
+    if op.session_content:
+        from server.knowledge.app.session_admission import require
+
+        await require(auth)
+
+
 def _token_org(auth: AuthInfo | None) -> str | None:
     org = present(getattr(auth, "org", None)) if auth is not None else None
     return None if org == "*" else org

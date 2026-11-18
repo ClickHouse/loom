@@ -1,8 +1,12 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
- *  no keys of their own), with New collection at its foot. */
+ *  no keys of their own), with New collection at its foot. Documents dragged from the list
+ *  and collections dragged in the tree drop on a place; each drop opens the Move dialog
+ *  its menu opens, set to that place. */
 import {
   type CSSProperties,
+  type DragEvent,
   type FormEvent,
+  type HTMLAttributes,
   memo,
   type ReactNode,
   useEffect,
@@ -19,17 +23,22 @@ import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { IconButton } from "../components/IconButton";
 import { announceCreated, type ClaimCreateVersion } from "../flows/CreateCollectionDialog";
+import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import {
   canHold,
   collectionOrder,
   collectionTitle,
   distinctTitle,
+  isUnder,
   MAX_TITLE,
   namespaceLabel,
   titleTooLong,
 } from "../lib/collections";
 import { LIBRARY_PLACES_LABEL } from "../lib/useTreeFocusHandoff";
+import { ALL_DOCUMENTS } from "../lib/libraryPlace";
 import { MORE_SHOWN, useShowMore } from "../lib/useShowMore";
+import { useDragHold } from "../lib/useDragHold";
+import { fmtInt } from "../lib/format";
 import {
   collectionPath,
   cycleStart,
@@ -52,6 +61,20 @@ export type MadeCollection = (collection: string, version: number, arriveFocus?:
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
+
+/** Documents held over the page (dragged from its list): the namespaces that take them, and
+ *  what a drop on one does. */
+export interface DocumentDrop {
+  targets: ReadonlySet<string>;
+  onDrop: (namespace: string) => void;
+}
+
+/** The drop target's key for "the top level", which no namespace spells. */
+const TOP_LEVEL = " top";
+
+/** A place's drop props: `data-drop="ok"` while what is held may land there, `"over"` while
+ *  it is over it, nothing where it may not. */
+type DropProps = HTMLAttributes<HTMLElement> & { "data-drop"?: "ok" | "over" };
 
 /** The collections a person opened in the tree, per person and org, for this browser. */
 export function expandedKey(subject: string, org: string): string {
@@ -153,6 +176,7 @@ export const LibraryTree = memo(function LibraryTree({
   onPick,
   claimCreateVersion,
   onCreated,
+  documentDrop = null,
 }: {
   /** Who is signed in: what one person opened is kept apart from another's. */
   subject: string;
@@ -175,12 +199,14 @@ export const LibraryTree = memo(function LibraryTree({
   /** The header's namespace, or null when it holds no documents (a code or tracker
    *  namespace, or none). */
   namespace: string | null;
-  /** The collection shown, or null for the header's namespace. */
+  /** The collection shown, `ALL_DOCUMENTS`, or null for the header's namespace. */
   current: string | null;
   onPick: PickPlace;
   claimCreateVersion: ClaimCreateVersion;
   /** It can land after the tree is gone (a resize, or a move to another org). */
   onCreated: MadeCollection;
+  /** Documents dragged from the list, or null while none is. */
+  documentDrop?: DocumentDrop | null;
 }) {
   // What the person opened, remembered for the next visit.
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(subject, org));
@@ -229,6 +255,65 @@ export const LibraryTree = memo(function LibraryTree({
   };
   const tree = useMemo(() => placeTree(rows ?? []), [rows]);
 
+  // A collection dragged in the tree.
+  const { held: heldCollection, start: holdCollection, end: endCollectionDrag } = useDragHold<CollectionEntry>();
+  // The place under what is held.
+  const [over, setOver] = useState<string | null>(null);
+  // A collection dropped on a place: the Move dialog, set to it.
+  const [nesting, setNesting] = useState<{ entry: CollectionEntry; parent: string } | null>(null);
+  // Whether that dialog moved it: only then is its row drawn again elsewhere.
+  const nested = useRef(false);
+  const parentOf = useMemo(() => new Map((rows ?? []).map((c) => [c.namespace, c.parent])), [rows]);
+  const holding = documentDrop !== null || heldCollection !== null;
+  useEffect(() => {
+    if (!holding) setOver(null);
+  }, [holding]);
+  // A collection the person administers moves (collection.move): not their own files.
+  const collectionDrag = (c: CollectionEntry): HTMLAttributes<HTMLElement> => {
+    if (c.personal || c.role !== "admin") return {};
+    return {
+      draggable: true,
+      onDragStart: (e: DragEvent) => holdCollection(e, c),
+      onDragEnd: endCollectionDrag,
+    };
+  };
+  // Where what is held may land: documents on a place their Move to… lists; a collection
+  // inside one the person writes that is not itself, under it nor its own parent, or at the
+  // top level.
+  const dropAt = (key: string, entry: CollectionEntry | null): DropProps => {
+    const held = heldCollection;
+    const parent = key === TOP_LEVEL ? "" : key;
+    const fits = documentDrop
+      ? documentDrop.targets.has(key)
+      : !!held &&
+        (key === TOP_LEVEL
+          ? held.parent !== ""
+          : !!entry && canHold(entry) && parent !== held.parent && !isUnder(parent, held.namespace, parentOf));
+    if (!fits) return {};
+    return {
+      "data-drop": over === key ? "over" : "ok",
+      onDragOver: (e: DragEvent) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (over !== key) setOver(key);
+      },
+      onDragLeave: (e: DragEvent) => {
+        if (over === key && !e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(null);
+      },
+      onDrop: (e: DragEvent) => {
+        e.preventDefault();
+        setOver(null);
+        endCollectionDrag();
+        if (documentDrop) {
+          documentDrop.onDrop(key);
+        } else if (held) {
+          nested.current = false;
+          setNesting({ entry: held, parent });
+        }
+      },
+    };
+  };
+
   // The form's target, fixed when New collection is pressed; null while closed.
   const [making, setMaking] = useState<CollectionEntry | "top" | null>(null);
   const newButton = useRef<HTMLButtonElement | null>(null);
@@ -257,9 +342,14 @@ export const LibraryTree = memo(function LibraryTree({
           icon={expanded ? "folder-open" : "folder-closed"}
           depth={depth}
           here={c.namespace === current}
+          count={c.document_count}
+          countBusy={busy}
+          countFailed={failed}
           expanded={expanded}
           onToggle={kids.length > 0 ? () => toggle(c.namespace) : undefined}
           onPick={onPick}
+          drag={collectionDrag(c)}
+          drop={dropAt(c.namespace, c)}
         />
         {expanded && <PlaceBranches items={kids} depth={depth + 1} onPath={onPath} branch={branch} />}
       </li>
@@ -273,34 +363,48 @@ export const LibraryTree = memo(function LibraryTree({
       className="library-tree"
       style={{ maxHeight: viewHeight }}
     >
-      {(namespace !== null || tree.own) && (
-        <ul>
-          {namespace !== null && (
-            <li>
-              <PlaceRow
-                collection={null}
-                label={namespaceLabel(namespace)}
-                icon="book"
-                depth={0}
-                here={current === null}
-                onPick={onPick}
-              />
-            </li>
-          )}
-          {tree.own && (
-            <li>
-              <PlaceRow
-                collection={tree.own.namespace}
-                label={collectionTitle(tree.own)}
-                icon="user"
-                depth={0}
-                here={tree.own.namespace === current}
-                onPick={onPick}
-              />
-            </li>
-          )}
-        </ul>
-      )}
+      <ul>
+        {/* Every place's documents in one list, above the places. */}
+        <li>
+          <PlaceRow
+            collection={ALL_DOCUMENTS}
+            label="All documents"
+            icon="list-bulleted"
+            depth={0}
+            here={current === ALL_DOCUMENTS}
+            onPick={onPick}
+          />
+        </li>
+        {namespace !== null && (
+          <li>
+            <PlaceRow
+              collection={null}
+              label={namespaceLabel(namespace)}
+              icon="book"
+              depth={0}
+              here={current === null}
+              onPick={onPick}
+              drop={dropAt(namespace, null)}
+            />
+          </li>
+        )}
+        {tree.own && (
+          <li>
+            <PlaceRow
+              collection={tree.own.namespace}
+              label={collectionTitle(tree.own)}
+              icon="user"
+              depth={0}
+              here={tree.own.namespace === current}
+              count={tree.own.document_count}
+              countBusy={busy}
+              countFailed={failed}
+              onPick={onPick}
+              drop={dropAt(tree.own.namespace, tree.own)}
+            />
+          </li>
+        )}
+      </ul>
       {/* Below the namespace's row while the list is read; a failed read says so beside the
           page, with a button to read it again. */}
       {rows === null && !failed && <Loading label="Loading collections" layout="inline" className="px-2" />}
@@ -318,6 +422,12 @@ export const LibraryTree = memo(function LibraryTree({
         branch={branch}
         label={{ id: "library-tree-shared", text: "Shared with you" }}
       />
+      {/* A collection held that sits inside another can leave it for the top level. */}
+      {heldCollection?.parent && (
+        <p className="library-tree-row library-tree-top" {...dropAt(TOP_LEVEL, null)}>
+          Drop here for the top level
+        </p>
+      )}
       <div className="library-tree-foot">
         {making ? (
           <NewCollectionForm
@@ -344,6 +454,31 @@ export const LibraryTree = memo(function LibraryTree({
           </Button>
         )}
       </div>
+      {nesting && (
+        <MoveCollectionDialog
+          org={org}
+          collection={nesting.entry}
+          parents={(rows ?? []).filter(canHold)}
+          all={rows ?? []}
+          initialParent={nesting.parent}
+          onMoved={() => {
+            nested.current = true;
+          }}
+          onClose={() => setNesting(null)}
+          // A move draws the dragged row again elsewhere: focus goes to the parent it was dropped
+          // on, or for the top level to New collection (its form's title while that is open).
+          onCloseAutoFocus={(e) => {
+            if (!nested.current) return;
+            const key = nesting.parent ? placeFocusKey(nesting.parent) : NEW_COLLECTION_FOCUS;
+            const to =
+              document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`) ??
+              (nesting.parent ? null : document.getElementById("library-tree-title"));
+            if (!to) return;
+            e.preventDefault();
+            to.focus();
+          }}
+        />
+      )}
     </nav>
   );
 });
@@ -401,19 +536,42 @@ function PlaceRow({
   expanded,
   onToggle,
   onPick,
+  drag,
+  drop,
+  count,
+  countBusy = false,
+  countFailed = false,
 }: {
   collection: string | null;
   label: string;
-  icon: "book" | "user" | "folder-open" | "folder-closed";
+  icon: "book" | "user" | "folder-open" | "folder-closed" | "list-bulleted";
   depth: number;
   here: boolean;
   expanded?: boolean;
   onToggle?: () => void;
   onPick: PickPlace;
+  /** It can be dragged: a collection the person may move. */
+  drag?: HTMLAttributes<HTMLElement>;
+  /** What is held may land on it. */
+  drop?: DropProps;
+  count?: number | null;
+  countBusy?: boolean;
+  countFailed?: boolean;
 }) {
   const focusKey = placeFocusKey(collection);
+  const countHint = countBusy
+    ? `Updating document count for ${label}`
+    : countFailed || count == null
+      ? `Document count unavailable for ${label}`
+      : `${count} document${count === 1 ? "" : "s"} directly in ${label}`;
   return (
-    <div className="library-tree-row" data-selected={here || undefined} style={{ "--depth": depth } as CSSProperties}>
+    <div
+      className="library-tree-row"
+      data-selected={here || undefined}
+      style={{ "--depth": depth } as CSSProperties}
+      {...drag}
+      {...drop}
+    >
       {onToggle ? (
         <IconButton
           icon={expanded ? "chevron-down" : "chevron-right"}
@@ -437,6 +595,12 @@ function PlaceRow({
         data-focus-key={focusKey}
         onOpen={() => onPick(collection, focusKey, label)}
       />
+      {collection !== null && collection !== ALL_DOCUMENTS && (
+        <span className="library-tree-count" title={countHint}>
+          <span aria-hidden="true">{countBusy ? "…" : countFailed || count == null ? "—" : fmtInt(count)}</span>
+          <span className="sr-only">{countHint}</span>
+        </span>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "../test/rtl";
+import { act, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../test/axe";
 import { ApiError } from "../lib/errors";
@@ -7,8 +7,8 @@ import { KnowledgeGaps } from "./KnowledgeGaps";
 // The Library's gaps tile: the grouped questions with their counts, what will appear on
 // an empty list, and no tile where the op is refused or absent.
 
-vi.mock("../api/knowledgeGaps", () => ({ listKnowledgeGaps: vi.fn() }));
-import { listKnowledgeGaps } from "../api/knowledgeGaps";
+vi.mock("../api/knowledgeGaps", () => ({ listKnowledgeGaps: vi.fn(), draftKnowledgeGap: vi.fn() }));
+import { draftKnowledgeGap, listKnowledgeGaps } from "../api/knowledgeGaps";
 
 const gap = {
   gap_id: "g1",
@@ -72,4 +72,15 @@ describe("KnowledgeGaps", () => {
     await act(async () => {});
     expect(container.querySelector("section")).toBeNull();
   });
+});
+
+it("queues one private draft and says where to review it", async () => {
+  vi.mocked(listKnowledgeGaps).mockResolvedValue({ gaps: [gap], built_at: null, enabled: true, capturing: true });
+  vi.mocked(draftKnowledgeGap).mockResolvedValue({ candidate_id: "candidate" });
+  render(<KnowledgeGaps org="o" namespace="ns" />);
+  const action = await screen.findByRole("button", { name: "Draft definition for what is arr" });
+  fireEvent.click(action);
+  await screen.findByText(/Review the draft in Review queue/);
+  expect(draftKnowledgeGap).toHaveBeenCalledWith({ org: "o", namespace: "ns" }, "g1");
+  expect(action).toBeDisabled();
 });

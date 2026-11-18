@@ -37,6 +37,7 @@ working_memory_get = Operation(
 
 working_memory_set = Operation(
     name="working_memory.set",
+    session_content=True,
     input_model=WorkingMemorySetInput,
     output_model=WorkingMemoryMutationOutput,
     handler=handle_working_memory_set,
@@ -47,6 +48,7 @@ working_memory_set = Operation(
 
 working_memory_append = Operation(
     name="working_memory.append",
+    session_content=True,
     maturity="experimental",
     input_model=WorkingMemoryAppendInput,
     output_model=WorkingMemoryMutationOutput,

@@ -207,8 +207,7 @@ def test_recent_recall_admits_medium_only_on_contact_intent() -> None:
 
 @pytest.mark.asyncio
 async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypatch) -> None:
-    from types import SimpleNamespace
-
+    from server.memory.api.models_lifecycle import MemoryStackInput
     from server.memory.app import handlers as mem
     from server.memory.app import restore as _restore_mod
     from server.memory.app import stack as _stack_mod
@@ -236,7 +235,7 @@ async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypat
     monkeypatch.setattr(
         "server.memory.app.profile.handle_profile_render", _no_profile, raising=False
     )
-    inp = SimpleNamespace(
+    inp = MemoryStackInput(
         org="o",
         namespace="n",
         agent="a",
@@ -250,13 +249,8 @@ async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypat
         knowledge_top_k=0,
         seed_query="who reviewed the rota?",
         procedure_limit=0,
-        include_procedures=False,
-        sections=None,
     )
-    try:
-        await stack_mod.handle_memory_stack(inp)
-    except Exception:  # noqa: BLE001 — must not raise: later sections may need unstubbed fields
-        pass  # sections after recent_recall may need fields this stub lacks
+    await stack_mod.handle_memory_stack(inp)
     recent = [(sql, p) for sql, p in seen if "recall_count > 0" in sql]
     assert recent, "recent_recall query not issued"
     sql, params = recent[0]

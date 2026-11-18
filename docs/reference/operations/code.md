@@ -107,7 +107,7 @@ The set-wide backport report: which merged fixes labelled for backport does a re
 | `branch` | `str` | the branch asked for ('' = every configured release branch) |
 | `branch_namespace` | `str` | The namespace of the branch asked for; "" when every branch was read. |
 | `branches` | `list[str]` | the release-branch namespaces the rows cover, newest first |
-| `rows` | `list[dict[str, Any]]` | one row per (fix, branch), gaps first, wanted-on-this-branch first, newest fix first: {pr_number, title, merged_at, minor_version, branch, branch_namespace, verdict, epistemic, basis, reason, cherry_pick {pr_number, merge_sha}… |
+| `rows` | `list[dict[str, Any]]` | one row per (fix, branch), gaps first, wanted-on-this-branch first, newest fix first: {pr_number, title, merged_at, minor_version, branch, branch_namespace, verdict, epistemic, basis, reason, cherry_pick {pr_number, merge_sha}, backport_pr… |
 | `counts` | `dict[str, int]` | verdict → rows returned |
 | `counts_by_branch` | `dict[str, dict[str, int]]` | branch version → verdict → rows |
 | `fixes` | `int` | How many distinct fixes the returned rows cover. |
@@ -1754,7 +1754,7 @@ Verify one closed-form claim against the index and return a three-valued verdict
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `verdict` | `Literal['confirmed', 'refuted', 'not_established']` | A subject or object that resolves no symbol is a RESOURCE_NOT_FOUND refusal, not a verdict; its detail carries `role` (subject \| object) and `did_you_mean`, up to 5 of code.symbol's near misses {qualified_name, path, kind, tier… |
+| `verdict` | `Literal['confirmed', 'refuted', 'not_established']` | A subject or object that resolves no symbol is a RESOURCE_NOT_FOUND refusal, not a verdict; its detail carries `role` (subject \| object) and `did_you_mean`, up to 5 of code.symbol's near misses {qualified_name, path, kind, tier, start_line… |
 | `reason` | `str` | Machine-readable cause, stable for bots to branch on. |
 | `explanation` | `str` | A human-readable account of how the verdict was reached. |
 | `evidence` | `list[dict[str, Any]]` | Positive rows behind the verdict: edges (a call chain, in order), symbol rows, or content excerpts — shape depends on kind. |

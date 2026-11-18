@@ -774,7 +774,7 @@ async def _finish_oidc_login(request: Request) -> Response:
         if kind == "device":
             await device.deny(user_code)
         return _denied_page(f"{reason}; ask your Loom operator for access")
-    return await _signed_in_as(pending, resolved, upstream, email)
+    return await _signed_in_as(pending, resolved, upstream, email, verified_claims=id_claims)
 
 
 class _Denied(NamedTuple):
@@ -822,13 +822,22 @@ async def _signed_in_as(
     identity: Identity,
     upstream: str,
     email: str,
+    *,
+    verified_claims: dict[str, Any] | None = None,
 ) -> Response:
     """Carry on the sign-in `pending` began, as `identity`. Every SSO sign-in
     ends here, so here is where a SCIM deactivation is sure to be checked."""
-    from server.auth import device
+    from server.auth import device, oidc
 
     if refused := await _refused_if_deactivated(email, pending, upstream):
         return refused
+    if verified_claims is not None:
+        try:
+            await sso_links.attest_domain(email, identity[1], identity[0], verified_claims)
+        except Exception:  # noqa: BLE001 — spent sign-ins must revoke upstream on any failed write
+            log.warning("oidc callback: reader identity evidence unavailable")
+            await oidc.revoke(upstream)
+            return _sign_in_unavailable(_restart_url(pending))
     if pending["kind"] == "device":
         return await device.signed_in(pending["user_code"], identity, upstream)
     if pending["kind"] == "dashboard":

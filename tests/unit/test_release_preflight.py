@@ -435,12 +435,12 @@ def test_the_workflow_images_are_the_docker_matrix_images() -> None:
     assert workflow["env"]["IMAGES"].split() == [i["image"] for i in matrix if "image" in i]
 
 
-def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
+def test_only_the_signing_jobs_and_the_registries_get_an_oidc_token() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
     assert "id-token" not in workflow["permissions"]
     jobs = workflow["jobs"]
     oidc = [name for name, job in jobs.items() if "id-token" in job.get("permissions", {})]
-    assert set(oidc) == {"sign", "pypi", "npm", "mcp-registry"}
+    assert set(oidc) == {"sign", "sign-files", "pypi", "npm", "mcp-registry"}
 
 
 def test_npm_publishes_only_through_its_trusted_publisher() -> None:
@@ -494,9 +494,8 @@ def test_the_sign_step_signs_each_digest(
 
 def test_release_check_verifies_every_image_the_release_signs_with_the_same_script() -> None:
     check = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())
-    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if "run" in s]
+    (step,) = [s for s in check["jobs"]["signatures"]["steps"] if VERIFY in s.get("run", "")]
     release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert VERIFY in step["run"]
     assert step["env"]["VERSION"] == "${{ inputs.version }}"
     assert step["env"]["IMAGES"] == release["env"]["IMAGES"]
 

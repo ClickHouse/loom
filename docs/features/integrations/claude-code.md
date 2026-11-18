@@ -35,6 +35,9 @@ end of this section are the exceptions. The plugin sends:
   redirected grep pattern (`code.symbol`); and the search query of a `gh` issue search the
   tracker shunt answers (`tracker.duplicate_check`), with the owner and name of a repository
   the command names (`code.repos`);
+- for each bulk file read or grep in an indexed repository that the code shunt redirects or
+  lets through, the tool name, file path and line range, and an estimate of the tokens it
+  kept out of the context or let in (`code.outcome`; `LOOM_SHUNT_REPORT=off` stops it);
 - chat turns (`conversation.append`), which the server stores only when the namespace has
   conversation logging on;
 - the session's last turns (up to 200), to `memory.set_from_messages`, which keeps them as
@@ -71,16 +74,37 @@ client-side redaction removes common credential shapes from the prompts, tool ca
 run records, notes and briefs the hooks send. It is best effort, not a guarantee. MCP tool
 arguments and a brief the `loom-session` skill saves are sent without it.
 
-The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
-provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
+The server keeps this in its own databases (ClickHouse, and Postgres when the operator
+stores memories there). It passes text to an LLM or embedding provider only if its
+operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
 Deleting data is covered in [retention and erasure](../memory/retention-and-erasure.md).
+Users whose grants allow them to read a stored row, and the server's operator, can read
+it. [Namespaces and sharing](../namespaces-and-sharing.md) describes access control.
+
+The plugin keeps the token it saves (a copy of the install token or a self-signup token
+in `~/.loom/config.json`; in agent mode the exchanged one in
+`~/.loom/agent-token-<hash of LOOM_CLIENT_ID>.json`) and its other state in `~/.loom/`,
+mode 0600, until you remove it.
+
+Its files in the system temp directory, which can hold prompt and reply text, are also
+mode 0600. A queued write whose delivery process stopped before sending it stays until
+you replay or delete it; `loom-status` counts these and names the directory. A write the
+server refuses, or that cannot reach the server, is discarded. A batch of the per-file
+read and grep records above that fails to send is discarded too. Chat turns that fail
+are sent again at the end of the next reply, and a brief's events at the next brief
+save. At session start the plugin tries to remove other state files untouched for a
+day. They can remain longer, especially when no new session starts. The log of which
+tool calls the plugin redirected or let through (no prompt or file content) stays until
+you remove it (`LOOM_SHUNT_LOG=off` stops it).
+
 Two skills reach other services, each only when you ask for it. The `loom-status` skill
 can install Node.js from NodeSource through apt, dnf or yum, or from apk or Homebrew, and
 runs that installer only after you agree. The `improve-loom-for-my-repo` skill searches
 the ClickHouse/loom GitHub issues for each finding it reports and, after you approve,
-files its report there, or adds it as a comment on the issue that already reports it.
-The issue is public, and names the namespace and the symbols and queries behind each
-finding.
+files its report there, or adds it as a comment on the issue that already reports it. The
+issue is public, and holds the report as shown to you: the server version, namespace,
+indexed commit and how much of the repository is indexed, and for each finding a
+reproduction with its queries, symbols and file names.
 
 ## Requirements
 
@@ -232,6 +256,16 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | SessionEnd                                        | `loom-run.mjs`              | closes the run (`run.complete`, `outcome: none`, the last reply as the final response)                                                                                                                                                                                                                                          | `LOOM_RUN_LEDGER=off`                                                                                       |
 | SessionEnd                                        | `loom-session-memory.mjs`   | hands the session's turns to `memory.set_from_messages(defer=true)`, which extracts facts and writes the session summary                                                                                                                                                                                                        | `LOOM_SESSION_MEMORY=off`                                                                                   |
 
+The plugin's hooks and its MCP header helper (the script that adds the token to Loom's MCP
+requests) run `node`, `git` and `grep` on your machine: `git` reads the checkout's
+remotes, branch, `HEAD` commit, status and diffs, and `grep` searches uncommitted files
+for the pattern of a grep the plugin redirects to the code index. The `loom-session`
+skill's brief script also runs `git log` for the commits since the last brief. The test
+gate (the hook that, when a reply ends, names the tests a change needs) runs no Python:
+for a pytest test it picks the interpreter of the checkout's virtualenv, the active one
+(`VIRTUAL_ENV`) or a `python3` or `python` on `PATH`, checking that the interpreter's file
+exists without running it.
+
 The plugin names the oldest Loom server its hooks support (`MIN_SERVER_VERSION` in `lib/server-version.mjs`). SessionStart reads the server's `version` from the `GET /v1/health` answer it already requests and, when that version is older, prints one `loom:` line naming both versions and asking for a server upgrade. The session goes on either way; an unreachable server, an answer other than 2xx, a server that reports no `version`, or a version that is not SemVer prints nothing. The `loom-status` skill (`bin/loom-client-status.mjs`) reports the same as a warning. The minimum rises with the release that first serves what a hook needs, so between that hook's merge and that release a server of the previous release gets no warning.
 
 **Why the run closes with `outcome: none`.** The hook knows the session ended, not
@@ -283,8 +317,9 @@ keeping tool authority independent of retrieved text is the client's job.
 The hooks' temp files (turn journal, cursors, stashes, flush jobs, and the code shunt's
 decision log, pending batches and denial counts) are created `0600`, never written through
 a symlink or into another user's file, and never read from a planted symlink, a hard link
-or another user's file; the turn journal and stashes are removed at SessionEnd. What the
-hooks redact before sending is in [data handling](#data-handling).
+or another user's file. At SessionEnd the session-memory hook removes its recalled-content
+stash; the turn journal is kept for cleanup at a later session start. Retention and what
+the hooks redact before sending are in [data handling](#data-handling).
 
 ### Tuning knobs
 

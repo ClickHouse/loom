@@ -15,7 +15,7 @@ import base64
 import time
 from collections.abc import Mapping, Sequence, Set
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc_second
@@ -316,6 +316,23 @@ async def heads(org: str, namespace: str, uris: Sequence[str]) -> dict[str, Head
     return {str(r["source_uri"]): Head(decode_row(r["row"]), bool(r["owed"])) for r in got}
 
 
+async def head_lists(org: str, namespace: str, uris: Sequence[str]) -> dict[str, str]:
+    """The permission list (`access_json`) of each live head among these sources, read
+    without the rest of the row."""
+    uris = [u for u in uris if not pg.unstorable(u)]
+    if not uris or pg.unstorable([org, namespace]):
+        return {}
+    got = await pg.fetch(
+        "SELECT source_uri, row->'access_json' AS access_json "
+        "FROM loom.knowledge_heads "
+        "WHERE org = $1 AND namespace = $2 AND source_uri = ANY($3::text[]) AND NOT deleted",
+        org,
+        namespace,
+        sorted(set(uris)),
+    )
+    return {str(r["source_uri"]): str(restore_text(r["access_json"]) or "") for r in got}
+
+
 async def serving(org: str, sources: Sequence[tuple[str, str]]) -> dict[tuple[str, str], Serving]:
     """What the heads of these (namespace, source_uri) pairs serve, in one read; a pair
     with no head (or a key Postgres cannot store, which holds none) is absent."""
@@ -491,6 +508,22 @@ async def unpublished(org: str, namespace: str) -> tuple[int, int]:
         namespace,
     )
     return int(row["owed"]), int(row["parked"])
+
+
+async def owed_ending(org: str, namespace: str, suffix: str) -> Literal["parked", "owed", ""]:
+    """`parked` when a delivery of a source whose address ends in `suffix` is parked
+    past LOOM_PG_DELIVERY_MAX_ATTEMPTS, else `owed` when one is still owed, else ""."""
+    if pg.unstorable([org, namespace, suffix]):
+        return ""  # no delivery holds what Postgres cannot store
+    row = await pg.fetchrow(
+        "SELECT bool_or(lease_until = 'infinity') AS parked, count(*) > 0 AS owed "
+        "FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2 "
+        "AND NOT settled AND right(source_uri, length($3)) = $3",
+        org,
+        namespace,
+        suffix,
+    )
+    return "parked" if row["parked"] else "owed" if row["owed"] else ""
 
 
 async def backlog(cap: int) -> pg_pipeline.Backlog:

@@ -282,6 +282,13 @@ _WORKERS: tuple[_Worker, ...] = (
         "conversation_titler_interval_seconds",
     ),
     _Worker(
+        "query_history",
+        "server.knowledge.workers.query_history",
+        "knowledge_query_history_enabled",
+        "knowledge_query_history_interval_seconds",
+        max_pass_setting="knowledge_query_history_max_pass_seconds",
+    ),
+    _Worker(
         "knowledge_gaps",
         "server.knowledge.workers.knowledge_gaps",
         "knowledge_gaps_enabled",
@@ -436,6 +443,21 @@ _WORKERS: tuple[_Worker, ...] = (
         idle_interval="knowledge_source_sync_idle_interval_seconds",
         # the pass stops starting sources at three quarters of it
         max_pass_setting="knowledge_source_sync_max_pass_seconds",
+    ),
+    _Worker(
+        "knowledge_source_retire",
+        "server.knowledge.workers.source_retirements",
+        None,
+        "knowledge_source_sync_interval_seconds",
+        idle_interval="knowledge_source_sync_idle_interval_seconds",
+        max_pass_attr="MAX_PASS_SECONDS",
+    ),
+    _Worker(
+        "knowledge_source_push",
+        "server.knowledge.workers.source_push",
+        "knowledge_source_push_enabled",
+        "knowledge_source_push_interval_seconds",
+        max_pass_setting="knowledge_source_push_max_pass_seconds",
     ),
     _Worker(
         "code_embed_recovery",

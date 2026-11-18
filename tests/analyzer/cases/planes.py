@@ -564,6 +564,14 @@ def _logged_turn_rows(embedded: bool):
     )
 
 
+async def _source_push(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import source_push
+
+    await source_push.get(ORG, NS, _UUID, ch=ch)
+    await source_push.drive_page(("", "", ""), ch=ch)
+    await source_push.sealed_page(("", "", ""), ch=ch)
+
+
 async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.knowledge.api.models_conversations import ConversationSaveMessageInput
     from server.knowledge.app.conversations import handle_conversation_save_message
@@ -609,6 +617,7 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await K.delete_versions(ORG, NS, [("doc://a", 5)], ch=ch)
     await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
+    await D.current_document_counts(ORG, [NS, "n2"], ch=ch)
     await D.list_with_chunk_counts(
         ORG,
         [NS],
@@ -770,7 +779,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await PL.stats_by_revision(org=ORG, namespace=NS, memory_key="k1")
     await PL.unfolded(org=ORG, namespace=NS, memory_key="k1", since="2026-01-01")
     await CF.candidate_rows_many(
-        org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+        user_id="-", org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
     )
     # The per-write peer read — stage A, stage B, the join fallback.
     _peer = {
@@ -792,10 +801,10 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF.nearest_peer_rows(ch, dict(_peer), one_user)
     scoped = dict(_peer)
     await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
-    await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
+    await CF._foreign_pinned_rows(ch, dict(_peer), one_user)
     with read_filters_bound(current_auth(), one_user):  # the narrowed batch and its pinned arm
         await CF.candidate_rows_many(
-            org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+            user_id="u1", org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
         )
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
@@ -860,6 +869,15 @@ async def _conversation_threads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await handle_conversation_threads(
         ConversationThreadsInput(org=ORG, namespace=NS, agent=c["agent"], fields=c["fields"])
     )
+
+
+async def _budget_warning_events(ch: RecordingCH, _v: dict[str, Any]) -> None:
+    from server.tasks.store import budget_notifications
+
+    await budget_notifications.event_seqs(ORG, "warnings", _UUID, ch=ch)
+    row = {"org": ORG, "inbox": "warnings", "task_id": _UUID, "seq": 1}
+    await budget_notifications.insert_event(row, ch=ch)
+    await budget_notifications.remove_event(row, ch=ch)
 
 
 async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -1075,6 +1093,25 @@ async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 _ORG_ROLLUPS = frozenset({"cost", "learnings", "audit", "agents"})
 
 
+async def _definition_draft_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import gaps, query_history
+    from server.memory.store import learnings
+
+    await gaps.gap_for_draft(ORG, NS, "gap")
+    await gaps.draft_queries(ORG, NS, ["revenue"], 3)
+    await query_history.find(ORG, NS, "metrics", ch=ch)
+    await query_history.list_sources(ORG, NS, 10, ch=ch)
+    await query_history.active_after(_UUID, 10)
+    await learnings.list_by_status(
+        ORG, NS, "pending", exclude_source_kinds=("query_history",), ch=ch
+    )
+    await learnings.private_candidate_namespaces("org = {org:String}", {"org": ORG})
+    await learnings.quality_by_namespace("org = {org:String}", {"org": ORG}, [])
+    await learnings.private_candidates_after(ORG, NS, "")
+    await learnings.scrub_private_candidate(ORG, NS, _UUID)
+    await learnings.delete_candidate_through(ORG, NS, _UUID, 1)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -1098,7 +1135,23 @@ def cases() -> list[Case]:
             rows=_HANDLER_ROWS,
         )
     )
+    out.append(
+        Case(
+            "definition_draft_reads",
+            "server.knowledge.store.query_history",
+            _definition_draft_reads,
+            {},
+        )
+    )
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
+    out.append(
+        Case(
+            "budget_warnings.events",
+            "server.tasks.store.budget_notifications",
+            _budget_warning_events,
+            {},
+        )
+    )
     out.append(
         Case(
             "provider_rebuild.session_chunks",
@@ -1227,6 +1280,7 @@ def cases() -> list[Case]:
                 }
             ),
         ),
+        Case("source_push_repos", "server.knowledge.store.source_push", _source_push, {}),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
         Case(
             "plane_services",

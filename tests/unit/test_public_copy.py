@@ -144,10 +144,11 @@ PATTERNS = {
     "paper citation": re.compile(r"arxiv|\bet al\.", re.IGNORECASE),
     "decision-record citation": re.compile(r"\b[Dd]ecisions? \d{3,5}\b|docs/decisions/\d"),
     "internal host": re.compile(r"\bubuntu-[0-9a-z]{2}(?![\w.])|\.ts\.net\b"),
-    # A personal address at the project's domain; the policy inboxes SECURITY.md and
-    # CODE_OF_CONDUCT.md name are public.
+    # Public security, conduct and feedback inboxes identify organizational roles,
+    # not individuals; personal addresses at the project's domain stay private.
     "personal address": re.compile(
-        r"\b(?!(?:security|conduct)@)[A-Za-z0-9._%+-]+@clickhouse\.com\b", re.IGNORECASE
+        r"\b(?!(?:security|conduct|feedback)@)[A-Za-z0-9._%+-]+@clickhouse\.com\b",
+        re.IGNORECASE,
     ),
 }
 
@@ -219,6 +220,9 @@ SKIP_PREFIXES = ("schemas/migrations/", "schemas/schema.sql")
 # This lint holds the digests.
 SELF = "tests/unit/test_public_copy.py"
 
+# Generated dependency metadata carries upstream package names, not authored copy.
+DEPENDENCY_LOCKS = {"integrations/n8n/pnpm-lock.yaml"}
+
 # Files whose subject is text carrying a decision reference: parsers and
 # classifiers for pointers an agent's transcript or a repository's own ADR
 # folder contains (Loom indexes any repository's `docs/decisions/`).
@@ -254,7 +258,7 @@ def _scanned() -> list[tuple[str, list[str]]]:
     out = []
     for path in _iter_scan_files():
         rel = path.relative_to(ROOT).as_posix()
-        if rel == SELF or rel.startswith(SKIP_PREFIXES):
+        if rel == SELF or rel in DEPENDENCY_LOCKS or rel.startswith(SKIP_PREFIXES):
             continue
         try:
             out.append((rel, path.read_text(errors="ignore").splitlines()))
@@ -311,6 +315,18 @@ def test_server_code_names_no_benchmark_dataset() -> None:
         "a benchmark dataset named in server code; state the behaviour and the measured "
         "effect (bench/ keeps the names):\n" + "\n".join(violations)
     )
+
+
+def test_personal_address_pattern_distinguishes_public_role_inboxes() -> None:
+    pattern = PATTERNS["personal address"]
+    for inbox in ("security", "conduct", "feedback"):
+        address = f"{inbox}@clickhouse.com"
+        assert pattern.search(address) is None
+        assert pattern.search(address.upper()) is None
+    for inbox in ("person", "person.feedback", "feedback-person", "person+feedback"):
+        address = f"{inbox}@clickhouse.com"
+        assert pattern.search(address) is not None
+        assert pattern.search(address.upper()) is not None
 
 
 def test_a_digest_catches_its_name_in_every_shape_and_nothing_else(monkeypatch) -> None:

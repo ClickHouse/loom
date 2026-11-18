@@ -114,18 +114,29 @@ class _Store:
     async def write_state(self, org: str, ns: str, name: str, *, state_value: str, detail: Any):
         self.states[name] = {"state_value": state_value, "detail": json.dumps(detail)}
 
-    async def source_documents(self, org: str, ns: str, name: str) -> list[dict[str, Any]]:
+    async def source_documents(self, org: str, ns: str, tag: str) -> list[dict[str, Any]]:
         return [{"source_uri": "https://x/1", "title": "Deck", "source_revision": "r1"}]
 
-    async def count_documents(self, org: str, ns: str, name: str) -> int:
-        return self.documents.get(name, 0)
+    async def count_documents(self, org: str, ns: str, tag: str) -> int:
+        return self.documents.get(tag.removeprefix("source:"), 0)
 
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
+    from server.knowledge.store import source_push as push_store
+
+    async def no_push(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(push_store, "get", no_push)
     fake = _Store()
     monkeypatch.setattr(app, "store", fake)
     monkeypatch.setattr(settings, "jwt_secret", "unit-test-root-secret")
+
+    async def _no_mirror(src: KnowledgeSource) -> bool:
+        return False
+
+    monkeypatch.setattr(app, "_queue_retirement", _no_mirror)
 
     async def _probe(
         kind: str, config: dict[str, Any], credential: str, *, items: Any = None
@@ -148,7 +159,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
     monkeypatch.setattr(leases, "holding", _holding)
     monkeypatch.setattr(leases, "has_live_holder", _has_live_holder)
 
-    async def _open(org: str) -> list[dict[str, Any]]:
+    async def _open(org: str, *, ch=None) -> list[dict[str, Any]]:
         return list(fake.erasures)
 
     from server.erasure.app import ledger_reads
@@ -449,6 +460,32 @@ def test_list_and_inspect_answer_a_mirrored_source_without_its_config(fake: _Sto
     assert listed.sources[0].config == {} and seen.config == {}
 
 
+def test_list_and_inspect_show_a_mirrored_source_s_sync_without_its_counts(
+    fake: _Store,
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    key = (ORG, NS, "design-decks")
+    fake.rows[key] = dataclasses.replace(fake.rows[key], access=domain.MIRRORED_ACCESS)
+    detail = {
+        "status": "ok",
+        "last_synced_at": "2026-01-01T00:00:00+00:00",
+        "documents_seen": 412,
+        "changed": 3,
+        "unconverted_reasons": {"too_large": 1},
+        "error": "export f1: http_503",
+    }
+    fake.states["design-decks"] = {"state_value": "", "detail": json.dumps(detail)}
+    listed = asyncio.run(
+        app.handle_knowledge_source_list(KnowledgeSourceListInput(org=ORG, namespace=NS))
+    )
+    body = KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
+    seen = asyncio.run(app.handle_knowledge_source_inspect(body))
+    # What the mirror holds goes only to a platform admin: no count, reason or error.
+    for sync in (listed.sources[0].sync, seen.sync):
+        shown = sync.model_dump(exclude_defaults=True)
+        assert shown == {"status": "ok", "last_synced_at": "2026-01-01T00:00:00+00:00"}
+
+
 def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) -> None:
     # The later build retires its documents from the mirror by this value.
     for name in ("design-decks", "other"):
@@ -668,12 +705,12 @@ def test_statements_read_final_on_the_key_prefix(monkeypatch: pytest.MonkeyPatch
     asyncio.run(store.list_sources(ORG, NS))
     asyncio.run(store.get_source(ORG, NS, "d"))
     asyncio.run(store.read_states(ORG, NS, ["d"]))
-    asyncio.run(store.source_documents(ORG, NS, "d"))
+    asyncio.run(store.source_documents(ORG, NS, domain.source_tag("d")))
     for st in ch.statements("FROM loom."):
         assert "FINAL" in st.sql and "org = {org:String} AND namespace = {ns:String}" in st.sql
     assert ch.statements("FROM loom.code_index_state")[0].params["keys"] == ["knowledge_source:d"]
     # A source's documents are those the sync worker wrote, never a caller's tagged ones.
-    asyncio.run(store.count_documents(ORG, NS, "d"))
+    asyncio.run(store.count_documents(ORG, NS, domain.source_tag("d")))
     for st in ch.statements("FROM loom.documents"):
         assert st.params["tag"] == "source:d"
         assert st.params["actor"] == domain.SYNC_WORKER_ACTOR == "worker:knowledge-source-sync"
@@ -1041,7 +1078,7 @@ def test_remove_counts_documents_with_sequential_consistency(
     asyncio.run(app.handle_knowledge_source_add(_add()))
     seen: list[bool] = []
 
-    async def _count(org: str, ns: str, name: str) -> int:
+    async def _count(org: str, ns: str, tag: str) -> int:
         seen.append(sequential_reads_active())
         return 2
 

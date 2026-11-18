@@ -6,6 +6,27 @@ is one claim under a key that Loom judges against its peers; a document is searc
 Put the document in knowledge and a short claim pointing at it in memory. A memory value over a couple of kilobytes
 belongs here ([writing memories](./memory/writing.md)).
 
+## How do agents search documents beside their code?
+
+Register a document source on the repository's trunk code namespace. Its synced documents
+carry the repository's `repo:<id>` tag, so repository-scoped searches can retrieve its
+runbooks and specifications. The source-sync worker must be enabled, and the caller must
+be allowed to read that namespace. See [document sources](#document-sources) and
+[repository scope in unified search](./unified-search.md#loom_search).
+
+This groups the repository's documents for retrieval. The
+[memory-to-symbol links](../concepts/memory.md#memories-linked-to-code) track memories
+against changing definitions; they do not turn every document into a symbol-linked memory.
+
+## How do agents connect a memory to a source document?
+
+Store the full text with `knowledge.add` and put a short claim with its `source_uri` in
+memory. The agent supplies that reference; a document and a memory remain separate records.
+Use [unified search](./unified-search.md) to retrieve both, then `knowledge.get` or
+`knowledge.outline` to open the cited document. A changed document needs its own update
+with `knowledge.upsert`; the memory claim is revised separately through the
+[memory write operations](./memory/writing.md).
+
 ## What Loom does with a document
 
 1. **Stores the text and, optionally, the original file.** `knowledge.add` takes
@@ -361,9 +382,11 @@ later than a minute before that turn's listing started. A file added to a folder
 older modification time (moved or copied in) is not changed after the stamp; it arrives
 with the next full listing. A listed file whose stored copy has the same revision, and
 whose chunks are live, is skipped without a fetch, so a write cut between its document
-and its chunks is redone; a native document whose stored text still holds its pictures'
-bytes is the one exception (see `docs` below). A changed file is fetched and written
-with `knowledge.upsert`:
+and its chunks is redone. A metadata edit of a stored copy keeps its revision and its
+chunks, so the edit stays until the file changes; a copy whose chunks were written
+before chunks recorded their revision is fetched and written again instead. A native
+document whose stored text still holds its pictures' bytes is the one exception (see
+`docs` below). A changed file is fetched and written with `knowledge.upsert`:
 
 | File                             | Text                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Original                       |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
@@ -1119,6 +1142,14 @@ recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 
 ### Moving documents
 
+In the dashboard, **Move to…** on a document row or selection offers places the
+person writes. **Add to collection…** offers only those collections, including **My
+files**. Both move the documents: each document lives in one place. Before confirmation,
+**Add to collection…** says the documents leave their source, and both actions say who
+can read them at the destination. In **All documents** or an everywhere search, a selection
+must come from one place; each row uses its own place. Cancelling before confirmation
+leaves the documents where they are.
+
 `knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the
 same org: a collection, `@me` (an end user's own collection) or a namespace. The caller
 needs writer on both; one it cannot write answers `found: false` and moves nothing, so the
@@ -1157,6 +1188,18 @@ the replay cache cannot answer under the ClickHouse authority, runs the move aga
 document that moved the first time answers `not_found`. Under the Postgres authority each of
 the two writes is its own commit. The ordering and what a cut-off move leaves are in
 [failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
+
+## Collection document counts
+
+The Library's collection tree shows how many live documents each collection holds
+directly; documents in child collections count beside those children. Zero means the
+collection has no live documents. A dash means the count is unavailable, and an ellipsis
+means it is being refreshed. Adding, moving, deleting or restoring documents refreshes
+the counts. Counts read the same document metadata as the document list, so a write
+awaiting publication can take a moment to appear.
+
+Clients request counts with `include_document_counts=true` on
+[`collection.list`](../reference/operations/collection.md#collectionlist).
 
 ## Ingesting files
 
@@ -1277,6 +1320,11 @@ print(status["state"], status["revision"], status["coverage"])
 ```
 
 ### Many files from the dashboard
+
+An empty collection the person writes also accepts files and folders in its **Drop files
+or folders here** area. Dropping opens the same **Add document** preview for that
+collection; the person confirms before any upload starts. A folder keeps its nesting as
+[below](#a-folder-from-the-dashboard).
 
 The Library's **Add document** takes several files at once, picked together or dropped
 on it, and names the place they go to. Each file is its own upload and ingest, as above,
@@ -1667,7 +1715,8 @@ How misses are recorded and grouped, their erasure and their rolling-upgrade not
   section.
 - [Search and ask](./memory/search-and-ask.md) — how `memory.ask` cites documents.
 - [Retention and erasure](./memory/retention-and-erasure.md) — what erasure removes.
-- [The dashboard](./dashboard.md) — the Library page lists, uploads and downloads
-  documents, and finds a passage inside them, cited by revision and place.
+- [The dashboard](./dashboard.md) — the Library page lists the documents of one place or
+  of every place the person reads (`knowledge.list` with `namespaces`), uploads and
+  downloads them, and finds a passage inside them, cited by revision and place.
 - [Memory architecture](../architecture/memory-architecture.md) — the chunk and
   document tables from the inside.

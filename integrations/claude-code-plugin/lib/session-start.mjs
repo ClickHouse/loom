@@ -74,8 +74,10 @@ export function renderPrimer({
 }) {
   const notice = notices.filter(Boolean).join("\n\n");
   const repoLine = repo
-    ? `Repository ${repo.slug} — rows from this checkout carry the tag \`repo:${repo.id}\`; ` +
-      `pass tags: ["repo:${repo.id}"] to loom_search to stay within it.\n\n`
+    ? `Repository ${repo.slug} — hook captures carry the tag \`repo:${repo.id}\`; ` +
+      `pass tags: ["repo:${repo.id}"] to loom_search to stay within it. ` +
+      `When saving a fact about this repository with loom_memory_set, include tags: ["repo:${repo.id}"] ` +
+      `alongside its other tags. Keep personal facts in your own namespace. Do not add this repository tag to unrelated facts.\n\n`
     : "";
   const extra = lines
     .filter(Boolean)

@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 def connected_where(
@@ -43,7 +44,7 @@ async def new_agent_count(
                 SELECT agent,
                        min(ts) AS first_seen,
                        countIf(ts > now() - toIntervalHour({{wh:UInt32}})) AS ops
-                FROM loom.agent_events
+                FROM {MASKED_EVENTS}
                 WHERE {where.replace("ts > now() - toIntervalHour({wh:UInt32}) AND ", "")}
                   AND ts > now() - toIntervalDay({{lb:UInt16}})
                 GROUP BY agent
@@ -67,8 +68,8 @@ async def connected_rows(
             f"""
         WITH all_time AS (
             SELECT agent, min(ts) AS first_seen
-            FROM loom.agent_events
-            WHERE org = {{org:String}} AND agent NOT IN ('-', '*', '')
+            FROM {MASKED_EVENTS}
+            WHERE {where.replace("ts > now() - toIntervalHour({wh:UInt32}) AND ", "")}
               AND ts > now() - toIntervalDay({{lb:UInt16}})
             GROUP BY agent
         )
@@ -88,7 +89,7 @@ async def connected_rows(
                 countDistinct(namespace) AS namespaces_touched,
                 argMax(namespace, ts) AS primary_namespace,
                 sum(upstream_cost_usd) AS cost_usd
-            FROM loom.agent_events
+            FROM {MASKED_EVENTS}
             WHERE {where}
             GROUP BY agent
         ) AS w

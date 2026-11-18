@@ -10,13 +10,16 @@ Covered:
   - redact on a historical row scrubs the value, sets redacted_at,
     preserves the timeline entry
   - history reflects the redact (value scrubbed, redacted_at populated)
+  - a redact scrubs the shared copy of its text, unless the live head holds it again
 """
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -28,6 +31,7 @@ from tests.integration._eventually import eventually  # noqa: E402
 from tests.integration._resources import unique_org  # noqa: E402
 
 ORG = unique_org("history-redact")
+_SECRET = {"note": "the vault code is 4417"}
 
 # No flaky-rerun marker. CH Cloud's default async_insert can buffer rows for ~1s
 # before they're visible to subsequent SELECTs; memory.set fires fast and
@@ -223,3 +227,82 @@ async def test_a_restore_after_delete_and_redact_brings_back_no_redacted_text(
         restored = await a.memory.restore("k")
         assert restored["restored"] is False and restored["redacted"] is True
         assert await a.memory.get("k") is None
+
+
+async def _shared_value(ns: str, key: str) -> str:
+    from server.core.ch import get_client
+
+    row = await get_client().query_one(
+        "SELECT value FROM loom.shared FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = {k:String}",
+        params={"org": ORG, "ns": ns, "k": key},
+    )
+    assert row is not None, key
+    return str(row["value"])
+
+
+async def _promote_then_redact(
+    control_plane_url: str, mint_test_token: Any, *, reverted: bool
+) -> tuple[str, set[str]]:
+    """Promote a secret, overwrite it (and write it again when `reverted`), redact the
+    first version; the copy's value and the keys a shared search then finds."""
+    from loom import Agent
+
+    ns = f"redact-shared-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin", "writer"])
+    async with Agent(
+        org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=tok
+    ) as a:
+        versions_written = 3 if reverted else 2
+
+        async def shared_keys() -> set[str]:
+            hits = await a.memory.search("vault code", scope="shared", top_k=5)
+            return {h.memory_key for h in hits}
+
+        async def copy_found() -> bool:
+            return "k" in await shared_keys()
+
+        async def all_versions() -> list[Any] | None:
+            r = await a.memory.history("k")
+            return r if len(r) >= versions_written else None
+
+        first = await a.memory.set("k", _SECRET, memory_type="semantic")
+        await a.memory.promote("k")
+
+        await a.memory.set("k", {"note": "the code was rotated"}, memory_type="semantic")
+        # The edit alone leaves the copy served.
+        await eventually(copy_found, description="the shared copy is found")
+        if reverted:
+            await a.memory.set("k", _SECRET, memory_type="semantic")
+
+        # The redact finds its version in history: wait until every write is there.
+        await eventually(all_versions, description="the versions visible before redact")
+        result = await a.memory.redact(
+            first["memory_id"], first["version"], reason="leak", redacted_by="t"
+        )
+        assert result["redacted"] is True
+        return await _shared_value(ns, "k"), await shared_keys()
+
+
+@pytest.mark.asyncio
+async def test_a_redact_scrubs_the_shared_copy_of_its_text(
+    control_plane_url, mint_test_token
+) -> None:
+    """A version promoted to the shared layer and then redacted leaves it: the copy's text
+    is scrubbed and a shared search no longer finds it."""
+    from server.memory.domain.redaction_lineage import REDACTED_VALUE
+
+    value, keys = await _promote_then_redact(control_plane_url, mint_test_token, reverted=False)
+    assert value == REDACTED_VALUE
+    assert "k" not in keys
+
+
+@pytest.mark.asyncio
+async def test_the_shared_copy_stays_while_the_live_head_holds_the_text(
+    control_plane_url, mint_test_token
+) -> None:
+    """An edit reverted byte for byte holds the text again: the copy stays, as the head
+    does."""
+    value, keys = await _promote_then_redact(control_plane_url, mint_test_token, reverted=True)
+    assert json.loads(value) == _SECRET
+    assert "k" in keys

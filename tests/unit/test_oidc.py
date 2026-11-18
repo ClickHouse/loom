@@ -672,5 +672,15 @@ async def test_signing_in_finishes_a_jit_account_whose_owner_grant_never_landed(
     monkeypatch.setattr(jit, "_accounts_naming", accounts)
     monkeypatch.setattr(jit, "_ever_granted", ever_granted)
     monkeypatch.setattr(self_signup, "insert_owner_grant", grant)
+    from unittest.mock import AsyncMock
+
+    attested = AsyncMock()
+    monkeypatch.setattr(oauth.sso_links, "attest_domain", attested)
     assert (await oauth.oidc_callback(_Req())).status_code == 302  # type: ignore[arg-type]
     assert granted == ([] if granted_before else [("u-bob", "u-bob")])
+    attested.assert_awaited_once_with(
+        "bob@acme.com",
+        settings.oidc_jit_org,
+        "someone",  # the identity resolver's owner, not the JIT account name
+        {"email": "bob@acme.com", "email_verified": True},
+    )

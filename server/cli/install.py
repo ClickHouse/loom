@@ -12,6 +12,7 @@ from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
+from server.cli.jsonc_edit import JsoncEditError, upsert_object_key
 from server.identity.app.token_clients import (
     CODING_CLIENTS,
     CODING_TOOLSET,
@@ -338,6 +339,75 @@ def _print_dry_run(path: Path, changes: dict[str, Any], token: str) -> None:
     print("  (every other key in the file is kept as it is)")
 
 
+def _print_zed_manual(
+    path: Path,
+    section: str,
+    name: str,
+    entry: dict[str, Any],
+    token: str,
+    reason: str,
+    *,
+    dry_run: bool,
+) -> None:
+    """The file stays as it was. The entry is what the user pastes by hand."""
+    import json as _json
+
+    rendered = _json.dumps({name: entry}, indent=2)
+    if dry_run and token:
+        rendered = rendered.replace(token, "<token>")
+    print(
+        f"ERROR (zed): {path} could not be merged ({reason}). The file was not changed.\n"
+        f'Add this under "{section}" in that file:\n{rendered}',
+        file=sys.stderr,
+    )
+
+
+def _install_zed(
+    cfg_path: Path,
+    section: str,
+    name: str,
+    entry: dict[str, Any],
+    token: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Merge `context_servers` into Zed's settings.json without a full rewrite."""
+    import json as _json
+
+    if not cfg_path.exists():
+        rendered = _json.dumps({section: {name: entry}}, indent=2) + "\n"
+        if dry_run:
+            _print_dry_run(cfg_path, {section: {name: entry}}, token)
+            return True
+        write_private(cfg_path, rendered, newline="")
+        print(f"✓ zed: wrote {name} → {cfg_path}")
+        return True
+    try:
+        original = cfg_path.read_bytes().decode("utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        _print_zed_manual(
+            cfg_path, section, name, entry, token, f"could not read it ({exc})", dry_run=dry_run
+        )
+        return False
+    try:
+        rendered, changed = upsert_object_key(original, section, name, entry)
+    except JsoncEditError as exc:
+        _print_zed_manual(cfg_path, section, name, entry, token, exc.reason, dry_run=dry_run)
+        return False
+    if dry_run:
+        if changed:
+            _print_dry_run(cfg_path, {section: {name: entry}}, token)
+        else:
+            print(f"unchanged: {cfg_path}")
+        return True
+    if not changed:
+        print(f"✓ zed: {name} already set → {cfg_path}")
+        return True
+    write_private(cfg_path, rendered, newline="")
+    print(f"✓ zed: wrote {name} → {cfg_path}")
+    return True
+
+
 def _install_one(
     client: str,
     *,
@@ -373,6 +443,8 @@ def _install_one(
     cfg_path = _resolve_install_path(client)
     mcp_url = _install_mcp_url(server_url, toolset)
     entry = mcp_entry(client, mcp_url, token)
+    if client == "zed":
+        return _install_zed(cfg_path, section, name, entry, token, dry_run=dry_run)
 
     existing: dict[str, Any] = {}
     if cfg_path.exists():

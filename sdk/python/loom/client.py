@@ -1345,6 +1345,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.formats", body, **options),
         )
 
+    async def gaps_draft(
+        self, body: _ops.KnowledgeGapsDraftBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeGapsDraftOutput:
+        """`knowledge.gaps.draft`."""
+        return cast(
+            "_ops.KnowledgeGapsDraftOutput",
+            await self._agent.call("knowledge.gaps.draft", body, **options),
+        )
+
     async def gaps_list(
         self, body: _ops.KnowledgeGapsListBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeGapsListOutput:
@@ -1431,6 +1440,33 @@ class KnowledgeOps:
             "_ops.KnowledgeQueryOutput", await self._agent.call("knowledge.query", body, **options)
         )
 
+    async def query_history_add(
+        self, body: _ops.KnowledgeQueryHistoryAddBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryAddOutput:
+        """`knowledge.query_history.add`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryAddOutput",
+            await self._agent.call("knowledge.query_history.add", body, **options),
+        )
+
+    async def query_history_list(
+        self, body: _ops.KnowledgeQueryHistoryListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryListOutput:
+        """`knowledge.query_history.list`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryListOutput",
+            await self._agent.call("knowledge.query_history.list", body, **options),
+        )
+
+    async def query_history_remove(
+        self, body: _ops.KnowledgeQueryHistoryRemoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryRemoveOutput:
+        """`knowledge.query_history.remove`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryRemoveOutput",
+            await self._agent.call("knowledge.query_history.remove", body, **options),
+        )
+
     async def reads(
         self, body: _ops.KnowledgeReadsBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeReadsOutput:
@@ -1500,6 +1536,33 @@ class KnowledgeOps:
         return cast(
             "_ops.KnowledgeSourceParseLinksOutput",
             await self._agent.call("knowledge.source.parse_links", body, **options),
+        )
+
+    async def source_push_configure(
+        self, body: _ops.KnowledgeSourcePushConfigureBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_configure`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_configure", body, **options),
+        )
+
+    async def source_push_confirm(
+        self, body: _ops.KnowledgeSourcePushConfirmBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_confirm`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_confirm", body, **options),
+        )
+
+    async def source_push_status(
+        self, body: _ops.KnowledgeSourcePushStatusBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_status`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_status", body, **options),
         )
 
     async def source_remove(

@@ -39,6 +39,7 @@ from server.operations.capabilities import operation_rows
 from server.settings import settings
 from server.transport import http as http_transport
 from server.transport import mcp as mcp_transport
+from server.transport.request_scope import HTTPApplication
 from server.wiring import wire
 
 # Install formatter before any uvicorn / module-level logging fires.
@@ -140,6 +141,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         open_signup_without_trust_network=settings.signup_open_without_trust_network(),
         weak_keys=weak_keys(),
     )
+    from server.core import tls
+
+    tls.require_served()
 
     from server.core.object_store import require_client
 
@@ -172,6 +176,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     await boot.require_keeper(ch)
     await boot.require_storage_authority(ch)
+    await boot.require_session_protection(ch)
     # The deployment's cell state, before the first heartbeat reports this process
     # serving and before the lease is decided on it.
     cell_loops = await boot.start_cell_gate()
@@ -192,7 +197,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         _leader.leads_deployment,
         label=_instance_mod.instance_label() or "",
         workers_lease=_leader.advertised_lease,
-        on_beat=_leader.read_holder,
+        on_beat=boot.refresh_instance_state,
     )
 
     from server.core.background import register_buffer_drainer
@@ -315,7 +320,7 @@ async def _with_repo_umask(target: FastAPI) -> AsyncIterator[None]:
             yield
 
 
-app = FastAPI(
+app = HTTPApplication(
     title="Loom Control Plane",
     description=(
         "Shared memory, knowledge, and observability data plane for AI agents "
@@ -444,7 +449,8 @@ async def _response_headers(request: Request, call_next: Any) -> Response:
     # same-origin keeps the real Origin on a same-origin non-GET request, which
     # web_refusal needs; no-referrer would send `Origin: null` on a form POST.
     response.headers.setdefault("Referrer-Policy", "same-origin")
-    # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
+    # Sent whatever the port serves: clients reach Loom over HTTPS through a terminator
+    # in front even when the port is plain HTTP, and browsers ignore HSTS over plain HTTP.
     if settings.hsts_max_age_seconds > 0:
         response.headers.setdefault(
             "Strict-Transport-Security", f"max-age={settings.hsts_max_age_seconds}"
@@ -544,6 +550,7 @@ from server import health as _health  # noqa: E402
 from server.assistant.app import routes as _assistant_routes  # noqa: E402
 from server.auth import routes as _auth_routes  # noqa: E402
 from server.knowledge.app import download_routes as _knowledge_download  # noqa: E402
+from server.knowledge.app import source_push_routes as _source_push  # noqa: E402
 from server.knowledge.app import upload_routes as _knowledge_upload  # noqa: E402
 
 _assistant_routes.attach(app)
@@ -551,6 +558,7 @@ _auth_routes.attach(app)
 _health.attach(app)
 _knowledge_download.attach(app)
 _knowledge_upload.attach(app)
+_source_push.attach(app)
 
 
 @app.get("/v1/api/openapi.json")

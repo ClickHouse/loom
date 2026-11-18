@@ -79,6 +79,7 @@ def main() -> None:
         app,
         host=os.environ.get("LOOM_EXTRACTOR_HOST", "127.0.0.1"),
         port=int(os.environ.get("LOOM_EXTRACTOR_PORT", "8790")),
+        access_log=False,
     )
 
 

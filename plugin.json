@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "clickhouse-loom",
+  "version": "1.2.0",
+  "description": "Shared long-term memory, document search and a code index from a self-hosted ClickHouse Loom server, over MCP, with the loom and loom-code skills that say when to recall, save and ask the code index. Experimental: checked with Copilot CLI 1.0.112.",
+  "author": { "name": "ClickHouse", "url": "https://github.com/ClickHouse" },
+  "homepage": "https://clickhouse.github.io/loom/features/integrations/mcp-clients/#other-editors-and-agents",
+  "repository": "https://github.com/ClickHouse/loom",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent-memory",
+    "long-term-memory",
+    "code-intelligence",
+    "code-search",
+    "mcp",
+    "clickhouse",
+    "self-hosted"
+  ]
+}

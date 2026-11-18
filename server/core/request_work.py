@@ -17,7 +17,8 @@ ledger row. It also carries one authorization outcome the row's
 sets when the request hid a row because a read the check needed failed.
 Like the cost accumulator, nothing is recorded when no bag is bound (a
 worker pass, a test) — a long-lived task never accumulates across requests.
-Never raises.
+Accounting helpers are best effort. A new marked-event claim refuses without
+a marked logical call and a live required request tail.
 """
 
 from __future__ import annotations
@@ -25,8 +26,12 @@ from __future__ import annotations
 import contextvars
 import secrets
 import time
+from collections.abc import Iterator, Mapping, MutableMapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
+
+from server.core.diagnostics import codes_only
 
 _MAX_SKIPPED = 16
 
@@ -62,6 +67,11 @@ class RequestWork:
     # resolved (a code op naming none runs in the code namespace): the ledger
     # row's tenant where the request named none.
     admitted: tuple[str, str] | None = None
+    # Mutable with the bag: a child leg marks its parent request even when it admits
+    # nothing. Diagnostic suppression must not hide this authorization state.
+    mirror_marked: bool = False
+    mirror_unread: bool = False
+    mirror_event_registered: bool = False
 
     def mark(self, name: str) -> float:
         now = time.perf_counter()
@@ -85,6 +95,36 @@ _current: contextvars.ContextVar[RequestWork | None] = contextvars.ContextVar(
 )
 
 
+_http_owner: contextvars.ContextVar[RequestWork | None] = contextvars.ContextVar(
+    "loom_http_request_work_owner", default=None
+)
+_HTTP_OWNER_KEY = "loom.request_work_owner"
+
+
+@contextmanager
+def http_owner(scope: MutableMapping[str, Any]) -> Iterator[None]:
+    """Own HTTP marks across middleware tasks and fresh logical operation bags."""
+    owner = RequestWork()
+    scope[_HTTP_OWNER_KEY] = owner
+    owner_token = _http_owner.set(owner)
+    local_token = _current.set(None)
+    try:
+        yield
+    finally:
+        _current.reset(local_token)
+        _http_owner.reset(owner_token)
+
+
+def http_mirror_marked(scope: Mapping[str, Any] | None = None) -> bool:
+    owner = _http_owner.get() if scope is None else scope.get(_HTTP_OWNER_KEY)
+    return isinstance(owner, RequestWork) and owner.mirror_marked
+
+
+def http_mirror_unread(scope: Mapping[str, Any] | None = None) -> bool:
+    owner = _http_owner.get() if scope is None else scope.get(_HTTP_OWNER_KEY)
+    return isinstance(owner, RequestWork) and owner.mirror_unread
+
+
 def begin() -> RequestWork:
     """Bind a fresh bag to the current context and return it."""
     bag = RequestWork()
@@ -92,14 +132,80 @@ def begin() -> RequestWork:
     return bag
 
 
+@contextmanager
+def bind(bag: RequestWork) -> Iterator[None]:
+    """Restore a logical owner's bag when a stream closes in another context."""
+    token = _current.set(bag)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
 def current() -> RequestWork | None:
-    return _current.get()
+    return None if codes_only() else _current.get()
+
+
+def admitted_scope() -> tuple[str, str] | None:
+    """Keep verified ledger attribution available when diagnostics hide the bag."""
+    bag = _current.get()
+    return bag.admitted if bag is not None else None
+
+
+def mark_mirrored(*, unread: bool = False) -> bool:
+    """Mark a leg; False means no outer request bag exists and it must serve no mirror."""
+    bag = _current.get()
+    if bag is None:
+        return False
+    bag.mirror_marked = True
+    bag.mirror_unread |= unread
+    owner = _http_owner.get()
+    if owner is not None:
+        owner.mirror_marked = True
+        owner.mirror_unread |= unread
+    return True
+
+
+def mirror_marked() -> bool:
+    bag = _current.get()
+    return bag is not None and bag.mirror_marked
+
+
+def flag_response(body: dict[str, Any]) -> dict[str, Any]:
+    """Place the server-owned privacy flag before a marked logical call's fields."""
+    if not mirror_marked():
+        return body
+    return {"mirrored": True, **{k: v for k, v in body.items() if k != "mirrored"}}
+
+
+def marked_event_pending() -> bool:
+    """A raw logical mark still owes its one required event registration."""
+    bag = _current.get()
+    return bag is not None and bag.mirror_marked and not bag.mirror_event_registered
+
+
+def claim_marked_event() -> bool:
+    """Claim once; a new claim requires a marked call and a live required tail.
+
+    Raise RequiredTailError when a new claim lacks either lifetime.
+    """
+    from server.core import request_tail
+
+    bag = _current.get()
+    if bag is None or not bag.mirror_marked:
+        raise request_tail.RequiredTailError()
+    if bag.mirror_event_registered:
+        return False
+    if not request_tail.required_active():
+        raise request_tail.RequiredTailError()
+    bag.mirror_event_registered = True
+    return True
 
 
 def mark_stage(name: str) -> None:
     """Charge the wall since the previous mark (or the bag's start) to
     `name`. No bag bound: nothing happens."""
-    bag = _current.get()
+    bag = current()
     if bag is None:
         return
     try:
@@ -115,6 +221,8 @@ def note_ch_summary(summary: Any) -> dict[str, Any]:
     `query_id`) for the caller's span, or {} when the summary is empty or
     unreadable — a Cloud response without the header is a null reading, not
     an error. Never raises."""
+    if codes_only():
+        return {}
     try:
         if not isinstance(summary, dict) or not summary:
             return {}
@@ -131,7 +239,7 @@ def note_ch_summary(summary: Any) -> dict[str, Any]:
         }
         if qid:
             parsed["query_id"] = qid
-        bag = _current.get()
+        bag = current()
         if bag is not None:
             bag.ch_statements += 1
             bag.ch_read_rows += parsed["read_rows"]
@@ -145,7 +253,7 @@ def note_ch_summary(summary: Any) -> dict[str, Any]:
 def next_query_seq() -> tuple[int, str] | None:
     """The request's next statement number and its nonce, or None when no bag is
     bound (a worker pass keeps the driver's own query ids)."""
-    bag = _current.get()
+    bag = current()
     if bag is None:
         return None
     bag.ch_seq += 1
@@ -153,7 +261,7 @@ def next_query_seq() -> tuple[int, str] | None:
 
 
 def note_injected(*, facts: int = 0, chunks: int = 0) -> None:
-    bag = _current.get()
+    bag = current()
     if bag is None:
         return
     bag.injected_facts += max(0, int(facts))
@@ -161,7 +269,7 @@ def note_injected(*, facts: int = 0, chunks: int = 0) -> None:
 
 
 def note_schema_skipped(table: str) -> None:
-    bag = _current.get()
+    bag = current()
     if bag is None or not table:
         return
     name = str(table)
@@ -180,6 +288,7 @@ def _int(v: Any) -> int | None:
 
 __all__ = [
     "RequestWork",
+    "admitted_scope",
     "begin",
     "current",
     "mark_stage",

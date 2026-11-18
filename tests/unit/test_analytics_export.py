@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
 from server.cli import analytics_export as cli
+from server.core.event_source import ALL_EVENTS
 from server.insights.app.analytics_export import export_day, name_hash_key, object_key, s3_put
 from server.insights.store.analytics_export import (
     ENTITIES,
@@ -181,10 +182,14 @@ _NEVER = ("memory_key", "value", "args", "subject", "owner_email", "impersonated
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
 def test_statements_export_no_content_and_no_person(entity: str) -> None:
-    sql = ENTITIES[entity]
+    # Input storage names do not leave the export. Every projection after the
+    # explicit physical source must still exclude content and direct identities.
+    sql = ENTITIES[entity].replace(ALL_EVENTS, "event_rows")
+    assert not re.search(r"SELECT\s+\*", sql, re.IGNORECASE)
     for column in _NEVER:
         assert not re.search(rf"\b{column}\b", sql), column
-    rest = re.sub(r"uniqExactIf\((user_id|session_id), \1 != '-'\)", "", sql)
+    rest = re.sub(r"uniqExactIf\((user_id|session_id), mirror_marked = 0 AND \1 != '-'\)", "", sql)
+    rest = re.sub(r"raw\.(user_id|session_id) AS \1", "", rest)
     assert not re.search(r"\b(user_id|session_id)\b", rest)
 
 
@@ -396,12 +401,18 @@ async def test_an_export_leaves_out_a_mirror(entity: str) -> None:
                 ", 'a', '-', '-', 'k', 'v'",
             ),
             (
-                "agent_events",
+                "agent_events_private" if ns == _MIRROR else "agent_events",
                 ", ts, operation, kind",
                 ", '2026-01-02 10:00:00', 'memory.get', 'request'",
             ),
         )
     ]
-    ch = LocalCH(local_ddl("namespaces"), local_ddl("memory"), local_ddl("agent_events"), *rows)
+    ch = LocalCH(
+        local_ddl("namespaces"),
+        local_ddl("memory"),
+        local_ddl("agent_events"),
+        local_ddl("agent_events_private"),
+        *rows,
+    )
     out = await ch.query_all(ENTITIES[entity], {"day": day})
     assert {r["namespace"] for r in out} == {"team"}

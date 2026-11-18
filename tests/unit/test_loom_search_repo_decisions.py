@@ -26,6 +26,7 @@ from server.memory.app.ask.reader_render import render_reader_block
 from server.memory.app.search.scoring import per_key_fetch
 from server.memory.app.search.telemetry import credit_merged_hits
 from server.memory.domain.search_types import SearchHit
+from tests.unit.checked_repo_search_fakes import install_repo_search
 from tests.unit.memory_search_fakes import install_search_fakes
 
 ORG = "acme"
@@ -134,7 +135,7 @@ async def _assemble(
 
     _stub_side_legs(monkeypatch)
     monkeypatch.setattr(fanout, "memory_with_repo_decisions", memory_leg)
-    monkeypatch.setattr(fanout, "knowledge_with_repo_docs", knowledge_leg)
+    install_repo_search(monkeypatch, knowledge_leg)
     return await fanout.search_sections(
         org=ORG,
         namespace=namespace,
@@ -148,6 +149,7 @@ async def _assemble(
         page="",
         explain=explain,
         repo_namespace=TRUNK,
+        tracker_plan=None,
     )
 
 
@@ -692,7 +694,7 @@ async def test_a_later_page_keeps_the_repository_docs_and_skips_the_decisions(
     monkeypatch.setattr("server.observability.capture_consent.narrow_to", narrow_to)
     _stub_side_legs(monkeypatch)
     monkeypatch.setattr(fanout, "memory_with_repo_decisions", memory_leg)
-    monkeypatch.setattr(fanout, "knowledge_with_repo_docs", knowledge_leg)
+    install_repo_search(monkeypatch, knowledge_leg)
     out = await handler.handle_search(
         SearchInput(org=ORG, namespace="me", agent="a", query="why", page="p2")
     )

@@ -89,7 +89,11 @@ def test_admin_route_allows_admin_bearer(
     from server.insights.store import admin as admin_repo
 
     async def fake(
-        since_seconds: int, limit: int, *, filters: dict[str, Any] | None = None
+        since_seconds: int,
+        limit: int,
+        *,
+        filters: dict[str, Any] | None = None,
+        operator: bool = False,
     ) -> list[dict[str, Any]]:
         return []
 

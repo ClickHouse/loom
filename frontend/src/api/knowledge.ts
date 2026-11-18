@@ -9,6 +9,9 @@ import type { Locator } from "../lib/locator";
 // ===== Knowledge =====
 
 export interface KnowledgeEntry {
+  /** Where the document is: the namespace read, or one of the other namespaces a read named.
+   *  A server that predates reading several places may leave it out. */
+  namespace?: string;
   source_uri: string;
   title: string;
   /** User-supplied summary. Rendered as a 2-line excerpt in the Library
@@ -31,6 +34,8 @@ export interface KnowledgeEntry {
 export interface KnowledgeListResponse {
   rows: KnowledgeEntry[];
   next_cursor: string | null;
+  /** The request fields the server did not know (a build a release behind names `namespaces`). */
+  ignored_args?: string[];
 }
 
 export async function listKnowledge(
@@ -43,11 +48,14 @@ export async function listKnowledge(
     fields?: string[];
     /** Only documents whose source_uri starts with one of these. */
     uriPrefix?: string[];
+    /** Also the documents of these namespaces, each read-checked. */
+    namespaces?: string[];
   } & RequestOpts = {},
 ): Promise<KnowledgeListResponse> {
   const body: Record<string, unknown> = {
     org: id.org,
     namespace: id.namespace,
+    ...(opts.namespaces?.length ? { namespaces: opts.namespaces } : {}),
     tags: opts.tags || [],
     // Two or more must all match (a build that predates `tags_every` matches any one).
     ...((opts.tags?.length ?? 0) > 1 ? { tags_every: true } : {}),
@@ -285,6 +293,8 @@ export interface KnowledgeHit {
   block_type?: string;
   locator?: Locator | null;
   keys_matched?: string[];
+  /** The namespace the passage is in, on a search of several. */
+  namespace?: string;
 }
 
 /** The namespace's best `topK` passages that answer `query`, best first (`knowledge.search`). */
@@ -292,11 +302,19 @@ export async function searchKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   query: string,
   topK: number,
-  opts: RequestOpts = {},
+  opts: RequestOpts & { namespaces?: string[] } = {},
 ): Promise<KnowledgeHit[]> {
   const r = await post<{ results: KnowledgeHit[] }>(
     "/v1/knowledge.search",
-    { org: id.org, namespace: id.namespace, query, top_k: topK, namespace_scope: "this" },
+    {
+      org: id.org,
+      namespace: id.namespace,
+      query,
+      top_k: topK,
+      namespace_scope: "this",
+      // Exactly these besides `namespace`, in place of the scope.
+      ...(opts.namespaces?.length ? { namespaces: opts.namespaces } : {}),
+    },
     opts.signal,
   );
   return r.results;

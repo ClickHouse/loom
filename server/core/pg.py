@@ -613,6 +613,16 @@ async def fetchval(sql: str, *args: Any) -> Any:
     return row[0] if row else None
 
 
+async def fetchrow_reset(sql: str) -> Any:
+    """`fetchrow` after RESET ALL, in one transaction (`transaction`, with its rollback and
+    error mapping), so it reads the session's settings as its startup values leave them:
+    a SET is gone, and a pooler (which a cell must not have) cannot swap the server
+    connection between the reset and the read. Three round trips more than `fetchrow`."""
+    async with transaction() as conn:
+        await conn.execute("RESET ALL")
+        return await conn.fetchrow(sql)
+
+
 async def execute(sql: str, *args: Any) -> str:
     async with connection() as conn:
         try:

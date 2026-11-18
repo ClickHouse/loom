@@ -334,16 +334,22 @@ class AuthSettings(BaseModel):
     # `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off.
     cell_probe_port: int = Field(default=0, ge=0, le=65535)
     # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
-    # default router; "" = none: in `enforced`, a new org answers 503.
+    # default router; "" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a
+    # value other than an http(s) URL with a host, a port at most 65535 and no '?' or '#'
+    # refuses the boot.
     cell_router_url: str = ""
     # The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64`
     # (never the length of a SHA-256); any other form is refused at boot. "" = none.
     cell_router_token: Annotated[str, Field(pattern=r"^(?:lcr_[0-9a-f]{128})?$")] = ""
-    # Seconds a whole placement call to the router may take before the request answers 503.
+    # Seconds a whole call to the router may take: a placement call, after which the request
+    # answers 503, and a cell's state read, which is also the margin past its read period
+    # before that read's answer counts as late.
     cell_router_timeout_s: float = Field(default=5.0, gt=0)
     # Seconds (at least 1) between reads of the cell state rows once the first read landed
     # (every second until then), in every process that reads them under the Postgres
-    # authority, and before an org read as not held is read again;
+    # authority, and before an org read as not held is read again; also the most a first
+    # cell's server process waits between reads of the router's state route (with
+    # LOOM_INSTANCE_HEARTBEAT_SECONDS) and the window of a process that reads it on demand.
     # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
     # The router's directory, its own Postgres database (`loom router serve` and
@@ -351,8 +357,10 @@ class AuthSettings(BaseModel):
     router_pg_dsn: str = ""
     # Placement calls one cell may make in a minute, counted by each router replica.
     router_placements_per_minute: int = Field(default=60, ge=1)
-    # Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed
-    # org's lookup answer before reading again; a new credential or host works within this.
+    # Seconds (at least 1) a router replica keeps the cells' credential hashes, a placed
+    # org's lookup answer and the first cell's state-route answer before reading again; a
+    # new credential or host works within this. A cell's processes carry the router's value:
+    # 401s from the state route last this long before the heartbeat's `router` turns false.
     router_directory_cache_s: float = Field(default=5.0, ge=1.0)
     # Org lookups one client address may make in a minute, counted by each router
     # replica (`GET /cells/lookup`).
@@ -670,6 +678,9 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
+    # Additional trusted writer HTTP origins for analyst setup policy observations.
+    # Uses the configured service credentials; missing or duplicate writers refuse.
+    ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
     # A statement that carries a secret, or one run as the analyst, gets its
@@ -2230,6 +2241,29 @@ class KnowledgeSettings(BaseModel):
     # Namespaces one pass groups, at most; the ones with the most misses first.
     knowledge_gaps_max_namespaces: Annotated[int, LIVE] = Field(default=500, ge=1)
 
+    # ---- query-history definitions ----
+    # Permit opt-in ClickHouse query-history sources to queue definition drafts.
+    knowledge_query_history_enabled: bool = False
+    # Distinct initial ClickHouse accounts required before drafting a query group.
+    knowledge_query_history_min_users: Annotated[int, LIVE] = Field(default=3, ge=3)
+    # Drafts one source may queue in a worker turn, at most.
+    knowledge_query_history_max_drafts: Annotated[int, LIVE] = Field(default=20, ge=1, le=100)
+    # Most-used query groups inspected per source turn before skipping existing drafts.
+    knowledge_query_history_max_groups: Annotated[int, LIVE] = Field(default=200, ge=1, le=1000)
+    # Days of finished SELECT query history a turn groups.
+    knowledge_query_history_window_days: Annotated[int, LIVE] = Field(default=7, ge=1, le=30)
+    # Seconds allowed for one query-history source read.
+    knowledge_query_history_read_timeout_s: Annotated[float, LIVE] = Field(default=30, gt=0, le=120)
+    # Deadline of one query-history pass; it starts no new group after half this budget.
+    knowledge_query_history_max_pass_seconds: float = Field(default=120.0, ge=30.0, le=600.0)
+    # Seconds between query-history passes.
+    knowledge_query_history_interval_seconds: int = Field(default=3600, ge=300)
+    # Sources one pass reads, at most; each turn is separately time bounded.
+    knowledge_query_history_max_sources: Annotated[int, LIVE] = Field(default=100, ge=1, le=1000)
+
+    # Query-history circuit states kept per process, at most; older sources are evicted first.
+    knowledge_query_history_max_breakers: int = Field(default=1000, ge=1, le=100000)
+
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
     # chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller
@@ -2296,6 +2330,12 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
+    # Seconds one connected-account OAuth request may take, including its response.
+    # The caller's remaining deadline can shorten this bound.
+    knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)
+    # Bytes read from a connected-account token or identity response; larger metadata
+    # replies are refused before parsing.
+    knowledge_connected_oauth_response_max_bytes: int = Field(default=64 * 1024, ge=1024)
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
@@ -2308,6 +2348,24 @@ class KnowledgeSettings(BaseModel):
     # credential, spends embedding calls on every changed document and model calls
     # mining it for decisions.
     knowledge_source_sync_enabled: bool = False
+    # Require protected automatic session capture and persist deployment privacy state.
+    # Off does not lift protection while the deployment latch remains set.
+    knowledge_mirrored_sources_enabled: bool = False
+    # Mirrored reads require a complete listing and group observation within this
+    # many seconds; missing or older evidence admits nobody.
+    knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
+    # Enable optional source push setup, callbacks and Drive renewal; false keeps polling only.
+    knowledge_source_push_enabled: bool = False
+    # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
+    knowledge_source_push_interval_seconds: int = Field(default=300, ge=60)
+    # Seconds one push setup or Drive renewal may spend on provider work, before cleanup.
+    knowledge_source_push_provider_timeout_s: float = Field(default=40.0, gt=0)
+    # Seconds allowed to stop one superseded or unpublished Drive channel.
+    knowledge_source_push_stop_timeout_s: float = Field(default=2.0, gt=0)
+    # Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait.
+    knowledge_source_push_cleanup_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows.
+    knowledge_source_push_max_pass_seconds: float = Field(default=120.0, gt=0)
     # Seconds between sync passes while there are sources.
     knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
     # Seconds between passes that found no source to sync; one idle sleep plus one
@@ -2317,9 +2375,15 @@ class KnowledgeSettings(BaseModel):
     # at three quarters of it. At least 180: 90 for the sync, then 60 of read time for
     # one document's extraction and 30 for its writes before the deadline.
     knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=180)
-    # Documents one pass fetches, writes, retires or mines for decisions across all
-    # sources; the rest wait for the next pass.
+    # Documents one pass fetches, writes, retires or mines for decisions across the
+    # namespace sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents one pass fetches, writes and retires for the mirrored sources, apart from
+    # the namespace sources' per-pass bound, so a mirror's size never takes their share.
+    knowledge_source_mirror_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents of stopped mirrored sources retired per cleanup pass, independently of
+    # the content-sync budget. Cleanup continues while syncing is switched off.
+    knowledge_source_retire_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
     # turn tries no new file, notes how many as `too_many_documents`, and still updates
     # and retires. At most 200,000: each read of the stored copies grows with its square.
@@ -2353,6 +2417,31 @@ class KnowledgeSettings(BaseModel):
         return {url.rstrip("/"): token for url, token in items}
 
     @model_validator(mode="after")
+    def _check_source_push_budgets(self) -> KnowledgeSettings:
+        provider = self.knowledge_source_push_provider_timeout_s
+        cleanup = self.knowledge_source_push_cleanup_timeout_s
+        if self.knowledge_source_push_stop_timeout_s > cleanup:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S must not exceed "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
+            )
+        # holding() permits work for 40% of renew_drive's 120-second lease.
+        # Keep this window in sync with leases.work_left; the regression checks both.
+        if provider + cleanup >= 48:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S must stay below the "
+                "48-second renewal work window"
+            )
+        if provider + 2 * cleanup >= self.knowledge_source_push_max_pass_seconds:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS must exceed "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus twice "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_document_extractors(self) -> KnowledgeSettings:
         """Every extractor URL is http(s) with a host. The error names the entry,
         never the URL (it can carry a credential)."""
@@ -2375,7 +2464,7 @@ class KnowledgeSettings(BaseModel):
             f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r}": url for key, url in routes.items()
         }
         for name, url in urls.items():
-            if url and not _is_http_url(url):
+            if url and not is_http_url(url):
                 raise ValueError(f"{name} is not an http(s) URL")
         # A token for a URL no route names would leave that service on the shared
         # token without a word: refused, as is a token that is not a string.
@@ -2499,6 +2588,9 @@ class MemorySettings(BaseModel):
     # Most shared definitions a namespace holds; a promotion past it is refused
     # (docs/concepts/identities-and-namespaces.md).
     memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
+    # How much longer memory.search waits for its term leg once the other legs are done;
+    # past it the leg adds nothing (docs/concepts/identities-and-namespaces.md).
+    memory_term_leg_wait_ms: Annotated[int, LIVE] = Field(default=100, ge=1)
 
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
@@ -4142,6 +4234,9 @@ class ObservabilitySettings(BaseModel):
     # Metric export cadence, seconds. Spans keep their own 3 s batch delay,
     # which bounds span loss at SIGTERM.
     otel_metrics_export_interval_s: int = 60
+    # Most series per metric; past it, new attribute sets join one `otel.metric.overflow`
+    # series. Request metrics need about operations x namespaces x transports x outcomes.
+    otel_metrics_cardinality_limit: int = Field(default=20_000, ge=1)
     # Delta temporality for counters and histograms (an idle synchronous
     # series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md)
     # read cumulative rows — flip together with them.
@@ -4284,10 +4379,11 @@ def url_host(url: str) -> str:
         return ""
 
 
-def _is_http_url(url: str) -> bool:
-    """An http(s) base URL with a host that the extractor client's httpx can
-    parse, and no query or fragment (the client appends `/v1/...`): a bad one is
-    refused at load, not on the first call."""
+def is_http_url(url: str) -> bool:
+    """Whether `url` is an http(s) base URL a client can append paths to: httpx parses it,
+    with a host and a port at most 65535, and it holds no `?` or `#` (no query or fragment).
+    A setting holding any other value is refused before its first call (at load, or at boot
+    for LOOM_CELL_ROUTER_URL)."""
     try:
         parsed = httpx.URL(url)
         urlsplit(url).port  # noqa: B018 — over 65535 raises, which httpx lets by
@@ -5087,6 +5183,11 @@ class RuntimeSettings(BaseModel):
     # namespace whose rolling 24 h cost reached it. Overridden per namespace by
     # loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers.
     default_daily_cost_cap_usd: float = 1.0
+    # Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it.
+    # A namespace's daily_user_cost_cap_usd overrides this default when positive.
+    default_daily_user_cost_cap_usd: Annotated[float, LIVE] = Field(default=0.0, ge=0)
+    # Fraction of a cap that warns its namespace's configured inbox on the next check.
+    cost_budget_alert_share: Annotated[float, LIVE] = Field(default=0.8, gt=0, le=1)
     # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
     # embeddings, and rerank only as named, since a reranker is a model call.
     reads_llm_free: bool = False
@@ -5177,6 +5278,20 @@ class RuntimeSettings(BaseModel):
     # outside trust-network, the dev signing secret or a weak root, gateway or end-user
     # key. Only for a port others cannot reach.
     allow_insecure: bool = False
+    # PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a
+    # renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP.
+    tls_cert_file: str = ""
+    # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused.
+    tls_key_file: str = ""
+    # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3".
+    tls_min_version: Literal["1.2", "1.3"] = "1.2"
+
+    @model_validator(mode="after")
+    def _check_tls_pair(self) -> RuntimeSettings:
+        """A certificate without its key, or a key without its certificate, serves nothing."""
+        if bool(self.tls_cert_file) != bool(self.tls_key_file):
+            raise ValueError("set LOOM_TLS_CERT_FILE and LOOM_TLS_KEY_FILE together, or neither")
+        return self
 
     def workers_mode(self) -> str:
         """`background_workers` as this process runs it: `auto` outside the
@@ -6085,6 +6200,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # most the listing's 5 s bound, and a service it could not read is not waited for
     # again for a minute.
     "knowledge.formats": 5500,
+    "knowledge.gaps.draft": 30000,
+    "knowledge.query_history.add": 30000,
+    "knowledge.query_history.list": 250,
+    "knowledge.query_history.remove": 1000,
     "knowledge.gaps.list": 300,
     "knowledge.get": 30,
     "knowledge.ingest": 60,
@@ -6117,6 +6236,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,
     "knowledge.source.sync_now": 300,
+    "knowledge.source.push_configure": 60000,
+    "knowledge.source.push_status": 1000,
+    "knowledge.source.push_confirm": 1000,
     "knowledge.source.update": 60000,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
@@ -6485,6 +6607,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
 # input stays a formula at its call.
 
 LLM_MAX_TOKENS: dict[str, int] = {
+    # The private metric definition drafted from eligible gap or query-history evidence.
+    "definition_draft": 1600,
     # code.ask: the synthesized answer; part of its cached answers' version, so a change
     # marks them stale.
     "code_answer_synth": 900,

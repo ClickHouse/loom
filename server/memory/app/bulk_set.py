@@ -1469,7 +1469,11 @@ async def _batched_peers(
         items.append((mt, str(entry.memory_key), vec if mt in floors else [], reach))
     try:
         return await conflicts.candidate_rows_many(
-            org=input.org, namespace=input.namespace, items=items, batch=batch
+            org=input.org,
+            namespace=input.namespace,
+            items=items,
+            batch=batch,
+            user_id=input.user_id,
         )
     except Exception as e:  # noqa: BLE001 — each fact reads its own peers
         log.warning("bulk_set: batched candidate lookup failed: %s", e)
@@ -1550,6 +1554,7 @@ async def _bulk_conflict_verdicts(
                     new_value=serialized,
                     new_embedding=vec,
                     new_run_id=str(getattr(input, "run_id", "") or "-"),
+                    new_user_id=input.user_id,
                     new_valid_at=(
                         getattr(entry, "valid_at", None) or getattr(input, "valid_at", None)
                     ),

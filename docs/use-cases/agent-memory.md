@@ -26,6 +26,9 @@ agent, or by a person at the dashboard. This page shows how that works and where
   other agents saved there.
   [Connect a coding agent](../getting-started/connect-a-coding-agent.md) ·
   [MCP clients](../features/integrations/mcp-clients.md)
+- **Memories linked to the code they are about.** A coding agent's lessons follow the
+  definitions they name through renames and edits, and appear when an agent reads that
+  code. [Memory linked to code](memory-linked-to-code.md)
 - **Per-user memory for your own agent.** The Python and TypeScript SDKs write and read
   memory per end user. [Your first agent](../getting-started/first-agent.md)
 
@@ -37,6 +40,28 @@ prompt tokens (excluding the one-time cost of building the memory); the accuracy
 difference is not statistically established.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom)
 
+## A research assistant that remembers your reading preferences
+
+After the [quickstart](../getting-started/quickstart.md), connect Claude Desktop or
+Cursor through the dashboard's [client setup](../getting-started/connect-a-coding-agent.md#how-do-i-give-cursor-or-another-mcp-client-shared-memory).
+The tools work with the stock LLM: your chat app supplies the model that calls them.
+
+1. Tell the assistant: “Use `loom_memory_set` to save my research preference under
+   `example/research/source-policy`: include peer-reviewed papers in my reading list.”
+2. Check that the tool response contains a `memory_id`. Open **Memories** in the
+   dashboard and confirm the value and writer. If the tool refuses the write, resolve
+   its reported problem before continuing.
+3. Start a fresh chat. Tell the assistant: “Use `loom_memory_get` to read
+   `example/research/source-policy`, then tell me which sources belong in my reading list.”
+   Check that the tool returns `found: true` and the preference you saved.
+4. Ask the assistant to delete that example key when finished, then confirm the
+   dashboard no longer lists it as a live memory.
+
+The second chat reads a stored preference without the first chat's transcript. This
+checks persistence and client wiring; it does not test whether the assistant can judge
+papers or answer research questions. For searches over the papers themselves, use
+[document search](document-search.md).
+
 ## Start
 
 [Quickstart](../getting-started/quickstart.md) boots the local stack and saves a first
@@ -44,3 +69,27 @@ memory over HTTP, Python and MCP. [When Loom does not fit](../getting-started/ov
 covers the cases an in-process memory library serves better.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).
+
+Use a [Microsoft Agent Framework context provider](../features/integrations/frameworks.md#microsoft-agent-framework)
+to recall user facts before a run and record the conversation after it.
+
+Store the [Claude API memory tool](../features/integrations/frameworks.md#claude-api-memory-tool)
+file tree in Loom so agents in a namespace can share its contents.
+
+Keep [OpenAI Agents session history](../features/integrations/frameworks.md#openai-agents-sdk)
+in Loom across agent runs and handoffs.
+
+For a visual workflow, [n8n nodes](../features/integrations/frameworks.md#n8n) connect an
+AI Agent to Loom conversation history, durable memories and knowledge search.
+
+Use the [Dify tools plugin](../features/integrations/frameworks.md#dify) to save facts,
+recall a user's memories and search app documents from a workflow.
+
+Use [Google ADK memory](../features/integrations/frameworks.md#google-adk) to recall
+per-user facts and shared knowledge through ADK memory tools.
+
+Use a [Haystack document store and retriever](../features/integrations/frameworks.md#haystack)
+to search documents from a pipeline while keeping them in your Loom deployment.
+
+Use [Agno user memories](../features/integrations/frameworks.md#agno) through its
+native memory manager with a Loom database bound to each end user.

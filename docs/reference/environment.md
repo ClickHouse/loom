@@ -44,7 +44,9 @@ them from its environment only, not from `.env` or `LOOM_ENV_FILE` (compose's
 `env_file:` sets them in the environment), except the settings fields
 `LOOM_WEB_WORKERS`, `LOOM_TRUSTED_PROXIES` and `LOOM_RUNTIME_DIR`, which it
 resolves as the server loads them: the environment, then the env file, then the
-[settings file](configuration.md):
+[settings file](configuration.md). uvicorn's own `UVICORN_<OPTION>` variables are not
+read: the web tier refuses to start while one is set for a uvicorn option that
+`scripts/serve.sh` does not pass:
 
 | Variable                   | Default              | Meaning                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

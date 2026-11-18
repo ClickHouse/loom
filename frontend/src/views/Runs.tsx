@@ -31,6 +31,7 @@ import {
   TipTarget,
   useClamped,
 } from "../components/ui";
+import { CopyButton } from "../components/CopyButton";
 import { IconButton } from "../components/IconButton";
 import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
 import { MenuTrigger } from "../components/ui/Menu";
@@ -1038,7 +1039,12 @@ export function Runs() {
           openerRef.current?.focus();
         }}
       >
-        <div className="text-xs text-text-muted font-mono truncate">{open?.run_id}</div>
+        {/* The ids show cut to fit; each copy button copies the whole id, the value a
+            person pastes into a run lookup or a log search. */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="text-xs text-text-muted font-mono truncate min-w-0">{open?.run_id}</div>
+          {open?.run_id && <CopyButton text={open.run_id} label="Copy run id" className="shrink-0" />}
+        </div>
         {open && (
           <div className="text-xs text-text-muted mt-1 mb-4 flex items-center gap-2 flex-wrap">
             <StatusBadge status={open.status} inferred={metaBool(open.metadata, "implicit")} />
@@ -1047,6 +1053,7 @@ export function Runs() {
               <>
                 <span>·</span>
                 <span className="font-mono">session {truncate(open.session_id, 24)}</span>
+                <CopyButton text={open.session_id} label="Copy session id" className="shrink-0" />
               </>
             )}
             <span>·</span>

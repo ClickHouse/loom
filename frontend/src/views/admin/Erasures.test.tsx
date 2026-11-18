@@ -346,4 +346,33 @@ describe("ErasuresPanel", () => {
     expect(within(dialog).queryByText(/loom.chunks/)).toBeNull();
     expect(api.getErasureStatus).toHaveBeenCalledWith("e1", expect.anything());
   });
+
+  it.each(["failed", "completed"] as const)(
+    "shows unavailable counts for a terminal %s receipt without evidence",
+    async (status) => {
+      vi.mocked(api.listErasures).mockResolvedValueOnce({ rows: [ROW] });
+      vi.mocked(api.getErasureStatus).mockResolvedValueOnce({
+        found: true,
+        erasure_id: "e1",
+        scope_type: "namespace",
+        scope_value: "ns1",
+        requester: "alice",
+        status,
+        current_step: 3,
+        requested_at: "2000-01-01 00:00:00",
+        completed_at: "2000-01-01 00:00:09",
+        failure_reason: status === "failed" ? "ERASURE_FAILED" : null,
+        residue_count: 0,
+        residue: {},
+        verified_at: null,
+      });
+      render(<ErasuresPanel />);
+      fireEvent.click(await screen.findByRole("button", { name: /Details of the erasure of namespace=ns1/ }));
+      const dialog = await screen.findByRole("dialog", { name: "Erasure details" });
+      expect(await within(dialog).findByText("Counts unavailable")).toBeInTheDocument();
+      expect(within(dialog).queryByText("Nothing")).toBeNull();
+      expect(within(dialog).queryByText("Verified")).toBeNull();
+      expect(within(dialog).queryByText("Not checked yet")).toBeNull();
+    },
+  );
 });

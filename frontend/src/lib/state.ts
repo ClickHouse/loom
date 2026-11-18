@@ -96,8 +96,8 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
   // the memory in the drawer, the document in the preview, the thread in the replay.
   memories: ["memory"],
-  // The Library also carries the collection it shows (`?collection=`).
-  knowledge: ["doc", "collection"],
+  // The Library also carries the place it shows (`?collection=`, or `?place=all`).
+  knowledge: ["doc", "collection", "place"],
   sessions: ["thread"],
   // The Help view's page of the docs (`?page=features/knowledge.md`); its section is the
   // URL's anchor.

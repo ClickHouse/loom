@@ -84,6 +84,7 @@ STATE_TABLES: dict[str, str] = {
     "loom.task_inboxes": "FINAL WHERE org = {org:String} AND owner_namespace = {ns:String}"
     " AND is_deleted = 0",
     "loom.knowledge_sources": f"FINAL WHERE {_AT} AND active",
+    "loom.query_history_sources": f"FINAL WHERE {_AT} AND tombstoned_at IS NULL",
     # A mirror outlives a deleted name until a namespace erasure: a new owner of the name
     # would inherit its mirrored documents.
     "loom.knowledge_mirrors": f"FINAL WHERE {_AT} AND NOT deleted",

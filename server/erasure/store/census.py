@@ -83,6 +83,9 @@ class Substrate:
 _HOLDS_TEXT = "(answer != '' OR citations != '')"
 
 _CENSUS: tuple[Substrate, ...] = (
+    # Sealed provider setup is namespace configuration; retirement fences writers
+    # before the settled deletion, including historical credential versions.
+    Substrate("loom.knowledge_source_push", "1", None, "knowledge_source_push.delete", None),
     # In the user scope `memory.tombstone` only stamps these rows, which the later steps
     # read the user's keys from; `memory.retire` owns them and, in a purge, deletes them.
     # A live summary built from the user's memories counts too: `memory.retire` retires
@@ -315,6 +318,12 @@ _CENSUS: tuple[Substrate, ...] = (
     # A gap names no user, so the census counts it in the namespace scope only; the
     # user's search_misses.delete step also deletes the builds of the user's namespaces.
     Substrate("loom.knowledge_gaps", "1", None, "knowledge_gaps.delete", None),
+    # When each mirrored source last listed, under its mirror's name: names and times.
+    Substrate(
+        "loom.knowledge_source_listings", "1", None, "knowledge_source_listings.delete", None
+    ),
+    # Source-scoped ACL evidence, under the mirror: retain none after its erasure.
+    Substrate("loom.knowledge_group_members", "1", None, "knowledge_group_members.delete", None),
     # A replayed response body quotes whatever the op returned. The rows name
     # the caller's org and subject but no namespace and no end user, so both
     # scopes clear and count the org's rows (a cache — the cost is one miss
@@ -376,7 +385,7 @@ _CENSUS: tuple[Substrate, ...] = (
     # Task inbox plane: the brief and the notes quote source
     # and issue text; keyed on the inbox's owner namespace, no user axis.
     Substrate("loom.tasks", "is_deleted = 0", None, "tasks.delete", None),
-    Substrate("loom.task_events", "1", None, "tasks.delete", None, final=False),
+    Substrate("loom.task_events", "1", UID, "tasks.delete", "tasks.delete", final=False),
     Substrate("loom.agent_runs", "1", UID, "agent_runs.delete", "agent_runs.delete"),
     Substrate("loom.operator_edges", LIVE, None, "curation.tombstone", None),
     Substrate("loom.conflict_allowlist", LIVE, None, "curation.tombstone", None),
@@ -514,7 +523,7 @@ CODE_INDEX_STEP_ONLY_TABLES: tuple[str, ...] = (
 
 STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
-    "agent_events.scrub": ("loom.agent_events",),
+    "agent_events.scrub": ("loom.agent_events", "loom.agent_events_private"),
     "subject_last_seen.delete": ("loom.subject_last_seen",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
     "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
@@ -534,6 +543,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # Deactivates the namespace's sources and clears their credentials: configuration
     # an admin wrote (ids, names, a filter's name fragment), no memory or document content.
     "knowledge_sources.retire": ("loom.knowledge_sources",),
+    # Connection metadata and sealed credentials, no query text; removed so the source
+    # cannot draft again into the erased namespace.
+    "query_history_sources.delete": ("loom.query_history_sources",),
     # Which `acl-` namespaces hold a namespace's mirrored documents: names only, no
     # content. Every step also purges the mirrors; this one writes them `deleted`.
     "knowledge_mirrors.forget": ("loom.knowledge_mirrors",),
@@ -549,6 +561,10 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
 # a CREATE TABLE that is in none of the three lists, so a new table is
 # classified the day it lands.
 NO_MEMORY_CONTENT: dict[str, str] = {
+    "loom.knowledge_mirror_latch": (
+        "One deployment-wide enablement timestamp; no identity or content. Tenant erasure "
+        "cannot lift protection; only the deployment mirror eraser clears this row last."
+    ),
     "loom.analysis_canary": (
         "One constant row in a reserved scope (org '', namespace '') that insights.query's "
         "probe reads; no content."
@@ -664,7 +680,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.machine_identities": "auth plane: registered bots and their public keys; no memory.",
     "loom.org_model_calls": "whether an org's data may go to a model, and who said so; no memory.",
     "loom.extraction_policies": "the operator's rules for what extraction stores; no memory.",
-    "loom.sso_links": "auth plane: which password accounts SSO sign-ins reach; no memory.",
+    "loom.sso_links": (
+        "auth plane: verified account links and signed issuer/domain evidence; no memory content."
+    ),
     "loom.scim_users": (
         "auth plane: the people the identity provider provisions (email, the emails "
         "list it sent, userName, active) and the subjects a deactivation revoked; no memory."

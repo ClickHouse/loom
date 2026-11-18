@@ -5,8 +5,9 @@ durable. Use it when the caller cannot decide inline what to save: raw API consu
 batch importers, and coding-agent hooks that capture a session at its end. A caller that
 already knows the fact should call `memory.set` ([writing](./writing.md)). Extraction
 writes through `memory.bulk_set`, so every extracted fact meets the same blacklist, lock,
-pin and conflict checks. It needs a real LLM provider; the stock fake provider extracts
-nothing.
+pin and conflict checks. Configure a real LLM provider for meaningful extraction. The
+stock fake provider is a deterministic development/test client that can synthesize
+facts.
 
 ## What a call does
 

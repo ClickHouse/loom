@@ -384,8 +384,8 @@ class MemorySetInput(_Identity):
     # Call the namespace's classify_endpoint to derive memory_type from `value`.
     # Classifier wins iff non-empty and inside tag_registry; else caller's value. Fail-open.
     classify: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
-    # Optimistic-concurrency precondition: 409 PRECONDITION_FAILED if the live
-    # row's SHA-256 doesn't match. Empty = skip the check.
+    # Require the live row's SHA-256, or 'absent' for no unexpired row under this
+    # exact identity (concrete agent required); mismatch is 409, empty skips checking.
     if_match_sha256: str = ""
     # Server-enforced char cap on the stringified value (422 on exceed). Persists
     # on the row so a later set without char_limit reuses the stored cap. NULL = no cap.
@@ -1193,12 +1193,13 @@ class MemoryRedactOutput(BaseModel):
     # UTC time of the scrub; None when nothing was redacted.
     redacted_at: datetime | None = None
     # The cached answers (the model response cache and code.ask's) whose window or quoted
-    # memory keys held the redacted key or a profile key the redact reached, deleted with
-    # it: the stored text that quoted the value. A profile key is shared by every user's
-    # profile, so its rows are deleted across the org.
+    # memory keys held the redacted key, a profile key the redact reached or a shared
+    # copy's key, deleted with it: the stored text that quoted the value. A profile key is
+    # shared by every user's profile, so its rows are deleted across the org.
     cache_rows_deleted: int = 0
-    # Stored `memory.ask` precedents that quoted the redacted key or a profile key the
-    # redact reached, deleted with it, across the org for a profile key.
+    # Stored `memory.ask` precedents that quoted the redacted key, a profile key the
+    # redact reached or a shared copy's key, deleted with it, across the org for a
+    # profile key.
     precedent_rows_deleted: int = 0
 
 

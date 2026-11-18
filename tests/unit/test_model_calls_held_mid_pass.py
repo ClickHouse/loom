@@ -150,7 +150,7 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
     async def in_order(repo: Any, org: str, ns: str, *a: Any) -> list[str]:
         return list(paths)
 
-    async def under_cap(org: str, ns: str) -> bool:
+    async def under_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     from server.code.store import index as code_index
@@ -514,7 +514,9 @@ def test_a_bulk_write_answers_a_held_conflict_check(monkeypatch, error) -> None:
     monkeypatch.setattr(cf, "namespace_conflict_policy", policy)
     monkeypatch.setattr(cf, "_resolve_threshold", threshold)
     entry = SimpleNamespace(memory_type="semantic", memory_key="k", valid_at=None)
-    put = SimpleNamespace(org="acme", namespace="n", agent="a", run_id="-", valid_at=None)
+    put = SimpleNamespace(
+        org="acme", namespace="n", agent="a", user_id="-", run_id="-", valid_at=None
+    )
     with pytest.raises(type(error)):  # not "unchecked": the org's write is held
         asyncio.run(
             bulk_set._bulk_conflict_verdicts(

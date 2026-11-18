@@ -1,7 +1,8 @@
 # Code index operations
 
-The code index runs only when an operator enables its workers and configures
-repositories. Every `code_*` worker except `code_coverage_notify` and
+This page covers how to enable the code index workers, configure repositories and keep
+the index current; the code index runs only when an operator enables its workers and
+configures repositories. Every `code_*` worker except `code_coverage_notify` and
 `code_backport_gaps` is off by default. What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).

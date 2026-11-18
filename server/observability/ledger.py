@@ -10,7 +10,9 @@ way.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
@@ -118,6 +120,34 @@ def _attribution_fields(
         "consumer_source": consumer_source,
         "traffic_class": traffic_class or "",
     }
+
+
+def _dispatch_event(event: AgentEvent) -> bool:
+    # Deliver the captured row through required, policy-witness or queued work.
+    from server.observability.events import for_this_cell
+
+    event = for_this_cell(event)
+    if event.kind == "request" and event.mirror_marked:
+        from server.core import request_tail, request_work
+        from server.core.diagnostics import private_work
+        from server.observability.events import write_marked_request_event
+
+        if not request_work.claim_marked_event():
+            return False
+
+        async def commit_marked_event() -> None:
+            with private_work():
+                await write_marked_request_event(event)
+
+        try:
+            if not request_tail.defer_required(commit_marked_event):
+                raise request_tail.RequiredTailError()
+        except BaseException:  # failed registration stays fatal even after its claim
+            request_tail.fail_required()
+            raise
+    elif _event_hold is None or not _event_hold(event):
+        get_emitter().emit(event)
+    return True
 
 
 def emit_agent_event(
@@ -228,6 +258,8 @@ def emit_agent_event(
     if attribution["consumer_source"]:
         args["consumer_source"] = attribution["consumer_source"]
 
+    from server.core.request_work import mirror_marked
+
     event = AgentEvent(
         ts=datetime.now(UTC),
         trace_id=trace_id,
@@ -262,13 +294,10 @@ def emit_agent_event(
         slo_class=slo_class,
         status_class=sli.row_status(success, error_code, error, server_fault=server_fault),
         budget_ms=budget_ms,
+        mirror_marked=mirror_marked(),
     )
-    # The same row on both paths: the policy witness writes the one it holds itself.
-    from server.observability.events import for_this_cell
-
-    event = for_this_cell(event)
-    if _event_hold is None or not _event_hold(event):
-        get_emitter().emit(event)
+    if not _dispatch_event(event):
+        return
     # Same numbers as OTel counters, so spend trends live beside latency and
     # retrieval quality instead of only in agent_events. Both transports reach
     # here, so this covers HTTP and MCP in one place. Never raises.
@@ -289,3 +318,64 @@ def emit_agent_event(
         )
     except Exception:  # noqa: BLE001 — cost metrics must never fail a request
         pass
+
+
+def _capture_interrupted_call(metadata: dict[str, Any], began: float) -> bool:
+    from server.core import request_tail, request_work
+
+    try:
+        if not request_work.marked_event_pending():
+            return False
+        emit_agent_event(
+            **metadata,
+            latency_ms=int((time.perf_counter() - began) * 1000),
+            success=False,
+            error_code="REQUEST_INTERRUPTED",
+        )
+    except BaseException:  # noqa: BLE001 — required capture failure retains no private exception
+        request_tail.fail_required()
+        raise request_tail.RequiredTailError() from None
+    return True
+
+
+@contextmanager
+def required_call_exit(
+    *,
+    op_name: str,
+    identity: dict[str, Any],
+    request_id: str,
+    run_id: str,
+    transport: str,
+    slo_class: str = "",
+    budget_ms: int = 0,
+    impersonated_by: str = "",
+) -> Iterator[None]:
+    """Capture pending marked spend on exit; the outer request tail owns settlement.
+
+    REQUEST_INTERRUPTED is a constant ledger failure, never a new wire error.
+    Keep only resolved attribution, not private arguments, results or exceptions.
+    """
+    from server.core.request_tail import RequiredTailError
+
+    metadata: dict[str, Any] = {
+        "op_name": op_name,
+        "identity": dict(identity),
+        "request_id": request_id,
+        "raw_args": {"run_id": run_id},
+        "transport": transport,
+        "slo_class": slo_class,
+        "budget_ms": budget_ms,
+        "impersonated_by": impersonated_by,
+    }
+    began = time.perf_counter()
+    try:
+        yield
+    except BaseException:  # preserve primary control while retaining mandatory failure
+        try:
+            _capture_interrupted_call(metadata, began)
+        except BaseException:  # noqa: BLE001 — the capture helper already latched required failure
+            pass
+        raise
+    else:
+        if _capture_interrupted_call(metadata, began):
+            raise RequiredTailError() from None

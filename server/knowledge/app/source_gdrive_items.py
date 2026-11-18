@@ -130,6 +130,7 @@ async def list_items(
     include: list[str],
     *,
     modified_after: str = "",
+    fields: str = gdrive.LISTED,
     pace_s: float = gdrive.PAGE_PACE_S,
     out_of_time: Callable[[], bool] = lambda: False,
 ) -> Listing:
@@ -141,7 +142,8 @@ async def list_items(
     come with the next full listing); once `out_of_time()`, no further walk level,
     folder listing or other item starts, and the listing records that it ran out, so
     the turn keeps its stamp and lists again. A `file` item is one metadata read on
-    every listing, an incremental one too."""
+    every listing, an incremental one too. `fields`: what is read of each file
+    (`gdrive.LISTED_WITH_PERMISSIONS` adds its permissions)."""
     out = Listing(mime_types=include_mime_types(include))
     files: dict[str, dict[str, Any]] = {}
 
@@ -157,7 +159,12 @@ async def list_items(
         out.ran_out = True
         return out
     found, whole = await gdrive.list_all(
-        token, sorted(out.folders), out.mime_types, modified_after=modified_after, pace_s=pace_s
+        token,
+        sorted(out.folders),
+        out.mime_types,
+        modified_after=modified_after,
+        fields=fields,
+        pace_s=pace_s,
     )
     add(found)
     out.whole = out.whole and whole
@@ -174,6 +181,7 @@ async def list_items(
                     gdrive.drive_query(out.mime_types),
                     drive_id=item["id"],
                     modified_after=modified_after,
+                    fields=fields,
                     pace_s=pace_s,
                 )
             except gdrive.NotFound:
@@ -191,13 +199,14 @@ async def list_items(
                 token,
                 gdrive.filter_query(item, mime_types),
                 modified_after=modified_after,
+                fields=fields,
                 pace_s=pace_s,
             )
             add(found)
             out.whole = out.whole and whole
         elif item["type"] == "file":
             out.file_ids.add(item["id"])
-            meta = await _file_item(token, n, item["id"], out)
+            meta = await _file_item(token, n, item["id"], out, fields)
             if meta and not (
                 modified_after and str(meta.get("modifiedTime") or "") <= modified_after
             ):
@@ -206,11 +215,13 @@ async def list_items(
     return out
 
 
-async def _file_item(token: str, n: int, file_id: str, out: Listing) -> dict[str, Any] | None:
+async def _file_item(
+    token: str, n: int, file_id: str, out: Listing, fields: str
+) -> dict[str, Any] | None:
     """The metadata of the `file` item `n`, or None with a note on `out` when it lists
     nothing (gone, trashed, or of a kind the source does not read)."""
     try:
-        meta = await gdrive.file_meta(token, file_id)
+        meta = await gdrive.file_meta(token, file_id, fields=fields)
     except gdrive.NotFound:
         out.notes.append(f"item {n}: http_404")
         return None

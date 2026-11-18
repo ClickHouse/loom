@@ -33,11 +33,12 @@ _COLUMNS = (
     "requested_at",
     "completed_at",
     "abandoned_at",
+    "mirror_marked",
 )
 # ClickHouse's ledger rows in this ledger's shape: a terminal state only when it is one.
 _CH_ROWS = (
     "SELECT org, id, scope_type, scope_value, purge, requester, toString(urgency) AS urgency, "
-    "requested_at, "
+    "requested_at, mirror_marked, "
     "if(status = 'completed', completed_at, NULL) AS completed_at, "
     "if(status = 'failed' AND startsWith(failure_reason, {abandoned:String}), completed_at, "
     "NULL) AS abandoned_at FROM loom.erasure_requests FINAL "
@@ -49,11 +50,13 @@ _OPEN_CHECK_AFTER = timedelta(minutes=10)
 
 async def record(row: Mapping[str, Any]) -> None:
     """The ledger row of a saga being registered (`saga.begin_erasure`); a second
-    registration of one id keeps the first."""
+    registration keeps its fields and can only promote its privacy mark."""
     await pg.execute(
-        "INSERT INTO loom.erasure_ledger (org, id, scope_type, scope_value, purge, requester, "
-        "urgency, requested_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
-        "ON CONFLICT (org, id) DO NOTHING",
+        "INSERT INTO loom.erasure_ledger AS l (org, id, scope_type, scope_value, purge, requester, "
+        "urgency, requested_at, mirror_marked) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) "
+        "ON CONFLICT (org, id) DO UPDATE SET "
+        "mirror_marked = l.mirror_marked OR EXCLUDED.mirror_marked "
+        "WHERE NOT l.mirror_marked AND EXCLUDED.mirror_marked",
         row["org"],
         UUID(str(row["id"])),
         row["scope_type"],
@@ -62,6 +65,7 @@ async def record(row: Mapping[str, Any]) -> None:
         str(row.get("requester") or ""),
         str(row.get("urgency") or "normal"),
         as_aware_utc(row["requested_at"]),
+        bool(row.get("mirror_marked")),
     )
 
 
@@ -190,13 +194,19 @@ async def _upsert(rows: Sequence[Mapping[str, Any]]) -> int:
     cols = [[r[c] for r in rows] for c in _COLUMNS]
     done = await pg.execute(
         "INSERT INTO loom.erasure_ledger AS l (org, id, scope_type, scope_value, purge, "
-        "requester, urgency, requested_at, completed_at, abandoned_at) "
+        "requester, urgency, requested_at, completed_at, abandoned_at, mirror_marked) "
         "SELECT * FROM unnest($1::text[], $2::uuid[], $3::text[], $4::text[], $5::bool[], "
-        "$6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::timestamptz[]) "
-        "ON CONFLICT (org, id) DO UPDATE SET completed_at = EXCLUDED.completed_at, "
-        "abandoned_at = EXCLUDED.abandoned_at "
-        "WHERE l.completed_at IS NULL AND l.abandoned_at IS NULL "
-        "AND (EXCLUDED.completed_at IS NOT NULL OR EXCLUDED.abandoned_at IS NOT NULL)",
+        "$6::text[], $7::text[], $8::timestamptz[], $9::timestamptz[], $10::timestamptz[], "
+        "$11::bool[]) "
+        "ON CONFLICT (org, id) DO UPDATE SET "
+        "completed_at = CASE WHEN l.completed_at IS NULL AND l.abandoned_at IS NULL "
+        "THEN EXCLUDED.completed_at ELSE l.completed_at END, "
+        "abandoned_at = CASE WHEN l.completed_at IS NULL AND l.abandoned_at IS NULL "
+        "THEN EXCLUDED.abandoned_at ELSE l.abandoned_at END, "
+        "mirror_marked = l.mirror_marked OR EXCLUDED.mirror_marked "
+        "WHERE (NOT l.mirror_marked AND EXCLUDED.mirror_marked) OR "
+        "(l.completed_at IS NULL AND l.abandoned_at IS NULL "
+        "AND (EXCLUDED.completed_at IS NOT NULL OR EXCLUDED.abandoned_at IS NOT NULL))",
         cols[0],
         [UUID(str(v)) for v in cols[1]],
         cols[2],
@@ -207,6 +217,7 @@ async def _upsert(rows: Sequence[Mapping[str, Any]]) -> int:
         [as_aware_utc(v) for v in cols[7]],
         [as_aware_utc(v) for v in cols[8]],
         [as_aware_utc(v) for v in cols[9]],
+        [bool(v) for v in cols[10]],
     )
     return int(done.split()[-1])
 

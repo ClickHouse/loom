@@ -120,6 +120,10 @@ async def test_lost_events_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_a_down_store_logs_the_failure_without_a_line_per_batch(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    from server.core.diagnostics import public_log
+
+    monkeypatch.setattr(caplog.handler, "filters", [*caplog.handler.filters, public_log])
+
     class _Boom:
         async def insert(self, *a: Any, **k: Any) -> None:
             raise RuntimeError("down")

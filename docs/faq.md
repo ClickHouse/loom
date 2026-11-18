@@ -10,6 +10,16 @@ If a Loom server already exists, install the Claude Code or Codex plugin and poi
 server: [connect a coding agent](getting-started/connect-a-coding-agent.md). To run a server
 on a laptop, `loom up` boots one in a few minutes: [quickstart](getting-started/quickstart.md).
 
+### How do I give Claude Code, Codex or Cursor long-term memory?
+
+Use the Claude Code or Codex plugins for session-start context and capture, or connect any
+other MCP client with `loom install --client <name>` (see [MCP clients](features/integrations/mcp-clients.md)).
+Boot a server via the [quickstart](getting-started/quickstart.md). Cursor gets the MCP
+entry and the `loom` and `loom-code` skills (no hooks for session-start context; not yet
+tested in Cursor); transcript capture comes from the separate `sessionEnd` hook. See
+[Connect a coding agent](getting-started/connect-a-coding-agent.md) and
+[Cursor](features/integrations/cursor.md).
+
 ### Why are my search results nonsense?
 
 The install runs a fake embedder: its `.env` (a checkout's, or `~/.loom/.env`) names

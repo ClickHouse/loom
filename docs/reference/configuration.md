@@ -91,13 +91,13 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` |  | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
 | `LOOM_CELL` | `str` | `''` |  | This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md). |
 | `LOOM_CELL_PROBE_PORT` | `int` | `0` |  | The port of the probe listener, which answers the deployment id and the values under `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off. |
-| `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; "" = none: in `enforced`, a new org answers 503. |
+| `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; "" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a value other than an http(s) URL with a host, a port at most 65535 and no '?' or '#' refuses the boot. |
 | `LOOM_CELL_ROUTER_TOKEN` | `str` | *(unset)* |  | The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64` (never the length of a SHA-256); any other form is refused at boot. "" = none. |
-| `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole placement call to the router may take before the request answers 503. |
-| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) between reads of the cell state rows once the first read landed (every second until then), in every process that reads them under the Postgres authority, and before an org read as not held is read again; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
+| `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole call to the router may take: a placement call, after which the request answers 503, and a cell's state read, which is also the margin past its read period before that read's answer counts as late. |
+| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) between reads of the cell state rows once the first read landed (every second until then), in every process that reads them under the Postgres authority, and before an org read as not held is read again; also the most a first cell's server process waits between reads of the router's state route (with LOOM_INSTANCE_HEARTBEAT_SECONDS) and the window of a process that reads it on demand. LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
 | `LOOM_ROUTER_PG_DSN` | `str` | *(unset)* |  | The router's directory, its own Postgres database (`loom router serve` and `loom router migrate`); "" = none. Never a cell's memory authority database. |
 | `LOOM_ROUTER_PLACEMENTS_PER_MINUTE` | `int` | `60` |  | Placement calls one cell may make in a minute, counted by each router replica. |
-| `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed org's lookup answer before reading again; a new credential or host works within this. |
+| `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes, a placed org's lookup answer and the first cell's state-route answer before reading again; a new credential or host works within this. A cell's processes carry the router's value: 401s from the state route last this long before the heartbeat's `router` turns false. |
 | `LOOM_ROUTER_LOOKUPS_PER_MINUTE` | `int` | `60` |  | Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`). |
 | `LOOM_ROUTER_SHARED_HOST` | `str` | `''` |  | The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; "" = no cell registers (registration tells the first cell by this host), and once one has, only its own host and aliases. |
 | `LOOM_ROUTER_UPSTREAM_URL` | `str` | `''` |  | Where the router forwards the shared host until a first cell registers, which copies it into its row; "" = 503 there and no first cell registers. |
@@ -155,6 +155,7 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TELEMETRY_DATABASE` | `str` | `'loom_telemetry'` |  | The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. A schema outside `loom` names its own: two schemas never share one. |
 | `LOOM_CH_CLUSTER` | `str` | `'default'` |  | The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on every node (`default` on ClickHouse Cloud). A server without it answers for itself; '' reads only the connected server. |
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
+| `LOOM_CH_ANALYSIS_OBSERVER_URLS` | `list[str]` | `[]` |  | Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens. |
 | `LOOM_CH_CAPTURE_STATEMENTS` | `str` | `''` |  | A file path: append one JSON line (`digest`, `sql`) per executed statement, to collect the shapes an acceptance run executes for the analyzer corpus. '' = off; never set it in production. |
 | `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size: request concurrency plus 3 x the batched-insert bound (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts). |
@@ -908,6 +909,21 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_GAPS_MAX_IN_FLIGHT` | `int` | `256` | live | Miss recordings in flight in one process, at most; past it a miss is dropped and counted, so a burst of abstentions cannot pile up background reads. |
 | `LOOM_KNOWLEDGE_GAPS_MAX_NAMESPACES` | `int` | `500` | live | Namespaces one pass groups, at most; the ones with the most misses first. |
 
+### Query-history definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_ENABLED` | `bool` | `False` |  | Permit opt-in ClickHouse query-history sources to queue definition drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MIN_USERS` | `int` | `3` | live | Distinct initial ClickHouse accounts required before drafting a query group. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_DRAFTS` | `int` | `20` | live | Drafts one source may queue in a worker turn, at most. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_GROUPS` | `int` | `200` | live | Most-used query groups inspected per source turn before skipping existing drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_WINDOW_DAYS` | `int` | `7` | live | Days of finished SELECT query history a turn groups. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_READ_TIMEOUT_S` | `float` | `30` | live | Seconds allowed for one query-history source read. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_PASS_SECONDS` | `float` | `120.0` |  | Deadline of one query-history pass; it starts no new group after half this budget. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between query-history passes. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_SOURCES` | `int` | `100` | live | Sources one pass reads, at most; each turn is separately time bounded. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_BREAKERS` | `int` | `1000` |  | Query-history circuit states kept per process, at most; older sources are evicted first. |
+
 ### Chunking
 
 | Variable | Type | Default | Live | Meaning |
@@ -952,13 +968,25 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |
+| `LOOM_KNOWLEDGE_CONNECTED_OAUTH_RESPONSE_MAX_BYTES` | `int` | `65536` |  | Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing. |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |
 | `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
+| `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` | `bool` | `False` |  | Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set. |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` | `int` | `3600` |  | Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | `bool` | `False` |  | Enable optional source push setup, callbacks and Drive renewal; false keeps polling only. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between bounded channel-renewal pages; channels renew a day before expiry. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S` | `float` | `40.0` |  | Seconds one push setup or Drive renewal may spend on provider work, before cleanup. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S` | `float` | `2.0` |  | Seconds allowed to stop one superseded or unpublished Drive channel. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S` | `float` | `5.0` |  | Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share. |
+| `LOOM_KNOWLEDGE_SOURCE_RETIRE_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off. |
 | `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` | `int` | `50000` | live | Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
@@ -996,6 +1024,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SHARED_DEFINITIONS_MAX` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
+| `LOOM_MEMORY_TERM_LEG_WAIT_MS` | `int` | `100` | live | How much longer memory.search waits for its term leg once the other legs are done; past it the leg adds nothing (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 
@@ -1608,6 +1637,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_OTEL_RETENTION_CENSUS_S` | `int` | `3600` |  | Seconds between retention censuses (`loom.retention.*`: per-org counts over 7- and 45-day windows; one FINAL pass over loom.memory on the lease holder). 0 = every export. |
 | `LOOM_OTEL_CENSUS_SCOPE` | `'leader' \| 'process'` | `'leader'` |  | Who takes the whole-table censuses (invariants, code-plane counts, retention, agent labels, storage): "leader" = only the supervisor-lease holder, "process" = every process (costly). |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S` | `int` | `60` |  | Metric export cadence, seconds. Spans keep their own 3 s batch delay, which bounds span loss at SIGTERM. |
+| `LOOM_OTEL_METRICS_CARDINALITY_LIMIT` | `int` | `20000` |  | Most series per metric; past it, new attribute sets join one `otel.metric.overflow` series. Request metrics need about operations x namespaces x transports x outcomes. |
 | `LOOM_OTEL_METRICS_DELTA_TEMPORALITY` | `bool` | `False` |  | Delta temporality for counters and histograms (an idle synchronous series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md) read cumulative rows — flip together with them. |
 | `LOOM_OTEL_GAUGE_HEARTBEAT_S` | `int` | `0` |  | Write a gauge point only when its value changed or this many seconds after the last write; 0 = every export. The ClickHouse exporter only (LOOM_OTEL_EXPORTER=ch); OTLP exports every point. Off because gauge tiles fill gaps with 0 and would draw a sawtooth. |
 | `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `str` | `''` |  | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with `otel_exporter` = "", it selects the otlp exporter. |
@@ -1726,6 +1756,8 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_EVENTS_STREAM_FLUSH_BATCH` | `int` | `500` |  | Queued telemetry rows that trigger a flush before the interval elapses. |
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` |  | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` |  | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
+| `LOOM_DEFAULT_DAILY_USER_COST_CAP_USD` | `float` | `0.0` | live | Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it. A namespace's daily_user_cost_cap_usd overrides this default when positive. |
+| `LOOM_COST_BUDGET_ALERT_SHARE` | `float` | `0.8` | live | Fraction of a cap that warns its namespace's configured inbox on the next check. |
 | `LOOM_READS_LLM_FREE` | `bool` | `False` |  | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` |  | The rate limiter divides every cap by the deployment's replica count so the replicas' sum matches the target (approximate, not cluster-strict). The count is the hosts with a live serving loom.instances row; this is its floor, and the count while those rows cannot be read. |
 | `LOOM_SERVES_TRAFFIC` | `bool` | `True` |  | False for a process no load balancer routes to (a workers-only container): its instance row does not count as a replica. |
@@ -1747,6 +1779,9 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks in the deployment guide's "Proxy and TLS" section. |
 | `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` |  | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. Required behind a load balancer: at the default every client counts as the balancer's address for the sign-in and sign-up limits. |
 | `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach. |
+| `LOOM_TLS_CERT_FILE` | `str` | `''` |  | PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP. |
+| `LOOM_TLS_KEY_FILE` | `str` | `''` |  | PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused. |
+| `LOOM_TLS_MIN_VERSION` | `'1.2' \| '1.3'` | `'1.2'` |  | Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3". |
 
 ### Outbound HTTP
 

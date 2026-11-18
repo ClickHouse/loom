@@ -3,11 +3,12 @@ name: release-check
 # A published release, checked from outside as a user meets it, signed in to
 # nothing: the one-line installer from github.com in clean Debian, Ubuntu and
 # Alpine containers on amd64 and arm64 (install, round trip, re-run, a refused
-# downgrade, an upgrade from the previous release), both images' signatures, and
-# the SDKs from PyPI and npm. The release workflow calls it after publishing,
-# with neither the upgrade nor the SDKs (they publish later, from the registry
-# dispatch); a maintainer dispatches it for any release, with `previous_version`
-# and `sdks` (docs/development/release-process.md).
+# downgrade, an upgrade from the previous release), the signatures of both
+# images and of every release file, and the SDKs from PyPI and npm. The release
+# workflow calls it after publishing, with neither the upgrade nor the SDKs
+# (they publish later, from the registry dispatch); a maintainer dispatches it
+# for any release, with `previous_version` and `sdks`
+# (docs/development/release-process.md).
 
 on:
   workflow_call:
@@ -79,14 +80,14 @@ jobs:
           python3 scripts/gates/installer_rehearsal.py "${args[@]}"
 
   signatures:
-    name: Image signatures
+    name: Image and release file signatures
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Both images carry the release workflow's keyless signature
         env:
           VERSION: ${{ inputs.version }}
@@ -94,6 +95,13 @@ jobs:
         run: |
           # shellcheck disable=SC2086 # one argument per image
           bash scripts/release/verify_signatures.sh "$VERSION" $IMAGES
+      - name: Every release file carries the release workflow's keyless signature
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
+        run: |
+          bash scripts/release/download_release_files.sh "$VERSION" "$RUNNER_TEMP/files"
+          bash scripts/release/verify_release_files.sh "$VERSION" "$RUNNER_TEMP/files"
 
   sdks:
     name: SDKs from PyPI and npm

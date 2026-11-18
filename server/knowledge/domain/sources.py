@@ -134,6 +134,9 @@ class KnowledgeSource:
     pending_delete: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # The namespace's mirror, which the sync sets before a mirrored source's turn; never
+    # stored.
+    mirror: str = ""
 
 
 def shown(value: Any) -> str:
@@ -176,6 +179,38 @@ def turn_lease_name(org: str, namespace: str, name: str) -> str:
 def source_tag(name: str) -> str:
     """The tag every document a source wrote carries."""
     return f"source:{name}"
+
+
+def source_id_tag(source_id: str) -> str:
+    """The tag that makes a mirrored document its source's: in a mirror, ownership goes
+    by the source's id, so a later source of the same name owns none of an earlier
+    one's documents."""
+    return f"source-id:{source_id}"
+
+
+def mirror_uri(address: str, source_id: str) -> str:
+    """A mirrored document's `source_uri`: the file's address and its source's id, so
+    each source that reaches a file keeps its own copy and list."""
+    return address + mirror_uri_suffix(source_id)
+
+
+def mirror_uri_suffix(source_id: str) -> str:
+    """The end of every `source_uri` a mirrored source writes."""
+    return f"#{source_id}"
+
+
+def home(src: KnowledgeSource) -> tuple[str, str]:
+    """Where the source's documents live and the tag that marks them its own: the
+    namespace and `source:<name>`, or for a mirrored source its mirror and
+    `source-id:<id>`. ValueError for an `access` this build does not know, or a
+    mirrored source whose mirror is not known."""
+    if src.access == NAMESPACE_ACCESS:
+        return src.namespace, source_tag(src.name)
+    if src.access != MIRRORED_ACCESS:
+        raise ValueError("a source's access is not one this build knows")
+    if not src.mirror:
+        raise ValueError("a mirrored source's mirror is not known")
+    return src.mirror, source_id_tag(src.source_id)
 
 
 def source_tags(tags: list[str]) -> set[str]:
@@ -534,6 +569,12 @@ def served(src: KnowledgeSource) -> bool:
     return src.access == NAMESPACE_ACCESS
 
 
+def mirror_synced(src: KnowledgeSource) -> bool:
+    """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
+    folder-store source. Its ops still refuse one (`served`)."""
+    return src.access == MIRRORED_ACCESS and src.kind == "gdrive"
+
+
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when that build must
     not read it, so `src` is stored with `kind` empty: a source it cannot express, or
@@ -591,6 +632,19 @@ def sync_of(detail: str) -> dict[str, Any]:
     return {k: v for k, t in SYNC_FIELDS.items() if isinstance(v := state.get(k), t)}
 
 
+# What a namespace's readers see of a mirrored source's sync: never its counts, its
+# reasons or its error text, which describe what the mirror holds.
+_MIRRORED_SYNC_SHOWN = frozenset({"requested_at", "last_synced_at", "status"})
+
+
+def sync_shown(src: KnowledgeSource, detail: str) -> dict[str, Any]:
+    """The sync state the namespace's readers are shown for `src` (`sync_of`)."""
+    shown = sync_of(detail)
+    if served(src):
+        return shown
+    return {k: v for k, v in shown.items() if k in _MIRRORED_SYNC_SHOWN}
+
+
 __all__ = [
     "GDRIVE_DEFAULT_INCLUDE",
     "GDRIVE_MIME_TYPES",
@@ -614,6 +668,7 @@ __all__ = [
     "check_filters",
     "config_from_items",
     "fits_id_list",
+    "home",
     "id_list_config",
     "include_in",
     "include_mime_types",
@@ -622,6 +677,9 @@ __all__ = [
     "items_from_config",
     "json_object",
     "max_items",
+    "mirror_synced",
+    "mirror_uri",
+    "mirror_uri_suffix",
     "normalize_name",
     "options_in",
     "parse_config",
@@ -629,11 +687,13 @@ __all__ = [
     "parse_items",
     "served",
     "shown",
+    "source_id_tag",
     "source_tag",
     "source_tags",
     "state_key",
     "stored_config",
     "sync_of",
+    "sync_shown",
     "unique_items",
     "unknown_keys",
     "unread_file_note",

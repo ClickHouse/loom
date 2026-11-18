@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.core import request_work
+from server.core import diagnostics, request_work
 
 
 # A request statement's `query_id` is `<request_id>:<n>:<nonce>`: the request id
@@ -40,6 +40,8 @@ def note_result_summary(result: Any) -> dict[str, Any]:
     request's work bag and onto the enclosing `ch.*` span. A result without a
     summary (a `command()` that returned a scalar, a fake) is a no-op. Never
     raises; returns what it parsed."""
+    if diagnostics.codes_only():
+        return {}
     summary = getattr(result, "summary", None)
     if not isinstance(summary, dict) or not summary:
         return {}

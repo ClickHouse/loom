@@ -1,6 +1,48 @@
-"""A namespace's mirrors, for the erasure saga, which erases them with the namespace they
-belong to (docs/architecture/document-sources.md)."""
+"""A namespace's mirrors: the erasure saga erases them with the namespace they belong to,
+and the sync writes a mirrored source's documents into one
+(docs/architecture/document-sources.md, The mirror)."""
 
-from server.knowledge.store.mirrors import forget_mirrors, mirrors_of
+from collections.abc import Awaitable, Callable
 
-__all__ = ["forget_mirrors", "mirrors_of"]
+from server.auth.directory import directory
+from server.core.ch import sequential_reads
+from server.core.naming import new_mirror_name
+from server.knowledge.app.sources import sources_lease
+from server.knowledge.store.mirrors import (
+    add_mirror,
+    forget_mirrors,
+    mirrors_of,
+)
+
+
+async def live_mirror(org: str, namespace: str) -> str:
+    """The namespace's live mirror, or "" when it has none."""
+    with sequential_reads():
+        live = await mirrors_of(org, [namespace], live_only=True)
+    return next(iter(live), "")
+
+
+async def ensure_mirror(
+    org: str, namespace: str, *, still_current: Callable[[], Awaitable[None]]
+) -> str:
+    """The namespace's live mirror, made under its sources lease if it has none.
+    `still_current` raises under the lease when an erasure removed the asking source
+    meanwhile, so no mirror outlives its namespace (rolling-upgrade rules 52 and 54)."""
+    if live := await live_mirror(org, namespace):
+        return live
+    async with sources_lease(org, namespace):
+        if live := await live_mirror(org, namespace):
+            return live  # another turn made it while this one waited for the lease
+        await still_current()
+        return await _register_mirror(org, namespace)
+
+
+async def _register_mirror(org: str, namespace: str) -> str:
+    mirror = new_mirror_name()
+    while await directory().in_use(org, mirror):
+        mirror = new_mirror_name()
+    await add_mirror(org, namespace, mirror)
+    return mirror
+
+
+__all__ = ["ensure_mirror", "forget_mirrors", "live_mirror", "mirrors_of"]

@@ -265,3 +265,9 @@ candidate does. Field lists:
 - [Namespaces and sharing](../namespaces-and-sharing.md): the shared zone a supporters
   candidate promotes into.
 - [Knowledge](../knowledge.md): where a bot's rule promotes by default.
+
+Definition drafts from knowledge gaps and query history are visible only to namespace
+admins, including their queue counts and lineage. Approving one publishes its complete
+value, including supporting SQL, to namespace readers. See [definition
+drafts](../../architecture/definition-drafts.md) for source setup, review conflicts and
+interrupted promotion.

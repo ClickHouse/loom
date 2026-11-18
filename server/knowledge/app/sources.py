@@ -41,6 +41,7 @@ from server.auth.sharing import is_collection
 from server.core import ch, leases
 from server.core.ch import sequential_reads
 from server.core.datetimes import as_aware_utc
+from server.core.diagnostics import private_work
 from server.core.errors import (
     BadConfigError,
     ErasureRunningError,
@@ -75,7 +76,7 @@ from server.knowledge.api.models_sources import (
     KnowledgeSourceUpdateInput,
     KnowledgeSourceUpdateOutput,
 )
-from server.knowledge.app import source_probes
+from server.knowledge.app import source_access, source_probes, source_publication, source_titles
 from server.knowledge.domain import sources as domain
 from server.knowledge.domain.source_links import parse_links
 from server.knowledge.domain.sources import KnowledgeSource
@@ -307,14 +308,14 @@ async def _source_refusal(org: str, namespace: str) -> ValidationError | None:
     return None
 
 
-async def _require_no_erasure(org: str, namespace: str) -> None:
+async def _require_no_erasure(org: str, namespace: str, *, ch: Any = None) -> None:
     """Refuse a new source while an erasure of the namespace will still run: its first step
     may have read the sources already, so what a later source wrote would outlast it."""
     # Imported here: the erasure saga imports this module.
     from server.erasure.app import ledger_reads
     from server.erasure.domain.scopes import may_cover
 
-    for row in await ledger_reads.open_namespace_erasures(org):
+    for row in await ledger_reads.open_namespace_erasures(org, ch=ch):
         if may_cover(str(row["scope_type"]), str(row["scope_value"]), namespace):
             raise ErasureRunningError(
                 f"an erasure of {namespace!r} will still run; change its sources once it finishes"
@@ -344,8 +345,9 @@ async def _source_or_404(org: str, namespace: str, name: str) -> KnowledgeSource
 
 
 def _require_served(src: KnowledgeSource) -> None:
-    """This build syncs only sources shown to every reader of the namespace: a mirrored
-    one, which a later build writes, is that build's to read."""
+    """This build's ops serve only sources shown to every reader of the namespace; its
+    sync worker writes a mirrored `gdrive` one into the mirror (`mirror_synced`), and
+    a later build serves it."""
     if not domain.served(src):
         raise ValidationError(
             f"source {src.name!r} is not served by this server yet (access "
@@ -377,8 +379,8 @@ def _answered_include(src: KnowledgeSource) -> list[str]:
     return domain.include_in(src.config) if src.kind == "gdrive" else []
 
 
-def _sync(state: dict[str, str] | None) -> KnowledgeSourceSync:
-    return KnowledgeSourceSync(**domain.sync_of((state or {}).get("detail", "")))
+def _sync(src: KnowledgeSource, state: dict[str, str] | None) -> KnowledgeSourceSync:
+    return KnowledgeSourceSync(**domain.sync_shown(src, (state or {}).get("detail", "")))
 
 
 async def handle_knowledge_source_list(
@@ -397,7 +399,7 @@ async def handle_knowledge_source_list(
                 config=domain.id_list_config(s) or {},
                 created_by=s.created_by,
                 created_at=_iso(s.created_at),
-                sync=_sync(states.get(s.name)),
+                sync=_sync(s, states.get(s.name)),
             )
             for s in found
         ],
@@ -408,28 +410,47 @@ async def handle_knowledge_source_list(
 async def handle_knowledge_source_inspect(
     input: KnowledgeSourceInspectInput,
 ) -> KnowledgeSourceInspectOutput:
-    src = await _source_or_404(input.org, input.namespace, input.name)
-    states = await store.read_states(src.org, src.namespace, [src.name])
-    docs = await store.source_documents(src.org, src.namespace, src.name)
-    return KnowledgeSourceInspectOutput(
-        name=src.name,
-        kind=src.kind,
-        items=src.items,
-        include=_answered_include(src),
-        config=domain.id_list_config(src) or {},
-        created_by=src.created_by,
-        created_at=_iso(src.created_at),
-        sync=_sync(states.get(src.name)),
-        documents=[
-            KnowledgeSourceDocument(
-                source_uri=str(d.get("source_uri") or ""),
-                title=str(d.get("title") or ""),
-                source_revision=str(d.get("source_revision") or ""),
-                ingested_at=_iso(d.get("ingested_at")),
+    plan = await source_access.prepare(input.org, [input.namespace])
+    with private_work() if plan.marked else contextlib.nullcontext():
+        src = await _source_or_404(input.org, input.namespace, input.name)
+        states = await store.read_states(src.org, src.namespace, [src.name])
+        output = KnowledgeSourceInspectOutput(
+            name=src.name,
+            kind=src.kind,
+            items=src.items,
+            include=_answered_include(src),
+            config=domain.id_list_config(src) or {},
+            created_by=src.created_by,
+            created_at=_iso(src.created_at),
+            sync=_sync(src, states.get(src.name)),
+        )
+        if src.access == domain.MIRRORED_ACCESS:
+            titles = await source_titles.collect(
+                plan, src.namespace, limit=200, source_id=src.source_id
             )
-            for d in docs
-        ],
-    )
+            output.documents = [
+                KnowledgeSourceDocument(
+                    source_uri=title.source_uri,
+                    title=title.title,
+                    source_revision=title.source_revision,
+                    ingested_at=_iso(title.ingested_at),
+                )
+                for title in titles
+            ]
+            for title in titles:
+                source_publication.retain(title.proof)
+        elif domain.served(src):
+            docs = await store.source_documents(src.org, src.namespace, domain.source_tag(src.name))
+            output.documents = [
+                KnowledgeSourceDocument(
+                    source_uri=str(d.get("source_uri") or ""),
+                    title=str(d.get("title") or ""),
+                    source_revision=str(d.get("source_revision") or ""),
+                    ingested_at=_iso(d.get("ingested_at")),
+                )
+                for d in docs
+            ]
+        return output
 
 
 async def handle_knowledge_source_add(input: KnowledgeSourceAddInput) -> KnowledgeSourceAddOutput:
@@ -504,14 +525,16 @@ def _sources_lease_name(org: str, namespace: str) -> str:
 
 
 @contextlib.asynccontextmanager
-async def sources_lease(org: str, namespace: str, *, wait_s: float = 5.0) -> AsyncIterator[None]:
+async def sources_lease(
+    org: str, namespace: str, *, wait_s: float = 5.0, ch: Any = None
+) -> AsyncIterator[None]:
     """Hold the lease that serializes every write of a namespace's sources. Busy
     past `wait_s`: OVERLOADED, retry; a lease store that cannot answer refuses
     (LeaseUnavailable), never writes unlocked."""
     # The TTL outlives the few reads and inserts of one write with room to spare (a
     # holder that dies is taken over after it).
     async with leases.holding(
-        _sources_lease_name(org, namespace), ttl_s=60.0, wait_s=wait_s
+        _sources_lease_name(org, namespace), ttl_s=60.0, wait_s=wait_s, ch=ch
     ) as held:
         if not held:
             raise OverloadedError(
@@ -535,10 +558,11 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
                 "(LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE); remove one first",
                 code="SOURCE_QUOTA",
             )
-        documents = await store.count_documents(org, namespace, name)
+        documents = await store.count_documents(org, namespace, domain.source_tag(name))
         earlier = await store.latest_source(org, namespace, name)
     # A new row under the name would orphan a removed mirrored source's documents and
-    # any delete request for them, which only the build that writes mirrors acts on.
+    # any delete request for them, which only the build that serves mirrored sources
+    # (their ops and their delete requests) acts on.
     if earlier is not None and not domain.served(earlier):
         raise ValidationError(
             f"the name {name!r} belongs to a removed source this server does not serve "
@@ -636,6 +660,10 @@ async def handle_knowledge_source_rotate(
         if _moved(fresh, src):
             # Another write changed what this credential was probed against.
             raise OverloadedError("the source changed during the probe; retry", retry_after_s=1)
+        # A provider binding must be set up again for the new credential.
+        from server.knowledge.app.source_push import retire
+
+        await retire(fresh)
         # Only the credential changes; every other column is carried forward.
         await store.insert_source(_with_credential(fresh, input.credential))
     return KnowledgeSourceRotateOutput(name=src.name, probe=probe, rotated_at=_now_iso())
@@ -675,6 +703,9 @@ async def handle_knowledge_source_update(
         updated = change.source
         # The probe can name an added folder as a drive the source already holds.
         if updated.items != fresh.items or plan.include is not None:
+            from server.knowledge.app.source_push import retire
+
+            await retire(fresh)
             # Sealed again: the change may move the credential to the other column.
             await store.insert_source(_with_credential(updated, _stored_credential(fresh)))
             # A fresh full request, so the next turn lists the added items' older files;
@@ -894,19 +925,27 @@ async def handle_knowledge_source_remove(
                     code="SOURCE_NOT_FOUND",
                 )
             pending = 0
-            if input.delete_documents:
-                pending = await store.count_documents(src.org, src.namespace, src.name)
+            if input.delete_documents and src.access != domain.MIRRORED_ACCESS:
+                pending = await store.count_documents(
+                    src.org, src.namespace, domain.source_tag(src.name)
+                )
         # The delete request rides on the inactive registry row, which no sync-state
         # write touches. It is recorded even with no documents counted now: a sync
         # turn running meanwhile may still write one, and the worker clears the
         # request once none is left.
+        pending_delete = input.delete_documents
+        if src.access == domain.MIRRORED_ACCESS:
+            pending_delete = await _queue_retirement(src)
         retired = dataclasses.replace(
             src,
             active=False,
             credential_enc="",
             secret_enc="",
-            pending_delete=input.delete_documents,
+            pending_delete=pending_delete,
         )
+        from server.knowledge.app.source_push import retire
+
+        await retire(src)
         await store.insert_source(retired)
     return KnowledgeSourceRemoveOutput(name=src.name, documents_pending=pending)
 
@@ -986,11 +1025,35 @@ async def deactivate_namespace_sources(org: str, namespace: str) -> list[str]:
     The names retired."""
     with sequential_reads():
         found = await store.list_sources(org, namespace)
+    from server.knowledge.app.source_push import retire
+
     for src in found:
+        pending = await _queue_retirement(src) if src.access == domain.MIRRORED_ACCESS else False
+        await retire(src)
         await store.insert_source(
-            dataclasses.replace(src, active=False, credential_enc="", secret_enc="")
+            dataclasses.replace(
+                src,
+                active=False,
+                credential_enc="",
+                secret_enc="",
+                pending_delete=pending or src.pending_delete,
+            )
         )
     return sorted(src.name for src in found)
+
+
+async def _queue_retirement(src: KnowledgeSource) -> bool:
+    """Called under the sources lease, before inactivation; never creates a mirror."""
+    from server.knowledge.app.mirrors import live_mirror
+    from server.knowledge.store.source_retirements import Retirement, write
+
+    mirror = await live_mirror(src.org, src.namespace)
+    if not mirror:
+        return False  # inactivation fences the first mirror's creation under this lease
+    await write(
+        Retirement(src.org, src.namespace, src.name, src.source_id, src.kind, mirror), pending=True
+    )
+    return True
 
 
 async def retire_sources_of(org: str, namespaces: list[str], *, wait_s: float) -> int:

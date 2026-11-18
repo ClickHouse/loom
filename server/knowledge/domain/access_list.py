@@ -50,6 +50,20 @@ class AccessList:
 UNREAD = AccessList(unread=True)
 
 
+def common(a: AccessList, b: AccessList) -> AccessList:
+    """Who both lists admit, entry by entry: never wider than either, and `unread` if
+    either is."""
+    if a.unread or b.unread:
+        return UNREAD
+    return AccessList(
+        emails=tuple(set(a.emails) & set(b.emails)),
+        owner=a.owner if a.owner == b.owner else "",
+        groups=tuple(set(a.groups) & set(b.groups)),
+        domains=tuple(set(a.domains) & set(b.domains)),
+        anyone=a.anyone and b.anyone,
+    )
+
+
 def to_json(access: AccessList) -> str:
     """The stored form; `unread` is stored empty, as every other writer stores it."""
     if access.unread:
@@ -89,6 +103,50 @@ def from_json(text: str) -> AccessList:
     )
 
 
+def allows(
+    access: AccessList,
+    *,
+    subject: str,
+    emails: frozenset[str] = frozenset(),
+    domains: frozenset[str] = frozenset(),
+    groups: frozenset[str] = frozenset(),
+    canonical_owner: str = "",
+) -> bool:
+    """Match verified identity and fresh source-scoped group evidence to a strict list.
+
+    The caller canonicalizes `access.owner` uncached. A subject-shaped email proves
+    no email or domain, and a caller with no person can match only `anyone`.
+    """
+    if access.unread:
+        return False
+    if access.anyone:
+        return True
+    if not subject:
+        return False
+    return bool(
+        (access.owner and canonical_owner and canonical_owner.lower() == subject.lower())
+        or emails.intersection(access.emails)
+        or domains.intersection(access.domains)
+        or groups.intersection(access.groups)
+    )
+
+
+def candidate_keys(*, subject: str, emails: frozenset[str], domains: frozenset[str]) -> list[str]:
+    """Coarse candidates only; the current strict permission list still decides.
+
+    Unicode buckets avoid mismatches between database and Python normalization.
+    Owner aliases and group membership are resolved after candidate selection.
+    """
+    keys = ["anyone"]
+    if subject:
+        keys.append("owner")
+        if emails:
+            keys.extend(["group", "email_unicode", *("e:" + e for e in sorted(emails))])
+        if domains:
+            keys.extend(["domain_unicode", *("d:" + d for d in sorted(domains))])
+    return keys
+
+
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:
     """The list a `shared` source reads from a Drive file's `permissions`; `unread` when
     the file has no `permissions` field. A deleted, link-only or one-view (`view`)
@@ -117,4 +175,13 @@ def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessLi
     )
 
 
-__all__ = ["UNREAD", "AccessList", "from_drive_permissions", "from_json", "to_json"]
+__all__ = [
+    "UNREAD",
+    "AccessList",
+    "allows",
+    "candidate_keys",
+    "common",
+    "from_drive_permissions",
+    "from_json",
+    "to_json",
+]

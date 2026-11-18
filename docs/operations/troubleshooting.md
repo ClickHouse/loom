@@ -411,6 +411,22 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `LOOM_BOOT_MIGRATE` on, and repeat until `loom doctor` names no missing or disabled
   trigger.
 
+### The cell_marker readiness check names the tenancy marker
+
+- **Symptom:** `/v1/health/ready` of a process with `LOOM_CELL` set reports the
+  `cell_marker` check with "pooled Postgres sessions do not keep the tenancy marker":
+  failing on an `enforced` or `partial` cell, passing with that reason on a first cell still
+  `recording`, and the process's cell heartbeat reports `marked` as `false`.
+- **Cause:** a connection pooler between the process and Postgres. A pooler opens its server
+  connections with its own startup parameters, so they lack `loom.tenancy_checked`; a pooler
+  that forwards client parameters with `SET` reads as unmarked too, since the refresh runs
+  `RESET ALL` before it reads the marker. Once a cell has its org triggers, they refuse
+  every write of such a session for an org the cell does not hold, Loom's own included.
+- **Fix:** point `LOOM_PG_DSN` at Postgres directly, with no pooler of any mode, as a cell
+  requires ([Postgres](./postgres.md)), then restart the processes: a `LOOM_PG_DSN` change
+  takes a restart. The check reads again on each cell refresh (`LOOM_TENANCY_MODE_CACHE_S`)
+  and clears on the first refresh after the restart.
+
 ### A boot fails with "function loom.tenancy_refuse_… does not exist"
 
 - **Symptom:** a migrating boot of an `enforced` cell fails creating a cell trigger with

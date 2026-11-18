@@ -9,6 +9,7 @@ from server.operations.base import Operation, Role
 
 memory_for_file = Operation(
     name="memory.for_file",
+    session_content=True,
     input_model=MemoryForFileInput,
     output_model=MemoryForFileOutput,
     handler=records_served(rendered_rows)(handle_memory_for_file),

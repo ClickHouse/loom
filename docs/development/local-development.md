@@ -105,7 +105,7 @@ Open `http://localhost:7777/` and paste a token (`loom mint-token … --save` wr
 
 ## Fake providers
 
-The stock `.env` pins `LOOM_EMBEDDING_MODEL=fake-ngram-3072` and `LOOM_LLM_PROVIDER=fake`. The fake embedder is deterministic character n-grams at Loom's standard 3072-vector width; the fake LLM extracts nothing. The stack runs offline and tests are reproducible, but retrieval quality on it measures nothing. Benchmarks and quality gates need real providers ([running benchmarks](../benchmarks/running.md)). With fake providers, the adaptive similarity thresholds fall back to their scalar settings.
+The stock `.env` pins `LOOM_EMBEDDING_MODEL=fake-ngram-3072` and `LOOM_LLM_PROVIDER=fake`. The fake embedder is deterministic character n-grams at Loom's standard 3072-vector width; the fake LLM is a deterministic development/test client that can synthesize facts. The stack runs offline and tests are reproducible, but retrieval quality on it measures nothing. Benchmarks and quality gates need real providers ([running benchmarks](../benchmarks/running.md)). With fake providers, the adaptive similarity thresholds fall back to their scalar settings.
 
 For real providers, set the provider block in `.env` ([deployment](../operations/deployment.md#providers)). The embedder's width is fixed when the vector tables are created, so recreate the local database when you change it (`make down-all`, or a fresh `dev/ci_start_clickhouse.sh` container).
 

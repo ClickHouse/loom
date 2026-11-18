@@ -34,7 +34,13 @@ def test_the_server_reports_its_fingerprint_beside_its_instance_row(
     ).result_rows
     assert rows, f"no cell heartbeat for {health['instance']}"
     cell, mode, raw = rows[0]
-    assert (cell, mode) == ("", "")  # the suite's server is not a cell
+    recorded = ch.query(
+        "SELECT authority, deployment_id FROM loom.storage_authority FINAL "
+        "ORDER BY epoch DESC LIMIT 1"
+    ).result_rows
+    postgres = bool(recorded) and recorded[0][0] == "postgres"
+    # The suite's server is not a cell; under Postgres its state read derives `open`.
+    assert (cell, mode) == ("", "open" if postgres else "")
     value = json.loads(raw)
     assert value["v"] == 1
     fields = value["fields"]
@@ -51,11 +57,7 @@ def test_the_server_reports_its_fingerprint_beside_its_instance_row(
         "bucket",
         "bucket_prefix",
     }
-    recorded = ch.query(
-        "SELECT authority, deployment_id FROM loom.storage_authority FINAL "
-        "ORDER BY epoch DESC LIMIT 1"
-    ).result_rows
-    if recorded and recorded[0][0] == "postgres":
+    if postgres:
         # The store identity a cell's fingerprint carries: the deployment id both stores record.
         assert fields["deployment_id"] == recorded[0][1]
     else:

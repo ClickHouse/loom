@@ -28,9 +28,12 @@ import { wait } from "../lib/wait";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
+import { ALL_DOCUMENTS } from "../lib/libraryPlace";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
+/** The select's value for All documents. */
+const ALL_ITEM = "__all__";
 
 /** A description beside a name is cut to this many characters; the name never is. */
 const LABEL_TEXT = 80;
@@ -158,7 +161,7 @@ export function useReadableCollections(org: string, showing: string | null = nul
           const byName = new Map<string, CollectionEntry>();
           let cursor: string | null = null;
           for (let page = 0; page < COLLECTIONS_PAGES; page++) {
-            const r = await listCollections(org, { cursor, signal });
+            const r = await listCollections(org, { cursor, signal, includeDocumentCounts: true });
             for (const c of r.collections) if (!byName.has(c.namespace)) byName.set(c.namespace, c);
             cursor = r.next_cursor;
             if (!cursor) break;
@@ -206,6 +209,7 @@ export function LibraryCollections({
   repeated,
   byName,
   current,
+  quietError = false,
   opening = null,
   place = "",
   onPick,
@@ -225,13 +229,16 @@ export function LibraryCollections({
   repeated: Set<string>;
   /** Every collection the caller can read, by name. */
   byName: Map<string, CollectionEntry>;
-  /** The collection shown, or null for the header's namespace. */
+  /** The collection shown, or null for the header's namespace and for All documents. */
   current: CollectionEntry | null;
+  /** The page says the collections' failure itself: no note here. */
+  quietError?: boolean;
   /** A collection the URL names that the list has not confirmed yet. */
   opening?: string | null;
-  /** Where the page is, as the URL names it (a collection, else the header's namespace):
-   *  the list confirming it is no move. */
+  /** Where the page is, as the URL names it (a collection, `ALL_DOCUMENTS`, else the header's
+   *  namespace): the list confirming it is no move. */
   place?: string;
+  /** Open a place: a collection, `ALL_DOCUMENTS`, or null for the header's namespace. */
   onPick: (collection: string | null) => void;
   /** Leave the place shown without a new history entry (it was deleted). */
   onLeave?: (collection: string | null) => void;
@@ -247,6 +254,7 @@ export function LibraryCollections({
    *  collection button step aside, and the path names where the page is. */
   besideTree?: boolean;
 }) {
+  const all = place === ALL_DOCUMENTS;
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
   const { rows, error } = collections;
   // New collection and Move belong to the place they opened in: a move to another
@@ -305,17 +313,20 @@ export function LibraryCollections({
   };
   // What the place shown is, behind the info button on the place line (and the role, which
   // a phone has no room to print).
-  const about = current
-    ? current.personal
-      ? "Your own files: no one else's grants reach them."
-      : `${roleLabel(current.role)} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents search it at its address ${current.namespace}.`
-    : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
+  const about = all
+    ? "The documents of every place you read, each saying where it lives."
+    : current
+      ? current.personal
+        ? "Your own files: no one else's grants reach them."
+        : `${roleLabel(current.role)} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents search it at its address ${current.namespace}.`
+      : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
   const shownRef = useRef<string | null>(null);
   shownRef.current = current?.namespace ?? null;
   // My files and the namespace have no path; beside the tree no select names them either, so
   // the line starts with the place's name, not the About button alone.
   const placeName = (): string | null => {
     if (!besideTree) return null;
+    if (all) return "All documents";
     if (current?.personal) return collectionTitle(current);
     if (current || opening || namespace === null) return null;
     return namespaceLabel(namespace);
@@ -367,14 +378,17 @@ export function LibraryCollections({
         )}
         {!besideTree && (
           <Select
-            value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
+            value={
+              opening ? "" : all ? ALL_ITEM : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF
+            }
             placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
-            onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v)}
+            onSelect={(v) => onPick(v === NAMESPACE_SHELF ? null : v === ALL_ITEM ? ALL_DOCUMENTS : v)}
             triggerProps={{ "aria-label": PLACE_PICKER_LABEL }}
             // A long list is found by typing a name or a description.
             showSearch
             className="min-w-0 flex-1 sm:flex-none sm:w-96"
           >
+            <Select.Item value={ALL_ITEM}>All documents</Select.Item>
             {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{namespaceLabel(namespace)}</Select.Item>}
             {ordered.map(({ c, depth }) => (
               <Select.Item key={c.namespace} value={c.namespace}>
@@ -435,7 +449,7 @@ export function LibraryCollections({
         </p>
       )}
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}
-      {!!error && (
+      {!!error && !quietError && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
           <span>
             {rowsDrawn ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}

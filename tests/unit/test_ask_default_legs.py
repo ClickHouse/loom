@@ -67,7 +67,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         e.searches.append(inp)
         return e.search_output
 
-    async def over_cap(org: str, ns: str) -> bool:
+    async def over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     async def fake_turns(**kw: Any) -> list[Any]:

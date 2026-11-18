@@ -89,9 +89,66 @@ const status = await loom.knowledge.ingestFile({
 
 `OpMap` binds every operation name (`GENERATED_OP_COUNT` of them) to its input and output interface; `OPS` is the table of specs (group, method, required role, idempotency, maturity, latency budget). An op the SDK does not know yet (a newer server) is reachable through `loom.callRaw(name, body)`.
 
+## Application-owned session protection
+
+`LoomClient` and `Transport` accept a `sessionProtection` handle backed by an
+application-owned `SessionProtectionStore`. Every client and concurrent callback
+participating in one logical conversation in the same process must reuse the same
+handle, including its pending-mark latch. Across restarts, restore the same durable
+authority. The application provisions
+the record and restores the same authority after restart; the SDK never creates,
+resets or repairs a missing record. `read()` must reject missing, damaged or
+inaccessible state. `mark()` resolves only after committing a monotonic protected
+state. An in-memory store does not meet this contract.
+
+For an automatic invocation, pass `capture: new SessionCapture(roots)` in its call
+options, outside the operation's wire arguments. Include every contributing
+conversation handle; `capture.with(root)` retains existing handles. The transport
+checks them after credential waits and immediately before sending each attempt.
+Protection suppresses automatic invocations with `AutomaticCaptureSuppressed`;
+explicit calls remain available and still observe their responses.
+
+Bound JSON responses are observed before status handling, retry, hints or typed
+return. A mirrored response waits for every contributing record's durable mark
+and readback before returning content. Invalid envelopes or an unconfirmed store
+produce `SessionProtectionUnavailable` and protect all known handles. A local
+monotonic latch suppresses concurrent automatic calls while persistence is pending;
+it never substitutes for durable acknowledgement before content returns.
+
+Bound event streams observe complete SSE frames before exposing their original
+bytes. Readers, body methods and clones share that guarded body; a marked frame
+waits for every contributing record's durable acknowledgement. CR, LF, CRLF,
+multiline data and split UTF-8 are supported. An unfinished frame is limited to
+4 MiB. Invalid frames, incomplete EOF, unsupported media types and compressed
+responses protect the retained handles and refuse. Early cancellation and read
+failures also protect them and join bounded owned cleanup. Verified ordinary EOF
+leaves clean handles unchanged. BYOB readers are unsupported and refuse; use the
+default reader or a standard body method. Native clone queues follow the platform's
+tee behavior and are separate from the observer's unfinished-frame limit.
+
+`loom.assistant.stream` accepts `capture` alongside its question for an automatic
+invocation. It retains all contributing handles, preserves protection failures and
+requires the completion marker before returning an answer. It keeps draining after
+that marker so later response metadata is observed.
+
+`Session` retains its constructor's optional `capture` and every transport handle
+that later contributes to it. Automatic resume, transcript and extraction calls
+check their retained authority before dispatch. A first marked recall can return;
+optional history is then omitted. Protection discards pending and carry-over turns
+instead of retrying them. The synchronous `buffered` getter discards known local
+taint; asynchronous owner boundaries also perform bounded durable checks.
+Explicit offload, fetch and note remain available and observe all retained handles.
+For an explicit call outside Session, `observe: new SessionCapture(roots)` retains
+response observers without making the call automatic.
+
+This control covers JSON/SSE transport observation and Session buffer ownership.
+It does not qualify framework callbacks, restored host lineage or a concrete storage
+backend. Binding a handle does not send a session protection capability declaration
+or enable mirrored-source creation.
+
 ## Errors
 
-Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
+Server and network failures use `LoomError`, with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
 
 | class                                                   | when                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -103,7 +160,7 @@ Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`
 | `BackendUnavailable`                                    | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
 | `TimeoutError`                                          | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                                                                                              |
 
-A 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body.
+For an unbound client, a 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body. Bound clients withhold the body and raise `SessionProtectionUnavailable`.
 
 ```ts
 import { NotFound, RateLimited } from "@clickhouse/loom";
@@ -389,6 +446,15 @@ const tools = loomTools(bot, { userId: "u-42" }); // generateText({ model, tools
 
 Loom's agent verbs (`AgentTools`) as an AI SDK `ToolSet` built with `tool()` and `jsonSchema()` from `ai`, an optional peer dependency (7.x, which needs Node 22.12 or later).
 
+## Claude API memory tool
+
+```ts
+import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
+const memory = loomMemoryTool(bot, { store: "u-42" }); // client.beta.messages.toolRunner({ tools: [memory], ... })
+```
+
+The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8.x). `loomMemoryHandlers(bot, { store })` returns the command handlers alone, for a loop that dispatches the calls itself.
+
 ## LangChain.js
 
 ```ts
@@ -411,7 +477,38 @@ import { loomTools } from "@clickhouse/loom/integrations/mastra";
 const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
 ```
 
-Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency (1.83 or a later 1.x, which needs Node 22.13 or later).
+Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency (1.83.x, which needs Node 22.13 or later).
+
+`LoomMemoryStorage` implements Mastra's native memory storage domain for one resource:
+
+```ts
+import { MastraCompositeStore } from "@mastra/core/storage";
+import { Memory } from "@mastra/memory";
+import { LoomMemoryStorage } from "@clickhouse/loom/integrations/mastra";
+
+const memory = new Memory({
+  storage: new MastraCompositeStore({
+    id: "loom",
+    domains: { memory: new LoomMemoryStorage(bot, { resourceId: "u-42" }) },
+  }),
+  options: {
+    semanticRecall: false,
+    observationalMemory: false,
+    workingMemory: { enabled: true, scope: "resource" },
+  },
+});
+```
+
+Install `@mastra/memory` next to the SDK. Construct a separate storage and `Memory`
+instance for each end-user: `resourceId` is the actual Loom `user_id`, so user erasure
+includes all threads, messages and working memory. Keep the same Loom agent and optional
+`storeId` when resuming in another process. Resource reassignment, observational memory,
+run fencing, atomic working-memory merges and cloning are unsupported. Data stays in
+your Loom deployment; the adapter adds no database, vector store or cache. First
+resource patches require server support for `memory.set.if_match_sha256="absent"`;
+older servers refuse creation without an unconditional fallback. Deletion targets the
+exact observed version and rejects concurrent rewrites. See
+[the memory contract and limits](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#mastra).
 
 ## OpenAI Agents SDK
 
@@ -421,6 +518,13 @@ const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ name: "assistan
 ```
 
 Loom's agent verbs (`AgentTools`: `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as function tools built with `tool()` from `@openai/agents`, an optional peer dependency, bound to one user, session or run.
+
+```ts
+import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";
+const session = new LoomSession(bot, "trip-42", { userId: "u-42" }); // run(assistant, input, { session })
+```
+
+`LoomSession` is the SDK's `Session` over loom: the conversation history of one session, as episodic memories of the user's loom session, separate rows from Python because the SDKs use different native item formats.
 
 ## Strands Agents
 

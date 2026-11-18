@@ -1,6 +1,10 @@
-# Tracker plane
+# Issue duplicate checks and regression candidates for agents
 
-Nothing serves until `LOOM_TRACKER_ORG` is set and a source is registered.
+With `LOOM_TRACKER_ORG` set and a registered source, Loom lets agents check whether a bug is already reported and rank changes that may
+have introduced a regression, using tracker records and indexed PR history.
+For a repository
+with indexed PR history and no tracker, use
+[code history and bisect candidates](../code-index/history-and-prs.md).
 
 A tracker is a team's record of issues, pull requests, incidents and CI runs, held in the
 team's own ClickHouse. Loom reads it live with a read-only credential and never copies it.
@@ -157,6 +161,73 @@ own PR history. It does not reproduce the issue or verify the triage observation
 ranks PRs for an engineer or testing agent to investigate. The full flow is in
 [history and PRs](../code-index/history-and-prs.md#bisect-candidates-codebisect_candidates).
 
+### From a bug draft to candidate PRs
+
+Use this sequence to check prior reports and rank merged changes without building the
+repository. The requests below illustrate one draft; they are not recorded results.
+
+1. Check the setup. Duplicate checks need a [registered tracker
+   source](record-contract.md#adding-a-tracker-source) and a namespace the caller may
+   read. To use the same code namespace for both operations, [link the
+   tracker](#linking-a-tracker-to-a-repository) and inspect `tracker.binding` there.
+   `kind: "none"` can mean unbound or refused; it does not establish that no tracker exists.
+   A repository with only [indexed PR
+   history](../code-index/history-and-prs.md#the-pr-plane) can rank changes, but that
+   history does not replace the tracker duplicate check.
+2. Send the draft to `POST /v1/tracker.duplicate_check`, using the code namespace bound
+   to the tracker. Replace the example scope and code clues with the repository's own:
+
+   ```json
+   {
+     "org": "acme",
+     "namespace": "code-widgets",
+     "title": "Upload hangs after token refresh",
+     "body": "The upload request never returns after refreshing its token.",
+     "paths": ["src/upload/client.py"],
+     "symbols": ["UploadClient.send"]
+   }
+   ```
+
+   Read `verdict`, `epistemic`, `items`, `closest`, `related_prs` and `leg_status` together.
+   Inspect the linked reports and fixes before treating them as the same defect.
+   `none` is not permission to conclude the bug is unreported; a degraded or unavailable
+   read leaves the duplicate question unresolved.
+
+3. If the introducing change still needs investigation, send the report's code clues to
+   `POST /v1/code.bisect_candidates` in that same code namespace:
+
+   ```json
+   {
+     "org": "acme",
+     "namespace": "code-widgets",
+     "paths": ["src/upload/client.py"],
+     "symbols": ["UploadClient.send"],
+     "text": "Upload hangs after refreshing its token.",
+     "before": "now",
+     "limit": 5
+   }
+   ```
+
+   Supply `issue_number` only for an actual report in the primary linked tracker. If
+   good and bad releases were observed, supply those observations as described in the
+   [version-window example](../code-index/history-and-prs.md#bisect-candidates-codebisect_candidates).
+   Here, `before: "now"` sets the upper bound at request time; it is not an observed
+   failure time. Prefer observed release bounds, an observed upper time bound in `before`
+   (and `after` when known), or a known-bad commit in `bad_sha`. For an unfiled draft
+   like this one, omitting every release and time bound gives `unknown` with
+   `no_failing_version`; no candidate scan runs. A tracker record that already names an
+   introducing commit or PR can instead answer without a scan. The operation does not
+   discover the last good version.
+
+4. Keep the evidence with the investigation. Read `candidates_from`, `epistemic`,
+   `causes`, `tracker_unavailable` and any `partial` / `partial_reason` beside the
+   candidate list. `candidates_from: "code_history"` identifies the repository-history
+   fallback, not a successful tracker read. Each candidate's `matched_paths`,
+   `matched_symbols` and `score` explain its ranking; `epistemic: "lower_bound"` means
+   an empty list excludes nothing. Inspect the diff and compare the reported behavior
+   before and after the candidate in a separate reproduction or test. The ranking
+   itself proves neither the defect nor its cause.
+
 ### CI test history
 
 `tracker.test_signal` reads one test's CI runs from the `checks` table and answers
@@ -269,6 +340,7 @@ Thresholds, legs, judge, rerank, bisect scope and test-signal settings are in th
 
 ## Related
 
+- [GitHub feed](github-feed.md): maintain a team-owned record with a scheduled CLI job
 - [Record contract](record-contract.md): tables, columns, aliases, mapping mode, sources
 - [History and PRs](../code-index/history-and-prs.md): the code-plane ops that read a tracker
 - [Adding repositories](../code-index/repositories.md)

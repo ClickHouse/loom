@@ -539,7 +539,12 @@ def sso(monkeypatch):
         return out
 
     async def verify(token: str, *, nonce: str) -> dict[str, Any]:
-        return {"email": idp["email"], "email_verified": True}
+        return {
+            "email": idp["email"],
+            "email_verified": True,
+            "iss": "https://idp.example",
+            **({"hd": idp["hd"]} if "hd" in idp else {}),
+        }
 
     async def issuer_ok(iss: str) -> bool:
         return iss in ("", "https://idp.example")
@@ -564,6 +569,11 @@ def sso(monkeypatch):
     monkeypatch.setattr(oidc, "refresh", refresh)
     monkeypatch.setattr(login, "resolve_identity_for_email", by_email)
     monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
+
+    async def attest(email: str, org: str, owner: str, claims: dict[str, Any]) -> None:
+        idp.setdefault("attestations", []).append((email, org, owner, claims))
+
+    monkeypatch.setattr(sso_links, "attest_domain", attest)
     return idp
 
 
@@ -1858,3 +1868,33 @@ def test_a_sign_in_form_posts_with_its_pages_own_origin(
     refused = c.post(action, data={}, headers={**_FORM_SUBMIT, "origin": "null"})
     assert refused.status_code == 403
     assert refused.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+
+
+def test_direct_sso_callback_forwards_signed_domain_evidence(sso) -> None:
+    sso["hd"] = "Example.COM"
+    c = _client()
+    grant = _start(c)
+    response = _sso_round_trip(c, grant["user_code"])
+    assert response.status_code == 200
+    assert sso["attestations"] == [
+        (
+            "alice@example.com",
+            "acme",
+            "alice@example.com",
+            {
+                "email": "alice@example.com",
+                "email_verified": True,
+                "iss": "https://idp.example",
+                "hd": "Example.COM",
+            },
+        )
+    ]
+
+
+def test_password_link_continuation_attests_no_hosted_domain(bobs_password_account, sso) -> None:
+    sso["hd"] = "example.com"
+    c = _client()
+    page = _sso_round_trip(c, _start(c)["user_code"])
+    assert "attestations" not in sso
+    assert _link(c, page.text, "bobpw").status_code == 200
+    assert "attestations" not in sso

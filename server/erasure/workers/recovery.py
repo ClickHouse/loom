@@ -22,6 +22,7 @@ from server.erasure.domain.failure_reason import (
     LAST_REASON_SEP,
     caller_reason,
 )
+from server.erasure.domain.receipts import audit_subject
 from server.erasure.store.rows import LedgerRow, ResumeRow, VerifyColumns, census_kept
 from server.observability import audit
 from server.workers import pass_context
@@ -184,6 +185,7 @@ async def _recover_one(
     last_error = caller_reason(str(row.get("failure_reason") or ""))
     completed_now: set[str] = set(previously_completed)
 
+    request_row = None
     try:
         input_obj = input_from_ledger_row(row)
         request_row = request_row_template(
@@ -192,6 +194,7 @@ async def _recover_one(
             actor=row["actor"],
             requested_at=row["requested_at"],
             attempts=new_attempts,
+            mirror_marked=bool(row.get("mirror_marked")),
         )
 
         out = await run_saga(
@@ -211,11 +214,14 @@ async def _recover_one(
                 org=input_obj.org,
                 namespace=audit_namespace(input_obj.scope_type, input_obj.scope_value),
                 actor=RECOVERY_WORKER_ACTOR,
-                subject={
-                    "erasure_id": erasure_id,
-                    "attempts": new_attempts,
-                    "previously_completed": sorted(previously_completed),
-                },
+                subject=audit_subject(
+                    request_row,
+                    {
+                        "erasure_id": erasure_id,
+                        "attempts": new_attempts,
+                        "previously_completed": sorted(previously_completed),
+                    },
+                ),
                 request_id=erasure_id,
             )
         else:
@@ -232,6 +238,9 @@ async def _recover_one(
         result.errors.append(
             {"erasure_id": erasure_id, "attempt": new_attempts, "error": f"{type(e).__name__}: {e}"}
         )
+
+    if request_row is not None and request_row.get("mirror_marked"):
+        row["mirror_marked"] = True
 
     # Permanent-fail once attempts hit max and the Saga still didn't complete.
     if new_attempts >= cfg.max_attempts and (out is None or out.status != "completed"):
@@ -303,14 +312,17 @@ async def _abandon(
         org=row["org"],
         namespace=audit_namespace(str(row["scope_type"]), str(row["scope_value"])),
         actor=RECOVERY_WORKER_ACTOR,
-        subject={
-            "erasure_id": erasure_id,
-            "attempts": attempts,
-            "completed_steps": sorted(completed),
-            "reason": "max_attempts exceeded",
-            "last_error": last_error[:512],
-            "residue_count": int(verify.get("residue_count", 0) or 0),
-        },
+        subject=audit_subject(
+            row,
+            {
+                "erasure_id": erasure_id,
+                "attempts": attempts,
+                "completed_steps": sorted(completed),
+                "reason": "max_attempts exceeded",
+                "last_error": last_error[:512],
+                "residue_count": int(verify.get("residue_count", 0) or 0),
+            },
+        ),
         request_id=erasure_id,
     )
     abandoned_at = datetime.now(UTC).replace(tzinfo=None)
@@ -321,6 +333,7 @@ async def _abandon(
             actor=row["actor"],
             requested_at=row["requested_at"],
             attempts=attempts,
+            mirror_marked=bool(row.get("mirror_marked")),
         ),
         status="failed",
         steps_completed=sorted(completed),
