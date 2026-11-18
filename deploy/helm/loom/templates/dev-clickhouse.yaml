@@ -1,8 +1,9 @@
 {{- if .Values.devClickhouse.enabled }}
 {{- $name := include "loom.chHost" . }}
 {{- /* Single-node ClickHouse with embedded Keeper for test clusters: the
-keeper, MergeTree, access-control and system-log defaults of deploy/clickhouse-config. No lemmatizer, so
-the migrations skip the NLP columns. */}}
+keeper, MergeTree, access-control and system-log defaults of
+deploy/clickhouse-config. No lemmatizer, so the migrations skip the NLP
+columns. */}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

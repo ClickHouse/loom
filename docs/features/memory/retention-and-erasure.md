@@ -343,7 +343,8 @@ table's TTL drops it, 90 days after the request), in audit, in `loom.erasure_rev
 in the deployment's own logs of the statements that named it (the ClickHouse mutation log,
 `system.query_log` and `system.text_log` for a statement that wrote it, and Postgres
 statement logs with `log_statement` or `log_min_duration_statement` on). The bundled
-ClickHouse keeps `system.query_log` and `system.text_log` for 30 days
+ClickHouse and the Helm chart's dev ClickHouse keep `system.query_log` and
+`system.text_log` for 30 days
 ([log retention](../../operations/deployment.md#log-retention)).
 
 ### Abandoned sagas
