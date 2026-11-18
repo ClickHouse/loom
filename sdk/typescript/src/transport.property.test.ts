@@ -32,7 +32,31 @@ function recorder() {
   return { calls, fetch };
 }
 
+function capturedLogger() {
+  const logs: string[] = [];
+  const log = (...values: unknown[]) => {
+    logs.push(inspect(values, { depth: null, customInspect: false }));
+  };
+  return { logs, logger: { debug: log, info: log, warn: log, error: log } };
+}
+
+function expectPrivateOutput(outputs: string[], secret: string) {
+  for (const output of outputs) expect(output).not.toContain(secret);
+}
+
 describe("Transport properties", () => {
+  it("detects nested log credentials before the supplied object is changed", () => {
+    const { logs, logger } = capturedLogger();
+    const secret = "credential-leak-control-fixture";
+    const headers = { Authorization: `Bearer ${secret}` };
+    logger.debug("request", { context: { headers } });
+    headers.Authorization = "redacted-later";
+
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).not.toContain("redacted-later");
+    expect(() => expectPrivateOutput(logs, secret)).toThrow();
+  });
+
   it("binds provider tokens to the canonical server origin before reading them", async () => {
     await fc.assert(
       fc.asyncProperty(
@@ -88,27 +112,23 @@ describe("Transport properties", () => {
     await fc.assert(
       fc.asyncProperty(token, authorization, async (secret, header) => {
         const { calls, fetch } = recorder();
-        const logs: string[] = [];
-        const log = (...values: unknown[]) => {
-          logs.push(values.map(String).join(" "));
-        };
+        const { logs, logger } = capturedLogger();
         const transport = new Transport({
           baseUrl: "https://loom.test",
           apiKey: `  ${secret}  `,
           headers: { Authorization: "caller-supplied", [header]: "caller-supplied" },
           fetch,
           retry: { maxAttempts: 1 },
-          logger: { debug: log, info: log, warn: log, error: log },
+          logger,
           logLevel: "debug",
         });
         await transport.post("memory.get", {});
         expect(calls).toHaveLength(1);
         const credentials = Object.entries(calls[0].headers).filter(([name]) => name.toLowerCase() === "authorization");
         expect(credentials).toEqual([["Authorization", `Bearer ${secret}`]]);
-        for (const output of [JSON.stringify(transport), inspect(transport), ...logs]) {
-          expect(output).not.toContain(secret);
-          expect(output).not.toContain("caller-supplied");
-        }
+        const outputs = [JSON.stringify(transport), inspect(transport), ...logs];
+        expectPrivateOutput(outputs, secret);
+        expectPrivateOutput(outputs, "caller-supplied");
       }),
       parameters,
     );
