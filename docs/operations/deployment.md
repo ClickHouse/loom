@@ -633,6 +633,9 @@ in `/etc/clickhouse-server/config.d/` and restart the server:
 </clickhouse>
 ```
 
+A `<text_log>` element turns `system.text_log` on, at trace level, on a server whose
+configuration had it off; keep only the `<query_log>` block there.
+
 When a log's definition changes, ClickHouse renames the existing table on the next start
 to the first free name of `query_log_0`, `query_log_1` and so on (`text_log_0` for the
 server log), keeps it with its rows and its old TTL, and creates the log again. A server
