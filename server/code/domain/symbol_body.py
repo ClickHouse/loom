@@ -9,14 +9,18 @@ def _source_lines(row: dict[str, Any]) -> list[str] | None:
     if row.get("kind") == "class_skeleton":
         return None
     text = str(row.get("content") or "")
+    # Index spans count LF boundaries; Unicode separators inside strings are text.
+    parts = text.split("\n")
+    lines = [part + "\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
     if any(
         line.rstrip().endswith(" … line continues")
         or line.lstrip().startswith("… continued at line ")
-        for line in text.splitlines()
+        for line in lines
     ):
         return None
     span = int(row.get("end_line") or 0) - int(row.get("start_line") or 0) + 1
-    lines = text.splitlines(keepends=True)
     if span <= 0 or len(lines) < span:
         return None
     # Function chunks may prepend their doc comment or a continuation header.

@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from server.code.app.symbol.resolve import symbol_body
 from server.code.app.symbol.verify import _body_complete, _subject_bodies
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 
 class _CH:
@@ -17,15 +20,13 @@ class _CH:
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         self.statements.append(" ".join(sql.split()))
-        from server.embedding.embedder import get_embedder
-
         assert params == {
             "org": "o",
             "ns": "n",
             "path": "src/a.cpp",
             "start": 10,
             "end": 20,
-            "model": get_embedder().model_name,
+            "model": settings.embedding_model,
         }
         assert "FROM loom.code_chunks FINAL" in sql and "LIMIT 401" in sql
         assert "tombstoned_at IS NULL" in sql and "kind != 'class_skeleton'" in sql
@@ -79,6 +80,45 @@ def test_a_missing_or_partial_retained_span_returns_no_body() -> None:
         )
         == ""
     )
+
+
+@pytest.mark.parametrize("key_missing", [False, True], ids=["factory-error", "missing-key"])
+def test_retained_source_does_not_construct_an_unavailable_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    key_missing: bool,
+) -> None:
+    from server.embedding import embedder
+
+    def unavailable(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError("embedding provider cannot be constructed")
+
+    monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
+    monkeypatch.setattr(settings, "embedding_provider", "openai")
+    monkeypatch.setattr(embedder, "_cached", None)
+    monkeypatch.setattr(embedder, "_key_missing", lambda provider: key_missing)
+    monkeypatch.setattr(embedder, "_build", unavailable)
+    text = "retained source\n" * 11
+    ch = _CH(
+        rows=[
+            {
+                "content": text,
+                "start_line": 10,
+                "end_line": 20,
+                "kind": "function",
+            }
+        ]
+    )
+    assert _body(ch) == text
+    assert embedder._cached is None
+
+
+def test_an_unset_model_label_does_not_read_unscoped_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "embedding_model", "")
+    ch = _CH(rows=[])
+    assert _body(ch) == ""
+    assert not ch.statements
 
 
 def test_the_definition_span_is_complete_only_when_the_chunks_reach_both_ends() -> None:

@@ -13,7 +13,7 @@ from server.code.app.common import repo_relative
 from server.code.app.index import symbol_forms
 from server.code.domain.symbol_body import complete_source_span
 from server.code.store.index import CodeRepo
-from server.embedding.embedder import get_embedder
+from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,12 @@ async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) ->
     start, end = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
     if start <= 0 or end < start or end - start + 1 > 12000:
         return ""
-    rows = await repo.source_chunks_for_span(org, ns, path, start, end, get_embedder().model_name)
+    # Hydration reads the configured label's retained text, without constructing a
+    # provider or letting missing credentials select another model's chunks.
+    model = settings.embedding_model
+    if not model:
+        return ""
+    rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
     if len(rows) > 400:
         return ""
     return complete_source_span(rows, start, end, max_chars=12000)

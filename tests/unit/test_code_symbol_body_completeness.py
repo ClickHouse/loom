@@ -139,6 +139,16 @@ async def test_a_real_single_line_function_can_be_served_whole() -> None:
     assert unit.body == text and not unit.elided
 
 
+@pytest.mark.parametrize("separator", ["\u0085", "\u2028"], ids=["next-line", "line-separator"])
+async def test_unicode_inside_a_string_does_not_change_physical_source_lines(
+    separator: str,
+) -> None:
+    text = f'def f(): return "a{separator}b"\n'
+    compile(text, "module.py", "exec")
+    unit = await _unit(_Repo([_row(text, 10, 10)]), row={**SYM, "end_line": 10})
+    assert unit.body == text and not unit.elided
+
+
 def test_retained_unchanged_pieces_can_have_different_introduction_commits() -> None:
     lines = FULL.splitlines(keepends=True)
     rows = [
