@@ -173,6 +173,32 @@ memory.get of a missing key → found=False
 unknown op → NotFound (RESOURCE_NOT_FOUND)
 ```
 
+## support_agent_memory.py
+
+Per-user memory for a support agent: two customers kept apart, a fact revised, and one customer erased on request and checked gone.
+
+```bash
+LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… LOOM_ORG=acme python support_agent_memory.py
+```
+
+Erasing a `user_id` takes an org admin. `loom mint-token --roles` takes `viewer`, `writer` or `admin` only, so on a local server with auth on, mint a short-lived platform-admin service token for the run:
+
+```bash
+loom mint-token --platform-admin --subject sa:support-example --org acme --ttl-days 1
+```
+
+1. `namespace.register` — the throwaway namespace; a refusal because it already exists is ignored.
+2. `memory.set` ×4 — two facts for each of two customers, under the same keys: `user_id` is the scope. Both customer ids are new on every run.
+3. `memory.search` narrowed to each customer — only that customer's facts come back.
+4. `memory.update_by_id` — the first customer's plan is revised in place, then read back with `memory.get`.
+5. `erasure.request` with `scope_type: "user_id"` for the second customer, then `erasure.status` until the saga is `completed` with `residue_count` 0. A `user_id` scope covers every namespace in the org, which is why the id must exist only in this run.
+6. `memory.search` again — the erased customer gets nothing back; the other customer's facts are still there.
+7. `memory.delete` — in a `finally`, every key of both customers, so nothing stays behind when a step fails.
+
+The script exits 1 when a check fails.
+
+<REAL_RUN>
+
 ## multi_agent_handoff.py
 
 A planner posts a task, a worker claims it with a lease fence and writes the result,
