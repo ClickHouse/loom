@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "offline_runtime": "CPython 3.12.13",
+  "third_party_runtime_dependencies": [],
+  "task_and_grader_lock": "suite.json",
+  "historical_execution": "disabled pending sandbox and dependency image qualification",
+  "live_adapter_dependencies": "Not installed or frozen for live use. Existing repository uv.lock pins Loom SDK dependencies. A future controller must freeze its provider SDK and transitive dependencies."
+}
