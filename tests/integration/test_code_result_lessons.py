@@ -19,7 +19,13 @@ DECISION = "Decided: the search memo never stores a caller's memories, " * 6
 
 
 def _set(
-    base: str, token: str, org: str, key: str, value: str, files: list[str], **kw: Any
+    org: str,
+    base: str,
+    token: str,
+    key: str,
+    value: str,
+    files: list[str],
+    **kw: Any,
 ) -> None:
     body = {"org": org, "namespace": "dev", "agent": "claude-code", "memory_key": key}
     body |= {"value": value, "files": files, **kw}
@@ -35,29 +41,34 @@ async def test_lessons_match_the_result_file_by_path(
     from server.core.ch import get_client
     from server.memory.app import path_lessons
 
-    await get_client().connect()
     org = unique_org("code-result-lessons")
+    await get_client().connect()
     token = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
-    _set(control_plane_url, token, org, "notes/exact", "Pages are cut by tokens.", [PATH])
+    _set(org, control_plane_url, token, "notes/exact", "Pages are cut by tokens.", [PATH])
     _set(
-        control_plane_url, token, org, "notes/bare", "Every handler logs its route.", ["handler.py"]
-    )
-    _set(
+        org,
         control_plane_url,
         token,
+        "notes/bare",
+        "Every handler logs its route.",
+        ["handler.py"],
+    )
+    _set(
         org,
+        control_plane_url,
+        token,
         "notes/other",
         "The memory handler drops weak hits.",
         ["server/memory/app/loom_search/handler.py"],
     )
-    _set(control_plane_url, token, org, "design/memo", DECISION, [PATH], memory_type="decision")
+    _set(org, control_plane_url, token, "design/memo", DECISION, [PATH], memory_type="decision")
     # More rows about other directories' handler.py than a small read would keep: the
     # exact path's rows still come back.
     for i in range(12):
         _set(
+            org,
             control_plane_url,
             token,
-            org,
             f"notes/elsewhere-{i}",
             f"Handler {i} retries twice.",
             [f"server/plane{i}/app/handler.py"],
@@ -99,10 +110,10 @@ async def test_a_search_keeps_a_stored_lesson_when_another_file_read_times_out(
     from server.memory.app import path_lessons
     from server.settings import settings
 
-    await get_client().connect()
     org = unique_org("code-result-lessons")
+    await get_client().connect()
     token = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
-    _set(control_plane_url, token, org, "notes/ready", "Keep the ready file's lesson.", [PATH])
+    _set(org, control_plane_url, token, "notes/ready", "Keep the ready file's lesson.", [PATH])
     listing_rows = path_lessons.listing_rows
     stopped = asyncio.Event()
 
