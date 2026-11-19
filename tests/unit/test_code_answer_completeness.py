@@ -69,15 +69,29 @@ async def test_complete_answer_keeps_text_past_character_limit(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "stop_reason",
-    ["max_tokens", "length", "content_filter", "refusal", "content_filtered", "guardrail_intervened"],
+    [
+        "max_tokens",
+        "length",
+        "content_filter",
+        "refusal",
+        "content_filtered",
+        "guardrail_intervened",
+    ],
 )
 async def test_cut_answer_discloses_partial_and_is_not_memoized(
     monkeypatch: pytest.MonkeyPatch, stop_reason: str
 ) -> None:
-    result = await _grounded(monkeypatch, "Incomplete answer.\nCOVERAGE: full", stop_reason=stop_reason)
+    result = await _grounded(
+        monkeypatch, "Incomplete answer.\nCOVERAGE: full", stop_reason=stop_reason
+    )
     assert result.partial
     assert result.partial_reason
-    refused = stop_reason in {"content_filter", "refusal", "content_filtered", "guardrail_intervened"}
+    refused = stop_reason in {
+        "content_filter",
+        "refusal",
+        "content_filtered",
+        "guardrail_intervened",
+    }
     assert result.coverage == ("none" if refused else "partial")
     if refused:
         assert result.abstain
@@ -133,8 +147,13 @@ async def test_embedding_failure_uses_lexical_evidence_once_without_cache(
     monkeypatch.setattr(answers, "_remember", forbidden)
     embedder = FailedEmbedder()
     result = await answers.ask(
-        SimpleNamespace(), "test-org", "test-code", question="Explain config.",
-        embedder=embedder, llm=SimpleNamespace(), search_kwargs={},
+        SimpleNamespace(),
+        "test-org",
+        "test-code",
+        question="Explain config.",
+        embedder=embedder,
+        llm=SimpleNamespace(),
+        search_kwargs={},
     )
     assert embedder.calls == 1
     assert result.partial and not result.memoize
@@ -175,8 +194,8 @@ def test_ranking_changes_invalidate_cached_answers(monkeypatch: pytest.MonkeyPat
 async def test_wire_response_keeps_incomplete_retrieval_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.code.app import ask as handler
     from server.code.api.models_search import CodeAskInput
+    from server.code.app import ask as handler
 
     async def thresholds(*args: Any) -> tuple[float, float]:
         return (0.3, 0.2)
@@ -186,8 +205,11 @@ async def test_wire_response_keeps_incomplete_retrieval_warning(
 
     async def answer(*args: Any, **kwargs: Any) -> answers_entry.AskResult:
         return answers_entry.AskResult(
-            answer="Available evidence.", partial=True, partial_reason="vector unavailable",
-            note="Semantic retrieval was unavailable.", coverage="partial",
+            answer="Available evidence.",
+            partial=True,
+            partial_reason="vector unavailable",
+            note="Semantic retrieval was unavailable.",
+            coverage="partial",
         )
 
     monkeypatch.setattr(handler, "require_code_intel", lambda: None)
@@ -198,10 +220,14 @@ async def test_wire_response_keeps_incomplete_retrieval_warning(
     monkeypatch.setattr(handler, "record_code_ask_cache", lambda **k: None)
     monkeypatch.setattr(handler, "schedule_code_trace", lambda **k: None)
     monkeypatch.setattr(handler, "set_code_span_attributes", lambda **k: None)
-    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="fake"))
+    monkeypatch.setattr(
+        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="fake")
+    )
     monkeypatch.setattr("server.observability.langfuse_scores.record_ask_scores", lambda **k: None)
     monkeypatch.setattr(answers, "ask", answer)
-    result = await handler.handle_code_ask(CodeAskInput(question="Where is config?", synthesize=False))
+    result = await handler.handle_code_ask(
+        CodeAskInput(question="Where is config?", synthesize=False)
+    )
     payload = result.model_dump()
     assert payload["partial"]
     assert payload["partial_reason"] == "vector unavailable"

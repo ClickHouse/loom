@@ -19,8 +19,8 @@ from server.code.app.common import (
 )
 from server.code.app.spans import set_code_span_attributes
 from server.code.store.index import CodeRepo
-from server.core.llm_free import refuse_synthesis
 from server.core.errors import error_kind
+from server.core.llm_free import refuse_synthesis
 from server.settings import settings
 
 logger = logging.getLogger(__name__)

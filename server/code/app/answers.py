@@ -128,7 +128,9 @@ async def ask(
             ctx,
             embedder=embedder if qvec else None,
             llm=llm,
-            search_kwargs=search_kwargs if qvec else {**search_kwargs, "embedding_model": ctx.model},
+            search_kwargs=search_kwargs
+            if qvec
+            else {**search_kwargs, "embedding_model": ctx.model},
             allow_synthesis=allow_synthesis,
             cache_llm=llm_cache_on,
         )
@@ -138,7 +140,8 @@ async def ask(
         _mark_incomplete(
             res,
             "question embedding unavailable",
-            "Semantic retrieval and answer-cache lookup were unavailable; available repository evidence was used.",
+            "Semantic retrieval and answer-cache lookup were unavailable; "
+            "available repository evidence was used.",
         )
     if cacheable:
         await _remember(ctx, res, llm)
@@ -270,7 +273,9 @@ async def _grounded_answer(
     )
     _disclose_retrieval(result)
     if synthesis.partial_reason:
-        _mark_incomplete(result, synthesis.partial_reason, "The provider returned an incomplete answer.")
+        _mark_incomplete(
+            result, synthesis.partial_reason, "The provider returned an incomplete answer."
+        )
     if synthesis.refused:
         result.answer = ""
         result.tokens_returned = 0
@@ -279,7 +284,9 @@ async def _grounded_answer(
         result.abstain_reason = "synthesis_refused"
         result.source = "abstained"
     result.memoize = (
-        not result.partial and result.coverage != "none" and await _memory_context_cacheable(org, memory)
+        not result.partial
+        and result.coverage != "none"
+        and await _memory_context_cacheable(org, memory)
     )
     return result
 
