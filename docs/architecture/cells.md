@@ -1454,6 +1454,12 @@ that the same backend still holds ATTACH. A COMMIT, rollback or ownership-check 
 never becomes a busy retry. After attempting the mode update, the diagnostic stays
 unknown until rollback plus ownership or COMMIT is acknowledged.
 
+Placement and cell control bind their cleanup owner synchronously inside the shared
+Postgres connector, before deployment or codec initialization can wait. A closed owner
+refuses initialization and closes a late session within its original deadline. Process
+admission, participant attribution and retirement seals still apply. Callers without an
+explicit owner retain connector cleanup until initialization finishes.
+
 Directory control mutations supervise the complete callback transaction independently,
 including acquisition and COMMIT. One 131-second bound includes public close, child
 settlement and pool-context exit, with cleanup time reserved inside it. Both a failed
