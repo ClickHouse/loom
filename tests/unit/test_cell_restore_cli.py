@@ -190,7 +190,7 @@ def test_cli_cancellation_names_retry_and_preserves_cancellation(
     monkeypatch.setattr(
         cell_restore.cell_cli, "operator_router", lambda args: httpx.URL("https://router.test")
     )
-    monkeypatch.setattr(cell_restore, "connect_declared", AsyncMock())
+    monkeypatch.setattr(cell_restore, "connect_verified", AsyncMock())
     monkeypatch.setattr(
         cell_restore,
         "disconnect",
@@ -316,6 +316,9 @@ async def test_restore_refuses_unsupported_encoding_before_control_writes(monkey
     from server.core import pg
 
     monkeypatch.setattr(settings, "pg_dsn", "postgres://not-connected")
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(settings, "cell", "first")
+    monkeypatch.setattr(cell, "read_state_if_present", AsyncMock(return_value=("open", "")))
     monkeypatch.setattr(pg, "_expected", None)
     conn = DriverConnection()
     conn.fetchval = AsyncMock(return_value=encoding)

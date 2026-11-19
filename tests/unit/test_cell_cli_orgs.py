@@ -23,6 +23,7 @@ _CONNECTS = {
     "connect_checked",
     "connect_declared",
     "check_acceptance",
+    "check_org_free",
     "_connected",
 }
 # `.connect()` receivers that are not the deployment's ClickHouse writer: the setup
@@ -67,6 +68,10 @@ def test_every_connect_declares_the_orgs_it_writes() -> None:
             if name not in _CONNECTS or (name == "_connected" and "_connected" not in defined):
                 continue
             keywords = {k.arg for k in call.keywords}
+            if name == "check_org_free":
+                if not call.args or not _typed(call.args[0]):
+                    undeclared.append(f"{path.relative_to(ROOT)}:{call.lineno} {name}")
+                continue
             if not keywords & {"orgs", "org_free"}:
                 undeclared.append(f"{path.relative_to(ROOT)}:{call.lineno} {name}")
     assert not undeclared, f"declare orgs= or org_free= on: {undeclared}"
@@ -97,10 +102,21 @@ def test_every_org_free_connect_says_whether_it_reads_writes_or_revokes() -> Non
         for call in _calls(ast.parse(path.read_text())):
             if _name(call) not in _CONNECTS:
                 continue
+            if _name(call) == "check_org_free" and (not call.args or not _typed(call.args[0])):
+                untyped.append(f"{path.relative_to(ROOT)}:{call.lineno}")
             for k in call.keywords:
                 if k.arg == "org_free" and not _typed(k.value):
                     untyped.append(f"{path.relative_to(ROOT)}:{call.lineno}")
     assert not untyped, f"pass reads(...), writes(...) or revokes(...) on: {untyped}"
+
+
+def test_verified_connects_have_a_declared_acceptance_gate() -> None:
+    missing = []
+    for path in _sources():
+        names = {_name(call) for call in _calls(ast.parse(path.read_text()))}
+        if "connect_verified" in names and not names & _CONNECTS:
+            missing.append(str(path.relative_to(ROOT)))
+    assert not missing, f"declare the acceptance gate after paired-store verification: {missing}"
 
 
 def test_each_signing_key_subcommand_has_its_own_kind() -> None:
@@ -537,18 +553,36 @@ def test_an_org_free_connect_runs_its_gate(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_no_cli_command_connects_outside_the_one_module() -> None:
     stray = []
+    native = []
+    native_owners = {
+        ("server/cli/cell_control.py", "Owner._open", "self.connect"),
+        ("server/cli/cell_place.py", "place.opening", "owner.connect"),
+    }
     for path in sorted((ROOT / "server" / "cli").glob("*.py")):
         if path.name == "_ch.py":
             continue
-        for call in _calls(ast.parse(path.read_text())):
+        tree = ast.parse(path.read_text())
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for call in _calls(tree):
             f = call.func
             if not (isinstance(f, ast.Attribute) and f.attr == "connect"):
                 continue
             receiver = f.value
             if isinstance(receiver, ast.Name) and receiver.id in _OTHER_CLIENTS:
                 continue
+            scope = []
+            ancestor = parents.get(call)
+            while ancestor is not None:
+                if isinstance(ancestor, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    scope.append(ancestor.name)
+                ancestor = parents.get(ancestor)
+            callsite = (str(path.relative_to(ROOT)), ".".join(reversed(scope)), ast.unparse(f))
+            if callsite in native_owners:
+                native.append(callsite)
+                continue
             stray.append(f"{path.relative_to(ROOT)}:{call.lineno}")
     assert not stray, f"connect through server/cli/_ch.py instead: {stray}"
+    assert sorted(native) == sorted(native_owners)
 
 
 def test_a_code_command_that_addresses_an_org_connects_for_it() -> None:
@@ -1422,3 +1456,29 @@ def test_a_cli_past_recording_is_refused_an_unheld_org_without_naming_the_token(
     with pytest.raises(_ch.OrgNotHeld) as refused:
         asyncio.run(_ch.check_orgs(["acme"]))
     assert str(refused.value) == "refusing: org 'acme' is not held by this cell"
+
+
+@pytest.mark.parametrize("free", [_ch.writes("w"), _ch.revokes("r")])
+def test_owned_state_reader_keeps_the_shared_wrong_cell_refusal(monkeypatch, free):
+    _cell_set(monkeypatch, AssertionError("the generic reader must not open another session"))
+    owned = AsyncMock(return_value=("enforced", "us-1"))
+    with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1', not LOOM_CELL='eu-1'"):
+        asyncio.run(_ch.check_org_free(free, state_reader=owned))
+    owned.assert_awaited_once_with()
+
+
+def test_owned_state_reader_retains_the_shared_read_work_cap(monkeypatch):
+    _cell_set(monkeypatch, AssertionError("the generic reader must not open another session"))
+    monkeypatch.setattr(_ch, "_STATE_READ_S", 0.01)
+    cancelled = []
+
+    async def owned():
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    with pytest.raises(TimeoutError, match="cell state read reached its deadline"):
+        asyncio.run(_ch.check_org_free(_ch.writes("w"), state_reader=owned))
+    assert cancelled == [True]

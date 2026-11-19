@@ -17,7 +17,7 @@ from server.cli import cell as cell_cli
 from server.cli import cell_attach_pg as apg
 from server.cli import cell_control
 from server.cli import cell_restore_pg as local
-from server.cli._ch import OrgNotHeld, connect_declared, disconnect, writes
+from server.cli._ch import OrgNotHeld, check_org_free, connect_verified, disconnect, writes
 from server.core import cell, pg
 from server.router import directory
 from server.router import restore as protocol
@@ -231,11 +231,23 @@ class Restore:
                 pass
             raise
 
+    async def check_stores(self) -> None:
+        async def read_state() -> tuple[str, str]:
+            # Capture native fatal exceptions before the policy's wait_for task sees them.
+            return await self.budget.call(cell.read_state_if_present(self.conn))
+
+        try:
+            await check_org_free(writes("restores this cell's metadata"), state_reader=read_state)
+        except OrgNotHeld as error:
+            # Convert the policy's SystemExit inside the captured operation.
+            raise ValueError(str(error)) from error
+
     async def run(self, ch: Any) -> dict[str, Any]:
         from server.cli import cell_restore_stores as stores
 
         try:
             await self.budget.call(self.open())
+            await self.budget.call(self.check_stores())
             refusals = await self.budget.call(apg.direct_refusals(self.conn, "restore"))
             refusals += await self.budget.call(apg.encoding_refusals(self.conn))
             if refusals:
@@ -330,11 +342,7 @@ class Restore:
 
 
 async def _connect(ch: Any) -> None:
-    try:
-        await connect_declared(ch, org_free=writes("restores this cell's metadata"))
-    except OrgNotHeld as error:
-        # SystemExit in an independent task would stop its supervisor's event loop.
-        raise ValueError(str(error)) from error
+    await connect_verified(ch)
 
 
 def cmd_restore(args: argparse.Namespace) -> int:

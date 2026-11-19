@@ -155,19 +155,28 @@ def _outage(e: BaseException) -> bool:
     return isinstance(e, pg.PostgresUnavailableError) or pg.is_outage(e)
 
 
-async def check_org_free(free: OrgFree) -> None:
+async def check_org_free(
+    free: OrgFree,
+    *,
+    state_reader: Callable[[], Awaitable[tuple[str, str]]] | None = None,
+) -> None:
     """With `LOOM_CELL` set, refuse an org-free `write` or `revocation` command whose
     stores belong to another cell: their `first` row names it. A CLI pointed at another
     cell's stores always finds one there; an absent row, or state tables not migrated
     yet, passes, so a later cell runs these before it is prepared. A failed read refuses,
-    but a revocation runs through an outage (docs/architecture/cells.md, "Invariants")."""
+    but a revocation runs through an outage (docs/architecture/cells.md, "Invariants").
+    An owned reader keeps its session and total deadline; its timeout escapes to its
+    owner with a fixed diagnostic rather than the generic ten-second read refusal.
+    """
     from server.core import pg
     from server.settings import settings
 
     if free.kind == "read" or not settings.cell or not pg.enabled():
         return
     try:
-        _found, name = await asyncio.wait_for(_read_state(), timeout=_STATE_READ_S)
+        _found, name = await asyncio.wait_for(
+            (state_reader or _read_state)(), timeout=_STATE_READ_S
+        )
     except pg.AuthorityMismatch:
         raise  # another deployment's Postgres: refused as `check_configured` refuses it
     except Exception as e:  # noqa: BLE001 — an unread cell state refuses a write
@@ -178,6 +187,9 @@ async def check_org_free(free: OrgFree) -> None:
                 file=sys.stderr,
             )
             return
+        if state_reader is not None and isinstance(e, TimeoutError):
+            # The owner's shorter deadline may have expired; never expose driver text.
+            raise TimeoutError("cell state read reached its deadline") from None
         raise OrgNotHeld(
             f"refusing: this cell's state could not be read "
             f"({type(e).__name__}: {_read_failure(e)})"

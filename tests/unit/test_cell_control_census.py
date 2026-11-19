@@ -687,6 +687,26 @@ def test_restore_claim_precedes_schema_probes_and_acceptance():
     run = function("server/cli/cell_restore.py", "Restore.run")
     found = {ast.unparse(node.func): node for node in ast.walk(run) if isinstance(node, ast.Call)}
     claim = found["self.control"]
+    gate = found["self.check_stores"]
+    assert (
+        found["self.open"].lineno
+        < gate.lineno
+        < found["apg.direct_refusals"].lineno
+        < found["apg.encoding_refusals"].lineno
+        < found["apg.take_lock"].lineno
+        < claim.lineno
+    )
+    policy = function("server/cli/cell_restore.py", "Restore.check_stores")
+    declarations = [
+        node
+        for node in ast.walk(policy)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "check_org_free"
+    ]
+    assert len(declarations) == 1
+    declaration = declarations[0].args[0]
+    assert isinstance(declaration, ast.Call) and ast.unparse(declaration.func) == "writes"
+    assert ast.literal_eval(declaration.args[0]) == "restores this cell's metadata"
+    assert any(kw.arg == "state_reader" for kw in declarations[0].keywords)
     assert any(kw.arg == "claim" and ast.literal_eval(kw.value) is True for kw in claim.keywords)
     assert (
         claim.lineno

@@ -1011,3 +1011,125 @@ async def test_restore_directory_exit_stall_keeps_original_page_deadline(stores,
         await released(observer, backend["pid"])
     finally:
         await observer.close(timeout=1)
+
+
+def test_public_preflight_deadline_releases_its_actual_backend_before_returning(
+    stores, command_loop, monkeypatch, capsys
+):
+    import argparse
+    import asyncio
+    import time
+
+    import asyncpg
+
+    from server.core import ch as ch_module
+    from server.settings import settings
+    from tests.integration.test_pg_owned_cleanup import released, sleeping
+
+    class ConnectedClickHouse(OfflineClickHouse):
+        connected = False
+        authority_reads = 0
+
+        async def connect(self):
+            self.connected = True
+
+        async def disconnect(self):
+            self.connected = False
+
+        async def query_one(self, sql, params=None):
+            if "storage_authority" in sql:
+                self.authority_reads += 1
+            return await super().query_one(sql, params)
+
+    client = ConnectedClickHouse()
+    monkeypatch.setattr(settings, "cell", "first")
+    monkeypatch.setattr(settings, "pg_dsn", stores["first"])
+    monkeypatch.setattr(settings, "document_s3_bucket", "")
+    monkeypatch.setattr(ch_module, "get_client", lambda: client)
+    observer = command_loop.run_until_complete(asyncpg.connect(stores["first"]))
+    started = asyncio.Event()
+    owned, closes, aborts = {}, [], []
+    fetchval = asyncpg.Connection.fetchval
+    public_close = asyncpg.Connection.close
+    terminate = asyncpg.Connection.terminate
+    seconds = 2
+
+    async def stalled_state_read(conn, query, *args, **kwargs):
+        if query == "SELECT count(to_regclass(t)) FROM unnest($1::text[]) AS t":
+            # Stall the real first-cell policy's driver I/O, retaining its exact backend.
+            assert args == (list(cell._STATE_TABLES),)
+            owned["pid"] = conn.get_server_pid()
+            await conn.execute("SELECT pg_advisory_lock($1)", 796934)
+            started.set()
+            await conn.execute("SELECT pg_sleep(10)")
+        return await fetchval(conn, query, *args, **kwargs)
+
+    async def close(conn, **kwargs):
+        ours = conn.get_server_pid() == owned.get("pid")
+        if ours:
+            closes.append((conn.get_server_pid(), kwargs["timeout"]))
+        await public_close(conn, **kwargs)
+        if ours:
+            # A separate real session verifies release before close acknowledges success.
+            await released(observer, owned["pid"])
+
+    def abort(conn):
+        if conn.get_server_pid() == owned.get("pid"):
+            aborts.append(conn.get_server_pid())
+        terminate(conn)
+
+    async def supervised(work):
+        task = asyncio.create_task(work)
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            await sleeping(observer, owned["pid"])
+            assert await observer.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory')",
+                owned["pid"],
+            )
+            return await task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def state():
+        rows = await observer.fetchrow(
+            "SELECT "
+            "(SELECT jsonb_agg(to_jsonb(f) ORDER BY to_jsonb(f)::text) FROM loom.cell_first f) AS first, "
+            "(SELECT jsonb_agg(to_jsonb(m) ORDER BY to_jsonb(m)::text) FROM loom.tenancy_mode m) AS mode, "
+            "(SELECT jsonb_agg(to_jsonb(s) ORDER BY to_jsonb(s)::text) FROM loom.cell_self s) AS own, "
+            "(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM loom.tenancy t) AS tenancy"
+        )
+        return await cell.read_state_and_first(observer), dict(rows)
+
+    try:
+        before = command_loop.run_until_complete(state())
+        monkeypatch.setattr(asyncpg.Connection, "fetchval", stalled_state_read)
+        monkeypatch.setattr(asyncpg.Connection, "close", close)
+        monkeypatch.setattr(asyncpg.Connection, "terminate", abort)
+        monkeypatch.setattr(
+            cell_restore.asyncio,
+            "run",
+            lambda work: command_loop.run_until_complete(supervised(work)),
+        )
+        began = time.monotonic()
+        assert (
+            cell_restore.cmd_restore(
+                argparse.Namespace(cell="first", wait=seconds, router=str(ROUTER))
+            )
+            == 1
+        )
+        assert time.monotonic() - began < seconds + 0.5
+        assert len(closes) == 1 and closes[0][0] == owned["pid"]
+        assert 0 < closes[0][1] <= seconds and aborts == []
+        command_loop.run_until_complete(released(observer, owned["pid"]))
+        assert command_loop.run_until_complete(state()) == before
+        assert client.authority_reads == 1 and not client.connected and client.writes == []
+        printed = capsys.readouterr()
+        assert printed.out == ""
+        assert "--wait" in printed.err or "cell state read reached its deadline" in printed.err
+        assert "outcome may be unknown" in printed.err
+        assert "rerun the same command before starting the cell" in printed.err
+    finally:
+        command_loop.run_until_complete(observer.close(timeout=1))

@@ -1482,7 +1482,7 @@ entry points and the named exceptions:
 | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cell_prepare._write_rows`                                                              | Fresh claim, observed local rows, exact lock backend                                                                                                                                                           |
 | `cell_attach_pg._mode_transaction`                                                      | Attach's claim, supervised mode try, recording/first/fingerprint comparison, exact lock backend                                                                                                                |
-| `cell_restore` schema, tenancy, state and trigger repair                                | Fresh claim before repair, same lock backend, retained generation at restart and final acknowledgement |
+| `cell_restore` schema, tenancy, state and trigger repair                                | Fresh claim before repair, same lock backend, retained generation at restart and final acknowledgement                                                                                                         |
 | `cell_control.backout`                                                                  | Fresh claim, fenced close and zero-placement read, observed local rows, exact lock backend                                                                                                                     |
 | `cell_update_pg.write.change`                                                           | Fresh directory claim; owner's bounded transaction on the exact ATTACH backend, paired registration and exact observed local identity/pair before tenancy repair and acceptance write                          |
 | `directory.attach_begin`, `attach_place`, `attach_enforced`, `attach_serving`, `remove` | Claimed generation, full registration and exact pair, including retries/no-ops                                                                                                                                 |
@@ -1547,6 +1547,9 @@ shared Postgres connector, before its deployment or codec waits. A closed owner 
 initialization and closes a late session within its original deadline. The connector
 still enforces process admission, participant attribution and retirement seals; callers
 without an explicit owner retain connector cleanup until initialization finishes.
+After verifying the ClickHouse authority, restore checks the first-cell write policy
+through that owned Postgres session before probes or repair. This preflight uses
+the command's existing deadline and close path.
 
 Each directory page uses the shared callback session owner with its own seven-statement
 budget. The owner begins and commits one audited transaction, closes that proxy before
