@@ -9,6 +9,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from pydantic import BaseModel
+
 from server.core import settings_overrides
 from server.core.ch import statement_timeout
 from server.core.ch_bounded import BoundedReadError
@@ -43,7 +45,7 @@ async def _allowance(deadline: float) -> AsyncIterator[float]:
             yield deadline
 
 
-def _result(model: Any) -> dict[str, Any]:
+def _result(model: BaseModel) -> dict[str, Any]:
     result = model.model_dump(mode="json")
     encoded = json.dumps(
         result, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False

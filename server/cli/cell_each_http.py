@@ -239,7 +239,7 @@ async def _request(
             return response.status_code, _object(bytes(raw))
 
 
-def _target(value: Any) -> dict[str, Any]:
+def _target(value: dict[str, Any]) -> dict[str, Any]:
     history._target(value)
     if re.fullmatch(r"[a-z0-9-]{1,32}", value["cell"]) is None:
         raise _refuse()
@@ -880,11 +880,11 @@ async def _cell(
             raise _refuse()
         completion = _completion(answer, target, state) if code is None else None
     except Exception:  # noqa: BLE001 — every post-send failure must retain uncertain completion
-        status = "UNSETTLED" if state["command"]["mutating"] else "known-no-action"
+        outcome_status = "UNSETTLED" if state["command"]["mutating"] else "known-no-action"
         code = "COMPLETION_UNKNOWN" if state["command"]["mutating"] else "READ_INCOMPLETE"
-        _mark(state, target, status, code=code)
+        _mark(state, target, outcome_status, code=code)
         history.write_state(path, state)
-        print(target["cell"] + " " + status + " " + code, file=sys.stderr)
+        print(target["cell"] + " " + outcome_status + " " + code, file=sys.stderr)
         return False
     if code is not None:
         _mark(state, target, "known-no-action", code=code)

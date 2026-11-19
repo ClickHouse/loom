@@ -7,6 +7,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import secrets
 import ssl
 import subprocess
@@ -84,7 +85,24 @@ def child(command: list[str], env: dict[str, str]) -> subprocess.CompletedProces
         capture_output=True,
         timeout=240,
     )
-    assert result.returncode == 0, f"Private fixture command {command[:1]} failed"
+    if result.returncode:
+        # Allow only migration names, error classes and numeric codes into CI output.
+        # The streams may hold connection credentials, beyond generic log redaction.
+        migrations = {path.name for path in (ROOT / "schemas" / "migrations").glob("*.sql")}
+        stages = re.findall(r"(?m)^\s*[→✓✗] (\d{3}_[a-z0-9_]{1,160}\.sql)", result.stdout)
+        kinds = re.findall(
+            r"\b(DatabaseError|OperationalError|PreflightError|ValidationError|"
+            r"ConnectionError|TimeoutError|KeeperRequired)\b",
+            result.stderr,
+        )
+        codes = re.findall(r"\bCode: (\d{1,5})\b", result.stderr)
+        detail = {
+            "exit": result.returncode,
+            "migration": [name for name in stages if name in migrations][-1:],
+            "error_kinds": sorted(set(kinds)),
+            "clickhouse_codes": sorted(set(codes))[:8],
+        }
+        raise AssertionError(f"Private fixture command {command[:1]} failed: {detail}")
     return result
 
 

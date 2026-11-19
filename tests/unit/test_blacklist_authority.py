@@ -78,8 +78,11 @@ class _Repo:
             return None
         return dict(row)
 
-    async def tombstone_pattern(self, pattern_id, when, **_):
+    async def tombstone_pattern(self, pattern_id, when, *, selected, **_):
+        row = self.rows[pattern_id]
+        assert selected == (row["org"], row["namespace"], row["scope"])
         self.tombstoned.append(pattern_id)
+        return True
 
 
 @pytest.fixture(autouse=True)
@@ -234,6 +237,25 @@ def test_remove_unknown_id_is_a_miss(repo: _Repo) -> None:
     set_current_auth(_auth("PLATFORM_ADMIN"))
     out = asyncio.run(h.handle_blacklist_remove(BlacklistRemoveInput(org=ORG, pattern_id="nope")))
     assert out.removed is False and out.removed_at is None
+
+
+def test_remove_unconfirmed_row_does_not_publish_success(repo: _Repo, monkeypatch) -> None:
+    repo.rows["p1"] = _row("p1", "namespace")
+    set_current_auth(_auth("ADMIN"))
+    published: list[str] = []
+
+    async def vanished(*args, **kwargs):
+        return False
+
+    async def bump(**kwargs):
+        published.append("version")
+
+    monkeypatch.setattr(h.blacklist_repo, "tombstone_pattern", vanished)
+    monkeypatch.setattr(h, "_bump_version", bump)
+    monkeypatch.setattr(h, "invalidate_cache", lambda: published.append("cache"))
+    out = asyncio.run(h.handle_blacklist_remove(BlacklistRemoveInput(org=ORG, pattern_id="p1")))
+    assert out.removed is False and out.removed_at is None
+    assert published == []
 
 
 # ------------------------------------------------- a token narrowed to one user

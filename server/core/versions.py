@@ -49,7 +49,9 @@ async def next_version(
             )
         ):
             raise BoundedReadError("A successor version could not be established")
-        return max(rows[0]["clock"], rows[0]["previous"] + 1)
+        clock: int = rows[0]["clock"]
+        previous: int = rows[0]["previous"]
+        return max(clock, previous + 1)
     with own_write_reads():  # the newest row may have landed a moment ago elsewhere
         row = await ch.query_one(
             "SELECT greatest(toUInt64(toUnixTimestamp64Nano(now64(9))), max(version) + 1) AS v "

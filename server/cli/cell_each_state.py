@@ -317,7 +317,8 @@ def new_state(command: Command, *, targets: list[dict[str, Any]], run_id: str) -
     }
     _validate(state)
     # Own the accepted snapshot instead of retaining a caller's mutable target list.
-    return json.loads(_json(state))
+    owned: dict[str, Any] = json.loads(_json(state))
+    return owned
 
 
 def has_uncertainty(state: dict[str, Any]) -> bool:

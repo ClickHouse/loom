@@ -167,13 +167,17 @@ async def record(
                 progress["recorded"] = True
             revocation.remember_row(current, **({} if deadline is None else {"bounded": True}))
             return current, True
-        row = await revocation.revoke(
-            subject,
-            reason=reason,
-            revoked_by=by,
-            **bounded,
-            **({} if deadline is None else {"progress": progress}),
-        )
+        if deadline is None:
+            row = await revocation.revoke(subject, reason=reason, revoked_by=by)
+        else:
+            row = await revocation.revoke(
+                subject,
+                reason=reason,
+                revoked_by=by,
+                deadline=deadline,
+                ch=ch,
+                progress=progress,
+            )
         if progress is not None:
             progress["recorded"] = True
         return row, False
@@ -236,17 +240,29 @@ async def finish(
             )
     finally:  # a revocation that landed is recorded, even if the marking did not finish
         end_user_org = org_of_end_user_revocation(subject)
-        await audit_revocation(
-            row,
-            token_id=subject,
-            kind="subject",
-            by=by,
-            org=end_user_org or org,
-            sessions=sessions,
-            tokens=tokens,
-            kept=kept,
-            **({} if deadline is None else {"deadline": deadline}),
-        )
+        if deadline is None:
+            await audit_revocation(
+                row,
+                token_id=subject,
+                kind="subject",
+                by=by,
+                org=end_user_org or org,
+                sessions=sessions,
+                tokens=tokens,
+                kept=kept,
+            )
+        else:
+            await audit_revocation(
+                row,
+                token_id=subject,
+                kind="subject",
+                by=by,
+                org=end_user_org or org,
+                sessions=sessions,
+                tokens=tokens,
+                kept=kept,
+                deadline=deadline,
+            )
     return Revoked(
         row=row, kept=kept, outright=outright, cutoff=in_force, sessions=sessions, tokens=tokens
     )

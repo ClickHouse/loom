@@ -85,7 +85,8 @@ def _whoami(answer: dict[str, Any], name: str) -> str:
         or not 35 <= expires - time.time() <= 60
     ):
         raise _refuse()
-    return answer["org"]
+    org: str = answer["org"]
+    return org
 
 
 def _registration(

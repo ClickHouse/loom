@@ -5,9 +5,9 @@ namespace='*'), and namespace (both set). The list-by-scope SQL has
 to encode all three lookup shapes; centralizing here keeps the
 predicates in one place.
 
-Soft-delete via tombstoned_at; an ALTER UPDATE flips it. The in-process
-cache and when it refreshes live in server.memory.app.blacklist_guard; the
-statements it runs (the active patterns, the version watermark) are here.
+Soft-delete inserts a complete row with a newer created_at version and tombstoned_at.
+The in-process cache and its refresh live in server.memory.app.blacklist_guard;
+the statements it runs (active patterns and the version watermark) are here.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from uuid import UUID
 from server.core import ch_names
 from server.core.ch import set_query_tag, statement_timeout
 from server.core.ch_bounded import BoundedReadError, read_rows
+from server.core.datetimes import fits_datetime_column, to_naive_utc_second
 from server.core.repo_base import _CHClient, _default_client
 
 
@@ -115,19 +116,74 @@ async def tombstone_pattern(
     when: datetime,
     *,
     ch: _CHClient | None = None,
-) -> None:
-    """Soft-delete via ALTER UPDATE. mutations_sync=2 so the next
-    list call doesn't see the row."""
-    ch = ch or _default_client()
-    await ch.execute(
-        """
-        ALTER TABLE loom.blacklist
-        UPDATE tombstoned_at = {ts:DateTime}
-        WHERE pattern_id = {pid:UUID}
-        SETTINGS mutations_sync=2
-        """,
-        params={"pid": pattern_id, "ts": when},
+    selected: tuple[str, str, str] | None = None,
+) -> bool:
+    """Insert a complete tombstone past the selected row's DateTime version."""
+    client = ch or _default_client()
+    deadline = time.monotonic() + 30.0
+    await check_bounded_storage(ch=client, deadline=deadline)
+    predicate = "pattern_id = {pid:UUID}"
+    params: dict[str, Any] = {"pid": pattern_id, "limit": 3}
+    if selected is not None:
+        predicate += (
+            " AND org = {org:String} AND namespace = {ns:String} AND scope = {scope:String}"
+        )
+        params.update(org=selected[0], ns=selected[1], scope=selected[2], limit=2)
+    rows = await read_rows(
+        "SELECT "
+        + _ROW_PROJECTION
+        + " FROM loom.blacklist FINAL WHERE "
+        + predicate
+        + " LIMIT {limit:UInt32} FORMAT JSONEachRow",
+        params,
+        ch=client,
+        deadline=deadline,
+        row_bytes=32768,
+        total_bytes=65536,
+        max_rows=2 if selected is None else 1,
+        tag="blacklist.remove.selected",
     )
+    if len(rows) > 1:
+        raise BoundedReadError("The refusal identity is ambiguous")
+    if not rows:
+        return False
+    row = _decode_bounded_row(rows[0])
+    if row["tombstoned_at"] is not None:
+        return False
+    epoch = datetime(1970, 1, 1)
+    created_at: datetime = row["created_at"]
+    stored = (created_at - epoch).days * 86400 + (created_at - epoch).seconds
+    if stored == 2**32 - 1:
+        raise BoundedReadError("A refusal successor version cannot be represented")
+    if not fits_datetime_column(when):
+        raise BoundedReadError("Invalid refusal removal time")
+    clocks = await read_rows(
+        "SELECT partition_key, toUnixTimestamp(now()) AS now FROM system.tables "
+        "WHERE database = {database:String} AND name = 'blacklist' LIMIT 2 FORMAT JSONEachRow",
+        {"database": ch_names.database()},
+        ch=client,
+        deadline=deadline,
+        row_bytes=1024,
+        total_bytes=1024,
+        max_rows=1,
+        tag="blacklist.remove.successor",
+    )
+    if (
+        len(clocks) != 1
+        or set(clocks[0]) != {"partition_key", "now"}
+        or clocks[0]["partition_key"] != ""
+        or type(clocks[0]["now"]) is not int
+        or not 0 <= clocks[0]["now"] <= 2**32 - 1
+    ):
+        raise BoundedReadError("The refusal replacement storage could not be established")
+    clock: int = clocks[0]["now"]
+    successor = epoch + timedelta(seconds=max(clock, stored + 1))
+    await insert_row(
+        {**row, "created_at": successor, "tombstoned_at": to_naive_utc_second(when)},
+        ch=client,
+        deadline=deadline,
+    )
+    return True
 
 
 async def active_patterns(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:

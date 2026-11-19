@@ -96,7 +96,8 @@ class Command:
 
     @property
     def arguments(self) -> dict[str, Any]:
-        return json.loads(self._arguments_json)
+        arguments: dict[str, Any] = json.loads(self._arguments_json)
+        return arguments
 
     @property
     def path(self) -> str:

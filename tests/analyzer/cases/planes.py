@@ -17,6 +17,7 @@ import sys
 import types
 import typing
 from typing import Any
+from unittest.mock import patch
 
 from server.auth.context import current_auth
 from server.core.naming import not_mirror_sql
@@ -655,7 +656,44 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await C.tombstone_ids(ORG, [_UUID], "note", _DT, ch=ch, namespace=NS)
     await B.find_active_pattern(_UUID, org=ORG if f else None, ch=ch)
     await B.list_for_scope(ORG, NS, scope="namespace" if f else None, ch=ch)
-    await B.tombstone_pattern(_UUID, _DT, ch=ch)
+
+    # Record the real bounded SELECT builders at their database adapter.
+    async def capture(sql: str, params: dict[str, Any], **kwargs) -> list[dict[str, Any]]:
+        await ch.query_all(sql, params)
+        if "SELECT engine, engine_full, sorting_key" in sql:
+            return [
+                {
+                    "engine": "ReplacingMergeTree",
+                    "engine_full": "ReplacingMergeTree(created_at)",
+                    "sorting_key": "org, namespace, pattern_id",
+                }
+            ]
+        if "FROM system.columns" in sql:
+            return [{"name": name, "type": kind} for name, kind in B._COLUMN_TYPES.items()]
+        if "SELECT partition_key" in sql:
+            return [{"partition_key": "", "now": 1_800_000_000}]
+        if "FROM loom.blacklist FINAL WHERE" in sql:
+            return [
+                {
+                    "pattern_id": _UUID,
+                    "org": ORG,
+                    "namespace": NS,
+                    "scope": "namespace",
+                    "pattern": "restricted",
+                    "pattern_type": "substring",
+                    "reason": "policy",
+                    "created_by": AGENT,
+                    "hit_count": 0,
+                    "created_at": 1_700_000_000,
+                    "last_hit_at": None,
+                    "tombstoned_at": None,
+                }
+            ]
+        raise AssertionError("Unexpected blacklist tombstone statement")
+
+    with patch.object(B, "read_rows", capture):
+        await B.tombstone_pattern(_UUID, _DT, ch=ch)
+        await B.tombstone_pattern(_UUID, _DT, ch=ch, selected=(ORG, NS, "namespace"))
     await W.blacklist_updated_at(ch=ch)
     await W.last_writes(ORG, [NS, "n2"], ch=ch)
     await L.delete_procedure_runs_by_key(ORG, NS, "k1", ch=ch)

@@ -427,7 +427,11 @@ async def handle_blacklist_remove(
             # An org-scoped pattern of another org is not addressable here.
             return BlacklistRemoveOutput(removed=False)
         _require_scope_authority(scope, "remove", row_org=row_org)
-    await blacklist_repo.tombstone_pattern(input.pattern_id, now)
+    removed = await blacklist_repo.tombstone_pattern(
+        input.pattern_id, now, selected=(row_org, row_ns, scope)
+    )
+    if not removed:
+        return BlacklistRemoveOutput(removed=False)
     invalidate_cache()
     await _bump_version(updated_by=f"remove:{input.removed_by or 'unknown'}", org=row_org)
     return BlacklistRemoveOutput(removed=True, removed_at=now)

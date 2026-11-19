@@ -63,7 +63,7 @@ The supported command families are closed:
 
 | Family         | Actions                                                 |
 | -------------- | ------------------------------------------------------- |
-| `settings`     | `list`, `set`, `history` for live settings              |
+| `settings`     | `list`, `set`, `reset`, `history` for live settings     |
 | `signing-key`  | `list`, `rotate`, `retire`                              |
 | `revoke-token` | One exact global subject                                |
 | `ratelimit`    | Namespace-name limit, shared across orgs with that name |

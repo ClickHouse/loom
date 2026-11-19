@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import HTTPException
@@ -10,6 +11,8 @@ from server.core import runtime_overrides as ro
 from server.core.numbers import parse_budget_value
 from server.core.ratelimit import Limit, get_limiter
 from server.observability.budgets import get_overrides, stored_ms
+
+log = logging.getLogger(__name__)
 
 
 async def change_namespace_rate(
@@ -119,11 +122,12 @@ async def change_budget(
     try:
         stored_ms(budget_ms)
     except ValueError as error:
+        log.info("budget change validation refused: %s", error)
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "VALIDATION_FAILED",
-                "message": str(error),
+                "message": "budget_ms must be a whole number of ms >= 0",
             },
         ) from error
     await ro.put(ro.BUDGET_OP, (op,), budget_ms, **bounded)

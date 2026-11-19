@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 from server.cli.cell_each_state import has_uncertainty, read_state, resume_read, run_lock
 
 
 class _Parser(argparse.ArgumentParser):
-    def error(self, _message: str) -> None:
+    def error(self, _message: str) -> NoReturn:
         self.exit(2, "Invalid cell administration options\n")
 
 
@@ -31,7 +32,7 @@ def _parser(*, add_help: bool = True) -> argparse.ArgumentParser:
     return parser
 
 
-def add_each_parser(sub: argparse._SubParsersAction) -> None:
+def add_each_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Share the exact client flags with normal CLI help and its generated tree."""
     parser = sub.add_parser(
         "each",
