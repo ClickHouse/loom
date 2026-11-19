@@ -376,11 +376,13 @@ async def connect_external(
 
 async def disconnect(ch: CHClient) -> None:
     """Close the Postgres pool a command opened, then `ch`."""
-    from server.core import pg
+    from server.core import pg, retirement
 
     pg.expect_deployment(None)
     try:
-        await pg.close_pool()
+        gate = retirement.get_gate()
+        if not (gate.role == "command" and gate.closed):
+            await pg.close_pool()
     except BaseException:  # Keep the pool close failure while closing ClickHouse.
         with suppress(BaseException):
             await ch.disconnect()
@@ -399,10 +401,13 @@ def run_connected[T](
     command writes), disconnected on every path — an open client at loop close leaks its
     HTTP session."""
     from server import boot
+    from server.auth.account_lifecycle import bind
     from server.core.background import register_buffer_drainer
     from server.core.ch import get_client
     from server.insights.app.provider_command import model_command
+    from server.knowledge.app.connected_accounts import stop_subjects
 
+    bind(stop_subjects)
     named = _declared(orgs, org_free)
     register_buffer_drainer("boot-writes", boot.drain_writes)
 

@@ -81,6 +81,7 @@ async def handle_code_calibrate(input: CodeCalibrateInput) -> CodeCalibrateOutpu
         paraphrase_pairs=positives,
         distractor_pairs=distractors,
         question_fact_pairs=positives,
+        paraphrase_pair_purpose="query_document",
     )
     if calibration is None:
         raise ValidationError(

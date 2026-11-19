@@ -176,7 +176,8 @@ connector can find the OAuth server (`mcp_auth.py`).
 `tools/list` shows the roster chosen by `LOOM_MCP_TOOLSET` (default `core`) or `?toolset=`
 (`server/operations/toolsets.py`). A roster is visibility only: every op stays callable by
 name, except the ops in `_MCP_HIDDEN_OPS`, which MCP neither lists nor calls (HTTP still
-serves them). The toolsets are in the [MCP reference](../reference/mcp.md). Three tools
+serves them; `LOOM_MCP_CODE_UPLOAD_TOOLS` serves the two compiler-tier upload ops over MCP
+as well). The toolsets are in the [MCP reference](../reference/mcp.md). Three tools
 have hand-written descriptors: `loom_search` (the `search.query` op, rendered as a text
 summary plus the lean sections), `loom_op` (calls any op by name through the same path;
 `op: "help"` lists them, `server/transport/mcp_op.py`) and `loom_activate` (the primer,

@@ -85,9 +85,10 @@ loom cell attach --cell <cell> \
 
 `--dry-run` runs the refusals and step 2's scan, prints the count and a sample of the orgs
 per source table, the ones it would skip, and whether the scan fit in half of
-`--scan-budget`, and writes nothing; the router's own checks at `attach/begin` (the probe,
-the hosts, the upstream) do not run. Name every ClickHouse user, user directory, object and
-replica that may write the configured databases with `--ch-allow-user`,
+`--scan-budget`. Cell state, tenancy triggers and placements stay unchanged; normal
+participant enrollment and retirement are still recorded. The router's own checks at
+`attach/begin` (the probe, the hosts, the upstream) do not run. Name every ClickHouse user,
+user directory, object and replica that may write the configured databases with `--ch-allow-user`,
 `--ch-allow-user-directory`, `--ch-allow-object` and `--ch-allow-replica`, and every
 Postgres role besides attach's own that may make an org held with `--pg-allow-role`; each
 list is audited by the router. `--wait` (default 600 s) is the wall time the waits share;
@@ -105,7 +106,8 @@ unprovisioned subject and refuses before serving. `--revoke-unprovisioned` cuts 
 subject's existing tokens under SCIM's revocation prefix; it does not provision a user.
 Already accepted cutoffs remain if a later read, audit or subject fails. Rerun the same
 command and flag to finish. An outright revocation or a newer cutoff is never narrowed.
-`--dry-run --revoke-unprovisioned` writes nothing, and a serving rerun only verifies.
+`--dry-run --revoke-unprovisioned` never revokes; command participation is still recorded.
+A serving rerun only verifies.
 On interruption its owner closes the session before cancelling transaction work.
 A close that cannot complete uses transport abort and reports failure; that abort
 does not establish that server locks or an unacknowledged commit have disappeared.

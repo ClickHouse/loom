@@ -3,13 +3,210 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from server.core import request_work
 from server.core.ch import current_query_tag, query_tag, statement_settings
 from server.knowledge.store import mirror_latch as store
+from tests.unit.clock_fake import ManualClock
 from tests.unit.mirror_latch_fake import A, B, KeeperWorld
+
+
+@pytest.mark.parametrize(
+    "operation, stage, method",
+    [
+        (store.enabled, "enabled.engines", "query_one"),
+        (store.ensure, "ensure.set", "execute"),
+    ],
+)
+async def test_refusal_logs_only_stage_exception_type_and_numeric_code(
+    operation, stage, method, caplog, monkeypatch
+):
+    world = KeeperWorld()
+    error = RuntimeError("Code: 999. private-body SELECT secret https://example.invalid/token")
+    monkeypatch.setattr(world, method, AsyncMock(side_effect=error))
+    with (
+        caplog.at_level("WARNING", logger=store.__name__),
+        pytest.raises(
+            store.LatchUnavailable, match="^Session protection state could not be confirmed$"
+        ),
+    ):
+        await operation(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args[:3] == (stage, "RuntimeError", 999)
+    _timing_fields(records[0])
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "private-body" not in caplog.text and "example.invalid" not in caplog.text
+    assert not world.leases
+
+
+async def test_nonce_mismatch_logs_its_stage_and_keeps_the_refusal_and_cleanup(caplog):
+    world = KeeperWorld()
+    world.fault = "expired_nonce"
+    with caplog.at_level("WARNING", logger=store.__name__), pytest.raises(store.LatchUnavailable):
+        await store.enabled(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args[:3] == ("enabled.nonce_confirm", "LatchUnavailable", None)
+    _timing_fields(records[0])
+    assert not world.leases and world.counts["release"] == 1
+
+
+def _timing_fields(record):
+    assert len(record.args) == 7
+    elapsed, current, expired, completed = record.args[3:]
+    assert type(elapsed) is int and elapsed >= 0
+    assert type(current) is int and 0 <= current <= elapsed
+    assert type(expired) is bool
+    assert isinstance(completed, dict)
+    assert all(type(value) is int and 0 <= value <= elapsed for value in completed.values())
+    return elapsed, current, expired, completed
+
+
+@pytest.mark.parametrize("failure", ["release", "verify"])
+async def test_nonce_cleanup_failure_names_the_exact_statement(failure, caplog, monkeypatch):
+    clock = ManualClock(t=1000)
+    monkeypatch.setattr(store, "monotonic", clock.monotonic)
+    world = KeeperWorld()
+    execute, query_one = world.execute, world.query_one
+
+    async def release(sql, params=None):
+        if sql == store.LOCK_RELEASE and failure == "release" and not world.counts["release"]:
+            world.route("release")
+            clock.advance(0.375)
+            raise TimeoutError("private-body SELECT secret https://example.invalid/token")
+        return await execute(sql, params)
+
+    async def verify(sql, params=None):
+        if sql == store._NONCE and failure == "verify" and world.counts["release"]:
+            clock.advance(0.375)
+            raise TimeoutError("private-body SELECT secret https://example.invalid/token")
+        return await query_one(sql, params)
+
+    monkeypatch.setattr(world, "execute", release)
+    monkeypatch.setattr(world, "query_one", verify)
+    with caplog.at_level("WARNING", logger=store.__name__), pytest.raises(store.LatchUnavailable):
+        await store.enabled(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args[:3] == (f"enabled.nonce_{failure}", "TimeoutError", None)
+    elapsed, current, expired, completed = _timing_fields(records[0])
+    assert (elapsed, current, expired) == (375, 375, False)
+    assert completed["enabled.nonce_confirm"] == 0
+    assert ("enabled.nonce_release" in completed) is (failure == "verify")
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "private-body" not in caplog.text and "example.invalid" not in caplog.text
+    assert not world.leases and world.counts["release"] == 2 and world.counts["nonce"] == 1
+
+
+@pytest.mark.parametrize("outer_expires", [False, True])
+async def test_timeout_warning_records_phase_elapsed_and_actual_outer_expiry(
+    outer_expires, caplog, monkeypatch
+):
+    clock = ManualClock(t=1000)
+    monkeypatch.setattr(store, "monotonic", clock.monotonic, raising=False)
+    deadlines = []
+
+    def timeout(seconds):
+        assert seconds == 5
+        deadline = asyncio.timeout(seconds)
+        deadlines.append(deadline)
+        return deadline
+
+    monkeypatch.setattr(store, "asyncio", SimpleNamespace(timeout=timeout))
+
+    class TimedWorld(KeeperWorld):
+        @asynccontextmanager
+        async def coordination_session(self):
+            async with super().coordination_session():
+                clock.advance(1)
+                yield
+
+        async def query_one(self, sql, params=None):
+            if sql == store._LATCH:
+                clock.advance(0.375)
+                if outer_expires:
+                    deadlines[0].reschedule(asyncio.get_running_loop().time() - 1)
+                    await asyncio.sleep(0)
+                    pytest.fail("the outer deadline must cancel the proof")
+                raise TimeoutError("private-body SELECT secret https://example.invalid/token")
+            clock.advance(0.125)
+            return await super().query_one(sql, params)
+
+    world = TimedWorld()
+    with caplog.at_level("WARNING", logger=store.__name__), pytest.raises(store.LatchUnavailable):
+        await store.enabled(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args[:3] == ("enabled.latch", "TimeoutError", None)
+    assert _timing_fields(records[0]) == (
+        1500,
+        375,
+        outer_expires,
+        {"enabled.coordination": 1000, "enabled.engines": 1125},
+    )
+    assert deadlines[0].expired() is outer_expires
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "private-body" not in caplog.text and "example.invalid" not in caplog.text
+    assert world.calls == ["engines"] and not world.leases
+
+
+async def test_positive_latch_close_timeout_has_its_own_phase(caplog, monkeypatch):
+    clock = ManualClock(t=1000)
+    monkeypatch.setattr(store, "monotonic", clock.monotonic, raising=False)
+
+    class ClosingWorld(KeeperWorld):
+        @asynccontextmanager
+        async def coordination_session(self):
+            async with super().coordination_session():
+                clock.advance(0.25)
+                yield
+                clock.advance(1.5)
+                raise TimeoutError("private close details")
+
+        async def query_one(self, sql, params=None):
+            clock.advance(0.375 if sql == store._LATCH else 0.125)
+            return await super().query_one(sql, params)
+
+    world = ClosingWorld(enabled=True, visible=True)
+    with caplog.at_level("WARNING", logger=store.__name__), pytest.raises(store.LatchUnavailable):
+        await store.enabled(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args[:3] == ("enabled.close", "TimeoutError", None)
+    assert _timing_fields(records[0]) == (
+        2250,
+        1500,
+        False,
+        {"enabled.coordination": 250, "enabled.engines": 375, "enabled.latch": 750},
+    )
+    assert world.calls == ["engines", "latch"] and not world.leases
+    assert "private close details" not in caplog.text
+
+
+async def test_diagnostic_logger_failure_cannot_replace_the_privacy_refusal(monkeypatch):
+    world = KeeperWorld()
+    monkeypatch.setattr(world, "query_one", AsyncMock(side_effect=TimeoutError("private timeout")))
+
+    def broken_logger(*args, **kwargs):
+        raise RuntimeError("private logging failure")
+
+    monkeypatch.setattr(store.log, "warning", broken_logger)
+    with pytest.raises(
+        store.LatchUnavailable, match="^Session protection state could not be confirmed$"
+    ):
+        await store.enabled(ch=world)
+    assert not world.leases
 
 
 async def test_an_absent_latch_is_never_a_cached_negative_decision():

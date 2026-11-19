@@ -151,6 +151,39 @@ async def automatic(self, messages):
     assert len({site.key for site in sites}) == 2
 
 
+@pytest.mark.parametrize(
+    ("operation", "body"),
+    [
+        ("conversation.append", '{"messages": messages}'),
+        ("conversation.get", '{"thread_id": thread_id, "limit": 20}'),
+    ],
+)
+def test_python_capture_wrapper_retains_literal_operation_and_payload_provenance(operation, body):
+    source = f"""
+async def flush(self, messages):
+    return await self._capture_call("{operation}", {body})
+"""
+    sites = python_sites(source, "adapter.py", {}, {})
+    assert {site.op for site in sites} == {operation}
+    changed = python_sites(
+        source.replace(body, body[:-1] + ', "other": extra}'), "adapter.py", {}, {}
+    )
+    assert {site.key for site in sites}.isdisjoint(site.key for site in changed)
+    assert _unclassified(changed, set(), {site.key: "delivery" for site in sites})
+
+
+def test_session_capture_producers_keep_their_named_operations_in_the_census():
+    path = "sdk/python/loom/session.py"
+    sites = python_sites((ROOT / path).read_text(), path, {}, {})
+    assert {
+        "context.pack",
+        "conversation.get",
+        "conversation.append",
+        "memory.set_from_messages",
+        "conversation.create",
+    } <= {site.op for site in sites}
+
+
 def test_cli_urllib_request_collects_the_formatted_url_operation():
     source = """
 def _cmd_ingest_transcript(args):

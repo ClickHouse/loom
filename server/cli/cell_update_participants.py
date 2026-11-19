@@ -47,6 +47,8 @@ def complete(sql: str, *, sequential: int = 0) -> str:
 
 def latest(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    # The latest winner cannot hide a conflicting older version from another replica.
+    seen: dict[tuple[str, int], tuple[str, str]] = {}
     for row in rows:
         try:
             identity = str(UUID(str(row["participant_id"])))
@@ -62,12 +64,10 @@ def latest(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         ):
             raise cell_control._refused("participant census contains an unreadable row")
         previous = out.get(identity)
-        if (
-            previous is not None
-            and int(previous["version"]) == version
-            and (previous["state"], previous["host_proof"]) != (state, proof)
-        ):
+        observed = seen.get((identity, version))
+        if observed is not None and observed != (state, proof):
             raise cell_control._refused(f"participant {identity} has conflicting equal versions")
+        seen[(identity, version)] = (state, proof)
         if previous is None or int(previous["version"]) < version:
             out[identity] = dict(row)
     return out

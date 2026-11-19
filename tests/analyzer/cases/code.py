@@ -328,7 +328,6 @@ async def _point_readers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.symbols_by_ids(ORG, NS, ["s1"])
     # The commit refresh's reached set, path-only
     await repo.symbol_paths_by_ids(ORG, NS, ["s1"])
-    await repo.methods_named(ORG, NS, "f")
     await repo.paths_under_prefix(ORG, NS, MODEL, "src/")
     await repo.code_corpus_stats(ORG, NS, ["quota"])
     await repo.chunks_for_paths(ORG, NS, MODEL, ["src/a.py"])

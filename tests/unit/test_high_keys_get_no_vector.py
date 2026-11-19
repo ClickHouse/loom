@@ -11,6 +11,8 @@ import pytest
 
 from server.memory.api.models_admin import MemoryConsolidateInput
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 def test_consolidation_candidates_are_live_vectors_of_plain_rows() -> None:
     from server.memory.app.consolidate import _CONSOLIDATION_CANDIDATES_SQL as sql

@@ -54,6 +54,12 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
             "egress",
         ),
         ("fatal: unable to access 'https://h/': CONNECT tunnel failed, response 405", "egress"),
+        # an operator's git proxy that does not take the credentials
+        ("fatal: unable to access 'https://h/': CONNECT tunnel failed, response 407", "egress"),
+        (
+            "fatal: unable to access 'https://h/': Received HTTP code 407 from proxy after CONNECT",
+            "egress",
+        ),
         (
             "fatal: unable to access 'https://h/': Received HTTP code 502 from proxy after CONNECT",
             "network",
@@ -114,6 +120,37 @@ FAILING_FULL = tier_health.failed(None, "clang_full", "harness exit 1: x", T0).t
 )
 def test_an_error_is_classified_into_its_kind(text: str, kind: str) -> None:
     assert tier_health.classify(text) == kind
+
+
+def test_an_egress_fix_names_the_proxy_that_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Git prints the same words for the sandbox's egress proxy and for an operator's
+    git proxy; with LOOM_CODE_GIT_PROXY_URL set only the operator's can have answered."""
+    from server.code.domain.index.state import GIT_PROXY_REFUSALS, GIT_PROXY_REFUSED
+    from server.settings import settings
+
+    refused = (
+        "fatal: unable to access 'https://git.example/acme/widgets.git/': CONNECT tunnel "
+        "failed, response 403"
+    )
+    # A clone shows no words of git's: the fixed sentence it gives for the proxy's refusal.
+    clone = (
+        f"clone https://git.example/acme/widgets.git: git clone failed: {GIT_PROXY_REFUSED} (407)"
+    )
+    assert "sandbox's egress proxy" in tier_health.fix_for("egress", refused)
+    monkeypatch.setattr(settings, "code_git_proxy_url", "http://proxy.example:3128")
+    fix = tier_health.fix_for("egress", refused)
+    assert "operator's git proxy (LOOM_CODE_GIT_PROXY_URL)" in fix and "sandbox" not in fix
+    assert "git.example/acme/widgets" in fix and "LOOM_CODE_GIT_PROXY_TOKEN_FILE" in fix
+    assert "git.example" not in tier_health.fix_for("egress", refused, name_where=False)
+    # an entry's first network job, its clone, is the same kind with the same fix
+    assert tier_health.classify(clone) == "egress"
+    assert tier_health.fix_for("egress", clone) == fix
+    # Loom's own refusal to connect without that proxy reads as the same kind
+    for reason in GIT_PROXY_REFUSALS:
+        record = tier_health.failed(None, "fetch", f"GitError: {reason}", T0)
+        assert record.kind == "egress" and record.error.endswith(reason)
+        assert record.fix.startswith("Loom refused the job")
+        assert tier_health.error_line("egress", record.error).endswith(reason)
 
 
 def test_a_harness_exit_that_names_a_network_error_is_a_network_failure() -> None:
@@ -237,6 +274,7 @@ class _Cfg:
     scip_checkout_dir = "/nonexistent/checkout"
     label = "o/code-x"
     github_token = ""
+    git_proxy_identity = ""
 
 
 async def _run_tier(module: str, repo: _StateRepo, run_repo: Any, *, owns: bool = True) -> Any:

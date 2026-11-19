@@ -33,6 +33,8 @@ from server.memory.store import (
     MemoryRow,
 )
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 _T0 = datetime(2024, 1, 1, 12, 0, 0)
 
 
@@ -195,6 +197,9 @@ class _Emb:
 
     async def embed(self, text):
         return [1.0, 0.0, 0.0, 0.0]
+
+    async def embed_many(self, texts):
+        return [await self.embed(text) for text in texts]
 
 
 def _existing(mid: str, key: str) -> MemoryRow:

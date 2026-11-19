@@ -34,15 +34,17 @@ from collections.abc import AsyncIterator, Container, Iterator
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
-from server.auth import machines
-from server.auth.context import current_caller
+from server.auth import authz, machines
+from server.auth.context import current_auth, current_caller
 from server.auth.personal_namespace import is_own_namespace
 from server.auth.sharing import is_collection
-from server.core import ch, leases
+from server.clients._checked_access import Credential
+from server.core import ch, leases, request_work
 from server.core.ch import sequential_reads
 from server.core.datetimes import as_aware_utc
 from server.core.diagnostics import private_work
 from server.core.errors import (
+    AuthInsufficientError,
     BadConfigError,
     ErasureRunningError,
     NotFoundError,
@@ -81,6 +83,7 @@ from server.knowledge.domain import sources as domain
 from server.knowledge.domain.source_links import parse_links
 from server.knowledge.domain.sources import KnowledgeSource
 from server.knowledge.store import sources as store
+from server.operations.base import Role
 from server.settings import settings
 
 _CREDENTIAL_PURPOSE = "knowledge_sources.credential"
@@ -103,9 +106,24 @@ def _now_iso() -> str:
 
 def credential_of(src: KnowledgeSource) -> str:
     """The source's credential, '' when it no longer opens."""
+    if src.credential_mode != "shared":
+        return ""  # A connected source never falls back to an ingestion credential.
     if src.secret_enc:
         return unseal(_SECRET_PURPOSE, src.secret_enc)
     return unseal(_CREDENTIAL_PURPOSE, src.credential_enc)
+
+
+async def credential_for(src: KnowledgeSource, *, deadline: float) -> Credential:
+    """A connected row selects only its exact owner and generation, never shared auth."""
+    if src.credential_mode == "connected":
+        from server.knowledge.app.connected_accounts import checked_for
+
+        return await checked_for(src, deadline=deadline)
+    if src.credential_mode != "shared":
+        raise ValidationError(
+            "the source credential mode is unavailable", code="CREDENTIAL_REFUSED"
+        )
+    return credential_of(src)
 
 
 def _sealed(purpose: str, credential: str) -> str:
@@ -248,7 +266,7 @@ async def _probe_items(
     kind: str,
     items: list[dict[str, Any]],
     config: dict[str, Any],
-    credential: str,
+    credential: Credential,
     suffix: str = "",
 ) -> tuple[KnowledgeSourceProbe, list[dict[str, Any]]]:
     """Probe the sample of `items` (`source_probes.sample`); the probe and `items` as
@@ -383,26 +401,55 @@ def _sync(src: KnowledgeSource, state: dict[str, str] | None) -> KnowledgeSource
     return KnowledgeSourceSync(**domain.sync_shown(src, (state or {}).get("detail", "")))
 
 
+async def _details_allowed(src: KnowledgeSource) -> bool:
+    if src.credential_mode == "shared":
+        return True
+    if src.credential_mode != "connected" or not request_work.mark_mirrored():
+        return False
+    from server.knowledge.app import connected_accounts as accounts
+    from server.knowledge.store import connected_accounts as account_store
+
+    with private_work():
+        try:
+            org, owner = await accounts.own_subject(current_auth())
+            if org != src.org or owner != src.owner_subject:
+                return False
+            account = await account_store.get(org, owner, src.kind)
+            if account is None:
+                return False
+            await accounts._source_standing(src, account)
+            return True
+        except Exception:  # noqa: BLE001 — unverifiable personal-source details stay private
+            return False
+
+
 async def handle_knowledge_source_list(
     input: KnowledgeSourceListInput,
 ) -> KnowledgeSourceListOutput:
+    ch.set_query_tag("knowledge.source.list")
     found = await store.list_sources(input.org, input.namespace)
     states = await store.read_states(input.org, input.namespace, [s.name for s in found])
-    return KnowledgeSourceListOutput(
-        accepts_sources=await _source_refusal(input.org, input.namespace) is None,
-        sources=[
+    entries = []
+    for s in found:
+        details = await _details_allowed(s)
+        entries.append(
             KnowledgeSourceEntry(
                 name=s.name,
                 kind=s.kind,
-                items=s.items,
-                include=_answered_include(s),
-                config=domain.id_list_config(s) or {},
-                created_by=s.created_by,
+                credential_mode=s.credential_mode,
+                access=s.access,
+                owner_subject=s.owner_subject if details else "",
+                items=s.items if details else [],
+                include=_answered_include(s) if details else [],
+                config=(domain.id_list_config(s) or {}) if details else {},
+                created_by=s.created_by if details else "",
                 created_at=_iso(s.created_at),
-                sync=_sync(s, states.get(s.name)),
+                sync=_sync(s, states.get(s.name)) if details else KnowledgeSourceSync(),
             )
-            for s in found
-        ],
+        )
+    return KnowledgeSourceListOutput(
+        accepts_sources=await _source_refusal(input.org, input.namespace) is None,
+        sources=entries,
         enabled=bool(settings.knowledge_source_sync_enabled),
     )
 
@@ -414,17 +461,21 @@ async def handle_knowledge_source_inspect(
     with private_work() if plan.marked else contextlib.nullcontext():
         src = await _source_or_404(input.org, input.namespace, input.name)
         states = await store.read_states(src.org, src.namespace, [src.name])
+        details = await _details_allowed(src)
         output = KnowledgeSourceInspectOutput(
             name=src.name,
             kind=src.kind,
-            items=src.items,
-            include=_answered_include(src),
-            config=domain.id_list_config(src) or {},
-            created_by=src.created_by,
+            credential_mode=src.credential_mode,
+            access=src.access,
+            owner_subject=src.owner_subject if details else "",
+            items=src.items if details else [],
+            include=_answered_include(src) if details else [],
+            config=(domain.id_list_config(src) or {}) if details else {},
+            created_by=src.created_by if details else "",
             created_at=_iso(src.created_at),
-            sync=_sync(src, states.get(src.name)),
+            sync=_sync(src, states.get(src.name)) if details else KnowledgeSourceSync(),
         )
-        if src.access == domain.MIRRORED_ACCESS:
+        if src.access == domain.MIRRORED_ACCESS and details:
             titles = await source_titles.collect(
                 plan, src.namespace, limit=200, source_id=src.source_id
             )
@@ -464,6 +515,12 @@ async def handle_knowledge_source_add(input: KnowledgeSourceAddInput) -> Knowled
     _require_kind(kind)
     sent = [f for f in ("items", "links") if getattr(input, f) is not None]
     config, items = _registration(input, kind, sent)
+    if input.credential_mode == "connected":
+        from server.knowledge.app.connected_sources import add
+
+        return await add(input, name=name, kind=kind, config=config, items=items, sent=sent)
+    if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
+        raise AuthInsufficientError("a namespace administrator is required for a shared source")
     if not input.credential.strip():
         raise ValidationError("a credential is required", code="CREDENTIAL_REFUSED")
     await _require_source_namespace(input.org, input.namespace)
@@ -543,7 +600,7 @@ async def sources_lease(
         yield
 
 
-async def _require_free(org: str, namespace: str, name: str) -> None:
+async def _require_free(org: str, namespace: str, name: str, *, owner_subject: str = "") -> None:
     """Refuse a taken name, a full namespace, and a name an earlier source's live
     documents still carry."""
     with sequential_reads():
@@ -551,11 +608,25 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
             raise ValidationError(
                 f"a source named {name!r} exists in {namespace!r}", code="SOURCE_EXISTS"
             )
-        limit = int(settings.knowledge_sources_max_per_namespace)
-        if await store.active_count(org, namespace) >= limit:
+        limit = (
+            settings.knowledge_connected_sources_max_per_namespace
+            if owner_subject
+            else settings.knowledge_sources_max_per_namespace
+        )
+        if await store.active_count(org, namespace, connected=bool(owner_subject)) >= limit:
             raise ValidationError(
-                f"{namespace!r} has {limit} sources, the most it may "
-                "(LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE); remove one first",
+                f"{namespace!r} has {limit} sources of this credential class; remove one first",
+                code="SOURCE_QUOTA",
+            )
+        if (
+            owner_subject
+            and await store.active_count(
+                org, namespace, connected=True, owner_subject=owner_subject
+            )
+            >= settings.knowledge_connected_sources_max_per_person
+        ):
+            raise ValidationError(
+                "the person's connected source quota for this namespace is full",
                 code="SOURCE_QUOTA",
             )
         documents = await store.count_documents(org, namespace, domain.source_tag(name))
@@ -588,11 +659,25 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
         )
 
 
+def _require_supported_recording_provider(src: KnowledgeSource) -> None:
+    if src.kind == "recording" and src.config.get("provider") == "meet":
+        raise ValidationError(
+            "Meet transcripts and notes use a gdrive shared-folder source", code="BAD_CONFIG"
+        )
+
+
 async def handle_knowledge_source_check(
     input: KnowledgeSourceCheckInput,
 ) -> KnowledgeSourceCheckOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    if src.credential_mode == "connected":
+        from server.knowledge.app.connected_sources import check
+
+        return await check(src)
+    if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
+        raise AuthInsufficientError("a namespace administrator is required for a shared source")
     _require_served(src)
+    _require_supported_recording_provider(src)
     checked_at = _now_iso()
     credential = credential_of(src)
     if not credential:
@@ -636,6 +721,7 @@ async def handle_knowledge_source_rotate(
 ) -> KnowledgeSourceRotateOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
     _require_served(src)
+    _require_supported_recording_provider(src)
     if not input.credential.strip():
         raise ValidationError("a credential is required", code="CREDENTIAL_REFUSED")
     # A deployment that cannot store the credential says so before the probe.
@@ -673,7 +759,14 @@ async def handle_knowledge_source_update(
     input: KnowledgeSourceUpdateInput,
 ) -> KnowledgeSourceUpdateOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
+    if src.credential_mode == "connected":
+        from server.knowledge.app.connected_sources import update
+
+        return await update(src, input)
+    if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
+        raise AuthInsufficientError("a namespace administrator is required for a shared source")
     _require_served(src)
+    _require_supported_recording_provider(src)
     if src.kind not in domain.ITEM_FIELDS:
         raise ValidationError(f"a {src.kind} source has no items", code="BAD_KIND")
     plan = await _update_plan(src, input)
@@ -734,7 +827,10 @@ class _UpdatePlan(NamedTuple):
 
 
 async def _update_plan(
-    src: KnowledgeSource, input: KnowledgeSourceUpdateInput
+    src: KnowledgeSource,
+    input: KnowledgeSourceUpdateInput,
+    *,
+    credential: Credential | None = None,
 ) -> _UpdatePlan | None:
     """The change `input` asks of `src`, refused before any probe when it cannot be
     made, its added items (and, for a new `include`, the kept file items) probed; None
@@ -760,7 +856,8 @@ async def _update_plan(
     await _require_no_erasure(src.org, src.namespace)
     if not added and not removed and include is None:
         return None
-    credential = _stored_credential(src)
+    if credential is None:
+        credential = _stored_credential(src)
     removing = {i["slug_id"] for i in removed if "slug_id" in i}
     # Short ids to UUIDs, the added and the removed in one lookup; a held project is
     # removed by its id, as knowledge.source.list shows.
@@ -806,7 +903,7 @@ def _stored_credential(src: KnowledgeSource) -> str:
 async def _resolved(
     kind: str,
     items: list[dict[str, Any]],
-    credential: str,
+    credential: Credential,
     suffix: str = "",
     about: Container[str] | None = None,
 ) -> list[dict[str, Any]]:
@@ -924,6 +1021,14 @@ async def handle_knowledge_source_remove(
                     f"no document source {domain.shown(name)} in {input.namespace!r}",
                     code="SOURCE_NOT_FOUND",
                 )
+            if src.credential_mode == "connected":
+                from server.knowledge.app.connected_sources import require_operator
+
+                await require_operator(src)
+            elif not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
+                raise AuthInsufficientError(
+                    "a namespace administrator is required for a shared source"
+                )
             pending = 0
             if input.delete_documents and src.access != domain.MIRRORED_ACCESS:
                 pending = await store.count_documents(
@@ -954,7 +1059,15 @@ async def handle_knowledge_source_sync_now(
     input: KnowledgeSourceSyncNowInput,
 ) -> KnowledgeSourceSyncNowOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
-    _require_served(src)
+    if src.credential_mode == "connected":
+        from server.knowledge.app.connected_sources import require_operator
+
+        await require_operator(src)
+    else:
+        if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
+            raise AuthInsufficientError("a namespace administrator is required for a shared source")
+        _require_served(src)
+    _require_supported_recording_provider(src)
     await _require_source_namespace(input.org, input.namespace)
     async with sources_lease(input.org, input.namespace):
         # A request meant for the source this call read must not be recorded on another
@@ -966,6 +1079,8 @@ async def handle_knowledge_source_sync_now(
                 f"source {src.name!r} was removed and added again; call "
                 "knowledge.source.sync_now again for the current source"
             )
+        if fresh.credential_mode == "connected":
+            await require_operator(fresh)
         state = await _read_state(fresh)
         # A full request waiting (an update's) already asks for more: a plain sync now
         # leaves it as it is, neither narrowed nor started over.
@@ -1100,6 +1215,15 @@ async def _wait_until_free(lease_name: str, deadline: float, busy: str) -> None:
 def source_add_audit_subject(input: KnowledgeSourceAddInput, response: Any) -> dict[str, Any]:
     """What an add's audit row records: the source as stored, never the
     credential. `loom.audit_log` outlives the source and must hold no secret."""
+    if input.credential_mode == "connected":
+        return {
+            "org": input.org,
+            "namespace": input.namespace,
+            "name": response["name"],
+            "kind": response["kind"],
+            "credential_mode": "connected",
+            "dry_run": input.dry_run,
+        }
     return {
         "org": input.org,
         "namespace": input.namespace,
@@ -1114,6 +1238,8 @@ def source_add_audit_subject(input: KnowledgeSourceAddInput, response: Any) -> d
 
 def source_update_audit_subject(input: KnowledgeSourceUpdateInput, response: Any) -> dict[str, Any]:
     """Which source changed and the items added and removed, never the credential."""
+    if request_work.mirror_marked():
+        return {"org": input.org, "namespace": input.namespace, "name": response["name"]}
     return {
         "org": input.org,
         "namespace": input.namespace,

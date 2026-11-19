@@ -108,29 +108,197 @@ jobs:
     if: inputs.sdks
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      python_extras: ${{ steps.sdk-metadata.outputs.python_extras }}
+      has_python_extras: ${{ steps.sdk-metadata.outputs.has_python_extras }}
+      node_peers: ${{ steps.sdk-metadata.outputs.node_peers }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      # The Python SDK names a candidate in its PEP 440 form (1.2.0rc1), as the
-      # release build writes it.
+      - name: Validate the checked release tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python - <<'PY'
+          import os
+          from scripts.release.prepare import _tag_version, tag_on_head
+          version = _tag_version(os.environ["VERSION"])
+          if not tag_on_head(version):
+              raise SystemExit("the checked source is not the requested release tag")
+          PY
+      # The wheel uses the tag's PEP 440 version.
       - name: pip install clickhouse-loom
         id: pip-sdk
         env:
           VERSION: ${{ inputs.version }}
         run: |
           python -m venv "$RUNNER_TEMP/sdk"
-          "$RUNNER_TEMP/sdk/bin/pip" install "clickhouse-loom==$VERSION"
+          "$RUNNER_TEMP/sdk/bin/pip" --isolated install --index-url https://pypi.org/simple "clickhouse-loom==$VERSION"
           "$RUNNER_TEMP/sdk/bin/python" -c "import loom, sys; assert loom.__version__ == sys.argv[1], loom.__version__" "${VERSION/-rc./rc}"
+          "$RUNNER_TEMP/sdk/bin/pip" --isolated check
       - name: npm install @clickhouse/loom
         env:
           VERSION: ${{ inputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/npm" && cd "$RUNNER_TEMP/npm"
           npm init -y >/dev/null
-          npm install --no-audit --no-fund "@clickhouse/loom@$VERSION"
-          node -e 'const { SDK_VERSION } = require("@clickhouse/loom"); if (SDK_VERSION !== process.argv[1]) { throw new Error(SDK_VERSION) }' "$VERSION"
+          npm install --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund "@clickhouse/loom@$VERSION"
           npm audit signatures
+          node -e 'const { SDK_VERSION } = require("@clickhouse/loom"); if (SDK_VERSION !== process.argv[1]) { throw new Error(SDK_VERSION) }' "$VERSION"
+      - name: Install the metadata checker separately from the SDKs
+        run: |
+          python -m venv "$RUNNER_TEMP/metadata-check"
+          "$RUNNER_TEMP/metadata-check/bin/pip" --isolated install --index-url https://pypi.org/simple packaging==24.2
+      - name: Published SDK metadata matches the release tag
+        id: sdk-metadata
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          "$RUNNER_TEMP/sdk/bin/python" - <<'METADATA'
+          import importlib.metadata
+          import os
+          from pathlib import Path
+          text = importlib.metadata.distribution("clickhouse-loom").read_text("METADATA")
+          if text is None:
+              raise SystemExit("published Python SDK metadata is missing")
+          (Path(os.environ["RUNNER_TEMP"]) / "sdk.METADATA").write_text(text)
+          METADATA
+          "$RUNNER_TEMP/metadata-check/bin/python" - <<'PY'
+          import email.parser
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+          from packaging.markers import Marker
+          from packaging.requirements import Requirement
+          from packaging.utils import canonicalize_name
+          from packaging.version import Version
+
+          def marker_terms(tree):
+              # packaging's parsed tree preserves each original extra condition.
+              alternatives, conjunction = set(), {frozenset()}
+              for item in tree:
+                  if item == "or":
+                      alternatives.update(conjunction)
+                      conjunction = {frozenset()}
+                  elif item != "and":
+                      terms = marker_terms(item) if isinstance(item, list) else {
+                          frozenset({tuple(part.serialize() for part in item)})
+                      }
+                      conjunction = {left | right for left in conjunction for right in terms}
+              alternatives.update(conjunction)
+              return {term for term in alternatives if not any(other < term for other in alternatives)}
+
+          def requirements(items):
+              grouped = {}
+              for requirement in items:
+                  marker = requirement.marker
+                  terms = marker_terms(marker._markers) if marker else {frozenset()}
+                  requirement.marker = None
+                  requirement.extras = {canonicalize_name(extra) for extra in requirement.extras}
+                  grouped.setdefault(requirement, set()).update(terms)
+              return {
+                  requirement: {term for term in terms if not any(other < term for other in terms)}
+                  for requirement, terms in grouped.items()
+              }
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          version = os.environ["VERSION"]
+          final = version.split("-rc.", 1)[0]
+          source_py = tomllib.loads((root / "sdk/python/pyproject.toml").read_text())["project"]
+          installed = email.parser.Parser().parsestr((Path(os.environ["RUNNER_TEMP"]) / "sdk.METADATA").read_text())
+          if Version(source_py["version"]) != Version(final) or Version(installed["Version"]) != Version(version):
+              raise SystemExit("Python SDK version differs from the release tag")
+          extras = [canonicalize_name(name) for name in source_py.get("optional-dependencies", {})]
+          published_extras = [canonicalize_name(name) for name in installed.get_all("Provides-Extra", [])]
+          if len(set(extras)) != len(extras) or sorted(extras) != sorted(published_extras):
+              raise SystemExit("published Python extras differ from the release tag")
+          expected = [Requirement(text) for text in source_py.get("dependencies", [])]
+          for extra, dependencies in source_py.get("optional-dependencies", {}).items():
+              scope = f"extra == {json.dumps(canonicalize_name(extra))}"
+              for text in dependencies:
+                  requirement = Requirement(text)
+                  requirement.marker = Marker(f"({requirement.marker}) and {scope}" if requirement.marker else scope)
+                  expected.append(requirement)
+          actual = [Requirement(text) for text in installed.get_all("Requires-Dist", [])]
+          if requirements(expected) != requirements(actual):
+              raise SystemExit("published Python requirements differ from the release tag")
+
+          source_js = json.loads((root / "sdk/typescript/package.json").read_text())
+          package = Path(os.environ["RUNNER_TEMP"]) / "npm/node_modules/@clickhouse/loom/package.json"
+          published_js = json.loads(package.read_text())
+          if source_js["version"] != final or published_js["version"] != version:
+              raise SystemExit("npm SDK version differs from the release tag")
+          for field in ("peerDependencies", "peerDependenciesMeta", "exports", "engines"):
+              if source_js.get(field, {}) != published_js.get(field, {}):
+                  raise SystemExit(f"published npm {field} differs from the release tag")
+          peers = source_js.get("peerDependencies", {})
+          node_rows = [{"peer": "none", "requirement": ""}]
+          node_rows += [{"peer": name, "requirement": f"{name}@{peers[name]}"} for name in sorted(peers)]
+          outputs = {
+              "python_extras": json.dumps({"extra": sorted(extras)}, separators=(",", ":")),
+              "has_python_extras": str(bool(extras)).lower(),
+              "node_peers": json.dumps({"include": node_rows}, separators=(",", ":")),
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              for name, value in outputs.items():
+                  print(f"{name}={value}", file=out)
+          PY
+
+  sdk-python-extras:
+    name: Python SDK extra (${{ matrix.extra }})
+    needs: sdks
+    if: inputs.sdks && needs.sdks.outputs.has_python_extras == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.sdks.outputs.python_extras) }}
+    steps:
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install the published extra in a clean virtualenv
+        env:
+          VERSION: ${{ inputs.version }}
+          EXTRA: ${{ matrix.extra }}
+        run: |
+          python -m venv "$RUNNER_TEMP/extra"
+          "$RUNNER_TEMP/extra/bin/pip" --isolated install --index-url https://pypi.org/simple "clickhouse-loom[$EXTRA]==$VERSION"
+          "$RUNNER_TEMP/extra/bin/pip" --isolated check
+          "$RUNNER_TEMP/extra/bin/pip" --isolated freeze
+
+  sdk-node-peers:
+    name: npm SDK peer (${{ matrix.peer }})
+    needs: sdks
+    if: inputs.sdks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.sdks.outputs.node_peers) }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install the published SDK with its declared peer
+        env:
+          VERSION: ${{ inputs.version }}
+          PEER_SPEC: ${{ matrix.requirement }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/peer" && cd "$RUNNER_TEMP/peer"
+          npm init -y >/dev/null
+          packages=("@clickhouse/loom@$VERSION")
+          [ -z "$PEER_SPEC" ] || packages+=("$PEER_SPEC")
+          npm install --registry=https://registry.npmjs.org --ignore-scripts --no-audit --no-fund "${packages[@]}"
+          npm audit signatures
+          node -e 'const { SDK_VERSION } = require("@clickhouse/loom"); if (SDK_VERSION !== process.argv[1]) { throw new Error(SDK_VERSION) }' "$VERSION"
+          npm ls --depth=0

@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from server.cli import cell_place
-from server.core import cell, pg
+from server.core import cell, pg, provider_process
 from server.core.schema import pg_migrate
 from server.router import directory
 from server.settings import settings
@@ -267,8 +267,9 @@ async def _local_retry(drill: Drill, monkeypatch) -> None:
         == ORG
     )
     args = argparse.Namespace(cell="first", org=ORG)
+    application = provider_process.participant_tag(provider_process.process_identity())
     cancelled = drill.task(cell_place.place(args, httpx.URL("http://router.example.test")))
-    pid = await drill.waiting(cancelled, "loom")
+    pid = await drill.waiting(cancelled, application)
     cancelled.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(cancelled, cell_place._bound_s() + 1)
@@ -283,7 +284,7 @@ async def _local_retry(drill: Drill, monkeypatch) -> None:
         "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1)", pid
     )
     retry = drill.task(cell_place.place(args, httpx.URL("http://router.example.test")))
-    await drill.waiting(retry, "loom")
+    await drill.waiting(retry, application)
     await drill.resume()
     assert await asyncio.wait_for(retry, 5) == {
         "org": ORG,

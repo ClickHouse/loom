@@ -449,6 +449,100 @@ def _behind_the_gateway(settings) -> None:
     settings.anthropic_base_url = "https://gateway.example"
 
 
+@pytest.mark.asyncio
+async def test_saved_native_llm_is_refused_when_restart_requires_gateway(monkeypatch):
+    saved = ProviderSetupInput.model_validate(
+        {
+            "llm": {"provider": "bedrock", "model": "bedrock:profile"},
+            "embedding": {"provider": "openai", "model": "text-embedding-test", "dimensions": 3072},
+            "keys": {"openai": "saved-embedding-key"},
+        }
+    )
+    current = runtime.settings
+    _behind_the_gateway(current)
+    current.llm_provider, current.llm_model = "openai", "gpt-environment"
+    current.embedding_provider, current.embedding_model = "openai", "text-embedding-test"
+    current.embedding_dim = 3072
+    row = {"config_id": "saved-native", "state": "active", "version": 321, "envelope": "saved"}
+    monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=saved))
+    for _ in range(2):
+        await runtime.load_active_configuration()
+        assert runtime.get_model_work_gate().closed
+        assert current.llm_provider == "openai"
+        assert current.llm_model == "gpt-environment"
+        assert runtime._applied_version == ""
+    assert "Bedrock" in runtime.refused_configuration()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "llm_changes",
+    [
+        {"overrides": {"code_ask_llm_model": "bedrock:profile"}},
+        {"verification_models": ["bedrock:profile"]},
+    ],
+)
+async def test_saved_native_overrides_are_refused_at_gateway_restart(monkeypatch, llm_changes):
+    saved = ProviderSetupInput.model_validate(
+        {
+            "llm": {"provider": "openai", "model": "gpt-saved", **llm_changes},
+            "embedding": {"provider": "openai", "model": "text-embedding-test", "dimensions": 3072},
+            "keys": {"openai": "saved-key"},
+        }
+    )
+    current = runtime.settings
+    _behind_the_gateway(current)
+    current.llm_provider, current.llm_model = "openai", "gpt-environment"
+    current.embedding_provider, current.embedding_model = "openai", "text-embedding-test"
+    current.embedding_dim = 3072
+    row = {"config_id": "saved-overrides", "state": "active", "version": 321, "envelope": "saved"}
+    monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=saved))
+    await runtime.load_active_configuration()
+    assert runtime.get_model_work_gate().closed
+    assert current.llm_model == "gpt-environment"
+    assert runtime._applied_version == ""
+    assert "Bedrock" in runtime.refused_configuration()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model,override", [("gpt-proxy", "gpt-other"), ("bedrock:proxy", "bedrock:proxy")]
+)
+async def test_gateway_compatible_saved_overrides_remain_available(monkeypatch, model, override):
+    saved = ProviderSetupInput.model_validate(
+        {
+            "llm": {
+                "provider": "openai",
+                "model": model,
+                "overrides": {"code_ask_llm_model": override},
+                "verification_models": [override],
+            },
+            "embedding": {
+                "provider": "compatible",
+                "model": "embedding-proxy",
+                "dimensions": 1536,
+                "base_url": "https://gateway.example/v1",
+            },
+            "keys": {"openai": "saved-key", "compatible": "saved-embedding-key"},
+        }
+    )
+    current = runtime.settings
+    _behind_the_gateway(current)
+    current.llm_provider, current.llm_model = "openai", "gpt-environment"
+    current.embedding_provider, current.embedding_model = "compatible", "embedding-proxy"
+    current.embedding_dim, current.embedding_base_url = 1536, "https://gateway.example/v1"
+    row = {"config_id": "saved-proxy", "state": "active", "version": 321, "envelope": "saved"}
+    monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=saved))
+    await runtime.load_active_configuration()
+    assert not runtime.get_model_work_gate().closed
+    assert current.llm_provider == "openai"
+    assert current.code_ask_llm_model == override
+    assert runtime._applied_version == "321"
+
+
 def _gemini_setup() -> ProviderSetupInput:
     return ProviderSetupInput.model_validate(
         {

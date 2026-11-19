@@ -323,12 +323,13 @@ async def _post_steps(plan: RepoPass, result: CodeIngestResult) -> None:
 def _without_unsandboxed(repos: list[Any], result: CodeIngestResult) -> list[Any]:
     """`repos` less the self-registered entries a host without the sandbox must
     not clone or fetch (`compiler_tier.unsandboxed_skip`); each one skipped is
-    named on the pass note."""
+    named on the pass note. The pass runs git and the parser on an entry, never
+    its build or a dependency install, so it asks as a `git_only` caller."""
     from server.code.app.index.compiler_tier import unsandboxed_skip
 
     kept: list[Any] = []
     for cfg in repos:
-        if reason := unsandboxed_skip(cfg, "code_ingest"):
+        if reason := unsandboxed_skip(cfg, "code_ingest", git_only=True):
             result.note = f"{cfg.namespace}: {reason}"
         else:
             kept.append(cfg)

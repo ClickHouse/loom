@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.clients import notion
+from server.clients._checked_access import Credential
 from server.core.errors import ValidationError
 from server.core.hashing import sha256_text
 from server.knowledge.app import source_sync as sync
@@ -79,7 +80,7 @@ class _Turn:
     """One turn's source, token and result, and the pages it handles."""
 
     src: KnowledgeSource
-    token: str
+    token: Credential
     result: sync.TurnResult
     # Known child pages: child page id -> the id of the page it was found on. A child
     # is forgotten in three ways only: its page is read and no longer holds it; a
@@ -113,7 +114,14 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     result = sync.TurnResult()
     result.full = bool(detail.get("full")) or not sync.valid_stamp(stamp) or sync.full_due(detail)
     sync.start_waits(result, detail)
-    token = source_ops.credential_of(src)
+    try:
+        token = await source_ops.credential_for(
+            src,
+            deadline=run.budget.stop_after,
+        )
+    except (ValidationError, TimeoutError):
+        result.fail("credential_invalid", "the source connection is unavailable")
+        return result
     if not token:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
@@ -144,13 +152,13 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     newest = max((f["modifiedTime"] for f in t.items), default="")
     result.newest = sync.capped(newest, listed_at - timedelta(seconds=_SETTLE_S))
     # Changed pages first: a pass bound spent on settling re-reads delays no edit.
-    t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"])))
+    t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"]), src))
     for f in t.items:  # a child found while syncing is appended and handled too
         if not await _sync_page(t, f, stored.get(f["id"]), run):
             break
     result.documents_seen = len(t.items)
     if trusted and result.complete:
-        addresses = {f["id"]: sync.source_uri_of(f) for f in t.items}
+        addresses = {f["id"]: sync.bound_source_uri(src, sync.source_uri_of(f)) for f in t.items}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
 
         gone = functools.partial(_page_gone, t)
@@ -174,14 +182,17 @@ async def _forget_unlisted_without_documents(t: _Turn) -> None:
             t.known.pop(child_id)
 
 
-def _changed(f: dict[str, Any], stored: dict[str, str] | None) -> bool:
+def _changed(
+    f: dict[str, Any], stored: dict[str, str] | None, src: KnowledgeSource | None = None
+) -> bool:
     """Whether a listed page differs from its stored copy: none stored, another
     revision or another address."""
     if stored is None:
         return True
-    return stored["source_revision"] != f["modifiedTime"] or stored["source_uri"] != (
-        sync.source_uri_of(f)
-    )
+    uri = sync.source_uri_of(f)
+    if src is not None:
+        uri = sync.bound_source_uri(src, uri)
+    return stored["source_revision"] != f["modifiedTime"] or stored["source_uri"] != uri
 
 
 def _item(page: dict[str, Any]) -> dict[str, Any]:
@@ -422,7 +433,7 @@ async def _sync_page(
     t: _Turn, f: dict[str, Any], prior: dict[str, str] | None, run: sync.Pass
 ) -> bool:
     """Handle one listed page; False when the turn must stop listing."""
-    uri = sync.source_uri_of(f)
+    uri = sync.bound_source_uri(t.src, sync.source_uri_of(f))
     # Read too soon after its revision: a later edit may share the stamp, so the page is
     # read and written again, with the new read time; once that is past the margin, the
     # stored copy lets the page be skipped.

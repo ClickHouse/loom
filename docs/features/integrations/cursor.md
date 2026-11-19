@@ -63,6 +63,79 @@ Then add `.cursor/rules/loom.mdc` from [agent instructions](agent-instructions.m
 the agent knows when to recall, save and use the code index, unless the repository's
 `AGENTS.md` already carries the block.
 
+### Connect an indexed checkout
+
+Use a project MCP entry to bind code tools to this checkout's indexed repository.
+The global `~/.cursor/mcp.json` is shared by every workspace; a static repository scope
+there would send other checkouts to the same index. Cursor merges the project and global
+files, with the project entry taking priority when both use the same server name
+([Cursor configuration](https://cursor.com/help/customization/mcp)).
+
+1. In your signed-in Loom dashboard, open **Settings → Tokens → New token**. Select
+   **Only what you choose** and include the repository. Include a memory namespace too
+   if the agent should save lessons, and select it under **Saves memories to**.
+   A restricted repository must be named explicitly: `*` does not cover it, and a
+   service account does not inherit its creator's direct grant. Minting from your own
+   identity writes the token subject's direct grant, capped at your access. If an
+   existing service-account token answers `cannot delegate access on <namespace>`,
+   use your own dashboard identity to mint the token. See
+   [restricted namespaces](../../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
+2. Create `.cursor/mcp.json` in the checkout root, or merge this `loom` entry into its
+   existing `mcpServers` object. Replace the URL, token and scope with your values;
+   `acme/code-myrepo` means org `acme`, repository namespace `code-myrepo`:
+
+   ```json
+   {
+     "mcpServers": {
+       "loom": {
+         "url": "https://loom.example.com/mcp?toolset=coding",
+         "headers": {
+           "Authorization": "Bearer <token>",
+           "X-Loom-Code-Scope": "acme/code-myrepo"
+         }
+       }
+     }
+   }
+   ```
+
+   Keep the token-bearing file untracked. Exclude it locally and restrict its
+   permissions (an exclude rule does not hide changes to an already tracked file):
+
+   ```bash
+   printf '\n/.cursor/mcp.json\n' >> "$(git rev-parse --git-path info/exclude)"
+   chmod 600 .cursor/mcp.json
+   ```
+
+   For a tracked project config, use `Bearer ${env:LOOM_API_KEY}` instead of a literal
+   token, and make that variable available to Cursor
+   ([config interpolation](https://cursor.com/docs/mcp#config-interpolation)).
+
+   The [code-scope header](../../reference/mcp.md#sessions-and-identity) selects the namespace for
+   `code.*` calls that omit it; authorization still checks the token's access there.
+   Memory writes that omit a namespace use the token's save namespace.
+
+3. Restart Cursor, enable Loom in its MCP settings, and start a fresh chat. For Cursor
+   CLI, run these from the checkout root:
+
+   ```bash
+   agent mcp enable loom
+   agent mcp list-tools loom
+   ```
+
+   `enable` adds Loom to Cursor CLI's local approved list. Until it is approved,
+   `list-tools` can report `MCP server "loom" has not been approved` even with a valid
+   token and configuration. See [Cursor CLI MCP commands](https://cursor.com/docs/cli/mcp).
+
+If an existing chat reports `Timed out waiting for connection` after the configuration
+changes, reload the editor window and test from a fresh chat. That error alone does not
+show whether the token can read the repository.
+
+Tool discovery checks the connection, not access to the repository. Ask the agent to
+call `loom_code_search` for a known function without a `namespace` argument, then check
+the returned path and `as_of` commit. This verifies the checkout's scope and the token's
+access to that index. When saved lessons exist for the hit, they can accompany the code
+([code and lessons](../code-index/operations.md)).
+
 ## Transcript capture
 
 A hook you register yourself. `cursor-session-hook.sh` hands a finished conversation's

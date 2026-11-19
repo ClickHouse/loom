@@ -32,6 +32,7 @@ from typing import Any
 
 from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
+from server.embedding.documents import document_vector, document_vectors
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
 from server.memory.app.sensitive_passages import embed_chunks_of
 from server.memory.domain.set_chunk_session import SESSION_PREFIX, set_chunk_session_id
@@ -328,24 +329,18 @@ async def restore_set_chunks(
 
 
 async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
-    """One batched request when the embedder can batch, serial otherwise (the
-    local embedder has no `embed_many`); a chunk whose embedding fails is
-    dropped from the write, not the whole value."""
-    embed_many = getattr(embedder, "embed_many", None)
-    if embed_many is not None:
-        try:
-            vectors = await embed_many(chunks)
-            if len(vectors) != len(chunks):
-                raise RuntimeError(
-                    f"embed_many returned {len(vectors)} vectors for {len(chunks)} chunks"
-                )
-            return [[float(x) for x in v] for v in vectors]
-        except Exception as e:  # noqa: BLE001 — falls back to serial embeds
-            log.warning("memory.set chunks: batch embed failed; falling back serial: %s", e)
+    """A document batch, then single-document requests if the batch fails.
+
+    A chunk whose embedding fails stays unembedded, without losing the value.
+    """
+    try:
+        return await document_vectors(embedder, chunks)
+    except Exception as e:  # noqa: BLE001 — recover the remaining documents independently
+        log.warning("memory.set chunks: batch embed failed; falling back serial: %s", e)
     serial: list[list[float]] = []
     for i, chunk in enumerate(chunks):
         try:
-            serial.append([float(x) for x in await embedder.embed(chunk)])
+            serial.append([float(x) for x in await document_vector(embedder, chunk)])
         except Exception as e:  # noqa: BLE001 — that chunk stays unembedded
             log.warning("memory.set chunks: embed failed for chunk %d: %s", i, e)
             serial.append([])

@@ -66,6 +66,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
+
 if TYPE_CHECKING:
     from loom.agent import Agent
 
@@ -421,6 +424,7 @@ class LoomStore(BaseStore):
         self, agent: Agent, *, tags: list[str] | None = None, search_top_k_cap: int = 50
     ) -> None:
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._tags = list(tags or [])
         self._cap = int(search_top_k_cap)
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -456,20 +460,23 @@ class LoomStore(BaseStore):
             loop.close()
 
     async def abatch(self, ops: Iterable[Any]) -> list[Any]:
-        out: list[Any] = []
-        for op in ops:
-            if isinstance(op, GetOp):
-                out.append(await self._get(op))
-            elif isinstance(op, PutOp):
-                await self._put(op)
-                out.append(None)
-            elif isinstance(op, SearchOp):
-                out.append(await self._search(op))
-            elif isinstance(op, ListNamespacesOp):
-                out.append(await self._list_namespaces(op))
-            else:
-                raise TypeError(f"unsupported store op: {type(op).__name__}")
-        return out
+        # A model-selected tool can use the same store after automatic work ends.
+        scope = self._protection.automatic if automatic_roots() else self._protection.observing
+        with scope(self._agent.transport.session_protection):
+            out: list[Any] = []
+            for op in ops:
+                if isinstance(op, GetOp):
+                    out.append(await self._get(op))
+                elif isinstance(op, PutOp):
+                    await self._put(op)
+                    out.append(None)
+                elif isinstance(op, SearchOp):
+                    out.append(await self._search(op))
+                elif isinstance(op, ListNamespacesOp):
+                    out.append(await self._list_namespaces(op))
+                else:
+                    raise TypeError(f"unsupported store op: {type(op).__name__}")
+            return out
 
     # -- one op each --
 

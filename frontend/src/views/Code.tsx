@@ -2708,10 +2708,8 @@ function ExploreTab({ id }: { id: CodeId }) {
             )}
           </div>
           {res.note && (
-            <div className="text-xs text-warn">
-              <TipTarget tip="Not all of this repository is indexed for meaning-based search yet; until it is, results match words only.">
-                {res.note}
-              </TipTarget>
+            <div role="status" className="text-xs text-warn">
+              {res.note}
             </div>
           )}
           {res.abstain && res.abstain_code === "not_covered" && (

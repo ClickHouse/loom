@@ -331,9 +331,9 @@ export function Documents() {
   const writeReason = add?.reason ?? null;
   // Known to be unable to add, rather than not known yet: the empty state's words.
   const knownReadOnly = !!add && !add.waits;
-  // The place's admins manage its sources. An admin claim reaches no collection, so there
-  // only the collection's own role decides.
-  const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", roleRead.role, whoami);
+  // Shared sources require the same admin standing as credential rotation. An admin claim
+  // reaches no collection, so only the collection's own role decides.
+  const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.rotate", roleRead.role, whoami);
   const [sourcesPanel, setSourcesPanel] = useState<HTMLDivElement | null>(null);
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);

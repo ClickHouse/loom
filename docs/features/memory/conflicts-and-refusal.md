@@ -6,7 +6,13 @@ which fact stands: in the dashboard's Review queue, or with `conflicts.resolve`.
 picks a winner only where a policy or the conflict resolver says one row replaces another (see
 [automatic retirements](#automatic-retirements)), and then records it so it can be
 undone. Refusal works the other way: `blacklist.add` registers a pattern, and every
-later write whose value matches it is refused. This page owns the write verdicts and the
+later write whose value matches it is refused. Restoring a deleted or retired memory,
+restoring a namespace snapshot, rolling back heads and writing a consolidated summary
+apply the target namespace's current blacklist too. A blocked restoration writes no
+memory or search document; an Undo records no acceptance of the blocked value.
+Namespace restore and rollback check every value to be revived before the first batch
+writes. Namespace restore rechecks after writing its grants; rollback preflight reads
+one bounded slice at a time. Tombstones remain allowed. This page owns the write verdicts and the
 namespace conflict policies; the model behind them is in [memory
 concepts](../../concepts/memory.md).
 

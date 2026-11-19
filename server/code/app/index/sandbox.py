@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Required, TypedDict, Unpack
 
-from server.code.domain.index.state import SANDBOX_REQUIRED_REFUSAL
+from server.code.app.index import git_proxy
+from server.code.domain.index.state import GIT_PROXY_SANDBOX_REFUSAL, SANDBOX_REQUIRED_REFUSAL
 from server.core import readiness
 from server.settings import settings
 
@@ -500,7 +501,10 @@ class JobOptions(TypedDict, total=False):
     environment is exactly `env` (inside the sandbox HOME and TMPDIR point into
     the job's scratch directory). `timeout_s` kills the tree (TimeoutError).
     `keep_stdout`: the caller parses stdout (ls-remote), so it is kept whole up to
-    _STDOUT_LIMIT and the job killed past it; otherwise only its tail is kept."""
+    _STDOUT_LIMIT and the job killed past it; otherwise only its tail is kept.
+    `network_git` is set by the git helpers alone, for git talking to a network remote:
+    with LOOM_CODE_GIT_PROXY_URL such a job connects through that proxy (`git_proxy`)
+    or is refused. A harness job never carries it, so no build sees the proxy's password."""
 
     env: Required[Mapping[str, str]]
     timeout_s: Required[float]
@@ -512,12 +516,17 @@ class JobOptions(TypedDict, total=False):
     stdin: bytes | None
     merge_stderr: bool
     keep_stdout: bool
+    network_git: git_proxy.NetworkGit
 
 
 async def run_sandboxed(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
-    """Run `argv` inside the sandbox."""
+    """Run `argv` inside the sandbox. GitProxyRefused for network git while
+    LOOM_CODE_GIT_PROXY_URL is set: the egress proxy below dials the remote itself, and
+    the operator's proxy is not chained behind it."""
     from server.code.app.index import egress
 
+    if "network_git" in job and git_proxy.configured():
+        raise git_proxy.GitProxyRefused(GIT_PROXY_SANDBOX_REFUSAL)
     network = job.get("network", False)
     outer = await asyncio.to_thread(tempfile.mkdtemp, prefix="loom-job-")
     scratch = os.path.join(outer, "tmp")
@@ -681,15 +690,29 @@ async def run_job(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobResult:
     child process with the same environment, timeout and process-group kill,
     unless LOOM_CODE_SANDBOX_REQUIRED says to refuse instead. Without the
     sandbox a process that left the job's session (setsid) is not killed, and
-    while it holds the job's output the job ends as a timeout."""
+    while it holds the job's output the job ends as a timeout.
+
+    Network git (`network_git`) under LOOM_CODE_GIT_PROXY_URL runs here, as a plain
+    process, with the proxy and its credentials in a copy of the environment
+    (`git_proxy.job_env`) and the password taken out of what git says; GitProxyRefused
+    when it cannot go through the proxy."""
     if sandbox_available():
         return await run_sandboxed(argv, **job)
     if settings.code_sandbox_required:
         raise SandboxRequiredError(SANDBOX_REQUIRED_REFUSAL)
-    proc = await asyncio.create_subprocess_exec(
-        *argv, env=dict(job["env"]), cwd=job.get("cwd"), **_pipes(job)
-    )
-    return await _result(proc, job)
+    env = dict(job["env"])
+    secrets: tuple[bytes, ...] = ()
+    if "network_git" in job and git_proxy.configured():
+        env, secrets = await git_proxy.job_env(env, job["network_git"])
+    proc = await asyncio.create_subprocess_exec(*argv, env=env, cwd=job.get("cwd"), **_pipes(job))
+    done = await _result(proc, job)
+    if not secrets:
+        return done
+    # Stdout the caller parses is the remote's refs, which git never mixes its own
+    # words into: masking a ref that happens to spell the password would corrupt it.
+    parsed = job.get("keep_stdout", False) and not job.get("merge_stderr", False)
+    stdout = done.stdout if parsed else git_proxy.redact(done.stdout, secrets)
+    return JobResult(done.returncode, stdout, git_proxy.redact(done.stderr, secrets))
 
 
 __all__ = [

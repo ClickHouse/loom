@@ -58,7 +58,7 @@ def coordinator(monkeypatch):
     )
     run.owner = SimpleNamespace(conn=object())
     run.row = row(value(), value("new", orgs=("held",)))
-    run.state = cell_update_pg.State("dep-first", True, "first", "enforced", value(), None, False)
+    run.state = cell_update_pg.State("dep-first", True, "first", "enforced", value(), None)
     run.target = None
 
     async def held(current, pending):

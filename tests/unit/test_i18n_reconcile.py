@@ -549,3 +549,90 @@ def test_request_bound_allows_a_one_byte_new_request():
     _assert_assembly(plan)
     assert _texts(plan) == ["x"]
     assert [u.disposition for u in plan.units] == ["new"]
+
+
+def test_same_input_completed_whole_page_fault_keeps_original_unit():
+    old, units = _history("A completed whole-page request.\n")
+    faults = (UnitFault("0", "semantic"), UnitFault("0", "language"), UnitFault("0", "semantic"))
+    plan = _reconcile(old, old, units, faults=faults)
+    _assert_assembly(plan)
+    assert len(plan.units) == 1
+    assert plan.units[0].disposition == "correction"
+    assert plan.units[0].original == units[0]
+    assert plan.units[0].fault_ids == ("language", "semantic")
+    assert plan.units[0].scope == SourceContext(old.path, old.english, 0, len(old.english))
+    assert plan.historical == old
+    assert plan.original_units == units
+    assert plan.unit_manifest_sha256 == original_unit_manifest_sha256(units)
+    assert plan.removed == ()
+
+
+@pytest.mark.parametrize("fits", [False, True])
+def test_same_input_whole_page_correction_obeys_byte_bound_without_splitting(fits):
+    old, units = _history("A paragraph with 界.\n")
+    bound = len(old.english.encode()) - int(not fits)
+    plan = _reconcile(
+        old, old, units, faults=(UnitFault("0", "semantic"),), bounded_new_request_bytes=bound
+    )
+    if fits:
+        _assert_assembly(plan)
+        assert len(plan.units) == 1
+        assert plan.units[0].disposition == "correction"
+        assert plan.units[0].original == units[0]
+        assert _texts(plan) == [old.english]
+    else:
+        assert [c.kind for c in plan.conflicts] == ["boundary"]
+        assert plan.conflicts[0].reply_refs == ("0",)
+        assert not plan.units
+
+
+@pytest.mark.parametrize("change", ["replace", "insert_before", "insert_after"])
+def test_faulty_completed_whole_page_still_refuses_changed_input(change):
+    old, units = _history("Original page.\n")
+    text = {
+        "replace": "Changed page.\n",
+        "insert_before": "Inserted.\n\n" + old.english,
+        "insert_after": old.english + "\nInserted.\n",
+    }[change]
+    plan = _reconcile(old, _source(text), units, faults=(UnitFault("0", "semantic"),))
+    assert [c.kind for c in plan.conflicts] == ["whole_page_replacement"]
+    assert plan.conflicts[0].reply_refs == ("0",)
+    assert not plan.units
+
+
+@pytest.mark.parametrize(
+    ("invalid", "kind"),
+    [
+        ("reply_reference", "authentication"),
+        ("missing_completion", "authentication"),
+        ("source_hash", "authentication"),
+        ("fault_reference", "context"),
+        ("context", "context"),
+        ("pair_refusal", "refusal"),
+    ],
+)
+def test_same_input_whole_page_correction_keeps_provenance_and_refusal_guards(invalid, kind):
+    old, units = _history("A completed whole-page request.\n")
+    manifest = original_unit_manifest_sha256(units)
+    current = old
+    faults = (UnitFault("0", "semantic"),)
+    if invalid == "reply_reference":
+        units = (replace(units[0], reply_ref="forged"),)
+    elif invalid == "missing_completion":
+        units = (replace(units[0], reply_ref=None),)
+    elif invalid == "source_hash":
+        old = replace(old, sha256="forged")
+    elif invalid == "fault_reference":
+        faults = (UnitFault("absent", "semantic"),)
+    elif invalid == "context":
+        current = replace(old, path="docs/other.md")
+    plan = reconcile_completed_units(
+        old,
+        current,
+        units,
+        unit_manifest_sha256=manifest,
+        faults=faults,
+        pair_refused=invalid == "pair_refusal",
+    )
+    assert [c.kind for c in plan.conflicts] == [kind]
+    assert not plan.units

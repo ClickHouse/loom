@@ -94,8 +94,8 @@ def test_max_result_chars_caps_what_the_model_reads() -> None:
         max_result_chars=100,
     )
     out = asyncio.run(_tools(toolset)["loom_recall"].function(query="seat"))
-    assert out.endswith("…[truncated]")
-    assert len(out) == 100 + len("…[truncated]")
+    assert json.loads(out) == {"memories": [], "omitted": 1}
+    assert len(out) <= 100
 
 
 def test_a_real_agent_posts_memory_search() -> None:

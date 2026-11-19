@@ -71,6 +71,8 @@ _CLASS_BY_LANG: dict[str, str] = {
     "hcl": SCRIPT,  # Dotted directory scopes
     "k8s": SCRIPT,  # Dotted file scopes
     "jsonnet": SCRIPT,
+    "lua": SCRIPT,  # Dotted file scopes
+    "graphql": SCRIPT,  # Module-scoped `<path>::Type` like protobuf
 }
 
 # Programs a shell test calls that are not, and can never be, symbols of

@@ -931,12 +931,16 @@ test("when the checkout differs, the denial carries the model's own grep lines f
   );
 });
 
-test("runLocalGrep runs grep without a shell and answers '' on no match", () => {
+test("runLocalGrep runs grep without a shell and answers '' on no match", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-shunt-grep-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, "a.h"), "int x;\nbool renameTempPartAndAdd(\n");
   fs.writeFileSync(path.join(dir, "a.cpp"), "// none here\n");
-  assert.equal(runLocalGrep(dir, "renameTempPartAndAdd", ["a.cpp", "a.h"]), "a.h:2:bool renameTempPartAndAdd(\n");
-  assert.equal(runLocalGrep(dir, "nothing_like_this", ["a.cpp"]), "");
+  assert.equal(
+    runLocalGrep(dir, "renameTempPartAndAdd", ["a.cpp", "a.h"], { timeoutMs: 10000 }),
+    "a.h:2:bool renameTempPartAndAdd(\n",
+  );
+  assert.equal(runLocalGrep(dir, "nothing_like_this", ["a.cpp"], { timeoutMs: 10000 }), "");
   assert.equal(runLocalGrep(dir, "x", []), "");
   const calls = [];
   runLocalGrep(dir, "$(rm -rf /)", ["a.h | cat"], {
@@ -960,6 +964,21 @@ test("runLocalGrep runs grep without a shell and answers '' on no match", () => 
   });
   assert.equal(opts.env.LOOM_GREP_SHIM, "off", "a grep shim on PATH never calls back into Loom");
   assert.equal(opts.env.PATH, "/bin");
+});
+
+test("runLocalGrep keeps its default deadline and returns empty after an execution failure", () => {
+  let calls = 0;
+  let timeout = null;
+  const output = runLocalGrep(".", "x", ["a.h"], {
+    exec: (_cmd, _args, opts) => {
+      calls++;
+      timeout = opts.timeout;
+      throw Object.assign(new Error("timeout"), { code: "ETIMEDOUT" });
+    },
+  });
+  assert.equal(output, "");
+  assert.equal(timeout, 2000);
+  assert.equal(calls, 1);
 });
 
 test("a clean file is answered by the index whatever the commits; only local changes get a grep", () => {
@@ -1228,3 +1247,17 @@ test("a sed or awk pattern holding a run of backslashes is parsed in linear time
   assert.equal(parseBashBulk(`awk '/${run}' notes.txt`), null);
   assert.ok(performance.now() - start < 500, "the pattern regex backtracks over the backslash run");
 });
+
+for (const modified of ["modified", "untracked"]) {
+  test(`${modified} single-file symbol greps stay local`, () => {
+    const verdict = classifyGrep({
+      rel: "src/parser.py",
+      isFile: true,
+      prefixes: ["src/"],
+      pattern: "field_value",
+      symbol: "field_value",
+      modified,
+    });
+    assert.deepEqual(verdict, { deny: null, reason: modified });
+  });
+}

@@ -51,6 +51,15 @@ def _restored_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(knowledge_reconcile, "held_sources", no_sources)
     monkeypatch.setattr(knowledge_reconcile, "dataset_sources_lost", no_lost)
 
+    # These cases isolate memory and erasure replay participants. Real connection
+    # cleanup and its publication ordering are covered in test_connected_account_restore.
+    from server.knowledge.app import connected_restore
+
+    async def no_connections(*a: Any, **k: Any) -> None:
+        pass
+
+    monkeypatch.setattr(connected_restore, "restore_all", no_connections)
+
 
 @pytest.fixture(autouse=True)
 def _registry_read(monkeypatch: pytest.MonkeyPatch) -> list[bool]:

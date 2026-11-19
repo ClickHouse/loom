@@ -7,6 +7,7 @@ barrier waits for the finite insert set observed after every writer confirms it.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
@@ -22,6 +23,8 @@ from server.core.sql_literal import sql_string
 from server.insights.domain.analysis import ANALYST_USER
 from server.insights.domain.observation_policy import observer_policies_allow
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 CONSTRAINT = "ordinary_events_only"
 ORDINARY = "mirror_marked = 0 AND NOT match(namespace, '^acl-[0-9a-f]{24}$')"
@@ -51,6 +54,19 @@ class EventCutoverUnavailable(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("ordinary event storage is not confirmed private-free on every writer")
+
+
+def _log_unavailable(proof_stage: str, error: Exception) -> None:
+    # Native policy and database error bodies can contain credentials.
+    try:
+        log.warning(
+            "Event storage proof refused: stage=%s exception=%s code=%s",
+            proof_stage,
+            type(error).__name__,
+            error_code(error),
+        )
+    except Exception:  # noqa: BLE001 — diagnostics must not replace the cutover refusal
+        pass
 
 
 def _remote(inner: str, cluster: str) -> str:
@@ -242,20 +258,30 @@ async def _observed(writers: _Writers, ch: _ObserverClient) -> AsyncIterator[_Wr
 async def confirm_ordinary_events(*, ch: _CHClient | None = None) -> None:
     """Refuse unknown writers or surviving private rows; never kill, copy or erase."""
     ch = ch or _default_client()
+    proof_stage = "writers"
     try:
         with query_tag("analysis.event_cutover"), statement_timeout(_BUDGET_S):
             async with asyncio.timeout(_BUDGET_S):
-                async with _observed(await _writers(ch), cast(_ObserverClient, ch)) as writers:
+                writers = await _writers(ch)
+                proof_stage = "observers"
+                async with _observed(writers, cast(_ObserverClient, ch)) as writers:
+                    proof_stage = "inserts"
                     old = _inserts(await writers.read(_processes()))
                     while old:
+                        proof_stage = "drain"
                         await asyncio.sleep(0.05)
                         old &= _inserts(await writers.read(_processes()))
+                    proof_stage = "verify_before_census"
                     await writers.verify()
+                    proof_stage = "census"
                     rows = await writers.read(_census())
                     if any(row["private"] != 0 for row in rows):
                         raise EventCutoverUnavailable()
+                    proof_stage = "verify_after_census"
                     await writers.verify()
+                    proof_stage = "observers_close"
     except asyncio.CancelledError:
         raise
-    except Exception:  # noqa: BLE001 — an uncertain cutover must never grant raw access
+    except Exception as error:  # noqa: BLE001 — an uncertain cutover must never grant raw access
+        _log_unavailable(proof_stage, error)
         raise EventCutoverUnavailable() from None

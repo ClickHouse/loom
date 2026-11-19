@@ -15,6 +15,8 @@ from server.memory.app import namespace_rollback as rb
 from server.memory.domain.rollback import RollbackAction, RollbackPlan
 from server.memory.store import MemoryRow
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 
 
