@@ -44,9 +44,11 @@ def _no_analysis_lease(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.insights.app import analysis
 
     monkeypatch.setattr(analysis, "lease", lambda ch=None: contextlib.nullcontext())
-    from server.assistant.app import service
+    from server.cli import secrets
 
-    monkeypatch.setattr(service, "lease", lambda ch=None: contextlib.nullcontext())
+    monkeypatch.setitem(
+        secrets._LEASED, "loom.assistant_service", lambda ch=None: contextlib.nullcontext()
+    )
 
 
 def test_purposes_do_not_open_each_other_and_empty_stays_empty(

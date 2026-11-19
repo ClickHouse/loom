@@ -415,12 +415,12 @@ describe("AssistantChat", () => {
       refusal(503, {
         code: "ASSISTANT_UNAVAILABLE",
         message: "the assistant is not set up in this web process yet",
-        reason: "starting",
+        reason: "failing",
       }),
     );
     render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
-    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "failing" }));
     expect(useChat.getState().refused).toEqual({ question: "Who owns billing?" });
     expect(screen.queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
@@ -955,9 +955,9 @@ describe("asking again", () => {
   it("puts a turn asked again back as it was when the route refuses, the question waiting as an edit", async () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("Who owns billing?", "Ada does.", citationsEvent([], "none"));
-    answers.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" }));
+    answers.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "failing" }));
     await userEvent.click(screen.getByRole("button", { name: "Ask again, answer 1" }));
-    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
+    await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "failing" }));
     expect(useChat.getState().turns.map((t) => t.answer)).toEqual(["Ada does."]);
     expect(lastAnswer()).toHaveTextContent("Ada does.");
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");

@@ -383,7 +383,7 @@ def test_citation_evidence_is_from_results_not_untrusted_text() -> None:
         (
             "[help:features/x.md § X > Y]",
             "help.get",
-            {"found": True, "path": "features/x.md", "section": "X > Y"},
+            {"found": True, "path": "features/x.md", "section": "X > Y", "anchor": "y"},
             {},
         ),
         (
@@ -612,3 +612,87 @@ def test_named_code_routing_recognizes_definition_and_caller_questions(question)
 
 def test_greeting_does_not_force_context_calls():
     assert context.initial("Hello!") == []
+
+
+def test_model_step_limit_refuses_a_followup_before_dispatch(offline, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_max_steps", 1)
+
+    class Followup:
+        async def stream(self, messages, descriptors, maximum, turn):
+            turn.sent = turn.usage_complete = True
+            turn.usage, turn.stop = model.Usage(100, 10), "tool_calls"
+            turn.calls = [model.ToolCall("next", "loom_memory_search", '{"query":"another"}')]
+            yield ""
+
+    monkeypatch.setattr(model, "model_for", lambda *_: Followup())
+    with pytest.raises(AssistantUpstreamError, match="step budget"):
+        run()
+    assert [name for name, _ in offline] == ["loom_memory_search", "loom_knowledge_search"]
+
+
+def test_tool_limit_counts_host_context_before_any_model(offline, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_max_tool_calls", 1)
+    monkeypatch.setattr(model, "model_for", lambda *_: pytest.fail("model sent"))
+    with pytest.raises(AssistantUpstreamError, match="tool budget"):
+        run()
+    assert [name for name, _ in offline] == ["loom_memory_search"]
+
+
+def test_reported_output_above_the_token_cap_refuses(offline, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_max_output_tokens", 64)
+
+    class Oversized:
+        async def stream(self, messages, descriptors, maximum, turn):
+            assert maximum == 64
+            turn.sent = turn.usage_complete = True
+            turn.usage, turn.stop = model.Usage(100, 65), "stop"
+            turn.text = "answer"
+            yield turn.text
+
+    monkeypatch.setattr(model, "model_for", lambda *_: Oversized())
+    with pytest.raises(AssistantUpstreamError, match="output token cap"):
+        run()
+
+
+def test_provisional_text_above_the_character_cap_withholds_done(offline, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_max_output_chars", 1000)
+
+    class Oversized:
+        async def stream(self, messages, descriptors, maximum, turn):
+            turn.sent = turn.usage_complete = True
+            turn.usage, turn.stop = model.Usage(100, 10), "stop"
+            turn.text = "x" * 1001
+            yield turn.text
+
+    monkeypatch.setattr(model, "model_for", lambda *_: Oversized())
+
+    async def scenario():
+        ticket = runtime.Ticket("org", "ns", "t", 1, "alice", "viewer")
+        seen = []
+        with pytest.raises(AssistantUpstreamError, match="output bound"):
+            async for chunk in runtime.stream(
+                ticket, [{"role": "user", "content": "policy"}], runtime.Answer()
+            ):
+                seen.append(chunk)
+        assert b"data: [DONE]\n\n" not in seen
+
+    asyncio.run(scenario())
+
+
+def test_tool_result_above_the_character_cap_refuses(monkeypatch):
+    from fastapi import FastAPI
+
+    monkeypatch.setattr(settings, "assistant_max_tool_result_chars", 1000)
+    app = FastAPI()
+
+    @app.post("/mcp")
+    async def response():
+        return {"result": {"structuredContent": {"data": "x" * 1001}}}
+
+    monkeypatch.setattr(tools, "_app", app)
+
+    async def scenario():
+        with pytest.raises(AssistantUpstreamError, match="response bound"):
+            await tools.Tools("org", "ns", "t", "run")._request("loom_memory_get", {})
+
+    asyncio.run(scenario())

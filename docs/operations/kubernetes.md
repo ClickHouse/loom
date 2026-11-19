@@ -192,8 +192,7 @@ helm install loom deploy/helm/loom -n loom -f deploy/helm/loom/values-eks.yaml
 - **ClickHouse Cloud's IP access list** must allow the cluster's NAT gateway addresses.
 - **Image.** Pin `image.digest`, and `extractor.image.digest` with `extractor.enabled`;
   each release's run summary prints both, after each image passed a CVE scan. The
-  assistant runs in the Loom web image
-  (`assistant.image.digest`, `assistant.mongo.image.digest`).
+  assistant runs in the Loom web image.
 
 ## Upgrades and scaling
 

@@ -585,8 +585,8 @@ describe("the search's answer card", () => {
     act(() => useDock.setState({ pageOff: false }));
   });
 
-  it("is offered while the setup starts or fails, and says a refusal it causes", async () => {
-    useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" });
+  it("is offered while the setup fails, and says a refusal it causes", async () => {
+    useDock.setState({ reason: { kind: "failing" }, reasonShort: "configuration failed" });
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
@@ -599,11 +599,11 @@ describe("the search's answer card", () => {
           status: 503,
           code: "ASSISTANT_UNAVAILABLE",
           message: "not set up yet",
-          detail: { reason: "starting" },
+          detail: { reason: "failing" },
         }),
       );
     });
-    expect(await screen.findByTestId("search-answer")).toHaveTextContent("Ask AI can't answer: setting up.");
+    expect(await screen.findByTestId("search-answer")).toHaveTextContent("Ask AI can't answer: configuration failed.");
   });
 
   it("keeps results first for a question with a search filter, its Ask AI option last", async () => {

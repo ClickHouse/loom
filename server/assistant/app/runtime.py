@@ -501,13 +501,14 @@ async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer
     await authorize(auth, org, namespace)
     ticket = await open_answer(auth, org, namespace)
     answer = Answer(mirrored=ticket.mirrored)
-    try:
-        async for _ in stream(ticket, kept, answer):
-            pass
-    finally:
-        # The slot comes back even when the stream stops before its own release (a charge
-        # that fails); a second release does nothing.
-        ticket.release()
+    with request_tail.publication_group() as publication:
+        try:
+            async for _ in stream(ticket, kept, answer):
+                pass
+        finally:
+            # A failed charge also releases the slot; a second release does nothing.
+            ticket.release()
+        publication.commit()
     return answer
 
 

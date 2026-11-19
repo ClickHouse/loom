@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.requests import ClientDisconnect
 
-from server.assistant.app import citations, runtime, service
+from server.assistant.app import runtime, service
 from server.auth.authz import check_acted_for
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
@@ -338,14 +338,16 @@ async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[
 async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
     answer = held.answer
     error: BaseException | None = None
-    try:
-        async for _ in chunks:
-            pass
-    except BaseException as e:
-        error = e
-        raise
-    finally:
-        held.close(error)
+    with request_tail.publication_group() as publication:
+        try:
+            async for _ in chunks:
+                pass
+        except BaseException as e:
+            error = e
+            raise
+        finally:
+            held.close(error)
+        publication.commit()
     return JSONResponse(
         {
             **({"mirrored": True} if answer.mirrored else {}),
@@ -377,4 +379,3 @@ def attach(app: Any) -> None:
     from server.assistant.app import tools
 
     tools.set_app(app)
-    citations.set_app(app)  # each citation is checked through Loom's own routes

@@ -45,7 +45,7 @@ const Starters = lazy(() => import("./cards/Starters").then((m) => ({ default: m
 /** The reason while this deployment's chat is off (lib/assistantDock.ts chatOff). */
 const NOT_CONFIGURED: AssistantReason = { kind: "not_configured" };
 
-/** How often the panel reads readiness again while the assistant is setting up or failing. */
+/** How often the panel reads readiness again while the assistant configuration is failing. */
 export const READINESS_POLL_MS = 10_000;
 
 type ModelCallsState = "loading" | "admin" | "locked" | "just_on" | "unknown";
@@ -190,7 +190,7 @@ export function DockBody() {
   }, []);
 
   // Readiness: read when the panel opens, and every READINESS_POLL_MS while it reports the
-  // assistant setting up or failing and the panel is open.
+  // assistant configuration failing and the panel is open.
   const [readTick, setReadTick] = useState(0);
   useEffect(() => {
     // With the chat off there is nothing to get ready.
@@ -201,17 +201,17 @@ export function DockBody() {
     const ctl = new AbortController();
     void readReadiness(ctl.signal).then((r) => {
       if (ctl.signal.aborted) return;
-      // A route's refusal that said setting up or failing is what readiness now says (as
+      // A route's refusal that said configuration failing is what readiness now says (as
       // Try again does): readiness reports the setup from here on.
       const h = useChat.getState().hint;
-      const stale = h?.kind === "starting" || h?.kind === "failing";
+      const stale = h?.kind === "failing";
       useChat.setState({ readiness: r, ...(stale ? { hint: null } : {}) });
       setChecking(false);
     });
     return () => ctl.abort();
   }, [open, readTick, off]);
-  // The setup is in progress or failing by readiness or by the route's refusal: read again.
-  const settingUp = (k?: string) => k === "starting" || k === "failing";
+  // The assistant configuration is failing by readiness or by the route's refusal: read again.
+  const settingUp = (k?: string) => k === "failing";
   const polling = open && (settingUp(readiness?.kind) || settingUp(hint?.kind));
   useEffect(() => {
     if (!polling) return;
@@ -271,9 +271,8 @@ export function DockBody() {
     ask(question, c.namespace ?? header, asked, null, { ...again, fromField: draft === question });
   };
 
-  // Chat not set up or its setup failing: the panel is its empty state and the starters,
-  // with no question field (ReasonBody's SetupState).
-  const setupDown = reason?.kind === "not_configured" || reason?.kind === "failing";
+  // A refused question keeps its draft controls while configuration is repaired.
+  const setupDown = reason?.kind === "not_configured" || (reason?.kind === "failing" && !refused);
   const memory = isMemoryNamespace(namespace, mine);
   const mismatch = turns.length > 0 && convNamespace !== null && convNamespace !== namespace;
   const blocked = blockedBy({ reason, checking, memory, mismatch });
@@ -645,9 +644,6 @@ function ReasonBody({
     case "token_expires_soon":
       text = `This token expires ${reason.leftS === undefined ? "" : `in ${reason.leftS} s, `}sooner than an answer can take. Sign in again or use a longer-lived token.`;
       break;
-    case "starting":
-      text = "Setting up — usually under a minute. This updates on its own.";
-      break;
     case "model_calls_off":
       text =
         modelCalls === "just_on" ? (
@@ -673,11 +669,11 @@ function ReasonBody({
   );
 }
 
-/** Where the docs say how an operator sets up the assistant service. */
+/** Where the docs say how an operator configures the assistant. */
 export const SETUP_DOCS = { page: "operations/assistant.md", anchor: "configuration" };
 
 /** Chat not set up (`failing`: its setup failing): the icon, a title and a line, then the
- *  docs on setting up the assistant service, or Try again while it fails, with Admin ›
+ *  docs on configuring the assistant, or Try again while it fails, with Admin ›
  *  Health for someone who can open it (a platform or namespace admin) and who fixes it for
  *  anyone but a platform admin. The line about Loom's own reads shows only while the
  *  starters, which need no model, show under it. */
@@ -699,13 +695,13 @@ function SetupState({
   // Only a platform admin fixes the deployment's setup; a namespace admin sees why it
   // fails.
   const why = seesHealth
-    ? "Loom retries the setup on its own; Admin › Health says why it fails."
-    : "Loom retries the setup on its own.";
+    ? "Check the assistant configuration in Admin › Health."
+    : "The assistant configuration needs attention.";
   const first = failing
     ? platform
       ? why
       : `${why} An admin of this deployment fixes it.`
-    : "An operator sets up the assistant service for this deployment.";
+    : "An operator configures the assistant provider and model for this deployment.";
   const reads = starters
     ? failing
       ? " Until it works, Loom can still answer these from its own reads."
@@ -721,7 +717,7 @@ function SetupState({
         <Icon name={failing ? "warning" : "sparkle"} size="md" aria-hidden="true" />
       </div>
       <Title type="h3" size="sm">
-        {failing ? "Chat's setup is failing" : "Chat isn't set up"}
+        {failing ? "Chat configuration needs attention" : "Chat isn't set up"}
       </Title>
       <p className="max-w-sm text-sm text-text-muted">
         {first}
@@ -750,7 +746,7 @@ function SetupState({
           size="sm"
           onClick={() => openDocsPage(SETUP_DOCS.page, SETUP_DOCS.anchor)}
         >
-          How to set up the assistant service
+          How to configure the assistant
         </Link>
       )}
     </div>

@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 
-from server.assistant.app import citations
+from server.assistant.app import citations, evidence
+from server.assistant.app.tools import Receipt
 from server.assistant.domain import names
 from server.assistant.domain.citations import parse
+from server.help.api.models import HelpGetInput
 from server.help.app import docs
 
 _PAGE = """# Sharing
@@ -29,17 +31,22 @@ def shipped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     (tmp_path / "features").mkdir()
     (tmp_path / "features" / "sharing.md").write_text(_PAGE)
     monkeypatch.setattr(docs, "DOCS_DIR", tmp_path)
-    monkeypatch.setattr(citations, "_LEDGER_WAIT_S", 0.0)
     docs.reset()
     yield tmp_path
     docs.reset()
 
 
 def _verify(text: str) -> list[dict[str, Any]]:
-    checked = asyncio.run(
-        citations.verify(text, org="acme", namespace="ns", token="t", run_id="r1", subject="a")
-    )
-    return [{**c.citation.model_dump(), "code": c.code} for c in checked]
+    async def read():
+        receipts = []
+        for path in {c.path.removeprefix("docs/") for c in parse(text) if c.kind == "help"}:
+            result = await docs.handle_help_get(HelpGetInput(path=path))
+            receipts.append(
+                Receipt("help.get", {"path": path}, result.model_dump(), "model_tool", 0)
+            )
+        return evidence.verify(text, receipts)
+
+    return [c.model_dump() for c in asyncio.run(read())]
 
 
 def test_a_help_citation_is_parsed_with_its_page_and_section() -> None:
@@ -58,18 +65,12 @@ def test_help_citations_are_checked_against_the_shipped_pages(shipped) -> None:
         "[help:features/sharing.md] [help:docs/features/sharing.md § Sharing > Collections] "
         "[help:features/sharing.md § Sharing > Groups] [help:features/absent.md]"
     )
-    got = [(c["verified"], c["ref"], c["anchor"], c["reason"], c["code"]) for c in _verify(text)]
+    got = [(c["verified"], c["ref"], c["anchor"]) for c in _verify(text)]
     assert got == [
-        (True, "features/sharing.md", "", "", "verified"),
-        (True, "features/sharing.md", "collections", "", "verified"),
-        (False, "features/sharing.md", "", "the page has no such section", "no_section"),
-        (
-            False,
-            "features/absent.md",
-            "",
-            "no such page in this build's documentation",
-            "no_document",
-        ),
+        (True, "features/sharing.md", ""),
+        (True, "features/sharing.md", "collections"),
+        (False, "features/sharing.md", ""),
+        (False, "features/absent.md", ""),
     ]
 
 
@@ -77,10 +78,9 @@ def test_with_no_docs_a_help_citation_is_unchecked_and_no_name_is_called_unknown
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(docs, "DOCS_DIR", tmp_path / "absent")
-    monkeypatch.setattr(citations, "_LEDGER_WAIT_S", 0.0)
     docs.reset()
     (only,) = _verify("[help:features/sharing.md]")
-    assert not only["verified"] and only["reason"] == "the check could not run"
+    assert not only["verified"] and only["reason"] == "this answer did not read this source"
     assert asyncio.run(citations.unknown_names("`memory.frobnicate`")) == []
     docs.reset()
 

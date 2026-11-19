@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from server.assistant.app import citations, support
 from server.assistant.domain import support as rule
 from server.assistant.domain.steps import steps_of
 from server.assistant.domain.support import CallRow
@@ -19,9 +18,8 @@ from server.core.ch import CHClient
 from server.core.ch_writes import async_insert_settings
 from server.memory.app import exposure_ledger
 from server.observability.consumer import ASSISTANT_CONSUMER
-from server.observability.event_args import text_digest
 from server.observability.events import AgentEvent
-from server.settings import settings
+from server.operations.toolsets import ASSISTANT_CITABLE_OPS, ASSISTANT_NO_NAMESPACE_DATA_OPS
 from tests.integration._event_fixtures import insert_event_rows
 from tests.integration._resources import unique_org
 
@@ -94,7 +92,16 @@ async def test_marked_outcomes_keep_one_public_support_result(events: CHClient, 
     assert await read(events, mode, org, "right", ts) == expected
     if mode != "digests":
         assert steps_of(expected) == ([], False)
-        assert support.streamed_support([], "An answer.", expected) == rule.UNCHECKED
+        assert (
+            rule.support_of(
+                [],
+                text="An answer.",
+                calls=rule.derive(expected),
+                citable=ASSISTANT_CITABLE_OPS,
+                no_data=ASSISTANT_NO_NAMESPACE_DATA_OPS,
+            )
+            == rule.UNCHECKED
+        )
 
 
 @pytest.mark.asyncio
@@ -133,56 +140,6 @@ async def test_assistant_support_keeps_org_and_subject_scope(events: CHClient) -
         CallRow("insights.query", True, "true", "7")
     ]
     assert await ledger.query_digests(org, "notes", "shared", "reader", ch=events) == {"own"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("marked", [False, True])
-@pytest.mark.parametrize("kind", ["sql", "memory"])
-async def test_citations_use_persisted_unknown_or_ordinary_positive_evidence(
-    events: CHClient, monkeypatch: pytest.MonkeyPatch, marked: bool, kind: str
-) -> None:
-    org = unique_org("assistant-citation")
-    ts = datetime.now(UTC)
-    sql = "SELECT 1"
-    key = "notes/answer"
-    row = event(
-        org, "answer", marked=marked, success=True, hits="1", digest=text_digest(sql), ts=ts
-    )
-    if kind == "memory":
-        row["operation"] = "memory.search"
-    await insert_event_rows(
-        events,
-        "loom.agent_events",
-        [row],
-        async_insert_settings(),
-        required_columns={"mirror_marked"},
-    )
-    # Protected calls leave no outcome-bearing exposure; an ordinary call records its key.
-    if not marked and kind == "memory":
-        exposure = exposure_ledger.build_row(
-            operation="memory.search",
-            org=org,
-            namespace="notes",
-            agent="reader",
-            user_id="reader",
-            session_id="session",
-            run_id="answer",
-            keys=[key],
-            auth=SimpleNamespace(subject="reader"),
-        )
-        await events.insert("loom.memory_exposures", [exposure], async_insert_settings())
-    monkeypatch.setattr(ledger, "_default_client", lambda: events)
-    monkeypatch.setattr(settings, "memory_exposure_ledger_enabled", True)
-    text = f"```sql\n{sql}\n```" if kind == "sql" else f"[memory:{key}@v1]"
-    checked = await citations.verify(
-        text, org=org, namespace="notes", token="", run_id="answer", subject="reader"
-    )
-    assert len(checked) == 1
-    assert checked[0].code == (rule.NOT_RUN if marked else rule.VERIFIED)
-    assert checked[0].citation.verified is not marked
-    assert support.streamed_support(checked, text, None) == (
-        rule.UNCHECKED if marked else rule.SUPPORTED
-    )
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,3 +39,33 @@ def test_chart_contains_only_native_assistant_enablement() -> None:
     helpers = (ROOT / "deploy/helm/loom/templates/_helpers.tpl").read_text()
     assert "LOOM_ASSISTANT_ENABLED" in helpers
     assert "librechat" not in helpers.lower()
+
+
+@pytest.mark.parametrize("broken", ["", "workload", "network", "enabled"])
+def test_native_helm_gate_rejects_expanded_runtime_or_network(monkeypatch, broken):
+    from scripts.gates import helm_assistant_isolation as gate
+
+    calls = []
+
+    def render(overlay, *sets):
+        calls.append((overlay, sets))
+        enabled = "assistant.enabled=true" in sets
+        config = {"LOOM_ASSISTANT_ENABLED": "true" if enabled else "false"}
+        if enabled and broken == "enabled":
+            config["LOOM_ASSISTANT_ENABLED"] = "false"
+        policy = {"kind": "NetworkPolicy", "metadata": {"name": "loom"}, "spec": {}}
+        if enabled and broken == "network":
+            policy["spec"]["ingress"] = [{}]
+        rows = [{"kind": "ConfigMap", "metadata": {"name": "loom"}, "data": config}, policy]
+        if enabled and broken == "workload":
+            rows.append({"kind": "Deployment", "metadata": {"name": "extra"}})
+        return rows
+
+    monkeypatch.setattr(gate, "render", render)
+    if broken:
+        with pytest.raises(AssertionError):
+            gate.main()
+    else:
+        gate.main()
+        for overlay in ("values-kind.yaml", "values-eks.yaml"):
+            assert any(name == overlay and "tls.secretName=ci" in args for name, args in calls)

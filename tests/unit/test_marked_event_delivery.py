@@ -42,6 +42,7 @@ def world(monkeypatch):
     monkeypatch.setattr(ledger, "_event_hold", hold)
     spend = SimpleNamespace(
         cost_usd=0.125,
+        cost_estimated=False,
         embed_tokens=13,
         llm_input_tokens=17,
         llm_output_tokens=19,

@@ -80,11 +80,6 @@ def _matches(citation: Citation, receipt: Receipt) -> bool:
             version = node.get("version_text") or node.get("version")
             if key == citation.key and str(version) == citation.text.rsplit("@v", 1)[-1][:-1]:
                 return True
-        if citation.kind == "help" and op == "help.get":
-            if result.get("found") and node.get("path", result.get("path")) == citation.path:
-                section = node.get("section", "")
-                if not citation.section or section_path(str(section)) == citation.section:
-                    return True
         if citation.kind == "doc" and op in ("knowledge.search", "knowledge.get"):
             if op == "knowledge.get" and result.get("found") is not True:
                 continue
@@ -104,15 +99,50 @@ def _matches(citation: Citation, receipt: Receipt) -> bool:
     return False
 
 
+def _help(citation: Citation, receipts: list[Receipt]) -> tuple[str, str] | None:
+    path = citation.path.removeprefix("docs/")
+    candidates: dict[tuple[str, ...], str] = {}
+    without_title: dict[tuple[str, ...], str] = {}
+    for receipt in receipts:
+        result = receipt.result
+        if receipt.op != "help.get" or not result.get("found") or result.get("path") != path:
+            continue
+        if not citation.section:
+            return path, ""
+        for node in _nodes(result):
+            section = section_path(str(node.get("section", "")))
+            anchor = node.get("anchor")
+            if section and isinstance(anchor, str) and anchor:
+                candidates.setdefault(section, anchor)
+                title = section_path(str(result.get("title", "")))
+                if title and section[: len(title)] == title:
+                    without_title.setdefault(section[len(title) :], anchor)
+    exact = candidates.get(citation.section) or without_title.get(citation.section)
+    if exact is not None:
+        return path, exact
+    matches = [
+        anchor
+        for section, anchor in candidates.items()
+        if section[-len(citation.section) :] == citation.section
+    ]
+    return (path, matches[0]) if len(matches) == 1 else None
+
+
 def verify(text: str, receipts: list[Receipt]) -> list[AssistantCitation]:
     out = []
     for citation in parse(text):
-        verified = any(_matches(citation, receipt) for receipt in receipts)
+        help_source = _help(citation, receipts) if citation.kind == "help" else None
+        verified = (
+            help_source is not None
+            if citation.kind == "help"
+            else any(_matches(citation, receipt) for receipt in receipts)
+        )
         out.append(
             AssistantCitation(
                 kind=citation.kind,
                 text=citation.text,
-                ref=citation.ref,
+                ref=help_source[0] if help_source else citation.ref,
+                anchor=help_source[1] if help_source else "",
                 verified=verified,
                 reason="" if verified else "this answer did not read this source",
             )

@@ -9,7 +9,7 @@ import { AssistantHealthRow } from "./AssistantHealthRow";
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-type Check = "ready" | "not_configured" | "starting" | "failing" | "read_failed";
+type Check = "ready" | "not_configured" | "failing" | "read_failed";
 const FIX = "Configure the native assistant provider and credentials.";
 
 let check: Check = "ready";
@@ -17,11 +17,7 @@ let problem = false;
 
 function readiness(): Response {
   const a =
-    check === "ready"
-      ? { ok: true, required: false }
-      : check === "starting"
-        ? { ok: false, reason: "starting", required: false }
-        : { ok: false, reason: "failing", required: false };
+    check === "ready" ? { ok: true, required: false } : { ok: false, reason: "provider_key_missing", required: false };
   return json({ ready: check === "ready", checks: check === "not_configured" ? {} : { assistant: a } });
 }
 
@@ -76,12 +72,10 @@ describe("who sees the Assistant row", () => {
   it.each<[string, boolean, Check, boolean]>([
     ["a platform admin", true, "ready", true],
     ["a platform admin", true, "not_configured", true],
-    ["a platform admin", true, "starting", true],
     ["a platform admin", true, "failing", true],
     ["a platform admin", true, "read_failed", false],
     ["a viewer", false, "ready", false],
     ["a viewer", false, "not_configured", false],
-    ["a viewer", false, "starting", true],
     ["a viewer", false, "failing", true],
     ["a viewer", false, "read_failed", false],
   ])("%s (platform admin: %s), check %s: shown %s", async (_who, platform, c, visible) => {
@@ -94,7 +88,6 @@ describe("who sees the Assistant row", () => {
 describe("the fix sentence", () => {
   it.each<[Check, boolean]>([
     ["failing", true],
-    ["starting", false],
     ["ready", false],
   ])("with the problem listed and check %s: shown %s", async (c, withFix) => {
     signIn(true);
