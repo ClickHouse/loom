@@ -14,13 +14,14 @@ from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
 
-ORG = unique_org("code-result-lessons")
 PATH = "server/code/app/search/handler.py"
 DECISION = "Decided: the search memo never stores a caller's memories, " * 6
 
 
-def _set(base: str, token: str, key: str, value: str, files: list[str], **kw: Any) -> None:
-    body = {"org": ORG, "namespace": "dev", "agent": "claude-code", "memory_key": key}
+def _set(
+    base: str, token: str, org: str, key: str, value: str, files: list[str], **kw: Any
+) -> None:
+    body = {"org": org, "namespace": "dev", "agent": "claude-code", "memory_key": key}
     body |= {"value": value, "files": files, **kw}
     r = httpx.post(
         f"{base}/v1/memory.set", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=10
@@ -35,23 +36,28 @@ async def test_lessons_match_the_result_file_by_path(
     from server.memory.app import path_lessons
 
     await get_client().connect()
-    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
-    _set(control_plane_url, token, "notes/exact", "Pages are cut by tokens.", [PATH])
-    _set(control_plane_url, token, "notes/bare", "Every handler logs its route.", ["handler.py"])
+    org = unique_org("code-result-lessons")
+    token = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(control_plane_url, token, org, "notes/exact", "Pages are cut by tokens.", [PATH])
+    _set(
+        control_plane_url, token, org, "notes/bare", "Every handler logs its route.", ["handler.py"]
+    )
     _set(
         control_plane_url,
         token,
+        org,
         "notes/other",
         "The memory handler drops weak hits.",
         ["server/memory/app/loom_search/handler.py"],
     )
-    _set(control_plane_url, token, "design/memo", DECISION, [PATH], memory_type="decision")
+    _set(control_plane_url, token, org, "design/memo", DECISION, [PATH], memory_type="decision")
     # More rows about other directories' handler.py than a small read would keep: the
     # exact path's rows still come back.
     for i in range(12):
         _set(
             control_plane_url,
             token,
+            org,
             f"notes/elsewhere-{i}",
             f"Handler {i} retries twice.",
             [f"server/plane{i}/app/handler.py"],
@@ -61,7 +67,7 @@ async def test_lessons_match_the_result_file_by_path(
     rows: list[dict[str, Any]] = []
     for _ in range(50):
         rows = (
-            await path_lessons.lessons_for_paths(ORG, ["dev"], "", [PATH], token_budget=2000)
+            await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=2000)
         ).rows
         if len(rows) >= 3:
             break
@@ -78,7 +84,7 @@ async def test_lessons_match_the_result_file_by_path(
     }
     assert by_key["design/memo"]["excerpt"] == " ".join(DECISION.split())
     # a cap below the decision's size leaves it out, never cut
-    small = (await path_lessons.lessons_for_paths(ORG, ["dev"], "", [PATH], token_budget=60)).rows
+    small = (await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=60)).rows
     assert "design/memo" not in {r["memory_key"] for r in small}
 
 
@@ -94,8 +100,9 @@ async def test_a_search_keeps_a_stored_lesson_when_another_file_read_times_out(
     from server.settings import settings
 
     await get_client().connect()
-    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
-    _set(control_plane_url, token, "notes/ready", "Keep the ready file's lesson.", [PATH])
+    org = unique_org("code-result-lessons")
+    token = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(control_plane_url, token, org, "notes/ready", "Keep the ready file's lesson.", [PATH])
     listing_rows = path_lessons.listing_rows
     stopped = asyncio.Event()
 
@@ -117,7 +124,7 @@ async def test_a_search_keeps_a_stored_lesson_when_another_file_read_times_out(
     wrapped = result_lessons.WithLessons(_search, result_lessons.search_paths)
     out = await wrapped(
         CodeSearchInput(
-            org=ORG, namespace="code-repo", query="ready file", lesson_namespaces=["dev"]
+            org=org, namespace="code-repo", query="ready file", lesson_namespaces=["dev"]
         )
     )
     assert any(row["memory_key"] == "notes/ready" for row in out.lessons), out.model_dump()
