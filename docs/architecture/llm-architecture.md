@@ -173,7 +173,7 @@ low.
 `resolve_llm_provider` in `server/core/llm_provider.py` picks the provider:
 
 1. An explicit `LOOM_LLM_PROVIDER` is never overridden.
-2. Else from `LOOM_LLM_MODEL`: `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
+2. Else from `LOOM_LLM_MODEL`: `bedrock:*` is `bedrock`; `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
    `chatgpt*` are `openai`; `fake*` is `fake`.
 3. Else from the key present: `OPENAI_API_KEY` gives `openai` with `gpt-6-luna`, then
    `ANTHROPIC_API_KEY` gives `anthropic` with `claude-haiku-4-5`.
@@ -188,6 +188,7 @@ The stock `.env` pins `LOOM_LLM_PROVIDER=fake`.
 | ----------- | ------------------------- | ---------------------------------------------------- |
 | `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`                                     |
 | `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY`                                  |
+| `bedrock`   | `server/llm/bedrock.py`   | deployment AWS role or SDK credential chain          |
 | `local`     | `server/llm/local.py`     | none: the OpenAI client at `LOOM_LOCAL_LLM_BASE_URL` |
 | `fake`      | `server/llm/fake.py`      | none                                                 |
 
@@ -196,6 +197,58 @@ Per-stage models (`LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_CODE_SUMMARY_MODEL` and t
 the provider from the name; the deployment's own `LOOM_LLM_MODEL` named again runs on
 the resolved provider (`Settings.provider_of`), so a local model with a hosted-looking
 name stays local.
+
+### Native Bedrock
+
+The server's `aws` extra supplies the AWS SDK; the server image includes it.
+Activate native Bedrock only after all server and worker processes support this
+provider; a process without the adapter cannot serve its configuration.
+Bedrock uses the deployment's AWS credential chain, including role and web-identity
+credential refresh. AWS access keys are not stored in the model-setup form or Loom's
+saved provider credentials. The region comes from `LOOM_BEDROCK_REGION`, or from the
+SDK's region configuration when that setting is empty.
+
+Set `LOOM_LLM_PROVIDER=bedrock` and set `LOOM_LLM_MODEL` to a model or inference-profile
+ID your role can invoke. There is no implicit Bedrock model. A stage override can
+select native inference with `bedrock:<model-or-inference-profile-id>`, including
+`LOOM_CODE_ASK_LLM_MODEL`; the local `bedrock:` routing prefix is stripped before the
+request. The role needs `bedrock:InvokeModel` for the selected resources.
+
+For text embeddings, select `LOOM_EMBEDDING_PROVIDER=bedrock` and
+`LOOM_EMBEDDING_MODEL=cohere.embed-v4:0`. Cohere Embed v4 supports dimensions 256, 512,
+1024 and 1536; the native default is 1536 when `LOOM_EMBEDDING_DIM` is unset. Single-text
+`embed()` requests use `search_query`; document batches use `search_document`, with at
+most 96 texts per request. Requests refuse silent truncation. Calibration compares
+write-time paraphrases as document/document pairs and retrieval probes as
+query/document pairs, matching the vectors those operations use.
+
+Changing embedding providers requires rebuilding existing vectors; model labels and
+dimensions do not make vectors from different providers interchangeable. Re-index
+code and run `code.calibrate` after the target index is ready. Thresholds remain
+embedder-specific; a threshold measured for one model is not a deployment-wide default.
+
+The Models & keys form can select Bedrock for either role and validates it using the
+server's AWS credentials. Validation makes billable requests only after Test & apply.
+A missing or expired credential is an error, never a fake-provider fallback.
+`bedrock:messages` and `bedrock:embeddings` feed the existing provider health report;
+a successful later call clears a recorded failure.
+
+The SDK resolves credentials and signs each request; Loom's async HTTP client sends
+model content, so cancelling a request closes its HTTP response. Signed requests do not
+follow redirects, and SDK endpoint overrides cannot redirect model content. Native
+Bedrock is refused when an inference gateway is required. In that deployment, use the
+gateway's configured provider endpoint.
+
+LLM usage comes from the Converse response. Embedding usage is recorded only when the
+provider reports it; an unavailable count is not estimated spend. A model missing from
+the pricing table remains unpriced, not evidence of free inference.
+Generation spans mark `loom.llm.cost_unknown`; embedding spans mark
+`loom.embed.cost_unknown` and, when needed, `loom.embed.usage_unknown` instead of
+publishing missing values as zero. Native request metadata records `cloud.region`
+and `aws.bedrock.request.model_id`, including inference-profile IDs as requested.
+
+The wire contracts follow [Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
+and [Cohere Embed v4](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-embed-v4.html).
 
 ### Protocol
 

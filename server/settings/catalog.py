@@ -4657,6 +4657,9 @@ _SENDER_HEADERS = frozenset(
         "content-type",
         "content-length",
         "host",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
     }
 )
 
@@ -4703,11 +4706,11 @@ class ProviderSettings(ModelSettings):
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
     # → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin
-    # "openai", "gemini", "local", "fake".
+    # "openai", "gemini", "bedrock" (Cohere Embed v4), "local", "fake".
     # Switching providers changes the embedding space: a full re-embed is
     # required.
     embedding_provider: Annotated[
-        Literal["", "openai", "gemini", "compatible", "local", "fake"], CaseFolded
+        Literal["", "openai", "gemini", "compatible", "bedrock", "local", "fake"], CaseFolded
     ] = ""
     # API root for an explicitly selected OpenAI-compatible embedding service,
     # e.g. https://provider.example/v1. Empty is invalid for compatible providers.
@@ -4726,6 +4729,9 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
+    # Region for native Bedrock model requests; empty uses the AWS SDK's region chain.
+    # AWS credentials use the SDK's role, profile or environment credential chain.
+    bedrock_region: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
     local_llm_base_url: str = "http://localhost:11434/v1"
@@ -4843,11 +4849,12 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+    # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
     # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
     # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
     # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-    # overridden. Run `make bench-quick` before making anthropic a default.
+    # overridden. Bedrock requires llm_model and the SDK credential chain.
+    # Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
     # (production) makes it an `error` and `status: degraded`, which preflight
@@ -4876,6 +4883,21 @@ class ProviderSettings(ModelSettings):
             return self
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
+            self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_bedrock_embedding_dim(self) -> ProviderSettings:
+        """Cohere Embed v4 uses its native width unless the operator pins one."""
+        native = self.embedding_provider == "bedrock" or (
+            not self.embedding_provider and self.embedding_model.startswith("bedrock:")
+        )
+        if native and (
+            not self.embedding_model.strip() or self.embedding_model.startswith("fake-ngram")
+        ):
+            raise ValueError("LOOM_EMBEDDING_PROVIDER=bedrock requires a Cohere Embed v4 model")
+        if "embedding_dim" not in self.model_fields_set and native:
+            self.embedding_dim = 1536
             self._inferred_fields |= {"embedding_dim"}
         return self
 
@@ -5047,6 +5069,8 @@ class ProviderSettings(ModelSettings):
         pair = frozenset({"llm_provider", "llm_model"})
         inferred = pair if not (pair & self.model_fields_set) else frozenset()
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
+        if resolved.provider == "bedrock" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
@@ -5136,6 +5160,8 @@ class ProviderSettings(ModelSettings):
         why = self.gateway_required_by()
         if not why:
             return ""
+        if self.llm_provider == "bedrock":
+            return f"{why} refuses native Bedrock: use the inference gateway"
         if not self.gateway_hosts():
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
         saved = dict(changes or {})
@@ -5174,12 +5200,13 @@ class ProviderSettings(ModelSettings):
                 provider = inferred_provider(v["embedding_model"])
             except ValueError:
                 provider = ""  # an unknown model is refused where the embedder is built
-        if provider == "gemini":
+        if provider in {"gemini", "bedrock"}:
             # The Gemini embedder calls Google's own API, never a gateway.
+            label = "Bedrock" if provider == "bedrock" else "Gemini"
             which = (
-                "the saved Gemini embedder"
+                f"the saved {label} embedder"
                 if "embedding_provider" in saved
-                else "the Gemini embedder"
+                else f"the {label} embedder"
             )
             return f"{why} refuses {which}: embed through the gateway"
         return ""

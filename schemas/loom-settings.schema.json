@@ -176,6 +176,11 @@
           "type": "string",
           "description": "Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell gate lets the process serve); off = never (a pure web replica)."
         },
+        "bedrock_region": {
+          "default": "",
+          "type": "string",
+          "description": "Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain."
+        },
         "bind_host": {
           "default": "127.0.0.1",
           "type": "string",
@@ -2592,11 +2597,12 @@
             "openai",
             "gemini",
             "compatible",
+            "bedrock",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
+          "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"bedrock\" (Cohere Embed v4), \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
         },
         "embedding_retry_attempts": {
           "default": 3,
@@ -3663,7 +3669,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,

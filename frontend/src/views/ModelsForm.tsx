@@ -10,7 +10,7 @@ import {
   type EmbeddingProvider,
   type LlmProvider,
   type ModelConfiguration,
-  type ModelProvider,
+  type ModelKeyProvider,
   type ModelStatus,
   type ModelValidation,
 } from "../api/models";
@@ -24,7 +24,7 @@ const PROVIDER_LABELS = {
 };
 const errorMessages: Record<string, string> = {
   missing_key: "Add an API key for this provider.",
-  invalid_credentials: "The provider rejected the key. Check its permissions and try again.",
+  invalid_credentials: "The provider rejected access. Check credentials and model permissions.",
   quota_or_rate_limit: "Check provider billing or quota, then try again.",
   model_unavailable: "This model is not available to your API account.",
   timeout: "The provider did not respond in time. Try again.",
@@ -37,18 +37,21 @@ const errorMessages: Record<string, string> = {
 };
 
 export function initialModelConfiguration(status: ModelStatus): ModelConfiguration {
-  const llm = status.llm_provider === "anthropic" ? "anthropic" : "openai";
+  const llm =
+    status.llm_provider === "bedrock" ? "bedrock" : status.llm_provider === "anthropic" ? "anthropic" : "openai";
   const embedding =
-    status.embedding_provider === "compatible"
-      ? "compatible"
-      : status.embedding_provider === "gemini"
-        ? "gemini"
-        : "openai";
+    status.embedding_provider === "bedrock"
+      ? "bedrock"
+      : status.embedding_provider === "compatible"
+        ? "compatible"
+        : status.embedding_provider === "gemini"
+          ? "gemini"
+          : "openai";
   return {
     llm: {
       provider: llm,
       model:
-        ["openai", "anthropic"].includes(status.llm_provider) && status.llm_model
+        ["openai", "anthropic", "bedrock"].includes(status.llm_provider) && status.llm_model
           ? status.llm_model
           : llm === "anthropic"
             ? "claude-haiku-4-5"
@@ -59,12 +62,12 @@ export function initialModelConfiguration(status: ModelStatus): ModelConfigurati
     embedding: {
       provider: embedding,
       model:
-        ["openai", "gemini", "compatible"].includes(status.embedding_provider) && status.embedding_model
+        ["openai", "gemini", "compatible", "bedrock"].includes(status.embedding_provider) && status.embedding_model
           ? status.embedding_model
           : embedding === "gemini"
             ? "gemini-embedding-001"
             : "text-embedding-3-large",
-      dimensions: ["openai", "gemini", "compatible"].includes(status.embedding_provider)
+      dimensions: ["openai", "gemini", "compatible", "bedrock"].includes(status.embedding_provider)
         ? status.embedding_dimensions
         : 3072,
       ...(embedding === "compatible"
@@ -98,7 +101,13 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
       label="Embedding dimensions"
       required
       min={1}
-      max={configuration.embedding.provider === "compatible" ? 65535 : 3072}
+      max={
+        configuration.embedding.provider === "compatible"
+          ? 65535
+          : configuration.embedding.provider === "bedrock"
+            ? 1536
+            : 3072
+      }
       step={1}
       disabled={embeddingLocked}
       value={configuration.embedding.dimensions}
@@ -158,13 +167,14 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 llm: {
                   ...configuration.llm,
                   provider,
-                  model: provider === "anthropic" ? "claude-haiku-4-5" : "gpt-6-luna",
+                  model: provider === "bedrock" ? "" : provider === "anthropic" ? "claude-haiku-4-5" : "gpt-6-luna",
                 },
               });
             }}
           >
             <Select.Item value="openai">OpenAI</Select.Item>
             <Select.Item value="anthropic">Anthropic (Claude)</Select.Item>
+            <Select.Item value="bedrock">Amazon Bedrock</Select.Item>
           </Select>
           <TextField
             label="LLM model"
@@ -183,12 +193,14 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
                 embedding: {
                   provider,
                   model:
-                    provider === "compatible"
-                      ? ""
-                      : provider === "gemini"
-                        ? "gemini-embedding-001"
-                        : "text-embedding-3-large",
-                  dimensions: 3072,
+                    provider === "bedrock"
+                      ? "cohere.embed-v4:0"
+                      : provider === "compatible"
+                        ? ""
+                        : provider === "gemini"
+                          ? "gemini-embedding-001"
+                          : "text-embedding-3-large",
+                  dimensions: provider === "bedrock" ? 1536 : 3072,
                 },
               });
             }}
@@ -196,6 +208,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
             <Select.Item value="openai">OpenAI</Select.Item>
             <Select.Item value="gemini">Google Gemini</Select.Item>
             <Select.Item value="compatible">Other (OpenAI-compatible API)</Select.Item>
+            <Select.Item value="bedrock">Amazon Bedrock (Cohere Embed v4)</Select.Item>
           </Select>
           <TextField
             label="Embedding model"
@@ -242,11 +255,14 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
           </div>
         )}
         <p className="text-sm text-text-muted">
-          Claude needs a separate embedding provider. OpenAI can use one API key for both roles. Only keys for your
-          selected providers are required.
+          LLM and embedding models are configured separately. Bedrock uses the deployment's AWS credentials; no AWS
+          access keys are saved here. Other providers use API keys.
         </p>
+        {configuration.embedding.provider === "bedrock" && (
+          <p className="text-sm text-text-muted">Cohere Embed v4 supports 256, 512, 1024 or 1536 dimensions.</p>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
-          {(Object.keys(PROVIDER_LABELS) as ModelProvider[])
+          {(Object.keys(PROVIDER_LABELS) as ModelKeyProvider[])
             .filter((provider) => provider !== "compatible" || configuration.embedding.provider === "compatible")
             .map((provider) => (
               <PasswordField

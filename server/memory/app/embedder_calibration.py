@@ -343,17 +343,23 @@ async def calibrate_embedder(
         )
         return None
 
-    async def _embed_pair(a: str, b: str) -> float:
+    async def _embed_pair(a: str, b: str, *, query: bool) -> float:
         # The recalibration worker's fixed pairs are the deployment's; code.calibrate
         # probes a namespace's corpus under its request's org, which wins.
         with customer.system():
-            va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
+            if query:
+                va, documents = await asyncio.gather(embedder.embed(a), embedder.embed_many([b]))
+                vb = documents[0]
+            else:
+                va, vb = await embedder.embed_many([a, b])
         return _cosine(va, vb)
 
     try:
-        similar_cosines = await asyncio.gather(*(_embed_pair(a, b) for a, b in para))
-        question_fact_cosines = await asyncio.gather(*(_embed_pair(a, b) for a, b in qf))
-        distractor_cosines = await asyncio.gather(*(_embed_pair(a, b) for a, b in dist))
+        similar_cosines = await asyncio.gather(*(_embed_pair(a, b, query=False) for a, b in para))
+        question_fact_cosines = await asyncio.gather(
+            *(_embed_pair(a, b, query=True) for a, b in qf)
+        )
+        distractor_cosines = await asyncio.gather(*(_embed_pair(a, b, query=True) for a, b in dist))
     except Exception as e:  # noqa: BLE001 — a failed probe: the scalar gates serve
         log.warning("calibration: probe failed (%s); falling back to scalar settings", e)
         return None

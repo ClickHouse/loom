@@ -47,10 +47,10 @@ def provider_for(name: str) -> str:
         return label
     explicit = settings.embedding_provider.strip().lower()
     if explicit:
-        if explicit not in {"fake", "local", "openai", "gemini", "compatible"}:
+        if explicit not in {"fake", "local", "openai", "gemini", "compatible", "bedrock"}:
             raise ValueError(
                 f"unknown LOOM_EMBEDDING_PROVIDER={explicit!r}; "
-                "expected one of: fake, local, openai, gemini, compatible (or leave "
+                "expected one of: fake, local, openai, gemini, compatible, bedrock (or leave "
                 "empty to infer from LOOM_EMBEDDING_MODEL)"
             )
         return explicit
@@ -193,6 +193,10 @@ def _build(spec: str, provider: str) -> Embedder:
     """An embedder for a spec from `provider`, no fallbacks: a missing key or
     model raises, because a secondary arm silently degraded to the fake
     embedder would measure nothing."""
+    if provider == "bedrock":
+        from server.embedding.bedrock import BedrockEmbedder
+
+        return BedrockEmbedder(model=spec, dim=settings.embedding_dim)
     if provider == "compatible":
         from server.embedding.compatible import CompatibleEmbedder
 

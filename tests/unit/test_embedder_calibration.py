@@ -122,6 +122,9 @@ class _TableEmbedder:
     async def embed(self, text: str) -> list[float]:
         return self._table[text]
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 class _HashEmbedder:
     model_name = "stub-embedder-1"
@@ -133,6 +136,9 @@ class _HashEmbedder:
         norm = math.sqrt(sum(x * x for x in v))
         return [x / norm for x in v]
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 class _FakeNamedEmbedder:
     model_name = "fake-ngram-1024"
@@ -140,6 +146,42 @@ class _FakeNamedEmbedder:
 
     async def embed(self, text: str) -> list[float]:  # pragma: no cover
         raise AssertionError("fake embedder must be skipped before any embed call")
+
+
+async def test_probe_matches_document_pairs_and_query_document_pairs(monkeypatch) -> None:
+    queries = []
+    documents = []
+    table = {
+        "statement one": [1.0, 0.0],
+        "statement two": [1.0, 0.0],
+        "answer": [0.6, 0.8],
+        "distractor": [0.0, 1.0],
+    }
+
+    class Asymmetric:
+        model_name = "asymmetric-test"
+        dim = 2
+
+        async def embed(self, text):
+            queries.append(text)
+            return [1.0, 0.0]
+
+        async def embed_many(self, texts):
+            documents.extend(texts)
+            return [table[text] for text in texts]
+
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", Asymmetric)
+    result = await ec.calibrate_embedder(
+        paraphrase_pairs=[("statement one", "statement two")],
+        question_fact_pairs=[("question", "answer")],
+        distractor_pairs=[("unrelated query", "distractor")],
+    )
+    assert result is not None
+    assert result.similar_p50 == pytest.approx(1.0)
+    assert result.question_fact_p50 == pytest.approx(0.6)
+    assert result.distractor_p90 == pytest.approx(0.0)
+    assert queries == ["question", "unrelated query"]
+    assert documents == ["statement one", "statement two", "answer", "distractor"]
 
 
 async def test_probe_end_to_end_with_stub_embedder(monkeypatch) -> None:
