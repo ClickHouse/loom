@@ -22,8 +22,8 @@ from server.observability.genai import embedding_span
 from server.observability.provider_health import recording
 from server.settings import settings
 
-_BATCH_LIMIT = 96
-# Cohere's 20 MB payload ceiling is below InvokeModel's 25,000,000-byte body limit.
+_BATCH_LIMIT = 96  # not a setting: Cohere Embed v4 protocol maximum texts per request
+# not a setting: Cohere's 20 MB protocol cap is below InvokeModel's 25,000,000-byte cap.
 _MAX_REQUEST_BYTES = 20_000_000
 _WIDTHS = frozenset({256, 512, 1024, 1536})
 

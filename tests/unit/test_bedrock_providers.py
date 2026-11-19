@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -133,6 +135,34 @@ async def test_guardrail_without_text_preserves_refusal_without_provider_outage(
     assert result.text == ""
     assert result.stop_reason == "guardrail_intervened"
     assert not provider_health.status()["providers"]["bedrock:messages"]["failing"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["malformed_model_output", "malformed_tool_use"])
+async def test_malformed_converse_results_never_enter_exact_response_cache(monkeypatch, stop):
+    from server.clients import bedrock
+    from server.llm.bedrock import BedrockLLMClient
+    from server.llm.cache import CachedLLMClient
+
+    call = AsyncMock(
+        return_value={
+            "output": {"message": {"content": [{"text": "incomplete answer"}]}},
+            "usage": {"inputTokens": 1, "outputTokens": 2},
+            "stopReason": stop,
+        }
+    )
+    monkeypatch.setattr(bedrock, "call", call)
+    ch = SimpleNamespace(query_one=AsyncMock(return_value=None), insert=AsyncMock())
+    client = CachedLLMClient(BedrockLLMClient("model"), org="o", ch=ch, table="loom.t")
+    for _ in range(2):
+        result = await client.complete("instructions", "question")
+        assert result.text == "incomplete answer"
+        assert result.stop_reason == stop
+        assert not result.from_cache
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert call.await_count == 2
+    ch.insert.assert_not_awaited()
 
 
 @pytest.mark.asyncio

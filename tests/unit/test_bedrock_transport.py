@@ -184,6 +184,7 @@ async def test_auth_errors_are_sanitized_without_retry(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_retryable_failure_signs_each_attempt(monkeypatch):
+    monkeypatch.setattr(settings, "bedrock_region", "us-west-2")
     responses = iter([httpx.Response(503), httpx.Response(200, json={"ok": True})])
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: next(responses)))
     sign = Mock(return_value=("https://bedrock.example/model/m/converse", b"{}", {}))
@@ -202,6 +203,7 @@ async def test_retryable_failure_signs_each_attempt(monkeypatch):
         )
     assert result == {"ok": True}
     assert sign.call_count == note.call_count == 2
+    assert [call.args[3] for call in sign.call_args_list] == ["us-west-2", "us-west-2"]
 
 
 @pytest.mark.asyncio

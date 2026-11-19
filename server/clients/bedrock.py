@@ -21,7 +21,7 @@ from server.llm import customer
 from server.settings import settings
 from server.settings.catalog import url_host
 
-_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+_MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # not a setting: fixed model-response decoder memory ceiling
 _SIGN_LOCK = threading.Lock()
 
 
