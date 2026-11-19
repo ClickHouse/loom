@@ -798,7 +798,9 @@ A deployment whose pods reach git remotes only through a forward proxy sets
 that proxy: a mirror's clone, fetch and `ls-remote`, the `ls-remote` before an add, and
 a checkout's `git submodule update`, in the workers and in every serving process, which
 keep mirrors of their own. While the setting is set git never connects directly: a job
-that cannot go through the proxy is refused.
+that cannot go through the proxy is refused. This holds with git 2.31 or later: Loom
+hands git these settings through its environment (`GIT_CONFIG_COUNT`), and an older git
+reads none of them, the proxy included.
 
 | Setting                           | Meaning                                                                                             |
 | --------------------------------- | --------------------------------------------------------------------------------------------------- |
