@@ -155,7 +155,7 @@ def _cell_env(name: str, dsn: str, database: str, router: str, ca: Path) -> dict
         "LOOM_CODE_ORG": "",
         "LOOM_TRACKER_ORG": "",
         "LOOM_DOCUMENT_S3_BUCKET": "",
-        "LOOM_DOCUMENT_S3_PREFIX": "",
+        "LOOM_DOCUMENT_S3_PREFIX": "originals",
         "LOOM_BACKGROUND_WORKERS": "off",
         "LOOM_EMBEDDING_MODEL": "fake-ngram-1024",
         "LOOM_LLM_PROVIDER": "fake",

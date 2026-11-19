@@ -58,3 +58,34 @@ def test_successful_child_returns_the_original_result(monkeypatch):
     assert len(calls) == 1
     assert calls[0][1]["timeout"] == 240
     assert calls[0][1]["capture_output"] is True
+
+
+@pytest.mark.parametrize("name", ["alpha", "beta"])
+def test_private_cell_environment_passes_startup_settings(monkeypatch, tmp_path, name):
+    import os
+
+    from server.settings import Settings
+
+    for key in list(os.environ):
+        if key.startswith("LOOM_"):
+            monkeypatch.delenv(key)
+    ports = iter((18443, 18444))
+    monkeypatch.setattr(fleet, "free_port", lambda: next(ports))
+    env = fleet._cell_env(
+        name,
+        "postgresql://fixture:fixture@127.0.0.1:15432/private_cell",
+        "private_each",
+        "https://127.0.0.1:18445",
+        tmp_path / "ca.pem",
+    )
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    configured = Settings(_env_file=None)
+
+    assert configured.cell == name
+    assert configured.storage_authority == "postgres"
+    assert configured.ch_database == "private_each"
+    assert configured.ch_telemetry_database == "private_each_telemetry"
+    assert configured.document_s3_prefix
+    assert configured.auth_actually_required()
