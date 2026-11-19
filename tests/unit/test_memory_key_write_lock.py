@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,6 +14,7 @@ from server.core.errors import BackendUnavailableError, PreconditionFailedError
 from server.memory.app import update as update_mod
 from server.memory.app import write as write_mod
 from server.memory.store import key_write_lock as kl
+from server.observability import provider_health
 from tests.unit.claims_fake import FakeLockTable
 
 _IDENT = ("org", "ns", "agent", "-", "-", "proc/deploy/steps")
@@ -90,6 +92,46 @@ async def test_keeper_failure_refuses_the_write(
         async with _locks(FakeKeeper(fail=True), monkeypatch).hold(*_IDENT):
             pytest.fail("wrote under a lock only this process held")
     assert notes == [("memory_key_lock", "keeper_unavailable")]
+
+
+@pytest.mark.parametrize("body_fails", [False, True])
+async def test_key_lock_health_recovers_when_the_lease_is_acquired(
+    monkeypatch: pytest.MonkeyPatch, body_fails: bool
+) -> None:
+    monkeypatch.setattr(provider_health, "_state", {})
+    ch = FakeKeeper(fail=True)
+    locks = _locks(ch, monkeypatch)
+    with pytest.raises(BackendUnavailableError):
+        async with locks.hold(*_IDENT):
+            pytest.fail("entered without a lease")
+    assert provider_health.status()["providers"]["memory_key_lock"]["failing"] is True
+
+    provider_health.record_failure("other_provider", "still unavailable")
+    ch.down = False
+    with pytest.raises(ValueError, match="body failed") if body_fails else nullcontext():
+        async with locks.hold(*_IDENT):
+            assert provider_health.status()["providers"]["memory_key_lock"]["failing"] is False
+            if body_fails:
+                raise ValueError("body failed")
+    assert provider_health.status()["providers"]["other_provider"]["failing"] is True
+    assert ch.keys == {} and len(locks) == 0
+
+
+async def test_a_busy_key_does_not_clear_the_last_acquisition_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(provider_health, "_state", {})
+    ch = FakeKeeper(fail=True)
+    locks = _locks(ch, monkeypatch)
+    with pytest.raises(BackendUnavailableError):
+        async with locks.hold(*_IDENT):
+            pytest.fail("entered without a lease")
+    ch.down = False
+    ch.seed(kl.lock_name(*_IDENT), "other")
+    with pytest.raises(PreconditionFailedError):
+        async with locks.hold(*_IDENT):
+            pytest.fail("entered a held lock")
+    assert provider_health.status()["providers"]["memory_key_lock"]["failing"] is True
 
 
 async def test_racing_conditional_sets_let_one_through(
