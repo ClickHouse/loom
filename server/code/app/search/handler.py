@@ -201,14 +201,6 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         budget=budget,
     )
 
-    if (
-        embedder is None
-        and input.legs != "lexical"
-        and res.route in {"hybrid", "symbol_miss_hybrid"}
-    ):
-        res.retrieval_work["vector_leg_failed"] = 1
-        res.epistemic = "partial"
-
     if expand_calls:
         # counted as an assist ("query_expand") by the retrieval metrics
         res.retrieval_work["llm_query_expand_calls"] = expand_calls

@@ -95,7 +95,10 @@ async def _vector_leg_rows(
     the scan."""
     rows: list[dict[str, Any]] = []
     qvec: list[float] | None = None
-    if vec_embedder is None or not run_vector:
+    if not run_vector:
+        return rows, qvec
+    if vec_embedder is None:
+        work["vector_leg_failed"] = 1
         return rows, qvec
     # the embedding call is the stage wall's `embed`
     with code_span("search.vector_leg") as sp:
