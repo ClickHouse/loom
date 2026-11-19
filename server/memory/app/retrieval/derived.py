@@ -11,6 +11,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.shielded import to_its_end
+from server.core.vectors.admission import vector_work
 from server.core.vectors.search_settings import vector_search_settings
 from server.memory.app.search_llm import expand_verb_synonyms
 from server.memory.domain.search_parsing import _iso_date, expand_predicate_class
@@ -276,18 +279,21 @@ async def _resolve_operand_event_date(
         {vector_search_settings(table="loom.memory_embeddings")}
     """
     try:
-        rows = await ch.query_all(
-            sql,
-            params={
-                "q": operand_vec,
-                "org": org,
-                "ns": namespace,
-                "agent": agent,
-                **({"run_id": run_id} if run_id else {}),
-                "uid": user_id or "-",
-                "model": embedding_model,
-            },
-        )
+        with vector_work(org, namespace):
+            rows = await ch.query_all(
+                sql,
+                params={
+                    "q": operand_vec,
+                    "org": org,
+                    "ns": namespace,
+                    "agent": agent,
+                    **({"run_id": run_id} if run_id else {}),
+                    "uid": user_id or "-",
+                    "model": embedding_model,
+                },
+            )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — a failed operand read means no date answer
         log.warning("_resolve_operand_event_date failed (fail-open): %s", e)
         return None
@@ -411,7 +417,10 @@ async def fetch_current_state_observation(
         {vector_search_settings(table="loom.memory_embeddings")}
     """
     try:
-        rows = await ch.query_all(sql, params=params)
+        with vector_work(org, namespace):
+            rows = await ch.query_all(sql, params=params)
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — the current-state leg is additive; fail open
         log.warning("fetch_current_state_observation failed (fail-open): %s", e)
         return []
@@ -486,8 +495,8 @@ async def fetch_temporal_diff(
     elif len(operand_vecs) != 2:
         return None
 
-    resolved = await asyncio.gather(
-        *[
+    tasks = [
+        asyncio.create_task(
             _resolve_operand_event_date(
                 ch,
                 org=org,
@@ -498,9 +507,24 @@ async def fetch_temporal_diff(
                 embedding_model=embedding_model,
                 run_id=run_id,
             )
-            for v in operand_vecs
-        ]
-    )
+        )
+        for v in operand_vecs
+    ]
+    try:
+        resolved = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="temporal-operand-cleanup")
+        except asyncio.CancelledError:
+            # The first operand failure stays the answer after every sibling settles.
+            pass
+        raise
     found = [r for r in resolved if r is not None]
     if len(found) != len(resolved):
         return None

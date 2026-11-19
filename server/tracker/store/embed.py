@@ -23,6 +23,7 @@ from typing import Any, TypedDict
 
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds as now_naive
+from server.core.vectors.admission import vector_work
 
 TABLE = "loom.qa_item_embeddings"
 ZERO_SHA = "0" * 64
@@ -306,17 +307,18 @@ class TrackerEmbedRepo:
             table=TABLE,
             fetch_multiplier=float(settings.tracker_embed_fetch_multiplier),
         )
-        rows = await self._ch.query_all(
-            f"""
-            SELECT {_HIT_COLS}, cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
-            FROM {TABLE} FINAL
-            WHERE {" AND ".join(conds)}
-            ORDER BY distance ASC
-            LIMIT {{limit:UInt32}}
-            {vec_settings}
-            """,
-            params,
-        )
+        with vector_work(org, namespace):
+            rows = await self._ch.query_all(
+                f"""
+                SELECT {_HIT_COLS}, cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
+                FROM {TABLE} FINAL
+                WHERE {" AND ".join(conds)}
+                ORDER BY distance ASC
+                LIMIT {{limit:UInt32}}
+                {vec_settings}
+                """,
+                params,
+            )
         rows.sort(
             key=lambda r: (
                 float(r.get("distance") or 0.0),

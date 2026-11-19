@@ -17,6 +17,7 @@ from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError
 from server.core.naming import SENTINEL, named
+from server.core.vectors.private_first import each
 from server.embedding import get_embedder
 from server.identity.app.conversation_logging import set_conversation_logging
 from server.identity.app.request_scope import request_scope
@@ -906,7 +907,6 @@ async def _search_conversations(
     distance with recency tiebreak. Falls back to substring search when
     the embedder is unavailable so the endpoint never 5xx's.
     """
-    import asyncio
 
     from server.settings import settings
 
@@ -947,7 +947,7 @@ async def _search_conversations(
             )
         )
 
-    results_per_ns = await asyncio.gather(*[_search_one(ns) for ns in namespaces])
+    results_per_ns = await each(_search_one)(namespaces)
     # Carry similarity so the cross-namespace merge ranks by cosine, not
     # insertion order.
     scored: list[tuple[float, _ConversationHit]] = []

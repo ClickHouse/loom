@@ -35,6 +35,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import batch_size, vector_work
+from server.core.vectors.private_first import each
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app.auto_resolution import (
@@ -230,7 +233,8 @@ async def _peers_many(
     }
     # A write retires only rows inside the writer's read scope.
     in_scope = scope_and(request_scope(), params, "m")
-    rows = await ch.query_all(_peers_sql_many(len(items), in_scope), params=params)
+    with vector_work(org, namespace, len(items)):
+        rows = await ch.query_all(_peers_sql_many(len(items), in_scope), params=params)
     out: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(items))}
     for r in rows:
         q = int(r.get("qidx") or 0)
@@ -259,32 +263,33 @@ async def _peers_joined(
         "min_cos": float(min_cosine),
     }
     in_scope = scope_and(request_scope(), params, "m")
-    rows = await ch.query_all(
-        f"""
-        SELECT toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
-               m.value AS value, m.valid_at AS valid_at, m.created_at AS created_at,
-               1 - cosineDistance(e.embedding, {{emb:Array(Float32)}}) AS cos
-        FROM loom.memory m FINAL
-        JOIN loom.memory_embeddings e FINAL
-          ON  e.org = m.org AND e.namespace = m.namespace
-          AND e.memory_key = m.memory_key
-          AND e.user_id = m.user_id AND e.session_id = m.session_id
-          AND e.agent = m.agent
-        WHERE m.org = {{org:String}}
-          AND m.namespace = {{ns:String}}
-          AND m.memory_type = {{mt:String}}
-          AND m.memory_key != {{self_key:String}}
-          AND m.tombstoned_at IS NULL
-          AND m.status IN ('active', 'conflicted')
-          AND e.tombstoned_at IS NULL
-          AND e.embedding_dim = {{dim:UInt16}}
-          AND length(e.embedding) = {{dim:UInt16}}{in_scope}
-        HAVING cos >= {{min_cos:Float32}}
-        ORDER BY cos DESC
-        LIMIT 8
-        """,
-        params=params,
-    )
+    with vector_work(org, namespace):
+        rows = await ch.query_all(
+            f"""
+            SELECT toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
+                   m.value AS value, m.valid_at AS valid_at, m.created_at AS created_at,
+                   1 - cosineDistance(e.embedding, {{emb:Array(Float32)}}) AS cos
+            FROM loom.memory m FINAL
+            JOIN loom.memory_embeddings e FINAL
+              ON  e.org = m.org AND e.namespace = m.namespace
+              AND e.memory_key = m.memory_key
+              AND e.user_id = m.user_id AND e.session_id = m.session_id
+              AND e.agent = m.agent
+            WHERE m.org = {{org:String}}
+              AND m.namespace = {{ns:String}}
+              AND m.memory_type = {{mt:String}}
+              AND m.memory_key != {{self_key:String}}
+              AND m.tombstoned_at IS NULL
+              AND m.status IN ('active', 'conflicted')
+              AND e.tombstoned_at IS NULL
+              AND e.embedding_dim = {{dim:UInt16}}
+              AND length(e.embedding) = {{dim:UInt16}}{in_scope}
+            HAVING cos >= {{min_cos:Float32}}
+            ORDER BY cos DESC
+            LIMIT 8
+            """,
+            params=params,
+        )
     return [dict(r) for r in rows]
 
 
@@ -371,6 +376,8 @@ async def link_value_updates(
     from server.settings import settings as _s
 
     batch = int(_s.memory_write_candidate_batch)
+    if batch > 0:
+        batch = batch_size(batch)
     per_fact = _s.memory_bulk_peer_read == "per_fact"
     read_one = _peers_codes_first if per_fact else _peers_joined
     prefetched: dict[int, list[dict[str, Any]]] = {}
@@ -397,14 +404,16 @@ async def link_value_updates(
             for j, i in enumerate(idxs):
                 prefetched[i] = got.get(j, [])
 
-        jobs = [
-            _batch(idxs[k : k + batch])
-            for idxs in by_dim.values()
-            for k in range(0, len(idxs), batch)
-        ]
-        for res in await asyncio.gather(*jobs, return_exceptions=True):
-            if isinstance(res, Exception):
-                log.warning("value_updates: batched peer lookup failed (per-row): %s", res)
+        async def _read_batch(idxs: list[int]) -> None:
+            try:
+                await _batch(idxs)
+            except VectorCapacityError:
+                raise
+            except Exception as error:  # noqa: BLE001 — ordinary failures retain per-row fallback
+                log.warning("value_updates: batched peer lookup failed (per-row): %s", error)
+
+        jobs = [idxs[k : k + batch] for idxs in by_dim.values() for k in range(0, len(idxs), batch)]
+        await each(_read_batch)(jobs)
 
     async def _one(i: int, row: dict[str, Any]) -> list[UpdateLink]:
         key = str(row.get("memory_key") or "")
@@ -424,6 +433,8 @@ async def link_value_updates(
                         embedding=emb,
                         min_cosine=min_cosine,
                     )
+                except VectorCapacityError:
+                    raise
                 except Exception as e:  # noqa: BLE001 — never block an ingest
                     log.warning("value_updates: peer lookup failed (open): %s", e)
                     report.errors += 1
@@ -437,7 +448,10 @@ async def link_value_updates(
             peers,
         )
 
-    results = await asyncio.gather(*(_one(i, r) for i, r in enumerate(rows)))
+    async def _read_row(item: tuple[int, dict[str, Any]]) -> list[UpdateLink]:
+        return await _one(*item)
+
+    results = await each(_read_row)(list(enumerate(rows)))
     report.checked = len(rows)
     links = [ln for sub in results for ln in sub]
     # One write per older row; if several newer rows supersede it, the latest

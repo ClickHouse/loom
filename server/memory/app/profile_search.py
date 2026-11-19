@@ -34,6 +34,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from server.core.vectors.admission import vector_work
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.settings import settings
 
@@ -230,16 +231,17 @@ async def _similarities(
         log.debug("profile leg: query embed failed: %s", e)
         return {}
     by_ident = {_ident(r): r for r in rows}
-    vecs = await ch.query_all(
-        PROFILE_VECTORS_SQL,
-        params={
-            "org": org,
-            "keys": list(by_ident),
-            "model": embedder.model_name,
-            "dim": len(qv),
-            "qv": [float(x) for x in qv],
-        },
-    )
+    with vector_work(org, tuple({str(r["namespace"]) for r in rows})):
+        vecs = await ch.query_all(
+            PROFILE_VECTORS_SQL,
+            params={
+                "org": org,
+                "keys": list(by_ident),
+                "model": embedder.model_name,
+                "dim": len(qv),
+                "qv": [float(x) for x in qv],
+            },
+        )
     sims: dict[Ident, float] = {}
     settled: set[Ident] = set()  # fresh, or a re-embed already queued
     scope: dict[Ident, str] = {}

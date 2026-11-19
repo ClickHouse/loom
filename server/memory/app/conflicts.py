@@ -25,8 +25,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.core.errors import AuthInsufficientError, IdentityIncompleteError, VectorCapacityError
 from server.core.naming import is_anonymous_user
+from server.core.vectors.admission import batch_size, vector_work
+from server.core.vectors.private_first import each
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -207,14 +209,13 @@ async def candidate_rows_many(
     chunk: a failed chunk's facts fall back to the per-fact statement in the caller
     by getting no entry here — callers treat a missing key as "fetch yourself", not
     as "no peers"."""
-    import asyncio
 
     ch = ch or get_client()
     scope = _writer_scope(user_id)
     if scope is None:
         return {}  # every fact falls back to the per-fact path, which fails closed
     size = int(batch if batch is not None else settings.memory_write_candidate_batch)
-    size = max(size, 1)
+    size = batch_size(size)
     by_dim: dict[int, list[int]] = {}
     for i, (_mt, _k, emb, _md) in enumerate(items):
         if emb:
@@ -231,18 +232,19 @@ async def candidate_rows_many(
             "keys": [items[i][1] for i in idxs],
             "max_dists": [float(items[i][3]) for i in idxs],
         }
-        candidates = ch.query_all(
-            candidate_sql_many(len(idxs), scope_and(scope, params, "m")), params=params
-        )
-        # Pinned rows outside the writer's scope (another user's or a shared one) still
-        # block; the scope hides them.
+
+        async def _read(sql: str) -> list[dict[str, Any]]:
+            with vector_work(org, namespace, len(idxs)):
+                rows: list[dict[str, Any]] = await ch.query_all(sql, params=params)
+                return rows
+
+        sql = candidate_sql_many(len(idxs), scope_and(scope, params, "m"))
+        # Pinned peers retain their independent namespace-wide statement.
         if scope.narrowed:
-            rows, pinned = await asyncio.gather(
-                candidates, ch.query_all(pinned_sql_many(len(idxs)), params=params)
-            )
+            rows, pinned = await each(_read)([sql, pinned_sql_many(len(idxs))])
             rows = rows + [r for r in pinned if _foreign_pinned(r, scope)]
         else:
-            rows = await candidates
+            rows = await _read(sql)
         for i in idxs:
             out[i] = []
         seen: set[tuple[int, str]] = set()
@@ -252,15 +254,18 @@ async def candidate_rows_many(
                 seen.add((q, str(r.get("memory_id"))))
                 out[idxs[q]].append(dict(r))
 
+    async def _one_chunk(item: tuple[int, list[int]]) -> None:
+        try:
+            await _chunk(*item)
+        except VectorCapacityError:
+            raise
+        except Exception as error:  # noqa: BLE001 — ordinary failures retain per-fact fallback
+            log.warning("batched conflict candidates failed (per-fact fallback): %s", error)
+
     jobs = [
-        _chunk(dim, idxs[k : k + size])
-        for dim, idxs in by_dim.items()
-        for k in range(0, len(idxs), size)
+        (dim, idxs[k : k + size]) for dim, idxs in by_dim.items() for k in range(0, len(idxs), size)
     ]
-    results = await asyncio.gather(*jobs, return_exceptions=True)
-    for res in results:
-        if isinstance(res, Exception):
-            log.warning("batched conflict candidates failed (per-fact fallback): %s", res)
+    await each(_one_chunk)(jobs)
     return out
 
 
@@ -317,7 +322,8 @@ async def nearest_peer_rows(
     in_scope = scope_and(scope, params)
     k = _PEER_FIRST_K
     while True:
-        cand = await ch.query_all(_peer_candidates_sql(in_scope), params={**params, "k": k})
+        with vector_work(str(params["org"]), str(params["ns"])):
+            cand = await ch.query_all(_peer_candidates_sql(in_scope), params={**params, "k": k})
         inside = [c for c in cand if float(c["dist"]) <= float(params["max_dist"])]
         live: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         if inside:
@@ -353,14 +359,15 @@ async def _peer_rows_joined(
     has read `_PEER_MAX_K` candidates without enough live peers. Filtered to
     equal-length vectors so cosineDistance never sees mixed embedders
     (SIZES_OF_ARRAYS)."""
-    rows: list[dict[str, Any]] = await ch.query_all(
-        """
+    with vector_work(str(params["org"]), str(params["ns"])):
+        rows: list[dict[str, Any]] = await ch.query_all(
+            """
         SELECT
             m.memory_id, m.memory_key, m.value, m.pinned,
             m.agent, m.user_id, m.session_id, m.run_id, m.valid_at,
             """
-        + "cosineDistance(e.embedding, {emb:Array(Float32)})"
-        + """ AS dist
+            + "cosineDistance(e.embedding, {emb:Array(Float32)})"
+            + """ AS dist
         FROM loom.memory m FINAL
         JOIN loom.memory_embeddings e FINAL
           ON  e.org = m.org AND e.namespace = m.namespace
@@ -376,14 +383,14 @@ async def _peer_rows_joined(
           AND e.tombstoned_at IS NULL
           AND e.embedding_dim = {dim:UInt16}
           AND length(e.embedding) = {dim:UInt16}"""
-        + in_scope
-        + f"""
-        HAVING dist <= {{max_dist:Float32}}
-        ORDER BY dist ASC
-        LIMIT {int(limit)}
-        """,
-        params=params,
-    )
+            + in_scope
+            + f"""
+            HAVING dist <= {{max_dist:Float32}}
+            ORDER BY dist ASC
+            LIMIT {int(limit)}
+            """,
+            params=params,
+        )
     return rows
 
 
@@ -421,7 +428,8 @@ async def _foreign_pinned_rows(
     `row_in_read_scope` test the same user and session), so no row appears in both."""
     if scope is not None and not scope.narrowed:
         return []
-    pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
+    with vector_work(str(params["org"]), str(params["ns"])):
+        pinned = await ch.query_all(PINNED_PEERS_SQL, params=params)
     return [dict(r) for r in pinned if _foreign_pinned(r, scope)]
 
 
@@ -433,9 +441,13 @@ async def _scoped_and_pinned_peers(
     the common adapter write, needs both."""
     if scope is None:
         return await _foreign_pinned_rows(ch, params, scope)
-    rows, pinned = await asyncio.gather(
-        nearest_peer_rows(ch, params, scope), _foreign_pinned_rows(ch, params, scope)
-    )
+
+    async def _read(pinned: bool) -> list[dict[str, Any]]:
+        if pinned:
+            return await _foreign_pinned_rows(ch, params, scope)
+        return await nearest_peer_rows(ch, params, scope)
+
+    rows, pinned = await each(_read)([False, True])
     return rows + pinned
 
 
@@ -925,14 +937,15 @@ async def check_against_shared(
     dim = len(embedding)  # equal-length filter; see check_on_commit
 
     ch = get_client()
-    rows = await ch.query_all(
-        """
+    with vector_work(org, namespace):
+        rows = await ch.query_all(
+            """
         SELECT
             s.memory_key,
             s.value,
             """
-        + "cosineDistance(e.embedding, {emb:Array(Float32)})"
-        + """ AS dist
+            + "cosineDistance(e.embedding, {emb:Array(Float32)})"
+            + """ AS dist
         FROM loom.shared s FINAL
         JOIN loom.memory_embeddings e FINAL
           ON  e.org = s.org AND e.namespace = s.namespace
@@ -950,16 +963,16 @@ async def check_against_shared(
         ORDER BY dist ASC
         LIMIT 5
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "mt": memory_type,
-            "self_key": target_key,
-            "dim": dim,
-            "emb": embedding,
-            "max_dist": max_distance,
-        },
-    )
+            params={
+                "org": org,
+                "ns": namespace,
+                "mt": memory_type,
+                "self_key": target_key,
+                "dim": dim,
+                "emb": embedding,
+                "max_dist": max_distance,
+            },
+        )
     return rows
 
 

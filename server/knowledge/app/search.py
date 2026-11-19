@@ -12,6 +12,7 @@ from typing import Any, Protocol, TypedDict
 
 from server.core import bm25
 from server.core.repo_base import _default_client
+from server.core.vectors.admission import vector_work
 from server.core.vectors.search_settings import vector_search_settings
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.live_chunks import live_chunk_sql
@@ -199,7 +200,8 @@ async def hybrid_search(
         LIMIT {{top_k:UInt32}}
         {vector_search_settings(table="loom.chunks")}
     """
-    rows = await ch.query_all(sql, params=params)
+    with vector_work(q.org, q.namespaces):
+        rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
             namespace=r["namespace"],
@@ -342,7 +344,8 @@ async def lexical_search(
         LIMIT {{top_k:UInt32}}
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
-    rows = await ch.query_all(sql, params=params)
+    with vector_work(q.org, q.namespaces):
+        rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
             namespace=r["namespace"],
@@ -399,7 +402,8 @@ async def keys_search(
         ORDER BY length(matched) DESC, distance ASC
         LIMIT {{top_k:UInt32}}
     """
-    rows = await ch.query_all(sql, params=params)
+    with vector_work(q.org, q.namespaces):
+        rows = await ch.query_all(sql, params=params)
     return [
         ChunkHit(
             namespace=r["namespace"],

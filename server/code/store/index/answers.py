@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.code.store.index.base import CodeRepoBase
+from server.core.vectors.admission import vector_work
 
 
 def _candidate_sql() -> str:
@@ -42,9 +43,10 @@ class AnswersMixin(CodeRepoBase):
     ) -> list[dict[str, Any]]:
         """The `k` live answer entries of (org, ns, model) nearest to `qvec`, nearest
         first, with their `distance` and `age_s`."""
-        rows = await self._ch.query_all(
-            _candidate_sql(), {"org": org, "ns": ns, "model": model, "q": qvec, "k": k}
-        )
+        with vector_work(org, ns):
+            rows = await self._ch.query_all(
+                _candidate_sql(), {"org": org, "ns": ns, "model": model, "q": qvec, "k": k}
+            )
         return list(rows or [])
 
     async def negative_answer(

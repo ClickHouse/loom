@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 import httpx
 import pytest
+from loom import VectorCapacityRefused
 from loom.errors import (
     AuthInsufficient,
     AuthInvalid,
@@ -130,6 +131,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "SESSION_PROTECTION_REQUIRED": PreconditionFailed,
     "OVERLOADED": Overloaded,
     "RATE_LIMITED": RateLimited,
+    "VECTOR_CAPACITY_REFUSED": VectorCapacityRefused,
     "BACKEND_UNAVAILABLE": BackendUnavailable,
     "BACKEND_TIMEOUT": BackendTimeout,
     "SCHEMA_PENDING": SchemaPending,
@@ -445,3 +447,27 @@ def test_a_wrong_cell_error_names_the_org_and_its_cell() -> None:
     assert (err.org, err.cell) == ("acme", "eu-2")
     unnamed = from_response({"detail": WrongCellError("acme").to_detail()}, 409)
     assert isinstance(unnamed, WrongCell) and (unnamed.org, unnamed.cell) == ("acme", "")
+
+
+def test_public_vector_capacity_refusal_preserves_rate_limit_response_metadata() -> None:
+    detail = {
+        "code": "VECTOR_CAPACITY_REFUSED",
+        "message": "vector queue is full",
+        "category": "capacity",
+        "retryable": True,
+        "reason": "org_queue",
+    }
+    error = from_response({"detail": detail}, 429, request_id="vector-rid", retry_after_s=2.5)
+
+    assert type(error) is VectorCapacityRefused
+    assert isinstance(error, RateLimited)
+    assert isinstance(error, BackendUnavailable)
+    assert (error.code, error.status, error.request_id, error.retry_after_s) == (
+        "VECTOR_CAPACITY_REFUSED",
+        429,
+        "vector-rid",
+        2.5,
+    )
+    assert error.detail == detail
+    assert (error.category, error.retryable) == ("capacity", True)
+    assert "vector queue is full" in str(error)

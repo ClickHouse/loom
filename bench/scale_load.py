@@ -415,6 +415,81 @@ def _summary(lat: list[float], errors: dict[str, int]) -> dict[str, Any]:
     }
 
 
+def latency_observations(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep every attempt beside the successful-call percentiles (small n is explicit)."""
+    assert samples, "no attempted calls"
+    for sample in samples:
+        ms = sample["elapsed_ms"]
+        assert isinstance(ms, (int, float)) and math.isfinite(ms) and ms >= 0
+    errors = Counter(str(s["error"]) for s in samples if s.get("error"))
+    lat = [float(s["elapsed_ms"]) for s in samples if not s.get("error")]
+    return {**_summary(lat, dict(errors)), "attempted": len(samples), "samples": samples}
+
+
+def committed_latency_rows(
+    op: str, result: dict[str, Any], entries: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """A normal-fixture refusal/merge is evidence, never an invented committed row."""
+    if op == "memory.set":
+        assert len(entries) == 1
+        assert result.get("noop") is False and result.get("status") == "active"
+        assert not result.get("duplicate_of") and not result.get("merged_into_key")
+        rows = [result]
+    else:
+        assert op == "memory.bulk_set"
+        assert _outcomes(op, result) == ["written"] * len(entries)
+        for key in (
+            "merged",
+            "duplicates",
+            "conflicted",
+            "rejected_pinned",
+            "identity_duplicates",
+            "skipped_pinned",
+            "skipped_locked",
+            "skipped_blacklisted",
+            "retyped",
+        ):
+            assert not result.get(key), f"fixture write: {key}"
+        rows = result.get("written")
+    assert isinstance(rows, list) and len(rows) == len(entries)
+    expected = {e["memory_key"]: e["value"] for e in entries}
+    assert len(expected) == len(entries)
+    assert [r.get("memory_key") for r in rows] == [e["memory_key"] for e in entries]
+    out = {}
+    for row in rows:
+        key = row["memory_key"]
+        assert row.get("conflict_verdict") == "clear", f"{key}: not checked clear"
+        assert isinstance(row.get("version"), int) and row["version"] > 0
+        assert row.get("memory_id"), f"{key}: no committed id"
+        out[key] = {
+            "value": expected[key],
+            "version": row["version"],
+            "memory_id": row["memory_id"],
+        }
+    return out
+
+
+def assert_latency_current(row: dict[str, Any], expected: dict[str, Any]) -> None:
+    assert row.get("found") is True, "acknowledged row missing from point read"
+    for field in ("value", "version", "memory_id"):
+        assert row.get(field) == expected[field], f"point read differs: {field}"
+    assert row.get("status") == "active"
+
+
+def assert_latency_visible(result: dict[str, Any], key: str, expected: dict[str, Any]) -> None:
+    rows = result.get("results")
+    assert isinstance(rows, list), "missing search results"
+    matches = [r for r in rows if r.get("memory_key") == key]
+    assert len(matches) == 1, "acknowledged row missing/duplicated on FIRST search"
+    assert matches[0].get("version") == expected["version"], "stale first search"
+    assert matches[0].get("status") == "active", "nonactive first search"
+
+
+def assert_latency_worker(pid: int, parent_pid: int, ppid: int, pgid: int) -> None:
+    assert pid > 0 and parent_pid > 0 and pid != parent_pid
+    assert ppid == parent_pid and pgid == parent_pid, "health PID not an owned worker"
+
+
 def sample_keys(ch: Any, shape: str, n: int) -> list[dict[str, Any]]:
     """`n` existing heads to read, spread over the load (largest tenant for single)."""
     where = (

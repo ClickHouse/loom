@@ -62,6 +62,7 @@ const ROOT_EXPORTS = [
   "TimeoutError",
   "Transport",
   "ValidationError",
+  "VectorCapacityRefused",
   "WrongCell",
   "accessToken",
   "backoffDelayMs",

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core.errors import VectorCapacityError
 from server.core.llm_free import refuse_synthesis
 from server.core.naming import named
 from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
@@ -495,7 +496,9 @@ async def _route_to_synthesize(
             route_tier="strong",
             route_reason=ask_routing.route_reason(synth.documents),
         )
-    except Exception as e:  # noqa: BLE001 - the memory path is always available
+    except VectorCapacityError:
+        raise
+    except Exception as e:  # noqa: BLE001 — ordinary route failures leave the memory path available
         log.debug("memory.ask synthesize route skipped: %s", e)
         return None
 

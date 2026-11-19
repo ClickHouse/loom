@@ -50,6 +50,7 @@ export {
   RateLimited,
   TimeoutError,
   ValidationError,
+  VectorCapacityRefused,
   WrongCell,
 } from "./errors.js";
 export type { FileData, IngestFileInput, KnowledgeFiles, Upload, UploadOptions, WaitOptions } from "./files.js";

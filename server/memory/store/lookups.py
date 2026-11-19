@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.core.vectors.admission import vector_work
 
 # --- The cosine-ordered fact read reaches the vector through a keyed re-read ---
 #
@@ -153,7 +154,10 @@ async def find_by_identifier(
     # Only a cosine-ordered read touches the vector; the length and recency
     # orders never materialise `embedding` and keep one statement.
     if qv and _order_mode != "recency":
-        return await ch.query_all(_fact_identifier_one_trip_sql(where_sql, order), params=params)
+        with vector_work(org, namespace):
+            return await ch.query_all(
+                _fact_identifier_one_trip_sql(where_sql, order), params=params
+            )
     return await ch.query_all(
         f"""
         SELECT agent, user_id, session_id, memory_key, memory_type, content_excerpt,
@@ -254,23 +258,24 @@ async def find_chunks_by_identifier(
     # wide columns), and the outer read re-applies the predicate to those keys
     # only, where the tombstone of a retired chunk wins.
     where_sql = " AND ".join(where)
-    return await ch.query_all(
-        f"""
-        SELECT concat('chunk:', session_id, ':', toString(chunk_index)) AS memory_key,
-               'episodic' AS memory_type,
-               content AS content_excerpt,
-               toString(created_at) AS created_at,
-               toString(created_at) AS valid_at
-        FROM loom.memory_chunks FINAL
-        WHERE {where_sql}
-          AND ({_CHUNK_KEY}) IN (
+    with vector_work(org, namespace, 1 if qv and order != "recency" else 0):
+        return await ch.query_all(
+            f"""
+            SELECT concat('chunk:', session_id, ':', toString(chunk_index)) AS memory_key,
+                   'episodic' AS memory_type,
+                   content AS content_excerpt,
+                   toString(created_at) AS created_at,
+                   toString(created_at) AS valid_at
+            FROM loom.memory_chunks FINAL
+            WHERE {where_sql}
+              AND ({_CHUNK_KEY}) IN (
               SELECT DISTINCT {_CHUNK_KEY} FROM loom.memory_chunks WHERE {where_sql}
-          )
-        ORDER BY {order_by}
-        LIMIT {{lim:UInt32}}
-        """,
-        params=params,
-    )
+              )
+            ORDER BY {order_by}
+            LIMIT {{lim:UInt32}}
+            """,
+            params=params,
+        )
 
 
 async def find_chunks_by_session_date(
@@ -329,38 +334,40 @@ async def find_chunks_by_session_date(
     # (see find_chunks_by_identifier); the subquery keeps to the sessions with
     # a digest dated in range, a superset of the join's max(valid_at) rule.
     chunk_where = [w for w in where if not w.startswith("toDate(ss.")]
-    return await ch.query_all(
-        f"""
-        SELECT concat('chunk:', c.session_id, ':', toString(c.chunk_index)) AS memory_key,
-               'episodic' AS memory_type,
-               c.content AS content_excerpt,
-               toString(ss.session_date) AS created_at,
-               toString(ss.session_date) AS valid_at
-        FROM loom.memory_chunks AS c FINAL
-        INNER JOIN (
-            SELECT session_id AS ss_session_id, max(valid_at) AS session_date
-            FROM loom.session_summaries FINAL
-            WHERE org = {{org:String}}
-              AND namespace = {{ns:String}}
-              AND tombstoned_at IS NULL
-              AND valid_at IS NOT NULL
-            GROUP BY session_id
-        ) AS ss ON ss.ss_session_id = c.session_id
-        WHERE {" AND ".join(where)}
-          AND (c.org, c.namespace, c.session_id, c.chunk_index, c.content_sha256) IN (
-              SELECT DISTINCT {_CHUNK_KEY} FROM loom.memory_chunks AS c
-              WHERE {" AND ".join(chunk_where)}
-                AND c.session_id IN (
-                    SELECT session_id FROM loom.session_summaries
-                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                      AND toDate(valid_at) BETWEEN toDate({{d0:String}}) AND toDate({{d1:String}})
-                )
-          )
-        ORDER BY {order}
-        LIMIT {{lim:UInt32}}
-        """,
-        params=params,
-    )
+    with vector_work(org, namespace, 1 if qv else 0):
+        return await ch.query_all(
+            f"""
+            SELECT concat('chunk:', c.session_id, ':', toString(c.chunk_index)) AS memory_key,
+                   'episodic' AS memory_type,
+                   c.content AS content_excerpt,
+                   toString(ss.session_date) AS created_at,
+                   toString(ss.session_date) AS valid_at
+            FROM loom.memory_chunks AS c FINAL
+            INNER JOIN (
+                SELECT session_id AS ss_session_id, max(valid_at) AS session_date
+                FROM loom.session_summaries FINAL
+                WHERE org = {{org:String}}
+                  AND namespace = {{ns:String}}
+                  AND tombstoned_at IS NULL
+                  AND valid_at IS NOT NULL
+                GROUP BY session_id
+            ) AS ss ON ss.ss_session_id = c.session_id
+            WHERE {" AND ".join(where)}
+              AND (c.org, c.namespace, c.session_id, c.chunk_index, c.content_sha256) IN (
+                  SELECT DISTINCT {_CHUNK_KEY} FROM loom.memory_chunks AS c
+                  WHERE {" AND ".join(chunk_where)}
+                    AND c.session_id IN (
+                        SELECT session_id FROM loom.session_summaries
+                        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                          AND toDate(valid_at)
+                              BETWEEN toDate({{d0:String}}) AND toDate({{d1:String}})
+                    )
+              )
+            ORDER BY {order}
+            LIMIT {{lim:UInt32}}
+            """,
+            params=params,
+        )
 
 
 # Suffixes a row may carry for an attribute facet the extractor did not

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.vectors.admission import vector_work
 from server.llm import customer
 from server.llm.identity import reads_writer
 from server.memory.api.models_crud import MemorySetInput
@@ -469,20 +470,21 @@ async def _contrast_pair(ch: Any, llm: Any, cfg: DistillConfig, neg: Any, writer
     was written, False when there is no close pair or no lesson."""
     sid = str(neg.get("session_id") or "")
     vec = [float(x) for x in (neg.get("summary_embedding") or [])]
-    pos = await ch.query_one(
-        _NEAREST_POSITIVE_SQL,
-        params={
-            "q": vec,
-            "minc": float(cfg.min_confidence),
-            "org": str(neg["org"]),
-            "ns": str(neg["namespace"]),
-            "model": str(neg.get("embedding_model") or ""),
-            "sid": sid,
-            # the positive's summary is handed to the LLM and its lessons
-            # land in this user's memory: never another user's session
-            "uid": str(neg.get("user_id") or "-"),
-        },
-    )
+    with vector_work(str(neg["org"]), str(neg["namespace"])):
+        pos = await ch.query_one(
+            _NEAREST_POSITIVE_SQL,
+            params={
+                "q": vec,
+                "minc": float(cfg.min_confidence),
+                "org": str(neg["org"]),
+                "ns": str(neg["namespace"]),
+                "model": str(neg.get("embedding_model") or ""),
+                "sid": sid,
+                # the positive's summary is handed to the LLM and its lessons
+                # land in this user's memory: never another user's session
+                "uid": str(neg.get("user_id") or "-"),
+            },
+        )
     sim = float((pos or {}).get("similarity") or 0.0)
     if not pos or sim < float(cfg.min_pair_similarity):
         return False

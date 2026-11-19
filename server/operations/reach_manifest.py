@@ -366,12 +366,16 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.agents_list": ("dashboard",),
     "memory.aggregate": ("sdk_method",),
     "memory.apply": ("sdk_method",),
-    "memory.ask": ("sdk_method",),
+    "memory.ask": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "memory.assign_category": ("sdk_method",),
     "memory.auto_retirements": ("dashboard",),
     "memory.backlinks": ("dashboard",),
     "memory.bulk_get": (
         "sdk_method",
+        "sdk_example",
         "dashboard",
     ),
     "memory.bulk_set": (
@@ -443,6 +447,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.link": ("sdk_method",),
     "memory.list": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -506,7 +511,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
         "dashboard",
     ),
-    "memory.search_trace": ("sdk_method",),
+    "memory.search_trace": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "memory.search_trace_log": (
         "sdk_method",
         "dashboard",

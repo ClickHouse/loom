@@ -6,6 +6,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.core.vectors.private_first import each
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -95,7 +97,10 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
             }
             sql = digest_descent_sql(" AND ".join(_digest_descent_where(input, params)))
             try:
-                return ns, sid, await _ch.query_all(sql, params=params)
+                with vector_work(input.org, ns):
+                    return ns, sid, await _ch.query_all(sql, params=params)
+            except VectorCapacityError:
+                raise
             except Exception as e:  # noqa: BLE001 — additive arm
                 log.warning("digest descent failed for %s/%s (non-fatal): %s", ns, sid, e)
                 return ns, sid, []
@@ -146,5 +151,7 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
                 ctx.all_hits.append(hit)
                 added += 1
         ctx.actual_work["digest_descent_added"] = added
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("digest descent stage failed (non-fatal): %s", e)

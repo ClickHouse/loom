@@ -7258,6 +7258,24 @@
           "type": "integer",
           "description": "Seconds between re-reads of which vector columns are coded and which coded tables carry patch parts. A write that embeds reads again on its own when the reading is older than a few seconds (codes_state.FRESH_READING_S)."
         },
+        "vector_scan_max_concurrent_per_org": {
+          "default": 16,
+          "minimum": 2,
+          "type": "integer",
+          "description": "Weighted vector work admitted per org in this process; two axes need two units."
+        },
+        "vector_scan_max_rows_to_read": {
+          "default": 1000000,
+          "exclusiveMinimum": 0,
+          "type": "integer",
+          "description": "Native throw ceiling per vector statement, including joins and row versions."
+        },
+        "vector_scan_max_waiters_per_org": {
+          "default": 256,
+          "exclusiveMinimum": 0,
+          "type": "integer",
+          "description": "Weighted org wait units; twice this also bounds the whole process population."
+        },
         "vector_search_quantized_codes": {
           "default": true,
           "type": "boolean",

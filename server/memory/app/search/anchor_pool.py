@@ -6,6 +6,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.core.vectors.private_first import each
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -118,7 +120,10 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
             anchor_sql = anchor_pool_sql(where_sql)
             params["qv"] = ctx.query_vec
             try:
-                return ns, await _ch_a.query_all(anchor_sql, params=params)
+                with vector_work(input.org, ns):
+                    return ns, await _ch_a.query_all(anchor_sql, params=params)
+            except VectorCapacityError:
+                raise
             except Exception as e:  # noqa: BLE001 — one namespace's anchor pool failure must not fail search
                 log.warning("anchor pool fetch failed for ns=%s (non-fatal): %s", ns, e)
                 return ns, []
@@ -159,5 +164,7 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
                 )
                 hit._row_identity = row_identity(row)
                 ctx.all_hits.append(_stamp_row_owner(hit, row.get("agent"), row.get("scope")))
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — the anchor pool is an optional recall stage
         log.warning("anchor-pool stage failed (non-fatal): %s", e)

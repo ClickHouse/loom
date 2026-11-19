@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.vectors.admission import vector_work
 from server.identity.api.models_namespace_catalog import (
     NamespaceListCategoriesInput,
     NamespaceListCategoriesOutput,
@@ -359,8 +360,9 @@ async def handle_namespace_search_categories(
     except Exception:  # noqa: BLE001 — embed failure answers no categories
         return NamespaceSearchCategoriesOutput(results=[])
 
-    rows = await get_client().query_all(
-        """
+    with vector_work(input.org, input.namespace):
+        rows = await get_client().query_all(
+            """
         SELECT
             category_id,
             name,
@@ -375,13 +377,13 @@ async def handle_namespace_search_categories(
         ORDER BY distance ASC
         LIMIT {top_k:UInt32}
         """,
-        params={
-            "org": input.org,
-            "ns": input.namespace,
-            "q": q_vec,
-            "top_k": int(input.top_k),
-        },
-    )
+            params={
+                "org": input.org,
+                "ns": input.namespace,
+                "q": q_vec,
+                "top_k": int(input.top_k),
+            },
+        )
     return NamespaceSearchCategoriesOutput(
         results=[
             _CategoryHit(

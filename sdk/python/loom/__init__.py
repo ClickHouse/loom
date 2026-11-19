@@ -36,6 +36,7 @@ from loom.errors import (
     PreconditionFailed,
     RateLimited,
     ValidationError,
+    VectorCapacityRefused,
     WrongCell,
 )
 from loom.retry import DEFAULT_RETRY_POLICY, RetryPolicy
@@ -77,6 +78,7 @@ __all__ = [
     "SyncAgent",
     "TokenClaims",
     "ValidationError",
+    "VectorCapacityRefused",
     "WrongCell",
     "__version__",
     "decode_token_claims",

@@ -160,6 +160,8 @@ export class RateLimited extends LoomError {
     this.retryAfterS = retryAfterS;
   }
 }
+/** 429 VECTOR_CAPACITY_REFUSED: the complete vector read exceeded admission or native budgets. */
+export class VectorCapacityRefused extends RateLimited {}
 /** 5xx after the transport's retries, or a connection that never got a response. */
 export class BackendUnavailable extends LoomError {}
 /**
@@ -203,6 +205,8 @@ export function errorFromResponse(
   const code = String(detail.code ?? "");
   const message = String(detail.message ?? "") || `${op}: HTTP ${status}`;
   const opts: LoomErrorOptions = { status, code, requestId, detail, op };
+  if (status === 429 && code === "VECTOR_CAPACITY_REFUSED")
+    return new VectorCapacityRefused(message, retryAfterS, opts);
   if (status === 429) return new RateLimited(message, retryAfterS, opts);
   if (status === 400 || status === 422) return new ValidationError(message, opts);
   if (status === 401 || status === 403) return new AuthError(message, opts);

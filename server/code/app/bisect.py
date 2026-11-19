@@ -90,6 +90,7 @@ from server.code.domain.index.repos import default_git_dir
 from server.code.domain.time_window import _iso, _parse_when
 from server.code.store.index import CodeRepo
 from server.core.errors import ValidationError
+from server.core.shielded import to_its_end
 from server.settings import settings
 from server.tracker.app import links as lk
 from server.tracker.domain import bisect as bi
@@ -621,6 +622,7 @@ async def _named_or_prefetch(
     introduced: str,
     before: Any,
     report_text: str,
+    owned: list[asyncio.Future[Any]],
 ) -> tuple[list[bi.Candidate], Any]:
     """The graph's named cause, else the fusion's window reads started early.
 
@@ -640,13 +642,15 @@ async def _named_or_prefetch(
             text=report_text,
         )
     )
+    if prefetch is not None:
+        owned.append(prefetch)
     named: list[bi.Candidate] = []
     if source is not None and facts.qa_ok and facts.caused and not introduced and not input.rescan:
         try:
             named = await _graph_named(source, org, tracker_ns, facts.caused)
         except BaseException:
             if prefetch is not None:
-                prefetch.cancel()  # the caller never receives it to cancel
+                prefetch.cancel()  # the outer owner retains it through cleanup
             raise
     if named and prefetch is not None:
         prefetch.cancel()
@@ -702,6 +706,7 @@ async def _handle_bisect(input: Any, started: float) -> Any:
     dup_task = _start_dupcheck_fix(input, org, ns, frames)
     if dup_task is not None:
         owned.append(dup_task)
+    failed = False
     try:
         return await _run_bisect(
             input,
@@ -718,12 +723,24 @@ async def _handle_bisect(input: Any, started: float) -> Any:
             dup_task=dup_task,
             owned=owned,
         )
+    except BaseException:
+        failed = True
+        raise
     finally:
-        # The duplicate check and the fusion's window reads run as tasks beside the scan: an
-        # early failure or a cancelled call must not leave them reading.
-        for task in owned:
-            if not task.done():
-                task.cancel()
+        # A failed or cancelled scan keeps its owned reads until retirement completes.
+        pending = [task for task in owned if not task.done()]
+        for task in pending:
+            task.cancel()
+        if owned and (failed or pending):
+
+            async def stopped() -> None:
+                await asyncio.gather(*owned, return_exceptions=True)
+
+            try:
+                await to_its_end(stopped(), name="bisect-read-cleanup")
+            except asyncio.CancelledError:
+                if not failed:
+                    raise
 
 
 async def _run_bisect(
@@ -797,9 +814,8 @@ async def _run_bisect(
         introduced=introduced,
         before=before,
         report_text=report_text,
+        owned=owned,
     )
-    if prefetch is not None:
-        owned.append(prefetch)
     fix_pr, widening = await _resolve_fix(input, facts, widening, source, org, tracker_ns)
     plan = _plan(
         input, resolved=resolved, widening=widening, frames=frames, patterns=patterns, facts=facts

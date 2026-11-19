@@ -6,7 +6,7 @@ are searched in parallel after their capture consent is resolved; the
 sections are assembled into one payload and trimmed by the answer-first
 rules (answer_first.py). An ordinary leg failure returns
 `{"error": ..., "results": []}` under its section and the others still
-answer. Typed input refusals propagate instead of producing partial results.
+answer. Typed capacity refusals propagate instead of producing partial results.
 The MCP `loom_search` tool renders this payload as its text and lean result;
 the `search` operation returns it as is.
 """
@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from server.core import request_tail
 from server.core.ch import set_query_tag
 from server.core.diagnostics import private_work
-from server.core.errors import LoomServerError, VectorInputTooLargeError, caller_text
+from server.core.errors import LoomServerError, VectorCapacityError, caller_text
+from server.core.shielded import to_its_end
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
 from server.knowledge.app import repo_docs, source_publication
@@ -319,6 +320,57 @@ async def _published_knowledge(
         return section
 
 
+async def _section_reads(
+    memory: Awaitable[Any],
+    knowledge: Awaitable[Any],
+    profile: Awaitable[Any],
+    conversations: Awaitable[Any],
+    tracker: Awaitable[Any],
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Join the fixed five sections, keeping a refusal ahead of empty-section fallback."""
+
+    async def section(call: Awaitable[Any]) -> Any:
+        try:
+            return await call
+        except VectorCapacityError:
+            raise
+        except Exception as error:  # noqa: BLE001 — ordinary leg failures become empty sections
+            return error
+
+    tasks = [
+        asyncio.create_task(section(call))
+        for call in (memory, knowledge, profile, conversations, tracker)
+    ]
+    try:
+        mem_result, know_result, profile_rows, conv_result, t_section = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="loom.search.sections.cleanup")
+        except asyncio.CancelledError:
+            pass  # Preserve the first failure after every owned section stops.
+        raise
+
+    fatal = next(
+        (
+            result
+            for result in (mem_result, know_result, profile_rows, conv_result, t_section)
+            if isinstance(result, VectorCapacityError)
+            or (isinstance(result, BaseException) and not isinstance(result, Exception))
+        ),
+        None,
+    )
+    if fatal is not None:
+        raise fatal
+
+    return mem_result, know_result, profile_rows, conv_result, t_section
+
+
 async def search_sections(
     *,
     org: str,
@@ -389,30 +441,16 @@ async def search_sections(
     prepared, plan = await _prepare_knowledge(know_input, repo_namespace)
 
     with private_work() if plan.marked else nullcontext():
-        mem_result, know_result, profile_rows, conv_result, t_section = await asyncio.gather(
-            # A later page continues the home search alone; the knowledge leg re-runs on
-            # every page and keeps the repository's documents.
+        mem_result, know_result, profile_rows, conv_result, t_section = await _section_reads(
+            # Later pages continue the home search alone; repository docs remain.
             memory_with_repo_decisions(mem_input, repo_namespace="" if page else repo_namespace),
             _run_knowledge(prepared, plan),
-            search_profile(  # By words, then by meaning
+            search_profile(
                 org, namespaces, query, top_k=top_k, lexical=profile_hit_matches, scope=scope
             ),
             _conversation_leg(conv_input, scope),
             tracker_leg(query, plan=tracker_plan, top_k=top_k),
-            return_exceptions=True,
         )
-
-        fatal = next(
-            (
-                result
-                for result in (mem_result, know_result, profile_rows, conv_result, t_section)
-                if isinstance(result, VectorInputTooLargeError)
-                or (isinstance(result, BaseException) and not isinstance(result, Exception))
-            ),
-            None,
-        )
-        if fatal is not None:
-            raise fatal
 
         # The QA verdict leads when the question is a defect report.
         payload: dict[str, Any] = {
@@ -441,6 +479,8 @@ async def search_sections(
         if not isinstance(know_result, Exception):
             try:
                 payload["knowledge"] = await _published_knowledge(know_result, plan, agent)
+            except VectorCapacityError:
+                raise
             except Exception as error:  # noqa: BLE001 — a failed knowledge renewal leaves other sections available
                 know_result = error
         if isinstance(know_result, Exception):

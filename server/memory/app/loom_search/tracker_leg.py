@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from server.core.errors import VectorCapacityError
+
 if TYPE_CHECKING:
     from server.tracker.app.dupcheck import DuplicateCheckPlan
 
@@ -222,7 +224,9 @@ async def tracker_leg(
             if out.tracker_unavailable:
                 return None
             return lean_tracker_section(out, defect_report_shape(query) or {})
-    except Exception as e:  # noqa: BLE001 — fail open: the memory legs answer
+    except VectorCapacityError:
+        raise
+    except Exception as e:  # noqa: BLE001 — ordinary tracker failures leave the memory legs available
         logger.info("loom_search tracker leg skipped on %s: %s", plan.org, type(e).__name__)
         return None
 
@@ -254,6 +258,8 @@ async def _similar_section(
     results: list[dict[str, Any]] = []
     served: list[str] = []
     for namespace, output in zip(plan.namespaces, outputs, strict=True):
+        if isinstance(output, VectorCapacityError):
+            raise output
         if isinstance(output, BaseException) or output.tracker_unavailable:
             continue
         served.append(namespace)

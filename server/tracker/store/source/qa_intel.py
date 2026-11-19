@@ -24,8 +24,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.ch_errors import error_code
+from server.core.errors import VectorCapacityError
 from server.core.hosts import vet_host
 from server.core.remote_ch import connect
+from server.core.vectors.admission import native_settings, raise_native
 from server.settings import settings
 from server.tracker.domain import sources as _sources
 from server.tracker.domain.source_circuit import SourceCircuit
@@ -211,11 +213,15 @@ async def query_rows(
         settings_for_query: dict[str, Any] = dict(query_settings or {})
         if max_execution_s:
             settings_for_query["max_execution_time"] = max(0.1, float(max_execution_s))
+        native_settings(
+            settings_for_query, timeout=max_execution_s or float(settings.tracker_live_timeout_s)
+        )
         res = await client.query(sql, parameters=params or {}, settings=settings_for_query)
         rows = [dict(zip(res.column_names, r, strict=True)) for r in res.result_rows]
-    except QaIntelUnavailable:
+    except (QaIntelUnavailable, VectorCapacityError):
         raise
     except Exception as e:
+        raise_native(e)
         # an upstream quota refusal (code 201) is the source rationing this
         # shape, not the service failing: the read is unavailable, the
         # breaker stays closed for every other shape (the

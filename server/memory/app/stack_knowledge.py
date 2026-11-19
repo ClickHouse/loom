@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from server import embedding
+from server.core.errors import VectorCapacityError
 from server.knowledge.app import pg_serving, search
 from server.knowledge.app.knowledge_search import not_noise
 from server.knowledge.app.search import ChunkHit, HybridSearchQuery
@@ -106,6 +107,8 @@ async def collect(
         try:
             wider = await ordinary(width)
             await collect_pass(width, wider)
+        except VectorCapacityError:
+            raise
         except Exception:  # noqa: BLE001 — a wider ordinary failure must preserve the usable first pass
             wider = None
     pools = await passes.finish()

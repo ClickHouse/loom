@@ -9,6 +9,7 @@ from typing import Any
 
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _gather_batched, _hex
+from server.core.vectors.admission import vector_work
 
 
 class FilesMixin(CodeRepoBase):
@@ -491,36 +492,37 @@ class FilesMixin(CodeRepoBase):
             if query_vec
             else "toFloat64(-1.0)"
         )
-        return await self._ch.query_all(
-            f"""
-            SELECT chunk_id, path, scope, kind, start_line, end_line, embedding_dim,
-                   arraySum(
-                       arrayMap(
-                           (tok, idf) -> idf * countSubstrings(
-                               concat(' ', lexemes, ' '), concat(' ', tok, ' ')
-                           ),
-                           {{tokens:Array(String)}}, {{idfs:Array(Float32)}}
-                       )
-                   ) AS lex_score,
-                   {vec_expr} AS distance
-            FROM loom.code_chunks FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND embedding_model = {{model:String}} AND path IN {{paths:Array(String)}}
-              AND tombstoned_at IS NULL
-            ORDER BY path, start_line
-            LIMIT {{limit:UInt32}}
-            """,
-            {
-                "org": org,
-                "ns": ns,
-                "model": model,
-                "paths": paths,
-                "tokens": tokens,
-                "idfs": idfs,
-                "limit": limit,
-                **({"q": query_vec} if query_vec else {}),
-            },
-        )
+        with vector_work(org, ns, 1 if query_vec else 0):
+            return await self._ch.query_all(
+                f"""
+                SELECT chunk_id, path, scope, kind, start_line, end_line, embedding_dim,
+                       arraySum(
+                           arrayMap(
+                               (tok, idf) -> idf * countSubstrings(
+                                   concat(' ', lexemes, ' '), concat(' ', tok, ' ')
+                               ),
+                               {{tokens:Array(String)}}, {{idfs:Array(Float32)}}
+                           )
+                       ) AS lex_score,
+                       {vec_expr} AS distance
+                FROM loom.code_chunks FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND embedding_model = {{model:String}} AND path IN {{paths:Array(String)}}
+                  AND tombstoned_at IS NULL
+                ORDER BY path, start_line
+                LIMIT {{limit:UInt32}}
+                """,
+                {
+                    "org": org,
+                    "ns": ns,
+                    "model": model,
+                    "paths": paths,
+                    "tokens": tokens,
+                    "idfs": idfs,
+                    "limit": limit,
+                    **({"q": query_vec} if query_vec else {}),
+                },
+            )
 
     async def best_chunks_for_paths(
         self,
@@ -539,8 +541,9 @@ class FilesMixin(CodeRepoBase):
         this size."""
         if not paths:
             return []
-        return await self._ch.query_all(
-            """
+        with vector_work(org, ns):
+            return await self._ch.query_all(
+                """
             SELECT chunk_id, path, scope, kind, start_line, end_line,
                    content, symbol_ids, context_description,
                    cosineDistance(embedding, {q:Array(Float32)}) AS distance
@@ -552,16 +555,16 @@ class FilesMixin(CodeRepoBase):
             LIMIT {per_path:UInt32} BY path
             LIMIT {lim:UInt32}
             """,
-            {
-                "org": org,
-                "ns": ns,
-                "model": model,
-                "q": query_vec,
-                "paths": sorted(set(paths)),
-                "per_path": int(per_path),
-                "lim": int(per_path) * len(set(paths)),
-            },
-        )
+                {
+                    "org": org,
+                    "ns": ns,
+                    "model": model,
+                    "q": query_vec,
+                    "paths": sorted(set(paths)),
+                    "per_path": int(per_path),
+                    "lim": int(per_path) * len(set(paths)),
+                },
+            )
 
     async def chunks_for_paths(
         self,

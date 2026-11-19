@@ -9,7 +9,9 @@ import logging
 import time
 from typing import Any
 
-from server.core.errors import ValidationError, caller_text
+from server.core.errors import ValidationError, VectorCapacityError, caller_text
+from server.core.shielded import to_its_end
+from server.core.vectors.private_first import each
 from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
@@ -48,12 +50,16 @@ async def handle_tracker_similar(input: TrackerSimilarInput) -> TrackerSimilarOu
             head = f"{item.get('title') or ''}\n{item.get('body') or ''}"
             text = head + (f"\n{text}" if text.strip() else "")
     rest = input.model_copy(update={"issue_number": 0, "text": text})
-    others = await asyncio.gather(
-        *[_similar_one(rest.model_copy(update={"namespace": ns})) for ns in linked[1:]]
-        if text.strip() or rest.frames
-        else [],
-        return_exceptions=True,
-    )
+
+    async def one(namespace: str) -> Any:
+        try:
+            return await _similar_one(rest.model_copy(update={"namespace": namespace}))
+        except VectorCapacityError:
+            raise
+        except BaseException as error:  # noqa: BLE001 — preserve gathered noncapacity outcomes
+            return error
+
+    others = await each(one)(linked[1:] if text.strip() or rest.frames else [])
     return _merge_similar(linked, [first, *others], int(input.top_k))
 
 
@@ -65,6 +71,8 @@ def _merge_similar(namespaces: list[str], outs: list[Any], top_k: int) -> Tracke
     held model call (`customer.HOLDS`), which is the answer."""
     served: list[tuple[str, Any]] = []
     for ns, o in zip(namespaces, outs, strict=False):
+        if isinstance(o, VectorCapacityError):
+            raise o
         if isinstance(o, customer.HOLDS):
             raise o  # the org's model calls are held: the request answers that
         if isinstance(o, BaseException):
@@ -113,10 +121,26 @@ async def similar_in_namespace(input: TrackerSimilarInput) -> TrackerSimilarOutp
     status: dict[str, str] = {}
     meta: dict[str, Any] = {}
     record: dict[str, Any] = {"status": "skipped", "relations": {}}
-    ranked, record = await asyncio.gather(
-        _similar_legs(src, input, q, stats, item, kinds, legs_on, status, meta),
-        _similar_record(src, input, q, item),
-    )
+    tasks = [
+        asyncio.create_task(
+            _similar_legs(src, input, q, stats, item, kinds, legs_on, status, meta)
+        ),
+        asyncio.create_task(_similar_record(src, input, q, item)),
+    ]
+    try:
+        ranked, record = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="tracker.similar.namespace.cleanup")
+        except asyncio.CancelledError:
+            pass  # Preserve the first failure after both reads stop.
+        raise
     # The vector leg adds its own candidates after the ranked ones and never re-ranks.
     fused = sim.fuse(
         ranked,
@@ -289,6 +313,8 @@ async def _similar_legs(
             return await _similar_vector_leg(
                 src, input, q, item, kinds, before, status, meta if meta is not None else {}
             )
+        except VectorCapacityError:
+            raise
         except TrackerUnavailable:
             raise
         except customer.HOLDS:
@@ -309,22 +335,51 @@ async def _similar_legs(
             name, coro, ns=input.namespace, status=status, errors=errors, timings=timings
         )
 
-    # Every leg runs to its end; then a held model call (`customer.HOLDS`) is the
-    # request's answer, rather than a degraded one without the vector leg.
-    results = await asyncio.gather(
+    return await _collect_similar_legs(
         leg("lexical", lexical()),
         leg("frames", frames()),
         leg("mentions", mentions()),
         leg("vector", vector()),
-        return_exceptions=True,
     )
-    legs: dict[str, list[dict[str, Any]]] = {}
-    for res in results:
-        if isinstance(res, BaseException):
-            raise res
-        if res[1]:
-            legs[res[0]] = res[1]
-    return legs
+
+
+async def _collect_similar_legs(
+    lexical: Any,
+    frames: Any,
+    mentions: Any,
+    vector: Any,
+) -> dict[str, list[dict[str, Any]]]:
+    """Settle the fixed retrieval legs before selecting their complete answer."""
+    # Ordinary leg errors settle with the other legs before selecting the answer.
+    tasks = [
+        asyncio.ensure_future(lexical),
+        asyncio.ensure_future(frames),
+        asyncio.ensure_future(mentions),
+        asyncio.ensure_future(vector),
+    ]
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        legs: dict[str, list[dict[str, Any]]] = {}
+        for res in results:
+            if isinstance(res, VectorCapacityError):
+                raise res
+            if isinstance(res, BaseException):
+                raise res
+            if res[1]:
+                legs[res[0]] = res[1]
+        return legs
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="tracker.similar.legs.cleanup")
+        except asyncio.CancelledError:
+            pass  # Preserve the first failure after every owned leg stops.
+        raise
 
 
 async def _guarded(
@@ -340,6 +395,8 @@ async def _guarded(
     t0 = time.monotonic()
     try:
         return name, await coro
+    except VectorCapacityError:
+        raise
     except TrackerUnavailable as e:
         common._unavailable(f"tracker.similar/{name}", ns, e)
         status[name] = "tracker_unavailable"

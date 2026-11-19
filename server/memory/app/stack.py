@@ -11,6 +11,7 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.core.diagnostics import private_work
+from server.core.errors import VectorCapacityError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.knowledge.app.source_access import ReadPlan
@@ -354,6 +355,8 @@ async def run_checked_stack(input: MemoryStackInput, plan: ReadPlan) -> CheckedS
                 knowledge = await stack_knowledge.collect(
                     input.org, input.namespace, input.agent, seed, int(input.knowledge_top_k), plan
                 )
+            except VectorCapacityError:
+                raise
             except Exception as e:  # noqa: BLE001 — a failed knowledge section must not fail the stack
                 log.warning("memory.stack: knowledge fan-out failed (non-fatal): %s", e)
         return CheckedStack(fill, knowledge, plan.marked)

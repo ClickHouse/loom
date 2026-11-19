@@ -9,6 +9,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from server.core.errors import VectorCapacityError
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.ask.question_shapes import (
     is_decisive_question,
@@ -110,7 +111,8 @@ def ordinal_line_markers(query_text: str) -> list[str]:
 async def _mention_window_chunks(search_input: Any, question: str, ranked: list[Any]) -> list[Any]:
     """Chunks from the sessions dated inside the question's resolved relative
     window (±1 day), cosine-ranked, as injectable hits. Empty
-    when the question resolves to no date. Fail-open."""
+    when the question resolves to no date. Ordinary failures return no chunks;
+    capacity refusals propagate."""
     from server.settings import settings as _s3000
 
     _n = int(_s3000.memory_ask_mention_window_chunks)
@@ -149,6 +151,8 @@ async def _mention_window_chunks(search_input: Any, question: str, ranked: list[
             agent=getattr(search_input, "agent", "*"),
             user_id=getattr(search_input, "user_id", None),
         )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — additive, never fatal
         logger.debug("mention-window chunks skipped: %s", e)
         return []
@@ -336,7 +340,8 @@ async def _chase_identifiers(
     the identifiers the previous hop's memories named; chased rows rank just
     under the direct injections (0.9) so the direct hit stays first. Stops
     when a hop names nothing new, adds nothing new, or `cap` rows are held.
-    Returns (rows added, hops walked). Fail-open: an error ends the walk."""
+    Returns (rows added, hops walked). Ordinary errors end the walk;
+    capacity refusals propagate."""
     added: list[Any] = []
     seen_all = list(seen)
     walked = 0
@@ -348,6 +353,8 @@ async def _chase_identifiers(
         seen_all.extend(idents)
         try:
             rows = await _inject_identifier_memories(search_input, idents, have + added)
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — additive, never fatal
             logger.debug("identifier chase stopped: %s", e)
             break
@@ -471,6 +478,8 @@ async def _read_decisive_chunks(
             user_id=getattr(search_input, "user_id", None),
             markers=list(_DECISIVE_MARKERS),
         )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — additive
         logger.debug("decisive chunk injection failed: %s", e)
         return []
@@ -518,9 +527,24 @@ async def _read_latest_word(
             user_id=getattr(search_input, "user_id", None),
             order="recency",
         )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — additive
         logger.debug("recent identifier injection failed: %s", e)
     return rows
+
+
+def _note_identifier_injections(out: list[Any]) -> None:
+    """Record injection counts without failing the answer."""
+    try:
+        from server.core import request_work as _rw
+
+        _n_chunk_rows = sum(
+            1 for h in out if str(getattr(h, "memory_key", "")).startswith("chunk:")
+        )
+        _rw.note_injected(facts=len(out) - _n_chunk_rows, chunks=_n_chunk_rows)
+    except Exception:  # noqa: BLE001 — a counter never fails an answer
+        pass
 
 
 async def _inject_identifier_memories(
@@ -614,6 +638,8 @@ async def _inject_identifier_memories(
                         agent=getattr(search_input, "agent", "*"),
                         user_id=getattr(search_input, "user_id", None),
                     )
+                except VectorCapacityError:
+                    raise
                 except Exception as e:  # noqa: BLE001 — chunks are additive too
                     logger.debug("identifier chunk injection failed: %s", e)
             rows = list(rows) + await _read_decisive_chunks(
@@ -622,6 +648,8 @@ async def _inject_identifier_memories(
             rows = list(rows) + await _read_latest_word(
                 search_input, idents, case_insensitive, _lim_settings
             )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — additive, never fatal
         logger.debug("identifier injection failed: %s", e)
         return []
@@ -654,13 +682,5 @@ async def _inject_identifier_memories(
             continue
         hit._row_identity = row_identity(r)  # the row read (none for a chunk), for the authority
         out.append(hit)
-    try:
-        from server.core import request_work as _rw
-
-        _n_chunk_rows = sum(
-            1 for h in out if str(getattr(h, "memory_key", "")).startswith("chunk:")
-        )
-        _rw.note_injected(facts=len(out) - _n_chunk_rows, chunks=_n_chunk_rows)
-    except Exception:  # noqa: BLE001 — a counter never fails an answer
-        pass
+    _note_identifier_injections(out)
     return out

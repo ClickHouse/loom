@@ -8,6 +8,8 @@ import logging
 import re
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.core.vectors.private_first import each
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.context import SearchContext
@@ -335,7 +337,10 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                     return ns, [], True
                 sql = key_match_sql(" AND ".join(where))
             try:
-                return ns, await _ch.query_all(sql, params=params), False
+                with vector_work(input.org, ns, 0 if component_only else 1):
+                    return ns, await _ch.query_all(sql, params=params), False
+            except VectorCapacityError:
+                raise
             except Exception as e:  # noqa: BLE001 — additive arm
                 log.warning("key-match arm failed for ns=%s (non-fatal): %s", ns, e)
                 return ns, [], False
@@ -390,5 +395,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
         ctx.actual_work["key_match_added"] = added
         if component_only:
             ctx.actual_work["key_match_component_only"] = True
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("key-match stage failed (non-fatal): %s", e)

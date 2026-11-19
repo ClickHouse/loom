@@ -28,11 +28,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
+import time
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -99,6 +102,120 @@ class Report:
 # ----------------------------------------------------------------------------
 # pure helpers (unit-tested)
 # ----------------------------------------------------------------------------
+
+
+RANKING_OPS = ("memory.search", "memory.search_trace", "memory.ask")
+_RANKING_SCORES = ("distance", "similarity", "rank_score")
+_RANKING_IDENTITY = (
+    "memory_key",
+    "memory_type",
+    "source",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_id",
+    "version",
+    "parent_memory_key",
+)
+RankingSnapshot = dict[str, dict[str, list[dict[str, Any]]]]
+
+
+def _ranking_score(value: object) -> float:
+    assert isinstance(value, int | float) and not isinstance(value, bool), "missing numeric score"
+    assert math.isfinite(value), "nonfinite score"
+    return float(value)
+
+
+def ranked_rows(payload: object, *, namespace: str, positive_key: str) -> list[dict[str, Any]]:
+    """Keep every returned identity and score, without sorting or truncating rows."""
+    assert isinstance(payload, dict), "ranking response is not an object"
+    rows = payload.get("results")
+    assert isinstance(rows, list) and rows, "missing or empty ranking results"
+    out = []
+    for row in rows:
+        assert isinstance(row, dict), "ranking result is not an object"
+        for name in ("memory_key", "memory_type", "source"):
+            assert isinstance(row.get(name), str) and row[name], f"missing {name}"
+        assert row.get("namespace", namespace) in ("", namespace), "wrong result namespace"
+        identity = {name: row[name] for name in _RANKING_IDENTITY if name in row}
+        out.append(
+            {
+                "identity": identity,
+                "scores": {name: _ranking_score(row.get(name)) for name in _RANKING_SCORES},
+            }
+        )
+    assert out[0]["identity"]["memory_key"] == positive_key, "positive anchor is not first"
+    return out
+
+
+def capture_rankings(
+    call: Callable[[str, dict[str, Any]], dict[str, Any]],
+    requests: dict[str, dict[str, dict[str, Any]]],
+    positives: dict[str, str],
+    *,
+    elapsed: dict[str, dict[str, float]] | None = None,
+) -> RankingSnapshot:
+    """Capture all requested public reads; request errors propagate as failures."""
+    assert positives and set(requests) == set(RANKING_OPS), "missing ranking operations"
+    snapshot: RankingSnapshot = {}
+    for op in RANKING_OPS:
+        assert set(requests[op]) == set(positives), "missing ranking queries"
+        snapshot[op] = {}
+        for query, positive_key in positives.items():
+            body = requests[op][query]
+            assert body.get("query") == query, "query does not match its request"
+            namespace = body.get("namespace")
+            assert isinstance(namespace, str) and namespace and positive_key
+            started = time.perf_counter()
+            payload = call(op, body)
+            duration = time.perf_counter() - started
+            if elapsed is not None:
+                elapsed.setdefault(op, {})[query] = duration
+            if op == "memory.ask":
+                assert payload.get("source") == "retrieval_only", "ask did not return retrieval"
+                assert payload.get("synth_calls") == 0, "ask made a synthesis call"
+            snapshot[op][query] = ranked_rows(
+                payload, namespace=namespace, positive_key=positive_key
+            )
+    return snapshot
+
+
+def assert_rankings_equal(
+    before: RankingSnapshot, after: RankingSnapshot, *, queries: list[str]
+) -> None:
+    """Compare each API independently with fixed float tolerances and exact order."""
+    assert queries and len(set(queries)) == len(queries), "missing or repeated queries"
+    assert set(before) == set(after) == set(RANKING_OPS), "missing ranking operations"
+    for op in RANKING_OPS:
+        assert set(before[op]) == set(after[op]) == set(queries), "missing ranking queries"
+        for query in queries:
+            left, right = before[op][query], after[op][query]
+            assert left and len(left) == len(right), f"{op}: changed result count"
+            for a, b in zip(left, right, strict=True):
+                assert a["identity"] == b["identity"], f"{op}: changed identity or order"
+                assert set(a["scores"]) == set(b["scores"]) == set(_RANKING_SCORES)
+                for name in _RANKING_SCORES:
+                    x, y = _ranking_score(a["scores"][name]), _ranking_score(b["scores"][name])
+                    assert math.isclose(x, y, rel_tol=1e-7, abs_tol=1e-6), (
+                        f"{op}: changed {name}: {x!r} != {y!r}"
+                    )
+
+
+def ranking_timings(elapsed: dict[str, dict[str, float]]) -> dict[str, dict[str, Any]]:
+    """Small-sample timings; nearest-rank p99 is the maximum of three queries."""
+    assert set(elapsed) == set(RANKING_OPS), "missing timing operations"
+    out = {}
+    for op, calls in elapsed.items():
+        values = sorted(_ranking_score(value) for value in calls.values())
+        assert values and values[0] >= 0, "missing or negative elapsed time"
+        out[op] = {
+            "n": len(values),
+            "p50_s": statistics.median(values),
+            "p99_s": values[math.ceil(0.99 * len(values)) - 1],
+            "calls_s": calls,
+        }
+    return out
 
 
 def top_keys(search_output: dict[str, Any], k: int) -> list[str]:

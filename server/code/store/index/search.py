@@ -6,6 +6,7 @@ scorer reads, and the outcome signals that feed ranking back.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,8 @@ from server.code.domain.search_scope import SearchScope
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _scope_sql, skip_tests_sql
 from server.core.datetimes import naive_utc_now as _now
+from server.core.vectors.admission import vector_work
+from server.core.vectors.private_first import each
 
 
 class SearchMixin(CodeRepoBase):
@@ -120,28 +123,29 @@ class SearchMixin(CodeRepoBase):
             # Source files only — two thirds of the ClickHouse
             # cards are tests, and for a behaviour question they are the nearest
             where_prefix += skip_tests_sql("scope_path")
-        return await self._ch.query_all(
-            f"""
-            SELECT scope_path AS path, summary, pagerank,
-                   cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
-            FROM loom.code_summaries FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND embedding_model = {{model:String}} AND scope_type = 'file'
-              AND embedding_dim > 0 AND tombstoned_at IS NULL AND summary != ''
-              {where_prefix}
-            ORDER BY distance ASC
-            LIMIT {{pool:UInt32}}
-            {cards_settings}
-            """,
-            {
-                "org": org,
-                "ns": ns,
-                "model": model,
-                "q": query_vec,
-                "pool": pool,
-                **({"prefix": path_prefix} if path_prefix else {}),
-            },
-        )
+        with vector_work(org, ns):
+            return await self._ch.query_all(
+                f"""
+                SELECT scope_path AS path, summary, pagerank,
+                       cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
+                FROM loom.code_summaries FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND embedding_model = {{model:String}} AND scope_type = 'file'
+                  AND embedding_dim > 0 AND tombstoned_at IS NULL AND summary != ''
+                  {where_prefix}
+                ORDER BY distance ASC
+                LIMIT {{pool:UInt32}}
+                {cards_settings}
+                """,
+                {
+                    "org": org,
+                    "ns": ns,
+                    "model": model,
+                    "q": query_vec,
+                    "pool": pool,
+                    **({"prefix": path_prefix} if path_prefix else {}),
+                },
+            )
 
     async def vector_search_chunks(
         self,
@@ -176,31 +180,32 @@ class SearchMixin(CodeRepoBase):
         # maps to (the coded column is one width per table); the served
         # label resolves to loom.code_chunks.
         table = code_vector_table(model)
-        rows = await self._ch.query_all(
-            f"""
-            SELECT chunk_id, path, scope, kind, start_line, end_line,
-                   content, symbol_ids, context_description,
-                   cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
-            FROM {table} FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND embedding_model = {{model:String}} AND embedding_dim > 0
-              AND tombstoned_at IS NULL
-              {where_prefix}
-              {scope_sql}
-            ORDER BY distance ASC
-            LIMIT {{pool:UInt32}}
-            {vector_search_settings(table=table)}
-            """,
-            {
-                "org": org,
-                "ns": ns,
-                "model": model,
-                "q": query_vec,
-                "pool": pool,
-                **({"prefix": path_prefix} if path_prefix else {}),
-                **scope_params,
-            },
-        )
+        with vector_work(org, ns):
+            rows = await self._ch.query_all(
+                f"""
+                SELECT chunk_id, path, scope, kind, start_line, end_line,
+                       content, symbol_ids, context_description,
+                       cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
+                FROM {table} FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND embedding_model = {{model:String}} AND embedding_dim > 0
+                  AND tombstoned_at IS NULL
+                  {where_prefix}
+                  {scope_sql}
+                ORDER BY distance ASC
+                LIMIT {{pool:UInt32}}
+                {vector_search_settings(table=table)}
+                """,
+                {
+                    "org": org,
+                    "ns": ns,
+                    "model": model,
+                    "q": query_vec,
+                    "pool": pool,
+                    **({"prefix": path_prefix} if path_prefix else {}),
+                    **scope_params,
+                },
+            )
         return rows
 
     async def vector_shortlist_ids(
@@ -224,30 +229,31 @@ class SearchMixin(CodeRepoBase):
         where_prefix = "AND startsWith(path, {prefix:String})" if path_prefix else ""
         scope_sql, scope_params = _scope_sql(scope)
         table = code_vector_table(model)
-        return await self._ch.query_all(
-            f"""
-            SELECT chunk_id, path,
-                   cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
-            FROM {table} FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND embedding_model = {{model:String}} AND embedding_dim > 0
-              AND tombstoned_at IS NULL
-              {where_prefix}
-              {scope_sql}
-            ORDER BY distance ASC
-            LIMIT {{n:UInt32}}
-            {vector_search_settings(table=table)}
-            """,
-            {
-                "org": org,
-                "ns": ns,
-                "model": model,
-                "q": query_vec,
-                "n": n,
-                **({"prefix": path_prefix} if path_prefix else {}),
-                **scope_params,
-            },
-        )
+        with vector_work(org, ns):
+            return await self._ch.query_all(
+                f"""
+                SELECT chunk_id, path,
+                       cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
+                FROM {table} FINAL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND embedding_model = {{model:String}} AND embedding_dim > 0
+                  AND tombstoned_at IS NULL
+                  {where_prefix}
+                  {scope_sql}
+                ORDER BY distance ASC
+                LIMIT {{n:UInt32}}
+                {vector_search_settings(table=table)}
+                """,
+                {
+                    "org": org,
+                    "ns": ns,
+                    "model": model,
+                    "q": query_vec,
+                    "n": n,
+                    **({"prefix": path_prefix} if path_prefix else {}),
+                    **scope_params,
+                },
+            )
 
     async def exact_rerank_by_ids(
         self,
@@ -289,9 +295,11 @@ class SearchMixin(CodeRepoBase):
         ident = """org = {org:String} AND namespace = {ns:String}
               AND embedding_model = {model:String}
               AND path IN {paths:Array(String)} AND chunk_id IN {ids:Array(UUID)}"""
-        rows, tombs = await asyncio.gather(
-            self._ch.query_all(
-                f"""
+
+        async def _ranked() -> list[dict[str, Any]]:
+            with vector_work(org, ns):
+                return await self._ch.query_all(
+                    f"""
                 SELECT chunk_id, path, scope, kind, start_line, end_line,
                        content, symbol_ids, context_description, distance
                 FROM (
@@ -307,18 +315,26 @@ class SearchMixin(CodeRepoBase):
                 ORDER BY distance ASC
                 LIMIT {{lim:UInt32}}
                 """,
-                params,
-            ),
-            self._ch.query_all(
-                f"""
+                    params,
+                )
+
+        async def _read(call: Awaitable[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+            return await call
+
+        rows, tombs = await each(_read)(
+            [
+                _ranked(),
+                self._ch.query_all(
+                    f"""
                 SELECT path, chunk_id, argMax(tombstoned_at IS NULL, version) AS is_live
                 FROM loom.code_chunks
                 WHERE {ident}
                 GROUP BY path, chunk_id
                 HAVING is_live = 1
                 """,
-                params,
-            ),
+                    params,
+                ),
+            ]
         )
         # the keys whose newest version is live (the null-safe idiom: a
         # re-inserted key reads live, not its old tombstone)

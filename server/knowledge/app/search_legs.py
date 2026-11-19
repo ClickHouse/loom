@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
+from collections.abc import Awaitable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from server.core import ch, pg
+from server.core.vectors.private_first import each
 from server.knowledge.app import bm25 as knowledge_bm25
 from server.knowledge.app import pg_serving, search
 
@@ -61,13 +62,17 @@ async def collect(
     lexical_weight: float,
 ) -> LegPools:
     """Preserve ordinary leg widths, cold-statistics behavior and fusion scales."""
+
+    async def _read(call: Awaitable[Any]) -> Any:
+        return await call
+
     top_k = query.top_k
     if mode == "semantic" or not query.tokens:
         if not query.keys:
             semantic = await search.hybrid_search(query)
             return LegPools(query, {"semantic": semantic}, top_k, lexical_weight)
         wide = replace(query, top_k=max(top_k * 3, 20))
-        semantic, keyed = await asyncio.gather(search.hybrid_search(wide), search.keys_search(wide))
+        semantic, keyed = await each(_read)([search.hybrid_search(wide), search.keys_search(wide)])
         return LegPools(wide, {"semantic": semantic, "keys": keyed}, top_k, lexical_weight)
     avgdl, idfs = await knowledge_bm25.lexical_stats(
         ch.get_client(),
@@ -81,8 +86,8 @@ async def collect(
         lexical = await search.lexical_search(lexical_query)
         return LegPools(lexical_query, {"lexical": lexical}, top_k, lexical_weight)
     wide = replace(lexical_query, top_k=max(top_k * 3, 20))
-    semantic, lexical, keyed = await asyncio.gather(
-        search.hybrid_search(wide), search.lexical_search(wide), search.keys_search(wide)
+    semantic, lexical, keyed = await each(_read)(
+        [search.hybrid_search(wide), search.lexical_search(wide), search.keys_search(wide)]
     )
     return LegPools(
         wide,

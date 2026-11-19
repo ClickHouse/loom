@@ -964,6 +964,10 @@ Raised in `server/memory/app/apply.py`, `server/memory/app/lock.py`, `server/mem
 
 HTTP 422, raised as `server.core.errors.ValidationError`. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
+#### `VECTOR_CAPACITY_REFUSED`
+
+HTTP 429, raised as `server.core.errors.VectorAdmissionError`. 429 — complete vector work exceeds a weighted queue or native budget. Category `capacity`, retryable: yes.
+
 #### `VECTOR_INPUT_TOO_LARGE`
 
 HTTP 422, raised as `server.core.errors.VectorInputTooLargeError`. 422 — an entity filter exceeds 64 raw names, or its canonical aliases or summary seeds exceed 256 distinct names. Category `input`, retryable: no.

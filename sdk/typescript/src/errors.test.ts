@@ -17,6 +17,12 @@ import {
   ValidationError,
   WrongCell,
 } from "./errors.js";
+import {
+  BackendUnavailable as PublicBackendUnavailable,
+  RateLimited as PublicRateLimited,
+  errorFromResponse as publicErrorFromResponse,
+  VectorCapacityRefused,
+} from "./index.js";
 
 describe("errorFromResponse", () => {
   it.each([
@@ -109,6 +115,60 @@ describe("errorFromResponse", () => {
     const wait = classed(new TimeoutError("still running", { op: "knowledge.ingest_status" }), "capacity", true);
     expect([wait.category, wait.retryable]).toEqual(["capacity", true]);
     expect(wait.detail).toEqual({});
+  });
+
+  it("preserves vector capacity refusal metadata through the public SDK exports", () => {
+    const detail = {
+      code: "VECTOR_CAPACITY_REFUSED",
+      message: "vector queue is full",
+      category: "capacity",
+      retryable: true,
+      reason: "org_queue",
+    };
+    const error = publicErrorFromResponse("memory.search", 429, { detail }, "vector-rid", 2.5);
+    expect(error.constructor).toBe(VectorCapacityRefused);
+    expect(error).toBeInstanceOf(PublicRateLimited);
+    if (!(error instanceof VectorCapacityRefused)) throw new Error("Expected public vector capacity refusal");
+    expect([error.status, error.code, error.requestId, error.retryAfterS]).toEqual([
+      429,
+      "VECTOR_CAPACITY_REFUSED",
+      "vector-rid",
+      2.5,
+    ]);
+    expect(error.detail).toEqual(detail);
+    expect([error.category, error.retryable]).toEqual(["capacity", true]);
+    expect(error.message).toBe("vector queue is full");
+  });
+
+  it("keeps ordinary rate limits unchanged through the public SDK exports", () => {
+    const error = publicErrorFromResponse(
+      "memory.search",
+      429,
+      { detail: { code: "RATE_LIMITED", message: "slow down" } },
+      "rate-rid",
+      3,
+    );
+    expect(error.constructor).toBe(PublicRateLimited);
+    expect(error).not.toBeInstanceOf(VectorCapacityRefused);
+    if (!(error instanceof PublicRateLimited)) throw new Error("Expected public rate limit");
+    expect([error.status, error.code, error.requestId, error.retryAfterS]).toEqual([
+      429,
+      "RATE_LIMITED",
+      "rate-rid",
+      3,
+    ]);
+  });
+
+  it("keeps overloaded errors unchanged through the public SDK exports", () => {
+    const error = publicErrorFromResponse(
+      "memory.search",
+      503,
+      { detail: { code: "OVERLOADED", message: "busy" } },
+      "overloaded-rid",
+    );
+    expect(error.constructor).toBe(PublicBackendUnavailable);
+    expect(error).not.toBeInstanceOf(VectorCapacityRefused);
+    expect([error.status, error.code, error.requestId]).toEqual([503, "OVERLOADED", "overloaded-rid"]);
   });
 });
 

@@ -9,6 +9,8 @@ import logging
 import re
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.core.vectors.search_settings import vector_search_settings
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.passage_trim import trim_chunk_excerpt
@@ -631,7 +633,10 @@ async def _chunk_anchor_windows(
             fallback_anchors, chunk_agent_pred=chunk_agent_pred, base_params=chunk_params
         )
         try:
-            neighbor_rows.extend(await _chunk_query(ch, neighbor_sql, neighbor_params))
+            with vector_work(chunk_params["org"], chunk_params["ns"]):
+                neighbor_rows.extend(await _chunk_query(ch, neighbor_sql, neighbor_params))
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — neighbour chunks are optional context around the hits
             log.warning("chunk leg: neighbour window read failed (served without): %s", e)
     return neighbor_rows
@@ -716,7 +721,10 @@ async def _search_memory_chunks(
     }
     try:
         stage1_sql = _chunk_candidates_sql(chunk_agent_pred)
-        candidates = await _chunk_query(ch, stage1_sql, stage1_params)
+        with vector_work(q.org, q.namespace):
+            candidates = await _chunk_query(ch, stage1_sql, stage1_params)
+    except VectorCapacityError:
+        raise
     except Exception:
         log.exception(
             "chunk plane query failed; degrading to fact-only retrieval "
@@ -784,7 +792,10 @@ async def _search_memory_chunks(
         neighbors=neighbors,
     )
     try:
-        rows = await _chunk_query(ch, sql, chunk_params)
+        with vector_work(q.org, q.namespace, int(neighbors)):
+            rows = await _chunk_query(ch, sql, chunk_params)
+    except VectorCapacityError:
+        raise
     except Exception:
         # Degrade to fact-only retrieval rather than 500'ing the query, but
         # log it — a silently-disabled chunk plane must leave a trace.

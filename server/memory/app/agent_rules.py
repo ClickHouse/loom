@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 
+from server.core.errors import VectorCapacityError
 from server.memory.domain import assistant_rules
 
 log = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ async def served_hits[H](
     """The first `top_k` knowledge hits that serve `agent` (and that `keep` keeps, when
     given). When a dropped hit took a place among `hits` and more can be asked for,
     `widen(n)` searches again for `n` hits; if that search fails, the hits served from
-    the first pass answer."""
+    the first pass answer. Capacity refusals propagate."""
 
     def serves(h: H) -> bool:
         return assistant_rules.serves_agent(tags_of(h), agent) and (keep is None or keep(h))
@@ -53,6 +54,8 @@ async def served_hits[H](
         try:
             wider = await widen(wider_k)
             served = [h for h in wider if serves(h)]
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — the first pass's served hits still answer
             log.warning("knowledge search widened past dropped hits failed: %s", e)
     return served[:top_k]

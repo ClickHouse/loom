@@ -7,6 +7,7 @@ import asyncio
 import logging
 from typing import Any
 
+from server.core.errors import VectorCapacityError
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.anchor_pool import _enforce_agent_scope
 from server.memory.app.search.context import SearchContext
@@ -164,6 +165,8 @@ async def _assemble_final_hits(
     try:
         for ns, sh in await summary_task:
             ctx.all_hits.append(_summary_hit_to_wire(ns, sh))
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("session-summary leg failed (non-fatal): %s", e)
     # Fold the PRE-BUILT entity summaries in as additive dense rows (source="entity_summary";
@@ -173,12 +176,16 @@ async def _assemble_final_hits(
         try:
             for ns, eh in await entity_summary_task:
                 ctx.all_hits.append(_summary_hit_to_wire(ns, eh))
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001
             log.warning("entity-summary leg failed (non-fatal): %s", e)
     if observation_task is not None:
         try:
             for ns, oh in await observation_task:
                 ctx.all_hits.append(_summary_hit_to_wire(ns, oh))
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001
             log.warning("observation leg failed (non-fatal): %s", e)
     # Digest-anchored expansion: the sessions behind the top-m digests contribute their own

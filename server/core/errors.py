@@ -43,7 +43,44 @@ class ValidationError(LoomServerError):
     status_code = 422
 
 
-class VectorInputTooLargeError(ValidationError):
+VectorCapacityReason = Literal[
+    "attribution",
+    "configuration",
+    "weight",
+    "population",
+    "org_queue",
+    "org_deadline",
+    "pool",
+    "rows",
+    "memory",
+    "deadline",
+]
+
+
+class VectorCapacityError(Exception):
+    """Common refusal family: a read must not return a ranking subset."""
+
+    extra: dict[str, Any]
+
+
+class VectorAdmissionError(LoomServerError, VectorCapacityError):
+    """429 — complete vector work exceeds a weighted queue or native budget.
+    `reason` names the bounded refusal; retry after `retry_after_s`, or narrow the read."""
+
+    code = "VECTOR_CAPACITY_REFUSED"
+    status_code = 429
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: VectorCapacityReason,
+        retry_after_s: int = 1,
+    ) -> None:
+        super().__init__(message, reason=reason, retry_after_s=retry_after_s)
+
+
+class VectorInputTooLargeError(ValidationError, VectorCapacityError):
     """422 — an entity filter exceeds 64 raw names, or its canonical aliases or
     summary seeds exceed 256 distinct names. Narrow the query or filter; entity
     names are never truncated."""
@@ -274,6 +311,16 @@ class OverloadedError(LoomServerError):
 
     def __init__(self, message: str = "", *, retry_after_s: int = 1) -> None:
         super().__init__(message, retry_after_s=retry_after_s)
+
+
+class VectorOverloadedError(OverloadedError, VectorCapacityError):
+    """An existing process overload that must survive optional vector-read catches."""
+
+    def __init__(
+        self, message: str, *, reason: Literal["pool", "population"], retry_after_s: int = 1
+    ) -> None:
+        super().__init__(message, retry_after_s=retry_after_s)
+        self.extra["reason"] = reason
 
 
 class OverrideBusyError(OverloadedError):
@@ -556,6 +603,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     # that is not idempotent a handler's answer may follow a write (OVERLOADED too: each
     # statement waits for a pool slot), so there it is not retryable (`handler_failure_detail`).
     "OVERLOADED": ("capacity", True),
+    "VECTOR_CAPACITY_REFUSED": ("capacity", True),
     "GRANT_BUSY": ("capacity", True),
     "ERASURE_RUNNING": ("capacity", True),
     "IDEMPOTENT_IN_PROGRESS": ("capacity", True),

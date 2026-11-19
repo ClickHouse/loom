@@ -230,6 +230,7 @@ def _begin_request(op: Operation, request: Request, response: Response) -> str:
     """The request id, the schema header and the per-request context vars —
     before the body is read. Returns the request id."""
     request_id = request_id_from(request.headers.get("X-Request-Id"))
+    request.state.loom_request_id = request_id
     response.headers["X-Request-Id"] = request_id
     response.headers["X-Schema-Version"] = SCHEMA_VERSION
     bind_request(op.name, request_id)

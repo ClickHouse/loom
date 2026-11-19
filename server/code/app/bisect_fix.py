@@ -21,6 +21,7 @@ from server.code.app.bisect_facts import (
 from server.code.app.spans import code_span
 from server.code.domain.index import blame_introduced as intro
 from server.code.store.index import CodeRepo
+from server.core.errors import VectorCapacityError
 from server.settings import settings
 from server.tracker.domain import bisect as bi
 from server.tracker.domain import bisect_fusion as fu
@@ -147,7 +148,7 @@ async def _dupcheck_fix(task: Any, started: float | None = None) -> dict[str, An
     """The matched issue's fix, or {} when there is none. The check started at the top of
     the call; this waits for what is left of
     its budget (`code_bisect_dupcheck_timeout_s` from `started`). Past it the
-    bisect answers with the fusion alone and says so (`status: timeout`); any
+    bisect answers with the fusion alone and says so (`status: timeout`); an ordinary
     error answers as it would without the check."""
     if task is None:
         return {}
@@ -159,7 +160,9 @@ async def _dupcheck_fix(task: Any, started: float | None = None) -> dict[str, An
         if _expired("dupcheck"):
             return {"status": "deadline", "budget_s": budget}
         return {"status": "timeout", "budget_s": budget}
-    except Exception as e:  # noqa: BLE001 — fail open
+    except VectorCapacityError:
+        raise
+    except Exception as e:  # noqa: BLE001 — ordinary duplicate-check errors keep the scan available
         logger.info("bisect: duplicate-check fix skipped: %s", e)
         return {}
 

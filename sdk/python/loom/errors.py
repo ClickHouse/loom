@@ -104,6 +104,12 @@ class RateLimited(BackendUnavailable):
         self.retry_after_s = retry_after_s
 
 
+class VectorCapacityRefused(RateLimited):
+    """A complete vector read exceeded admission or native budgets; no subset was served."""
+
+    code = "VECTOR_CAPACITY_REFUSED"
+
+
 class Overloaded(BackendUnavailable):
     """503 OVERLOADED — the server was too busy: every pooled ClickHouse connection of
     the serving process was busy for longer than its slot wait, or a lock or claim
@@ -252,6 +258,7 @@ ERROR_CODES: dict[str, type[LoomError]] = {
     "AUTH_INSUFFICIENT": AuthInsufficient,
     "RESOURCE_NOT_FOUND": NotFound,
     "RATE_LIMITED": RateLimited,
+    "VECTOR_CAPACITY_REFUSED": VectorCapacityRefused,
     "BACKEND_UNAVAILABLE": BackendUnavailable,
     "OVERLOADED": Overloaded,
     "BACKEND_TIMEOUT": BackendTimeout,
@@ -305,7 +312,7 @@ def from_response(
         message = str(payload)[:500]
     status = int(status or 0)
     cls = ERROR_CODES.get(code) or _STATUS_CLASSES.get(status, LoomError)
-    if status == 429:
+    if status == 429 and not issubclass(cls, RateLimited):
         cls = RateLimited
     elif status >= 500 and not issubclass(cls, BackendUnavailable):
         cls = BackendUnavailable

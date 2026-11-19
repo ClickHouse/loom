@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.errors import VectorCapacityError
 from server.knowledge.app.source_corpus import LostCorpus
 from server.knowledge.app.source_passages import CheckedPassages, collect
 from server.memory.app.ask.source_context import PreparedKnowledge, prepare_knowledge
@@ -115,6 +116,8 @@ async def knowledge_passages(
         )
         return AskKnowledge(passages)
     except LostCorpus:
+        raise
+    except VectorCapacityError:
         raise
     except Exception:  # noqa: BLE001 — an unavailable additive plane contributes no passages
         logger.warning("knowledge plane on ask unavailable")

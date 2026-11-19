@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from server.core.errors import VectorInputTooLargeError
+from server.core.errors import VectorCapacityError
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scoring import drop_rerank_trail
 from server.memory.app.search.verdict import gate_order
@@ -105,7 +105,7 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)
             ctx.final_hits = final_hits[: input.top_k]
-        except VectorInputTooLargeError:
+        except VectorCapacityError:
             raise
         except Exception as e:  # noqa: BLE001
             log.warning("iterative retrieve retry failed: %s", e)

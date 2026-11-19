@@ -187,3 +187,167 @@ def test_one_row_identity_in_two_namespaces_sorts_by_its_namespace() -> None:
 
     n1, n2 = row("n1"), row("n2")
     assert sorted([n2, n1], key=hit_sort_key) == [n1, n2]
+
+
+def _three_api_snapshot():
+    from bench.retrieval_determinism import RANKING_OPS, capture_rankings
+
+    rows = [
+        {
+            "memory_key": key,
+            "memory_type": "semantic",
+            "source": "fact",
+            "namespace": "ns",
+            "distance": distance,
+            "similarity": 1 - distance,
+            "rank_score": 1 - distance,
+        }
+        for key, distance in (("harbor", 0.0), ("orchard", 0.75))
+    ]
+    requests = {
+        op: {"quiet harbor": {"query": "quiet harbor", "namespace": "ns"}} for op in RANKING_OPS
+    }
+    return capture_rankings(
+        lambda _op, _body: {"results": rows, "source": "retrieval_only", "synth_calls": 0},
+        requests,
+        {"quiet harbor": "harbor"},
+    )
+
+
+def test_three_api_snapshot_retains_order_and_all_scores_with_float_tolerance():
+    from copy import deepcopy
+
+    from bench.retrieval_determinism import RANKING_OPS, assert_rankings_equal
+
+    before = _three_api_snapshot()
+    after = deepcopy(before)
+    for op in RANKING_OPS:
+        after[op]["quiet harbor"][0]["scores"]["rank_score"] += 1e-8
+        assert [row["identity"]["memory_key"] for row in before[op]["quiet harbor"]] == [
+            "harbor",
+            "orchard",
+        ]
+        assert set(before[op]["quiet harbor"][0]["scores"]) == {
+            "distance",
+            "similarity",
+            "rank_score",
+        }
+    assert_rankings_equal(before, after, queries=["quiet harbor"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["order", "score", "identity", "query", "operation", "empty", "missing-score", "nonfinite"],
+)
+def test_three_api_comparison_refuses_changed_or_incomplete_results(change):
+    from copy import deepcopy
+
+    from bench.retrieval_determinism import assert_rankings_equal
+
+    before = _three_api_snapshot()
+    after = deepcopy(before)
+    rows = after["memory.search"]["quiet harbor"]
+    if change == "order":
+        rows.reverse()
+    elif change == "score":
+        rows[0]["scores"]["rank_score"] += 0.01
+    elif change == "identity":
+        rows[0]["identity"]["memory_key"] = "another-key"
+    elif change == "query":
+        after["memory.search"].pop("quiet harbor")
+    elif change == "operation":
+        after.pop("memory.ask")
+    elif change == "empty":
+        rows.clear()
+    elif change == "missing-score":
+        rows[0]["scores"].pop("distance")
+    else:
+        rows[0]["scores"]["distance"] = float("nan")
+    with pytest.raises(AssertionError):
+        assert_rankings_equal(before, after, queries=["quiet harbor"])
+
+
+@pytest.mark.parametrize("invalid", [None, {}, {"results": []}, {"results": [None]}])
+def test_three_api_capture_refuses_missing_or_empty_results(invalid):
+    from bench.retrieval_determinism import ranked_rows
+
+    with pytest.raises(AssertionError):
+        ranked_rows(invalid, namespace="ns", positive_key="harbor")
+
+
+@pytest.mark.parametrize(
+    "field", ["memory_key", "memory_type", "source", "distance", "similarity", "rank_score"]
+)
+def test_three_api_capture_requires_each_identity_and_score_field(field):
+    from bench.retrieval_determinism import ranked_rows
+
+    row = {
+        "memory_key": "harbor",
+        "memory_type": "semantic",
+        "source": "fact",
+        "distance": 0.0,
+        "similarity": 1.0,
+        "rank_score": 1.0,
+    }
+    row.pop(field)
+    with pytest.raises(AssertionError):
+        ranked_rows({"results": [row]}, namespace="ns", positive_key="harbor")
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"), "1.0", True])
+def test_three_api_capture_refuses_nonfinite_or_nonnumeric_scores(score):
+    from bench.retrieval_determinism import ranked_rows
+
+    row = {
+        "memory_key": "harbor",
+        "memory_type": "semantic",
+        "source": "fact",
+        "distance": score,
+        "similarity": 1.0,
+        "rank_score": 1.0,
+    }
+    with pytest.raises(AssertionError):
+        ranked_rows({"results": [row]}, namespace="ns", positive_key="harbor")
+
+
+def test_three_api_capture_does_not_omit_a_failed_request():
+    from bench.retrieval_determinism import RANKING_OPS, capture_rankings
+
+    requests = {
+        op: {"quiet harbor": {"query": "quiet harbor", "namespace": "ns"}} for op in RANKING_OPS
+    }
+
+    def refused(_op, _body):
+        raise AssertionError("HTTP 429")
+
+    with pytest.raises(AssertionError, match="HTTP 429"):
+        capture_rankings(refused, requests, {"quiet harbor": "harbor"})
+
+
+def test_three_api_capture_requires_its_positive_anchor():
+    from bench.retrieval_determinism import ranked_rows
+
+    row = {
+        "memory_key": "another-key",
+        "memory_type": "semantic",
+        "source": "fact",
+        "distance": 0.0,
+        "similarity": 1.0,
+        "rank_score": 1.0,
+    }
+    with pytest.raises(AssertionError, match="positive anchor"):
+        ranked_rows({"results": [row]}, namespace="ns", positive_key="harbor")
+
+
+def test_three_api_timings_report_small_sample_median_maximum_and_each_call():
+    from bench.retrieval_determinism import RANKING_OPS, ranking_timings
+
+    calls = {op: {"first": 0.03, "second": 0.01, "third": 0.02} for op in RANKING_OPS}
+    report = ranking_timings(calls)
+    for op in RANKING_OPS:
+        assert report[op] == {
+            "n": 3,
+            "p50_s": 0.02,
+            "p99_s": 0.03,
+            "calls_s": calls[op],
+        }

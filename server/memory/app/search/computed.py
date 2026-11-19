@@ -10,7 +10,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
-from server.core.errors import VectorInputTooLargeError
+from server.core.errors import (
+    VectorCapacityError,
+    VectorInputTooLargeError,
+)
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.budget import SearchBudget
 from server.memory.app.search.context import SearchContext
@@ -180,6 +183,8 @@ async def _maybe_temporal_diff(ctx: SearchContext) -> dict[str, Any] | None:
                 to_observation=to_observation,
                 run_id=str(getattr(input, "run_id", "") or ""),
             )
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001
             log.warning("temporal diff leg failed (non-fatal): %s", e)
     cache["v"] = result

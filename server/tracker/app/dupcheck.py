@@ -26,7 +26,10 @@ from datetime import datetime
 from typing import Any
 
 from server.code.domain.index.repos import registry_unread
+from server.core.errors import VectorCapacityError
 from server.core.llm_free import reads_llm_free
+from server.core.shielded import to_its_end
+from server.core.vectors.private_first import each
 from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
@@ -116,6 +119,7 @@ async def execute_duplicate_check(plan: DuplicateCheckPlan) -> TrackerDuplicateC
     wants_prs = bool(input.related_prs) and not plan.explicit
     pr_task = _start_pr_check(input.org, plan.code_namespace, title, body) if wants_prs else None
     deadline = dl.start_deadline()
+    failed = False
     try:
         inputs = [input.model_copy(update={"namespace": ns}) for ns in plan.targets] or [input]
         out = await _checked(inputs, wall, int(input.top_k))
@@ -129,10 +133,23 @@ async def execute_duplicate_check(plan: DuplicateCheckPlan) -> TrackerDuplicateC
             title,
             cache=plan.cache,
         )
+    except BaseException:
+        failed = True
+        raise
     finally:
         dl.end_deadline(deadline)
-        if pr_task is not None and not pr_task.done():
-            pr_task.cancel()
+        if pr_task is not None and (failed or not pr_task.done()):
+            if not pr_task.done():
+                pr_task.cancel()
+
+            async def stopped() -> None:
+                await asyncio.gather(pr_task, return_exceptions=True)
+
+            try:
+                await to_its_end(stopped(), name="tracker.related-pr-cleanup")
+            except asyncio.CancelledError:
+                if not failed:
+                    raise
 
 
 def _start_pr_check(org: str, code_ns: str, title: str, body: str) -> Any:
@@ -304,6 +321,43 @@ async def _attach_links(
             logger.info("tracker.duplicate_check: fix links skipped: %s", res)
 
 
+async def _namespace_checks(
+    inputs: list[TrackerDuplicateCheckInput],
+    wall: datetime | None,
+    pools: list[Any],
+    pools_ready: asyncio.Future[None],
+) -> list[Any]:
+    """Only an admitted namespace allocates its hand-over future."""
+    loop = asyncio.get_running_loop()
+    ready_count = 0
+
+    async def one(indexed: tuple[int, TrackerDuplicateCheckInput]) -> Any:
+        index, inp = indexed
+        ready: asyncio.Future[Any] = loop.create_future()
+
+        def received(future: asyncio.Future[Any]) -> None:
+            nonlocal ready_count
+            pools[index] = future.result()
+            ready_count += 1
+            if ready_count == len(inputs) and not pools_ready.done():
+                pools_ready.set_result(None)
+
+        ready.add_done_callback(received)
+        try:
+            return await _check_one(inp, wall, pool_ready=ready)
+        except VectorCapacityError as error:
+            if not pools_ready.done():
+                pools_ready.set_exception(error)
+            raise
+        except BaseException as error:  # noqa: BLE001 — preserve gathered noncapacity outcomes
+            return error
+        finally:
+            if not ready.done():
+                ready.set_result([])
+
+    return await each(one)(list(enumerate(inputs)))
+
+
 async def _checked(
     inputs: list[TrackerDuplicateCheckInput], wall: datetime | None, top_k: int
 ) -> TrackerDuplicateCheckOutput:
@@ -315,26 +369,25 @@ async def _checked(
     from server.tracker.app.dupcheck_fanout import merge_outputs
 
     loop = asyncio.get_running_loop()
-    ready = [loop.create_future() for _ in inputs]
-    tasks = [
-        asyncio.ensure_future(_check_one(inp, wall, pool_ready=f))
-        for inp, f in zip(inputs, ready, strict=True)
-    ]
-    for t, f in zip(tasks, ready, strict=True):
-        t.add_done_callback(_empty_pool_on_exit(f))
-    owned: list[asyncio.Future[Any]] = list(tasks)
+    pools: list[Any] = [None] * len(inputs)
+    pools_ready: asyncio.Future[None] = loop.create_future()
+    checking = asyncio.create_task(_namespace_checks(inputs, wall, pools, pools_ready))
+    owned: list[asyncio.Future[Any]] = [checking, pools_ready]
+    failure: BaseException | None = None
     try:
-        # Cancelling a gather over the bare pool futures does not reach the checks
-        # (the loom_search tracker leg runs this under wait_for): every task this
-        # call started is cancelled on the way out unless it finished.
-        pools = await asyncio.gather(*ready)
+        if not inputs:
+            pools_ready.set_result(None)
+        # The final window can finish judging while the shared rerank runs.
+        await pools_ready
         rerank = asyncio.ensure_future(
             _rerank_over(inputs[0], list(pools)) if inputs[0].rerank else _none()
         )
         owned.append(rerank)
-        outs = await asyncio.gather(*tasks, return_exceptions=True)
+        outs = await checking
         kept: list[Any] = []
         for inp, o in zip(inputs, outs, strict=True):
+            if isinstance(o, VectorCapacityError):
+                raise o
             if isinstance(o, BaseException):
                 if inp is inputs[0] or isinstance(o, customer.HOLDS):
                     raise o  # a held model call is the answer, from any tracker
@@ -350,10 +403,22 @@ async def _checked(
         else:
             out = merge_outputs([i.namespace for i in inputs], kept, top_k)
         picked = await rerank
+    except BaseException as error:
+        failure = error
+        raise
     finally:
         for started in owned:
             if not started.done():
                 started.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*owned, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="tracker.duplicate.cleanup")
+        except asyncio.CancelledError:
+            if failure is None:
+                raise
     if picked is None:
         return out
     rr, picks = picked
@@ -362,17 +427,6 @@ async def _checked(
 
 async def _none() -> None:
     return None
-
-
-def _empty_pool_on_exit(fut: Any) -> Any:
-    """A check that ends before handing its pool over (it failed early, or
-    found the record unavailable) counts as an empty pool."""
-
-    def done(_task: Any) -> None:
-        if not fut.done():
-            fut.set_result([])
-
-    return done
 
 
 async def _rerank_over(input: Any, pools: list[list[dict[str, Any]]]) -> Any:
@@ -481,16 +535,29 @@ async def _check_one(input: Any, wall: datetime | None, pool_ready: Any = None) 
                 pool_ready.set_result(rows)
 
         handing = asyncio.ensure_future(hand_over())
+    failure: BaseException | None = None
     try:
         fit = await cached_fit(input.org, input.namespace)
         out = answer(run, fit, status=status, wall=wall, top_k=int(input.top_k))
         out = await judge_uncertain(src, input, run, out, fit)
         if handing is not None:
             await handing
+    except BaseException as error:
+        failure = error
+        raise
     finally:
         # A failed or cancelled check does not leave its pool read running.
-        if handing is not None and not handing.done():
+        if handing is not None:
             handing.cancel()
+
+            async def stopped() -> None:
+                await asyncio.gather(handing, return_exceptions=True)
+
+            try:
+                await to_its_end(stopped(), name="tracker.duplicate.pool.cleanup")
+            except asyncio.CancelledError:
+                if failure is None:
+                    raise
     out = with_closest(out, run, input, fit)
     out = await with_canonical(src, input, out)
     return out

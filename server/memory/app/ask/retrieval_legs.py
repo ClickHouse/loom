@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Any
 
-from server.core.errors import VectorInputTooLargeError
+from server.core.errors import VectorCapacityError
 from server.memory.app.ask.question_shapes import (
     looks_multihop,
 )
@@ -235,8 +235,8 @@ async def decomposed_retrieval(
     hits into `ranked` (whole-question hits first, then per part in order,
     merged by row through `PooledRows`). Returns (sub_questions, merged). A part
     whose retrieval has an ordinary failure is skipped and counted in
-    `stats["failed"]`; typed input refusals propagate — the count rides the response and the
-    ledger, so a lever that stops working is a number, not a log line."""
+    `stats["failed"]`; typed capacity refusals propagate. The count rides the
+    response and ledger, so a failed leg is counted rather than only logged."""
     from server.memory.app.search import handle_memory_search
 
     if mode == "auto" and not looks_multihop(question):
@@ -251,7 +251,7 @@ async def decomposed_retrieval(
             sub = await handle_memory_search(
                 _with(search_input, query=part, top_k=max(1, int(part_top_k)))
             )
-        except VectorInputTooLargeError:
+        except VectorCapacityError:
             raise
         except Exception as e:  # noqa: BLE001 — additive
             logger.warning("memory.ask decompose: part retrieval failed (fail-open): %s", e)

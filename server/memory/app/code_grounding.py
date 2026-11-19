@@ -11,8 +11,9 @@ can be added as sibling grounders behind the same `apply_code_grounding`-shaped
 entry point.
 
 Every step is gated by an explicit code-namespace BINDING (`_resolve_code_target`
-— never guesses a repo) and by its own setting, and every step is additive /
-fail-open, so a deployment with no bound code index is a complete no-op.
+— never guesses a repo) and by its own setting. Ordinary read failures leave the pool
+available; capacity refusals fail the complete read. A deployment with no bound code
+index is a complete no-op.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ import re
 from typing import Any
 
 from server.code.domain.anchor import local_name
+from server.core.errors import VectorCapacityError
+from server.core.shielded import to_its_end
 from server.memory.store.code_links import LinkRow
 
 logger = logging.getLogger(__name__)
@@ -144,7 +147,7 @@ async def _inject_code_context(
     When both hold, run code.search against that EXPLICIT (org, namespace) and
     render the top units as `[code index @ <branch>] path:line — symbol …`
     grounding hits, carrying the authoritative source location + signature +
-    recent PRs the memory corpus usually lacks. Fail-open to []."""
+    recent PRs the memory corpus usually lacks. Ordinary failures return []."""
     from server.code.domain import idents
 
     _hop_cap = int(settings.memory_ask_code_hop_symbols)
@@ -250,15 +253,37 @@ async def _inject_code_context(
                     consumer=GROUNDING_CONSUMER,
                 )
             )
-        except Exception as e:  # noqa: BLE001 — additive, never fatal
+        except VectorCapacityError:
+            raise
+        except Exception as e:  # noqa: BLE001 — ordinary enrichment failures are optional
             _warn_once("code-context search fallback failed: %s", e)
             return None
 
     # Hop symbols ride the same concurrent round, one
     # authoritative definition each, appended after the question's rows.
-    gathered = await asyncio.gather(
-        *(_symbol(sym) for sym in exact), *(_symbol(sym) for sym in hop_syms), _search()
-    )
+    tasks = [
+        asyncio.create_task(work)
+        for work in (
+            *(_symbol(sym) for sym in exact),
+            *(_symbol(sym) for sym in hop_syms),
+            _search(),
+        )
+    ]
+    try:
+        gathered = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="code-context-read-cleanup")
+        except asyncio.CancelledError:
+            # Cleanup cancellation cannot replace the first read failure.
+            pass
+        raise
     symbol_outs, out = list(gathered[: len(exact)]), gathered[-1]
     hop_outs = list(gathered[len(exact) : len(exact) + len(hop_syms)])
     # The exact definitions first, the search fills.
@@ -688,14 +713,33 @@ async def apply_code_grounding(
     if not target[1]:
         return synth_pool
 
-    gated, code_hits = await asyncio.gather(
-        _gate_future_prs(synth_pool, search_input, settings, code_target=target)
-        if settings.memory_ask_pr_temporal_gate
-        else _noop_gate(),
-        _inject_code_context(query, search_input, settings, pool=synth_pool, code_target=target)
-        if settings.memory_ask_code_enrichment
-        else _noop_hits(),
-    )
+    tasks = [
+        asyncio.create_task(
+            _gate_future_prs(synth_pool, search_input, settings, code_target=target)
+            if settings.memory_ask_pr_temporal_gate
+            else _noop_gate()
+        ),
+        asyncio.create_task(
+            _inject_code_context(query, search_input, settings, pool=synth_pool, code_target=target)
+            if settings.memory_ask_code_enrichment
+            else _noop_hits()
+        ),
+    ]
+    try:
+        gated, code_hits = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="code-grounding-round-cleanup")
+        except asyncio.CancelledError:
+            # Cleanup cancellation cannot replace the first grounding failure.
+            pass
+        raise
     if len(gated) != len(synth_pool):
         synth_pool = gated
     if code_hits:

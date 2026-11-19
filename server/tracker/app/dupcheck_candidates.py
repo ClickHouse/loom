@@ -8,9 +8,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any
 
+from server.core.shielded import to_its_end
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerSimilarInput,
@@ -35,6 +37,34 @@ LEG_HEAD = 5
 def _max_length(field: Any) -> int:
     """A pydantic field's `max_length` constraint."""
     return next(int(m.max_length) for m in field.metadata if getattr(m, "max_length", None))
+
+
+async def _candidate_reads[A, B, C, D](
+    legs: Awaitable[A], record: Awaitable[B], flight: Awaitable[C], fingerprint: Awaitable[D]
+) -> tuple[A, B, C, D]:
+    """Retire all four candidate readers before the first failed read escapes."""
+    tasks = (
+        asyncio.ensure_future(legs),
+        asyncio.ensure_future(record),
+        asyncio.ensure_future(flight),
+        asyncio.ensure_future(fingerprint),
+    )
+    try:
+        a, b, c, d = await asyncio.gather(*tasks)
+        return a, b, c, d
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="duplicate-candidate-cleanup")
+        except asyncio.CancelledError:
+            # Cleanup cancellation does not replace the first failed read.
+            pass
+        raise
 
 
 async def candidates(
@@ -72,7 +102,7 @@ async def candidates(
     await _resolve_error_name(src, input, q, meta)
     draft_paths = _draft_paths(q, input)
     errors: dict[str, BaseException] = {}
-    lists, record, in_flight, fingerprint = await asyncio.gather(
+    lists, record, in_flight, fingerprint = await _candidate_reads(
         tsim._similar_legs(
             src,
             sim_input,

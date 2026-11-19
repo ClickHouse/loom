@@ -8,6 +8,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 
 from server.core.diagnostics import private_work
+from server.core.errors import VectorCapacityError
 from server.knowledge.api.models_knowledge import _SearchHit
 from server.knowledge.app import knowledge_search
 from server.knowledge.app.knowledge_search import CheckedSearch, SearchRequest
@@ -92,6 +93,8 @@ class CheckedPassages:
             if self._wide is not None:
                 try:
                     wide = (await self._wide.ordinary()).results
+                except VectorCapacityError:
+                    raise
                 except Exception:  # noqa: BLE001 — the first complete ordinary pass still answers
                     self._wide = None
             self.hits = await self._select(first, wide)
@@ -119,6 +122,8 @@ class CheckedPassages:
                     if self._wide is not None:
                         try:
                             wide = (await self._wide.current()).results
+                        except VectorCapacityError:
+                            raise
                         except Exception:  # noqa: BLE001 — discard mixed work if an optional renewal fails
                             return await self._fallback()
                     if not self.fresh():
@@ -163,6 +168,8 @@ async def collect(
             if width > top_k:
                 try:
                     await wider(width)
+                except VectorCapacityError:
+                    raise
                 except Exception:  # noqa: BLE001 — a failed optional wide pass does not replace the first
                     wide = None
             result = CheckedPassages(first, wide, agent, top_k, keep, [])

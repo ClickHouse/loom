@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from typing import Any
 
 from server.core.ch_params import fitting
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.search_parsing import _iso_date, _record_excerpt, _record_query_tokens
 from server.memory.domain.search_sql import _build_where
@@ -134,9 +136,12 @@ async def _lexical_recall_fallback(
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
     try:
-        rows = await _call_retrying_empty_block(
-            lambda: ch.query_all(sql, params=params), leg="lexical"
-        )
+        with vector_work(q.org, q.namespace):
+            rows = await _call_retrying_empty_block(
+                lambda: ch.query_all(sql, params=params), leg="lexical"
+            )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — the lexical fallback leg is additive; fail open
         log.warning("_lexical_recall_fallback failed (fail-open): %s", e)
         return []
@@ -465,7 +470,10 @@ async def _fetch_unmatched_candidates(
         LIMIT {{unmatched_limit:UInt32}}
     """
     try:
-        rows = await ch.query_all(sql, params=params)
+        with vector_work(q.org, q.namespace):
+            rows = await ch.query_all(sql, params=params)
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — the unmatched-candidate leg is additive; fail open
         log.warning("_fetch_unmatched_candidates failed (fail-open): %s", e)
         return []

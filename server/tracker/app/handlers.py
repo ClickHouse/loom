@@ -9,11 +9,11 @@ a source that cannot answer marks the response `tracker_unavailable` instead of 
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
-from server.core.errors import ValidationError
+from server.core.errors import ValidationError, VectorCapacityError
+from server.core.vectors.private_first import each
 from server.tracker.api.models import (
     TrackerAnswerInput,
     TrackerAnswerOutput,
@@ -300,13 +300,20 @@ async def _answer_elsewhere(
     `<namespace>:` head."""
     from server.tracker.app.router import TrackerAnswer, answer, render_lines
 
-    outs = await asyncio.gather(
-        *[answer(question, tracker_namespace=ns, **ask) for ns in namespaces],
-        return_exceptions=True,
-    )
+    async def one(namespace: str) -> Any:
+        try:
+            return await answer(question, tracker_namespace=namespace, **ask)
+        except VectorCapacityError:
+            raise
+        except BaseException as error:  # noqa: BLE001 — preserve gathered noncapacity outcomes
+            return error
+
+    outs = await each(one)(namespaces)
     kept: list[tuple[str, Any]] = []
     lines: list[str] = []
     for ns, a in zip(namespaces, outs, strict=True):
+        if isinstance(a, VectorCapacityError):
+            raise a
         if isinstance(a, BaseException):
             logger.info("tracker.answer on %s failed inside a fan-out: %s", ns, a)
             continue

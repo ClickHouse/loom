@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 
 from server.core.ch import sequential_reads, set_query_tag
 from server.core.diagnostics import private_work
+from server.core.errors import VectorCapacityError
 from server.knowledge.app.search import ChunkHit, HybridSearchQuery
 from server.knowledge.app.source_access import Admitted, ReadPlan
 from server.knowledge.app.source_ranking import RankedHit, ordinary_families, rank
@@ -95,6 +96,8 @@ class SearchPasses:
                     ordinary=ordinary_families({leg: ordinary.get(leg, []) for leg in legs}),
                 )
                 mirrored = await hydrate(self.plan, candidates, model=query.embedding_model)
+        except VectorCapacityError:
+            raise
         except Exception:  # noqa: BLE001 — a failed conditional pass must disclose no partial mirrors
             self.plan.failed = True
         self._passes.append(_Pass(ordinary, mirrored, legs, fallback, top_k, lexical_weight))
@@ -118,6 +121,8 @@ class SearchPasses:
                 if self.proofs.invalid:
                     raise ValueError("invalid final search admission")
                 return [selected.ranked(checked) for selected in self._passes]
+        except VectorCapacityError:
+            raise
         except Exception:  # noqa: BLE001 — final candidate failure invalidates every earlier mirror pass
             self.plan.failed = True
             self.proofs = SearchProofs(self.plan, "", ())

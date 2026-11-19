@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Awaitable
 from typing import Any
 
 from server.code.app.search.lexical import _lexical_terms
@@ -17,10 +18,35 @@ from server.code.app.spans import code_span, span_attrs
 from server.code.domain.index import query_trim
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo
+from server.core.errors import VectorCapacityError
+from server.core.shielded import to_its_end
 from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
+
+
+async def _card_reads[T](
+    *reads: Awaitable[T], source: asyncio.Future[Any] | None = None
+) -> list[T]:
+    """Retire both card legs and their source before a failed read escapes."""
+    tasks = [asyncio.ensure_future(read) for read in reads]
+    owned = [*tasks, *([source] if source is not None else [])]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in owned:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*owned, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="card-read-cleanup")
+        except asyncio.CancelledError:
+            # Cleanup cancellation does not replace the first failed read.
+            pass
+        raise
 
 
 async def _card_leg_rows(
@@ -94,6 +120,8 @@ async def _card_leg_rows(
                         int(r.get("start_line") or 0),
                     )
                 )
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — a vote, never a gate
             logger.warning("code.search card leg failed: %s", e)
             work["card_leg_failed"] = 1
@@ -226,6 +254,8 @@ async def _card_and_concept_rows(
                     pool=pool,
                     skip_tests=True,
                 )
+            except VectorCapacityError:
+                raise
             except Exception as e:  # noqa: BLE001 — a vote, never a gate
                 logger.warning("code.search card term read failed: %s", e)
                 return []
@@ -282,13 +312,9 @@ async def _card_and_concept_rows(
                 cards=(await asyncio.shield(source)) if shared else None,
             )
 
-        try:
-            cards, concepts = await asyncio.gather(_cards(), _concepts())
-        finally:
-            if not source.done():
-                source.cancel()
+        cards, concepts = await _card_reads(_cards(), _concepts(), source=source)
         return cards, concepts
-    cards, concepts = await asyncio.gather(
+    cards, concepts = await _card_reads(
         _card_leg_rows(
             repo,
             org,

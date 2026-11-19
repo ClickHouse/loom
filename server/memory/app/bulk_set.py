@@ -16,9 +16,11 @@ from server.core import pg, pg_lease
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.error_summary import error_summary
+from server.core.errors import VectorCapacityError
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
+from server.core.vectors.private_first import each
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
@@ -80,6 +82,7 @@ from server.memory.store.pg_memory import (
     PeerErased,
     heads_unchanged,
 )
+from server.observability import degradations
 from server.observability.budget_shape import note_budget_shape
 
 if TYPE_CHECKING:
@@ -818,6 +821,19 @@ async def _bulk_post_insert_links(
             )
             _n_value_links = len(_report.links)
             _value_links = list(_report.follow_links)
+        except VectorCapacityError as error:
+            reason = str(error.extra.get("reason", "input"))
+            log.warning("bulk_set: optional value-update linking refused: %s", reason)
+            degradations.note(
+                "value_updates", "versions_committed_linking_refused", reason, health=False
+            )
+            affected = {(str(row["memory_key"]), int(row["version"])) for row in _live_rows}
+            for result in state.results:
+                if (result.memory_key, result.version) in affected:
+                    result.next = (
+                        result.next + " Optional value-update linking was refused by vector "
+                        "capacity; this version committed."
+                    ).strip()
         except Exception as e:  # noqa: BLE001 — never block an ingest
             log.warning("bulk_set: value-update linking failed (non-fatal): %s", e)
     last_value_updates_linked.set(_n_value_links)
@@ -1475,6 +1491,8 @@ async def _batched_peers(
             batch=batch,
             user_id=input.user_id,
         )
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — each fact reads its own peers
         log.warning("bulk_set: batched candidate lookup failed: %s", e)
         return {}
@@ -1561,11 +1579,17 @@ async def _bulk_conflict_verdicts(
                 )
             except customer.HOLDS:
                 raise  # held, as the batch's own embeds would be: the write answers it
+            except VectorCapacityError:
+                raise
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 
-    jobs = [_one(idx, vec, prefetched.get(j)) for j, ((idx, *_), vec) in enumerate(pairs)]
-    await asyncio.gather(*jobs)
+    async def _check(item: tuple[int, int, list[float]]) -> None:
+        j, idx, vec = item
+        await _one(idx, vec, prefetched.get(j))
+
+    jobs = [(j, idx, vec) for j, ((idx, *_), vec) in enumerate(pairs)]
+    await each(_check)(jobs)
     return out
 
 

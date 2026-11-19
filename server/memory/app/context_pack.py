@@ -16,10 +16,11 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from server.core.background import gather_or_cancel
 from server.core.diagnostics import private_work
+from server.core.errors import VectorCapacityError
 from server.core.naming import SENTINEL as _WM_SENTINEL
 from server.core.naming import named
+from server.core.shielded import to_its_end
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
 from server.memory.api.models_lifecycle import MemoryStackInput
@@ -892,7 +893,9 @@ async def _pack_runs(st: _PackState) -> None:
 async def _optional_section(name: str, work: Awaitable[Any]) -> Any:
     try:
         return await work
-    except Exception as error:  # noqa: BLE001 — a failed optional section leaves other sections available
+    except VectorCapacityError:
+        raise
+    except Exception as error:  # noqa: BLE001 — an ordinary section failure leaves other sections available
         log.warning("context.pack: section %s failed: %s", name, error)
         return None
 
@@ -915,9 +918,25 @@ async def _gather_sections(
         _pack_runs(st),
     )
     names = [name for name in _DEFAULT_SECTION_ORDER if name != "decisions"]
-    results = await gather_or_cancel(
-        *(_optional_section(name, task) for name, task in zip(names, work, strict=True))
-    )
+    tasks = [
+        asyncio.create_task(_optional_section(name, task))
+        for name, task in zip(names, work, strict=True)
+    ]
+    try:
+        results = await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="context-pack-section-cleanup")
+        except asyncio.CancelledError:
+            # Cleanup cancellation cannot replace the first section failure.
+            pass
+        raise
     return cast("CheckedStack | None", results[5]), cast("CheckedPassages | None", results[8])
 
 
@@ -1091,11 +1110,15 @@ class CheckedPack:
             if self._direct is not None:
                 try:
                     direct = await self._direct.ordinary()
+                except VectorCapacityError:
+                    raise
                 except Exception:  # noqa: BLE001 — a failed ordinary section is omitted without retry
                     self._direct = None
             if self._stack is not None:
                 try:
                     stack = await self._stack.ordinary()
+                except VectorCapacityError:
+                    raise
                 except Exception:  # noqa: BLE001 — a failed ordinary section is omitted without retry
                     self._stack = None
             self._output = _render_checked_pack(self._prefix, stack, direct)
@@ -1124,11 +1147,15 @@ class CheckedPack:
                     if self._direct is not None:
                         try:
                             direct = await self._direct.current()
+                        except VectorCapacityError:
+                            raise
                         except Exception:  # noqa: BLE001 — a failed optional section cannot expose a partial mixed pack
                             self._direct, failed = None, True
                     if self._stack is not None:
                         try:
                             stack = await self._stack.current()
+                        except VectorCapacityError:
+                            raise
                         except Exception:  # noqa: BLE001 — a failed optional section cannot expose a partial mixed pack
                             self._stack, failed = None, True
                     if failed or not self.fresh():

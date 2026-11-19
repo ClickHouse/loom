@@ -9,6 +9,7 @@ import functools
 import logging
 from typing import Any
 
+from server.core.errors import VectorCapacityError
 from server.core.vectors.private_first import best_similarity, each, search_private_first
 from server.identity.app import namespace_visibility
 from server.memory.api.models_search import _MemorySearchHit
@@ -205,6 +206,8 @@ async def _run_vector_legs(
     if entity_boost_task is not None:
         try:
             ctx.entity_boost_by_key = await entity_boost_task
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — entity boost is optional; search runs without it
             log.warning("entity_vectors ANN read failed (non-fatal): %s", e)
 

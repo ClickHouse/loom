@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import Any
 
-from server.core.errors import VectorInputTooLargeError
+from server.core.errors import VectorCapacityError
 from server.memory.app.ask.completion import (
     _bridge_complete_memories,
     _facet_complete_memories,
@@ -290,7 +290,7 @@ async def _widen_by_question(
         for _part in _parts[1:]:
             try:
                 _sub = await handle_memory_search(_with(search_input, query=_part))
-            except VectorInputTooLargeError:
+            except VectorCapacityError:
                 raise
             except Exception:  # noqa: BLE001 — additive
                 continue
@@ -348,7 +348,7 @@ async def _widen_by_question(
                         )
                     )
                     _sub_hits = list(_sub.results or [])
-                except VectorInputTooLargeError:
+                except VectorCapacityError:
                     raise
                 except Exception:  # noqa: BLE001 — additive
                     continue

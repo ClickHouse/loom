@@ -20,7 +20,7 @@ def _main_leg_threads_sql(settings_obj: Any) -> str:
     return f"max_threads = {pin},\n            " if pin > 0 else ""
 
 
-async def _fact_distance_expr(q: SearchQuery, ch: _CHClient, settings_obj: Any) -> str:
+async def _fact_distance_expr(q: SearchQuery, ch: _CHClient, settings_obj: Any) -> tuple[str, int]:
     """Phase 6's vector fragment: the `distance` expression. Resolves the key axis for this
     read."""
     # Key-embedding axis. Referencing `memory_key_embedding`
@@ -30,7 +30,7 @@ async def _fact_distance_expr(q: SearchQuery, ch: _CHClient, settings_obj: Any) 
     # is the bare value distance and the column is never named in the query.
     key_axis_on = await resolve_key_axis(q, ch=ch, settings_obj=settings_obj)
     if not key_axis_on:
-        return "cosineDistance(e.embedding, {q:Array(Float32)})"
+        return "cosineDistance(e.embedding, {q:Array(Float32)})", 1
     return (
         "least("
         "cosineDistance(e.embedding, {q:Array(Float32)}), "
@@ -39,12 +39,12 @@ async def _fact_distance_expr(q: SearchQuery, ch: _CHClient, settings_obj: Any) 
         " AND length(e.memory_key_embedding) = length({q:Array(Float32)}),"
         " e.memory_key_embedding, e.embedding), {q:Array(Float32)})"
         ")"
-    )
+    ), 2
 
 
 async def _fact_leg_sql(
     q: SearchQuery, ch: _CHClient, where: list[str], params: dict[str, Any], t: _FactRankTerms
-) -> str:
+) -> tuple[str, int]:
     """Phase 6 of `vector_search`: the fact leg's statement. Binds
     `internal_limit` into `params`."""
     # Over-fetch 4× top_k (floor 60) so weak semantic candidates can rerank up
@@ -89,7 +89,7 @@ async def _fact_leg_sql(
     where_sql = " WHERE " + " AND ".join(rest_clauses) if rest_clauses else ""
 
     # use_query_cache is deliberately NOT set — it breaks write-then-read.
-    distance_expr = await _fact_distance_expr(q, ch, _vs_settings)
+    distance_expr, weight = await _fact_distance_expr(q, ch, _vs_settings)
     select_from = f"""
         SELECT
             e.memory_key       AS memory_key,
@@ -167,4 +167,4 @@ async def _fact_leg_sql(
             query_plan_join_swap_table = 'auto',
             optimize_read_in_order = 1
     """
-    return sql
+    return sql, weight

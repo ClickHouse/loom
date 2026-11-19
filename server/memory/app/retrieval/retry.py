@@ -10,6 +10,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.memory.domain.search_types import _CHClient
 from server.settings import settings
 
@@ -41,10 +43,13 @@ async def _spanned(name: str, coro: Any) -> Any:
 
 
 async def _query_all_retrying_empty_block(
-    ch: _CHClient, sql: str, params: dict[str, Any]
+    ch: _CHClient, sql: str, params: dict[str, Any], *, weight: int
 ) -> list[dict[str, Any]]:
     """The vector leg's statement under the fresh-part retry."""
-    return await _call_retrying_empty_block(lambda: ch.query_all(sql, params=params), leg="vector")
+    with vector_work(str(params["org"]), str(params["ns"]), weight):
+        return await _call_retrying_empty_block(
+            lambda: ch.query_all(sql, params=params), leg="vector"
+        )
 
 
 async def _call_retrying_empty_block[T](
@@ -62,6 +67,8 @@ async def _call_retrying_empty_block[T](
     while True:
         try:
             return await factory()
+        except VectorCapacityError:
+            raise
         except Exception as e:
             if (
                 not _is_empty_block_column_error(e)

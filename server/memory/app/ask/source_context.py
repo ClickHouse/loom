@@ -57,8 +57,11 @@ async def prepare_knowledge(
     return PreparedKnowledge(request, plan)
 
 
-async def cancel_and_drain(task: asyncio.Task[Any]) -> None:
+async def cancel_and_drain(task: asyncio.Task[Any], *, preserve_failure: bool = False) -> None:
     """Join an owned child before another attempt or the request can finish."""
+    if task.done():
+        return
+
     import anyio
 
     from server.core.ch import set_query_tag
@@ -80,7 +83,7 @@ async def cancel_and_drain(task: asyncio.Task[Any]) -> None:
                 break
     if not task.cancelled():
         task.exception()
-    if interrupted is not None:
+    if interrupted is not None and not preserve_failure:
         raise interrupted
 
 

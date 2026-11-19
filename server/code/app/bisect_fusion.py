@@ -2,8 +2,8 @@
 
 The diff scan's candidates, fused with the window's vector, lexical, path,
 subtree and recency ranks, and the suspects the report names
-(`server/tracker/domain/bisect_fusion.py` holds the pure parts). Every read
-fails open: an error leaves the scan's candidates as they were.
+(`server/tracker/domain/bisect_fusion.py` holds the pure parts). Ordinary read failures
+leave the scan's candidates available; capacity refusals fail the complete read.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.core.errors import VectorCapacityError
 from server.core.llm_free import reads_llm_free
 from server.llm import customer
 from server.settings import settings
@@ -58,7 +59,9 @@ async def _vector_order(
             kinds=["pr"],
             numbers=numbers,
         )
-    except Exception as e:  # noqa: BLE001 — the vector leg is optional
+    except VectorCapacityError:
+        raise
+    except Exception as e:  # noqa: BLE001 — ordinary vector failures leave other signals available
         logger.info("bisect fusion: vector read failed: %s", e)
         return []
     return [int(h["number"]) for h in hits]

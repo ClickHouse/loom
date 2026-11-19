@@ -10,6 +10,7 @@ from server.code.app.search.fusion import leg_provenance
 from server.code.app.search.state import _POOL, _model_name
 from server.code.app.spans import code_span, span_attrs
 from server.code.store.index import CodeRepo
+from server.core.errors import VectorCapacityError
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,8 @@ async def _track(
                 if found
                 else []
             )
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — a diagnostic never sinks a search
             logger.warning("code.search track_path read failed: %s", e)
             return {"path": path, "verdict": f"track read failed: {type(e).__name__}"}

@@ -29,12 +29,13 @@ value), so a dropped leg degrades exactly the way a failed one always has.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import time
 from collections.abc import Awaitable
 from typing import Any
 
+from server.core.errors import VectorCapacityError
 from server.core.llm_free import reads_llm_free
+from server.core.shielded import to_its_end
 from server.settings import settings
 
 # The legs whose rows the answer cannot do without; the deadline waits for
@@ -103,10 +104,16 @@ async def run_legs(
             legs, tasks, result=result, work=work, deadline_ms=deadline_ms, floor_ms=floor_ms
         )
     except BaseException:
-        # the caller was cancelled, or a leg raised: no sibling leg keeps
-        # reading after the request has gone
-        for t in tasks.values():
-            t.cancel()
+        for task in tasks.values():
+            task.cancel()
+
+        async def stopped() -> None:
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+        try:
+            await to_its_end(stopped(), name="code.search.legs.cleanup")
+        except asyncio.CancelledError:
+            pass  # Preserve the first failure after every owned leg stops.
         raise
 
 
@@ -136,13 +143,22 @@ async def _await_legs(
             return rem
         return cap_s if rem is None else min(rem, cap_s)
 
+    def capacity_failure() -> None:
+        for task in tasks.values():
+            if task.done() and not task.cancelled():
+                error = task.exception()
+                if isinstance(error, VectorCapacityError):
+                    raise error
+
     plain = [tasks[n] for n in names if n not in LLM_LEGS]
     model = [tasks[n] for n in names if n in LLM_LEGS]
     if plain:
         await asyncio.wait(plain, timeout=_left())
+    capacity_failure()
     pending_model = [t for t in model if not t.done()]
     if pending_model:
         await asyncio.wait(pending_model, timeout=_left(grace / 1000.0 if grace else None))
+    capacity_failure()
     core = [tasks[n] for n in names if n in CORE_LEGS]
     if core and not any(t.done() for t in core):
         # the floor: an answer from at least one content leg, inside the budget
@@ -151,12 +167,18 @@ async def _await_legs(
             return_when=asyncio.FIRST_COMPLETED,
             timeout=None if floor_ms is None else floor_ms / 1000.0,
         )
+    capacity_failure()
     dropped = [n for n in names if not tasks[n].done()]
     for n in dropped:
         tasks[n].cancel()
-    for n in dropped:
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await tasks[n]
+    if dropped:
+
+        async def stopped() -> None:
+            await asyncio.gather(*(tasks[n] for n in dropped), return_exceptions=True)
+
+        await to_its_end(stopped(), name="code.search.deadline.cleanup")
+    # A leg can refuse capacity while its deadline cancellation is settling.
+    capacity_failure()
     if dropped:
         result.legs_timed_out = dropped
         result.epistemic = "partial"

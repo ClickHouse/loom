@@ -26,6 +26,8 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
+from server.core.errors import VectorCapacityError
+from server.core.shielded import to_its_end
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -165,23 +167,39 @@ async def run_all(
     for ns in namespaces:
         sub = inp.model_copy(update={"namespace": ns, "namespaces": []})
         tasks[ns] = asyncio.ensure_future(_timed(ns, single(sub)))
+
+    async def stopped() -> None:
+        await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+    def capacity_failure() -> None:
+        for task in tasks.values():
+            if task.done() and not task.cancelled():
+                error = task.exception()
+                if isinstance(error, VectorCapacityError):
+                    raise error
+
     try:
         done, pending = await asyncio.wait(tasks.values(), timeout=max(0.001, timeout_ms / 1000.0))
+        capacity_failure()
+        for task in pending:
+            task.cancel()
+        if pending:
+            await to_its_end(stopped(), name="code.search.fanout.deadline.cleanup")
+        capacity_failure()
+        answered: Answered = {}
+        for task in done:
+            ns, out, ms = task.result()
+            answered[ns] = (out, ms)
+        dropped = [ns for ns, task in tasks.items() if task in pending]
+        return answered, dropped
     except BaseException:
-        # the caller was cancelled: `wait` leaves its tasks running
-        for t in tasks.values():
-            t.cancel()
+        for task in tasks.values():
+            task.cancel()
+        try:
+            await to_its_end(stopped(), name="code.search.fanout.cleanup")
+        except asyncio.CancelledError:
+            pass  # Preserve the first failure after every owned namespace stops.
         raise
-    for t in pending:
-        t.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    answered: Answered = {}
-    for t in done:
-        ns, out, ms = t.result()
-        answered[ns] = (out, ms)
-    dropped = [ns for ns, t in tasks.items() if t in pending]
-    return answered, dropped
 
 
 def interleave(answered: Answered, namespaces: list[str], top_k: int) -> list[CodeUnit]:

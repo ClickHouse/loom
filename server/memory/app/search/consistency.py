@@ -13,7 +13,7 @@ from typing import Any
 
 from server.core.ch import sequential_reads, sequential_reads_active
 from server.core.datetimes import naive_utc_now
-from server.core.errors import VectorInputTooLargeError
+from server.core.errors import VectorCapacityError
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
 from server.memory.app.recent_writes import written_recently
 from server.memory.app.search.context import SearchContext
@@ -183,7 +183,7 @@ async def _consistency_reread(
                 )
         except TimeoutError:
             log.warning("memory.search: fresh-hit sequential re-read exceeded the wall budget")
-        except VectorInputTooLargeError:
+        except VectorCapacityError:
             raise
         except Exception as e:  # noqa: BLE001 — an optional re-read; the first pass stands
             log.warning("memory.search: fresh-hit sequential re-read failed: %s", e)
@@ -214,7 +214,7 @@ async def _consistency_reread(
                 )
         except TimeoutError:
             log.warning("memory.search: sequential-consistency retry exceeded the wall budget")
-        except VectorInputTooLargeError:
+        except VectorCapacityError:
             raise
         except Exception as e:  # noqa: BLE001 — an optional retry; the first pass stands
             log.warning("memory.search: sequential-consistency retry failed: %s", e)

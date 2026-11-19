@@ -391,6 +391,8 @@
  "tracker_snapshot_ttl_s",
  "tracker_source_check_timeout_s",
  "tracker_test_candidates_timeout_s",
+ "vector_scan_max_concurrent_per_org",
+ "vector_scan_max_waiters_per_org",
  "worker_backoff_base_s",
  "worker_backoff_cap_s",
  "worker_partial_retry_s"

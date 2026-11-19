@@ -467,6 +467,7 @@ async def ask(
 
         # Every exit below — an early answer, a precedent, an error — leaves the
         # knowledge read cancelled; after a normal await it is already done.
+        failed = False
         try:
             # `question` is the text the model answers; search_input.query is what
             # retrieval embedded (the stem, when the caller's query carried an answer
@@ -577,6 +578,8 @@ async def ask(
                 generate, knowledge_context, marked=prepared_knowledge.plan.marked
             )
 
+        except BaseException:
+            failed = True
+            raise
         finally:
-            if not _knowledge_task.done():
-                await cancel_and_drain(_knowledge_task)
+            await cancel_and_drain(_knowledge_task, preserve_failure=failed)

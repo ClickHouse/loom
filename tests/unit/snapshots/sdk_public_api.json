@@ -3876,6 +3876,7 @@
     "SyncAgent",
     "TokenClaims",
     "ValidationError",
+    "VectorCapacityRefused",
     "WrongCell",
     "__version__",
     "decode_token_claims",

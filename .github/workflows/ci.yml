@@ -1110,7 +1110,7 @@ jobs:
       # first parent of its merge commit, the target branch as the merge was made. The
       # target branch's tip can carry a newer migration by the time the run starts.
       - name: Mixed-version gate
-        run: python scripts/gates/mixed_version.py --require --base HEAD~1
+        run: python scripts/gates/mixed_version.py --require --base HEAD~1 --ranking-neutral
       - name: Published build ordinary-event compatibility
         run: python scripts/gates/mixed_version.py --require --base 1cbaf0411114512957b96ec5ea7bbb8058828543
 

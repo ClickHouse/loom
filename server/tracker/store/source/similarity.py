@@ -421,6 +421,7 @@ class SimilarReads(SourceBase):
             params,
             cache_key=["vec", refs, before, repos, lim],
             budget_ms=int(settings.tracker_live_bisect_budget_ms),
+            vector=True,
         )
         return [{**similar_row(r), "distance": float(r.get("distance") or 0.0)} for r in rows]
 

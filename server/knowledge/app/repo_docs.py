@@ -6,8 +6,8 @@ access. Mirrored documents keep their source's permissions for each reader.
 
 Under a code scope the repository's documents join `loom_search`'s knowledge
 section, and `code.context_pack` returns them as its `docs` section. Every
-read passes the gate for the current principal first and is bounded; a
-failure answers nothing, never an error — the leg is additive.
+read passes the gate for the current principal first and is bounded; an
+ordinary failure answers nothing; capacity refusals propagate.
 """
 
 from __future__ import annotations
@@ -19,8 +19,9 @@ import time
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, TypedDict
 
-from server.core.background import gather_or_cancel
 from server.core.diagnostics import private_work
+from server.core.errors import VectorCapacityError
+from server.core.shielded import to_its_end
 from server.knowledge.api.models_knowledge import (
     KnowledgeListInput,
     KnowledgeSearchInput,
@@ -113,6 +114,8 @@ class RepoSearch:
                         await extra.ordinary()
                     else:
                         await extra.current()
+        except VectorCapacityError:
+            raise
         except Exception:  # noqa: BLE001 — an additive renewal failure leaves the base search intact
             self._lost |= extra.lost
             self.extra = None
@@ -129,7 +132,24 @@ class RepoSearch:
 
     async def _ordinary(self) -> KnowledgeSearchOutput:
         self._lost = True
-        await gather_or_cancel(self.base.ordinary(), self._renew_extra(ordinary=True))
+        tasks = [
+            asyncio.create_task(self.base.ordinary()),
+            asyncio.create_task(self._renew_extra(ordinary=True)),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+
+            async def stopped() -> None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            try:
+                await to_its_end(stopped(), name="knowledge.repo.ordinary.cleanup")
+            except asyncio.CancelledError:
+                pass  # Preserve the first failure after both reads stop.
+            raise
         self._drop_expired_extra()
         return self.output
 
@@ -224,6 +244,8 @@ async def search_repo_docs(request: RepoSearchRequest, plan: ReadPlan) -> Checke
             raise TimeoutError()
         async with asyncio.timeout_at(request.extra_deadline):
             return await run_checked_search(request.extra, plan)
+    except VectorCapacityError:
+        raise
     except Exception:  # noqa: BLE001 — a failed additive search cannot expose private details
         log.info("repo docs search did not answer")
         return None
@@ -235,9 +257,24 @@ async def run_repo_search(request: RepoSearchRequest, plan: ReadPlan) -> RepoSea
     if any(child.input.org != plan.org for child in (request.base, request.extra) if child):
         raise ValueError("document read scope changed")
     with private_work() if plan.marked else nullcontext():
-        base, extra = await gather_or_cancel(
-            run_checked_search(request.base, plan), search_repo_docs(request, plan)
-        )
+        tasks = [
+            asyncio.create_task(run_checked_search(request.base, plan)),
+            asyncio.create_task(search_repo_docs(request, plan)),
+        ]
+        try:
+            base, extra = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+
+            async def stopped() -> None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            try:
+                await to_its_end(stopped(), name="knowledge.repo.search.cleanup")
+            except asyncio.CancelledError:
+                pass  # Preserve the first failure after both searches stop.
+            raise
         assert base is not None
         return RepoSearch(request, base, extra)
 

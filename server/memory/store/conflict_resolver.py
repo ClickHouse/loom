@@ -26,6 +26,7 @@ from typing import Any, NamedTuple
 
 from server.core.naming import SENTINEL, is_anonymous_user, session_spellings
 from server.core.repo_base import _CHClient, _default_client
+from server.core.vectors.admission import vector_work
 from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
 
 # Aware: a naive datetime encodes as host time, which east of UTC is before 1970.
@@ -383,8 +384,12 @@ async def cluster_peers(
         "lim": 4 * max(int(limit), 1),
     }
     half = max(int(limit) // 2, 1)
-    near = [c for c in await ch.query_all(_nearest_sql(), params=params) if 1 - c["dist"] >= floor]
-    anchored = await ch.query_all(_ANCHORED_SQL, params={**params, "same_lim": half})
+    with vector_work(str(row["org"]), str(row["namespace"])):
+        near = [
+            c for c in await ch.query_all(_nearest_sql(), params=params) if 1 - c["dist"] >= floor
+        ]
+    with vector_work(str(row["org"]), str(row["namespace"]), 2):
+        anchored = await ch.query_all(_ANCHORED_SQL, params={**params, "same_lim": half})
     above_floor = {key_identity(c) for c in near}
     found = {key_identity(c): c for c in [*anchored, *near]}
     if not found:

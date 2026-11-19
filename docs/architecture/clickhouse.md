@@ -1028,3 +1028,58 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - [Migrations](../development/migrations.md): writing and testing a migration.
 - [Troubleshooting](../operations/troubleshooting.md): too many parts, slow inserts.
 - [Performance tuning](../guides/performance-tuning.md): traffic classes, vector knobs.
+
+## Vector read admission
+
+Vector dispatches carry their target org, authorized namespaces and probe weight.
+One query vector against one stored axis costs one unit; a value/key read or entity
+boost costs two, and a six-probe conflict statement costs six. These units are
+independent of connection slots. SQL, tenant predicates and ranking stay in their
+owning readers.
+
+Each process admits 16 weighted units per org and queues at most 256 more by
+default. Its total population is at most twice the configured waiting limit,
+including org waits, connection waits, execution, retries and local retirement.
+Reservation precedes any org or waiter allocation. Atomic FIFO grants prevent
+partial acquisition. Lower live limits refuse new reservations while existing
+charges drain; an overweight queued statement refuses instead of blocking its
+successors. Disabling the existing connection gate refuses new vector work.
+
+Sub-query and set-expansion phrases share a completion-sensitive duplicate set.
+Their vector statements take an immediate atomic grant or refuse the complete read
+with `VECTOR_CAPACITY_REFUSED` and reason `org_queue`; they never join an org wait
+queue or pass an older waiter. Owned siblings finish cancellation before the refusal
+returns. Other vector owners retain bounded FIFO waits. The policy is inherited by
+child tasks independently of statement attribution and resets when the phrase owner
+exits. Admitted work still holds its charge through connection waits, retries and
+local retirement.
+
+With no competing work, two phrases over one namespace can require eight weighted
+units; two namespaces can require sixteen. Actual overlap determines admission,
+so a nine-namespace fact-only read can succeed at the default sixteen-unit ceiling.
+It is not refused from input counts alone. Wide shapes, including thirty-three
+namespaces and eight phrases, can refuse even at the default ceiling. A two-unit
+ceiling can refuse overlapping weighted statements. These are explicit capacity
+failures, not partial successful rankings. Request frequency and representative
+refusal rates require deployment qualification.
+
+The admitted and queued unit bounds do not bound eager task objects created by
+upstream producers. Supplemental phrases retain eager scheduling and have no
+four-task producer window. There is no established composed maximum fanout or
+process-memory bound from these admission limits alone.
+
+Every vector attempt has finite time and memory budgets and a native throw ceiling
+of one million read rows by default. Versions, joins and several namespaces can
+reach that ceiling before one million logical keys. Admission and native refusals
+propagate through optional read legs rather than returning a different ranking.
+A selected conflict check refuses before commit. Optional value linking after a
+commit preserves those versions and records the refused linking in their existing
+result guidance and degradation record.
+
+The existing streaming slots and upstream tracker credential connections remain
+separate from ordinary pooled connections. Their vector work shares the same
+weighted population; permission reads consuming a stream do not inherit its vector
+attribution. Local cleanup does not prove remote cancellation or a fleet-wide bound.
+Native retry amplification, maximum supported shape completion and competing-org
+progress require deployment qualification. Placement evidence alone does not
+report this read capacity, and the full capacity report remains unfinished.

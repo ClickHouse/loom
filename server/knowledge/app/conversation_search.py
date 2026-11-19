@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from server.core.repo_base import _default_client
+from server.core.vectors.admission import vector_work
 from server.core.vectors.search_settings import vector_search_settings
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
@@ -114,19 +115,20 @@ async def vector_search(
     # ASC, ts DESC`) disqualifies the query from CH's vector-search rewrite, so
     # the recency tie-break runs in Python below, where it costs nothing (top_k
     # rows, already distance-ordered by CH, and Python's sort is stable).
-    rows = await ch.query_all(
-        f"""
-        SELECT thread_id, msg_id, role,
-               content_excerpt AS embedded_text, ts,
-               cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
-        FROM loom.conversation_embeddings FINAL
-        WHERE {" AND ".join(where)}
-        ORDER BY distance ASC
-        LIMIT {{lim:UInt32}}
-        {vector_search_settings(table="loom.conversation_embeddings")}
-        """,
-        params=params,
-    )
+    with vector_work(q.org, q.namespace):
+        rows = await ch.query_all(
+            f"""
+            SELECT thread_id, msg_id, role,
+                   content_excerpt AS embedded_text, ts,
+                   cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
+            FROM loom.conversation_embeddings FINAL
+            WHERE {" AND ".join(where)}
+            ORDER BY distance ASC
+            LIMIT {{lim:UInt32}}
+            {vector_search_settings(table="loom.conversation_embeddings")}
+            """,
+            params=params,
+        )
     # The whole embedded text is read so the sensitivity check covers all of it. A turn that
     # reads as high gets no embedding row; this holds back a row an earlier build
     # wrote for one.

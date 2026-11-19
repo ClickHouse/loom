@@ -39,6 +39,7 @@ from server.operations.capabilities import operation_rows
 from server.settings import settings
 from server.transport import http as http_transport
 from server.transport import mcp as mcp_transport
+from server.transport._common import request_id_from
 from server.transport.request_scope import HTTPApplication
 from server.wiring import wire
 
@@ -436,6 +437,12 @@ async def _web_gate(request: Request, call_next: Any) -> Response:
 async def _response_headers(request: Request, call_next: Any) -> Response:
     """Headers every answer leaves with."""
     response: Response = await call_next(request)
+    # An exception replaces FastAPI's temporary response; retain its bound request id.
+    response.headers["X-Request-Id"] = (
+        getattr(request.state, "loom_request_id", None)
+        or response.headers.get("X-Request-Id")
+        or request_id_from(request.headers.get("X-Request-Id"))
+    )
     path = request.url.path
     # A year-long immutable cache for content-hashed /assets/* names: the hash is the
     # version, so a load does not re-validate them.

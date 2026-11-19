@@ -16,7 +16,9 @@ import logging
 import time
 from typing import Any, Protocol
 
-from server.core.errors import caller_text
+from server.core.ch import get_client
+from server.core.errors import VectorAdmissionError, VectorCapacityError, caller_text
+from server.core.vectors.admission import admit, native_settings, vector_work
 from server.settings import settings
 from server.tracker.domain.contract import ContractFailed
 from server.tracker.domain.errors import TrackerUnavailable
@@ -212,6 +214,7 @@ class SourceBase:
         budget_ms: int | None = None,
         ttl_s: float | None = None,
         query_settings: dict[str, Any] | None = None,
+        vector: bool = False,
     ) -> list[dict[str, Any]]:
         await self._admit()
         assert self.cfg is not None
@@ -230,19 +233,30 @@ class SourceBase:
         ms = budget_ms if budget_ms else int(settings.tracker_live_budget_ms)
         budget_s = max(0.05, ms / 1000.0)
         try:
-            rows = await asyncio.wait_for(
-                gate.query_rows(
-                    sql,
-                    params,
-                    credential=self.cfg.credential,
-                    max_execution_s=budget_s if budget_ms else None,
-                    query_settings=query_settings,
-                ),
-                timeout=budget_s,
-            )
-        except TrackerUnavailable:
+            ready = get_client().vector_pool_ready() if vector else False
+            with vector_work(self.org, self.namespace, 1 if vector else 0):
+                async with admit(pool_ready=ready, wait_s=budget_s):
+                    rows = await asyncio.wait_for(
+                        gate.query_rows(
+                            sql,
+                            params,
+                            credential=self.cfg.credential,
+                            max_execution_s=budget_s if budget_ms else None,
+                            query_settings=native_settings(
+                                dict(query_settings or {}), timeout=budget_s
+                            ),
+                        ),
+                        timeout=budget_s,
+                    )
+        except (TrackerUnavailable, VectorCapacityError):
             raise
         except TimeoutError as e:
+            if vector:
+                raise VectorAdmissionError(
+                    "the complete vector read exceeded its deadline",
+                    reason="deadline",
+                    retry_after_s=1,
+                ) from e
             # the caller's deadline, not the upstream's failure: the read is
             # unavailable, the breaker stays closed
             raise TrackerUnavailable(f"{tag} exceeded {int(budget_s * 1000)} ms") from e

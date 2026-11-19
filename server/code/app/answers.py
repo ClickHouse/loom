@@ -49,6 +49,7 @@ from server.code.app.answers_entry import (
 from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
+from server.core.errors import VectorCapacityError
 from server.observability.genai import staged
 from server.settings.budgets import llm_max_tokens
 
@@ -439,7 +440,7 @@ async def _inject_memory_context(question: str) -> MemoryContext:
     memory.ask's code enrichment. Gated by an explicit memory-namespace binding
     (code_ask_memory_namespace); a no-op when unset. Returns short excerpts with
     their keys to ground code.ask's synthesis in WHY the code is the way it is.
-    Fail-open to no excerpts."""
+    Ordinary read failures leave no excerpts."""
     from server.settings import settings as _s
 
     mem_ns = _s.code_ask_memory_namespace.strip()
@@ -476,7 +477,9 @@ async def _inject_memory_context(question: str) -> MemoryContext:
                 include_tags=True,  # a consolidated row is told by its tags
             )
         )
-    except Exception as e:  # noqa: BLE001 — additive, never fatal
+    except VectorCapacityError:
+        raise
+    except Exception as e:  # noqa: BLE001 — ordinary enrichment failures are optional
         logger.debug("code.ask memory enrichment failed: %s", e)
         return MemoryContext()
     if getattr(out, "abstain", False):

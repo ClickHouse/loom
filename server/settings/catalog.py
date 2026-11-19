@@ -694,6 +694,12 @@ class ClickHouseSettings(BaseModel):
     # HTTP connection pool size: request concurrency plus 3 x the batched-insert bound
     # (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
+    # Weighted vector work admitted per org in this process; two axes need two units.
+    vector_scan_max_concurrent_per_org: Annotated[int, LIVE] = Field(default=16, ge=2)
+    # Weighted org wait units; twice this also bounds the whole process population.
+    vector_scan_max_waiters_per_org: Annotated[int, LIVE] = Field(default=256, gt=0)
+    # Native throw ceiling per vector statement, including joins and row versions.
+    vector_scan_max_rows_to_read: int = Field(default=1_000_000, gt=0)
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
     # TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`).

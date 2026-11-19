@@ -11,7 +11,9 @@ from dataclasses import replace
 from typing import Any, NamedTuple
 
 from server.core.ch_params import fitting
+from server.core.errors import VectorCapacityError
 from server.core.repo_base import query_all_sliced
+from server.core.vectors.admission import vector_work
 from server.memory.app.retrieval.side_legs import exclude_pooled
 from server.memory.app.set_chunks import set_chunk_identities
 from server.memory.domain.search_parsing import _iso_date
@@ -83,7 +85,10 @@ async def _recency_backfill(
         LIMIT {{newest_limit:UInt32}}
     """
     try:
-        rows = await ch.query_all(sql, params=params)
+        with vector_work(q.org, q.namespace):
+            rows = await ch.query_all(sql, params=params)
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — an additive leg fails open
         log.warning("recency backfill failed (fail-open): %s", e)
         return hits

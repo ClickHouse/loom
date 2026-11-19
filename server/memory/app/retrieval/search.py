@@ -5,12 +5,13 @@ side legs run concurrently, then the hits are merged, fused and finished.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Sequence
 from typing import Any
 
 from server.core.repo_base import _default_client
+from server.core.vectors.admission import vector_work
+from server.core.vectors.private_first import each
 from server.memory.app.retrieval.chunks import _search_memory_chunks
 from server.memory.app.retrieval.fact_rank import (
     _fact_boost_terms,
@@ -137,13 +138,13 @@ def _apply_plane_mask(q: SearchQuery) -> SearchQuery:
 
 
 def _fact_rows_task(
-    ch: _CHClient, q: SearchQuery, params: dict[str, Any], fact_sql: str
+    ch: _CHClient, q: SearchQuery, params: dict[str, Any], fact_sql: str, weight: int
 ) -> Awaitable[list[dict[str, Any]]]:
     """Phase 7 of `vector_search`: the fact leg's read as one awaitable, with
     the reinforcement fold riding inside."""
     fact_rows_task = _spanned(
         "ch.query.memory_embeddings.ann",
-        _query_all_retrying_empty_block(ch, fact_sql, params),
+        _query_all_retrying_empty_block(ch, fact_sql, params, weight=weight),
     )
 
     # The usage fold's reinforcement lives in a side table;
@@ -212,7 +213,11 @@ async def _gather_legs(
         else None
     )
     optional_tasks = [t for t in (chunks_task, lexical_task, records_task) if t is not None]
-    gathered = await asyncio.gather(rows_task, *optional_tasks)
+
+    async def _leg(call: Awaitable[Any]) -> Any:
+        return await call
+
+    gathered = await each(_leg)([rows_task, *optional_tasks])
     rows = gathered[0]
     chunk_hits, lexical_pool, record_hits = _split_gathered(
         gathered, chunks_task is not None, lexical_task is not None, records_task is not None
@@ -412,8 +417,8 @@ async def vector_search(
 
     _fact_rank_tail(q, params, t)
 
-    fact_sql = await _fact_leg_sql(q, ch, where, params, t)
-    rows_task = _fact_rows_task(ch, q, params, fact_sql)
+    fact_sql, weight = await _fact_leg_sql(q, ch, where, params, t)
+    rows_task = _fact_rows_task(ch, q, params, fact_sql, weight)
     rows, chunk_hits, lexical_pool, record_hits = await _gather_legs(ch, q, params, rows_task)
 
     hits = _fact_rows_to_hits(rows, q, t.lexical_score_expr)
@@ -465,7 +470,8 @@ async def vector_search_trace(
         LIMIT {{top_k:UInt32}}
         SETTINGS query_plan_direct_read_from_text_index = 0
     """
-    rows = await ch.query_all(sql, params=params)
+    with vector_work(q.org, q.namespace):
+        rows = await ch.query_all(sql, params=params)
     return [
         SearchTraceHit(
             memory_key=r["memory_key"],

@@ -2621,15 +2621,37 @@ async def test_a_sign_in_once_the_row_says_active_lives_after_the_lift(world, mo
     assert await world.keeps_out("lee", issued_at=int(start.timestamp()))  # a token from before
 
 
+@pytest.mark.parametrize("elapsed_s", [0.0, 0.2], ids=["same-second", "whole-second"])
 async def test_a_quick_reactivation_keeps_a_token_an_ahead_clock_issued_before_it_dead(
-    world,
+    world, monkeypatch, elapsed_s: float
 ) -> None:
-    # A replica whose clock runs ahead issued a token just before the deactivation.
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock(t=1000.9)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return cls.fromtimestamp(clock.time(), tz)
+
+    monkeypatch.setattr(scim, "datetime", Clock)
+    monkeypatch.setattr(revocation, "datetime", Clock)
+    monkeypatch.setattr(
+        revocation,
+        "time",
+        SimpleNamespace(time=clock.time, monotonic=time.monotonic, time_ns=time.time_ns),
+    )
     world.person("lee@example.com", "lee")
     uid = await _create("lee@example.com")
+    ahead = int(clock.time()) + revocation.CLOCK_SKEW_S
     await scim.update(uid, active=False)
-    ahead = int(time.time()) + revocation.CLOCK_SKEW_S
-    await scim.update(uid, active=True)  # at once
+    clock.advance(elapsed_s)
+    await scim.update(uid, active=True)
+    cutoff = world.ours["lee"]
+    assert cutoff is not None
+    cutoff_s = int(cutoff.replace(tzinfo=UTC).timestamp())
+    assert cutoff_s == 1001 + revocation.CLOCK_SKEW_S
+    assert not await world.keeps_out("lee", issued_at=cutoff_s)
     assert await world.keeps_out("lee", issued_at=ahead)
 
 

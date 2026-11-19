@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.core.vectors.search_settings import vector_search_settings
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
@@ -197,7 +199,10 @@ async def fetch_session_summaries(
     wildcard = not agent or agent in ("*", "-")
     params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1)
     try:
-        rows = await ch.query_all(sql, params=params)
+        with vector_work(org, namespace):
+            rows = await ch.query_all(sql, params=params)
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
@@ -353,7 +358,10 @@ async def fetch_entity_summaries(
         {vector_search_settings(table="loom.entity_summaries", column="summary_embedding")}
     """
     try:
-        rows = await ch.query_all(sql, params=params)
+        with vector_work(org, namespace):
+            rows = await ch.query_all(sql, params=params)
+    except VectorCapacityError:
+        raise
     except Exception as e:  # noqa: BLE001 — the entity-summary leg is additive; fail open
         log.warning("fetch_entity_summaries failed (fail-open): %s", e)
         return []

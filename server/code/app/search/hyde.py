@@ -11,6 +11,7 @@ from server.code.app.search.state import _POOL
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo
+from server.core.errors import VectorCapacityError
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,8 @@ async def _hyde_leg_rows(
             work["hyde_ms"] = int((time.perf_counter() - t0) * 1000)
             span_attrs(sp, results=len(rows))
             return rows
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — a vote, never a gate
             logger.warning("code.search hyde leg failed: %s", e)
             work["hyde_leg_failed"] = 1

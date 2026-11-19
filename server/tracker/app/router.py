@@ -14,12 +14,13 @@ exists".
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core.errors import VectorCapacityError
+from server.core.vectors.private_first import each
 from server.tracker.app import source as tsource
 from server.tracker.domain import catalogue as cat
 from server.tracker.domain.errors import TrackerUnavailable
@@ -179,6 +180,8 @@ async def _run_step(
     started = time.monotonic()
     try:
         rows = await _call_reader(source, org, ns, t, step)
+    except VectorCapacityError:
+        raise
     except TrackerUnavailable as e:
         logger.info("tracker.answer %s unavailable: %s", t.name, e)
         sec.status = "tracker_unavailable"
@@ -329,11 +332,11 @@ async def answer(
                 )
             )
         return out
-    out.sections = list(
-        await asyncio.gather(
-            *(_run_step(source, org, tracker_namespace, st, out.restricted) for st in p.steps)
-        )
-    )
+
+    async def one(step: cat.Step) -> Section:
+        return await _run_step(source, org, tracker_namespace, step, out.restricted)
+
+    out.sections = await each(one)(list(p.steps))
     return out
 
 

@@ -6,6 +6,8 @@ import logging
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.errors import VectorCapacityError
+from server.core.vectors.admission import vector_work
 from server.core.vectors.private_first import each
 from server.core.vectors.search_settings import vector_search_settings
 from server.observability.otel import traced
@@ -98,16 +100,19 @@ async def _ann_entity_boosts(
                 entities=len(query_entities),
                 namespaces=len(namespaces),
             ):
-                rows = await ch.query_all(
-                    sql,
-                    params={
-                        "q": emb,
-                        "org": org,
-                        "namespaces": list(namespaces),
-                        "agent": agent,
-                        "uid": user_id or "-",
-                    },
-                )
+                with vector_work(org, namespaces, 2):
+                    rows = await ch.query_all(
+                        sql,
+                        params={
+                            "q": emb,
+                            "org": org,
+                            "namespaces": list(namespaces),
+                            "agent": agent,
+                            "uid": user_id or "-",
+                        },
+                    )
+        except VectorCapacityError:
+            raise
         except Exception as e:  # noqa: BLE001 — entity boost is optional; search runs without it
             log.warning("entity_vectors lookup failed for %r: %s", entity, e)
             return []
