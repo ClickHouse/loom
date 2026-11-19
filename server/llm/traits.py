@@ -1,6 +1,6 @@
-"""Documented request restrictions and what provider responses teach Loom.
+"""Known request restrictions and what provider responses teach Loom.
 
-Documented sampling restrictions apply before the first request. Other traits
+Known sampling restrictions apply before the first request. Other traits
 are learned from provider responses, once per model:
 
 * **Refused fields.** A 400 that names a field the request carried (OpenAI's
@@ -24,7 +24,7 @@ are learned from provider responses, once per model:
 * **Output limit.** A 400 that says the cap is over the model's maximum names
   the maximum; caps are clamped to it from then on.
 
-Learned traits live for the process; documented restrictions survive a restart.
+Learned traits live for the process; known restrictions survive a restart.
 """
 
 from __future__ import annotations
@@ -65,6 +65,8 @@ _OUTPUT_LIMIT_RE = re.compile(
 )
 # These model revisions reject sampling parameters even on the first request.
 # https://platform.claude.com/docs/en/about-claude/model-deprecations
+# Leave sampling at the provider default for the default extraction model.
+_DEFAULT_SAMPLING_MODELS = frozenset({"gpt-6-luna"})
 _DEFAULT_SAMPLING_RE = re.compile(
     r"(?:(?:us|eu|apac|global|au|jp)\.)?(?:anthropic\.)?"
     r"claude-(?:opus-(?:4-[78]|5(?:-5)?)|sonnet-5(?:-5)?|haiku-5-5)"
@@ -94,7 +96,7 @@ def traits(model: str) -> Traits:
         t = Traits()
         # Bedrock accepts regional IDs and profile ARNs as well as model IDs.
         name = model.rsplit("/", 1)[-1].removeprefix("bedrock:")
-        if _DEFAULT_SAMPLING_RE.fullmatch(name):
+        if name in _DEFAULT_SAMPLING_MODELS or _DEFAULT_SAMPLING_RE.fullmatch(name):
             t.refused.add("temperature")
         _TRAITS[model] = t
     return _TRAITS[model]

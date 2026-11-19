@@ -10,6 +10,7 @@ from server.llm import anthropic, customer, gateway, openai, traits
 from server.llm.bedrock import BedrockLLMClient
 
 MODELS_WITHOUT_TEMPERATURE = (
+    "gpt-6-luna",
     "claude-sonnet-5-5",
     "claude-sonnet-5-5-20260928",
     "us.anthropic.claude-sonnet-5-5",
@@ -47,7 +48,8 @@ def test_known_models_omit_temperature_in_both_http_protocols(model, temperature
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module", [openai, anthropic])
-async def test_http_client_sends_one_valid_request_from_a_cold_process(monkeypatch, module):
+@pytest.mark.parametrize("model", ["gpt-6-luna", "claude-sonnet-5-5"])
+async def test_http_client_sends_one_valid_request_from_a_cold_process(monkeypatch, module, model):
     response = httpx.Response(
         200,
         request=httpx.Request("POST", "https://provider.example"),
@@ -70,9 +72,7 @@ async def test_http_client_sends_one_valid_request_from_a_cold_process(monkeypat
     client_class = openai.OpenAILLMClient if module is openai else anthropic.AnthropicLLMClient
     for _ in range(2):
         traits.reset_for_tests()
-        result = await client_class("claude-sonnet-5-5", api_key="test-key").complete(
-            "", "question"
-        )
+        result = await client_class(model, api_key="test-key").complete("", "question")
         assert result.text == "complete"
         assert "temperature" not in http.post.call_args.kwargs["json"]
     assert http.post.await_count == 2

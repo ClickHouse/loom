@@ -287,8 +287,9 @@ The caller parses (`server/llm/json_text.py`).
 **Request shape per model.** `server/llm/traits.py` seeds documented sampling
 restrictions for Claude Opus 4.7, 4.8, 5 and 5.5, Sonnet 5 and 5.5, and Haiku 5.5.
 The OpenAI-compatible, Anthropic and Bedrock clients omit temperature for these
-models before the first request, including after a process restart. Models that
-accept temperature keep the caller's value. An opaque gateway alias or application
+models before the first request, including after a process restart. Loom also uses
+provider-default sampling for `gpt-6-luna`, including through a gateway. Other
+models keep the caller's requested temperature. An opaque gateway alias or application
 inference-profile ARN does not identify its backing model and receives no inferred
 restriction.
 
@@ -307,7 +308,7 @@ output cap), and provider responses teach other traits once per model per proces
   the cap with no visible text is re-sent once with the ceiling as its reserve.
 
 An unrecognized model learns traits from its responses. Documented sampling
-restrictions avoid a rejected request for known models; learned traits supplement
+restrictions and provider-default sampling avoid an initial temperature request; learned traits supplement
 them. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
 
 ### Retries, timeouts, fallback
