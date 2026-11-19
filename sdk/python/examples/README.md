@@ -197,7 +197,25 @@ loom mint-token --platform-admin --subject sa:support-example --org acme --ttl-d
 
 The script exits 1 when a check fails.
 
-<REAL_RUN>
+A run against a local Loom server from source (ClickHouse 26.10, auth on, the `local` embedder), with a one-day platform-admin service token. The customer ids and the erasure id change from run to run:
+
+```text
+wrote 4 facts for customer-keep-22e75585 and customer-erase-22e75585
+
+search as customer-keep-22e75585:
+  "The customer is on the Pro plan, renewed in March 2026." (#plan)
+  "The customer uses the Android app on a Pixel 8." (#device)
+
+search as customer-erase-22e75585:
+  "The customer is on the Free plan." (#plan)
+  "The customer uses Safari on macOS and sees a login loop." (#device)
+
+revised plan for customer-keep-22e75585: The customer upgraded to the Business plan in November 2026.
+
+erasure 74d6bd9d-fd01-478e-a102-e569313775d3: status=completed residue_count=0
+after erasure: customer-erase-22e75585 → 0 hit(s), customer-keep-22e75585 → 2
+all checks passed
+```
 
 ## multi_agent_handoff.py
 
