@@ -247,3 +247,9 @@ this accounting primitive cannot establish permission by itself. It constructs
 no provider or Loom client and grants no spending permission. Connecting this
 journal, the process supervisor, live transports and complete billing into one
 qualified cohort entrypoint remains required before live execution.
+
+Transport events retain bounded request IDs for joining client dispatches and
+responses to usage receipts. HTTP records use only `x-request-id`; Bedrock
+records use only parsed `ResponseMetadata.RequestId`. Other headers and response
+content are excluded. Missing or malformed IDs remain unknown; correlation
+alone does not establish complete billing or a zero cost.

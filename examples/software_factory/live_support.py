@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import random
+import re
 import time
 from decimal import Decimal
 
@@ -73,6 +74,12 @@ class ScopeVerifier:
         }
 
 
+def _request_id(value) -> str | None:
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value):
+        return value
+    return None
+
+
 class TransportAudit:
     """Attach public httpx event hooks or botocore before-send/after-call hooks.
 
@@ -101,7 +108,14 @@ class TransportAudit:
         return sum(row["phase"] == "dispatch" for row in self.rows)
 
     async def request(self, request) -> None:
-        self.emit({"phase": "dispatch", "time": time.monotonic(), "path": request.url.path})
+        self.emit(
+            {
+                "phase": "dispatch",
+                "time": time.monotonic(),
+                "path": request.url.path,
+                "request_id": _request_id(request.headers.get("x-request-id")),
+            }
+        )
 
     async def response(self, response) -> None:
         self.emit(
@@ -110,6 +124,7 @@ class TransportAudit:
                 "time": time.monotonic(),
                 "status": response.status_code,
                 "path": response.request.url.path,
+                "request_id": _request_id(response.headers.get("x-request-id")),
             }
         )
 
@@ -118,12 +133,16 @@ class TransportAudit:
 
     def after_call(self, **kwargs) -> None:
         response = kwargs.get("http_response")
+        parsed = kwargs.get("parsed")
+        metadata = parsed.get("ResponseMetadata") if isinstance(parsed, dict) else None
+        request_id = metadata.get("RequestId") if isinstance(metadata, dict) else None
         self.emit(
             {
                 "phase": "response",
                 "time": time.monotonic(),
                 "status": getattr(response, "status_code", None),
                 "path": "Converse",
+                "request_id": _request_id(request_id),
             }
         )
 
