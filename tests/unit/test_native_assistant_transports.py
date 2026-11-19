@@ -6,6 +6,7 @@ import asyncio
 import json
 import threading
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -197,7 +198,7 @@ def test_native_tool_uses_authenticated_mcp_and_revocation(monkeypatch):
             raise TokenError("revoked")
         return principal
 
-    monkeypatch.setattr("server.auth.jwt.verify_token", verify)
+    monkeypatch.setattr("server.auth.jwt.authenticate_token", AsyncMock(side_effect=verify))
 
     async def readable(auth, org, ns):
         assert auth.subject == principal.subject
@@ -436,7 +437,9 @@ def test_native_host_calls_loom_before_the_first_model_turn(monkeypatch):
         return None
 
     monkeypatch.setattr(runtime, "_afford", affordable)
-    monkeypatch.setattr("server.auth.jwt.verify_token", lambda token: principal)
+    monkeypatch.setattr(
+        "server.auth.jwt.authenticate_token", AsyncMock(side_effect=lambda token: principal)
+    )
     monkeypatch.setattr("server.transport.mcp_auth._may_read", readable)
     monkeypatch.setattr(settings, "mcp_auth_mode", "required")
     monkeypatch.setattr(settings, "assistant_provider", "fake")

@@ -6,6 +6,7 @@ import asyncio
 import json
 from dataclasses import replace
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -29,7 +30,9 @@ def publication(monkeypatch):
         consumer="loom-assistant",
         token_id="assistant-answer-publication",
     )
-    monkeypatch.setattr("server.auth.jwt.verify_token", lambda token: principal)
+    monkeypatch.setattr(
+        "server.auth.jwt.authenticate_token", AsyncMock(side_effect=lambda token: principal)
+    )
     state = SimpleNamespace(current=True, checks=0, owner=object(), stage="", events=[])
 
     async def renew():
