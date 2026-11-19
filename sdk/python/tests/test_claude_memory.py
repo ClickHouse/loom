@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import sys
 from typing import Any
 
+import httpx2
 import pytest
+from anthropic import Anthropic, AsyncAnthropic
 from anthropic.lib.tools import BetaAbstractMemoryTool, BetaAsyncAbstractMemoryTool, ToolError
 from loom import Agent, SyncAgent
 from loom.integrations.claude_memory import AsyncLoomMemoryTool, LoomMemoryTool
@@ -433,3 +436,126 @@ def test_the_sync_tool_runs_on_a_real_sync_agents_loop() -> None:
         agent.close()
     assert answer == "File created successfully at: /memories/a.md"
     assert posts == ["/v1/knowledge.get", "/v1/knowledge.list", "/v1/knowledge.upsert"]
+
+
+def _memory_runner_transport() -> tuple[httpx2.MockTransport, list[dict[str, Any]]]:
+    requests: list[dict[str, Any]] = []
+    commands = [
+        {"command": "create", "path": "/memories/preferences.md", "file_text": "I prefer tea."},
+        {"command": "view", "path": "/memories/preferences.md"},
+    ]
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.path == "/v1/messages"
+        body = json.loads(request.content)
+        assert body["tools"] == [{"type": "memory_20250818", "name": "memory"}]
+        turn = len(requests)
+        requests.append(body)
+        assert turn <= 2, "the native runner must stop after its final text reply"
+        content = (
+            [{"type": "tool_use", "id": f"toolu_{turn}", "name": "memory", "input": commands[turn]}]
+            if turn < 2
+            else [{"type": "text", "text": "You prefer tea."}]
+        )
+        return httpx2.Response(
+            200,
+            json={
+                "id": f"msg_{turn}",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-5-5",
+                "content": content,
+                "stop_reason": "tool_use" if turn < 2 else "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        )
+
+    return httpx2.MockTransport(respond), requests
+
+
+def _assert_native_memory_roundtrip(docs: _Docs, requests: list[dict[str, Any]]) -> None:
+    assert len(requests) == 3
+    assert docs.docs == {
+        "loom-memory://alice/memories/preferences.md": ("I prefer tea.", ["claude-memory:alice"])
+    }
+    assert requests[1]["messages"][-1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_0",
+                "content": "File created successfully at: /memories/preferences.md",
+            }
+        ],
+    }
+    assert requests[2]["messages"][-1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": "Here's the content of /memories/preferences.md with line numbers:\n"
+                "     1\tI prefer tea.",
+            }
+        ],
+    }
+
+
+def test_native_sync_tool_runner_persists_and_returns_memory_commands() -> None:
+    docs = _Docs()
+    transport, requests = _memory_runner_transport()
+    with Anthropic(
+        api_key="test-key",
+        base_url="https://anthropic.invalid",
+        max_retries=0,
+        http_client=httpx2.Client(transport=transport),
+    ) as client:
+        messages = list(
+            client.beta.messages.tool_runner(
+                model="claude-sonnet-5-5",
+                max_tokens=128,
+                max_iterations=3,
+                tools=[_sync_tool(docs, "alice")],
+                messages=[
+                    {"role": "user", "content": "Remember that I prefer tea, then read it back."}
+                ],
+            )
+        )
+    assert [message.stop_reason for message in messages] == ["tool_use", "tool_use", "end_turn"]
+    assert messages[-1].content[0].type == "text"
+    assert messages[-1].content[0].text == "You prefer tea."
+    _assert_native_memory_roundtrip(docs, requests)
+
+
+def test_native_async_tool_runner_persists_and_returns_memory_commands() -> None:
+    async def run() -> None:
+        docs = _Docs()
+        transport, requests = _memory_runner_transport()
+        async with AsyncAnthropic(
+            api_key="test-key",
+            base_url="https://anthropic.invalid",
+            max_retries=0,
+            http_client=httpx2.AsyncClient(transport=transport),
+        ) as client:
+            messages = [
+                message
+                async for message in client.beta.messages.tool_runner(
+                    model="claude-sonnet-5-5",
+                    max_tokens=128,
+                    max_iterations=3,
+                    tools=[_async_tool(docs, "alice")],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "Remember that I prefer tea, then read it back.",
+                        }
+                    ],
+                )
+            ]
+        assert [message.stop_reason for message in messages] == ["tool_use", "tool_use", "end_turn"]
+        assert messages[-1].content[0].type == "text"
+        assert messages[-1].content[0].text == "You prefer tea."
+        _assert_native_memory_roundtrip(docs, requests)
+
+    asyncio.run(run())
