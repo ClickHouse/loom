@@ -50,7 +50,7 @@ def configuration_error() -> str:
         if not provider_key(definition.provider) and not gateway.keyless():
             return "provider_key_missing"
     if definition.provider == "bedrock":
-        if not settings.assistant_bedrock_region or importlib.util.find_spec("botocore") is None:
+        if not settings.bedrock_region or importlib.util.find_spec("botocore") is None:
             return "bedrock_configuration_missing"
         if settings.gateway_required() or gateway.keyless():
             return "bedrock_requires_direct_route"

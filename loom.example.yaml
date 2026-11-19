@@ -965,9 +965,6 @@ settings:
   # Total reported input and output tokens allowed across all turns. [restart]
   # assistant_max_tokens: 100000
 
-  # AWS region for the Bedrock Converse streaming route; no implicit region. [restart]
-  # assistant_bedrock_region: ""
-
   # Seconds one assistant answer may run, and how long its delegated token lives.
   # [restart]
   # assistant_answer_ttl_s: 600

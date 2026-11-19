@@ -65,8 +65,6 @@ class AssistantSettings(BaseModel):
     assistant_max_output_tokens: int = Field(default=2048, ge=64, le=16384)
     # Total reported input and output tokens allowed across all turns.
     assistant_max_tokens: int = Field(default=100000, ge=1024, le=1000000)
-    # AWS region for the Bedrock Converse streaming route; no implicit region.
-    assistant_bedrock_region: str = ""
     # Seconds one assistant answer may run, and how long its delegated token lives.
     assistant_answer_ttl_s: int = Field(default=600, ge=60, le=3600)
     # The share of a namespace's daily model cost cap the assistant may spend, so

@@ -60,11 +60,6 @@
           "type": "integer",
           "description": "Seconds one assistant answer may run, and how long its delegated token lives."
         },
-        "assistant_bedrock_region": {
-          "default": "",
-          "type": "string",
-          "description": "AWS region for the Bedrock Converse streaming route; no implicit region."
-        },
         "assistant_budget_share": {
           "default": 0.5,
           "exclusiveMinimum": 0,

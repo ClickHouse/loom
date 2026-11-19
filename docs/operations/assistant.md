@@ -10,13 +10,13 @@ Set `LOOM_ASSISTANT_ENABLED=true`. Select `LOOM_ASSISTANT_PROVIDER` and
 `LOOM_ASSISTANT_MODEL` explicitly. Empty provider and model select Anthropic and
 `claude-haiku-4-5`; there is no fallback to the deployment's general LLM model.
 
-| Provider    | Credentials and route                                                                                                                    |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `anthropic` | Existing Anthropic key or guarded inference gateway; Messages streaming tools                                                            |
-| `openai`    | Existing OpenAI key or guarded inference gateway; chat-completions streaming tools                                                       |
-| `bedrock`   | Standard AWS credential chain, `LOOM_ASSISTANT_BEDROCK_REGION`, Converse streaming permission and an explicit model or inference profile |
-| `local`     | Existing `LOOM_LOCAL_LLM_BASE_URL`, explicit model and verified price reference                                                          |
-| `fake`      | No credentials, no model network; explicit offline verification only                                                                     |
+| Provider    | Credentials and route                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `anthropic` | Existing Anthropic key or guarded inference gateway; Messages streaming tools                                                  |
+| `openai`    | Existing OpenAI key or guarded inference gateway; chat-completions streaming tools                                             |
+| `bedrock`   | Standard AWS credential chain, `LOOM_BEDROCK_REGION`, Converse streaming permission and an explicit model or inference profile |
+| `local`     | Existing `LOOM_LOCAL_LLM_BASE_URL`, explicit model and verified price reference                                                |
+| `fake`      | No credentials, no model network; explicit offline verification only                                                           |
 
 For a route alias, set `LOOM_ASSISTANT_PRICE_MODEL` to its verified price-table model.
 An unknown price or missing credential refuses an answer. A price reference records

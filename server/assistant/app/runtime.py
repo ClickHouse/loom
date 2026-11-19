@@ -23,9 +23,9 @@ from typing import Any
 import httpx
 
 from server.assistant.api.models import AssistantCitation
+from server.assistant.app import agent, citations, evidence, service
 from server.assistant.domain.limits import MAX_HISTORY, MAX_MESSAGE_CHARS
 from server.assistant.domain.steps import STEP_TEXT
-from server.assistant.app import agent, citations, evidence, service
 from server.assistant.domain.support import UNCHECKED
 from server.auth import fail_closed, sharing
 from server.auth.answer_tokens import ANSWER_JTI_PREFIX, is_answer_token
@@ -361,8 +361,10 @@ def _event(obj: str, run_id: str, **fields: Any) -> bytes:
 
 def _steps(answer: Answer) -> list[dict[str, Any]]:
     receipts = answer.state.receipts if answer.state else []
-    return [{"op": r.op, "text": STEP_TEXT.get(r.op, ("Read context", "Read failed"))[0],
-             "ok": True} for r in receipts]
+    return [
+        {"op": r.op, "text": STEP_TEXT.get(r.op, ("Read context", "Read failed"))[0], "ok": True}
+        for r in receipts
+    ]
 
 
 async def stream(

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from typing import Any
-from urllib.parse import quote
 
+from server.clients import bedrock
 from server.clients._http import get_model_client, refuse_off_gateway
-from server.core.errors import AssistantUpstreamError
+from server.core import request_tail, shielded
+from server.core.errors import AssistantUpstreamError, GatewayRequiredError
 from server.llm import customer
 from server.llm.agent import ToolCall, Turn, Usage, count, model_stream
 from server.llm.agent_http import anthropic_messages
@@ -85,21 +87,25 @@ def converse_body(
     }
 
 
-def signed_headers(url: str, body: bytes, headers: dict[str, str]) -> dict[str, str]:
-    # The image already carries the aws extra. Credential selection is the standard
-    # operator-owned AWS chain; no separate assistant identity store exists.
-    from botocore.auth import SigV4Auth
-    from botocore.awsrequest import AWSRequest
-    from botocore.session import get_session
+async def _signed_request(
+    payload: dict[str, Any], headers: dict[str, str]
+) -> tuple[str, bytes, dict[str, str]]:
+    # SDK credential refresh can block. Keep it off the event loop and join it
+    # before a cancelled producer can finish; it never sends a model request.
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            bedrock._signed, "converse_stream", payload, headers, settings.bedrock_region
+        )
+    )
+    try:
+        return await asyncio.shield(task)
+    finally:
 
-    credentials = get_session().get_credentials()
-    if credentials is None:
-        raise AssistantUpstreamError("Bedrock credentials are unavailable")
-    request = AWSRequest(method="POST", url=url, data=body, headers=headers)
-    SigV4Auth(
-        credentials.get_frozen_credentials(), "bedrock", settings.assistant_bedrock_region
-    ).add_auth(request)
-    return dict(request.headers)
+        async def joined() -> None:
+            async with asyncio.timeout(request_tail.REQUIRED_STEP_TIMEOUT_S):
+                await asyncio.gather(task, return_exceptions=True)
+
+        await shielded.to_its_end(joined(), name="assistant.bedrock.signing")
 
 
 class BedrockAgentModel:
@@ -116,18 +122,18 @@ class BedrockAgentModel:
         from botocore.eventstream import EventStreamBuffer
 
         who = await customer.require()
-        region = settings.assistant_bedrock_region
-        if not region or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-" for c in region):
-            raise AssistantUpstreamError("Bedrock requires a valid region")
-        url = (
-            f"https://bedrock-runtime.{region}.amazonaws.com/model/"
-            f"{quote(self.model, safe='')}/converse-stream"
+        if settings.gateway_required():
+            raise GatewayRequiredError(
+                "Native Bedrock cannot bypass the required inference gateway"
+            )
+        payload = {
+            "modelId": bedrock.model_id(self.model),
+            **converse_body(messages, tools, max_tokens),
+        }
+        url, body, headers = await _signed_request(
+            payload, {**customer.headers(who), "Accept": "application/vnd.amazon.eventstream"}
         )
         refuse_off_gateway(url)
-        body = json.dumps(converse_body(messages, tools, max_tokens)).encode()
-        headers = signed_headers(
-            url, body, {"Content-Type": "application/json", **customer.headers(who)}
-        )
         parser = BedrockStream(turn)
         buffer = EventStreamBuffer()
         with recording("bedrock:assistant"):

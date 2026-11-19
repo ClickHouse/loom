@@ -63,7 +63,6 @@ Native assistant admission, tool and model budgets.
 | `LOOM_ASSISTANT_MAX_OUTPUT_CHARS` | `int` | `20000` |  | Characters of provisional answer text allowed across all model turns. |
 | `LOOM_ASSISTANT_MAX_OUTPUT_TOKENS` | `int` | `2048` |  | Output tokens per model turn and total input plus output tokens per answer. |
 | `LOOM_ASSISTANT_MAX_TOKENS` | `int` | `100000` |  | Total reported input and output tokens allowed across all turns. |
-| `LOOM_ASSISTANT_BEDROCK_REGION` | `str` | `''` |  | AWS region for the Bedrock Converse streaming route; no implicit region. |
 | `LOOM_ASSISTANT_ANSWER_TTL_S` | `int` | `600` |  | Seconds one assistant answer may run, and how long its delegated token lives. |
 | `LOOM_ASSISTANT_BUDGET_SHARE` | `float` | `0.5` |  | The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need. |
 | `LOOM_ASSISTANT_CONCURRENT_ANSWERS` | `int` | `2` |  | Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it. |

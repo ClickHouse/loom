@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -260,9 +261,19 @@ def test_bedrock_binary_stream_uses_guarded_http_and_closes(monkeypatch):
         return Customer()
 
     monkeypatch.setattr(agent_bedrock.customer, "require", customer)
-    monkeypatch.setattr(agent_bedrock, "signed_headers", lambda *_: {"Authorization": "fixture"})
+
+    async def signed(payload, headers):
+        assert payload["modelId"] == "explicit.profile"
+        assert headers["Accept"] == "application/vnd.amazon.eventstream"
+        return (
+            "https://bedrock-runtime.us-east-1.amazonaws.com/model/explicit.profile/converse-stream",
+            json.dumps({k: v for k, v in payload.items() if k != "modelId"}).encode(),
+            {"Authorization": "fixture"},
+        )
+
+    monkeypatch.setattr(agent_bedrock, "_signed_request", signed)
     monkeypatch.setattr(agent_bedrock, "refuse_off_gateway", lambda url: checked.append(url))
-    monkeypatch.setattr(settings, "assistant_bedrock_region", "us-east-1")
+    monkeypatch.setattr(settings, "bedrock_region", "us-east-1")
 
     async def scenario():
         async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
@@ -270,7 +281,9 @@ def test_bedrock_binary_stream_uses_guarded_http_and_closes(monkeypatch):
             turn = Turn()
             text = [
                 part
-                async for part in agent_bedrock.BedrockAgentModel("explicit.profile").stream(
+                async for part in agent_bedrock.BedrockAgentModel(
+                    "bedrock:explicit.profile"
+                ).stream(
                     [{"role": "system", "content": "rules"}, {"role": "user", "content": "q"}],
                     [],
                     100,
@@ -283,6 +296,40 @@ def test_bedrock_binary_stream_uses_guarded_http_and_closes(monkeypatch):
     assert len(sent) == 1 and len(checked) == 1
     assert str(sent[0].url).endswith("/model/explicit.profile/converse-stream")
     assert json.loads(sent[0].content)["inferenceConfig"] == {"maxTokens": 100}
+
+
+def test_bedrock_cancel_joins_pending_signer_without_sending_a_request(monkeypatch):
+    from server.llm import agent_bedrock
+
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def sign(operation, payload, headers, region):
+        assert operation == "converse_stream"
+        started.set()
+        try:
+            assert release.wait(5), "credential fixture was not released"
+            return "https://provider.invalid/", b"{}", {}
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(agent_bedrock.bedrock, "_signed", sign)
+
+    async def scenario():
+        task = asyncio.create_task(agent_bedrock._signed_request({"modelId": "fixture"}, {}))
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert finished.is_set()
+
+    asyncio.run(scenario())
 
 
 def test_unknown_usage_trace_does_not_invent_zero_tokens():
