@@ -1063,10 +1063,13 @@ async def _drain_queue(org: str, ns: str) -> None:
 async def test_a_deferred_extraction_replays_inside_the_writers_scope(
     control_plane_url: str, seed: _Seed, ch_client: Any
 ) -> None:
-    """Under `newest_wins` a same-key write supersedes the older row. W's pinned
-    token defers a set_from_messages whose fact lands on the key V holds: the replay
-    runs under W's scope, so V's row stays active. A namespace-wide writer's deferred
-    write of the same key does supersede it (the control)."""
+    """Deferred same-key writes only supersede rows owned by the write's user.
+
+    W's pinned token and a namespace-wide token writing as user-x both replay
+    inside their respective writers' scopes, leaving V's row active. A later
+    write for the same user from another session still supersedes that user's
+    earlier row.
+    """
     ns = f"rs-defer-{uuid.uuid4().hex[:8]}"
     ns_tok = _mint(seed.org, ns)
     w_tok = _mint(seed.org, ns, read_scope="own_user", read_user_id=W)
@@ -1111,7 +1114,34 @@ async def test_a_deferred_extraction_replays_inside_the_writers_scope(
     )
     await _drain_queue(seed.org, ns)
     rows = _rows_by_user(ch_client, seed.org, ns)
-    assert rows[V][0][1] == "superseded", f"the control superseded nothing: {rows}"
+    assert any(r[0] == v_key and r[1] == "active" for r in rows.get("user-x", [])), (
+        f"user-x's replay wrote nothing: {rows}"
+    )
+    assert rows[V] == [(v_key, "active", "")], f"user-x's deferred write changed V's row: {rows}"
+
+    # Same-user supersession remains permitted across sessions.
+    _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set_from_messages",
+        {
+            **base,
+            "user_id": "user-x",
+            "session_id": "sess-2",
+            "messages": say("4444"),
+            "defer": True,
+        },
+    )
+    await _drain_queue(seed.org, ns)
+    rows = _rows_by_user(ch_client, seed.org, ns)
+    x_rows = rows.get("user-x", [])
+    assert any(r[0] == v_key and r[1] == "active" for r in x_rows), (
+        f"user-x's same-user replay wrote nothing: {rows}"
+    )
+    assert any(r[0] == v_key and r[1] == "superseded" for r in x_rows), (
+        f"same-user supersession did not retire user-x's earlier row: {rows}"
+    )
+    assert rows[V] == [(v_key, "active", "")], f"user-x's same-user write changed V's row: {rows}"
 
 
 def test_a_pinned_token_reads_only_its_users_deferred_batches(
