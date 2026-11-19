@@ -183,10 +183,25 @@ function lifetimeFailure(context, witness, stage, error) {
   context.diagnostic(`LWL1:${witness}:${stage}:${category}`);
 }
 
+// Raw observer errors stay out of the additional boundary diagnostic.
+function observerPhase(stderr) {
+  let phase = "unobserved";
+  const text = String(stderr ?? "");
+  const lines = text.slice(-1024).split(/\r?\n/);
+  if (text.length > 1024) lines.shift();
+  for (const line of lines) {
+    const match = /^LWO1:(entry|parsed|observed|done)$/.exec(line);
+    if (match) phase = match[1];
+  }
+  return `LWO1:${phase}`;
+}
+
 function exactProcesses(identities, kill = false) {
   const source = String.raw`
     $ErrorActionPreference = 'Stop'
+    try { [Console]::Error.WriteLine('LWO1:entry'); [Console]::Error.Flush() } catch { }
     $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    try { [Console]::Error.WriteLine('LWO1:parsed'); [Console]::Error.Flush() } catch { }
     $live = @()
     foreach ($identity in $r.identities) {
       try {
@@ -197,7 +212,9 @@ function exactProcesses(identities, kill = false) {
         }
       } catch [ArgumentException] {} catch [InvalidOperationException] {}
     }
+    try { [Console]::Error.WriteLine('LWO1:observed'); [Console]::Error.Flush() } catch { }
     ConvertTo-Json -Compress -InputObject @($live)
+    try { [Console]::Error.WriteLine('LWO1:done'); [Console]::Error.Flush() } catch { }
   `;
   const result = spawnSync(
     path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
@@ -209,7 +226,7 @@ function exactProcesses(identities, kill = false) {
       maxBuffer: 1024,
     },
   );
-  assert.equal(result.error, undefined);
+  assert.equal(result.error, undefined, observerPhase(result.stderr));
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
@@ -331,10 +348,16 @@ if (process.platform === "win32") {
       if (child) {
         const cleanupSource = String.raw`
           $ErrorActionPreference = 'Stop'
+          try { [Console]::Error.WriteLine('LWO1:entry'); [Console]::Error.Flush() } catch { }
           $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+          try { [Console]::Error.WriteLine('LWO1:parsed'); [Console]::Error.Flush() } catch { }
           try { $p = [Diagnostics.Process]::GetProcessById([int]$r.pid) }
-          catch [ArgumentException] { exit 0 }
+          catch [ArgumentException] {
+            try { [Console]::Error.WriteLine('LWO1:done'); [Console]::Error.Flush() } catch { }
+            exit 0
+          }
           if ($p.StartTime.ToUniversalTime().Ticks.ToString() -eq $r.started) { $p.Kill(); [void]$p.WaitForExit(1000) }
+          try { [Console]::Error.WriteLine('LWO1:done'); [Console]::Error.Flush() } catch { }
         `;
         const cleanup = spawnSync(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", cleanupSource], {
           input: JSON.stringify(child),
@@ -342,7 +365,7 @@ if (process.platform === "win32") {
           timeout: 2000,
           maxBuffer: 1024,
         });
-        assert.equal(cleanup.error, undefined);
+        assert.equal(cleanup.error, undefined, observerPhase(cleanup.stderr));
         assert.equal(cleanup.status, 0, cleanup.stderr);
       }
     }
@@ -391,6 +414,7 @@ if (process.platform === "win32") {
         receipt.directory,
         path.join(environment.LOOM_PRIVATE_COMPILER_BASE, environment.LOOM_PRIVATE_COMPILATION_ID),
       );
+      stage = "directory-present";
       assert.equal(fs.existsSync(receipt.directory), true);
       stage = "live-identities";
       assert.deepEqual(
