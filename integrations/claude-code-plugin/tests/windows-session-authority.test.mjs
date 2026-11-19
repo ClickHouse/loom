@@ -615,7 +615,12 @@ if (process.platform === "win32") {
         },
       },
     );
-    assert.equal(Boolean(result.error), false);
+    const childError = result.error
+      ? ["ETIMEDOUT", "ENOBUFS", "ENOENT", "EACCES", "EPERM", "EPIPE"].includes(result.error.code)
+        ? result.error.code
+        : "OTHER"
+      : "NONE";
+    assert.equal(Boolean(result.error), false, `Scanner child error: ${childError}`);
     assert.equal(result.signal, null);
     assert.equal(result.status, 0);
     assert.equal(result.stderr.length, 0);
