@@ -537,18 +537,36 @@ def test_an_org_free_connect_runs_its_gate(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_no_cli_command_connects_outside_the_one_module() -> None:
     stray = []
+    native = []
+    native_owners = {
+        ("server/cli/cell_control.py", "Owner._open", "self.connect"),
+        ("server/cli/cell_place.py", "place.opening", "owner.connect"),
+    }
     for path in sorted((ROOT / "server" / "cli").glob("*.py")):
         if path.name == "_ch.py":
             continue
-        for call in _calls(ast.parse(path.read_text())):
+        tree = ast.parse(path.read_text())
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for call in _calls(tree):
             f = call.func
             if not (isinstance(f, ast.Attribute) and f.attr == "connect"):
                 continue
             receiver = f.value
             if isinstance(receiver, ast.Name) and receiver.id in _OTHER_CLIENTS:
                 continue
+            scope = []
+            ancestor = parents.get(call)
+            while ancestor is not None:
+                if isinstance(ancestor, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    scope.append(ancestor.name)
+                ancestor = parents.get(ancestor)
+            callsite = (str(path.relative_to(ROOT)), ".".join(reversed(scope)), ast.unparse(f))
+            if callsite in native_owners:
+                native.append(callsite)
+                continue
             stray.append(f"{path.relative_to(ROOT)}:{call.lineno}")
     assert not stray, f"connect through server/cli/_ch.py instead: {stray}"
+    assert sorted(native) == sorted(native_owners)
 
 
 def test_a_code_command_that_addresses_an_org_connects_for_it() -> None:
