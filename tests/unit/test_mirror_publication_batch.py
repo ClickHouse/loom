@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -329,7 +330,7 @@ async def test_single_endpoint_keeps_response_proofs_and_discards_notification_p
         return None if "id" not in req else frame(1, {"private": True})
 
     monkeypatch.setattr(mcp, "_effective_auth_mode", lambda: "open")
-    monkeypatch.setattr(mcp, "_verify_bearer", lambda _request: None)
+    monkeypatch.setattr(mcp, "_verify_bearer", AsyncMock(return_value=None))
     monkeypatch.setattr(mcp, "_handle_request", dispatch)
     payload = request(1, "ping")
     if notification:

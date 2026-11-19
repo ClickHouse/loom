@@ -183,7 +183,7 @@ async def test_pinned_watch_filters_warning_payloads(
     event_sql.add(2, user_id="alice")
     event_sql.add(3, event="progress", user_id="bob")
     auth = principal("writer", read_user_id="alice")
-    monkeypatch.setattr(watch_routes, "_bearer_auth", lambda _: auth)
+    monkeypatch.setattr(watch_routes, "_bearer_auth", AsyncMock(return_value=auth))
     monkeypatch.setattr(
         watch_routes, "_resolve_key", AsyncMock(return_value=("key", "warnings", None))
     )

@@ -60,7 +60,20 @@ class _CH:
     ) -> list[dict[str, Any]]:
         params = params or {}
         if "service_accounts" in sql:
-            return [self.sa_row] if params.get("sub") == SA else []
+            if params.get("sub") != SA:
+                return []
+            return [
+                {
+                    "bounded_creator": self.sa_row["created_by"],
+                    "bounded_lineage": [],
+                    "lineage_count": 0,
+                    "subject_bytes": len(self.sa_row["created_by"].encode()),
+                    "revoked_at": None,
+                    "expires_at": None,
+                    "inherit_creator_grants": self.sa_row["inherit_creator_grants"],
+                    "kind": "",
+                }
+            ]
         if "groupArray((namespace, rank))" in sql:  # the grant map (`grant_cache`)
             grants = [(TEAM, 1)] if params.get("sub") == CREATOR else []
             return [{"grants": grants, "spellings": [params.get("sub")]}]

@@ -24,6 +24,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from server.auth import tenancy
 from server.core.errors import (
     LoomServerError,
+    caller_text,
     classified,
     error_help_link,
     shown_unauthenticated,
@@ -120,8 +121,15 @@ class TenancyMiddleware:
             # it is recorded or refused, never placed, as for a sign-up.
             await tenancy.ensure_held(org, info if org == info.org else None)
         except PermissionError as e:
+            log.info("tenancy middleware refused caller: %s", e)
             await _refuse(
-                scope, receive, send, path, 401, {"code": "AUTH_INVALID", "message": str(e)}, None
+                scope,
+                receive,
+                send,
+                path,
+                401,
+                {"code": "AUTH_INVALID", "message": caller_text(e)},
+                None,
             )
             return
         except LoomServerError as e:

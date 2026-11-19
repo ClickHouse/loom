@@ -319,7 +319,7 @@ def test_the_op_gate_checks_tenancy_before_anything_it_provisions(
     target = gates.Target(org="acme", namespace="ns", named_namespace="ns", register_namespace="ns")
     with pytest.raises(errors.WrongCellError):
         asyncio.run(gates.authorize(op, _auth("acme"), target, transport="http"))
-    assert order == ["tenancy:acme"]
+    assert order == ["acted_for", "tenancy:acme"]
 
 
 def test_the_raw_routes_authorize_through_the_tenancy_check(
@@ -1551,3 +1551,37 @@ def test_a_malformed_router_url_answers_a_placement_503_and_writes_nothing(
     with pytest.raises(errors.BackendUnavailableError, match="did not answer"):
         asyncio.run(tenancy.ensure_held("new", _auth("new")))
     assert calls == [] and cell_pg.writes == []
+
+
+@pytest.mark.parametrize("path", ["/v1/me/sharing-summary", "/scim/v2/Groups"])
+async def test_the_middleware_keeps_acted_for_refusal_text_out_of_the_response(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, path: str
+) -> None:
+    import logging
+
+    from server.transport import tenancy_gate
+
+    private = "private-identity-store-detail"
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr("server.auth.jwt.authenticate_token", AsyncMock(return_value=_auth("acme")))
+    monkeypatch.setattr(
+        "server.auth.authz.check_acted_for", AsyncMock(side_effect=PermissionError(private))
+    )
+    held = AsyncMock(side_effect=AssertionError("denied identity reached placement"))
+    monkeypatch.setattr(tenancy, "ensure_held", held)
+    app, send = AsyncMock(), AsyncMock()
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "headers": [(b"authorization", b"Bearer x")],
+    }
+    with caplog.at_level(logging.INFO, logger="server.transport.tenancy_gate"):
+        await tenancy_gate.TenancyMiddleware(app)(scope, AsyncMock(), send)
+    app.assert_not_awaited()
+    held.assert_not_awaited()
+    start, body = send.await_args_list[0].args[0], send.await_args_list[1].args[0]
+    assert start["status"] == 401
+    assert private.encode() not in body["body"]
+    assert b"AUTH_INVALID" in body["body"] and b"PermissionError" in body["body"]
+    assert private in caplog.text
