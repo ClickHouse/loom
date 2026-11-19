@@ -1,5 +1,6 @@
 """Permanent retirement requires completion, never expiry or an API object's absence."""
 
+from time import monotonic
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -8,6 +9,14 @@ import pytest
 from server.core import provider_process
 from server.insights.app import provider_barrier as barrier
 from server.insights.store import provider_participants as store
+
+
+class _AuthorityCH:
+    async def query_one(self, sql, params=None):
+        from server.core.pg_profile import _CH_RECORD
+
+        assert sql == _CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
 
 
 @pytest.mark.asyncio
@@ -24,7 +33,10 @@ async def test_expired_quiet_participant_is_not_manual_death(monkeypatch):
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=[row]))
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=0))
     monkeypatch.setattr(barrier, "record_participant", AsyncMock())
-    assert await barrier.retire_participant(participant) == "live"
+    assert (
+        await barrier.retire_participant(participant, ch=_AuthorityCH(), end=monotonic() + 1)
+        == "live"
+    )
     barrier.record_participant.assert_not_awaited()
 
 
@@ -50,6 +62,9 @@ async def test_close_is_permanent_through_an_awaited_retirement_write(monkeypatc
     import asyncio
 
     from server.core import retirement
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
 
     gate = retirement.get_gate()
     gate.install("test")
@@ -57,7 +72,8 @@ async def test_close_is_permanent_through_an_awaited_retirement_write(monkeypatc
     gate.stopped()
     entered, finish = asyncio.Event(), asyncio.Event()
 
-    async def write(proof):
+    async def write(proof, *, ch):
+        assert isinstance(ch, _AuthorityCH)
         assert gate.quiescent
         entered.set()
         await finish.wait()
@@ -68,7 +84,7 @@ async def test_close_is_permanent_through_an_awaited_retirement_write(monkeypatc
     monkeypatch.setattr(barrier, "flush_registered_buffers", AsyncMock(return_value=True))
     monkeypatch.setattr(barrier, "_server_side_settled", AsyncMock(return_value=True))
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=0))
-    task = asyncio.create_task(barrier.retire_process())
+    task = asyncio.create_task(barrier.retire_process(_AuthorityCH(), end=monotonic() + 1))
     try:
         await asyncio.wait_for(entered.wait(), timeout=0.5)
         with pytest.raises(retirement.ProcessStopping):
@@ -148,14 +164,14 @@ async def test_composed_request_tail_holds_counter_after_dispatch_raises(monkeyp
             gate.install("test")
             gate.enrolled = True
             gate.stopped()
-            assert not await barrier.retire_process()
+            assert not await barrier.retire_process(_AuthorityCH(), end=monotonic() + 1)
             assert not task.done()
             barrier.record_retirement.assert_not_awaited()
             if cancel_tail:
                 task.cancel()
                 await asyncio.wait_for(canceled.wait(), 5)
                 assert gate.active == 1 and not task.done()
-                assert not await barrier.retire_process()
+                assert not await barrier.retire_process(_AuthorityCH(), end=monotonic() + 1)
             finish.set()
             done, _ = await asyncio.wait({task}, timeout=0.5)
             if not done:
@@ -287,7 +303,7 @@ async def test_registered_descendant_blocks_after_outer_and_inner_completed(monk
         gate.enrolled = True
         gate.stopped()
         monkeypatch.setattr(barrier, "record_retirement", AsyncMock())
-        assert not await barrier.retire_process()
+        assert not await barrier.retire_process(_AuthorityCH(), end=monotonic() + 1)
         barrier.record_retirement.assert_not_awaited()
         finish.set()
         _, pending = await asyncio.wait(tasks, timeout=0.5)
@@ -572,6 +588,7 @@ async def test_pod_object_death_never_retires_work_that_can_resume(
         "host_proof": proof,
     }
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=[row]))
+    monkeypatch.setattr(barrier, "_default_client", _AuthorityCH)
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=0))
     monkeypatch.setattr(barrier, "prune_retired", AsyncMock())
     monkeypatch.setattr(barrier, "record_retirement", AsyncMock())
@@ -588,7 +605,7 @@ async def test_pod_object_death_never_retires_work_that_can_resume(
     task = asyncio.create_task(paused())
     try:
         await asyncio.wait_for(admitted.wait(), timeout=0.5)
-        await barrier.sweep_stopped(now=5000)
+        await barrier.sweep_stopped(end=monotonic() + 1, now=5000)
         barrier.record_retirement.assert_not_awaited()
         assert barrier.stale_participants()[0]["participant_id"] == str(participant)
         assert len(seen) == 1  # the current reaper never asks the API for a death certificate
@@ -684,7 +701,7 @@ async def test_shutdown_budget_does_not_wait_for_cancellation_deferring_drains(m
             await finish.wait()
 
     async def leave(*args, **kwargs):
-        assert not await barrier.retire_process()
+        assert not await barrier.retire_process(_AuthorityCH(), end=monotonic() + 1)
 
     monkeypatch.setattr(instances, "stop", AsyncMock())
     monkeypatch.setattr(main, "_shutdown_drains", drains)
@@ -793,11 +810,11 @@ async def test_stream_and_response_background_cleanup_remain_counted(monkeypatch
             gate.install("test")
             gate.enrolled = True
             gate.stopped()
-            assert not await barrier.retire_process()
+            assert not await barrier.retire_process(_AuthorityCH(), end=monotonic() + 1)
             body_finish.set()
             await asyncio.wait_for(cleanup_entered.wait(), timeout=0.5)
             assert gate.active == 2 and not task.done()
-            assert not await barrier.retire_process()
+            assert not await barrier.retire_process(_AuthorityCH(), end=monotonic() + 1)
             cleanup_finish.set()
             done, _ = await asyncio.wait({task}, timeout=0.5)
             if not done:

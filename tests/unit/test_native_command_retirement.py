@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -15,10 +16,18 @@ from server.insights.app import provider_command as command
 def native(monkeypatch):
     from server.core import background, ch, pg, pg_profile
     from server.core.model_work_gate import ModelWorkGate
+    from server.settings import settings
 
     events = []
     gate = retirement.get_gate()
     client = SimpleNamespace(connected=False)
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+
+    async def authority(sql, params=None):
+        assert sql == pg_profile._CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
+
+    client.query_one = authority
 
     async def connect():
         client.connected = True
@@ -28,6 +37,7 @@ def native(monkeypatch):
 
     client.connect, client.disconnect = connect, disconnect
     monkeypatch.setattr(ch, "get_client", lambda: client)
+    monkeypatch.setattr(command, "get_client", lambda: client)
     monkeypatch.setattr(pg, "close_pool", AsyncMock())
 
     async def verified(_):
@@ -43,7 +53,8 @@ def native(monkeypatch):
         assert gate.enrolled and gate.active > 0 and not gate.closed
         events.append("acceptance")
 
-    async def certificate(proof):
+    async def certificate(proof, *, ch):
+        assert ch is client
         assert gate.quiescent and client.connected
         assert events[-1] == "buffer"
         events.append("certificate")

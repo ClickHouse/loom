@@ -11,7 +11,6 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -683,9 +682,11 @@ async def test_a_cli_connection_to_another_deployments_postgres_is_refused(
     class _Pool:
         terminated = False
 
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
         def terminate(self) -> None:
             _Pool.terminated = True
@@ -5982,9 +5983,11 @@ async def test_verify_deployment_checks_a_pool_already_open(
             return {"epoch": 1, "deployment_id": "other"}
 
     class _Pool:
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
     async def _open() -> _Pool:
         return _Pool()
