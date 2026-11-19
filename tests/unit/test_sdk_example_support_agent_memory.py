@@ -47,7 +47,13 @@ def _install(
             return httpx.Response(200, json={"memory_key": body["memory_key"], **row})
         if op == "memory.search":
             hits = [
-                {"memory_key": k, "memory_type": "semantic", "content_excerpt": r["value"]}
+                {
+                    "memory_key": k,
+                    "memory_type": "semantic",
+                    "content_excerpt": r["value"],
+                    "distance": 0.2,
+                    "similarity": 0.8,
+                }
                 for (u, k), r in rows.items()
                 if u == user
             ]
