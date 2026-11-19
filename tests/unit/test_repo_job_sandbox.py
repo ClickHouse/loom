@@ -733,6 +733,32 @@ def test_the_missing_sandbox_warning_says_what_the_git_waiver_changes(monkeypatc
     assert "not cloned or fetched" not in waived.message and "refused" not in waived.message
 
 
+@pytest.mark.parametrize(
+    ("proxy", "sandboxed", "reported"),
+    [
+        ("http://proxy.example:3128", True, True),
+        ("http://proxy.example:3128", False, False),
+        ("http://proxy.example:3128", None, False),  # not probed yet: unknown, not a guess
+        ("", True, False),
+    ],
+)
+def test_a_git_proxy_on_a_host_that_runs_the_sandbox_is_a_health_error(
+    monkeypatch, proxy: str, sandboxed: bool | None, reported: bool
+) -> None:
+    """The sandbox's network does not go through the operator's proxy, so network git
+    is refused there (`run_sandboxed`) and health says why."""
+    from server.observability.problems import HealthState, collect_problems, derive_status
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_git_proxy_url", proxy)
+    problems = collect_problems(settings, HealthState(repo_sandbox=sandboxed))
+    found = [p for p in problems if p.code == "repo_git_proxy_sandboxed"]
+    assert [p.severity for p in found] == (["error"] if reported else [])
+    if reported:
+        assert "LOOM_CODE_GIT_PROXY_URL" in found[0].message
+        assert derive_status(True, found) == "degraded"
+
+
 @pytest.mark.parametrize(("required", "rc", "ran"), [(True, 1, False), (False, 1, True)])
 async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     tmp_path: Path, monkeypatch, required: bool, rc: int, ran: bool
@@ -817,7 +843,11 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
     monkeypatch.setattr(compiler_tier, "git", _git)
     bare = tmp_path / "bare.git"
-    cfg = repo_config(github_token="ghs_test", git_remote="https://github.com/o/private")
+    cfg = repo_config(
+        github_token="ghs_test",
+        git_remote="https://github.com/o/private",
+        git_proxy_identity="acme.widgets-indexer",
+    )
     await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40, cfg)
     fetch, _checkout, submodules = calls
     assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
@@ -825,6 +855,7 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
     assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
     assert submodules[1]["token"] == "ghs_test"
     assert submodules[1]["remote"] == "https://github.com/o/private"
+    assert submodules[1]["proxy_identity"] == "acme.widgets-indexer"
 
 
 @pytest.mark.asyncio

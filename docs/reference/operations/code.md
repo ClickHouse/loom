@@ -1146,11 +1146,12 @@ Add a repository's branch as a new read-only index.
 | `join_policy` | `Literal['open', 'approval']` | `'open'` | `open`: any org member joins at once; `approval`: a maintainer approves each request. |
 | `classification` | `Literal['standard', 'restricted']` | `'standard'` | `standard` or `restricted` (a reader needs an approved grant and a token that names the namespace). |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; stored encrypted, never returned. |
+| `git_proxy_identity` | `str` | `''` | The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. |
 | `path_prefixes` | `list[str]` | *(computed)* | Path prefixes to index (`src/`, `lib/`); blank entries are dropped, [] indexes the whole tree. |
 | `exclude` | `list[str]` | *(computed)* | Globs never indexed for this repository (`vendor/`, `*.generated.go`); [] keeps the deployment's default exclude list. |
 | `exclude_generated` | `bool` | `True` | Refuse generated content (Go's `// Code generated … DO NOT EDIT.` header, the `@generated` marker, the repository's `.gitattributes` linguist rules) — on unless the maintainer says otherwise |
 | `scip_producer` | `Literal['', 'go', 'typescript', 'clang', 'python']` | `''` | The compiler tier's producer; "" infers it from the tree's manifests (go.mod → go, tsconfig / package.json → typescript, a root CMakeLists.txt → clang, pyproject → python) |
-| `branches` | `list[str]` | *(computed)* | More branches chosen at add time, each its own index sharing the mirror and inheriting rule, token and paths; per-branch refusals come back in `skipped`, never undoing the ones registered. |
+| `branches` | `list[str]` | *(computed)* | More branches chosen at add time, each its own index sharing the mirror and inheriting rule, token, git proxy identity and paths; per-branch refusals come back in `skipped`, never undoing the ones registered. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1207,6 +1208,7 @@ What a Git remote shows before anything is written — every branch with its hea
 | `org` | `str` | required | The org adding the repository. |
 | `repo` | `str` | required | GitHub owner/name or an HTTPS/SSH Git URL. |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; used once. |
+| `git_proxy_identity` | `str` | `''` | The user name this read presents to the deployment's git proxy; only a platform admin may set it. |
 | `query` | `str` | `''` | Case-insensitive substring of the branch name to match. |
 | `limit` | `int` | `60` | How many matching branches to return (default 60). |
 

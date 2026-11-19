@@ -1281,6 +1281,8 @@ export interface CodeRepoAddInput {
   classification?: "standard" | "restricted";
   /** Token for a private HTTPS remote; stored encrypted, never returned. */
   access_token?: string;
+  /** The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   path_prefixes?: string[];
   exclude?: string[];
   exclude_generated?: boolean;
@@ -1317,6 +1319,8 @@ export interface CodeRepoRemoteBranchesInput {
   repo: string;
   /** Token for a private HTTPS remote; used once. */
   access_token?: string;
+  /** The user name this read presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   /** Case-insensitive substring of the branch name to match. */
   query?: string;
   /** How many matching branches to return (default 60). */

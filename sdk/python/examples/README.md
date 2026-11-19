@@ -2,6 +2,61 @@
 
 Runnable, self-contained scripts for `clickhouse-loom`. The memory example's output below was recorded against a live Loom; the handoff output illustrates its checked result. The memory example reads `LOOM_BASE_URL`, `LOOM_API_KEY` and `LOOM_ORG` from the environment and registers a throwaway namespace. The handoff example uses an existing namespace and two separate tokens. The TypeScript SDK ships the twin of `agent_memory.py` (and a session-resume example) under `sdk/typescript/examples/`.
 
+## fact_document_evidence.py
+
+Read an existing saved fact and an explicitly selected document section for operator
+review. Install `clickhouse-loom` and configure `LOOM_BASE_URL` and `LOOM_API_KEY` for
+a deployment where your credential can read both records. Supply the fact's owning
+agent, user and session identity; omitted user/session values are `-`. Both records
+must be in the selected namespace. No source connector is configured by this example.
+The command rejects anonymous agent names and stops before reading the document if
+the returned fact's agent, user or session is missing or differs from the selection.
+
+```bash
+python sdk/python/examples/fact_document_evidence.py \
+  --org "$LOOM_ORG" --namespace "$LOOM_NAMESPACE" --agent "$FACT_AGENT" \
+  --memory-key "$FACT_KEY" --source-uri "$DOCUMENT_URI" \
+  --section "Deployments" "Rollback"
+```
+
+Use the exact heading path recorded by
+[`knowledge.outline`](../../../docs/features/knowledge.md#reading-a-document).
+The script calls `memory.get` and `knowledge.outline` with `include_children=False`.
+`knowledge.outline` is experimental and must be served by the deployment.
+It makes no search, embedding or model call, writes no application data, and disables
+automatic run recording, startup briefs, retries and rate-limit pacing.
+
+For inspection in an authorized Python application, import `read_pair` from the
+example and await it with your configured `Agent` and the same selection arguments.
+
+```python
+pair = await read_pair(
+    bot,
+    memory_key=fact_key,
+    source_uri=document_uri,
+    section_path=["Deployments", "Rollback"],
+)
+fact, document_section = pair["fact"], pair["document_section"]
+```
+
+The returned `fact["value"]` is the saved claim; `fact` also retains returned
+`agent`, `user_id`, `session_id`, `version`, `status`, `actor`, `source_class`,
+`source_trace` and `source_resource_id`
+fields. `document_section["section_content"]` is the selected section's assembled
+chunk text, with `source_uri` and `section_chunk_idxs` identifying its source. Compare
+the claim with that passage privately; CLI output contains only presence and field
+names, never the claim, passage or provenance values. Optional fields remain absent
+when the server does not return them. Check `fact["found"]`, document `found` and
+non-null `section_content` before inspecting bodies.
+
+The pairing is caller-selected. A stored source pointer does not establish support,
+and this example neither resolves that pointer nor verifies entailment or truth.
+`support` remains `not_evaluated`, including when both reads succeed. The reads are
+separate observations, not an atomic snapshot or a revision-pinned citation. A missing
+or inaccessible fact, document or section supplies no support. Offline HTTP doubles
+check the SDK contracts; no captured live output is supplied. See the
+[memory and document boundary](../../../docs/features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document).
+
 ## software_factory_memory.py
 
 A software-factory memory reference for an implementation agent handing source evidence

@@ -59,28 +59,28 @@ def _require_self_service() -> None:
         )
 
 
-def _require_platform_admin() -> None:
-    """With LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY, only a platform admin starts
-    a remote job or adds an index. The role counts on a flat token used by its own
-    subject: a scoped token's authority is its namespaces, and a trusted caller's
-    role is not the subject's it acts for. A call without a principal passes only
-    where auth is off: no transport then asks for a token, so there is no caller
-    to refuse. Where auth is on such a call is no platform admin's (an MCP endpoint
-    in `open` mode takes one that sends no bearer) and is refused."""
-    if not settings.code_self_service_platform_admin_only:
-        return
+def _is_platform_admin() -> bool:
+    """Whether the caller is a platform admin, for the two rules below. The role
+    counts on a flat token used by its own subject: a scoped token's authority is
+    its namespaces, and a trusted caller's role is not the subject's it acts for.
+    A call without a principal counts only where auth is off: no transport then
+    asks for a token, so there is no caller to refuse. Where auth is on such a
+    call is no platform admin's (an MCP endpoint in `open` mode takes one that
+    sends no bearer)."""
     from server.auth.context import current_auth
     from server.operations.base import Role
 
     auth = current_auth()
-    if auth is None and not settings.auth_actually_required():
-        return
-    if (
-        auth is None
-        or auth.has_ns_roles()
-        or auth.impersonated_by
-        or not auth.has_role(Role.PLATFORM_ADMIN)
-    ):
+    if auth is None:
+        return not settings.auth_actually_required()
+    flat = not auth.has_ns_roles() and not auth.impersonated_by
+    return flat and auth.has_role(Role.PLATFORM_ADMIN)
+
+
+def _require_platform_admin() -> None:
+    """With LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY, only a platform admin
+    (`_is_platform_admin`) starts a remote job or adds an index."""
+    if settings.code_self_service_platform_admin_only and not _is_platform_admin():
         raise AuthInsufficientError(
             "only platform admins add repositories or branches on this deployment "
             "(LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY), with a token of their own that "
@@ -122,6 +122,18 @@ def _require_same_org(org: str) -> None:
         raise AuthInsufficientError(f"principal cannot act in org {org!r}")
 
 
+def _require_git_proxy_admin(identity: str, refusal: str) -> None:
+    """A git proxy identity decides whose credential the operator's proxy fetches a
+    repository with, so only a platform admin (`_is_platform_admin`) attaches one to an
+    index or reads a remote under one, whatever LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY
+    says. Anyone else is refused with `refusal`, before any remote job."""
+    if identity and not _is_platform_admin():
+        raise AuthInsufficientError(refusal)
+
+
+_NAMES_GIT_PROXY_IDENTITY = "git_proxy_identity is a platform admin's to set"
+
+
 async def _namespace_taken(org: str, namespace: str) -> bool:
     from server.code.domain.index.repos import repo_for_namespace
     from server.identity.app.registration import namespace_claimable
@@ -156,6 +168,7 @@ async def _register(
     remote_head: str,
     exclude_generated: bool = True,
     scip_producer: str = "",
+    git_proxy_identity: str = "",
 ) -> CodeRepoAddOutput:
     from server.auth.default_namespace import auth_off_subject
     from server.code.app.index.bootstrap import set_stage
@@ -193,6 +206,7 @@ async def _register(
             created_by=subject,
             exclude_generated=exclude_generated,
             scip_producer=scip_producer,
+            git_proxy_identity=git_proxy_identity,
         )
         await reg.refresh_db_repos(force=True)
         cfg = next(
@@ -243,13 +257,17 @@ async def handle_code_repo_remote_branches(input: Any) -> Any:
     _require_platform_admin()
     await _require_sandbox()
     _require_same_org(input.org)
+    proxy_identity = str(getattr(input, "git_proxy_identity", "") or "")
+    _require_git_proxy_admin(proxy_identity, _NAMES_GIT_PROXY_IDENTITY)
     try:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
     except ValueError as e:
         raise ValidationError(str(e), code="BAD_REPO") from None
     token = input.access_token
     try:
-        remote = await reg.remote_branches(repo, token, git_remote=git_remote)
+        remote = await reg.remote_branches(
+            repo, token, git_remote=git_remote, proxy_identity=proxy_identity
+        )
     except ValueError as e:
         raise ValidationError(str(e), code="REMOTE_REFUSED") from None
     await reg.refresh_db_repos()
@@ -344,6 +362,7 @@ async def _add_extra_branches(
                 branch,
                 input.access_token,
                 git_remote=git_remote,
+                proxy_identity=input.git_proxy_identity,
             )
         except ValueError as e:
             skipped.append({"branch": branch, "reason": str(e)})
@@ -372,6 +391,7 @@ async def _add_extra_branches(
                 remote_head=head,
                 exclude_generated=bool(input.exclude_generated),
                 scip_producer=str(input.scip_producer or ""),
+                git_proxy_identity=input.git_proxy_identity,
             )
         except ValidationError as e:  # taken meanwhile, before any write: its own sentence
             skipped.append({"branch": branch, "reason": e.message})
@@ -395,6 +415,7 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
     _require_platform_admin()
     await _require_sandbox()
     _require_same_org(input.org)
+    _require_git_proxy_admin(input.git_proxy_identity, _NAMES_GIT_PROXY_IDENTITY)
     try:
         repo, git_remote, provider = reg.normalize_remote(input.repo)
     except ValueError as e:
@@ -406,11 +427,13 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
             "retire one or ask the operator to raise the limit",
             code="REPO_QUOTA",
         )
-    token = input.access_token
+    token, proxy_identity = input.access_token, input.git_proxy_identity
     branch = input.branch.strip()
     if not branch:
         try:
-            discovered = await reg.remote_branches(repo, token, git_remote=git_remote)
+            discovered = await reg.remote_branches(
+                repo, token, git_remote=git_remote, proxy_identity=proxy_identity
+            )
         except ValueError as e:
             raise ValidationError(str(e), code="REMOTE_REFUSED") from None
         branch = str(discovered.get("default_branch") or "")
@@ -425,7 +448,9 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
     join_policy = "approval" if classification == "restricted" else input.join_policy
     # The remote first: what is indexed here is told only to a caller who reads it.
     try:
-        head = await reg.remote_has_branch(repo, branch, token, git_remote=git_remote)
+        head = await reg.remote_has_branch(
+            repo, branch, token, git_remote=git_remote, proxy_identity=proxy_identity
+        )
     except ValueError as e:
         raise ValidationError(str(e), code="REMOTE_REFUSED") from None
     namespace = reg.namespace_for(repo, branch)
@@ -456,6 +481,7 @@ async def handle_code_repo_add(input: CodeRepoAddInput) -> CodeRepoAddOutput:
         remote_head=head,
         exclude_generated=bool(input.exclude_generated),
         scip_producer=str(input.scip_producer or ""),
+        git_proxy_identity=proxy_identity,
     )
     if input.branches:
         out.also, out.skipped = await _add_extra_branches(
@@ -571,6 +597,11 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
     src: Any = repo_for_namespace(input.org, input.namespace)
     if src is None:
         raise ValidationError(f"{input.namespace} is not a repository index", code="NOT_A_REPO")
+    # The branch inherits the entry's git proxy identity: as for naming one in an add.
+    _require_git_proxy_admin(
+        src.git_proxy_identity,
+        f"{input.namespace} carries a git proxy identity: a platform admin adds its branches",
+    )
     branch = input.branch.strip()
     if not reg.valid_branch(branch):
         raise ValidationError(f"{branch!r} is not a branch name git accepts", code="BAD_BRANCH")
@@ -620,7 +651,11 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         )
     try:
         head = await reg.remote_has_branch(
-            src.repo, branch, src.github_token, git_remote=src.git_remote
+            src.repo,
+            branch,
+            src.github_token,
+            git_remote=src.git_remote,
+            proxy_identity=src.git_proxy_identity,
         )
     except ValueError as e:
         raise ValidationError(str(e), code="REMOTE_REFUSED") from None
@@ -639,6 +674,7 @@ async def handle_code_repo_add_branch(input: CodeRepoAddBranchInput) -> CodeRepo
         remote_head=head,
         exclude_generated=bool(getattr(src, "exclude_generated", True)),
         scip_producer=str(getattr(src, "scip_producer", "") or ""),
+        git_proxy_identity=src.git_proxy_identity,
     )
     await _inherit_tracker_links(input.org, input.namespace, namespace)
     return out

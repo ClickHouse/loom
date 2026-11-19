@@ -1,6 +1,6 @@
 {
   "name": "clickhouse-loom",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Shared long-term memory, document search and a code index for Gemini CLI from a self-hosted ClickHouse Loom server, over MCP.",
   "mcpServers": {
     "loom": {

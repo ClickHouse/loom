@@ -148,13 +148,6 @@ async def _confirm(ch: CHClient, backend: uuid.UUID, params: dict[str, Any]) -> 
         raise LatchUnavailable()
 
 
-async def _clear(ch: CHClient, backend: uuid.UUID, params: dict[str, Any]) -> None:
-    await ch.execute(LOCK_RELEASE, params)
-    _, row = await _one(ch, _NONCE, params, backend=backend)
-    if row["holders"]:
-        raise LatchUnavailable()
-
-
 async def enabled(*, ch: CHClient | None = None) -> bool:
     """Never cache an absence; only a confirmed synchronous write orders that read."""
     ch = ch or get_client()
@@ -189,8 +182,12 @@ async def enabled(*, ch: CHClient | None = None) -> bool:
                     raise LatchUnavailable()
                 progress.enter("enabled.nonce_confirm")
                 await _confirm(ch, backend, params)
-                progress.enter("enabled.nonce_clear")
-                await _clear(ch, backend, params)
+                progress.enter("enabled.nonce_release")
+                await ch.execute(LOCK_RELEASE, params)
+                progress.enter("enabled.nonce_verify")
+                _, row = await _one(ch, _NONCE, params, backend=backend)
+                if row["holders"]:
+                    raise LatchUnavailable()
                 progress.enter("enabled.keeper_after_clear")
                 if await _keeper(ch, backend) != before:
                     raise LatchUnavailable()

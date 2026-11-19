@@ -823,6 +823,30 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     ]
 
 
+def _git_proxy_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """LOOM_CODE_GIT_PROXY_URL on a host that runs repository jobs in the sandbox: the
+    sandbox's network does not go through that proxy, so every network git job is
+    refused (`server.code.app.index.git_proxy`). Unknown before the probe."""
+    if not (settings.code_intel_enabled and settings.code_git_proxy_url):
+        return []
+    if state.repo_sandbox is not True:
+        return []
+    return [
+        Problem(
+            "repo_git_proxy_sandboxed",
+            "error",
+            "The code index's network git (clone, fetch, ls-remote, submodule update) is "
+            "refused: LOOM_CODE_GIT_PROXY_URL is set and this host runs repository jobs in "
+            "the sandbox, whose network does not go through that proxy.",
+            "The two are not used together: unset LOOM_CODE_GIT_PROXY_URL, or run this host "
+            "without the repository-job sandbox (its container profile and "
+            "LOOM_CODE_SANDBOX_REQUIRED) — 'Git through a forward proxy' in "
+            "docs/operations/code-index-operations.md.",
+            source="runtime",
+        )
+    ]
+
+
 def _reader_user_problems(settings: Any, state: HealthState) -> list[Problem]:
     """The caller-shaped reads (code.grep, code.search with a pattern or globs,
     memory.aggregate, memory.record.query) run as the reader user, so they all
@@ -1048,6 +1072,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _otel_problems(settings, st)
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
+        + _git_proxy_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _analysis_problems(settings, st)
         + _assistant_problems(settings, st)

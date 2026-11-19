@@ -41,6 +41,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.callers": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "code.context_pack": (

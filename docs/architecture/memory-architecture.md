@@ -1026,6 +1026,14 @@ and shared duplicate selection by phrase completion.
    | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                                                                                                                      |
    | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                                                                                                                              |
 
+   Every chunk statement excludes a known parent that the read would not serve, using
+   the canonical memory row's status and time predicates. The parent match includes
+   agent, user, session and key within the org and namespace, so another writer's row
+   cannot hide a passage. Anonymous user and session spellings compare as the same
+   sentinel. Blank-session ingests retain independent generated session ids. A chunk
+   with no matching canonical parent, including such a generated session, stays
+   eligible. Hard tags also require a matching searchable parent.
+
    A pooled chunk of a long `memory.set` value folds onto the row whose current value cuts
    it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key with
    the newest vectors over `memory_embeddings` (`memory_search_set_chunk_rows` of them),

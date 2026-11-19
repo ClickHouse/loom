@@ -383,3 +383,138 @@ def test_interior_replacement_keeps_the_exact_utf8_request_bound(fits):
         assert plan.units[1].disposition == "changed"
     else:
         assert not plan.units
+
+
+@pytest.mark.parametrize("trailing", ["", "\n\n"])
+@pytest.mark.parametrize(
+    "suffix", ["\nAdded paragraph.\n", "\nOne paragraph.\n\nAnother paragraph.\n"]
+)
+def test_terminal_paragraph_append_extends_only_the_original_final_section(trailing, suffix):
+    historical = RAW + trailing
+    case = _case(historical + suffix, historical=historical)
+    plan = _plan(case)
+    assert not plan.conflicts
+    assert len(plan.units) == len(case[2]) == 4
+    assert [u.disposition for u in plan.units] == ["reuse", "reuse", "reuse", "changed"]
+    assert tuple(u.original for u in plan.units) == case[2]
+    assert all(
+        (u.scope.start, u.scope.end) == (original.start, original.end)
+        for u, original in zip(plan.units[:-1], case[2][:-1], strict=True)
+    )
+    assert plan.units[-1].scope.start == case[2][-1].start
+    assert plan.units[-1].scope.end == len(case[1].english)
+    assert case[1].english[plan.units[-1].scope.start :].endswith(suffix)
+    assert (
+        "".join(
+            u.separator_before + u.scope.english[u.scope.start : u.scope.end] for u in plan.units
+        )
+        == case[1].english
+    )
+    assert not plan.removed and not plan.trailing_separator
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "Tail.\n",
+        "\n## Added section\n\nNew text.\n",
+        "\n```text\nUnclosed.\n",
+        "\n```text\nClosed.\n```\n",
+        "\n- New list item.\n",
+        "\n> Quoted paragraph.\n",
+        "\nA | B\n--- | ---\n1 | 2\n",
+        "\n<div>HTML</div>\n",
+        "\nInline <b>HTML</b>.\n",
+        "\n[id]: https://example.com\n\nAdded paragraph.\n",
+        "\n<!-- languages -->\n",
+        "\n!!! note\n    Site extension.\n",
+        "\n{: .attribute}\n",
+        "\nNew text without a terminal newline.",
+    ],
+)
+def test_terminal_append_does_not_claim_new_blocks_or_ambiguous_context(suffix):
+    plan = _plan(_case(RAW + suffix))
+    assert plan.conflicts and not plan.units
+
+
+def test_terminal_proof_does_not_move_an_interior_boundary():
+    current = RAW.replace("## Last", "Inserted paragraph.\n\n## Last") + "\nAppended.\n"
+    plan = _plan(_case(current))
+    assert plan.conflicts and not plan.units
+
+
+def test_terminal_append_requires_the_final_original_to_own_its_heading():
+    historical = RAW.replace("End.", "Earlier paragraph.\n\nEnd.")
+    old, now, _, origins = _case(historical + "\nAppended.\n", historical=historical)
+    start = old.english.index("End.")
+    parts = (old.english[: start - 1], old.english[start:])
+    units = (
+        OriginalUnit(0, start - 1, _digest(parts[0]), "first"),
+        OriginalUnit(start, len(old.english), _digest(parts[1]), "last"),
+    )
+    plan = _plan((old, now, units, origins))
+    assert plan.conflicts and not plan.units
+
+
+@pytest.mark.parametrize("problem", ["forged-raw", "forged-prepared", "incomplete"])
+def test_terminal_append_keeps_authentication_and_completion_guards(problem):
+    old, now, units, origins = _case(RAW + "\nAppended.\n")
+    if problem == "forged-raw":
+        origins = replace(origins, current_raw=RAW)
+    elif problem == "forged-prepared":
+        text = now.english.replace("Appended", "Forged")
+        now = replace(now, english=text, sha256=_digest(text))
+    else:
+        units = (*units[:-1], replace(units[-1], reply_ref=None))
+    plan = _plan((old, now, units, origins))
+    assert plan.conflicts and not plan.units
+
+
+def test_terminal_extension_cannot_split_an_oversized_changed_original():
+    case = _case(RAW + "\n" + "界" * chunks.MAX_BYTES + ".\n")
+    plan = _plan(case)
+    assert plan.conflicts and not plan.units
+
+
+def test_terminal_paragraph_after_a_related_list_keeps_inline_link_origins():
+    historical = RAW.replace("End.", "- [One](../guides/one.md).\n- [Two](../guides/two.md).")
+    suffix = "\nRead the [guide](../guides/one.md) for\nmore detail.\n"
+    case = _case(historical + suffix, historical=historical)
+    plan = _plan(case)
+    assert not plan.conflicts
+    assert len(plan.units) == 4 and plan.units[-1].disposition == "changed"
+    assert tuple(u.original for u in plan.units) == case[2]
+    assert case[1].english[plan.units[-1].scope.start :].endswith(suffix)
+
+
+def test_terminal_append_refuses_a_site_ordered_list_continuation():
+    historical = RAW.replace("End.", "1. Original related.")
+    plan = _plan(_case(historical + "\n  Appended paragraph.\n", historical=historical))
+    assert plan.conflicts and not plan.units
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "\nAdded paragraph.\n{ .class }\n",
+        "\nAdded **paragraph**{:.class}.\n",
+        "\nAdded **paragraph**{.class}.\n",
+        "\nAdded paragraph }.\n",
+    ],
+)
+def test_terminal_append_refuses_brace_marked_text(suffix):
+    plan = _plan(_case(RAW + suffix))
+    assert plan.conflicts and not plan.units
+
+
+@pytest.mark.parametrize("fits", [False, True])
+def test_terminal_counterpart_keeps_the_exact_utf8_bound(fits):
+    case = _case(RAW + "\nAppended 界.\n")
+    size = len(chunks.heading_sections(case[1].english)[-1].encode())
+    plan = _plan(case, bounded_new_request_bytes=size - int(not fits))
+    assert bool(plan.conflicts) is not fits
+    if fits:
+        assert len(plan.units) == 4 and plan.units[-1].original == case[2][-1]
+        assert plan.units[-1].disposition == "changed"
+    else:
+        assert not plan.units

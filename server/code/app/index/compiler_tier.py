@@ -21,10 +21,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from server.code.app.index import tier_health
 from server.code.app.index.entry_lock import EntryLockHeld, EntryLockLost, check_held, entry_lock
+from server.code.app.index.git_proxy import GitProxyRefused, NetworkGit
 from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
-from server.code.app.index.sandbox import run_job, sandbox_available
+from server.code.app.index.sandbox import JobOptions, run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
 from server.settings import settings
 from server.workers import pass_context
@@ -378,13 +379,16 @@ async def git(
     network: bool = False,
     token: str = "",
     remote: str = "",
+    proxy_identity: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
     `local_remote` (the bare clone a fetch reads) read-only, the network only with
     `network`. `token` authenticates to the owner of `remote` (the repository's own
-    https remote), so a private submodule of that owner can be fetched. On timeout,
-    name the command (a bare TimeoutError says nothing) and retry `retries` times — a
-    stall is usually transient contention on the shared bare clone."""
+    https remote), so a private submodule of that owner can be fetched; with an
+    operator's git proxy the network job goes through it as `proxy_identity` (the
+    entry's git_proxy_identity). On timeout, name the command (a bare TimeoutError says
+    nothing) and retry `retries` times — a stall is usually transient contention on
+    the shared bare clone."""
     from server.code.app.index.gitrepo import auth_env
 
     # The file transport follows the bare clone alone, never the entry's remote.
@@ -392,6 +396,17 @@ async def git(
         env = auth_env(token, remote)
     else:
         env = auth_env(remote=str(local_remote or ""))
+    job: JobOptions = {
+        "env": env,
+        "timeout_s": timeout_s,
+        "writable": [cwd],
+        "readonly": [local_remote] if local_remote else [],
+        "network": network,
+        "merge_stderr": True,
+    }
+    if network:
+        # It follows the URLs .gitmodules names, not the entry's remote: no remote to name.
+        job["network_git"] = NetworkGit(identity=proxy_identity)
 
     attempt = 0
     while True:
@@ -399,13 +414,10 @@ async def git(
             done = await run_job(
                 # never a repack inside a fetch: the tier's own gc does it (`gc_checkout`)
                 ["git", "-C", str(cwd), "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args],
-                env=env,
-                timeout_s=timeout_s,
-                writable=[cwd],
-                readonly=[local_remote] if local_remote else [],
-                network=network,
-                merge_stderr=True,
+                **job,
             )
+        except GitProxyRefused as e:
+            raise tier_health.ToolOutputError(e.reason) from None
         except TimeoutError:
             attempt += 1
             if attempt > retries:

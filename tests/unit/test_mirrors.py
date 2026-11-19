@@ -19,6 +19,7 @@ class _Cfg:
         self.org, self.namespace, self.label = "o", ns, f"o/{ns}"
         self.git_dir, self.git_remote = git_dir, "https://github.com/o/r.git"
         self.git_branch, self.github_token, self.classification = "main", "", "standard"
+        self.git_proxy_identity = ""
         self.source, self.git_fetch_pr_heads = source, True
         self.scip_extra_producers: tuple[str, ...] = ()
         self.scip_checkout_dir = ""
@@ -100,7 +101,9 @@ async def test_a_merge_the_remote_no_longer_serves_is_recorded_and_the_rest_fetc
     gone, kept = "a" * 40, "b" * 40
     sent: list[list[str]] = []
 
-    async def _fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str = "") -> int:
+    async def _fetch_shas(
+        git_dir: str, remote: str, shas: list[str], *, token: str = "", proxy_identity: str = ""
+    ) -> int:
         sent.append(list(shas))
         if gone in shas:
             raise gitrepo.GitError(f"fatal: remote error: upload-pack: not our ref {gone}")

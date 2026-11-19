@@ -125,6 +125,11 @@ def test_row_to_config_is_a_registry_entry(monkeypatch: pytest.MonkeyPatch) -> N
     )  # its own tree, never the operator's
     restricted = reg.row_to_config(_row(classification="restricted", join_policy="approval"))
     assert restricted.public is False and restricted.classification == "restricted"
+    # a row from before the column, or with none, takes the deployment's default identity
+    assert cfg.git_proxy_identity == ""
+    assert reg.row_to_config(
+        _row(git_proxy_identity="acme.widgets-indexer")
+    ).git_proxy_identity == ("acme.widgets-indexer")
 
 
 def test_configured_repos_appends_registry_and_operator_wins(
@@ -650,7 +655,9 @@ async def test_with_auth_off_the_waiver_path_reaches_the_remote_a_request_names(
 
     asked: list[str] = []
 
-    async def _remote(repo: str, branch: str, token: str, *, git_remote: str = "") -> str:
+    async def _remote(
+        repo: str, branch: str, token: str, *, git_remote: str = "", proxy_identity: str = ""
+    ) -> str:
         asked.append(git_remote)
         return "abc123def456" + "0" * 28
 
@@ -1465,3 +1472,150 @@ async def test_an_add_without_the_sandbox_is_refused(
         )
     assert ei.value.to_detail()["code"] == "SANDBOX_UNAVAILABLE"
     assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+
+
+# --- git proxy identity -----------------------------------------------------------------
+
+IDENTITY = "acme.widgets-indexer"
+
+
+def _probes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The identity each remote read of an add was made under."""
+    under: list[str] = []
+
+    async def _has_branch(repo: str, branch: str, token: str, **kw: Any) -> str:
+        under.append(kw["proxy_identity"])
+        return "abc123def456" + "0" * 28
+
+    async def _branches(repo: str, token: str, **kw: Any) -> dict[str, Any]:
+        under.append(kw["proxy_identity"])
+        return {"default_branch": "main", "branches": [{"name": "main", "sha": "a" * 40}]}
+
+    monkeypatch.setattr(reg, "remote_has_branch", _has_branch)
+    monkeypatch.setattr(reg, "remote_branches", _branches)
+    return under
+
+
+def _registered(plane: Any) -> list[dict[str, Any]]:
+    return [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_s_add_stores_the_git_proxy_identity_and_reads_the_remote_under_it(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    with acting_as(_platform_admin()):
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(
+                org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY, branches=["release/1.2"]
+            )
+        )
+    # the default branch's discovery, its probe, then the extra branch's probe
+    assert under == [IDENTITY] * 3
+    assert [r["git_proxy_identity"] for r in _registered(plane)] == [IDENTITY] * 2
+    listed = [c for c in repos.configured_repos() if c.repo == "acme/widgets"]
+    assert {c.git_proxy_identity for c in listed} == {IDENTITY} and len(listed) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "caller",
+    [
+        {"roles": (Role.VIEWER,)},
+        {"roles": (Role.ORG_ADMIN,)},
+        {"roles": (Role.PLATFORM_ADMIN,), "ns_roles": (("code-widgets", "admin"),)},
+        {"roles": (Role.PLATFORM_ADMIN,), "impersonated_by": "sa:gateway"},
+    ],
+    ids=["a member", "an org admin", "a scoped token", "an admin acting for someone else"],
+)
+async def test_only_a_platform_admin_names_a_git_proxy_identity(
+    plane, monkeypatch: pytest.MonkeyPatch, caller: dict[str, Any]
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    auth = AuthInfo(
+        subject="alice@x", org=ORG, namespaces=("personal",), is_service_account=False, **caller
+    )
+    with acting_as(auth):
+        with pytest.raises(AuthInsufficientError, match="git_proxy_identity"):
+            await admin.handle_code_repo_add(
+                CodeRepoAddInput(org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY)
+            )
+        with pytest.raises(AuthInsufficientError, match="git_proxy_identity"):
+            await admin.handle_code_repo_remote_branches(
+                CodeRepoRemoteBranchesInput(
+                    org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY
+                )
+            )
+    # refused before any remote job and before any write
+    assert under == [] and _registered(plane) == []
+
+
+def test_a_caller_without_a_principal_names_an_identity_only_where_auth_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With auth off the single user is the operator. With auth on, a caller no
+    principal was bound for (an MCP endpoint left open on loopback) is nobody."""
+    from server.settings import settings
+    from tests.unit.principals import acting_as
+
+    with acting_as(None):
+        monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: False)
+        admin._require_git_proxy_admin(IDENTITY, "refused")
+        admin._require_git_proxy_admin("", "refused")
+        monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: True)
+        admin._require_git_proxy_admin("", "refused")  # naming none is anyone's
+        with pytest.raises(AuthInsufficientError, match="refused"):
+            admin._require_git_proxy_admin(IDENTITY, "refused")
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_lists_a_remote_s_branches_under_the_identity(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    with acting_as(_platform_admin()):
+        out = await admin.handle_code_repo_remote_branches(
+            CodeRepoRemoteBranchesInput(org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY)
+        )
+    assert under == [IDENTITY] and out.default_branch == "main"
+
+
+@pytest.mark.asyncio
+async def test_a_branch_inherits_the_git_proxy_identity_and_only_a_platform_admin_adds_it(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    branch = CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+    with acting_as(_platform_admin()):
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(
+                org=ORG, repo="acme/widgets", branch="main", git_proxy_identity=IDENTITY
+            )
+        )
+    # The fixture's caller maintains the namespace; the identity is not theirs to pass on.
+    with pytest.raises(AuthInsufficientError, match="code-widgets carries a git proxy identity"):
+        await admin.handle_code_repo_add_branch(branch)
+    assert len(_registered(plane)) == 1
+    with acting_as(_platform_admin()):
+        await admin.handle_code_repo_add_branch(branch)
+    assert under == [IDENTITY] * 2
+    assert [r["git_proxy_identity"] for r in _registered(plane)] == [IDENTITY] * 2
+
+
+@pytest.mark.parametrize("identity", ["acme:widgets", "two words", "a/b", "x" * 129, "ok\n"])
+def test_a_git_proxy_identity_outside_its_shape_is_refused_on_the_wire(identity: str) -> None:
+    from pydantic import ValidationError as WireError
+
+    for model in (CodeRepoAddInput, CodeRepoRemoteBranchesInput):
+        with pytest.raises(WireError, match="git_proxy_identity"):
+            model(org=ORG, repo="acme/widgets", git_proxy_identity=identity)
+        assert model(org=ORG, repo="acme/widgets").git_proxy_identity == ""

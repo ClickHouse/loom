@@ -80,3 +80,45 @@ async def test_lessons_match_the_result_file_by_path(
     # a cap below the decision's size leaves it out, never cut
     small = (await path_lessons.lessons_for_paths(ORG, ["dev"], "", [PATH], token_budget=60)).rows
     assert "design/memo" not in {r["memory_key"] for r in small}
+
+
+@pytest.mark.slow
+async def test_a_search_keeps_a_stored_lesson_when_another_file_read_times_out(
+    control_plane_url: str, mint_test_token: Any, ch_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
+    from server.code.app import result_lessons
+    from server.code.domain.units import CodeUnit
+    from server.core.ch import get_client
+    from server.memory.app import path_lessons
+    from server.settings import settings
+
+    await get_client().connect()
+    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
+    _set(control_plane_url, token, "notes/ready", "Keep the ready file's lesson.", [PATH])
+    listing_rows = path_lessons.listing_rows
+    stopped = asyncio.Event()
+
+    async def _rows(inp: Any) -> Any:
+        if inp.path == PATH:
+            return await listing_rows(inp)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    async def _search(inp: CodeSearchInput) -> CodeSearchOutput:
+        return CodeSearchOutput(
+            results=[CodeUnit(path=PATH), CodeUnit(path="unavailable.py")], route="hybrid"
+        )
+
+    monkeypatch.setattr(path_lessons, "listing_rows", _rows)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 1.0)
+    wrapped = result_lessons.WithLessons(_search, result_lessons.search_paths)
+    out = await wrapped(
+        CodeSearchInput(
+            org=ORG, namespace="code-repo", query="ready file", lesson_namespaces=["dev"]
+        )
+    )
+    assert any(row["memory_key"] == "notes/ready" for row in out.lessons), out.model_dump()
+    assert stopped.is_set()

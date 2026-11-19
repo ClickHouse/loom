@@ -1,9 +1,9 @@
 # Shared context for multi-agent workflows
 
-Loom gives the agents in a multi-agent workflow one place to share context: memory every
-agent in a namespace reads, task inboxes for handing work from one agent to another, and a
-record of decisions. Your agents and orchestrator run the workflow; Loom keeps what they
-learn and hand over.
+Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and
+separate read and write roles. Agents share context through memory, task inboxes and
+decision records within the namespaces they can access. Your agents and orchestrator run
+the workflow; Loom keeps what they learn and hand over.
 
 ## What you get
 
@@ -77,6 +77,13 @@ before relying on the deployment for team work.
 6. **Record the outcome.** Correct an outdated claim at the same memory key. Record which
    memories each run relied on and close the run once, following the [run and procedure reporting rules](autonomous-agents.md#check-one-agent-task).
    Keep failed checks and unresolved questions with the handoff.
+
+The [Python software-factory reference](https://github.com/ClickHouse/loom/tree/main/sdk/python/examples#software_factory_memorypy)
+implements this evidence handoff with separate implementation and review credentials.
+Start with its indexed public repository and review-inbox setup. It compares the served
+function body and reports operation receipts; it does not generate a patch, decide whether
+a lesson is true or run code review. The example documents cleanup limits and supplies
+no captured live output.
 
 ## Start
 

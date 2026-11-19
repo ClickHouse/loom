@@ -1133,6 +1133,26 @@
           "type": "integer",
           "description": "Max PR heads fetched per shared mirror per ingest pass."
         },
+        "code_git_proxy_ca_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM bundle git verifies TLS with through the proxy, in place of its default roots (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url."
+        },
+        "code_git_proxy_identity": {
+          "default": "",
+          "type": "string",
+          "description": "The proxy user of an entry that names no `git_proxy_identity`: letters, digits and `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_token_file": {
+          "default": "",
+          "type": "string",
+          "description": "File holding the proxy password, read again for every git job. Empty = no password; a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_url": {
+          "default": "",
+          "type": "string",
+          "description": "The proxy: `http://host:port` or `https://host:port`, the port named, with no credentials, path or query. Empty = git connects directly."
+        },
         "code_git_remote": {
           "default": "",
           "type": "string",
@@ -3710,9 +3730,9 @@
           "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
         },
         "mcp_always_load_tools": {
-          "default": "code.search,code.symbol",
+          "default": "",
           "type": "string",
-          "description": "Ops whose tools/list entry carries `_meta: {\"anthropic/alwaysLoad\": true}`, so a host that defers MCP tools behind tool search lists these up front and an agent calls them on its first turn instead of spending a turn loading them. Comma-separated op names; empty = none."
+          "description": "Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront."
         },
         "mcp_auth_mode": {
           "default": "required",

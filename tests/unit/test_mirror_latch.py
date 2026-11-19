@@ -70,6 +70,43 @@ def _timing_fields(record):
     return elapsed, current, expired, completed
 
 
+@pytest.mark.parametrize("failure", ["release", "verify"])
+async def test_nonce_cleanup_failure_names_the_exact_statement(failure, caplog, monkeypatch):
+    clock = ManualClock(t=1000)
+    monkeypatch.setattr(store, "monotonic", clock.monotonic)
+    world = KeeperWorld()
+    execute, query_one = world.execute, world.query_one
+
+    async def release(sql, params=None):
+        if sql == store.LOCK_RELEASE and failure == "release" and not world.counts["release"]:
+            world.route("release")
+            clock.advance(0.375)
+            raise TimeoutError("private-body SELECT secret https://example.invalid/token")
+        return await execute(sql, params)
+
+    async def verify(sql, params=None):
+        if sql == store._NONCE and failure == "verify" and world.counts["release"]:
+            clock.advance(0.375)
+            raise TimeoutError("private-body SELECT secret https://example.invalid/token")
+        return await query_one(sql, params)
+
+    monkeypatch.setattr(world, "execute", release)
+    monkeypatch.setattr(world, "query_one", verify)
+    with caplog.at_level("WARNING", logger=store.__name__), pytest.raises(store.LatchUnavailable):
+        await store.enabled(ch=world)
+
+    records = [record for record in caplog.records if record.name == store.__name__]
+    assert len(records) == 1
+    assert records[0].args[:3] == (f"enabled.nonce_{failure}", "TimeoutError", None)
+    elapsed, current, expired, completed = _timing_fields(records[0])
+    assert (elapsed, current, expired) == (375, 375, False)
+    assert completed["enabled.nonce_confirm"] == 0
+    assert ("enabled.nonce_release" in completed) is (failure == "verify")
+    assert records[0].exc_info is None and records[0].stack_info is None
+    assert "private-body" not in caplog.text and "example.invalid" not in caplog.text
+    assert not world.leases and world.counts["release"] == 2 and world.counts["nonce"] == 1
+
+
 @pytest.mark.parametrize("outer_expires", [False, True])
 async def test_timeout_warning_records_phase_elapsed_and_actual_outer_expiry(
     outer_expires, caplog, monkeypatch

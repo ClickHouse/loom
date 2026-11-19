@@ -393,7 +393,9 @@ async def test_opt_out_skips_the_read(monkeypatch: pytest.MonkeyPatch, how: str)
 
 @pytest.mark.asyncio
 async def test_a_slow_or_failing_read_leaves_no_lessons(monkeypatch: pytest.MonkeyPatch) -> None:
+    read_paths = path_lessons.lessons_for_paths
     _stub_reads(monkeypatch, ["code-repo"], [])
+    monkeypatch.setattr(path_lessons, "lessons_for_paths", read_paths)
 
     async def _slow(*a: Any, **kw: Any) -> Any:
         await asyncio.sleep(5)
@@ -404,8 +406,98 @@ async def test_a_slow_or_failing_read_leaves_no_lessons(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.05)
     for read in (_slow, _fails):
-        monkeypatch.setattr(path_lessons, "lessons_for_paths", read)
+        monkeypatch.setattr(path_lessons, "listing_rows", read)
         assert (await result_lessons.lessons_for(_input(), ["a.py"], time.monotonic())).rows == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_file", ["slow", "failing"])
+async def test_a_slow_or_failing_file_keeps_another_files_ready_lesson(
+    monkeypatch: pytest.MonkeyPatch, other_file: str
+) -> None:
+    async def _nss(org: str, code_ns: str, extra: list[str]) -> list[str]:
+        return ["mem-home", "code-repo"]
+
+    stopped = asyncio.Event()
+
+    async def _rows(inp: Any) -> tuple[list[dict[str, Any]], bool]:
+        if inp.path == "a.py":
+            return [_hit("notes/known", state="fresh")], False
+        if other_file == "failing":
+            raise RuntimeError("the other file's read failed")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+        raise AssertionError("the unfinished read must be cancelled")
+
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", _nss)
+    monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", _trunk)
+    monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
+    monkeypatch.setattr(path_lessons, "listing_rows", _rows)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.05)
+
+    found = await result_lessons.lessons_for(
+        _input(lesson_namespaces=["mem-home"]), ["a.py", "b.py"], time.monotonic()
+    )
+
+    assert [(row["memory_key"], row["code_state"]) for row in found.rows] == [
+        ("notes/known", "fresh")
+    ]
+    if other_file == "slow":
+        assert stopped.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_lesson_read_stops_its_file_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started, stopped = asyncio.Event(), asyncio.Event()
+
+    async def _rows(inp: Any) -> Any:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(path_lessons, "listing_rows", _rows)
+    task = asyncio.create_task(
+        path_lessons.lessons_for_paths("acme", ["mem-home"], "", ["a.py"], token_budget=200)
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stopped.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope_seconds", [0.3, 0.6])
+async def test_resolving_the_lesson_scope_uses_the_same_read_budget(
+    monkeypatch: pytest.MonkeyPatch, scope_seconds: float
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    calls: list[dict[str, Any]] = []
+    _stub_reads(monkeypatch, ["code-repo"], calls)
+
+    async def _nss(org: str, code_ns: str, extra: list[str]) -> list[str]:
+        clock.advance(scope_seconds)
+        return ["code-repo"]
+
+    monkeypatch.setattr(result_lessons, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(code_plane_reads, "lesson_namespaces", _nss)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 0.5)
+    found = await result_lessons.lessons_for(_input(deadline_ms=0), ["a.py"], clock.monotonic())
+
+    if scope_seconds < 0.5:
+        assert found.rows and calls[0]["timeout_s"] == pytest.approx(0.2)
+    else:
+        assert found.rows == [] and calls == []
 
 
 @pytest.mark.asyncio

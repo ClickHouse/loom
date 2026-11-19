@@ -498,7 +498,13 @@ async def _backfill_head(git_dir: str, cfg: Any, args: argparse.Namespace) -> st
     if pinned:
         return await gitrepo.resolve_commit(git_dir, pinned)
     if not getattr(args, "no_fetch", False):
-        await gitrepo.fetch(git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+        await gitrepo.fetch(
+            git_dir,
+            cfg.git_remote,
+            cfg.git_branch,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
+        )
     return await gitrepo.head_sha(git_dir, cfg.git_branch)
 
 

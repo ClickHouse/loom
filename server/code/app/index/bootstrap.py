@@ -254,6 +254,7 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
     clone got there first), else why not. The processes of one host share the
     mirror directory, so one clones while the others wait on its lock file. With
     `pin`, a clone this call made then pins the ledger merges it lacks."""
+    from server.code.app.index.git_proxy import GitProxyRefused, refused_by_proxy
     from server.code.app.index.gitrepo import auth_env, remote_access, upload_pack_args
     from server.code.app.index.sandbox import SandboxRequiredError, run_job
 
@@ -280,13 +281,18 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
             env=auth_env(cfg.github_token, cfg.git_remote),
             timeout_s=settings.code_bootstrap_clone_timeout_s,
             writable=[Path(tmp)],
-            **remote_access(cfg.git_remote),
+            **remote_access(cfg.git_remote, cfg.git_proxy_identity),
         )
         if done.returncode != 0:
             # The reason reaches `/v1/health?include=mirrors` without a token: git's
             # stderr can name host paths and the remote's URL, so it is logged only.
-            stderr = done.stderr.decode(errors="replace").strip()[-600:]
-            logger.warning("mirror clone exited %s: %s", done.returncode, stderr)
+            stderr = done.stderr.decode(errors="replace").strip()
+            logger.warning("mirror clone exited %s: %s", done.returncode, stderr[-600:])
+            # A clone is an entry's first network job: a refusal by the operator's git
+            # proxy is named, by its status alone, so the fetch tier reads as it does
+            # for a refused fetch.
+            if refused := refused_by_proxy(stderr):
+                return f"git clone failed: {refused}"
             return f"git clone failed (exit {done.returncode})"
         # Whatever mode the clone left on the directory, the mirror gets `repo_dir_mode`:
         # closed to other users.
@@ -299,6 +305,8 @@ async def clone_mirror(cfg: Any, *, pin: bool = False) -> str:
         return CLONE_TIMED_OUT
     except SandboxRequiredError:
         return SANDBOX_REQUIRED_REFUSAL
+    except GitProxyRefused as e:
+        return e.reason  # a fixed sentence: it names settings, no path and no remote
     except OSError as e:
         # The reason reaches `code.repos` and `/v1/health?include=mirrors`: the kind; the
         # mirror's path is logged.
@@ -316,7 +324,13 @@ async def fetch_mirror(cfg: Any) -> str:
 
     try:
         async with fetch_lock(cfg.git_dir):
-            await gitrepo.fetch(cfg.git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+            await gitrepo.fetch(
+                cfg.git_dir,
+                cfg.git_remote,
+                cfg.git_branch,
+                token=cfg.github_token,
+                proxy_identity=cfg.git_proxy_identity,
+            )
     except gitrepo.GitError as e:
         # As for a clone: git's message is logged, the reason is fixed.
         logger.warning("mirror fetch failed: %s", e)
