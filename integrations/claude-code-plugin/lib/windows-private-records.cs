@@ -260,9 +260,11 @@ public sealed class WindowsPrivateRecords
             using (SafeFileHandle manifest = OpenRecord(manifestFile, false)) {
                 CheckManifest(ReadChecked(manifest), rootId);
                 using (SafeFileHandle state = OpenRecord(leaf, true)) {
+                    WriteRecordPhase("protect-open");
                     long position;
                     Require(SetFilePointerEx(state, 0, out position, 2));
                     WriteAndFlush(state, new byte[] { 49, 10 });
+                    WriteRecordPhase("protect-flushed");
                 }
             }
         } finally { CloseDirectories(held); }
@@ -621,7 +623,7 @@ public sealed class WindowsPrivateRecords
         return id;
     }
 
-    static void WriteRootPhase(string phase) {
+    static void WriteRecordPhase(string phase) {
         try {
             Console.Error.WriteLine("LSP1:" + phase + ":0");
             Console.Error.Flush();
@@ -630,7 +632,7 @@ public sealed class WindowsPrivateRecords
     }
 
     public string CreateRoot() {
-        WriteRootPhase("root-entry");
+        WriteRecordPhase("root-entry");
         string id = Guid.NewGuid().ToString("D");
         string unused;
         List<SafeFileHandle> baseHeld = PinDirectories(new string[] { "root.json" }, true, out unused);
@@ -643,7 +645,7 @@ public sealed class WindowsPrivateRecords
             using (SafeFileHandle root = OpenDirectory(rootPath, true)) {
                 CreateRootRecord(new string[] { id, "state" }, Encoding.UTF8.GetBytes("0\n"));
                 CreateRootRecord(new string[] { id, "root.json" }, Encoding.UTF8.GetBytes("{\"version\":1,\"id\":\"" + id + "\"}"));
-                WriteRootPhase("root-flushed");
+                WriteRecordPhase("root-flushed");
                 Require(!IsProtected(id));
                 return id;
             }
