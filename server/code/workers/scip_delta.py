@@ -127,6 +127,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipDeltaResult
         network=True,
         token=cfg.github_token,
         remote=cfg.git_remote,
+        proxy_identity=cfg.git_proxy_identity,
     )
 
     with tempfile.TemporaryDirectory(prefix="scip_delta_", dir=work_dir()) as tmp:

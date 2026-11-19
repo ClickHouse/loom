@@ -3,10 +3,10 @@ private rows out of the fused pool."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
+from server.core.vectors.private_first import each
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scoring import _anchor_rank_score
@@ -84,8 +84,7 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
         _ch_a = _get_ch_a()
         _anchor_limit = max(30, input.top_k * 2)
 
-        # One CH round-trip per namespace; the legs are independent,
-        # so they run in one gather instead of a sequential loop.
+        # Independent namespace reads run in bounded windows, retaining input order.
         async def _anchor_rows_for_ns(ns: str) -> tuple[str, list[dict[str, Any]]]:
             params: dict[str, Any] = {
                 "org": input.org,
@@ -124,7 +123,7 @@ async def _run_anchor_pool(ctx: SearchContext) -> None:
                 log.warning("anchor pool fetch failed for ns=%s (non-fatal): %s", ns, e)
                 return ns, []
 
-        anchor_results = await asyncio.gather(*[_anchor_rows_for_ns(ns) for ns in ctx.namespaces])
+        anchor_results = await each(_anchor_rows_for_ns)(ctx.namespaces)
         for ns, anchor_rows in anchor_results:
             for row in anchor_rows:
                 mk = str(row.get("memory_key") or "")

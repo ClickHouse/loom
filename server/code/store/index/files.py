@@ -368,7 +368,7 @@ class FilesMixin(CodeRepoBase):
         selects by the sort key's path component; 50 paths per statement."""
         out: dict[str, list[dict[str, Any]]] = {}
         wanted = list(dict.fromkeys(p for p in paths if p))
-        for i in range(0, len(wanted), 50):
+        for batch in _batched(wanted, 50):
             rows = await self._ch.query_all(
                 """
                 SELECT DISTINCT path, kind, scope, start_line, end_line
@@ -378,7 +378,7 @@ class FilesMixin(CodeRepoBase):
                 ORDER BY path, start_line
                 LIMIT 20000
                 """,
-                {"org": org, "ns": ns, "paths": wanted[i : i + 50]},
+                {"org": org, "ns": ns, "paths": batch},
             )
             for r in rows:
                 out.setdefault(str(r["path"]), []).append(

@@ -161,6 +161,13 @@ def assert_closed(state):
     assert not state.native.gate.producers
     assert not background._registered_tasks
     assert all(task.done() for task in state.keepers)
+    if state.native.gate.closed:
+        assert not state.native.reversible_closes
+        assert len(state.native.terminal_ends) == state.native.events.count("pg")
+    else:
+        assert not state.native.terminal_ends
+        assert state.native.reversible_closes
+        assert len(state.native.reversible_closes) == state.native.events.count("pg")
 
 
 @pytest.mark.parametrize("mode", ["init", "configure", "sync"])
@@ -179,7 +186,7 @@ def test_tracker_run_owns_acceptance_all_work_and_record_close_until_certified(t
     assert events.index("configuration") < events.index("acceptance") < events.index("owner")
     assert events.index("owner") < events.index("record-connect") < events.index("work-enter")
     assert events.index("work") < events.index("record-close") < events.index("stop")
-    assert events[-3:] == ["certificate", "pg", "ch"]
+    assert events[-3:] == ["pg", "certificate", "ch"]
     assert events.count("certificate") == 1 and tracker.native.gate.quiescent
     assert tracker.keepers
     assert_closed(tracker)

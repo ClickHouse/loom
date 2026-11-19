@@ -56,15 +56,24 @@ async def test_native_prepare_interrupt_releases_backend_and_locks(
     task = asyncio.create_task(
         cell_prepare.prepare(None, argparse.Namespace(), httpx.URL("http://router"))
     )
-    await asyncio.wait_for(observed.wait(), 3)
-    await sleeping(native_database, backend["pid"])
-    began = time.monotonic()
-    if interrupt == "cancel":
-        task.cancel("native prepare cancelled")
-    with pytest.raises(asyncio.CancelledError if interrupt == "cancel" else TimeoutError):
-        await asyncio.wait_for(task, 1.5)
-    assert time.monotonic() - began < 1.5
-    await released(native_database, backend["pid"])
+    task.add_done_callback(lambda _: observed.set())
+    try:
+        await asyncio.wait_for(observed.wait(), 3)
+        if task.done():
+            await task
+            pytest.fail("prepare completed before interruption")
+        await sleeping(native_database, backend["pid"])
+        began = time.monotonic()
+        if interrupt == "cancel":
+            task.cancel("native prepare cancelled")
+        with pytest.raises(asyncio.CancelledError if interrupt == "cancel" else TimeoutError):
+            await asyncio.wait_for(task, 1.5)
+        assert time.monotonic() - began < 1.5
+        await released(native_database, backend["pid"])
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_native_prepare_body_failure_is_not_hidden_by_rollback(native_database, monkeypatch):
@@ -128,8 +137,12 @@ async def test_native_prepare_second_cancel_preserves_first_and_releases_locks(
     task = asyncio.create_task(
         cell_prepare.prepare(None, argparse.Namespace(), httpx.URL("http://router"))
     )
+    task.add_done_callback(lambda _: observed.set())
     try:
-        await observed.wait()
+        await asyncio.wait_for(observed.wait(), 3)
+        if task.done():
+            await task
+            pytest.fail("prepare completed before cancellation")
         await sleeping(native_database, backend["pid"])
         task.cancel("first native cancellation")
         await asyncio.wait_for(close_started.wait(), 1)
@@ -297,12 +310,21 @@ async def test_native_attach_run_body_uses_sole_owner_on_cancellation(native_dat
     monkeypatch.setattr(cell_attach.Run, "read_own_row", read)
     run = cell_attach.Run(None, argparse.Namespace(cell="first", wait=0), Router(), lambda _: None)
     task = asyncio.create_task(run.run())
-    await observed.wait()
-    await sleeping(native_database, backend["pid"])
-    task.cancel("native attach cancellation")
-    with pytest.raises(asyncio.CancelledError, match="native attach cancellation"):
-        await asyncio.wait_for(task, 1.3)
-    await released(native_database, backend["pid"])
+    task.add_done_callback(lambda _: observed.set())
+    try:
+        await asyncio.wait_for(observed.wait(), 3)
+        if task.done():
+            await task
+            pytest.fail("attach completed before cancellation")
+        await sleeping(native_database, backend["pid"])
+        task.cancel("native attach cancellation")
+        with pytest.raises(asyncio.CancelledError, match="native attach cancellation"):
+            await asyncio.wait_for(task, 1.3)
+        await released(native_database, backend["pid"])
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_attach_role_needs_stats_but_not_backend_signal_privilege(native_database):
@@ -367,10 +389,10 @@ settings.pg_dsn = os.environ['LOOM_NATIVE_CLEANUP_DSN']
 settings.cell = 'first'
 pg._expected = None
 original = SystemExit(17) if kind == 'exit' else KeyboardInterrupt('close interrupted')
-real_connect, real_close = pg._connect_dedicated, asyncpg.Connection.close
+real_connect, real_close = asyncpg.connect, asyncpg.Connection.close
 backend = {}
-async def connect(**kwargs):
- conn = await real_connect(**kwargs)
+async def connect(*args, **kwargs):
+ conn = await real_connect(*args, **kwargs)
  backend['pid'] = conn.get_server_pid()
  if late == 'True':
   try: await asyncio.Future()
@@ -385,11 +407,11 @@ async def close(self, **kwargs):
 async def body(owner):
  await owner.conn.execute('SELECT * FROM probe FOR UPDATE')
  return 19
-pg._connect_dedicated = connect
+asyncpg.connect = connect
 asyncpg.Connection.close = close
 if late == 'True': cell_control.OPEN_S = .5
 async def main():
- observer = await asyncpg.connect(settings.pg_dsn)
+ observer = await real_connect(settings.pg_dsn)
  try:
   try: await cell_control.run('native close', body)
   except BaseException as caught:

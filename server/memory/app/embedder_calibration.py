@@ -29,7 +29,7 @@ import math
 import time
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from server.core import readiness
 from server.llm import customer
@@ -302,6 +302,8 @@ async def calibrate_embedder(
     paraphrase_pairs: list[tuple[str, str]] | None = None,
     distractor_pairs: list[tuple[str, str]] | None = None,
     question_fact_pairs: list[tuple[str, str]] | None = None,
+    *,
+    paraphrase_pair_purpose: Literal["document_document", "query_document"] = "document_document",
 ) -> CalibrationResult | None:
     """Probe the configured embedder and compute percentile-based
     thresholds. Returns None on probe failure (gates fall through to
@@ -311,7 +313,9 @@ async def calibrate_embedder(
     per-namespace operator-shipped corpus. The operator corpus carries
     only similar/distractor pairs, so per-NS probes keep the module
     question→fact corpus — the question-vs-fact register gap is a
-    property of the embedder, not the domain vocabulary.
+    property of the embedder, not the domain vocabulary. Ordinary memory
+    paraphrases use document/document vectors. Code calibration explicitly
+    supplies query/document positives for both positive distributions.
     """
     from server.embedding.embedder import get_embedder
 
@@ -343,17 +347,25 @@ async def calibrate_embedder(
         )
         return None
 
-    async def _embed_pair(a: str, b: str) -> float:
+    async def _embed_pair(a: str, b: str, *, query: bool) -> float:
         # The recalibration worker's fixed pairs are the deployment's; code.calibrate
         # probes a namespace's corpus under its request's org, which wins.
         with customer.system():
-            va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
+            if query:
+                va, documents = await asyncio.gather(embedder.embed(a), embedder.embed_many([b]))
+                vb = documents[0]
+            else:
+                va, vb = await embedder.embed_many([a, b])
         return _cosine(va, vb)
 
     try:
-        similar_cosines = await asyncio.gather(*(_embed_pair(a, b) for a, b in para))
-        question_fact_cosines = await asyncio.gather(*(_embed_pair(a, b) for a, b in qf))
-        distractor_cosines = await asyncio.gather(*(_embed_pair(a, b) for a, b in dist))
+        similar_cosines = await asyncio.gather(
+            *(_embed_pair(a, b, query=paraphrase_pair_purpose == "query_document") for a, b in para)
+        )
+        question_fact_cosines = await asyncio.gather(
+            *(_embed_pair(a, b, query=True) for a, b in qf)
+        )
+        distractor_cosines = await asyncio.gather(*(_embed_pair(a, b, query=True) for a, b in dist))
     except Exception as e:  # noqa: BLE001 — a failed probe: the scalar gates serve
         log.warning("calibration: probe failed (%s); falling back to scalar settings", e)
         return None

@@ -62,6 +62,7 @@ _DATA_TABLES = frozenset(
         "loom.collections",
         "loom.conflict_allowlist",
         "loom.consolidation_runs",
+        "loom.connected_accounts",
         "loom.context_blobs",
         "loom.conversation_embeddings",
         "loom.conversation_threads",

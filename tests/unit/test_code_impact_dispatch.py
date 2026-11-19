@@ -69,22 +69,10 @@ def test_name_matches_is_suffix_qualified_only() -> None:
     assert not diff._name_matches("DB::BaseSettings::write", "")
 
 
-def test_arity() -> None:
-    assert dispatch._arity("void f()") == 0
-    assert dispatch._arity("void f(int a)") == 1
-    assert (
-        dispatch._arity(
-            "void read(QueryPlan &, const Names &, const StorageSnapshotPtr &, SelectQueryInfo &, ContextPtr, QueryProcessingStage::Enum, size_t, size_t) override"
-        )
-        == 8
-    )
-    assert dispatch._arity("no parens") == 0
-
-
 class _Repo:
     """Fake corpus shaped like the real one: signatures carry NO virtual/override
     keywords, the override's class has no inherits edge indexed, IStorage is a
-    base (something inherits from it), IReadable::read has the wrong arity."""
+    base by naming convention. Neither fact establishes an inheritance relationship."""
 
     SIG8 = "(QueryPlan &, const Names &, const StorageSnapshotPtr &, SelectQueryInfo &, ContextPtr, QueryProcessingStage::Enum, size_t, size_t)"
 
@@ -125,7 +113,9 @@ class _Repo:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_seeds_fall_back_to_virtual_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_dispatch_seeds_do_not_guess_an_unrelated_interface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     seeds = [
         {
@@ -136,9 +126,7 @@ async def test_dispatch_seeds_fall_back_to_virtual_by_name(monkeypatch: pytest.M
         }
     ]
     out = await dispatch._dispatch_seeds(_Repo(), "clickhouse", "code-clickhouse", seeds)  # type: ignore[arg-type]
-    assert [(r["qualified_name"], r["via"]) for r in out] == [
-        ("DB::IStorage::read", "virtual_by_name")
-    ]
+    assert out == []
 
 
 class _ManyRepo:
@@ -191,7 +179,7 @@ async def test_dispatch_skips_heuristics_when_namespace_has_override_edges(
             "signature": _Repo.SIG8,
         }
     ]
-    # _Repo has no overrides edge for the seed and would normally fall back by name
+    # No relationship from the seed is indexed.
     assert await dispatch._dispatch_seeds(_Repo(), "o", "n", seeds) == []  # type: ignore[arg-type]
 
 

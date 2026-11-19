@@ -109,6 +109,8 @@ OpName = Literal[
     "conflicts.list",
     "conflicts.propose_revision",
     "conflicts.resolve",
+    "connection.disconnect",
+    "connection.list",
     "consolidations.list",
     "context.fetch",
     "context.offload",
@@ -485,6 +487,8 @@ OP_NAMES: tuple[str, ...] = (
     "conflicts.list",
     "conflicts.propose_revision",
     "conflicts.resolve",
+    "connection.disconnect",
+    "connection.list",
     "consolidations.list",
     "context.fetch",
     "context.offload",
@@ -1631,6 +1635,30 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "connection.disconnect": OpSpec(
+        "connection.disconnect",
+        "ConnectionDisconnectInput",
+        "ConnectionDisconnectBody",
+        "ConnectionDisconnectOutput",
+        True,
+        "viewer",
+        "experimental",
+        30000,
+        False,
+        False,
+    ),
+    "connection.list": OpSpec(
+        "connection.list",
+        "ConnectionListInput",
+        "ConnectionListBody",
+        "ConnectionListOutput",
+        True,
+        "viewer",
+        "experimental",
+        1000,
+        False,
+        True,
+    ),
     "consolidations.list": OpSpec(
         "consolidations.list",
         "ConsolidationsListInput",
@@ -2609,7 +2637,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceAddBody",
         "KnowledgeSourceAddOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
         60000,
         True,
@@ -2621,7 +2649,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceCheckBody",
         "KnowledgeSourceCheckOutput",
         True,
-        "admin",
+        "writer",
         "experimental",
         30000,
         False,
@@ -2705,7 +2733,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceRemoveBody",
         "KnowledgeSourceRemoveOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
         400,
         True,
@@ -2729,7 +2757,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceSyncNowBody",
         "KnowledgeSourceSyncNowOutput",
         True,
-        "admin",
+        "writer",
         "experimental",
         300,
         True,
@@ -2741,7 +2769,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceUpdateBody",
         "KnowledgeSourceUpdateOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
         60000,
         True,
@@ -7121,6 +7149,7 @@ class CodeRepoAddInput(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -7137,6 +7166,7 @@ class CodeRepoAddBody(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -7182,6 +7212,7 @@ class CodeRepoRemoteBranchesInput(TypedDict, total=False):
     org: Required[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -7192,6 +7223,7 @@ class CodeRepoRemoteBranchesBody(TypedDict, total=False):
     org: NotRequired[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -8348,6 +8380,48 @@ class ConflictsResolveOutput(TypedDict, total=False):
     affected_memory_ids: Required[list[str]]
     resolved_at: NotRequired[Optional[str]]
     total: NotRequired[Optional[int]]
+
+
+class ConnectionDisconnectInput(TypedDict, total=False):
+    "Disconnect the caller's own provider account and stop its connected sources."
+
+    org: Required[str]
+    kind: Required[Literal["gdrive", "notion", "linear"]]
+
+
+class ConnectionDisconnectBody(TypedDict, total=False):
+    "Disconnect the caller's own provider account and stop its connected sources."
+
+    org: NotRequired[str]
+    kind: Required[Literal["gdrive", "notion", "linear"]]
+
+
+class ConnectionDisconnectOutput(TypedDict, total=False):
+    disconnected: Required[bool]
+
+
+class ConnectionListInput(TypedDict, total=False):
+    "List the signed-in caller's own connected provider accounts."
+
+    org: Required[str]
+
+
+class ConnectionListBody(TypedDict, total=False):
+    "List the signed-in caller's own connected provider accounts."
+
+    org: NotRequired[str]
+
+
+class ConnectionListOutput(TypedDict, total=False):
+    connections: Required[list["ConnectionEntry"]]
+
+
+class ConnectionEntry(TypedDict, total=False):
+    kind: Required[Literal["gdrive", "notion", "linear"]]
+    connected: Required[bool]
+    account_email: NotRequired[Optional[str]]
+    scopes: NotRequired[list[str]]
+    connect_url: Required[str]
 
 
 class ConsolidationsListInput(TypedDict, total=False):
@@ -11638,7 +11712,8 @@ class KnowledgeSourceAddInput(TypedDict, total=False):
     links: NotRequired[Optional[list[str]]]
     config: NotRequired[Optional[dict[str, Any]]]
     include: NotRequired[Optional[list[str]]]
-    credential: Required[str]
+    credential_mode: NotRequired[Literal["shared", "connected"]]
+    credential: NotRequired[str]
     dry_run: NotRequired[bool]
 
 
@@ -11653,7 +11728,8 @@ class KnowledgeSourceAddBody(TypedDict, total=False):
     links: NotRequired[Optional[list[str]]]
     config: NotRequired[Optional[dict[str, Any]]]
     include: NotRequired[Optional[list[str]]]
-    credential: Required[str]
+    credential_mode: NotRequired[Literal["shared", "connected"]]
+    credential: NotRequired[str]
     dry_run: NotRequired[bool]
 
 
@@ -11725,6 +11801,9 @@ class KnowledgeSourceInspectBody(TypedDict, total=False):
 class KnowledgeSourceInspectOutput(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
+    credential_mode: NotRequired[str]
+    access: NotRequired[str]
+    owner_subject: NotRequired[str]
     items: NotRequired[list[dict[str, Any]]]
     include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
@@ -11785,6 +11864,9 @@ class KnowledgeSourceListOutput(TypedDict, total=False):
 class KnowledgeSourceEntry(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
+    credential_mode: NotRequired[str]
+    access: NotRequired[str]
+    owner_subject: NotRequired[str]
     items: NotRequired[list[dict[str, Any]]]
     include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
@@ -19097,6 +19179,7 @@ class SearchQueryInput(TypedDict, total=False):
     ]
     bodies: NotRequired[Literal["full", "excerpt", "none", "unit"]]
     explain: NotRequired[bool]
+    live: NotRequired[bool]
     page: NotRequired[str]
 
 
@@ -19115,6 +19198,7 @@ class SearchQueryBody(TypedDict, total=False):
     ]
     bodies: NotRequired[Literal["full", "excerpt", "none", "unit"]]
     explain: NotRequired[bool]
+    live: NotRequired[bool]
     page: NotRequired[str]
 
 
@@ -19122,12 +19206,31 @@ class SearchQueryOutput(TypedDict, total=False):
     'The sections, each `{"results": [...], ...}` as its plane\'s search'
 
     tracker: NotRequired[Optional[dict[str, Any]]]
+    live: NotRequired[Optional["LiveSearchResults"]]
     memory: NotRequired[dict[str, Any]]
     knowledge: NotRequired[dict[str, Any]]
     profile: NotRequired[dict[str, Any]]
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
     namespaces_skipped: NotRequired[list[str]]
+
+
+class LiveSearchResults(TypedDict, total=False):
+    "Connected-source results returned only in this response."
+
+    live: NotRequired[Literal[True]]
+    results: NotRequired[list["LiveSearchHit"]]
+
+
+class LiveSearchHit(TypedDict, total=False):
+    "One ephemeral result from the asker's connected source."
+
+    id: Required[str]
+    title: Required[str]
+    url: Required[str]
+    provider: Required[Literal["gdrive", "notion", "linear"]]
+    content: NotRequired[str]
+    live: NotRequired[Literal[True]]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):

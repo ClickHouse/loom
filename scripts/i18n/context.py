@@ -46,6 +46,12 @@ _NAMES = {
     "docs/reference/mcp.md": ("OAuth",),
 }
 
+# Format names are attested by the source table's parser extension, not English case.
+_FORMAT_NAMES = {
+    ("docs/features/code-index/overview.md", ".proto"): "Protocol Buffers",
+    ("docs/features/code-index/overview.md", ".fbs"): "FlatBuffers",
+}
+
 # Each declaration is confined to this source's documented field, and applies only when
 # its entire literal vocabulary occurs in order. Surrounding prose remains translatable.
 _FIELDS = {
@@ -191,11 +197,28 @@ def _file_target(target: str, source_path: str, files: frozenset[str], repo_url:
     return resolved if resolved in files else ""
 
 
+def _filename(text: str, target: str) -> str:
+    if not target:
+        return ""
+    parts = target.split("/")
+    for start in range(len(parts)):
+        name = "/".join(parts[start:])
+        if pattern((name,)).search(text):
+            return name
+    if parts[-1] == "README.md" and pattern(("README",)).search(text):
+        return "README"
+    return ""
+
+
 def protected(
     label: Label, source_path: str, *, files: frozenset[str] = frozenset(), repo_url: str = ""
 ) -> tuple[str, ...]:
     """Derive protection from the source node, never from a translated assertion."""
     atoms = [name for name in _NAMES.get(source_path, ()) if pattern((name,)).search(label.text)]
+    for extension in label.code:
+        name = _FORMAT_NAMES.get((source_path, extension))
+        if name and pattern((name,)).search(label.text):
+            atoms.append(name)
     declared = _FIELDS.get((source_path, label.field), ())
     if declared and pattern(declared).findall(label.text) == list(declared):
         atoms.extend(declared)
@@ -212,11 +235,8 @@ def protected(
     ):
         atoms.extend(value[1:-1] for value in re.findall(_QUOTED, label.text))
     for text, target in label.links:
-        basename = posixpath.basename(_file_target(target, source_path, files, repo_url))
-        name = basename
-        if basename == "README.md" and not pattern((basename,)).search(text):
-            name = "README"
-        if name and pattern((name,)).search(text):
+        name = _filename(text, _file_target(target, source_path, files, repo_url))
+        if name:
             atoms.append(name)
     return tuple(dict.fromkeys(atoms))
 

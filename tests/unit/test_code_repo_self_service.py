@@ -19,8 +19,12 @@ import server.code.app.repo_admin as admin
 import server.code.domain.index.repos as repos
 from server.auth.context import set_current_auth
 from server.auth.jwt import AuthInfo
-from server.code.api.models_repos import CodeRepoAddBranchInput, CodeRepoAddInput
-from server.core.errors import ValidationError
+from server.code.api.models_repos import (
+    CodeRepoAddBranchInput,
+    CodeRepoAddInput,
+    CodeRepoRemoteBranchesInput,
+)
+from server.core.errors import AuthInsufficientError, ValidationError
 from server.operations.base import Role
 
 # The scalar code repository these tests model (none is configured by default).
@@ -121,6 +125,11 @@ def test_row_to_config_is_a_registry_entry(monkeypatch: pytest.MonkeyPatch) -> N
     )  # its own tree, never the operator's
     restricted = reg.row_to_config(_row(classification="restricted", join_policy="approval"))
     assert restricted.public is False and restricted.classification == "restricted"
+    # a row from before the column, or with none, takes the deployment's default identity
+    assert cfg.git_proxy_identity == ""
+    assert reg.row_to_config(
+        _row(git_proxy_identity="acme.widgets-indexer")
+    ).git_proxy_identity == ("acme.widgets-indexer")
 
 
 def test_configured_repos_appends_registry_and_operator_wins(
@@ -419,6 +428,249 @@ async def test_code_repo_add_refuses_another_org(plane) -> None:
 
     with pytest.raises(AuthInsufficientError):
         await admin.handle_code_repo_add(CodeRepoAddInput(org="acme", repo="acme/widgets"))
+
+
+def _platform_admin(**fields: Any) -> AuthInfo:
+    """A platform admin's flat token; `fields` scope it or make it act for a subject."""
+    return AuthInfo(
+        **{
+            "subject": "ops@x",
+            "org": ORG,
+            "namespaces": ("*",),
+            "roles": (Role.PLATFORM_ADMIN,),
+            "is_service_account": True,
+            **fields,
+        }
+    )
+
+
+async def _add_side_calls(source: str) -> tuple[Any, Any, Any]:
+    """The three ops that start a remote job or add an index, as one caller runs them:
+    list a remote's branches, add the repository, add a branch to `source`."""
+    listed = await admin.handle_code_repo_remote_branches(
+        CodeRepoRemoteBranchesInput(org=ORG, repo="acme/widgets")
+    )
+    added = await admin.handle_code_repo_add(
+        CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")
+    )
+    branch = await admin.handle_code_repo_add_branch(
+        CodeRepoAddBranchInput(org=ORG, namespace=source, branch="release/1.2")
+    )
+    return listed, added, branch
+
+
+@pytest.fixture
+def remote_lists_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _branches(repo: str, token: str, **_: Any) -> dict[str, Any]:
+        return {"default_branch": "main", "branches": [{"name": "main", "sha": "a" * 40}]}
+
+    monkeypatch.setattr(reg, "remote_branches", _branches)
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_only_refuses_a_member_before_any_probe_or_remote_job(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY a member gets the authorization
+    error from each op that starts a remote job or adds an index: the sandbox is not
+    probed, the remote is not asked and nothing is registered."""
+    from server.code.app.index import sandbox
+    from server.settings import settings
+
+    def no_probe() -> bool:
+        raise AssertionError("a refused caller starts no sandbox probe")
+
+    async def no_remote_job(*_a: Any, **_k: Any) -> str:
+        raise AssertionError("a refused caller starts no remote job")
+
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    monkeypatch.setattr(sandbox, "sandbox_available", no_probe)
+    monkeypatch.setattr(reg, "remote_has_branch", no_remote_job)
+    monkeypatch.setattr(reg, "remote_branches", no_remote_job)
+    calls = [
+        (
+            admin.handle_code_repo_remote_branches,
+            CodeRepoRemoteBranchesInput(org=ORG, repo="acme/widgets"),
+        ),
+        (admin.handle_code_repo_add, CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")),
+        (
+            admin.handle_code_repo_add_branch,
+            CodeRepoAddBranchInput(org=ORG, namespace="code-clickhouse", branch="26.8"),
+        ),
+    ]
+    for handler, request in calls:
+        with pytest.raises(AuthInsufficientError) as ei:
+            await handler(request)
+        detail = ei.value.to_detail()
+        assert detail["code"] == "AUTH_INSUFFICIENT"
+        assert "LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY" in detail["message"]
+    assert plane.ch.inserted == []
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_only_admits_a_platform_admin_to_the_three_ops(
+    plane, remote_lists_main, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    set_current_auth(_platform_admin())
+    listed, added, branch = await _add_side_calls("code-widgets")
+    assert listed.default_branch == "main"
+    assert (added.namespace, added.my_role) == ("code-widgets", "admin")
+    assert branch.namespace == "code-widgets-release-1-2"
+    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert [r["created_by"] for r in rows] == ["ops@x", "ops@x"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "auth",
+    [
+        _platform_admin(ns_roles=(("code-widgets", "admin"),)),
+        _platform_admin(subject="alice@x", impersonated_by="gateway@x"),
+        _platform_admin(roles=(Role.ORG_ADMIN,)),
+    ],
+    ids=["scoped-token", "acting-for-a-subject", "org-admin"],
+)
+async def test_platform_admin_only_counts_the_role_on_a_flat_token_of_its_own_subject(
+    plane, monkeypatch: pytest.MonkeyPatch, auth: AuthInfo
+) -> None:
+    """A scoped token's authority is its namespaces, and a trusted caller's role is
+    not the subject's it acts for: neither adds a repository as a platform admin."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    set_current_auth(auth)
+    request = CodeRepoAddInput(org=ORG, repo="acme/widgets", branch="main")
+    with pytest.raises(AuthInsufficientError, match="LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY"):
+        await admin.handle_code_repo_add(request)
+    assert plane.ch.inserted == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("auth_required", False), ("identity_provider", "single-user")],
+    ids=["auth-not-required", "single-user"],
+)
+async def test_platform_admin_only_passes_a_call_without_a_principal_where_auth_is_off(
+    plane, remote_lists_main, monkeypatch: pytest.MonkeyPatch, field: str, value: Any
+) -> None:
+    """With auth off no transport asks for a token: a call without one carries no
+    principal and there is no caller to refuse, so the three ops run as without the
+    setting."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, field, value)
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    set_current_auth(None)
+    listed, added, branch = await _add_side_calls("code-widgets")
+    assert listed.default_branch == "main"
+    assert (added.namespace, branch.namespace) == ("code-widgets", "code-widgets-release-1-2")
+
+
+@pytest.mark.asyncio
+async def test_platform_admin_only_refuses_an_mcp_call_without_a_principal_where_auth_is_on(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An MCP endpoint in `open` mode runs a call that sent no bearer with no
+    principal, on a deployment whose auth is on. Such a caller is no platform admin:
+    each of the three ops answers the authorization error before the sandbox probe
+    and any remote job, as it does to a member."""
+    import server.transport.mcp_call as mcp_call
+    from server.code.app.index import sandbox
+    from server.settings import settings
+
+    def no_probe() -> bool:
+        raise AssertionError("a refused caller starts no sandbox probe")
+
+    async def no_remote_job(*_a: Any, **_k: Any) -> str:
+        raise AssertionError("a refused caller starts no remote job")
+
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "")
+    monkeypatch.setattr(settings, "mcp_auth_mode", "open")
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    monkeypatch.setattr(sandbox, "sandbox_available", no_probe)
+    monkeypatch.setattr(reg, "remote_has_branch", no_remote_job)
+    monkeypatch.setattr(reg, "remote_branches", no_remote_job)
+    calls = {
+        "loom_code_repo_remote_branches": {"org": ORG, "repo": "acme/widgets"},
+        "loom_code_repo_add": {"org": ORG, "repo": "acme/widgets", "branch": "main"},
+        "loom_code_repo_add_branch": {
+            "org": ORG,
+            "namespace": "code-clickhouse",
+            "branch": "26.8",
+        },
+    }
+    for tool, arguments in calls.items():
+        answer = (await mcp_call._call_tool(1, {"name": tool, "arguments": arguments}))["result"]
+        refusal = answer["structuredContent"]
+        assert answer["isError"] is True and refusal["code"] == "AUTH_INSUFFICIENT", tool
+        assert "LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY" in refusal["message"]
+    assert not [t for t, _ in plane.ch.inserted if t in ("loom.code_repos", "loom.namespaces")]
+
+
+@pytest.mark.asyncio
+async def test_the_git_waiver_admits_the_three_ops_without_the_sandbox(
+    plane, remote_lists_main, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the SANDBOX_UNAVAILABLE refusal of
+    the three ops. Each still probes off the event loop: the remote job that follows
+    asks the probe on the loop, which must find the answer cached."""
+    import threading
+
+    from server.code.app.index import sandbox
+    from server.settings import settings
+
+    probes: list[threading.Thread] = []
+
+    def probe() -> bool:
+        probes.append(threading.current_thread())
+        return False
+
+    monkeypatch.setattr(sandbox, "sandbox_available", probe)
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    monkeypatch.setattr(settings, "code_self_service_git_unsandboxed", True)
+    set_current_auth(_platform_admin())
+    listed, added, branch = await _add_side_calls("code-widgets")
+    assert listed.default_branch == "main" and added.index_stage == "queued"
+    rows = [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+    assert [r["git_branch"] for r in rows] == ["main", "release/1.2"]
+    assert branch.namespace == "code-widgets-release-1-2"
+    assert len(probes) == 3 and threading.main_thread() not in probes
+
+
+@pytest.mark.asyncio
+async def test_with_auth_off_the_waiver_path_reaches_the_remote_a_request_names(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With auth off the handler has no caller to refuse: with both settings on and
+    no sandbox the add asks the remote the request names and registers the entry.
+    The settings stop it instead: the waiver does not load with auth off (the load
+    test in test_repo_job_sandbox.py)."""
+    from server.code.app.index import sandbox
+    from server.settings import settings
+
+    asked: list[str] = []
+
+    async def _remote(
+        repo: str, branch: str, token: str, *, git_remote: str = "", proxy_identity: str = ""
+    ) -> str:
+        asked.append(git_remote)
+        return "abc123def456" + "0" * 28
+
+    monkeypatch.setattr(reg, "remote_has_branch", _remote)
+    monkeypatch.setattr(sandbox, "_available", False)
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(settings, "code_self_service_platform_admin_only", True)
+    monkeypatch.setattr(settings, "code_self_service_git_unsandboxed", True)
+    set_current_auth(None)
+    remote = "https://git.example:8443/acme/widgets.git"
+    out = await admin.handle_code_repo_add(CodeRepoAddInput(org=ORG, repo=remote, branch="main"))
+    assert asked == [remote]
+    assert (out.namespace, out.index_stage) == ("code-widgets", "queued")
 
 
 @pytest.mark.asyncio
@@ -1220,3 +1472,150 @@ async def test_an_add_without_the_sandbox_is_refused(
         )
     assert ei.value.to_detail()["code"] == "SANDBOX_UNAVAILABLE"
     assert not [t for t, _ in plane.ch.inserted if t == "loom.code_repos"]
+
+
+# --- git proxy identity -----------------------------------------------------------------
+
+IDENTITY = "acme.widgets-indexer"
+
+
+def _probes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The identity each remote read of an add was made under."""
+    under: list[str] = []
+
+    async def _has_branch(repo: str, branch: str, token: str, **kw: Any) -> str:
+        under.append(kw["proxy_identity"])
+        return "abc123def456" + "0" * 28
+
+    async def _branches(repo: str, token: str, **kw: Any) -> dict[str, Any]:
+        under.append(kw["proxy_identity"])
+        return {"default_branch": "main", "branches": [{"name": "main", "sha": "a" * 40}]}
+
+    monkeypatch.setattr(reg, "remote_has_branch", _has_branch)
+    monkeypatch.setattr(reg, "remote_branches", _branches)
+    return under
+
+
+def _registered(plane: Any) -> list[dict[str, Any]]:
+    return [r for t, rows in plane.ch.inserted if t == "loom.code_repos" for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_s_add_stores_the_git_proxy_identity_and_reads_the_remote_under_it(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    with acting_as(_platform_admin()):
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(
+                org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY, branches=["release/1.2"]
+            )
+        )
+    # the default branch's discovery, its probe, then the extra branch's probe
+    assert under == [IDENTITY] * 3
+    assert [r["git_proxy_identity"] for r in _registered(plane)] == [IDENTITY] * 2
+    listed = [c for c in repos.configured_repos() if c.repo == "acme/widgets"]
+    assert {c.git_proxy_identity for c in listed} == {IDENTITY} and len(listed) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "caller",
+    [
+        {"roles": (Role.VIEWER,)},
+        {"roles": (Role.ORG_ADMIN,)},
+        {"roles": (Role.PLATFORM_ADMIN,), "ns_roles": (("code-widgets", "admin"),)},
+        {"roles": (Role.PLATFORM_ADMIN,), "impersonated_by": "sa:gateway"},
+    ],
+    ids=["a member", "an org admin", "a scoped token", "an admin acting for someone else"],
+)
+async def test_only_a_platform_admin_names_a_git_proxy_identity(
+    plane, monkeypatch: pytest.MonkeyPatch, caller: dict[str, Any]
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    auth = AuthInfo(
+        subject="alice@x", org=ORG, namespaces=("personal",), is_service_account=False, **caller
+    )
+    with acting_as(auth):
+        with pytest.raises(AuthInsufficientError, match="git_proxy_identity"):
+            await admin.handle_code_repo_add(
+                CodeRepoAddInput(org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY)
+            )
+        with pytest.raises(AuthInsufficientError, match="git_proxy_identity"):
+            await admin.handle_code_repo_remote_branches(
+                CodeRepoRemoteBranchesInput(
+                    org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY
+                )
+            )
+    # refused before any remote job and before any write
+    assert under == [] and _registered(plane) == []
+
+
+def test_a_caller_without_a_principal_names_an_identity_only_where_auth_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With auth off the single user is the operator. With auth on, a caller no
+    principal was bound for (an MCP endpoint left open on loopback) is nobody."""
+    from server.settings import settings
+    from tests.unit.principals import acting_as
+
+    with acting_as(None):
+        monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: False)
+        admin._require_git_proxy_admin(IDENTITY, "refused")
+        admin._require_git_proxy_admin("", "refused")
+        monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: True)
+        admin._require_git_proxy_admin("", "refused")  # naming none is anyone's
+        with pytest.raises(AuthInsufficientError, match="refused"):
+            admin._require_git_proxy_admin(IDENTITY, "refused")
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_lists_a_remote_s_branches_under_the_identity(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    with acting_as(_platform_admin()):
+        out = await admin.handle_code_repo_remote_branches(
+            CodeRepoRemoteBranchesInput(org=ORG, repo="acme/widgets", git_proxy_identity=IDENTITY)
+        )
+    assert under == [IDENTITY] and out.default_branch == "main"
+
+
+@pytest.mark.asyncio
+async def test_a_branch_inherits_the_git_proxy_identity_and_only_a_platform_admin_adds_it(
+    plane, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.principals import acting_as
+
+    under = _probes(monkeypatch)
+    branch = CodeRepoAddBranchInput(org=ORG, namespace="code-widgets", branch="release/1.2")
+    with acting_as(_platform_admin()):
+        await admin.handle_code_repo_add(
+            CodeRepoAddInput(
+                org=ORG, repo="acme/widgets", branch="main", git_proxy_identity=IDENTITY
+            )
+        )
+    # The fixture's caller maintains the namespace; the identity is not theirs to pass on.
+    with pytest.raises(AuthInsufficientError, match="code-widgets carries a git proxy identity"):
+        await admin.handle_code_repo_add_branch(branch)
+    assert len(_registered(plane)) == 1
+    with acting_as(_platform_admin()):
+        await admin.handle_code_repo_add_branch(branch)
+    assert under == [IDENTITY] * 2
+    assert [r["git_proxy_identity"] for r in _registered(plane)] == [IDENTITY] * 2
+
+
+@pytest.mark.parametrize("identity", ["acme:widgets", "two words", "a/b", "x" * 129, "ok\n"])
+def test_a_git_proxy_identity_outside_its_shape_is_refused_on_the_wire(identity: str) -> None:
+    from pydantic import ValidationError as WireError
+
+    for model in (CodeRepoAddInput, CodeRepoRemoteBranchesInput):
+        with pytest.raises(WireError, match="git_proxy_identity"):
+            model(org=ORG, repo="acme/widgets", git_proxy_identity=identity)
+        assert model(org=ORG, repo="acme/widgets").git_proxy_identity == ""

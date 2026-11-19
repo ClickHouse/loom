@@ -70,9 +70,9 @@ def _parse_headers(raw: str) -> dict[str, str]:
 # point: the deployment, per OTel semconv; the tenant rides `loom.namespace`.
 SERVICE_NAMESPACE = "loom"
 
-# Sign-in URLs carry codes and state in their query strings; whatever the
+# Authentication URLs carry codes and state in their query strings; whatever the
 # setting says, they never go into a trace.
-_SIGN_IN_URLS = "/oauth/"
+_SIGN_IN_URLS = "/oauth/,/v1/connect/"
 
 
 def _fastapi_excluded_urls() -> str:
@@ -80,7 +80,7 @@ def _fastapi_excluded_urls() -> str:
     regexes matched against the request URL; a match opens no server span, so
     the `http send` / `http receive` children never exist either. Default
     `/v1/health`: the healthcheck poll writes a span every few seconds that
-    nobody reads. The sign-in routes are always added."""
+    nobody reads. Sign-in and provider-consent routes are always added."""
     raw = str(settings.otel_excluded_urls).strip()
     return f"{raw},{_SIGN_IN_URLS}" if raw else _SIGN_IN_URLS
 

@@ -4,21 +4,34 @@ refusals for what Loom does not do."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import importlib
+import json
+import os
 import sys
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from crewai import Agent as CrewAgent
 from crewai import Crew, Task
 from crewai.llms.base_llm import BaseLLM
 from crewai.memory.unified_memory import Memory
-from crewai.tools.memory_tools import RememberTool
+from crewai.tools.memory_tools import RecallMemoryTool, RememberTool
 from loom import Agent, SyncAgent
 from loom.errors import BackendUnavailable
 from loom.integrations.crewai import LoomCrewMemory
 from loom.memory import MemorySearchHit, MemorySearchResult
+from loom.session_protection import (
+    AutomaticCaptureSuppressed,
+    SessionProtection,
+    SessionProtectionUnavailable,
+    observation_scope,
+)
 from pydantic import Field, ValidationError
 
 
@@ -51,9 +64,20 @@ def _hit(key: str, text: str, sim: float = 0.9) -> MemorySearchHit:
     )
 
 
+@dataclasses.dataclass
+class _TransportState:
+    session_protection: SessionProtection | None = None
+
+
+@dataclasses.dataclass
+class _AgentState:
+    transport: _TransportState = dataclasses.field(default_factory=_TransportState)
+
+
 def _sync_agent(fake: _FakeMemory) -> SyncAgent:
     sync = object.__new__(SyncAgent)
     sync.memory = fake  # type: ignore[assignment]
+    sync._agent = _AgentState()  # type: ignore[assignment]
     return sync
 
 
@@ -319,3 +343,309 @@ def test_a_crew_runs_on_when_loom_is_unreachable() -> None:
     crew = Crew(agents=[agent], tasks=[task], memory=_memory(down))
     assert crew.kickoff().raw == "Alice wants an aisle seat."  # no memory, no error
     assert [op for op, _, _ in down.calls] == ["search", "set_from_messages"]  # both tried
+
+
+@contextmanager
+def _protected_agent(
+    family: SessionProtection | None,
+    respond: Callable[[httpx.Request], httpx.Response],
+) -> Iterator[SyncAgent]:
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("NO_PROXY", "*")
+        environment.setenv("no_proxy", "*")
+        with SyncAgent(
+            org="acme",
+            namespace="support",
+            agent="bot",
+            base_url="http://inert.invalid",
+            api_key="test-token",
+            session_protection=family,
+            pacing=False,
+            coalesce_sets=False,
+            auto_run=False,
+            mentor_brief=False,
+            retry={"max_attempts": 1},
+        ) as agent:
+            agent.transport._client._transport = httpx.MockTransport(respond)
+            yield agent
+
+
+def _reply(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/v1/memory.search":
+        return httpx.Response(200, json={"results": []})
+    assert request.url.path in {"/v1/memory.set", "/v1/memory.set_from_messages"}
+    return httpx.Response(200, json={"stored": True})
+
+
+def _mirrored_reply() -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "mirrored": True,
+            "results": [
+                {
+                    "memory_key": "seat",
+                    "memory_type": "semantic",
+                    "content_excerpt": "private recalled content",
+                    "distance": 0.1,
+                    "similarity": 0.9,
+                }
+            ],
+        },
+    )
+
+
+def test_protected_agent_mock_transport_ignores_inherited_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    monkeypatch.setenv("NO_PROXY", "localhost")
+    monkeypatch.setenv("no_proxy", "localhost")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Transport selection must not send a request")
+
+    with _protected_agent(None, respond) as agent:
+        selected = agent.transport._client._transport_for_url(
+            httpx.URL("http://inert.invalid/v1/memory.search")
+        )
+        assert isinstance(selected, httpx.MockTransport)
+    assert os.environ["NO_PROXY"] == "localhost"
+    assert os.environ["no_proxy"] == "localhost"
+
+
+@pytest.mark.parametrize("operation", ["recall", "remember", "remember_many"])
+@pytest.mark.parametrize("constructor_context", ["bound", "ambient"])
+def test_automatic_callbacks_retain_constructor_contributors_after_rebinding(
+    tmp_path: Path, constructor_context: str, operation: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _reply(request)
+
+    with _protected_agent(original if constructor_context == "bound" else None, respond) as agent:
+        if constructor_context == "ambient":
+            with observation_scope((original,)):
+                memory = LoomCrewMemory(agent=agent)
+        else:
+            memory = LoomCrewMemory(agent=agent)
+        agent.transport.session_protection = replacement
+        original.mark()
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            if operation == "recall":
+                memory.recall("private request")
+            elif operation == "remember":
+                memory.remember("automatic task output")
+            else:
+                memory.remember_many(["automatic task output"])
+        assert posts == []
+        assert not replacement.protected and not producer.protected
+
+
+@pytest.mark.parametrize("earlier_callback", ["recall", "extract_memories"])
+def test_automatic_capture_retains_earlier_callback_contributors(
+    tmp_path: Path, earlier_callback: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    contributor = SessionProtection.create(base=tmp_path / "contributor")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _reply(request)
+
+    with _protected_agent(original, respond) as agent:
+        memory = LoomCrewMemory(agent=agent)
+        with observation_scope((contributor,)):
+            if earlier_callback == "recall":
+                assert memory.recall("ordinary request") == []
+            else:
+                assert memory.extract_memories("raw task output") == ["raw task output"]
+        before = list(posts)
+        contributor.mark()
+        agent.transport.session_protection = replacement
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            memory.remember_many(["later automatic output"])
+        assert posts == before
+        assert not replacement.protected and not producer.protected
+
+
+def test_native_crew_refuses_protected_automatic_recall_and_output_capture(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _reply(request)
+
+    with _protected_agent(original, respond) as agent:
+        memory = LoomCrewMemory(agent=agent)
+        llm = _FakeLLM(model="fake")
+        crew_agent = CrewAgent(role="travel agent", goal="book seats", backstory="", llm=llm)
+        task = Task(
+            description="Which seat does Alice want?", expected_output="a seat", agent=crew_agent
+        )
+        crew = Crew(agents=[crew_agent], tasks=[task], memory=memory)
+        agent.transport.session_protection = replacement
+        original.mark()
+        with producer.automatic():
+            assert crew.kickoff().raw == "Alice wants an aisle seat."
+        assert posts == []
+        assert not replacement.protected and not producer.protected
+
+
+def test_automatic_capture_retains_constructor_root_across_auth_await(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _reply(request)
+
+    with _protected_agent(original, respond) as agent:
+        memory = LoomCrewMemory(agent=agent)
+        agent.transport.session_protection = current
+
+        class RebindingAuth(httpx.Auth):
+            async def async_auth_flow(self, request: httpx.Request) -> AsyncIterator[httpx.Request]:
+                await asyncio.sleep(0)
+                original.mark()
+                agent.transport.session_protection = replacement
+                yield request
+
+        agent.transport._client.auth = RebindingAuth()
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            memory.remember_many(["automatic task output"])
+        assert posts == []
+        assert not current.protected and not replacement.protected and not producer.protected
+
+
+def test_marked_recall_is_retained_before_later_automatic_capture(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        if request.url.path == "/v1/memory.search":
+            return _mirrored_reply()
+        return _reply(request)
+
+    with _protected_agent(original, respond) as agent:
+        memory = LoomCrewMemory(agent=agent)
+        agent.transport.session_protection = current
+        assert [match.record.content for match in memory.recall("private request")] == [
+            "private recalled content"
+        ]
+        assert SessionProtection.open(current.pointer()).protected
+        agent.transport.session_protection = replacement
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            memory.remember_many(["automatic task output"])
+        assert SessionProtection.open(original.pointer()).protected
+        assert posts == ["/v1/memory.search"]
+        assert not replacement.protected and not producer.protected
+
+
+def test_failed_retained_observation_withholds_recalled_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = SessionProtection.create(base=tmp_path / "broken")
+    current = SessionProtection.create(base=tmp_path / "current")
+    mark = SessionProtection.mark
+    posts: list[str] = []
+
+    def fail_one(family: SessionProtection) -> None:
+        if family == broken:
+            raise SessionProtectionUnavailable()
+        mark(family)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _mirrored_reply()
+
+    with _protected_agent(broken, respond) as agent:
+        memory = LoomCrewMemory(agent=agent)
+        agent.transport.session_protection = current
+        monkeypatch.setattr(SessionProtection, "mark", fail_one)
+        with pytest.raises(SessionProtectionUnavailable):
+            memory.recall("withhold a failed observation")
+        assert current.protected and posts == ["/v1/memory.search"]
+
+
+@pytest.mark.parametrize("operation", ["remember", "remember_many", "recall"])
+def test_protected_family_allows_explicit_native_memory_tools(
+    tmp_path: Path, operation: str
+) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        return _reply(request)
+
+    with _protected_agent(family, respond) as agent:
+        memory = LoomCrewMemory(agent=agent, user_id="alice", tags=["crew"])
+        with family.automatic():
+            assert memory.recall("ordinary request") == []
+        family.mark()
+        if operation == "recall":
+            assert (
+                RecallMemoryTool(memory=memory)._run(queries="explicit search")
+                == "No relevant memories found."
+            )
+            assert posts[-1][0] == "/v1/memory.search"
+            assert posts[-1][1]["query"] == "explicit search"
+        else:
+            contents: str | list[str] = (
+                "explicit note" if operation == "remember" else ["one", "two"]
+            )
+            result = RememberTool(memory=memory)._run(contents=contents)
+            assert result.startswith(
+                "Saved to memory" if operation == "remember" else "Saving 2 items"
+            )
+            assert posts[-1][0] == (
+                "/v1/memory.set" if operation == "remember" else "/v1/memory.set_from_messages"
+            )
+        assert len(posts) == 2
+        assert posts[-1][1]["user_id"] == "alice"
+        assert family.protected
+
+
+def test_read_only_protected_memory_keeps_native_no_write_semantics(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    family.mark()
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        return _reply(request)
+
+    with _protected_agent(family, respond) as agent:
+        memory = LoomCrewMemory(agent=agent, read_only=True)
+        assert memory.remember("ignored") is None
+        assert memory.remember_many(["ignored"]) == []
+        assert memory.recall("explicit read") == []
+        assert [op for op, _ in posts] == ["/v1/memory.search"]
+        assert posts[0][1]["auto_touch"] is False

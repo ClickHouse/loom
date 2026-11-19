@@ -47,7 +47,8 @@ async def active_sources(
     if not namespaces:
         return []
     return await (ch or _default_client()).query_all(
-        "SELECT namespace, toString(source_id) AS source_id FROM loom.knowledge_sources FINAL "
+        "SELECT namespace, name, credential_mode, toString(source_id) AS source_id "
+        "FROM loom.knowledge_sources FINAL "
         "WHERE org = {org:String} AND namespace IN {names:Array(String)} "
         "AND active AND access = 'mirrored' ORDER BY namespace, name",
         params={"org": org, "names": sorted(set(namespaces))},

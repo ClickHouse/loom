@@ -104,18 +104,9 @@ async def _refusal(restored: str, point: datetime, *, live: bool, ch: Any) -> st
             "cannot be run again"
         )
     if not live:
-        # Two workers-lease terms (a minute by default).
-        window_s = 2 * settings.supervisor_lease_ttl_s
-        row = await ch.query_one(
-            "SELECT count() AS n FROM loom.worker_status "
-            "WHERE pass_finished > now64(3) - toIntervalSecond({s:UInt32})",
-            params={"s": window_s},
-        )
-        if row and int(row["n"]):
-            return (
-                f"a worker reported a pass in the last {window_s} s: stop every server "
-                "and worker first (or pass --allow-live)"
-            )
+        from server.knowledge.app.connected_restore import offline_refusal
+
+        return await offline_refusal(ch)
     return ""
 
 
@@ -156,6 +147,9 @@ async def reconcile(
                 f"namespace {s['namespace']}, source_uri {s['source_uri']}"
             )
     if not apply:
+        from server.knowledge.app.connected_restore import restore_all
+
+        await restore_all(apply=False, ch=ch)
         return 0
     from server.code.app.index import repo_registry
 
@@ -179,6 +173,18 @@ async def reconcile(
         # live head held here, which `loom rechunk` builds again from the stored content.
         for line in _rechunk_lines(await knowledge_reconcile.held_sources()):
             print(line)
+    from server.knowledge.app.connected_restore import restore_all
+
+    # Connection cleanup is fail-fast: no restored document may publish with
+    # retained provider authority, even when an unrelated erasure replay can retry.
+    try:
+        await restore_all(apply=True, ch=ch)
+    except Exception:  # noqa: BLE001 — local cleanup must finish before any publication
+        print(
+            "loom reconcile: connected-account cleanup failed; publication remains held",
+            file=sys.stderr,
+        )
+        return 1
     # A step that raises is counted and the rest run: what `hold` held is published
     # whatever an erasure did.
     for entry in erasures:

@@ -1057,6 +1057,7 @@ class Owner:
             raise error
         if self.first is not None and not cleanup:
             raise self.first
+        item["cleaned"] = True
         return item
 
     def send(self, item: dict, sig: int) -> None:

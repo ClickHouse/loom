@@ -101,6 +101,7 @@ async def move_checkout(checkout: Path, bare: Path, target: str, cfg: RepoConfig
         network=True,
         token=cfg.github_token,
         remote=cfg.git_remote,
+        proxy_identity=cfg.git_proxy_identity,
         timeout_s=settings.code_git_fetch_timeout_s,
         retries=1,
     )

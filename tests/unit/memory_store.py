@@ -244,7 +244,7 @@ class FixedEmbedder:
     async def embed(self, _text: str) -> list[float]:
         return [0.5, 0.5, 0.5, 0.5]
 
-    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [[0.5, 0.5, 0.5, 0.5] for _ in texts]
 
 

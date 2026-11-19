@@ -64,68 +64,70 @@ def _chunk_candidates_sql(agent_pred: str) -> str:
     """
 
 
-def _chunk_parent_pred(q: SearchQuery, params: dict[str, Any]) -> str:
-    """The read's hard tag filter, `as_of` anchor and served-status set,
-    carried into the chunk leg through the parent row.
-
-    `memory_chunks` has no `tags`, `valid_at` or `status` column; the parent
-    in `memory_embeddings` has all three. A search that names `tags` admits
-    a chunk only when its parent passes the fact leg's own predicates —
-    `tag_predicate`, `as_of_predicate`, `status_predicate`, the same helpers
-    with the same parameter names, so the two legs cannot drift. A search
-    that names only `as_of` excludes the chunks whose parent is known and
-    was not valid then; a chunk whose parent is a session (no embeddings
-    row) keeps its session date and stays. Without either filter the leg is
-    unchanged. Returns "" when nothing applies; binds its parameters into
-    `params` (the chunk statement's, both stages read them)."""
-    from server.core.tag_sql import tag_predicate
-    from server.memory.domain.search_sql import hard_tag_filter
+def _chunk_parent_state(q: SearchQuery, params: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Share the fact leg's status and time rules without depending on a vector projection."""
     from server.memory.domain.temporal_sql import (
         as_of_predicate,
         status_predicate,
         tombstone_predicate,
     )
 
-    hard_tags = hard_tag_filter(q.tags, q.tags_soft)
     replaying = q.as_of is not None
-    if not hard_tags and not replaying:
-        return ""
     identity = ["org = {org:String}", "namespace = {ns:String}"]
     if q.scope == "private" and q.agent not in ("*", "-"):
         identity.append("agent = {agent:String}")
         params["agent"] = q.agent
+    state = [
+        tombstone_predicate(q.as_of_basis, replaying=replaying),
+        status_predicate(
+            q.as_of_basis,
+            replaying=replaying,
+            include_duplicates=q.include_duplicates,
+            include_superseded=q.include_superseded,
+            include_proposed=q.include_proposed,
+        ),
+    ]
     if replaying:
         params["as_of"] = q.as_of
-    if hard_tags:
-        params["tags"] = hard_tags
-        where = [
-            *identity,
-            tombstone_predicate(q.as_of_basis, replaying=replaying),
-            status_predicate(
-                q.as_of_basis,
-                replaying=replaying,
-                include_duplicates=q.include_duplicates,
-                include_superseded=q.include_superseded,
-                include_proposed=q.include_proposed,
-            ),
-            tag_predicate(""),
-        ]
-        if replaying:
-            where.append(
-                as_of_predicate(q.as_of_basis, invalid_col="invalid_at", tomb_col="tombstoned_at")
-            )
-        return (
-            "AND c.parent_memory_key IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
-            " WHERE " + " AND ".join(where) + ")"
+        state.append(
+            as_of_predicate(q.as_of_basis, invalid_col="invalid_at", tomb_col="tombstoned_at")
         )
-    # `as_of` alone: the parents that exist and fail the anchor are excluded;
-    # an orphan chunk (session parent) is dated by its session, not here.
-    not_valid = "NOT " + as_of_predicate(
-        q.as_of_basis, invalid_col="invalid_at", tomb_col="tombstoned_at"
+    return identity, state
+
+
+def _chunk_parent_pred(q: SearchQuery, params: dict[str, Any]) -> str:
+    """Exclude an unserved known parent on every read; retain session-only evidence.
+
+    The parent identity keeps anonymous spellings equivalent and named writers
+    and sessions distinct. Canonical rows carry status even without a vector.
+    Hard tags additionally require a matching searchable parent. Both stages
+    and neighbour windows use this predicate. Long point-write chunks have a
+    synthetic session; the pool checks those against their current value.
+    """
+    from server.core.tag_sql import tag_predicate
+    from server.memory.domain.search_sql import hard_tag_filter
+
+    identity, state = _chunk_parent_state(q, params)
+    parent = (
+        "AND (c.agent, if(c.user_id = '', '-', c.user_id), "
+        "if(c.session_id = '', '-', c.session_id), c.parent_memory_key) NOT IN "
+        "(SELECT agent, if(user_id = '', '-', user_id), "
+        "if(session_id = '', '-', session_id), memory_key FROM loom.memory FINAL WHERE "
+        + " AND ".join(identity)
+        + " AND NOT ("
+        + " AND ".join(state)
+        + "))"
     )
+    hard_tags = hard_tag_filter(q.tags, q.tags_soft)
+    if not hard_tags:
+        return parent
+    params["tags"] = hard_tags
     return (
-        "AND c.parent_memory_key NOT IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
-        " WHERE " + " AND ".join([*identity, not_valid]) + ")"
+        parent
+        + "\nAND c.parent_memory_key IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
+        + " WHERE "
+        + " AND ".join([*identity, *state, tag_predicate("")])
+        + ")"
     )
 
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -18,6 +18,7 @@ from server.memory.app import webhooks
 from server.memory.domain import rollback as svc
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import pg_memory
+from server.memory.store.rows import stored_value_text
 
 log = logging.getLogger(__name__)
 
@@ -78,10 +79,23 @@ async def apply_rollback(
     batch by batch: a key erased since the plan is not reinstated, and one deleted since
     is not removed again."""
     from server.embedding import get_embedder
+    from server.memory.app import blacklist_guard
     from server.memory.domain.excerpt import build_excerpt
     from server.memory.domain.memory_types import is_embedded
     from server.memory.domain.trust import attests
 
+    # Check every slice before any write, retaining only one slice's full rows. The
+    # apply pass reads current heads afresh and holds this single captured policy.
+    policy = await blacklist_guard.capture_policy(org) if plan.reinstate else {}
+    for start in range(0, len(plan.reinstate), _INSERT_BATCH):
+        values = (
+            {"org": org, "namespace": namespace, "value": stored_value_text(historical)}
+            for historical, head in await _reinstated(
+                org, namespace, plan.reinstate[start : start + _INSERT_BATCH], ch=ch
+            )
+            if head is not None and historical.tombstoned_at is None
+        )
+        await blacklist_guard.enforce_rows(values, policy=policy)
     embedder = get_embedder()
     # Empty: the insert gives it the width its coded column takes.
     stub_vector: list[float] = []
@@ -163,7 +177,7 @@ async def apply_rollback(
             )
             source = None if h.redacted_at else (str(h.memory_id), h.version)
             batch.append(_Planned(row, head, _reinstate_event(h, head), stub, source))
-        await _write(batch, ch=ch, landed=applied.add_reinstated)
+        await _write(batch, ch=ch, landed=applied.add_reinstated, policy=policy)
 
     # --- remove: keys born after as_of are tombstoned ----------------------
     for i in range(0, len(plan.remove), _INSERT_BATCH):
@@ -222,7 +236,13 @@ class _Planned:
     source: tuple[str, int] | None = None
 
 
-async def _write(batch: list[_Planned], *, ch: Any, landed: Callable[[int], None]) -> None:
+async def _write(
+    batch: list[_Planned],
+    *,
+    ch: Any,
+    landed: Callable[[int], None],
+    policy: Mapping[tuple[str, str], int] | None = None,
+) -> None:
     """Commit the batch over its heads; `landed` counts and announces it, `_follow_ups`
     retires and fences (ClickHouse) and inserts its stubs; under Postgres the publish
     retires the vectors and `fenced_once_committed` fences the batch's 'high' rows."""
@@ -259,6 +279,7 @@ async def _write(batch: list[_Planned], *, ch: Any, landed: Callable[[int], None
             # A reinstated live row's document is owed until its stub lands.
             documented=[p.stub is not None and p.row["tombstoned_at"] is None for p in batch],
             sources=[p.source for p in batch if p.source is not None],
+            policy=policy,
             on_commit=answer.mark_committed,
         )
 

@@ -1281,6 +1281,8 @@ export interface CodeRepoAddInput {
   classification?: "standard" | "restricted";
   /** Token for a private HTTPS remote; stored encrypted, never returned. */
   access_token?: string;
+  /** The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   path_prefixes?: string[];
   exclude?: string[];
   exclude_generated?: boolean;
@@ -1317,6 +1319,8 @@ export interface CodeRepoRemoteBranchesInput {
   repo: string;
   /** Token for a private HTTPS remote; used once. */
   access_token?: string;
+  /** The user name this read presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   /** Case-insensitive substring of the branch name to match. */
   query?: string;
   /** How many matching branches to return (default 60). */
@@ -2069,6 +2073,34 @@ export interface ConflictsResolveOutput {
   affected_memory_ids: string[];
   resolved_at?: string | null;
   total?: number | null;
+}
+
+export interface ConnectionDisconnectInput {
+  /** The caller's organization. */
+  org: string;
+  /** The connected provider to disconnect. */
+  kind: "gdrive" | "notion" | "linear";
+}
+
+export interface ConnectionDisconnectOutput {
+  disconnected: boolean;
+}
+
+export interface ConnectionListInput {
+  /** The caller's organization. */
+  org: string;
+}
+
+export interface ConnectionEntry {
+  kind: "gdrive" | "notion" | "linear";
+  connected: boolean;
+  account_email?: string | null;
+  scopes?: string[];
+  connect_url: string;
+}
+
+export interface ConnectionListOutput {
+  connections: ConnectionEntry[];
 }
 
 export interface ConsolidationsListInput {
@@ -4259,8 +4291,10 @@ export interface KnowledgeSourceAddInput {
   config?: Record<string, unknown> | null;
   /** gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). */
   include?: string[] | null;
+  /** Use the supplied shared credential, or your own mirrored connected account. */
+  credential_mode?: "shared" | "connected";
   /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
-  credential: string;
+  credential?: string;
   /** Probe and write nothing. */
   dry_run?: boolean;
 }
@@ -4343,6 +4377,9 @@ export interface KnowledgeSourceDocument {
 export interface KnowledgeSourceInspectOutput {
   name: string;
   kind: string;
+  credential_mode?: string;
+  access?: string;
+  owner_subject?: string;
   items?: Array<Record<string, unknown>>;
   include?: string[];
   config?: Record<string, unknown>;
@@ -4362,6 +4399,9 @@ export interface KnowledgeSourceListInput {
 export interface KnowledgeSourceEntry {
   name: string;
   kind: string;
+  credential_mode?: string;
+  access?: string;
+  owner_subject?: string;
   items?: Array<Record<string, unknown>>;
   include?: string[];
   config?: Record<string, unknown>;
@@ -9317,11 +9357,27 @@ export interface SearchQueryInput {
   recipe?: "" | "fast" | "balanced" | "quality" | "verbatim" | "code" | "temporal" | "graph";
   bodies?: "full" | "excerpt" | "none" | "unit";
   explain?: boolean;
+  live?: boolean;
   page?: string;
+}
+
+export interface LiveSearchResults {
+  live?: true;
+  results?: LiveSearchHit[];
+}
+
+export interface LiveSearchHit {
+  id: string;
+  title: string;
+  url: string;
+  provider: "gdrive" | "notion" | "linear";
+  content?: string;
+  live?: true;
 }
 
 export interface SearchQueryOutput {
   tracker?: Record<string, unknown> | null;
+  live?: LiveSearchResults | null;
   memory?: Record<string, unknown>;
   knowledge?: Record<string, unknown>;
   profile?: Record<string, unknown>;
@@ -10482,6 +10538,8 @@ export type OpName =
   | "conflicts.list"
   | "conflicts.propose_revision"
   | "conflicts.resolve"
+  | "connection.disconnect"
+  | "connection.list"
   | "consolidations.list"
   | "context.fetch"
   | "context.offload"
@@ -10858,6 +10916,8 @@ export interface OpMap {
   "conflicts.list": { input: ConflictsListInput; output: ConflictsListOutput };
   "conflicts.propose_revision": { input: ConflictsProposeRevisionInput; output: ConflictsProposeRevisionOutput };
   "conflicts.resolve": { input: ConflictsResolveInput; output: ConflictsResolveOutput };
+  "connection.disconnect": { input: ConnectionDisconnectInput; output: ConnectionDisconnectOutput };
+  "connection.list": { input: ConnectionListInput; output: ConnectionListOutput };
   "consolidations.list": { input: ConsolidationsListInput; output: ConsolidationsListOutput };
   "context.fetch": { input: ContextFetchInput; output: ContextFetchOutput };
   "context.offload": { input: ContextOffloadInput; output: ContextOffloadOutput };
@@ -11234,6 +11294,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "conflicts.list", group: "conflicts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conflicts.propose_revision", group: "conflicts", method: "proposeRevision", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conflicts.resolve", group: "conflicts", method: "resolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 500, audit: true, readOnly: false },
+  { name: "connection.disconnect", group: "connection", method: "disconnect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
+  { name: "connection.list", group: "connection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1000, audit: false, readOnly: true },
   { name: "consolidations.list", group: "consolidations", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "context.fetch", group: "context", method: "fetch", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "context.offload", group: "context", method: "offload", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
@@ -11315,18 +11377,18 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.restore", group: "knowledge", method: "restore", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
-  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
-  { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
+  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
+  { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "knowledge.source.push_configure", group: "knowledge", method: "sourcePushConfigure", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.source.push_confirm", group: "knowledge", method: "sourcePushConfirm", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
   { name: "knowledge.source.push_status", group: "knowledge", method: "sourcePushStatus", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: false, readOnly: false },
-  { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
+  { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
-  { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
-  { name: "knowledge.source.update", group: "knowledge", method: "sourceUpdate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
+  { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
+  { name: "knowledge.source.update", group: "knowledge", method: "sourceUpdate", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.synthesize", group: "knowledge", method: "synthesize", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.upsert", group: "knowledge", method: "upsert", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: false },
@@ -11543,4 +11605,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 373;
+export const GENERATED_OP_COUNT = 375;

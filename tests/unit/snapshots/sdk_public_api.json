@@ -13,7 +13,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "Agent.methods": {
     "call": [
@@ -82,7 +83,8 @@
       "session_id",
       "run_id",
       "only",
-      "max_result_chars"
+      "max_result_chars",
+      "code_namespace"
     ]
   },
   "Datapack.__init__": [
@@ -98,7 +100,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "SyncAgent.__init__": [
     "org",
@@ -115,7 +118,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "clients": {
     "account": {
@@ -550,6 +554,19 @@
               "options"
             ],
             "resolve": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "connection": {
+          "class": "ConnectionOps",
+          "methods": {
+            "disconnect": [
+              "body",
+              "options"
+            ],
+            "list": [
               "body",
               "options"
             ]
@@ -3070,6 +3087,7 @@
           "memory_type",
           "tags",
           "entities",
+          "files",
           "user_id",
           "session_id",
           "run_id",

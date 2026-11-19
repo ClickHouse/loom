@@ -166,7 +166,7 @@ async def _bootstrap(cell_clickhouse_databases, monkeypatch, tmp_path, dsn):
             "LOOM_CH_READER_USER": "",
             "LOOM_CH_CLUSTER": "",
             "LOOM_DOCUMENT_S3_BUCKET": "",
-            "LOOM_DOCUMENT_S3_PREFIX": "",
+            "LOOM_DOCUMENT_S3_PREFIX": "originals",
             "LOOM_BACKGROUND_WORKERS": "off",
             "LOOM_EMBEDDING_MODEL": "fake-ngram-1024",
             "LOOM_LLM_PROVIDER": "fake",

@@ -193,6 +193,10 @@ External harnesses with loom plugged in live in their own folders:
 
 ## Agents, operations and cost
 
+- **`sdk_issue_resolution.py`** — paired issue-resolution agent with identical local
+  tools and instructions, an optional Loom Python SDK code binding, and separate
+  external patch grading. [Protocol and artifact schema](../docs/benchmarks/sdk-issue-resolution.md).
+
 - **`op_planning.py`** — did the agent pick the right loom operation (tool,
   required args, literal args, no extras), and does the gold plan leave the
   store in the right state? Tasks in `fixtures/op_planning_tasks.jsonl`, or

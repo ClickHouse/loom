@@ -640,7 +640,7 @@ async def test_another_orgs_request_is_refused_before_any_account_read(
     child = await _child(_login(), {"*": None})
     monkeypatch.setattr(delegation, "creator_account_active", account_active)
     for org in ("evil-1", "evil-2"):
-        with pytest.raises(PermissionError, match="cannot act in org"):
+        with pytest.raises(PermissionError, match="^token is for another org$"):
             await authz.check_authorized(child, Role.VIEWER, org, "a")
     assert reads == []
 

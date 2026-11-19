@@ -284,11 +284,11 @@ async def test_a_save_during_an_embedder_outage_is_embedded_by_the_retry(
     from server.embedding import get_embedder
     from server.knowledge.app.conversations import handle_conversation_save_message
 
-    async def down(_text: str) -> list[float]:
+    async def down(_texts: list[str]) -> list[list[float]]:
         raise RuntimeError("embedder down")
 
     with monkeypatch.context() as m:
-        m.setattr(get_embedder(), "embed", down)
+        m.setattr(get_embedder(), "embed_many", down)
         out = await handle_conversation_save_message(_save(namespace))
     assert (out.indexed, out.reason) == (False, "embed_failed")
     # The BM25 leg reads the saved text, so the turn is found before it has a vector.

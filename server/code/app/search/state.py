@@ -58,12 +58,33 @@ class CodeSearchResult:
     budget: code_deadline.Budget | None = None
 
     @property
+    def failure_reason(self) -> str:
+        unavailable = [
+            name for name in ("lexical", "vector") if self.retrieval_work.get(f"{name}_leg_failed")
+        ]
+        return "retrieval unavailable: " + ", ".join(unavailable) if unavailable else ""
+
+    @property
+    def note(self) -> str:
+        if not self.failure_reason:
+            return ""
+        return (
+            "Search is incomplete: " + self.failure_reason + ". "
+            "Check server health before relying on missing results."
+        )
+
+    @property
     def partial(self) -> bool:
-        return self.budget is not None and self.budget.partial
+        return bool(self.failure_reason or self.legs_timed_out) or (
+            self.budget is not None and self.budget.partial
+        )
 
     @property
     def partial_reason(self) -> str:
-        return self.budget.reason() if self.budget is not None else ""
+        deadline = self.budget.reason() if self.budget is not None else ""
+        if not deadline and self.legs_timed_out:
+            deadline = "retrieval timed out: " + ", ".join(self.legs_timed_out)
+        return "; ".join(reason for reason in (deadline, self.failure_reason) if reason)
 
 
 # Ranked units kept for continuation past the served page.

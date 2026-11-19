@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from time import monotonic
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -137,6 +138,18 @@ def _row(participant: UUID, proof: str, **over: Any) -> dict[str, Any]:
 async def test_this_host_retires_its_dead_participants_once_their_queries_ended(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from types import SimpleNamespace
+
+    from server.core import pg_profile
+    from server.settings import settings
+
+    async def authority(sql, params=None):
+        assert sql == pg_profile._CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
+
+    client = SimpleNamespace(query_one=authority)
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    monkeypatch.setattr(barrier, "_default_client", lambda: client)
     me, dead, busy, paused, remote = (uuid4() for _ in range(5))
     monkeypatch.setattr(barrier, "process_identity", lambda: me)
     gone = _with(pid=_dead_pid())
@@ -149,17 +162,22 @@ async def test_this_host_retires_its_dead_participants_once_their_queries_ended(
     ]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
     monkeypatch.setattr(
-        barrier, "running_queries", AsyncMock(side_effect=lambda p: int(str(p) == str(busy)))
+        barrier,
+        "running_queries",
+        AsyncMock(side_effect=lambda p, **_scope: int(str(p) == str(busy))),
     )
     record = AsyncMock()
     monkeypatch.setattr(barrier, "record_retirement", record)
     monkeypatch.setattr(barrier, "_last_here", -float("inf"))
-    assert await barrier.retire_dead_here(now=100.0) == 1
+    assert await barrier.retire_dead_here(end=monotonic() + 1, now=100.0) == 1
     record.assert_awaited_once()
+    assert record.await_args.kwargs == {"ch": client}
     proof = record.await_args.args[0]
     assert proof.participant == dead and proof.after == 5
     assert proof.host_proof == pp.certified(gone)
-    assert await barrier.retire_dead_here(now=100.0 + barrier.HERE_S / 2) == 0  # throttled
+    assert (
+        await barrier.retire_dead_here(end=monotonic() + 1, now=100.0 + barrier.HERE_S / 2) == 0
+    )  # throttled
 
 
 def _fresh_process_stat(

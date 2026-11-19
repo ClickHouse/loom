@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from typing import Any, TypeVar, cast
 from urllib.parse import urlsplit
@@ -23,6 +24,14 @@ except ImportError:
 
 from loom import SyncAgent
 from loom.errors import LoomError
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
+
+
+def _callback_scope(protection: _CallbackProtection) -> AbstractContextManager[None]:
+    if automatic_roots():
+        return protection.automatic(None)
+    return protection.observing(None)
 
 
 def _digest(value: str) -> str:
@@ -42,6 +51,10 @@ class LoomDocumentStore:
 
     Connection serialization keeps an environment-variable Secret, never a token.
     The caller's Loom deployment holds all document content and native metadata.
+    Application-owned protection contributors survive fresh factory clients and
+    later callbacks. An existing automatic scope guards each request; explicit
+    store calls retain response observation without becoming automatic. Protection
+    state stays with the application and is not serialized with the connection.
     """
 
     def __init__(
@@ -77,6 +90,7 @@ class LoomDocumentStore:
         self.store = store
         self._prefix = "haystack://" + _digest(store) + "/"
         self._tag = "haystack:" + _digest(store)
+        self._protection = _CallbackProtection(None)
 
     def _client(self) -> SyncAgent:
         token = self.api_key.resolve_value()
@@ -92,11 +106,11 @@ class LoomDocumentStore:
         )
 
     def _call(self, op: str, **fields: Any) -> dict[str, Any]:
-        with self._client() as client:
+        with _callback_scope(self._protection), self._client() as client:
             return client.call(op, fields)
 
     def _download(self, source_uri: str) -> bytes:
-        with self._client() as client:
+        with _callback_scope(self._protection), self._client() as client:
             data: bytes = client.knowledge.download(source_uri)
             return data
 
@@ -202,7 +216,13 @@ class LoomDocumentStore:
 
 @component
 class LoomRetriever:
-    """Full stored documents ranked by the best hit among up to 100 Loom chunks."""
+    """Full stored documents ranked by the best hit among up to 100 Loom chunks.
+
+    Retain constructor and earlier callback contributors across search, get and
+    download. In the application's automatic scope, protection stops later
+    requests and withholds an incomplete result. Explicit retrieval keeps its
+    response observers without changing ownership.
+    """
 
     def __init__(
         self, document_store: LoomDocumentStore, top_k: int = 10, search_mode: str = "hybrid"
@@ -214,6 +234,7 @@ class LoomRetriever:
         self.document_store = document_store
         self.top_k = top_k
         self.search_mode = search_mode
+        self._protection = _CallbackProtection(None)
 
     @_document_output
     def run(self, query: str, top_k: int | None = None) -> dict[str, list[Document]]:
@@ -221,26 +242,27 @@ class LoomRetriever:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("top_k must be from 1 to 100")
         store = self.document_store
-        hits = store._call(
-            "knowledge.search",
-            query=query,
-            tags=[store._tag],
-            uri_prefix=[store._prefix],
-            namespace_scope="this",
-            search_mode=self.search_mode,
-            top_k=100,
-        )
-        found: dict[str, Document] = {}
-        for hit in hits.get("results", []):
-            uri = hit["source_uri"]
-            if uri in found or not uri.startswith(store._prefix):
-                continue
-            document = store._get(uri)
-            if document is not None:
-                found[uri] = replace(document, score=hit.get("score", hit.get("similarity")))
-                if len(found) == limit:
-                    break
-        return {"documents": list(found.values())}
+        with _callback_scope(store._protection), _callback_scope(self._protection):
+            hits = store._call(
+                "knowledge.search",
+                query=query,
+                tags=[store._tag],
+                uri_prefix=[store._prefix],
+                namespace_scope="this",
+                search_mode=self.search_mode,
+                top_k=100,
+            )
+            found: dict[str, Document] = {}
+            for hit in hits.get("results", []):
+                uri = hit["source_uri"]
+                if uri in found or not uri.startswith(store._prefix):
+                    continue
+                document = store._get(uri)
+                if document is not None:
+                    found[uri] = replace(document, score=hit.get("score", hit.get("similarity")))
+                    if len(found) == limit:
+                        break
+            return {"documents": list(found.values())}
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = default_to_dict(

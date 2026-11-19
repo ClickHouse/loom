@@ -34,7 +34,6 @@ from server.observability.consumer import ASSISTANT_CONSUMER
 from server.observability.ledger import required_call_exit, run_id_of
 from server.operations.base import Operation
 from server.operations.toolsets import (
-    _MCP_HIDDEN_OPS,
     ASSISTANT_DROPPED_ARGS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
@@ -62,7 +61,7 @@ from server.transport.mcp_config import (
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
-from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal
+from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal, is_hidden
 from server.transport.mcp_outcome import (
     _emit_success,
     _handler_failed,
@@ -269,7 +268,7 @@ async def _call_tool(
     target = await _authorize_call(req_id, op, input_obj, arguments, auth, request_id)
     if isinstance(target, dict):
         return target  # AUTH_INSUFFICIENT — nothing below (limiter, handler) runs
-    input_obj = gates.with_target(input_obj, target)
+    input_obj = gates.with_target(op, input_obj, target)
 
     # The resolved tenant the telemetry and post-handler rows name, as HTTP's
     # identity does after authorization.
@@ -514,7 +513,7 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    if op is None or (op.name in _MCP_HIDDEN_OPS and not allow_hidden):
+    if op is None or (is_hidden(op.name) and not allow_hidden):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.

@@ -10,6 +10,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.naming import named
+from server.embedding.documents import document_vectors
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -352,12 +353,7 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
     # embeds both), strictly paired back.
     keyed = [i for i, (_e, _t, key) in enumerate(texts) if key]
     batch = [t for _e, t, _k in texts] + [texts[i][2] for i in keyed]
-    if hasattr(embedder, "embed_many"):
-        vectors = await embedder.embed_many(batch)
-    else:
-        vectors = [await embedder.embed(t) for t in batch]
-    if len(vectors) != len(batch):
-        raise ValueError(f"embed_many returned {len(vectors)} vectors for {len(batch)} inputs")
+    vectors = await document_vectors(embedder, batch)
     key_vecs: dict[int, list[float]] = {i: vectors[len(rows) + j] for j, i in enumerate(keyed)}
 
     # The embedding row mirrors its memory row (status, validity, provenance,

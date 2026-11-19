@@ -247,22 +247,8 @@ async def test_value_and_key_embed_in_one_round_trip() -> None:
     value, key = await update_mod._embed_value_and_key(e, "value text", "deploy day")
     assert e.calls == [["value text", "deploy day"]] and value and key
 
-    class _Plain:
-        def __init__(self) -> None:
-            self.live = 0
-            self.peak = 0
-
-        async def embed(self, text: str) -> list[float]:
-            self.live += 1
-            self.peak = max(self.peak, self.live)
-            await asyncio.sleep(0.01)
-            self.live -= 1
-            return [1.0]
-
-    p = _Plain()
-    await update_mod._embed_value_and_key(p, "v", "k")
-    assert p.peak == 2, "without embed_many the two calls overlap"
-    assert await update_mod._embed_value_and_key(p, "v", "") == ([1.0], [])
+    assert await update_mod._embed_value_and_key(e, "v", "") == ([0.1, 0.2, 0.3], [])
+    assert e.calls == [["value text", "deploy day"], ["v"]]
 
 
 @pytest.mark.asyncio

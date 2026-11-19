@@ -1,6 +1,6 @@
 [project]
 name = "clickhouse-loom"
-version = "1.2.0"
+version = "1.3.0"
 description = "Python SDK for ClickHouse Loom, a self-hosted server that gives AI agents shared long-term memory, document search and a code index."
 requires-python = ">=3.11"
 license = "Apache-2.0"

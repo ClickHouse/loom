@@ -7,6 +7,7 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Load session context",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart codex"
           }
@@ -18,16 +19,19 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Record the prompt",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Recall relevant memories",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Load prompt context",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit codex"
           }
@@ -40,6 +44,7 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Look up indexed code",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse codex"
           }
@@ -50,6 +55,7 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Load file context",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse codex"
           }
@@ -62,6 +68,7 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Show memory guidance",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse codex"
           }
@@ -72,6 +79,7 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Check change impact",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse codex"
           }
@@ -82,6 +90,7 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Capture session activity",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse codex"
           }
@@ -93,16 +102,19 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Capture session activity",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Save working context",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Save a session brief",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact codex"
           }
@@ -114,31 +126,37 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Capture session activity",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Save conversation turns",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Check required tests",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Validate session memories",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Check memory health",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Save working context",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop codex"
           }
@@ -150,21 +168,25 @@
         "hooks": [
           {
             "type": "command",
+            "statusMessage": "Loom: Capture session activity",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Close the session run",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Save session memories",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd codex"
           },
           {
             "type": "command",
+            "statusMessage": "Loom: Save a session brief",
             "command": "sh \"${PLUGIN_ROOT}/bin/loom-node\" \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd codex",
             "commandWindows": "node \"${PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd codex"
           }

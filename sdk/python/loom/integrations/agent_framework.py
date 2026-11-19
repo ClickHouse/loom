@@ -38,6 +38,8 @@ except ImportError as e:  # the framework is an optional extra
         "pip install 'clickhouse-loom[agent-framework]'"
     ) from e
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import require_automatic_allowed
 from loom.sync import SyncAgent
 
 if TYPE_CHECKING:
@@ -57,6 +59,11 @@ class LoomContextProvider(ContextProvider):
     The mapping is in ``docs/features/integrations/frameworks.md``
     (Microsoft Agent Framework). The framework awaits its providers, so the
     provider takes a ``loom.Agent``.
+
+    Use one provider per conversation, bound to that conversation's logical
+    session family. Native session ids label extracted turns; they do not select
+    session protection. Constructor and callback contributors remain bound for
+    the provider's lifetime, including after the client is rebound.
     """
 
     # Inside an AgentLoopMiddleware loop, the turn is sent once, when the loop ends: the
@@ -85,6 +92,7 @@ class LoomContextProvider(ContextProvider):
             )
         super().__init__(source_id)
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._user_id = user_id
         self._top_k = top_k
         self._honour_abstain = honour_abstain
@@ -98,33 +106,34 @@ class LoomContextProvider(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        asked = [m.text for m in _new_turn(context.input_messages) if m.role == "user"]
-        query = next((text for text in reversed(asked) if text.strip()), "")
-        if not query:
-            return
-        result = await self._agent.memory.search(
-            query,
-            top_k=self._top_k,
-            user_id=self._user_id,
-            # Read the namespace this provider writes to, whatever the deployment's default.
-            namespace_scope="this",
-            # Pinned so every top_k gets full bodies and no per-hit explanation
-            # (the server's defaults switch at 15).
-            bodies="full",
-            explain=False,
-        )
-        hits = list(result)
-        if self._honour_abstain:
-            if result.abstain:
+        with self._protection.automatic(self._agent.transport.session_protection):
+            asked = [m.text for m in _new_turn(context.input_messages) if m.role == "user"]
+            query = next((text for text in reversed(asked) if text.strip()), "")
+            if not query:
                 return
-            # A response that does not abstain can still carry rows below the floor.
-            hits = [hit for hit in hits if not hit.below_threshold]
-        # Derived rows may come back above the top_k slice: cut after filtering.
-        lines = [f"{i}. {hit.content_excerpt}" for i, hit in enumerate(hits[: self._top_k], 1)]
-        if lines:
-            context.extend_instructions(
-                self.source_id, "Relevant memory content from Loom:\n" + "\n".join(lines)
+            result = await self._agent.memory.search(
+                query,
+                top_k=self._top_k,
+                user_id=self._user_id,
+                # Read the namespace this provider writes to, whatever the deployment's default.
+                namespace_scope="this",
+                # Pinned so every top_k gets full bodies and no per-hit explanation
+                # (the server's defaults switch at 15).
+                bodies="full",
+                explain=False,
             )
+            hits = list(result)
+            if self._honour_abstain:
+                if result.abstain:
+                    return
+                # A response that does not abstain can still carry rows below the floor.
+                hits = [hit for hit in hits if not hit.below_threshold]
+            # Derived rows may come back above the top_k slice: cut after filtering.
+            lines = [f"{i}. {hit.content_excerpt}" for i, hit in enumerate(hits[: self._top_k], 1)]
+            if lines:
+                context.extend_instructions(
+                    self.source_id, "Relevant memory content from Loom:\n" + "\n".join(lines)
+                )
 
     async def after_run(
         self,
@@ -134,18 +143,20 @@ class LoomContextProvider(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        response = context.response
-        # A user message in a response is a loop's own prompt, not the user's words.
-        replies = [m for m in (response.messages if response else []) if m.role == "assistant"]
-        messages = _texts([*_new_turn(context.input_messages), *replies])
-        loom_session = _loom_session(self._user_id or "-", session.session_id)
-        for start in range(0, len(messages), _MAX_MESSAGES):
-            await self._agent.memory.set_from_messages(
-                messages[start : start + _MAX_MESSAGES],
-                user_id=self._user_id,
-                session_id=loom_session,
-                defer=self._defer,
-            )
+        with self._protection.automatic(self._agent.transport.session_protection):
+            response = context.response
+            # A user message in a response is a loop's own prompt, not the user's words.
+            replies = [m for m in (response.messages if response else []) if m.role == "assistant"]
+            messages = _texts([*_new_turn(context.input_messages), *replies])
+            loom_session = _loom_session(self._user_id or "-", session.session_id)
+            for start in range(0, len(messages), _MAX_MESSAGES):
+                await self._agent.memory.set_from_messages(
+                    messages[start : start + _MAX_MESSAGES],
+                    user_id=self._user_id,
+                    session_id=loom_session,
+                    defer=self._defer,
+                )
+                require_automatic_allowed(self._agent.transport.session_protection)
 
 
 def _new_turn(messages: Sequence[Message]) -> Sequence[Message]:

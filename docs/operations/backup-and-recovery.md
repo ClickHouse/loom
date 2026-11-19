@@ -150,6 +150,32 @@ fewer rows there is a warning once a merge has run, and a failure otherwise. It 
 The dump is per table, not a snapshot across tables. Use it to move data between
 clusters, not for disaster recovery.
 
+## Connected-account authority after a restore
+
+Stop every server and worker before restoring a deployment. Under the Postgres authority,
+`loom reconcile --apply` clears restored connection authority before publishing held
+documents, for either restored store; a cleanup failure leaves publication held. Its
+live override does not skip the connected-account offline check.
+
+For a ClickHouse-only deployment, restore the configured stores and run:
+
+```bash
+python dev/restore_connected_accounts.py
+python dev/restore_connected_accounts.py --apply
+```
+
+Use the deployment's normal configuration. This maintenance entry accepts no arbitrary
+host or database remapping: a generic loader's scratch restore must not clear another
+deployment's accounts. Dry run validates the bounded history inventory without changing
+it. Apply fences historical connection keys, queues owned source ids, clears credentials
+and verifies deletion of historical account and source rows. Failure refuses completion;
+keep the deployment stopped and rerun after resolving the cause. Owners establish their
+connections again. Remote revocation is bounded and best effort after all local cleanup.
+
+This step does not certify erasure of every mirror document, chunk, head or original.
+The [mirror restore procedure](../architecture/document-sources.md#rolling-upgrades)
+remains required before serving mirrored content.
+
 ## Verifying the audit log after a restore
 
 `python dev/verify_audit_chain.py [--org X] [--ts-since YYYY-MM-DD] [--json]` recomputes

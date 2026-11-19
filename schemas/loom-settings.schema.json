@@ -176,6 +176,11 @@
           "type": "string",
           "description": "Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell gate lets the process serve); off = never (a pure web replica)."
         },
+        "bedrock_region": {
+          "default": "",
+          "type": "string",
+          "description": "Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain."
+        },
         "bind_host": {
           "default": "127.0.0.1",
           "type": "string",
@@ -1132,6 +1137,31 @@
           "default": 200,
           "type": "integer",
           "description": "Max PR heads fetched per shared mirror per ingest pass."
+        },
+        "code_git_proxy_ca_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM bundle git verifies TLS with through the proxy, in place of its default roots (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url."
+        },
+        "code_git_proxy_identity": {
+          "default": "",
+          "type": "string",
+          "description": "The proxy user of an entry that names no `git_proxy_identity`: letters, digits and `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_tls_ca_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM bundle git verifies the proxy's own certificate with, in place of its default roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one is for the remote, behind a proxy that terminates TLS under its own authority; this one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url."
+        },
+        "code_git_proxy_token_file": {
+          "default": "",
+          "type": "string",
+          "description": "File holding the proxy password, read again for every git job. Empty = no password; a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_url": {
+          "default": "",
+          "type": "string",
+          "description": "The proxy: `http://host:port` or `https://host:port`, the port named, with no credentials, path or query. Empty = git connects directly."
         },
         "code_git_remote": {
           "default": "",
@@ -2129,10 +2159,20 @@
           "type": "boolean",
           "description": "Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); a configured entry for a namespace a member added from the page is skipped. Off = the operator's JSON is the only source."
         },
+        "code_self_service_git_unsandboxed": {
+          "default": false,
+          "type": "boolean",
+          "description": "True lets a host without the sandbox add and fetch a self-service entry with a network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and it gets no compiler tier. Refused at load without code_self_service_platform_admin_only, where a request can carry no principal (auth off, or mcp_auth_mode open), and with code_sandbox_required. False: such an entry needs the sandbox."
+        },
         "code_self_service_max_repos": {
           "default": 20,
           "type": "integer",
           "description": "Active self-service entries per org (branches count); past it the add refuses with a message."
+        },
+        "code_self_service_platform_admin_only": {
+          "default": false,
+          "type": "boolean",
+          "description": "True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to platform admins: a token scoped to namespaces, or a trusted caller acting for another subject, is refused too. False: each op's own role decides."
         },
         "code_setting_control": {
           "default": "",
@@ -2304,6 +2344,26 @@
           "default": 0.85,
           "type": "number",
           "description": "memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold."
+        },
+        "connect_gdrive_client_id": {
+          "default": "",
+          "type": "string",
+          "description": "OAuth client id for personal Drive connections; empty disables the provider."
+        },
+        "connect_linear_client_id": {
+          "default": "",
+          "type": "string",
+          "description": "OAuth client id for personal project-tracker connections; empty disables it."
+        },
+        "connect_notion_client_id": {
+          "default": "",
+          "type": "string",
+          "description": "Public-integration client id for personal page-store connections; empty disables it."
+        },
+        "connect_notion_read_content_only": {
+          "default": false,
+          "type": "boolean",
+          "description": "The operator has restricted the public integration to read-content capability. Its token response cannot prove this registration setting; false disables it."
         },
         "consolidation_merge_concurrency": {
           "default": 4,
@@ -2542,11 +2602,12 @@
             "openai",
             "gemini",
             "compatible",
+            "bedrock",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
+          "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"bedrock\" (Cohere Embed v4), \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
         },
         "embedding_retry_attempts": {
           "default": 3,
@@ -3050,6 +3111,67 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_connected_lease_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the renewed account-generation lease lives. Source leases follow it; provider requests hold neither."
+        },
+        "knowledge_connected_lease_wait_s": {
+          "default": 5.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds a connection change waits for another holder's account-generation lease."
+        },
+        "knowledge_connected_oauth_response_max_bytes": {
+          "default": 65536,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing."
+        },
+        "knowledge_connected_oauth_timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound."
+        },
+        "knowledge_connected_registry_page_size": {
+          "default": 256,
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Registrations per page during root-secret resealing."
+        },
+        "knowledge_connected_registry_scan_limit": {
+          "default": 4096,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum complete owner scan; exceeding it refuses instead of stopping a subset."
+        },
+        "knowledge_connected_revoke_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds for best-effort provider revocation after every local stop has committed."
+        },
+        "knowledge_connected_sources_max_per_namespace": {
+          "default": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Active connected sources per namespace, separate from the shared/crawl quota."
+        },
+        "knowledge_connected_sources_max_per_person": {
+          "default": 8,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Active connected sources one canonical person may register in one namespace."
+        },
+        "knowledge_connected_stop_timeout_s": {
+          "default": 20.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds for local connection stops, including their source retirement writes."
+        },
         "knowledge_gaps_enabled": {
           "default": false,
           "type": "boolean",
@@ -3139,6 +3261,48 @@
           "minimum": 60,
           "type": "integer",
           "description": "Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts."
+        },
+        "knowledge_live_search_max_ancestors": {
+          "default": 3,
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Native parent lookups per Notion membership check, from zero to three. Zero accepts directly registered pages and database membership without parent fetches."
+        },
+        "knowledge_live_search_max_hits": {
+          "default": 10,
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Live hits across all registrations, and the per-provider page bound, from one to ten."
+        },
+        "knowledge_live_search_max_items": {
+          "default": 4,
+          "maximum": 4,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Registered Drive items searched per source, from one to four; no pagination."
+        },
+        "knowledge_live_search_max_sources": {
+          "default": 3,
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Connected registrations searched per live-search request, from one to three."
+        },
+        "knowledge_live_search_response_max_bytes": {
+          "default": 262144,
+          "maximum": 262144,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes read from one live-search provider response, at most 256 KiB. The document-source download limit may shorten this bound further."
+        },
+        "knowledge_live_search_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "maximum": 5.0,
+          "type": "number",
+          "description": "Seconds for the whole optional live-search leg, including final membership checks. At most five; provider credential deadlines may shorten it further."
         },
         "knowledge_mirrored_sources_enabled": {
           "default": false,
@@ -3269,6 +3433,12 @@
           "minimum": 2,
           "type": "integer",
           "description": "How many fused hits a rerank reads (the legs fetch at least this many)."
+        },
+        "knowledge_source_acl_max_entries": {
+          "default": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum team and member rows read for one project's complete permission list. A larger list refuses publication rather than granting from a partial page."
         },
         "knowledge_source_acl_stale_seconds": {
           "default": 3600,
@@ -3504,7 +3674,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
@@ -3571,9 +3741,9 @@
           "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
         },
         "mcp_always_load_tools": {
-          "default": "code.search,code.symbol",
+          "default": "",
           "type": "string",
-          "description": "Ops whose tools/list entry carries `_meta: {\"anthropic/alwaysLoad\": true}`, so a host that defers MCP tools behind tool search lists these up front and an agent calls them on its first turn instead of spending a turn loading them. Comma-separated op names; empty = none."
+          "description": "Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront."
         },
         "mcp_auth_mode": {
           "default": "required",
@@ -3589,6 +3759,11 @@
           "default": false,
           "type": "boolean",
           "description": "List code.* tools on the MCP surface (core toolset union). Off = code ops are HTTP/SDK-only."
+        },
+        "mcp_code_upload_tools": {
+          "default": false,
+          "type": "boolean",
+          "description": "Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP, which hides both when off. On, an upload is accepted, on every transport, only for a namespace that has a repository entry."
         },
         "mcp_loom_search_floor_mode": {
           "default": "drop",
@@ -3666,7 +3841,7 @@
         "mcp_toolset": {
           "default": "core",
           "type": "string",
-          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\"); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed. An unknown value is \"core\"."
+          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\"); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is \"core\"."
         },
         "memory_ask_aggregational_window": {
           "default": 40,
@@ -5688,7 +5863,7 @@
         "otel_excluded_urls": {
           "default": "/v1/health",
           "type": "string",
-          "description": "Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). \"\" = instrument every path but the sign-in routes (/oauth/), which are always left out: their URLs carry codes."
+          "description": "Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). \"\" = instrument every path but the sign-in routes (/oauth/ and /v1/connect/), which are always left out: their URLs carry codes."
         },
         "otel_exporter": {
           "default": "",
