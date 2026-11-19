@@ -309,13 +309,17 @@ async def test_closed_restore_attempt_refuses_before_raw_acquisition(monkeypatch
 
 @pytest.mark.parametrize("encoding", ["LATIN1", "SQL_ASCII", "UTF8"])
 async def test_restore_refuses_unsupported_encoding_before_control_writes(monkeypatch, encoding):
+    import asyncpg
+
     from server.cli import cell_attach_pg as apg
     from server.cli import cell_restore_stores
     from server.core import pg
 
+    monkeypatch.setattr(settings, "pg_dsn", "postgres://not-connected")
+    monkeypatch.setattr(pg, "_expected", None)
     conn = DriverConnection()
     conn.fetchval = AsyncMock(return_value=encoding)
-    monkeypatch.setattr(pg, "_connect_dedicated", AsyncMock(return_value=conn))
+    monkeypatch.setattr(asyncpg, "connect", AsyncMock(return_value=conn))
     monkeypatch.setattr(pg, "_check_deployment", AsyncMock())
     monkeypatch.setattr(pg, "init_connection", AsyncMock())
     monkeypatch.setattr(apg, "direct_refusals", AsyncMock(return_value=[]))

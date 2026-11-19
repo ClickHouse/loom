@@ -435,11 +435,11 @@ async def test_late_raw_connection_stays_with_closed_budget_owner(cell_db, monke
 
     from server.cli import cell_restore
 
-    connect, close = pg._connect_dedicated, pg.close_owned
+    connect, close = asyncpg.connect, pg.close_owned
     owned, initialized, closed = {}, [], []
 
-    async def late(**kwargs):
-        conn = await connect(**kwargs)
+    async def late(*args, **kwargs):
+        conn = await connect(*args, **kwargs)
         owned["pid"] = conn.get_server_pid()
         await conn.execute("SELECT pg_advisory_lock(846234)")
         try:
@@ -454,10 +454,10 @@ async def test_late_raw_connection_stays_with_closed_budget_owner(cell_db, monke
         closed.append(conn.get_server_pid())
         await close(conn, end=end)
 
-    monkeypatch.setattr(pg, "_connect_dedicated", late)
+    observer = await connect(settings.pg_dsn)
+    monkeypatch.setattr(asyncpg, "connect", late)
     monkeypatch.setattr(pg, "_check_deployment", initialize)
     monkeypatch.setattr(pg, "close_owned", public_close)
-    observer = await asyncpg.connect(settings.pg_dsn)
     budget = cell_restore.Budget(0.4)
     try:
         with pytest.raises(TimeoutError, match="--wait"):

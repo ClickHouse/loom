@@ -389,10 +389,10 @@ settings.pg_dsn = os.environ['LOOM_NATIVE_CLEANUP_DSN']
 settings.cell = 'first'
 pg._expected = None
 original = SystemExit(17) if kind == 'exit' else KeyboardInterrupt('close interrupted')
-real_connect, real_close = pg._connect_dedicated, asyncpg.Connection.close
+real_connect, real_close = asyncpg.connect, asyncpg.Connection.close
 backend = {}
-async def connect(**kwargs):
- conn = await real_connect(**kwargs)
+async def connect(*args, **kwargs):
+ conn = await real_connect(*args, **kwargs)
  backend['pid'] = conn.get_server_pid()
  if late == 'True':
   try: await asyncio.Future()
@@ -407,11 +407,11 @@ async def close(self, **kwargs):
 async def body(owner):
  await owner.conn.execute('SELECT * FROM probe FOR UPDATE')
  return 19
-pg._connect_dedicated = connect
+asyncpg.connect = connect
 asyncpg.Connection.close = close
 if late == 'True': cell_control.OPEN_S = .5
 async def main():
- observer = await asyncpg.connect(settings.pg_dsn)
+ observer = await real_connect(settings.pg_dsn)
  try:
   try: await cell_control.run('native close', body)
   except BaseException as caught:

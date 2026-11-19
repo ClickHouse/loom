@@ -29,9 +29,19 @@ pytestmark = pytest.mark.asyncio
 async def test_attach_owner_releases_backend_locks_before_return(
     database, monkeypatch, owner, phase, interruption
 ):
+    import os
+
     import asyncpg
 
+    from server.settings import settings
+    from tests.integration._pg_database import with_database
+
     conn, observer = database
+    dsn = with_database(
+        os.environ["LOOM_PG_DSN"], await observer.fetchval("SELECT current_database()")
+    )
+    monkeypatch.setattr(settings, "pg_dsn", dsn)
+    monkeypatch.setattr(pg, "_expected", None)
     await conn.execute(
         "CREATE SCHEMA loom; CREATE TABLE loom.tenancy_mode(mode text, since timestamptz); INSERT INTO loom.tenancy_mode VALUES('recording', now())"
     )
@@ -72,7 +82,7 @@ async def test_attach_owner_releases_backend_locks_before_return(
             conn, table, statements, kwargs["lock_timeout"], 1, warn=False
         )
 
-    async def connect(**_):
+    async def connect(*args, **kwargs):
         return conn
 
     monkeypatch.setattr(asyncpg.Connection, "execute", intercepted)
@@ -82,7 +92,7 @@ async def test_attach_owner_releases_backend_locks_before_return(
     monkeypatch.setattr(apg, "_MODE_STANDBY_S", 0.5)
     monkeypatch.setattr(apg, "_MODE_STATEMENT_MARGIN_MS", 0)
     monkeypatch.setattr(cell_control, "OPEN_S", 0.6)
-    monkeypatch.setattr(pg, "_connect_dedicated", connect)
+    monkeypatch.setattr(asyncpg, "connect", connect)
     await apg.take_lock(conn, "cleanup test")
     if owner == "trigger":
         work = apg._ensure_one(_owner(conn), "probe", 100, apg.Wait(0))

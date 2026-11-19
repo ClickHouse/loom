@@ -212,21 +212,23 @@ class Restore:
             )
         await cell_control.check_lock(self.conn)
 
+    def _bind(self, conn: Any) -> bool:
+        self.conn = conn
+        self.budget.conn = self.conn
+        return not self.budget.closed
+
     async def open(self) -> None:
         if self.conn is not None or self.budget.closed:
             raise cell_control._refused("a restore attempt cannot open another session")
-        self.conn = await pg._connect_dedicated(
-            statement_timeout_ms=settings.pg_statement_timeout_ms
-        )
-        self.budget.conn = self.conn
-        if self.budget.closed:
-            await self.budget.close()
-            raise cell_control._refused("restore connection arrived after the attempt ended")
         try:
-            await pg._check_deployment(self.conn)
-            await pg.init_connection(self.conn)
-        except Exception as error:
-            pg._raise_if_unavailable(error)
+            await pg._connect_dedicated(
+                statement_timeout_ms=settings.pg_statement_timeout_ms, bind=self._bind
+            )
+        except BaseException:
+            try:
+                await self.budget.close()
+            except BaseException:  # noqa: BLE001 — cleanup preserves the opening failure.
+                pass
             raise
 
     async def run(self, ch: Any) -> dict[str, Any]:

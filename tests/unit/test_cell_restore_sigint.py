@@ -170,9 +170,13 @@ async def test_public_restore_transports_identical_native_fatal_after_cleanup(ph
     script = textwrap.dedent(f"""
         import argparse
         import asyncio
+        import asyncpg
         import httpx
         from server.cli import cell_restore
         from server.core import ch, pg
+        from server.settings import settings
+
+        settings.pg_dsn = "postgres://not-connected"
 
         phase = {phase!r}
         fatal = {kind}('native restore child failure')
@@ -188,7 +192,7 @@ async def test_public_restore_transports_identical_native_fatal_after_cleanup(ph
         conn = Connection()
         async def no_io(*args, **kwargs):
             pass
-        async def open_connection(**kwargs):
+        async def open_connection(*args, **kwargs):
             return conn
         async def initialize(conn):
             if phase == 'initialization':
@@ -205,7 +209,7 @@ async def test_public_restore_transports_identical_native_fatal_after_cleanup(ph
         cell_restore.cell_cli.operator_router = lambda args: httpx.URL('https://router.test')
         cell_restore._connect = no_io
         cell_restore.disconnect = disconnect
-        pg._connect_dedicated = open_connection
+        asyncpg.connect = open_connection
         pg._check_deployment = no_io
         pg.init_connection = initialize
         cell_restore.apg.direct_refusals = direct

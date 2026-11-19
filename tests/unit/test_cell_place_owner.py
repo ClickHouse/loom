@@ -188,9 +188,12 @@ async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind
     program = textwrap.dedent(
         """
         import argparse, asyncio, sys
+        import asyncpg
         import httpx
         from server.cli import cell_place
         from server.core import pg
+        from server.settings import settings
+        settings.pg_dsn = "postgres://not-connected"
         stage, kind = sys.argv[1:]
         original = (SystemExit if kind == 'SystemExit' else KeyboardInterrupt)('original')
         events = []
@@ -206,7 +209,7 @@ async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind
                 if stage == 'close': raise original
             def terminate(self): events.append('abort')
         conn = Connection()
-        async def connect(**kw): return conn
+        async def connect(*args, **kw): return conn
         async def initialize(c):
             assert c is conn
             if stage == 'opening': raise original
@@ -220,7 +223,7 @@ async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind
             if stage == 'directory': raise original
         async def held(c): return True
         async def main():
-            pg._connect_dedicated = connect
+            asyncpg.connect = connect
             pg._check_deployment = initialize
             pg.init_connection = noop
             cell_place.apg.direct_refusals = direct

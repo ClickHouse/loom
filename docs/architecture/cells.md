@@ -1542,6 +1542,11 @@ initialization can wait. Cleanup sends public connection close before cancelling
 a second signal does not cancel that close early or extend the original deadline.
 A late connection cannot become usable after the attempt ends. A transport abort
 leaves an unknown outcome rather than proving that the backend released its locks.
+Restore, placement and cell control bind their cleanup owner synchronously inside the
+shared Postgres connector, before its deployment or codec waits. A closed owner refuses
+initialization and closes a late session within its original deadline. The connector
+still enforces process admission, participant attribution and retirement seals; callers
+without an explicit owner retain connector cleanup until initialization finishes.
 
 Each directory page uses the shared callback session owner with its own seven-statement
 budget. The owner begins and commits one audited transaction, closes that proxy before

@@ -153,7 +153,7 @@ async def owned_command(world):
     owner = cell_control.Owner()
 
     async def opening():
-        owner.conn = await pg._connect_dedicated(statement_timeout_ms=60_000)
+        await owner.connect(statement_timeout_ms=60_000)
 
     async def work():
         await owner.conn.execute("COMMIT")
