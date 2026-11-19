@@ -305,6 +305,22 @@
       "category": "explicit",
       "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
     },
+    "sdk/typescript/src/integrations/langgraph.ts:memory.bulk_get:78ccc65600b1b328298e:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/langgraph.ts:memory.delete:940ca958d9c4ccf0c62b:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/langgraph.ts:memory.get:2ec95bdfe9ce6750223c:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/langgraph.ts:memory.list:e5fe32e9614db85ac001:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
     "sdk/typescript/src/integrations/mastra-memory.ts:<dynamic>:e26e447e7b608a59dc2c:1": {
       "category": "delivery",
       "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
@@ -396,6 +412,7 @@
     "sdk/typescript/src/integrations/claude-memory.ts": "c846f0011d7cf1ba4b30e99fbfd8adb6b29abff56856d0dbe14fba620007f6bc",
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
+    "sdk/typescript/src/integrations/langgraph.ts": "ec43f47657fc400c087a62f74326be43d48a9f3cd1e5a2de64b719ba305cf52d",
     "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
     "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
     "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
