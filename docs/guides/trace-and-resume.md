@@ -110,7 +110,7 @@ and tool observations are not unrestricted recordings of every tool input and ou
    `conversation.set_logging` needs admin access. Capture hooks send new transcript
    turns when recording is enabled. Do not append the same turns manually.
 3. Run an ordinary task in that coding-agent session. The run hooks record its goal
-   and outcome. Claude Code's tool hooks submit bounded, redacted observations,
+   and final response; they do not determine whether the task succeeded. Claude Code's tool hooks submit bounded, redacted observations,
    skipping Loom and harness meta tools and deduplicating repeated file reads. See
    [capture and data handling](../features/integrations/claude-code.md#data-handling).
 4. Use a token with viewer access to the same namespace to list recent threads:
