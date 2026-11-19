@@ -98,6 +98,49 @@ async def test_a_deliberate_pointer_request_reads_no_source() -> None:
     assert unit.body == "" and repo.reads == 0
 
 
+@pytest.mark.parametrize(
+    ("reader_failed", "budget"),
+    [(False, 2500), (True, 2500), (False, 200)],
+    ids=["missing-skeleton", "failed-reader", "paged-outline"],
+)
+async def test_a_large_container_without_source_discloses_omission_and_keeps_outline(
+    reader_failed: bool,
+    budget: int,
+) -> None:
+    class ContainerRepo(_Repo):
+        async def class_skeleton_chunk(self, *args: Any) -> None:
+            if reader_failed:
+                raise RuntimeError("skeleton reader unavailable")
+
+        async def outline_for_path(self, *args: Any) -> list[dict[str, Any]]:
+            return [
+                {
+                    **SYM,
+                    "qualified_name": f"module::f::member_{i}",
+                    "start_line": 12 + i * 20,
+                    "end_line": 18 + i * 20,
+                }
+                for i in range(8)
+            ]
+
+    symbol = {**SYM, "kind": "class", "end_line": 309}
+    parts = await _symbol_bodies(
+        ContainerRepo([]), "org", "code-repo", CodeSymbolInput(token_budget=budget), [symbol]
+    )
+    unit = _unit_with_body(symbol, parts[0], {})
+    assert unit.body == "" and unit.elided and unit.granularity == "card"
+    if budget == 200:
+        assert unit.next == "code.outline path=module.py"
+    else:
+        assert unit.next == "Read module.py offset=10 limit=300"
+    if budget == 2500:
+        assert len(unit.outline) == (0 if reader_failed else 8)
+    wire = lean_code("code.symbol", {"definitions": [unit.model_dump()]})["definitions"][0]
+    assert wire["elided"] and wire["next"] == unit.next
+    if unit.outline:
+        assert wire["outline"] == unit.outline
+
+
 def test_source_pieces_are_placed_without_repeating_overlap_or_doc_prefix() -> None:
     lines = FULL.splitlines(keepends=True)
     rows = [

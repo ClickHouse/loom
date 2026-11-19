@@ -231,7 +231,7 @@ async def _symbol_bodies(
             body, outline, outline_next = await _container_skeleton(
                 repo, org, ns, r, input.token_budget
             )
-            return body, outline, outline_next, "skeleton"
+            return body, outline, outline_next, "skeleton" if body else "card"
         if input.include_body:
             text = await symbol_body(repo, org, ns, r)
             if text:
@@ -259,7 +259,10 @@ def _unit_with_body(
     elif granularity == "card":
         u.elided = True
         u.granularity = "card"
-        u.next = next_step
+        u.outline = outline
+        start = max(1, u.start_line)
+        span = max(1, u.end_line - start + 1)
+        u.next = next_step or f"Read {u.path} offset={start} limit={span}"
     return u
 
 
