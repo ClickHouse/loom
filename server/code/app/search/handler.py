@@ -234,7 +234,11 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
 
 def _served_model_name(embedder: Any) -> str:
     name: str = getattr(embedder, "model_name", "") or ""
-    return name or settings.embedding_model
+    if name:
+        return name
+    from server.embedding.embedder import served_model_label
+
+    return served_model_label(settings.embedding_model)
 
 
 def _search_embedder(input: CodeSearchInput) -> tuple[Any, str]:

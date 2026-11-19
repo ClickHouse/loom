@@ -154,6 +154,10 @@ def _unavailable_primary() -> Any:
     raise RuntimeError("primary embedder initialization failed")
 
 
+def _unavailable_local() -> Any:
+    raise ImportError("fastembed is not installed")
+
+
 def test_a_valid_secondary_vector_needs_no_primary_embedder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -171,17 +175,29 @@ def test_a_valid_secondary_vector_needs_no_primary_embedder(
 
 @pytest.mark.parametrize("requested_model", ["", "ctx:served-model"])
 @pytest.mark.parametrize("secondary_works", [False, True])
+@pytest.mark.parametrize(
+    ("configured_model", "configured_provider", "served_model"),
+    [
+        ("served-model", "compatible", "served-model"),
+        ("text-embedding-3-small", "local", "local"),
+    ],
+)
 def test_primary_initialization_failure_keeps_the_lexical_model_partition(
-    monkeypatch: pytest.MonkeyPatch, requested_model: str, secondary_works: bool
+    monkeypatch: pytest.MonkeyPatch,
+    requested_model: str,
+    secondary_works: bool,
+    configured_model: str,
+    configured_provider: str,
+    served_model: str,
 ) -> None:
-    configured_model = "served-model"
-    stored_model = requested_model or configured_model
+    stored_model = requested_model or served_model
     repo = _ModelFilteringRepo(stored_model)
     secondary = fixture._Embedder()
     secondary.model_name = "secondary"
     monkeypatch.setattr(settings, "embedding_model", configured_model)
-    monkeypatch.setattr(settings, "embedding_provider", "compatible")
-    monkeypatch.setattr(fixture, "_Embedder", _unavailable_primary)
+    monkeypatch.setattr(settings, "embedding_provider", configured_provider)
+    unavailable = _unavailable_local if configured_provider == "local" else _unavailable_primary
+    monkeypatch.setattr(fixture, "_Embedder", unavailable)
     monkeypatch.setattr(embedding, "allowed_vector_models", lambda: ["secondary"])
     monkeypatch.setattr(embedding, "get_secondary_embedder", lambda name: secondary)
     data, _ = fixture._handle(
@@ -203,10 +219,20 @@ def test_primary_initialization_failure_keeps_the_lexical_model_partition(
         assert repo.vector_models == []
 
 
+@pytest.mark.parametrize(
+    ("configured_model", "configured_provider", "served_model"),
+    [
+        ("served-model", "compatible", "served-model"),
+        ("text-embedding-3-small", "local", "local"),
+    ],
+)
 def test_continuations_keep_the_configured_model_when_initialization_fails(
     monkeypatch: pytest.MonkeyPatch,
+    configured_model: str,
+    configured_provider: str,
+    served_model: str,
 ) -> None:
-    repo = _ModelFilteringRepo("served-model")
+    repo = _ModelFilteringRepo(served_model)
     for name, value in {
         "code_intel_enabled": True,
         "code_org": "o",
@@ -215,11 +241,13 @@ def test_continuations_keep_the_configured_model_when_initialization_fails(
         "code_risk_annotations": False,
     }.items():
         monkeypatch.setattr(settings, name, value)
-    monkeypatch.setattr(settings, "embedding_model", "served-model")
-    monkeypatch.setattr(embedding, "get_embedder", _unavailable_primary)
+    monkeypatch.setattr(settings, "embedding_model", configured_model)
+    monkeypatch.setattr(settings, "embedding_provider", configured_provider)
+    unavailable = _unavailable_local if configured_provider == "local" else _unavailable_primary
+    monkeypatch.setattr(embedding, "get_embedder", unavailable)
     monkeypatch.setattr(handler, "CodeRepo", lambda: repo)
     request = CodeSearchInput(query=fixture._QUESTION, top_k=1, vector_model="secondary")
-    params = search_cursor.params_hash(request, rerank="", embedding_model="served-model")
+    params = search_cursor.params_hash(request, rerank="", embedding_model=served_model)
     pool = [
         CodeUnit(unit_id="L1", path="src/a.cpp", score=1.0),
         CodeUnit(unit_id="V1", path="src/b.cpp", score=0.9),
@@ -227,7 +255,7 @@ def test_continuations_keep_the_configured_model_when_initialization_fails(
     payload = search_cursor.search_pool_payload(
         query=request.query,
         route="hybrid",
-        model="served-model",
+        model=served_model,
         params=params,
         served=1,
         pool=pool,
@@ -251,7 +279,7 @@ def test_continuations_keep_the_configured_model_when_initialization_fails(
     monkeypatch.setattr(search, "search", no_retrieval)
     result = asyncio.run(handler.handle_code_search(request.model_copy(update={"cursor": cursor})))
     assert [unit.unit_id for unit in result.results] == ["V1"]
-    assert result.results[0].body == "x" and repo.key_models == ["served-model"]
+    assert result.results[0].body == "x" and repo.key_models == [served_model]
     assert result.retrieval_work["embedding_calls"] == 0
 
 
