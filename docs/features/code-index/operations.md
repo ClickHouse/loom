@@ -90,6 +90,20 @@ A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.se
 the request stops starting new work when the budget runs out and returns what it has,
 `partial: true` with a `partial_reason` naming what did not finish (a grep scan stopped
 by ClickHouse's break-on-timeout, a search leg, rerank, HyDE), instead of timing out.
+
+A failed lexical or vector retrieval leg also returns `partial: true`. Its
+`partial_reason` names the unavailable leg, and `note` warns that results are
+incomplete. These warnings survive the default MCP result shaping and searches
+across repositories. An empty result during an outage does not prove that no match
+exists. Failed-leg results are neither memoized nor saved as continuation pools;
+retry after restoring the provider or store. Choosing `legs: "lexical"` deliberately
+is not a failure.
+
+Provider failures appear in `/v1/health` under `providers_degraded` and `problems`,
+and in the dashboard's Health view. Check provider credentials, permissions and
+quota; a successful provider call clears its warning. Health reads make no provider
+calls and cannot detect expired credentials before a real request encounters them.
+
 In `mode: "message"`, a pattern that matches no statement template (a code line rather
 than a rendered message) is grepped once more as a literal and the answer says
 `fallback: "literal"`.

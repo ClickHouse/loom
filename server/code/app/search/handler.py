@@ -21,7 +21,6 @@ from server.code.app.common import (
 )
 from server.code.app.search.shared import (
     _not_covered_output,
-    _partial_fields,
     _read_pool_settling,
     _scope_of,
     page_plan,
@@ -202,6 +201,14 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         budget=budget,
     )
 
+    if (
+        embedder is None
+        and input.legs != "lexical"
+        and res.route in {"hybrid", "symbol_miss_hybrid"}
+    ):
+        res.retrieval_work["vector_leg_failed"] = 1
+        res.epistemic = "partial"
+
     if expand_calls:
         # counted as an assist ("query_expand") by the retrieval metrics
         res.retrieval_work["llm_query_expand_calls"] = expand_calls
@@ -226,7 +233,6 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         ns,
         repo,
         res,
-        budget=budget,
         started=started,
         embedding_model=embedding_model,
         memo_key=memo_key if memo_on else None,
@@ -266,7 +272,6 @@ async def _finish_search(
     repo: CodeRepo,
     res: CodeSearchResult,
     *,
-    budget: Any,
     started: float,
     embedding_model: str,
     memo_key: str | None,
@@ -343,10 +348,13 @@ async def _finish_search(
         constrained=res.constrained,
         matched_files=res.matched_files,
         tracked=res.tracked,
-        note=await embedding_coverage_note(repo, org, ns),
+        note="; ".join(
+            note for note in (res.note, await embedding_coverage_note(repo, org, ns)) if note
+        ),
         legs_timed_out=res.legs_timed_out,
         epistemic=res.epistemic,  # type: ignore[arg-type]
-        **_partial_fields(budget),
+        partial=res.partial,
+        partial_reason=res.partial_reason,
     )
     # a failed history read, a failed leg and a deadline-cut answer are transient: never replay
     if (
@@ -493,7 +501,7 @@ def _issue_search_cursor(
 
     pool = list(getattr(res, "pool", []) or [])
     served = len(res.units)
-    if not paging.enabled() or res.abstain or len(pool) <= served:
+    if not paging.enabled() or res.abstain or res.failure_reason or len(pool) <= served:
         return ""
     ph = _search_params_hash(input, embedding_model)
     payload = paging.search_pool_payload(
