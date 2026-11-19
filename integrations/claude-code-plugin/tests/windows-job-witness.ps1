@@ -6,6 +6,13 @@ $lib = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..', 'lib'))
 . ([IO.Path]::Combine($lib, 'windows-compiler-job.ps1'))
 . ([IO.Path]::Combine($lib, 'windows-session-protection.ps1')) -DefinitionsOnly
 $native = New-LoomBootstrapApi
+function Write-LoomWitnessPhase([string]$phase) {
+    if ($phase -cnotin @('assigned', 'live', 'identity', 'announced')) { throw 'Unavailable' }
+    try {
+        [Console]::Error.WriteLine('LSP1:witness-' + $phase + ':0')
+        [Console]::Error.Flush()
+    } catch { } # Missing diagnostic output does not establish a failed boundary.
+}
 [void](Invoke-LoomGuardedCompiler $native {
     param($compilerNative, $compilerJob, $compilerDeadline, $directory)
     if ($directory.Contains('"') -or $directory.Contains("`r") -or $directory.Contains("`n")) { throw 'Unavailable' }
@@ -22,14 +29,18 @@ $native = New-LoomBootstrapApi
     Invoke-LoomCompilerProcess $compilerNative $compilerJob $compilerDeadline $directory ('/noconfig @"' + $responseFile + '"') {
         param($compilerHandle, $compilerPid, [bool]$assigned = $false)
         if (-not $assigned -or $CompileControl) { return }
+        Write-LoomWitnessPhase 'assigned'
         if ($compilerNative::WaitForSingleObject($compilerHandle, 0) -ne 258) { throw 'Unavailable' }
+        Write-LoomWitnessPhase 'live'
         $compiler = [Diagnostics.Process]::GetProcessById($compilerPid)
         try {
             $guardian = [Diagnostics.Process]::GetCurrentProcess()
             $receipt = @{ pid = $compilerPid; started = $compiler.StartTime.ToUniversalTime().Ticks.ToString();
                 directory = $directory; guardian = @{ pid = $guardian.Id; started = $guardian.StartTime.ToUniversalTime().Ticks.ToString() } }
+            Write-LoomWitnessPhase 'identity'
             [Console]::Out.WriteLine((ConvertTo-Json -Compress -Depth 4 $receipt))
             [Console]::Out.Flush()
+            Write-LoomWitnessPhase 'announced'
         } finally { $compiler.Dispose() }
         # Existing native job deadlines bound this exact-process wait.
         if ($compilerNative::WaitForSingleObject($compilerHandle, [uint32]::MaxValue) -ne 0) { throw 'Unavailable' }

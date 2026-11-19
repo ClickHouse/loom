@@ -94,6 +94,10 @@ function nativePhaseTrail(child) {
     "native-timer",
     "worker-start",
     "worker-assign",
+    "witness-assigned",
+    "witness-live",
+    "witness-identity",
+    "witness-announced",
     "compiler-private",
     "compiler-identity",
     "compiler-path",
@@ -150,7 +154,15 @@ function nativePhaseTrail(child) {
         code <= 2147483647 &&
         (match[1] !== "compiler-bytes" || (code >= 0 && code <= 8192)) &&
         (match[1] !== "compiler-format" || (code >= 0 && code <= 6)) &&
-        (!["root-entry", "root-flushed"].includes(match[1]) || code === 0)
+        (![
+          "root-entry",
+          "root-flushed",
+          "witness-assigned",
+          "witness-live",
+          "witness-identity",
+          "witness-announced",
+        ].includes(match[1]) ||
+          code === 0)
       ) {
         if (frames.length === 24) frames.shift();
         frames.push({ phase: match[1], code, observerMs: Math.min(60000, Math.round(performance.now() - started)) });
