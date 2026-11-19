@@ -448,10 +448,19 @@ def _memory_runner_transport() -> tuple[httpx2.MockTransport, list[dict[str, Any
     def respond(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/v1/messages"
         body = json.loads(request.content)
-        assert body["tools"] == [{"type": "memory_20250818", "name": "memory"}]
         turn = len(requests)
-        requests.append(body)
         assert turn <= 2, "the native runner must stop after its final text reply"
+        if turn == 0:
+            assert body["tools"] == [{"type": "memory_20250818", "name": "memory"}]
+            assert body["thread"] == {"type": "create"}
+        else:
+            assert body["thread"] == {"type": "continue", "previous_message_id": f"msg_{turn - 1}"}
+            # The thread retains its initial tool registration; each continuation sends its delta.
+            assert "tools" not in body
+            assert "system" not in body
+            assert len(body["messages"]) == 1
+        assert "tool_choice" not in body
+        requests.append(body)
         content = (
             [{"type": "tool_use", "id": f"toolu_{turn}", "name": "memory", "input": commands[turn]}]
             if turn < 2
