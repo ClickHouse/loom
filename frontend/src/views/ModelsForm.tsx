@@ -289,7 +289,7 @@ export function ModelsForm({ status, onValidate, onSave }: Props) {
           <summary className="cursor-pointer font-medium">Advanced models per job</summary>
           <p className="my-3 text-sm text-text-muted">
             Leave overrides blank to use the main model. Optional tiers stay off unless configured. Cross-provider
-            overrides need that provider's key.
+            overrides need that provider's key, or the deployment's AWS credentials for Bedrock.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {(Object.entries(MODEL_JOBS) as [keyof typeof MODEL_JOBS, string][]).map(([job, label]) => (
