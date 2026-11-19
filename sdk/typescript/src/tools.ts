@@ -22,6 +22,7 @@ import type { OpInput } from "./client.js";
 import { CODE_TOOL_SPEC, type CodeOp, codeRequest, fitCodeResult } from "./code-tools.js";
 import { LoomError } from "./errors.js";
 import type { MemorySearchOutput } from "./generated/ops.js";
+import { hasIdentityWhitespace } from "./whitespace.js";
 
 const MEMORY_INSUFFICIENT = JSON.stringify({
   insufficient: true,
@@ -93,11 +94,12 @@ export interface JsonSchema {
     Record<
       string,
       {
-        readonly type: "string" | "integer";
+        readonly type: "string" | "integer" | "array";
         readonly description: string;
         readonly enum?: readonly string[];
         readonly minimum?: number;
         readonly maximum?: number;
+        readonly items?: { readonly type: "string" };
       }
     >
   >;
@@ -126,6 +128,18 @@ const SPECS = [
           description: "semantic (default): a fact; preference: what the user likes; procedural: how to do something",
           enum: ["semantic", "preference", "procedural"],
         },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Repository-relative files this fact concerns; [] clears references. A file reference alone does not prove a resolved code link.",
+        },
+        tags: {
+          type: "array",
+          items: { type: "string" },
+          description: "Classification and repository tags for this fact.",
+        },
+        source_resource_id: { type: "string", description: "Supporting source path, document identifier or URL." },
       },
       required: ["memory_key", "value"],
       additionalProperties: false,
@@ -200,7 +214,23 @@ const SPECS = [
   },
 ] as const satisfies readonly ToolSpec[];
 
-export type ToolName = (typeof SPECS)[number]["name"] | typeof CODE_TOOL_SPEC.name;
+const UPDATE_TOOL_SPEC = {
+  name: "loom_update",
+  description:
+    "Correct one existing fact by its saved key in the configured memory scope. Use this for a changed fact instead of writing another key. The server refuses an ambiguous key; do not choose a row or create a replacement silently. Check updated, new_version and the returned content hash before claiming the correction persisted.",
+  parameters: {
+    type: "object",
+    properties: {
+      memory_key: { type: "string", description: "Existing stable key returned by recall or a write." },
+      value: { type: "string", description: "The corrected fact." },
+      if_match_sha256: { type: "string", description: "Known current content hash; a changed row refuses the update." },
+    },
+    required: ["memory_key", "value"],
+    additionalProperties: false,
+  },
+} as const satisfies ToolSpec;
+
+export type ToolName = (typeof SPECS)[number]["name"] | typeof CODE_TOOL_SPEC.name | typeof UPDATE_TOOL_SPEC.name;
 
 export const LOOM_TOOL_SPECS: readonly ToolSpec<ToolName>[] = Object.freeze(SPECS);
 
@@ -227,7 +257,7 @@ export function toolDefinitions<F extends ToolFormat = "generic">(
   format?: F,
   only?: readonly ToolName[],
 ): ToolDefinition<F>[] {
-  const available = only ? [CODE_TOOL_SPEC, ...LOOM_TOOL_SPECS] : LOOM_TOOL_SPECS;
+  const available = only ? [CODE_TOOL_SPEC, UPDATE_TOOL_SPEC, ...LOOM_TOOL_SPECS] : LOOM_TOOL_SPECS;
   const specs = available.filter((s) => !only || only.includes(s.name));
   return specs.map((s) => definition(format ?? "generic", s)) as ToolDefinition<F>[];
 }
@@ -266,6 +296,7 @@ export class AgentTools {
     opts: AgentToolsOptions = {},
   ) {
     this.maxResultChars = opts.maxResultChars ?? 8_000;
+    if (opts.only?.includes("loom_update")) namedCorrectionUserId(scope.userId);
     if (opts.only?.includes("loom_code_lookup") && opts.codeNamespace === undefined)
       throw new LoomError("loom_code_lookup requires codeNamespace");
     if (opts.codeNamespace !== undefined) {
@@ -275,7 +306,8 @@ export class AgentTools {
         throw new LoomError("code tools require maxResultChars of at least 256");
     }
     this.codeNamespace = opts.codeNamespace?.trim();
-    const available = this.codeNamespace ? [CODE_TOOL_SPEC, ...LOOM_TOOL_SPECS] : LOOM_TOOL_SPECS;
+    const defaults = this.codeNamespace ? [CODE_TOOL_SPEC, ...LOOM_TOOL_SPECS] : LOOM_TOOL_SPECS;
+    const available = opts.only ? [...defaults, UPDATE_TOOL_SPEC] : defaults;
     this.names = new Set(available.map((s) => s.name).filter((n) => !opts.only || opts.only.includes(n)));
   }
 
@@ -293,16 +325,25 @@ export class AgentTools {
    * schema) throws a `LoomError` whose message the model can act on.
    */
   async execute(name: string, args: unknown): Promise<string> {
-    const spec = [CODE_TOOL_SPEC, ...LOOM_TOOL_SPECS].find((s) => s.name === name);
+    const spec = [CODE_TOOL_SPEC, UPDATE_TOOL_SPEC, ...LOOM_TOOL_SPECS].find((s) => s.name === name);
     if (!spec || !this.has(spec.name))
       throw new LoomError(`unknown tool ${name}; this agent offers ${Array.from(this.names).join(", ")}`);
-    if ((name === "loom_remember" || name === "loom_recall") && this.maxResultChars < MEMORY_INSUFFICIENT.length)
+    if (
+      (name === "loom_remember" || name === "loom_recall" || name === "loom_update") &&
+      this.maxResultChars < MEMORY_INSUFFICIENT.length
+    )
       throw new LoomError("maxResultChars is too small to report memory result omissions");
     if (spec.name === "loom_code_lookup") {
       const raw = parseArgs(args);
       const extra = Object.keys(raw).filter((key) => !Object.hasOwn(CODE_TOOL_SPEC.parameters.properties, key));
       if (extra.length) throw new LoomError(`unexpected code tool arguments: ${extra.sort().join(", ")}`);
-      const { op, body } = codeRequest(checkArgs(CODE_TOOL_SPEC, raw));
+      const checked = checkArgs(CODE_TOOL_SPEC, raw);
+      const depth = optInt(checked, "depth");
+      const { op, body } = codeRequest({
+        kind: text(checked, "kind"),
+        target: text(checked, "target"),
+        ...(depth !== undefined ? { depth } : {}),
+      });
       const input = { ...this.agent.identity(this.scope), ...body, namespace: this.codeNamespace } as OpInput<CodeOp>;
       const response = await this.agent.client.callWithResponse(op, input);
       return fitCodeResult(
@@ -316,9 +357,12 @@ export class AgentTools {
       );
     }
     const out = await this.run(spec.name, checkArgs(spec, args));
-    if (name === "loom_remember" || name === "loom_recall") return this.fitMemoryResult(out as Record<string, unknown>);
-    const text = typeof out === "string" ? out : JSON.stringify(out);
-    return text.length > this.maxResultChars ? `${text.slice(0, this.maxResultChars)}…[truncated]` : text;
+    if (name === "loom_remember" || name === "loom_recall" || name === "loom_update")
+      return this.fitMemoryResult(out as Record<string, unknown>);
+    const resultText = typeof out === "string" ? out : JSON.stringify(out);
+    return resultText.length > this.maxResultChars
+      ? `${resultText.slice(0, this.maxResultChars)}…[truncated]`
+      : resultText;
   }
 
   /** Keep whole evidence and disclose when even the metadata cannot fit. */
@@ -340,9 +384,13 @@ export class AgentTools {
     switch (name) {
       case "loom_remember": {
         const memoryType = optText(a, "memory_type");
+        const source = optText(a, "source_resource_id");
         const r = await this.agent.remember(text(a, "memory_key"), text(a, "value"), {
           ...this.scope,
           ...(memoryType ? { memory_type: memoryType } : {}),
+          ...(Array.isArray(a.files) ? { files: a.files } : {}),
+          ...(Array.isArray(a.tags) ? { tags: a.tags } : {}),
+          ...(source ? { source_resource_id: source } : {}),
         });
         return {
           ...r,
@@ -350,6 +398,21 @@ export class AgentTools {
           memory_key: r.memory_key || text(a, "memory_key"),
           verdict: r.conflict_verdict || "",
         };
+      }
+      case "loom_update": {
+        const userId = namedCorrectionUserId(this.scope.userId);
+        const expected = optText(a, "if_match_sha256");
+        return this.agent.client.call("memory.update", {
+          org: this.agent.org,
+          namespace: this.agent.namespace,
+          agent: "*",
+          user_id: userId,
+          session_id: "-",
+          run_id: this.scope.runId ?? "-",
+          memory_key: text(a, "memory_key"),
+          value: text(a, "value"),
+          ...(expected ? { if_match_sha256: expected } : {}),
+        });
       }
       case "loom_recall": {
         const topK = optInt(a, "top_k");
@@ -402,14 +465,20 @@ export class AgentTools {
   }
 }
 
+function namedCorrectionUserId(value: unknown): string {
+  if (typeof value !== "string" || !value || value === "-" || hasIdentityWhitespace(value))
+    throw new LoomError("loom_update requires an application-bound named userId");
+  return value;
+}
+
 /** A tool call's arguments after `checkArgs`: only the properties given, each of its declared type. */
-type Args = Readonly<Record<string, string | number>>;
+type Args = Readonly<Record<string, string | number | string[]>>;
 
 /** The model's arguments checked against the tool's schema; extra keys are ignored. */
 function checkArgs(spec: ToolSpec, raw: unknown): Args {
   const given = parseArgs(raw);
   const required = new Set(spec.parameters.required ?? []);
-  const out: Record<string, string | number> = {};
+  const out: Record<string, string | number | string[]> = {};
   for (const [key, prop] of Object.entries(spec.parameters.properties)) {
     const v = given[key];
     if (v === undefined || v === null || v === "") {
@@ -417,7 +486,11 @@ function checkArgs(spec: ToolSpec, raw: unknown): Args {
       const kind = prop.type === "string" ? "a non-empty string" : "an integer";
       throw new LoomError(`tool argument ${key} is required and must be ${kind}`);
     }
-    if (prop.type === "integer") {
+    if (prop.type === "array") {
+      if (!Array.isArray(v) || !v.every((item) => typeof item === "string"))
+        throw new LoomError(`tool argument ${key} must be an array of strings`);
+      out[key] = v;
+    } else if (prop.type === "integer") {
       // Models sometimes quote a number.
       const n = typeof v === "string" && v.trim() !== "" ? Number(v) : v;
       if (typeof n !== "number" || !Number.isInteger(n))

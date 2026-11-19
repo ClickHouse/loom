@@ -304,11 +304,23 @@ scip-python, scip-typescript, scip-go, and for C/C++ clang 21, lld, CMake, ninja
 scip-clang. Upstream builds scip-clang for x86_64 Linux only, so the arm64 image has
 the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_PATH` at
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
-creates a missing working tree as an empty repository and fetches each commit into it
-from the entry's mirror, so a new leader starts from nothing. A worker whose project
-prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
+initializes a missing or empty working tree directory as a Git repository and fetches
+each commit into it from the entry's mirror, so a new leader starts from nothing.
+An existing checkout must be the root of a standalone Git working tree, with its
+`.git` directory inside the checkout. Compiler Git jobs need writable metadata
+there. Linked worktrees, external Git metadata, regular files, bare repositories and
+nonempty directories without their own working tree are refused without replacing
+their contents. Use a separate empty path for the compiler checkout, or point
+`scip_checkout_dir` at an existing standalone checkout root.
+A worker whose project prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
 remains available. TypeScript projects have their dependencies installed
 automatically in their checkout.
+
+Compiler reconciliation batches file paths and symbol keys by both item count and
+serialized UTF-8 size. Long qualified names and multibyte paths therefore split into
+smaller reads within the default ClickHouse HTTP form-field limit. A symbol key
+larger than one field is reconstructed from bounded parameters; names and identifiers
+remain exact.
 
 The C/C++ harness runs the repository's CMake configure (compile database only, no
 build) on the first run in a tree, or when its `CMakeCache.txt` is missing, was made in
