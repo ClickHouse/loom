@@ -172,6 +172,17 @@ function nativePhaseTrail(child) {
   return () => JSON.stringify({ frames, rejected });
 }
 
+// Keep the primary stage visible when a later cleanup assertion also fails.
+function lifetimeFailure(context, witness, stage, error) {
+  const category =
+    error?.code === "ETIMEDOUT" || error?.actual?.code === "ETIMEDOUT"
+      ? "observer-timeout"
+      : error?.code === "ERR_ASSERTION"
+        ? "assertion"
+        : "other";
+  context.diagnostic(`LWL1:${witness}:${stage}:${category}`);
+}
+
 function exactProcesses(identities, kill = false) {
   const source = String.raw`
     $ErrorActionPreference = 'Stop'
@@ -245,7 +256,9 @@ function acl(operation, file) {
 }
 
 if (process.platform === "win32") {
-  test("forced helper termination also terminates a real child in its compiler job", { timeout: 5000 }, async () => {
+  test("forced helper termination also terminates a real child in its compiler job", {
+    timeout: 5000,
+  }, async (context) => {
     const powershell = path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     const witness = spawn(
       powershell,
@@ -267,6 +280,7 @@ if (process.platform === "win32") {
     const exited = new Promise((resolve) => witness.once("exit", resolve));
     let child;
     let startupTimer;
+    let stage = "receipt-wait";
     try {
       child = await new Promise((resolve, reject) => {
         let output = "";
@@ -284,11 +298,15 @@ if (process.platform === "win32") {
           }
         });
       });
+      stage = "receipt-schema";
       clearTimeout(startupTimer);
       assert.ok(Number.isInteger(child.pid) && child.pid > 0);
       assert.equal(typeof child.started, "string");
+      stage = "helper-kill";
       assert.equal(witness.kill("SIGKILL"), true);
+      stage = "helper-exit";
       await exited;
+      stage = "child-absence";
       let alive = true;
       const until = performance.now() + 500;
       while (alive && performance.now() < until) {
@@ -301,6 +319,10 @@ if (process.platform === "win32") {
         if (alive) await new Promise((resolve) => setTimeout(resolve, 20));
       }
       assert.equal(alive, false, "compiler-job child survived helper termination");
+      context.diagnostic("LWL1:helper:complete:ok");
+    } catch (error) {
+      lifetimeFailure(context, "helper", stage, error);
+      throw error;
     } finally {
       clearTimeout(startupTimer);
       if (witness.exitCode === null && witness.signalCode === null) witness.kill("SIGKILL");
@@ -328,7 +350,7 @@ if (process.platform === "win32") {
 
   test("native deadlines stop helper and real compiler after Node-parent death and clean their owned directory", {
     timeout: 5000,
-  }, async () => {
+  }, async (context) => {
     const environment = witnessEnv();
     const caller = spawn(process.execPath, [fileURLToPath(new URL("./windows-job-parent.mjs", import.meta.url))], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -339,6 +361,7 @@ if (process.platform === "win32") {
     const exited = new Promise((resolve) => caller.once("exit", resolve));
     let receipt;
     let timer;
+    let stage = "receipt-wait";
     try {
       receipt = await new Promise((resolve, reject) => {
         let output = "";
@@ -356,28 +379,40 @@ if (process.platform === "win32") {
           }
         });
       });
+      stage = "receipt-schema";
       clearTimeout(timer);
       for (const identity of [receipt, receipt.guardian]) {
         assert.ok(Number.isInteger(identity.pid) && identity.pid > 0);
         assert.equal(typeof identity.started, "string");
       }
       assert.notEqual(receipt.guardian.pid, receipt.pid, "guardian and real compiler must be distinct processes");
+      stage = "directory-identity";
       assert.equal(
         receipt.directory,
         path.join(environment.LOOM_PRIVATE_COMPILER_BASE, environment.LOOM_PRIVATE_COMPILATION_ID),
       );
       assert.equal(fs.existsSync(receipt.directory), true);
+      stage = "live-identities";
       assert.deepEqual(
         exactProcesses([receipt.guardian, receipt]).sort((a, b) => a - b),
         [receipt.guardian.pid, receipt.pid].sort((a, b) => a - b),
       );
+      stage = "parent-kill";
       assert.equal(caller.kill("SIGKILL"), true);
+      stage = "parent-exit";
       await exited;
       // This wait observes the existing 1500ms primary deadline; it does not
       // provide a timer to the surviving guardian.
+      stage = "deadline-wait";
       await new Promise((resolve) => setTimeout(resolve, 1500));
+      stage = "deadline-absence";
       assert.deepEqual(exactProcesses([receipt.guardian, receipt]), []);
+      stage = "directory-absence";
       assert.equal(fs.existsSync(receipt.directory), false, "owned compiler directory survived parent death");
+      context.diagnostic("LWL1:parent:complete:ok");
+    } catch (error) {
+      lifetimeFailure(context, "parent", stage, error);
+      throw error;
     } finally {
       clearTimeout(timer);
       if (caller.exitCode === null && caller.signalCode === null) caller.kill("SIGKILL");
