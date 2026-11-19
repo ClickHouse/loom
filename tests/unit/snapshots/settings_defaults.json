@@ -199,6 +199,7 @@
  "code_git_pr_head_batch": 200,
  "code_git_proxy_ca_file": "",
  "code_git_proxy_identity": "",
+ "code_git_proxy_tls_ca_file": "",
  "code_git_proxy_token_file": "",
  "code_git_proxy_url": "",
  "code_git_remote": "",

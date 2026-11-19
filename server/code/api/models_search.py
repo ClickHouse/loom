@@ -281,9 +281,8 @@ class CodeSearchOutput(_LessonsOut):
     # {ns: {ms, results, abstain, route, commit, trace_run_id}}, dropped: [ns...]}.
     # Empty (and off the wire) unless the request named several namespaces.
     fanout: dict[str, Any] = Field(default_factory=dict)
-    # e.g. "lexical only until embeddings finish (41% embedded)" while the namespace's
-    # vector leg covers less than LOOM_CODE_READY_EMBED_COVERAGE of its chunks (a first
-    # index still embedding, a backfill without --embed); "" otherwise.
+    # Caller-facing warning when retrieval is unavailable or vector indexing is
+    # incomplete; empty when neither limitation applies.
     note: str = ""
     # The legs the deadline (or the model-leg grace) dropped — their rows are not in the
     # ranking — and `epistemic` "partial" then, or when a content leg failed
@@ -291,11 +290,11 @@ class CodeSearchOutput(_LessonsOut):
     legs_timed_out: list[str] = Field(default_factory=list)
     # "partial" when a leg timed out or a content leg failed; off the wire otherwise.
     epistemic: Literal["", "partial"] = ""
-    # `deadline_ms` cut something (a leg, rerank, a late stage): the page is the best
-    # found in the budget, and `partial_reason` names what did not finish. Off the wire
-    # otherwise.
+    # True when retrieval is unavailable, a leg timed out or a deadline cut a stage;
+    # false (and off the wire) when no such limitation was observed.
     partial: bool = False
-    # What the deadline cut, as `deadline N ms: <stage>; <stage>`; off the wire otherwise.
+    # Explanation of unavailable or timed-out retrieval and deadline cuts; empty
+    # (and off the wire) when no such limitation was observed.
     partial_reason: str = ""
 
 

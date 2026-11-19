@@ -1495,11 +1495,11 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | `top_similarity` | `float` | Raw cosine of the top vector-leg hit (0.0 when the vector leg did not run or the route was symbol_exact). |
 | `tracked` | `dict[str, Any]` | track_path diagnostic: {path, verdict, chunks, pool, best: {chunk_id, scope, start_line, lexical_rank, vector_rank, lex_score, distance, served_rank}, lexical_floor, vector_ceiling}. |
 | `fanout` | `dict[str, Any]` | Fan-out disclosure: {namespaces, interleave: "rank", timeout_ms, per_namespace: {ns: {ms, results, abstain, route, commit, trace_run_id}}, dropped: [ns...]}. |
-| `note` | `str` | e.g. "lexical only until embeddings finish (41% embedded)" while the namespace's vector leg covers less than LOOM_CODE_READY_EMBED_COVERAGE of its chunks (a first index still embedding, a backfill without --embed); "" otherwise. |
+| `note` | `str` | Caller-facing warning when retrieval is unavailable or vector indexing is incomplete; empty when neither limitation applies. |
 | `legs_timed_out` | `list[str]` | The legs the deadline (or the model-leg grace) dropped — their rows are not in the ranking — and `epistemic` "partial" then, or when a content leg failed (`retrieval_work` names it). |
 | `epistemic` | `Literal['', 'partial']` | "partial" when a leg timed out or a content leg failed; off the wire otherwise. |
-| `partial` | `bool` | `deadline_ms` cut something (a leg, rerank, a late stage): the page is the best found in the budget, and `partial_reason` names what did not finish. |
-| `partial_reason` | `str` | What the deadline cut, as `deadline N ms: <stage>; <stage>`; off the wire otherwise. |
+| `partial` | `bool` | True when retrieval is unavailable, a leg timed out or a deadline cut a stage; false (and off the wire) when no such limitation was observed. |
+| `partial_reason` | `str` | Explanation of unavailable or timed-out retrieval and deadline cuts; empty (and off the wire) when no such limitation was observed. |
 
 ## `code.setting_facts`
 
