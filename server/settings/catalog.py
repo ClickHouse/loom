@@ -1721,7 +1721,10 @@ class CodeSettings(BaseModel):
     # Fusion multiplier for prose files (documentation, release notes, changelogs)
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
-    code_search_prose_penalty: float = 0.25
+    code_search_prose_penalty: float = 1.0
+    # Chunk-kind ranking prior when the request names none: structural boosts the
+    # kind named by the question; flat/default apply fixed tables; off disables it.
+    code_search_kind_prior: Literal["off", "default", "flat", "structural"] = "structural"
     # The question kinds `code_search_catalogue_penalty` applies to.
     code_search_catalogue_kinds: str = "responsibility"
     # Cap of code.search's fan-in rank prior:
@@ -6782,7 +6785,7 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "definition_draft": 1600,
     # code.ask: the synthesized answer; part of its cached answers' version, so a change
     # marks them stale.
-    "code_answer_synth": 900,
+    "code_answer_synth": 4000,
     # The ceiling a truncated extraction's one retry doubles its budget up to: bounds a
     # pathological transcript while clearing the long-session case.
     "extract_truncation_retry": 8192,

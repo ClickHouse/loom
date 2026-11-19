@@ -292,6 +292,14 @@ chunks have vectors, `code.search` answers from its lexical legs and says so.
 | second-model tables, `code_chunks_prefix` | `LOOM_CODE_VECTOR_TABLES`; `loom code vector-twin` | The vector leg shortlists on the smaller twin and rescores on served vectors (`prefix_twin.py`).      |
 | `code_answers`                            | `code.ask`                                         | Answer cache keyed by question embedding; served only if every cited file's hash is current.          |
 
+The answer-cache policy also keys synthesis prompts, output budget and the prose and
+chunk-kind ranking settings. Failed retrieval legs, interrupted or refused synthesis,
+and unavailable synthesis never produce positive or negative cache entries. A returned
+answer discloses these limits with `partial`, `partial_reason` and `note`; `coverage`
+is a model self-assessment rather than verified correctness. See
+[repository questions](../guides/repository-questions.md) for calibration and mixed
+source/documentation retrieval.
+
 Bulk passes leave extra copies per key until a merge. `code/app/index/compaction.py`
 runs `OPTIMIZE … FINAL` on the twin tables after a bulk pass. `code_chunks` is compacted
 only by `loom code compact --table code_chunks --apply`.

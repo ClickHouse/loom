@@ -49,7 +49,10 @@ from server.code.app.answers_entry import (
 from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
+from server.core.errors import error_kind
+from server.llm.traits import is_complete_stop
 from server.observability.genai import staged
+from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
@@ -94,20 +97,24 @@ async def ask(
     writes."""
     from server.llm.cache import exact_cache_scope
 
-    qvec = await embedder.embed(question)
+    try:
+        qvec = await embedder.embed(question)
+    except Exception as exc:  # noqa: BLE001 — lexical evidence remains useful without embeddings
+        logger.warning("code.ask question embedding unavailable: %s", error_kind(exc))
+        qvec = []
     ctx = _AskCtx(
         repo=repo,
         org=org,
         ns=ns,
         question=question,
         qvec=qvec,
-        model=embedder.model_name,
+        model=str(getattr(embedder, "model_name", "") or settings.embedding_model),
         key=cache_key_for(search_kwargs, _synth_model_of(llm)),
         index_head=(index_head or "").strip(),
         started=time.monotonic(),
         cost_at_start=_request_cost(),
     )
-    cacheable = cache_namespace_ok(ns) and not _memory_read_narrowed()
+    cacheable = bool(qvec) and cache_namespace_ok(ns) and not _memory_read_narrowed()
     outcome = "bypassed"
     if cacheable and not no_cache:
         looked = await _serve_from_cache(ctx)
@@ -119,13 +126,20 @@ async def ask(
     with scope:
         res = await _answer_fresh(
             ctx,
-            embedder=embedder,
+            embedder=embedder if qvec else None,
             llm=llm,
-            search_kwargs=search_kwargs,
+            search_kwargs=search_kwargs if qvec else {**search_kwargs, "embedding_model": ctx.model},
             allow_synthesis=allow_synthesis,
             cache_llm=llm_cache_on,
         )
     res.cache = outcome
+    _disclose_retrieval(res)
+    if not qvec:
+        _mark_incomplete(
+            res,
+            "question embedding unavailable",
+            "Semantic retrieval and answer-cache lookup were unavailable; available repository evidence was used.",
+        )
     if cacheable:
         await _remember(ctx, res, llm)
     return res
@@ -209,13 +223,27 @@ async def _grounded_answer(
     if units:
         units = units + await _expand_mechanism(repo, org, ns, question, units, ctx.model)
     memory = await _inject_memory_context(question)
-    answer = await _synthesize(
-        llm,
-        question,
-        units,
-        memories=[f"[{m.label}] {m.text}" if m.label else m.text for m in memory.items],
-        history=history,
-    )
+    try:
+        synthesis = await _synthesize(
+            llm,
+            question,
+            units,
+            memories=[f"[{m.label}] {m.text}" if m.label else m.text for m in memory.items],
+            history=history,
+        )
+    except Exception as exc:  # noqa: BLE001 — return cited evidence when synthesis is unavailable
+        logger.warning("code.ask synthesis unavailable: %s", error_kind(exc))
+        result = AskResult(
+            source="abstained",
+            abstain=True,
+            abstain_reason="synthesis_unavailable",
+            retrieval=retrieval,
+            citations=_citations_of(units),
+            coverage="none",
+        )
+        _mark_incomplete(result, "synthesis unavailable", "Answer synthesis was unavailable.")
+        return result
+    answer = synthesis.text
     # Cite what the answer USED, not everything it was shown: context units
     # the model ignored are noise to the reader (and judged as such).
     citations = _citations_of(_units_cited(answer, units) or units)
@@ -227,21 +255,56 @@ async def _grounded_answer(
     # a non-public memory namespace is served to this caller and never memoized for the
     # next one. A memoized one names the memory it quoted, for the erasure saga.
     answer, coverage = _split_coverage(answer)
-    memoize = coverage != "none" and await _memory_context_cacheable(org, memory)
-    return AskResult(
+    result = AskResult(
         answer=answer,
         citations=citations,
         source="synthesized",
         retrieval=retrieval,
         tokens_returned=len(answer) // 4,
         coverage=coverage,
-        memoize=memoize,
         # the files the synthesis was SHOWN: an entry is stale when any of them changes,
         # cited or not
         shown_paths=list(dict.fromkeys(u.path for u in units)),
         memory_namespace=memory.namespace if memory.items else "",
         memory_keys=list(dict.fromkeys(m.erasure_key for m in memory.items)),
     )
+    _disclose_retrieval(result)
+    if synthesis.partial_reason:
+        _mark_incomplete(result, synthesis.partial_reason, "The provider returned an incomplete answer.")
+    if synthesis.refused:
+        result.answer = ""
+        result.tokens_returned = 0
+        result.coverage = "none"
+        result.abstain = True
+        result.abstain_reason = "synthesis_refused"
+        result.source = "abstained"
+    result.memoize = (
+        not result.partial and result.coverage != "none" and await _memory_context_cacheable(org, memory)
+    )
+    return result
+
+
+def _mark_incomplete(result: AskResult, reason: str, note: str) -> None:
+    result.partial = True
+    parts = result.partial_reason.split("; ") + reason.split("; ")
+    result.partial_reason = "; ".join(dict.fromkeys(filter(None, parts)))
+    if note and note not in result.note:
+        result.note = f"{result.note} {note}".strip()
+    result.memoize = False
+    if result.coverage == "full":
+        result.coverage = "partial"
+
+
+def _disclose_retrieval(result: AskResult) -> None:
+    retrieval = result.retrieval
+    if retrieval is not None and (
+        getattr(retrieval, "partial", False) or getattr(retrieval, "epistemic", "") == "partial"
+    ):
+        _mark_incomplete(
+            result,
+            getattr(retrieval, "partial_reason", "") or "retrieval incomplete",
+            getattr(retrieval, "note", "") or "Some retrieval evidence was unavailable.",
+        )
 
 
 async def _expand_mechanism(
@@ -385,6 +448,12 @@ def history_lines(history: dict[str, Any]) -> list[str]:
     return out[:12]
 
 
+class _SynthesisResult(NamedTuple):
+    text: str
+    partial_reason: str
+    refused: bool
+
+
 @staged("code_answer")
 async def _synthesize(
     llm: Any,
@@ -392,7 +461,7 @@ async def _synthesize(
     units: list[CodeUnit],
     memories: list[str] | None = None,
     history: list[str] | None = None,
-) -> str:
+) -> _SynthesisResult:
     excerpts = "\n\n".join(
         f"[{u.path}:{u.start_line}-{u.end_line}] {u.symbol}{u.signature}\n{u.body[:_EXCERPT_CHARS]}"
         for u in units
@@ -412,7 +481,10 @@ async def _synthesize(
         joined = "\n".join(f"- {m}" for m in memories)
         prompt += _MEMORY_NOTE + joined
     res = await llm.complete(_SYNTH_SYSTEM, prompt, max_tokens=llm_max_tokens("code_answer_synth"))
-    return str(res.text).strip()[:8000]
+    stop = str(getattr(res, "stop_reason", "") or "")
+    reason = "" if is_complete_stop(stop) else "synthesis limited by provider"
+    refused = stop in {"content_filter", "refusal", "content_filtered", "guardrail_intervened"}
+    return _SynthesisResult(str(res.text).strip(), reason, refused)
 
 
 class MemoryExcerpt(NamedTuple):
