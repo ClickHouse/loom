@@ -125,7 +125,7 @@ class Context:
         accepted, rejected = [], []
         for item in data.get("definitions", [])[:3]:
             try:
-                source = self.checkout.read(item["path"])
+                source = self.checkout.full_read(item["path"])
                 lines = source.splitlines()
                 start, end = int(item["start_line"]), int(item["end_line"])
                 body = item.get("body", "")
@@ -163,7 +163,7 @@ class Context:
         hints = []
         for item in data.get("impacted_symbols", [])[:10]:
             try:
-                source = self.checkout.read(item["path"])
+                source = self.checkout.full_read(item["path"])
                 bare = item["qualified_name"].split("::")[-1].split(".")[-1]
                 if not any(
                     isinstance(n, (ast.FunctionDef, ast.ClassDef)) and n.name == bare

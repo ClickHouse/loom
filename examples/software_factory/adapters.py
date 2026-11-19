@@ -84,7 +84,7 @@ class BedrockProvider:
 
     label = "bedrock-converse"
 
-    def __init__(self, client, model_id: str, *, approved_model_id: str):
+    def __init__(self, client, model_id: str, *, approved_model_id: str, physical_counter=None):
         if model_id != approved_model_id or not model_id:
             raise PermissionError("Model must match the frozen approved protocol")
         if client.meta.config.retries.get("total_max_attempts") != 1:
@@ -92,6 +92,7 @@ class BedrockProvider:
         if client.meta.config.read_timeout > 45 or client.meta.config.connect_timeout > 5:
             raise ValueError("Provider timeout exceeds the bounded protocol")
         self.client, self.model_id = client, model_id
+        self.physical_counter = physical_counter
 
     def step(self, messages: list[dict], tools: list[dict], max_tokens: int) -> dict:
         specs = [
@@ -104,16 +105,24 @@ class BedrockProvider:
             }
             for t in tools
         ]
-        response = self.client.converse(
-            modelId=self.model_id,
-            messages=copy.deepcopy(messages),
-            toolConfig={"tools": specs},
-            inferenceConfig={"maxTokens": max_tokens},
-        )
+        before = self.physical_counter() if self.physical_counter else None
+        try:
+            response = self.client.converse(
+                modelId=self.model_id,
+                messages=copy.deepcopy(messages),
+                toolConfig={"tools": specs},
+                inferenceConfig={"maxTokens": max_tokens},
+            )
+        except Exception as error:  # Retain failed dispatch counts.
+            failure = RuntimeError(f"{type(error).__name__}: {error}")
+            failure.physical_requests = (
+                self.physical_counter() - before if before is not None else None
+            )
+            raise failure from error
         return {
             "blocks": response["output"]["message"]["content"],
             "usage": response.get("usage", {}),
-            "physical_requests": 1,
+            "physical_requests": self.physical_counter() - before if before is not None else None,
             "provider_request_id": response.get("ResponseMetadata", {}).get("RequestId"),
             "cost_usd": None,
             "cost_status": "unknown",
@@ -163,6 +172,8 @@ class SDKContext:
         ):
             raise PermissionError("Index authorization is unverified")
         result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1}, timeout_s=10)
+        if result.data.get("ignored_args"):
+            raise PermissionError("Index ignored request arguments")
         after = await self.verify_scope(self.agent, body)
         if before["scope"] != after["scope"] or after.get("permission") != "allowed":
             raise PermissionError("Index scope changed during lookup")

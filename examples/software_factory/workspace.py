@@ -28,21 +28,29 @@ class Checkout:
             raise PermissionError("Source path escapes checkout")
         return candidate
 
-    def read(self, name: str) -> str:
-        return self.path(name).read_text()[:16000]
+    def full_read(self, name: str) -> str:
+        path = self.path(name)
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError("Source budget exceeded")
+        return path.read_text()
+
+    def read(self, name: str, start_line: int = 1) -> str:
+        if type(start_line) is not int or start_line < 1:
+            raise ValueError("start_line must be a positive integer")
+        return "".join(self.full_read(name).splitlines(True)[start_line - 1 :])[:16000]
 
     def files(self) -> dict[str, str]:
-        return {name: self.read(name) for name in self.original}
+        return {name: self.full_read(name) for name in self.original}
 
     def state(self) -> str:
         return digest(self.files())
 
     def edit(self, path: str, old: str, new: str) -> dict:
-        before = self.read(path)
+        before = self.full_read(path)
         if not old or before.count(old) != 1:
             return {"error": "Replacement must match exactly once"}
         after = before.replace(old, new, 1)
-        if len(after) > 16000:
+        if len(after.encode()) > 1024 * 1024 or len(new) > 16000:
             raise ValueError("Source budget exceeded")
         self.path(path).write_text(after)
         return {"edited": path, "state": self.state()}
@@ -52,7 +60,7 @@ class Checkout:
             "".join(
                 difflib.unified_diff(
                     before.splitlines(True),
-                    self.read(name).splitlines(True),
+                    self.full_read(name).splitlines(True),
                     fromfile="a/" + name,
                     tofile="b/" + name,
                 )
@@ -133,7 +141,7 @@ class ObjectiveGrader:
         for case in cases:
             try:
                 actual = evaluate(
-                    checkout.read(self.data["path"]), self.data["symbol"], case["args"]
+                    checkout.full_read(self.data["path"]), self.data["symbol"], case["args"]
                 )
                 passed = type(actual) is type(case["expected"]) and actual == case["expected"]
                 detail = {"args": case["args"], "actual": actual, "expected": case["expected"]}

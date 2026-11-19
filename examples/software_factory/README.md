@@ -159,3 +159,74 @@ Agent dedicated to this adapter.
 The adapter's `expected_scope` must name the frozen org, namespace, repository
 and full commit. The preflight compares all four before issuing the code request;
 postflight compares them again before releasing evidence.
+
+## Historical qualification without inference
+
+`historical.py` supplies a trusted exact-base blob exporter and a focused
+container grader. The agent receives only ordinary implementation source, with
+no object database. Edits, hashes and grounding use complete files; agent reads
+are limited to 16,000 characters and accept an optional 1-based `start_line`.
+Files are limited to 1 MiB. Display limits never truncate source authority.
+
+The historical grader builds an independent checkout for each invocation,
+overlays only allowlisted implementation files, and preserves tests and runner
+configuration. Hidden tests are applied only after the agent finishes. Test
+containers use an existing image digest, no network, a read-only root and source
+mount, a separate results mount, one CPU, 512 MiB and 64 processes. Tests cannot
+change their source or evaluator configuration. Only fixed focused pytest nodes
+are accepted. Missing tests, collection errors, skips and duplicate JUnit ids
+fail qualification. Candidate code executes inside that container, never in the
+controller process. Container isolation is a prerequisite to verify on the host;
+it is not established by a mocked command-construction test.
+
+The qualification CLI consumes independently frozen controller inputs. It checks
+their hashes against the historical manifest and runs public-base, hidden-base
+and private-reference controls. Reference patches stay outside agent access.
+Visible selectors come from tests present at the public base; the complete
+frozen hidden selector list remains mandatory.
+
+```bash
+python -m examples.software_factory.qualify \
+  --task pallets__flask-4045 --config /private/grade-pallets__flask-4045.json \
+  --output /private/factory-controls
+python -m examples.software_factory.qualify_sandbox \
+  --image sha256:REPLACE_WITH_FROZEN_LOCAL_IMAGE --output /private/factory-isolation
+```
+
+Use the required local supervisor around these finite checks. No image pull,
+provider call, ingestion or model judge occurs. Each container has an exact-name,
+label-verified ownership receipt. Normal exits clean it in `finally`. After a
+supervisor interruption, reconcile those receipts before resuming:
+
+```bash
+python -m examples.software_factory.cleanup --root /private/factory-controls
+```
+
+Cleanup refuses another owner's label. Preserve failed qualification directories
+and choose a fresh output path for a diagnosed rerun. These controls qualify an
+environment; they are not agent resolutions or benchmark results.
+
+`live_support.py` provides the exact scope/build verifier, dispatch event hooks,
+a reproducible paired schedule and global token/request/cost reservations.
+A failed request retains its reservation. Unknown cache or usage semantics stop
+settlement; a fixture cannot supply real billing evidence. Scope verification
+requires an external immutable-index/authorization certificate and compares the
+full repository, namespace, commit and server build before releasing evidence.
+Matching watermarks do not establish immutability by themselves.
+
+These pieces can be injected into `Factory` with `HistoricalGrader`, but do not
+constitute an approved live cohort command. The controller still needs qualified
+provider/dependency locks, verified token bounds, durable global reservations,
+hard attempt supervision, server billing joins and actual protocol approval.
+The offline CLI never constructs live clients. Provider failures and invalid
+hidden graders retain failed result manifests, counts and unknown costs.
+
+The shared intake names the public repository/base, named symbol and allowed
+source paths so an unscripted provider can discover files. It exposes no grader,
+replay, namespace or history. `supervision.run_bounded` can enforce a hard deadline
+for one trusted controller process, retain its output and timeout receipt, and
+reconcile its recorded containers. It pins the process-group leader until cleanup
+so a reused PID cannot identify another owner's group. This is a controller
+utility; it is never an agent tool or permission to launch a paid cohort.
+`TransportAudit` accepts a physical request cap and a durable recording callback;
+failed I/O consumes a dispatch, and a request beyond the cap is refused before I/O.

@@ -86,14 +86,14 @@ class Ledger:
             stream.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def tool(name: str, description: str, properties: dict) -> dict:
+def tool(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
     return {
         "name": name,
         "description": description,
         "input_schema": {
             "type": "object",
             "properties": properties,
-            "required": list(properties),
+            "required": list(properties) if required is None else required,
             "additionalProperties": False,
         },
     }
@@ -102,7 +102,12 @@ def tool(name: str, description: str, properties: dict) -> dict:
 def tool_schemas(mode: str) -> list[dict]:
     string = {"type": "string"}
     tools = [
-        tool("read", "Read one source file in the task checkout.", {"path": string}),
+        tool(
+            "read",
+            "Read up to 16000 characters from a source file, starting at a 1-based line.",
+            {"path": string, "start_line": {"type": "integer", "minimum": 1}},
+            ["path"],
+        ),
         tool("search", "Find a literal in allowed source files.", {"text": string}),
         tool(
             "edit",
