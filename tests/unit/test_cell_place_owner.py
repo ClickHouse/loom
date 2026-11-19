@@ -109,7 +109,11 @@ async def test_native_wrapper_keeps_its_existing_three_budgets(monkeypatch):
     assert observed == {"opening": 75.0, "exit": pg._RELEASE_TIMEOUT_S, "phases": [75.0, 60.0]}
 
 
-async def test_failed_phase_keeps_its_end_instead_of_custom_exit():
+async def test_failed_phase_keeps_its_end_instead_of_custom_exit(monkeypatch):
+    # Scheduling the timeout cannot spend the cleanup budget under test.
+    clock = ManualClock(t=time.monotonic())
+    monkeypatch.setattr(cell_control, "time", clock)
+    monkeypatch.setattr(pg, "time", clock)
     owner = cell_control.Owner(exit_s=99)
     conn = FakeConn()
 
@@ -119,7 +123,7 @@ async def test_failed_phase_keeps_its_end_instead_of_custom_exit():
     async def body():
         return await owner.call(lambda: asyncio.Future(), total_s=0.04)
 
-    before = time.monotonic()
+    before = clock.monotonic()
     with pytest.raises(TimeoutError):
         await owner.run(opening, body, opening_s=0.1)
     assert before < owner.close_end <= before + 0.1
