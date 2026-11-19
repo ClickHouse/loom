@@ -579,11 +579,12 @@ without one included, and moving a cell's data to other stores, or adding one, i
 design of its own (Operations). Bots are not in it: `loom bot create` adds them at run
 time, each with one org, and placement already bounds them. The cell's own row in
 `loom.cell_self` holds an accepted fingerprint, `current`, and during a change a second,
-`next`. Its rows, and the cell heartbeat (`loom.cell_heartbeats`, keyed by the process's
-`loom.instances` row and written with it, since a KeeperMap table takes no new column:
-the `LOOM_CELL` it runs with, the state its last read makes, its fingerprint and
-[the keys beside it](#the-heartbeats-keys)), hold no memory
-content and are classified so for erasure. A process matches a value when every field
+`next`. These rows and the cell heartbeat (`loom.cell_heartbeats`) hold no memory content
+and are classified so for erasure. The heartbeat is keyed by the process's `instance_id`.
+A server writes it alongside its `loom.instances` row; a worker writes only the cell
+heartbeat. Since a KeeperMap table takes no new column, the heartbeat records the
+`LOOM_CELL` it runs with, the state its last read makes, its fingerprint and
+[the keys beside it](#the-heartbeats-keys). A process matches a value when every field
 both know is equal, a field the value lacks counting as equal only at its default, so
 builds N and N+1 with the same configuration match one row. With `LOOM_CELL` set, while
 its cell's own row, `first` row or mode row is unread, the state rows are in a `partial`
