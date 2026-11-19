@@ -104,6 +104,20 @@ STATE_TABLES: dict[str, str] = {
     " JSONExtract(scope_value, 'namespaces', 'Array(String)')), {ns:String})))",
 }
 
+# The census tables a request writes a row about itself in, under the name it names,
+# registered or not: a latency reading, an exposure, a search's trace. They record that
+# a request ran, not what the namespace holds, so a workload trust makes an agent's
+# namespace over them.
+REQUEST_TRACES: frozenset[str] = frozenset(
+    {
+        "loom.events",
+        "loom.memory_exposures",
+        "loom.search_trace_log",
+        "loom.code_search_trace",
+        "loom.code_search_outcome",
+    }
+)
+
 
 async def in_use(
     org: str, namespace: str, tables: list[str], *, ch: _CHClient | None = None

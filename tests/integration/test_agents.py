@@ -68,6 +68,69 @@ async def test_a_namespace_someone_else_made_is_not_reached(ch: Any) -> None:
         await agents.ensure_namespace(m, "a1")
 
 
+async def test_a_lookup_over_its_budget_does_not_stop_the_agent(ch: Any) -> None:
+    """A `namespace.get` of the agent's name before its first exchange, run over its
+    latency budget, writes this row under the name."""
+    from server.observability import events_stream
+
+    m = _trust()
+    ns = f"{m['name']}-a1"
+    reading = events_stream.to_event(
+        events_stream.BUDGET_VIOLATION_KIND,
+        {
+            "event_type": "budget.violated",
+            "org": m["org"],
+            "namespace": ns,
+            "actor": "control-plane",
+            "operation": "namespace.get",
+            "elapsed_ms": 45,
+            "budget_ms": 30,
+        },
+    )
+    await ch.insert(events_stream.TABLE, [reading], settings=dict(events_stream.COMMITTED))
+    with own_write_reads():
+        held = await ch.query_one(
+            "SELECT count() AS n FROM loom.events WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": m["org"], "ns": ns},
+        )
+    assert held["n"] == 1
+    assert await agents.ensure_namespace(m, "a1") == ns
+    with own_write_reads():
+        rows = await ch.query_all(
+            "SELECT owner_email, tags FROM loom.namespaces FINAL "
+            "WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": m["org"], "ns": ns},
+        )
+    assert [(r["owner_email"], list(r["tags"])) for r in rows] == [
+        (f"sa:{m['name']}:a1", [f"machine:{m['name']}"])
+    ]
+
+
+@pytest.mark.parametrize(
+    ("table", "row"),
+    [
+        (
+            "loom.memory",
+            {"agent": "bot", "user_id": "-", "session_id": "-", "memory_key": "k", "value": "v"},
+        ),
+        # A run's ledger row holds its request and response, which the namespace serves back.
+        ("loom.agent_runs", {"goal": "g"}),
+    ],
+)
+async def test_data_or_a_run_under_the_name_with_no_row_stops_the_agent(
+    ch: Any, table: str, row: dict[str, Any]
+) -> None:
+    from server.observability import events_stream
+
+    m = _trust()
+    ns = f"{m['name']}-a1"
+    await ch.insert(
+        table, [{"org": m["org"], "namespace": ns, **row}], settings=dict(events_stream.COMMITTED)
+    )
+    with pytest.raises(machines.Refused, match="not this trust's"):
+        await agents.ensure_namespace(m, "a1")
+
+
 async def test_a_released_namespace_is_dropped_from_the_bots_naming_it(ch: Any) -> None:
     org, name = unique_org("agents"), f"bot{uuid.uuid4().hex[:6]}"
     bot: machines.Machine = {

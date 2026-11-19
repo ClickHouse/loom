@@ -39,6 +39,7 @@ from typing import Any, Final
 from server.core.naming import reserved_for_sso
 from server.identity.api.models import NamespaceRegisterInput
 from server.identity.app.directory import IdentityDirectory
+from server.identity.store.namespace_census import REQUEST_TRACES
 from server.operations.base import Operation, Role
 from server.settings import settings
 
@@ -58,16 +59,7 @@ _MISSING = ("", "-", "*")
 # The census tables a read or a run writes under a name (telemetry, a query, a run's
 # ledger row with its request and response), so a writer who searched first still owns
 # the name; a name holding only these rows goes to its first writer.
-READ_TRACES: Final = frozenset(
-    {
-        "loom.agent_runs",
-        "loom.events",
-        "loom.memory_exposures",
-        "loom.search_trace_log",
-        "loom.code_search_trace",
-        "loom.code_search_outcome",
-    }
-)
+READ_TRACES: Final = REQUEST_TRACES | {"loom.agent_runs"}
 
 
 def _csv(value: str) -> tuple[str, ...]:
