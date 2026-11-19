@@ -262,22 +262,16 @@ async def check(
     seconds: float,
     revoke: bool = False,
     dry_run: bool = False,
-    new_later: bool = False,
-    target: dict[str, Any] | None = None,
     report: dict[str, Any] | None = None,
     log: Callable[[str], None] = lambda _message: None,
 ) -> None:
     """Read the intended policy freshly; contract only under the native attach owner."""
-    if not (required(target) if target is not None else required(*own)):
+    if not required(*own):
         return
     if not math.isfinite(seconds) or seconds <= 0:
         raise _refuse("the provisioning census needs a finite positive scan budget")
     if client is not ch.get_client():
         raise _refuse("the census client differs from this process's configured store")
-    if target is not None and target.get("fields", {}).get("deployment_id") != row.get(
-        "deployment_id"
-    ):
-        raise _refuse("the intended configuration names another deployment")
     status = report if report is not None else {}
     status.update(checked=0, revoked=0, unprovisioned=0, complete=False)
     deadline = time.monotonic() + seconds
@@ -286,12 +280,6 @@ async def check(
         async with asyncio.timeout(seconds):
             with ch.own_write_reads(), ch.query_tag("cli.cell.scim_precondition"):
                 binding = await _identity(conn, row, own)
-                if new_later and not binding["is_first"]:
-                    found = await _query(
-                        client, "SELECT count() AS n FROM loom.scim_users FINAL", {}, deadline
-                    )
-                    if found is None or int(found["n"]):
-                        raise _refuse("a new later cell already holds a SCIM user or tombstone")
                 floor = revocation.past_every_token_before(
                     max(as_aware_utc(binding["since"]), as_aware_utc(binding["updated_at"]))
                 )

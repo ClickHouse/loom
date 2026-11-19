@@ -106,7 +106,8 @@ unprovisioned subject and refuses before serving. `--revoke-unprovisioned` cuts 
 subject's existing tokens under SCIM's revocation prefix; it does not provision a user.
 Already accepted cutoffs remain if a later read, audit or subject fails. Rerun the same
 command and flag to finish. An outright revocation or a newer cutoff is never narrowed.
-`--dry-run --revoke-unprovisioned` writes nothing, and a serving rerun only verifies.
+`--dry-run --revoke-unprovisioned` never revokes; command participation is still recorded.
+A serving rerun only verifies.
 On interruption its owner closes the session before cancelling transaction work.
 A close that cannot complete uses transport abort and reports failure; that abort
 does not establish that server locks or an unacknowledged commit have disappeared.

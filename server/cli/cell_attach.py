@@ -212,7 +212,7 @@ class Run:
         await self.scim_precondition()
         return verdict
 
-    async def scim_precondition(self, *, read_only: bool = False) -> None:
+    async def scim_precondition(self) -> None:
         if not cell_scim.required(*self.own_fp):
             return
         report: dict[str, Any] = {}
@@ -223,8 +223,8 @@ class Run:
             self.row,
             self.own_fp,
             seconds=self.args.scan_budget,
-            revoke=getattr(self.args, "revoke_unprovisioned", False) and not read_only,
-            dry_run=self.args.dry_run or read_only,
+            revoke=getattr(self.args, "revoke_unprovisioned", False),
+            dry_run=self.args.dry_run,
             report=report,
             log=self.log,
         )

@@ -789,8 +789,6 @@ async def handle_code_repo_set_access(input: Any) -> Any:
     needs `confirm` = namespace; a restricted index is never `open`. The change
     then syncs the repository's maintainers, quietly: a restriction's failed sync is
     finished by the ingest pass, a widening's by the next sync of the repository."""
-    from server.auth.authz import identity_write
-
     require_code_intel()
     from server.code.domain.index.repos import repo_for_namespace
     from server.core.ch import get_client
@@ -863,7 +861,7 @@ async def handle_code_repo_set_access(input: Any) -> Any:
                     "updated_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
                 }
             )
-            with identity_write():
+            with authz.identity_write():
                 await ch.insert("loom.namespaces", [new_row])
             directory_updated = True
         await reg.upsert_access(

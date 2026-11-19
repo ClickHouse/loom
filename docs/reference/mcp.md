@@ -55,10 +55,10 @@ instructions.
 
 `LOOM_MCP_AUTH_MODE` decides which methods need a bearer:
 
-| Mode                 | Bearer required on                                            |
-| -------------------- | ------------------------------------------------------------- |
-| `required` (default) | every method except notifications                             |
-| `discovery_only`     | `tools/call` only; every other method is open                 |
+| Mode                 | Bearer required on                                                             |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `required` (default) | every method except notifications                                              |
+| `discovery_only`     | `tools/call` only; every other method is open                                  |
 | `open`               | nothing; a cryptographically invalid bearer is ignored (trusted networks only) |
 
 A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
