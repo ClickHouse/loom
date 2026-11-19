@@ -4548,8 +4548,9 @@ def host_list_refusal(setting: str, hosts: str) -> str:
     return ""
 
 
-# The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
+# The gateway check merges these settings with the proposed dashboard configuration.
 _GATEWAY_CHECKED = (
+    "llm_provider",
     "openai_base_url",
     "anthropic_base_url",
     "local_llm_base_url",
@@ -5160,12 +5161,12 @@ class ProviderSettings(ModelSettings):
         why = self.gateway_required_by()
         if not why:
             return ""
-        if self.llm_provider == "bedrock":
-            return f"{why} refuses native Bedrock: use the inference gateway"
         if not self.gateway_hosts():
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
         saved = dict(changes or {})
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
+        if v["llm_provider"] == "bedrock":
+            return f"{why} refuses native Bedrock: use the inference gateway"
         # Both hosted API roots count, a provider unused included: a model named per
         # request may be either provider's. The local root is called only while it is
         # the provider, since no model name reaches it otherwise.
@@ -5174,7 +5175,7 @@ class ProviderSettings(ModelSettings):
             ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
             ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
         ]
-        if self.llm_provider == "local":
+        if v["llm_provider"] == "local":
             roots.append(("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL"))
         for field, what in roots:
             host = self.off_gateway(v[field]) if v[field] else ""

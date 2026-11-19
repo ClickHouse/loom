@@ -218,7 +218,9 @@ For text embeddings, select `LOOM_EMBEDDING_PROVIDER=bedrock` and
 `LOOM_EMBEDDING_MODEL=cohere.embed-v4:0`. Cohere Embed v4 supports dimensions 256, 512,
 1024 and 1536; the native default is 1536 when `LOOM_EMBEDDING_DIM` is unset. Single-text
 `embed()` requests use `search_query`; document batches use `search_document`, with at
-most 96 texts per request. Requests refuse silent truncation. Calibration compares
+most 96 texts per request. Each serialized UTF-8 JSON body is capped at 20,000,000
+bytes, including escaping and metadata. An oversized item is refused before any model
+request from its batch set. Requests refuse silent truncation. Calibration compares
 write-time paraphrases as document/document pairs and retrieval probes as
 query/document pairs, matching the vectors those operations use.
 
@@ -235,9 +237,12 @@ a successful later call clears a recorded failure.
 
 The SDK resolves credentials and signs each request; Loom's async HTTP client sends
 model content, so cancelling a request closes its HTTP response. Signed requests do not
-follow redirects, and SDK endpoint overrides cannot redirect model content. Native
-Bedrock is refused when an inference gateway is required. In that deployment, use the
-gateway's configured provider endpoint.
+follow redirects, and SDK endpoint overrides cannot redirect model content. The elapsed
+deadline covers credential resolution, signing, retries, backoff and body consumption.
+Credential work may finish after cancellation but cannot send model content. Native
+Bedrock is refused when an inference gateway is required, including saved main, stage
+and verification model routes. In that deployment, use the gateway's configured provider
+endpoint.
 
 LLM usage comes from the Converse response. Embedding usage is recorded only when the
 provider reports it; an unavailable count is not estimated spend. A model missing from

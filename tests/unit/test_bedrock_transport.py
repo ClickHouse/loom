@@ -2,11 +2,15 @@
 
 import asyncio
 import json
+import threading
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 from botocore.credentials import ReadOnlyCredentials
 
 from server.clients import bedrock
@@ -65,6 +69,89 @@ def test_private_identity_headers_are_filtered_before_signing(monkeypatch):
     assert "X-Identity" not in headers
     assert headers["X-Customer"] == "org"
     assert "x-identity" not in headers["Authorization"].lower()
+
+
+@pytest.mark.parametrize("region,resolved", [("", "us-east-1"), ("us-west-2", "us-west-2")])
+def test_sdk_region_and_endpoint_resolution_disables_endpoint_overrides(
+    monkeypatch, region, resolved
+):
+    session, client = Mock(), Mock()
+    client.meta.endpoint_url = f"https://bedrock-runtime.{resolved}.amazonaws.com"
+    client.meta.region_name = resolved
+    session.client.return_value = client
+    monkeypatch.setattr("boto3.session.Session", lambda: session)
+    bedrock._connection.cache_clear()
+    try:
+        connection = bedrock._connection(region)
+        assert connection.region == resolved
+        assert connection.endpoint == client.meta.endpoint_url
+        assert session.client.call_args.kwargs["region_name"] == (region or None)
+        assert session.client.call_args.kwargs["config"].ignore_configured_endpoint_urls
+        assert set(session.client.call_args.kwargs) == {"region_name", "config"}
+        client.close.assert_called_once()
+    finally:
+        bedrock._connection.cache_clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation,fields",
+    [
+        ("converse", {"messages": [{"role": "user", "content": [{"text": "question"}]}]}),
+        ("invoke_model", {"body": '{"texts":["é"]}'.encode()}),
+    ],
+)
+async def test_outgoing_profile_arn_request_retains_its_sdk_signature(
+    monkeypatch, operation, fields
+):
+    frozen = ReadOnlyCredentials("example", "not-a-real-key", "example-session")
+    credentials = SimpleNamespace(get_frozen_credentials=lambda: frozen)
+    connection = bedrock._Connection(
+        SimpleNamespace(get_credentials=lambda: credentials),
+        "https://bedrock-runtime.us-east-1.amazonaws.com",
+        "us-east-1",
+    )
+    monkeypatch.setattr(bedrock, "_connection", lambda region: connection)
+    monkeypatch.setattr(
+        "botocore.auth.get_current_datetime", lambda: datetime(2024, 1, 1, tzinfo=UTC)
+    )
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        names = (
+            request.headers["Authorization"]
+            .split("SignedHeaders=", 1)[1]
+            .split(",", 1)[0]
+            .split(";")
+        )
+        expected = AWSRequest(
+            method=request.method,
+            url=str(request.url),
+            data=request.content,
+            headers={name: request.headers[name] for name in names},
+        )
+        SigV4Auth(frozen, "bedrock", "us-east-1").add_auth(expected)
+        assert request.headers["Authorization"] == expected.headers["Authorization"]
+        return httpx.Response(200, json={"ok": True})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(bedrock, "get_model_client", lambda: client)
+    async with client:
+        await bedrock.call(
+            operation,
+            {
+                "modelId": "arn:aws:bedrock:us-east-1:000000000000:inference-profile/name%2Fpart:0",
+                **fields,
+            },
+            customer.Customer(),
+            request_timeout_s=1,
+            attempts=1,
+        )
+    assert len(requests) == 1
+    assert "%2F" in str(requests[0].url)
+    if operation == "invoke_model":
+        assert requests[0].content == fields["body"]
 
 
 @pytest.mark.asyncio
@@ -173,3 +260,131 @@ async def test_response_size_is_bounded(monkeypatch):
     async with client:
         with pytest.raises(ValueError, match="response limit"):
             await bedrock._post("https://bedrock.example/", b"{}", {}, 1)
+
+
+@pytest.mark.asyncio
+async def test_deadline_covers_pending_credential_resolution(monkeypatch):
+    from server.llm._retry import is_provider_outage
+
+    async def sign(*args):
+        await asyncio.sleep(0.1)
+        return "https://bedrock.example/", b"{}", {}
+
+    post = AsyncMock(return_value=bedrock._Reply({"ok": True}, {}))
+    monkeypatch.setattr(bedrock.asyncio, "to_thread", sign)
+    monkeypatch.setattr(bedrock, "_post", post)
+    with pytest.raises(TimeoutError) as caught:
+        await bedrock.call(
+            "converse", {"modelId": "m"}, customer.Customer(), request_timeout_s=0.02, attempts=1
+        )
+    post.assert_not_awaited()
+    assert is_provider_outage(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_deadline_covers_retries_and_backoff(monkeypatch):
+    monkeypatch.setattr(
+        bedrock.asyncio,
+        "to_thread",
+        AsyncMock(
+            return_value=("https://bedrock.example/", b"{}", {}),
+        ),
+    )
+    post = AsyncMock(
+        side_effect=[httpx.ConnectError("unavailable"), bedrock._Reply({"ok": True}, {})]
+    )
+    monkeypatch.setattr(bedrock, "_post", post)
+    with pytest.raises(TimeoutError):
+        await bedrock.call(
+            "converse", {"modelId": "m"}, customer.Customer(), request_timeout_s=0.02, attempts=3
+        )
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_deadline_closes_a_response_that_keeps_making_progress(monkeypatch):
+    closed = asyncio.Event()
+    chunks = []
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            chunks.append(b'{"ok":')
+            yield chunks[-1]
+            for _ in range(10):
+                await asyncio.sleep(0.02)
+                chunks.append(b" ")
+                yield chunks[-1]
+            yield b"true}"
+
+        async def aclose(self):
+            closed.set()
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=Stream()),
+        )
+    )
+    monkeypatch.setattr(bedrock, "get_model_client", lambda: client)
+    monkeypatch.setattr(
+        bedrock.asyncio,
+        "to_thread",
+        AsyncMock(
+            return_value=("https://bedrock.example/", b"{}", {}),
+        ),
+    )
+    async with client:
+        with pytest.raises(TimeoutError):
+            await bedrock.call(
+                "converse",
+                {"modelId": "m"},
+                customer.Customer(),
+                request_timeout_s=0.05,
+                attempts=1,
+            )
+    assert chunks
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_pending_signer_cannot_send_model_content(monkeypatch):
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def sign(*args):
+        started.set()
+        try:
+            if not release.wait(10):
+                raise AssertionError("signing fixture was not released")
+            return "https://bedrock.example/", b"{}", {}
+        finally:
+            finished.set()
+
+    post = AsyncMock(return_value=bedrock._Reply({"ok": True}, {}))
+    monkeypatch.setattr(bedrock, "_signed", sign)
+    monkeypatch.setattr(bedrock, "_post", post)
+    task = asyncio.create_task(
+        bedrock.call(
+            "converse", {"modelId": "m"}, customer.Customer(), request_timeout_s=30, attempts=1
+        )
+    )
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 5)
+        await asyncio.gather(task, return_exceptions=True)
+    post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [0, -1, float("inf"), float("nan")])
+async def test_native_request_deadline_must_be_positive_and_finite(monkeypatch, budget):
+    signer = AsyncMock()
+    monkeypatch.setattr(bedrock.asyncio, "to_thread", signer)
+    with pytest.raises(ValueError, match="positive finite timeout"):
+        await bedrock.call(
+            "converse", {"modelId": "m"}, customer.Customer(), request_timeout_s=budget, attempts=1
+        )
+    signer.assert_not_called()

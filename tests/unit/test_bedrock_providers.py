@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from server.core.llm_provider import provider_for_model, resolve_llm_provider
-from server.embedding._provider import MalformedEmbedding
+from server.embedding._provider import EmbedderInputTooLarge, MalformedEmbedding
 from server.llm import customer
 from server.observability import provider_health
 from server.settings import Settings, settings
@@ -175,6 +175,70 @@ async def test_cohere_batches_are_bounded_and_keep_order(monkeypatch):
     )
     assert sizes == [96, 1]
     assert [v[0] for v in result] == list(range(97))
+
+
+@pytest.mark.asyncio
+async def test_cohere_batches_bound_serialized_utf8_json_without_changing_text(monkeypatch):
+    from server.clients import bedrock
+    from server.embedding import bedrock as module
+
+    texts = ["é" * 32, "\n" * 16, "🙂" * 8]
+    bodies = []
+    limit = 230
+    monkeypatch.setattr(module, "_MAX_REQUEST_BYTES", limit, raising=False)
+
+    async def invoke(operation, payload, who, **kwargs):
+        raw = payload["body"]
+        body = raw if isinstance(raw, bytes) else raw.encode("utf-8")
+        assert len(body) <= limit
+        bodies.append(body)
+        values = json.loads(body)["texts"]
+        return {"body": {"embeddings": [[float(texts.index(text))] * 256 for text in values]}}
+
+    monkeypatch.setattr(bedrock, "call", invoke)
+    vectors = await module.BedrockEmbedder(model="cohere.embed-v4:0", dim=256).embed_many(texts)
+    assert len(bodies) == 2
+    assert [text for body in bodies for text in json.loads(body)["texts"]] == texts
+    assert [vec[0] for vec in vectors] == [0.0, 1.0, 2.0]
+    assert any("é".encode() in body for body in bodies)
+
+
+@pytest.mark.asyncio
+async def test_cohere_oversized_later_item_is_refused_before_any_request(monkeypatch):
+    from server.clients import bedrock
+    from server.embedding import bedrock as module
+
+    monkeypatch.setattr(module, "_MAX_REQUEST_BYTES", 230, raising=False)
+    request = AsyncMock(return_value={"body": {"embeddings": [[1.0] * 256] * 2}})
+    monkeypatch.setattr(bedrock, "call", request)
+    with pytest.raises(EmbedderInputTooLarge):
+        await module.BedrockEmbedder(model="cohere.embed-v4:0", dim=256).embed_many(
+            ["ok", "x" * 231]
+        )
+    request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_large_document_batches_stay_under_actual_service_body_limit(monkeypatch):
+    from server.clients import bedrock
+    from server.embedding.bedrock import BedrockEmbedder
+
+    counts = []
+
+    async def invoke(operation, payload, who, **kwargs):
+        body = payload["body"]
+        assert isinstance(body, bytes)
+        assert len(body) <= 20_000_000
+        texts = json.loads(body)["texts"]
+        counts.append(len(texts))
+        return {"body": {"embeddings": [[1.0] * 256 for _ in texts]}}
+
+    monkeypatch.setattr(bedrock, "call", invoke)
+    result = await BedrockEmbedder(model="cohere.embed-v4:0", dim=256).embed_many(
+        ["x" * 300_000] * 96
+    )
+    assert len(result) == sum(counts) == 96
+    assert len(counts) == 2
 
 
 @pytest.mark.asyncio

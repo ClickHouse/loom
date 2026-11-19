@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 from server.clients import bedrock
 from server.embedding._cache import cached_embed, last_tier
 from server.embedding._provider import (
+    EmbedderInputTooLarge,
     MalformedEmbedding,
     check_size,
     count_tokens,
@@ -22,7 +23,46 @@ from server.observability.provider_health import recording
 from server.settings import settings
 
 _BATCH_LIMIT = 96
+# Cohere's 20 MB payload ceiling is below InvokeModel's 25,000,000-byte body limit.
+_MAX_REQUEST_BYTES = 20_000_000
 _WIDTHS = frozenset({256, 512, 1024, 1536})
+
+
+def _body(texts: list[str], purpose: str, width: int) -> bytes:
+    return json.dumps(
+        {
+            "texts": texts,
+            "input_type": purpose,
+            "embedding_types": ["float"],
+            "output_dimension": width,
+            "truncate": "NONE",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _batches(
+    misses: list[tuple[int, str]], purpose: str, width: int
+) -> list[list[tuple[int, str]]]:
+    """Preflight every item, then pack references in linear serialized-text work."""
+    base = len(_body([], purpose, width))
+    batches: list[list[tuple[int, str]]] = []
+    batch: list[tuple[int, str]] = []
+    size = base
+    for item in misses:
+        encoded_size = len(json.dumps(item[1], ensure_ascii=False).encode("utf-8"))
+        if base + encoded_size > _MAX_REQUEST_BYTES:
+            raise EmbedderInputTooLarge("A serialized Cohere input exceeds the request byte limit")
+        added = encoded_size + bool(batch)
+        if batch and (len(batch) == _BATCH_LIMIT or size + added > _MAX_REQUEST_BYTES):
+            batches.append(batch)
+            batch, size, added = [], base, encoded_size
+        batch.append(item)
+        size += added
+    if batch:
+        batches.append(batch)
+    return batches
 
 
 def _billed_tokens(model: str, response: dict[str, Any]) -> int | None:
@@ -70,19 +110,14 @@ class BedrockEmbedder:
         who = await customer.require()
         for text in texts:
             check_size(text, self.max_input_tokens, self.model_name)
+        body = _body(texts, purpose, self.dim)
+        if len(texts) > _BATCH_LIMIT or len(body) > _MAX_REQUEST_BYTES:
+            raise EmbedderInputTooLarge("Cohere request exceeds the item or serialized byte limit")
         payload = {
             "modelId": self._model_id,
             "accept": "application/json",
             "contentType": "application/json",
-            "body": json.dumps(
-                {
-                    "texts": texts,
-                    "input_type": purpose,
-                    "embedding_types": ["float"],
-                    "output_dimension": self.dim,
-                    "truncate": "NONE",
-                }
-            ),
+            "body": body,
         }
         with recording("bedrock:embeddings"):
             data = await bedrock.call(
@@ -132,8 +167,7 @@ class BedrockEmbedder:
         with embedding_span(provider="bedrock", model=self.model_name) as span:
             results, misses, hits = split_cached(self._cache_model, texts)
             billed: int | None = 0
-            for start in range(0, len(misses), _BATCH_LIMIT):
-                batch = misses[start : start + _BATCH_LIMIT]
+            for batch in _batches(misses, "search_document", self.dim):
                 vectors, tokens = await self._fetch([text for _, text in batch], "search_document")
                 billed = billed + tokens if billed is not None and tokens is not None else None
                 for (index, text), vec in zip(batch, vectors, strict=True):

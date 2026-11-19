@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import threading
 from collections.abc import Callable
@@ -86,9 +87,7 @@ def _signed(
 ) -> tuple[str, bytes, dict[str, str]]:
     request_body = {key: value for key, value in payload.items() if key != "modelId"}
     body = (
-        request_body["body"].encode()
-        if operation == "invoke_model"
-        else json.dumps(request_body).encode()
+        request_body["body"] if operation == "invoke_model" else json.dumps(request_body).encode()
     )
     suffix = "invoke" if operation == "invoke_model" else "converse"
     # Session mutation and credential refresh are serialized; HTTP requests are not.
@@ -181,19 +180,22 @@ async def call(
         )
     if operation not in {"converse", "invoke_model"}:
         raise ValueError("Unsupported native Bedrock operation")
-    async for attempt in _retry.retrying(attempts=attempts, max_wait_s=max_wait_s):
-        with attempt:
-            url, body, headers = await asyncio.to_thread(
-                _signed,
-                operation,
-                payload,
-                customer.headers(who),
-                settings.bedrock_region,
-            )
-            if on_attempt is not None:
-                on_attempt()
-            reply = await _post(url, body, headers, request_timeout_s)
-            if operation == "invoke_model":
-                return {"body": reply.data, "ResponseMetadata": {"HTTPHeaders": reply.headers}}
-            return reply.data
+    if not math.isfinite(request_timeout_s) or request_timeout_s <= 0:
+        raise ValueError("Native Bedrock requests require a positive finite timeout")
+    async with asyncio.timeout(request_timeout_s):
+        async for attempt in _retry.retrying(attempts=attempts, max_wait_s=max_wait_s):
+            with attempt:
+                url, body, headers = await asyncio.to_thread(
+                    _signed,
+                    operation,
+                    payload,
+                    customer.headers(who),
+                    settings.bedrock_region,
+                )
+                if on_attempt is not None:
+                    on_attempt()
+                reply = await _post(url, body, headers, request_timeout_s)
+                if operation == "invoke_model":
+                    return {"body": reply.data, "ResponseMetadata": {"HTTPHeaders": reply.headers}}
+                return reply.data
     raise RuntimeError("Bedrock retry loop exited without a response")
