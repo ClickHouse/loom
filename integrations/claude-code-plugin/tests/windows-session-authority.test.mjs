@@ -583,15 +583,15 @@ if (process.platform === "win32") {
         if ($phase -ceq 'compiler-bytes' -and ($code -lt 0 -or $code -gt 8192)) { throw 'Unexpected diagnostic count' }
         if ($phase -ceq 'compiler-format' -and ($code -lt 0 -or $code -gt 6)) { throw 'Unexpected diagnostic format' }
         if ($phase -ceq 'compiler-scanned' -and $code -ne 0) { throw 'Unexpected diagnostic status' }
-        $script:scannerFrames.Add([ordered]@{ phase = $phase; code = $code })
+        $script:scannerFrames.Add('{"phase":"' + $phase + '","code":' + $code.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')
       }
-      $observed = @()
+      $observed = [Collections.Generic.List[string]]::new()
       foreach ($label in @('formats', 'rejects', 'bounded', 'empty')) {
-        $script:scannerFrames = [Collections.Generic.List[object]]::new()
+        $script:scannerFrames = [Collections.Generic.List[string]]::new()
         Write-LoomCompilerCodes ([IO.Path]::Combine($env:LOOM_TEST_SCANNER_DIRECTORY, $label + '.log'))
-        $observed += [ordered]@{ 'case' = $label; frames = $script:scannerFrames.ToArray() }
+        $observed.Add('{"case":"' + $label + '","frames":[' + [string]::Join(',', $script:scannerFrames.ToArray()) + ']}')
       }
-      [Console]::Out.Write((ConvertTo-Json -InputObject $observed -Compress -Depth 4))
+      [Console]::Out.Write('[' + [string]::Join(',', $observed.ToArray()) + ']')
     `;
     const system32 = path.join(process.env.SystemRoot, "System32");
     const powershellHome = path.join(system32, "WindowsPowerShell", "v1.0");
