@@ -201,8 +201,10 @@ describe("login", () => {
     expect(p).toMatchObject({ server: SERVER, marked: true, access_token: "a1", refresh_token: "r1" });
     expect(p.session).toMatch(/^[0-9a-f]{16}$/);
     expect(p.expires_at).toBeGreaterThan(now() + 3500);
-    expect(statSync(credentialsPath()).mode & 0o777).toBe(0o600);
-    expect(statSync(join(home, ".loom")).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect(statSync(credentialsPath()).mode & 0o777).toBe(0o600);
+      expect(statSync(join(home, ".loom")).mode & 0o777).toBe(0o700);
+    }
     expect(srv.sent.at(-1)).toMatchObject({ path: "/v1/whoami", auth: "Bearer a1" });
   });
 
