@@ -25,6 +25,7 @@
  "auth_oidc_discovery_ttl_s": 3600.0,
  "auth_required": true,
  "background_workers": "auto",
+ "bedrock_region": "",
  "bind_host": "127.0.0.1",
  "blacklist_cache_ttl_seconds": 300,
  "blacklist_version_check_interval_seconds": 2.0,
