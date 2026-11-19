@@ -216,8 +216,8 @@ Matching watermarks do not establish immutability by themselves.
 
 These pieces can be injected into `Factory` with `HistoricalGrader`, but do not
 constitute an approved live cohort command. The controller still needs qualified
-provider/dependency locks, verified token bounds, durable global reservations,
-hard attempt supervision, server billing joins and actual protocol approval.
+provider/dependency locks, verified token bounds, integrated hard supervision,
+server billing joins and actual protocol approval.
 The offline CLI never constructs live clients. Provider failures and invalid
 hidden graders retain failed result manifests, counts and unknown costs.
 
@@ -230,3 +230,20 @@ so a reused PID cannot identify another owner's group. This is a controller
 utility; it is never an agent tool or permission to launch a paid cohort.
 `TransportAudit` accepts a physical request cap and a durable recording callback;
 failed I/O consumes a dispatch, and a request beyond the cap is refused before I/O.
+
+`cohort.Cohort` persists the protocol digest, exact schedule, every attempt and
+global model reservations in an fsynced journal under an exclusive file lock.
+`ReservedProvider` writes the reservation before calling an injected provider,
+then saves raw usage and settles only explicitly priced fields. Model cost is
+labelled generation-only; server and transport overhead remain separate.
+A failed call retains its worst-case reservation. A restart refuses an active
+attempt or unsettled usage instead of repeating it; a changed protocol or
+partial journal also refuses. Preserve those receipts for explicit controller
+reconciliation. No automatic retry or journal repair is provided.
+
+The caller supplies an eligibility verifier before each attempt. That verifier
+must check the actual owner approval, merged integration and frozen dependencies;
+this accounting primitive cannot establish permission by itself. It constructs
+no provider or Loom client and grants no spending permission. Connecting this
+journal, the process supervisor, live transports and complete billing into one
+qualified cohort entrypoint remains required before live execution.
