@@ -304,27 +304,3 @@ def parse_command(argv: list[str]) -> Command:
     if parser is None:
         raise _refuse()
     return parser(argv[1:])
-
-
-def new_state(command: Command, *, targets: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
-    from server.cli.cell_each_state import new_state as create
-
-    return create(command, targets=targets, run_id=run_id)
-
-
-def read_state(path: Any) -> dict[str, Any]:
-    from server.cli.cell_each_state import read_state as read
-
-    return read(path)
-
-
-def write_state(path: Any, state: dict[str, Any], *, exclusive: bool = False) -> None:
-    from server.cli.cell_each_state import write_state as write
-
-    write(path, state, exclusive=exclusive)
-
-
-def main(argv: list[str] | None = None) -> int:
-    from server.cli.cell_each_run import main as run
-
-    return run(argv)

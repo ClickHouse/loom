@@ -15,11 +15,13 @@ RUN_ID = "a046002d-c888-4b54-852b-167f1cb8a443"
 
 
 def _module() -> Any:
-    return importlib.import_module("server.cli.cell_each")
+    return importlib.import_module("server.cli.cell_each_state")
 
 
 def _state(module: Any) -> dict[str, Any]:
-    command = module.parse_command(["settings", "set", "memory_ask_recency_weight", "0.25"])
+    from server.cli.cell_each import parse_command
+
+    command = parse_command(["settings", "set", "memory_ask_recency_weight", "0.25"])
     return module.new_state(
         command,
         targets=[
@@ -45,6 +47,8 @@ def test_uncertain_resume_stops_before_credentials_or_http(
 ) -> None:
     import httpx
 
+    from server.cli.cell_each_run import main
+
     module = _module()
     directory = tmp_path / "private"
     directory.mkdir(mode=0o700)
@@ -62,7 +66,7 @@ def test_uncertain_resume_stops_before_credentials_or_http(
     monkeypatch.setattr(httpx, "AsyncClient", no_network)
     # Missing credentials prove resume inspects durable uncertainty before any key/manifest read.
     assert (
-        module.main(
+        main(
             [
                 "--router",
                 "https://router.example.com",
