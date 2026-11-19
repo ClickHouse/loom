@@ -70,7 +70,6 @@ _TOKEN_RE = re.compile(
     r"|[A-Za-z_][A-Za-z0-9_.]*|-?\d[\w.+-]*|[{}()<>,;:=\[\]]|\S",
     re.S,
 )
-_INCLUDE_RE = re.compile(r"(?m)^[^\S\n]*include\s+[\"']([^\"'\n]+)[\"']")
 
 
 @dataclass
@@ -101,6 +100,11 @@ def _tokens(text: str) -> list[_Tok]:
 
 def _is_name(t: str) -> bool:
     return bool(t) and (t[0].isalpha() or t[0] == "_")
+
+
+def _is_literal(t: str) -> bool:
+    """A closed, non-empty string literal: `"shared.thrift"` or `'shared.thrift'`."""
+    return len(t) > 2 and t[0] in "\"'" and t[-1] == t[0]
 
 
 def _bare_type(name: str) -> str:
@@ -279,6 +283,11 @@ class _Parser:
                     self._fields(j + 1, close)
                     self.i = close + 1
                     continue
+            elif t == "include" and _is_literal(nxt):
+                # read from the tokens, so an include inside a comment is not one
+                self.units.includes.append(nxt[1:-1])
+                self.i += 2
+                continue
             elif t == "enum" and _is_name(nxt):
                 start = self.i
                 j = self.i + 2
@@ -317,7 +326,7 @@ class _Parser:
 
 def thrift_units(path: str, text: str) -> ThriftUnits:
     units = _Parser(path, _tokens(text)).parse()
-    units.includes = list(dict.fromkeys(_INCLUDE_RE.findall(text)))
+    units.includes = list(dict.fromkeys(units.includes))
     return units
 
 
