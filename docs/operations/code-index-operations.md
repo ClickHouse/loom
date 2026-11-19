@@ -868,7 +868,7 @@ A certificate git cannot verify fails the job in git's own words, the same for t
 proxy's certificate and a remote's (`SSL certificate problem: unable to get local issuer
 certificate` with one TLS library; the wording is the library's). A certificate that
 names another host fails the same way, in other words of the library. When it is the
-proxy's, git ends the handshake before its first request, so neither the identity nor
+proxy's, git ends the connection before its first request, so neither the identity nor
 the token leaves. A fetch records git's words on the `fetch` tier, as an unclassified
 error. A clone shows `git clone failed (exit 128)` with git's words in the server log,
 and the `ls-remote` before an add shows `git ls-remote failed for <repository>`: check

@@ -269,8 +269,8 @@ async def test_git_verifies_an_https_proxy_by_a_bundle_of_its_own(
     """A proxy whose own listener speaks TLS under a private authority. With that
     authority in LOOM_CODE_GIT_PROXY_TLS_CA_FILE git sends its first request, the identity
     and the password in it, as it does to an http:// proxy. With another authority's
-    bundle, or with the authority named only as the remote's bundle, git ends the
-    handshake: the proxy receives no request, so no credential leaves."""
+    bundle, or with the authority named only as the remote's bundle, git refuses the
+    proxy: it sends no request, so no credential leaves."""
     mirror = tmp_path / "mirror.git"
     git(tmp_path, "init", "--bare", "--quiet", str(mirror))
     started: list[tuple[str, ...]] = []
@@ -296,7 +296,7 @@ async def test_git_verifies_an_https_proxy_by_a_bundle_of_its_own(
     assert TOKEN not in error and ENCODED not in error and BASIC not in error
     assert "proxy" not in (mirror / "config").read_text().lower()
     if not verified:
-        assert proxy.heads == []  # git ended the handshake: no request, so no credential
+        assert proxy.heads == []  # git refused the proxy: no request, so no credential
         return
     assert proxy.heads, "git made no request to the proxy"
     for head in proxy.heads:
