@@ -27,6 +27,7 @@ from server.identity.app import namespace as _registry
 from server.identity.app import registration
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespaces as namespaces_repo
+from server.memory.app import blacklist_guard
 from server.memory.app import snapshot_rows as memory_snapshot
 from server.memory.app.provenance import writer_actor
 from server.observability import audit
@@ -159,6 +160,27 @@ async def handle_namespace_snapshot(
     )
 
 
+async def _restore_payload(
+    input: NamespaceRestoreInput, version_base: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Validate all restored values before the namespace or its grants change."""
+    memories, erased = await memory_snapshot.without_erased(
+        input.org, input.target_namespace, input.payload.memories
+    )
+    rows = memory_snapshot.checked_rows(
+        memory_snapshot.restore_rows(
+            memories,
+            org=input.org,
+            target_namespace=input.target_namespace,
+            rebind_agent=input.rebind_agent,
+            version_base=version_base,
+            actor=writer_actor(),
+        )
+    )
+    await blacklist_guard.enforce_rows(rows)
+    return rows, erased
+
+
 async def handle_namespace_restore(
     input: NamespaceRestoreInput,
 ) -> NamespaceRestoreOutput:
@@ -229,23 +251,8 @@ async def handle_namespace_restore(
                 counts={"erased_skipped": 0, **done},
             )
 
-        memories, erased = await memory_snapshot.without_erased(
-            input.org, input.target_namespace, payload.memories
-        )
-        # Every persisted column, through the builder, and refused before anything is
-        # written where its column cannot hold it. Versions bump off one base so restored
-        # rows win against any pre-existing row with the same identity.
         version_base = _time.time_ns()
-        rows = memory_snapshot.checked_rows(
-            memory_snapshot.restore_rows(
-                memories,
-                org=input.org,
-                target_namespace=input.target_namespace,
-                rebind_agent=input.rebind_agent,
-                version_base=version_base,
-                actor=writer_actor(),
-            )
-        )
+        rows, erased = await _restore_payload(input, version_base)
         now = naive_utc_now_seconds()
 
         # Only CREATE the namespace row when absent — an RMT insert over an
@@ -284,6 +291,8 @@ async def handle_namespace_restore(
                 )
     await _registry.insert_admin_grant(ch, input.org, input.target_namespace, caller)
 
+    # Our namespace/grant writes move policy too: the insert rechecks all values and
+    # captures admission after them, so concurrent blacklist changes still refuse.
     pending = await memory_snapshot.insert_version_rows(rows, ch=ch) if rows else False
 
     # Per-type configs.

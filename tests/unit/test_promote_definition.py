@@ -517,6 +517,9 @@ class _Embedder:
     async def embed(self, text: str) -> list[float]:
         return [0.6, 0.8]
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 async def test_a_definition_skips_the_close_shared_row_check(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch

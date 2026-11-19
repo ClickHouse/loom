@@ -17,6 +17,21 @@ import { recalledDataBlock } from "../lib/prompt-recall.mjs";
 
 const scope = { org: "o", namespace: "coding", agent: "claude-code", project: "loom", tags: [] };
 
+test("indexed code guidance starts with Loom and reuses answers supplied by hooks", () => {
+  const text = codeArbitration({ git_head: "abc", fetch_overdue: false });
+  assert.match(text.split("\n")[1], /Use Loom first/);
+  assert.doesNotMatch(text, /Grep or Read the names you know first/);
+  assert.match(text, /loom_code_symbol.*definitions/);
+  assert.match(text, /loom_code_callers.*callers/);
+  assert.match(text, /tool is deferred.*ToolSearch/);
+  assert.match(text, /definition does not supply its callers/);
+  assert.match(text, /Explicit literal-search requests/);
+  assert.match(text, /quoting an identifier or error is still a code investigation/);
+  assert.match(text, /hook already supplied.*do not repeat/);
+  assert.match(text, /uncommitted.*local/);
+  assert.match(text, /unavailable or abstains.*local/);
+});
+
 test("the session-start pack leaves the runs manifest out by default, so the primer stays the same", () => {
   const off = startPackBody(scope, { session_id: "s1", cwd: "/repo" }, { tokenBudget: 1200, runId: "cc-s1", env: {} });
   assert.equal(off.include_runs, undefined);
@@ -63,7 +78,9 @@ test("the primer's scope line names org, namespace, repo and branch, and is empt
     repo: "ClickHouse/ClickHouse",
     branch: "26.8",
   });
-  assert.match(line, /org: "clickhouse", namespace: "code-ch-26-8"/);
+  assert.match(line, /namespace: "code-ch-26-8"/);
+  assert.match(line, /MCP infers org "clickhouse" from the token/);
+  assert.match(line, /HTTP\/SDK callers also pass org/);
   assert.match(line, /ClickHouse\/ClickHouse @ 26\.8/);
   assert.match(line, /EVERY loom_code_\* call/);
   assert.equal(codeScopeLine(null), "");
@@ -115,12 +132,7 @@ test("codeArbitration: fresh status keeps the taught block; a stalled mirror rew
   );
   assert.doesNotMatch(stale, /grep THIS checkout/, "information, not a stand-down");
   // every other rule survives untouched
-  for (const rule of [
-    "loom_code_symbol",
-    "loom_code_search",
-    "loom_tracker_duplicate_check",
-    "loom_code_bisect_candidates",
-  ]) {
+  for (const rule of ["loom_code_symbol", "loom_code_search", "loom_code_callers", "loom_code_impact"]) {
     assert.ok(stale.includes(rule), rule);
   }
 });

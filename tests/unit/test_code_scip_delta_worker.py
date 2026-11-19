@@ -105,7 +105,11 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     harness = AsyncMock(return_value=JobResult(0, b"", b""))
 
     repo = _repo("a" * 40, "b" * 40)
-    cfg = _Cfg(github_token="ghs_test", git_remote="https://github.com/o/private")
+    cfg = _Cfg(
+        github_token="ghs_test",
+        git_remote="https://github.com/o/private",
+        git_proxy_identity="acme.widgets-indexer",
+    )
     with (
         patch("server.code.store.index.CodeRepo", return_value=repo),
         patch(
@@ -124,6 +128,7 @@ async def test_fetch_does_not_recurse_submodules(monkeypatch, tmp_path):
     # the submodule pins come with the entry's token, so a private submodule is fetched
     sub = git_kwargs[next(i for i, c in enumerate(git_calls) if c[0] == "submodule")]
     assert sub["token"] == "ghs_test" and sub["remote"] == "https://github.com/o/private"
+    assert sub["proxy_identity"] == "acme.widgets-indexer"
 
 
 @pytest.mark.asyncio

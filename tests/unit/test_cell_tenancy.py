@@ -319,7 +319,7 @@ def test_the_op_gate_checks_tenancy_before_anything_it_provisions(
     target = gates.Target(org="acme", namespace="ns", named_namespace="ns", register_namespace="ns")
     with pytest.raises(errors.WrongCellError):
         asyncio.run(gates.authorize(op, _auth("acme"), target, transport="http"))
-    assert order == ["tenancy:acme"]
+    assert order == ["acted_for", "tenancy:acme"]
 
 
 def test_the_raw_routes_authorize_through_the_tenancy_check(
@@ -461,6 +461,8 @@ ROUTES: dict[str, str] = {
     "/v1/auth/agent-signup POST": "named",
     "/v1/auth/login POST": "password sign-in: the account is this cell's",
     "/v1/auth/self-signup POST": "named",
+    "/v1/connect/{kind}/start POST": "token",
+    "/v1/connect/{kind}/callback GET": "named",
     "/v1/health GET": "health probe",
     "/v1/health/live GET": "health probe",
     "/v1/health/ready GET": "health probe",
@@ -547,7 +549,7 @@ def _checks(endpoint: Any) -> bool:
     return False
 
 
-def test_every_route_is_tenancy_checked_or_org_free() -> None:
+def _assert_every_route_is_tenancy_checked_or_org_free() -> None:
     from server.main import app
     from server.operations.registry import ALL_OPERATIONS
 
@@ -571,6 +573,31 @@ def test_every_route_is_tenancy_checked_or_org_free() -> None:
     endpoints = {key: ep for key, ep in _endpoints(app.routes)}
     missing = [key for key, how in ROUTES.items() if how == "named" and not _checks(endpoints[key])]
     assert not missing, f"these routes name an org but check none: {missing}"
+
+
+def test_every_route_is_tenancy_checked_or_org_free() -> None:
+    import os
+    import subprocess
+
+    # Route attachment is decided when the app is built, before request handling.
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from server.settings import settings\n"
+            "settings.auth_required = True\n"
+            "settings.identity_provider = 'trust-network'\n"
+            "settings.oauth_enabled = False\n"
+            "from tests.unit.test_cell_tenancy import "
+            "_assert_every_route_is_tenancy_checked_or_org_free as check\n"
+            "check()\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "LOOM_ENV_FILE": ""},
+    )
+    assert check.returncode == 0, check.stdout + check.stderr
 
 
 @pytest.mark.parametrize("mode", ["recording", "enforced"])
@@ -1524,3 +1551,37 @@ def test_a_malformed_router_url_answers_a_placement_503_and_writes_nothing(
     with pytest.raises(errors.BackendUnavailableError, match="did not answer"):
         asyncio.run(tenancy.ensure_held("new", _auth("new")))
     assert calls == [] and cell_pg.writes == []
+
+
+@pytest.mark.parametrize("path", ["/v1/me/sharing-summary", "/scim/v2/Groups"])
+async def test_the_middleware_keeps_acted_for_refusal_text_out_of_the_response(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, path: str
+) -> None:
+    import logging
+
+    from server.transport import tenancy_gate
+
+    private = "private-identity-store-detail"
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr("server.auth.jwt.authenticate_token", AsyncMock(return_value=_auth("acme")))
+    monkeypatch.setattr(
+        "server.auth.authz.check_acted_for", AsyncMock(side_effect=PermissionError(private))
+    )
+    held = AsyncMock(side_effect=AssertionError("denied identity reached placement"))
+    monkeypatch.setattr(tenancy, "ensure_held", held)
+    app, send = AsyncMock(), AsyncMock()
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": path,
+        "headers": [(b"authorization", b"Bearer x")],
+    }
+    with caplog.at_level(logging.INFO, logger="server.transport.tenancy_gate"):
+        await tenancy_gate.TenancyMiddleware(app)(scope, AsyncMock(), send)
+    app.assert_not_awaited()
+    held.assert_not_awaited()
+    start, body = send.await_args_list[0].args[0], send.await_args_list[1].args[0]
+    assert start["status"] == 401
+    assert private.encode() not in body["body"]
+    assert b"AUTH_INVALID" in body["body"] and b"PermissionError" in body["body"]
+    assert private in caplog.text

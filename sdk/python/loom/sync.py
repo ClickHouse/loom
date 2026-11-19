@@ -36,6 +36,7 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 from loom.agent import Agent
 from loom.retry import RetryPolicy
 from loom.run import _ACTIVE_RUN, RunClient, RunScope
+from loom.session_protection import SessionProtection
 
 # Client attributes on Agent that get a synchronous proxy.
 _CLIENT_ATTRS: tuple[str, ...] = (
@@ -256,6 +257,7 @@ class SyncAgent:
         consumer: str = "",
         mentor_brief: bool | None = None,
         profile: str | None = None,
+        session_protection: SessionProtection | None = None,
     ) -> None:
         self._closed = False
         self._close_lock = threading.Lock()
@@ -285,6 +287,7 @@ class SyncAgent:
                     consumer=consumer,
                     mentor_brief=mentor_brief,
                     profile=profile,
+                    session_protection=session_protection,
                 )
 
             self._agent: Agent = self._submit(_build()).result(_CLOSE_TIMEOUT_S)

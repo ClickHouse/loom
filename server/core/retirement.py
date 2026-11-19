@@ -27,6 +27,7 @@ class RetirementGate:
     def __init__(self) -> None:
         self.active = 0
         self.closed = False
+        self.pg_sealed = False
         self.role = ""
         self.enrolled = False
         self.producers_stopped = False
@@ -112,7 +113,7 @@ class RetirementProof:
 def guarded_proof(participant: UUID, *, version: int) -> RetirementProof:
     gate = get_gate()
     proof = provider_process.host_proof()
-    if not gate.quiescent or not gate.enrolled or not proof:
+    if not gate.quiescent or not gate.pg_sealed or not gate.enrolled or not proof:
         raise ProcessStopping("Permanent guarded quiescence is not established")
     return RetirementProof(participant, provider_process.certified(proof), version - 1, version)
 

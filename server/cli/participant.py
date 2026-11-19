@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from time import monotonic
 from typing import Any
 
 from server.cli._ch import writes
@@ -28,9 +29,10 @@ def _cmd_retire(args: argparse.Namespace) -> int:
         return 2
 
     async def _go(ch: Any) -> str:
-        from server.insights.app.provider_barrier import retire_participant
+        from server.insights.app.provider_barrier import SHUTDOWN_RETIRE_S, retire_participant
 
-        return await retire_participant(participant, ch=ch)
+        end = monotonic() + SHUTDOWN_RETIRE_S
+        return await retire_participant(participant, ch=ch, end=end)
 
     outcome = run_connected(_go, org_free=writes("a participant row of this cell"))
     if outcome == "absent":

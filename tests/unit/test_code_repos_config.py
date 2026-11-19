@@ -69,6 +69,28 @@ def test_an_entry_names_its_producer_or_leaves_it_to_the_tree(
     assert [r.scip_producer for r in configured_repos()] == ["", "clang"]
 
 
+def test_an_entry_names_its_git_proxy_identity_and_a_malformed_one_skips_the_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An entry without one takes the deployment's default at fetch time; one that
+    names something else is not fetched under a guess."""
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(
+        settings,
+        "code_repos_json",
+        '[{"namespace": "code-a", "git_proxy_identity": "acme.widgets-indexer"},'
+        ' {"namespace": "code-b"},'
+        ' {"namespace": "code-c", "git_proxy_identity": "acme:widgets"},'
+        ' {"namespace": "code-d", "git_proxy_identity": 7}]',
+    )
+    listed = {r.namespace: r.git_proxy_identity for r in configured_repos()}
+    assert listed == {"code-a": "acme.widgets-indexer", "code-b": ""}
+    for skipped in ("code-c", "code-d"):
+        (reason,) = repos.config_errors_for(skipped)
+        assert "git_proxy_identity" in reason and "skipped" in reason
+
+
 def test_an_entry_whose_namespace_could_name_a_tier_tree_is_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

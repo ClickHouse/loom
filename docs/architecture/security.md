@@ -6,6 +6,13 @@ gate and the handlers authorize; nothing downstream reads a raw credential. To r
 vulnerability, and for the deployment hardening checklist, see
 [SECURITY.md](../../SECURITY.md).
 
+HTTP and MCP pass the authorized target to the handler. An omitted optional
+namespace takes that target; a read-only operation also takes its omitted
+optional organization, including a code read authorized by its verified token.
+Writes keep their validated organization for stable idempotency hashes across
+builds. Explicit identities and required fields remain unchanged; a code read
+never takes the caller's memory namespace.
+
 ## Threat model
 
 | Threat                                                                | Boundary                                                                                                                                                                                                                                                                                                                                                                                                 | Enforced by                                                                                                                       |

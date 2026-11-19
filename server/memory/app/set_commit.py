@@ -20,6 +20,7 @@ from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector, document_vectors
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -433,6 +434,37 @@ def _answers_at_commit(w: _SetWrite) -> bool:
     )
 
 
+async def _audit_set_receipt(
+    input: MemorySetInput,
+    *,
+    memory_id: str,
+    content_sha256: str,
+    source_class: str,
+    verdict: str,
+    actor: str,
+) -> None:
+    """A committed point write's hash-only receipt, never its value."""
+    from server.observability import audit as _audit_mod
+
+    try:
+        await _audit_mod.emit(
+            event_type="memory.set",
+            org=input.org,
+            namespace=input.namespace,
+            actor=actor,
+            subject={
+                "memory_key": input.memory_key,
+                "memory_id": memory_id,
+                "content_sha256": content_sha256,
+                "source_class": source_class,
+                "verdict": verdict,
+                "pinned": bool(input.pinned),
+            },
+        )
+    except Exception as e:  # noqa: BLE001 — the audit row never fails the write
+        log.warning("memory.set: audit emit failed (non-fatal): %s", e)
+
+
 async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
     """Write the plain row and announce it, and fence a 'high' one whenever it may be in:
     under Postgres committed and handed to the publication batch, on ClickHouse inserted
@@ -468,6 +500,14 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
             await insert_memory_versions([memory_row], ch=ch)
         landed = True
         try:
+            await _audit_set_receipt(
+                w.input,
+                memory_id=w.memory_id,
+                content_sha256=w.new_sha,
+                source_class=w.source_class,
+                verdict="",
+                actor=w.writer_actor or "-",
+            )
             version = await _lift_after_insert(w, ch)
         finally:
             await _announce_set(w)  # the row is in, whatever failed after it
@@ -572,25 +612,10 @@ async def _set_embed(w: _SetWrite, embedder: Any = None) -> None:
     )
     with traced("embed.compute", model=embedder.model_name, excerpt_len=len(excerpt)):
         if not key_text:
-            embedding = await embedder.embed(embed_text)
+            embedding = await document_vector(embedder, embed_text)
             key_embedding = [0.0] * embedder.dim
         else:
-            # One request for both axes when the embedder can batch. The two
-            # `embed()` calls already ran concurrently, so this is not a latency
-            # win — it halves outbound embedding requests per write, which is
-            # rate-limit headroom rather than speed. `embed_many` is not on the
-            # Embedder protocol (the local embedder lacks it), hence the probe.
-            embed_many = getattr(embedder, "embed_many", None)
-            if embed_many is not None:
-                pair = await embed_many([embed_text, key_text])
-                if len(pair) != 2:
-                    raise RuntimeError(f"embed_many returned {len(pair)} vectors for 2 inputs")
-                embedding, key_embedding = pair[0], pair[1]
-            else:
-                embedding, key_embedding = await asyncio.gather(
-                    embedder.embed(embed_text),
-                    embedder.embed(key_text),
-                )
+            embedding, key_embedding = await document_vectors(embedder, [embed_text, key_text])
     w.embedder = embedder
     w.excerpt = excerpt
     w.embedding = embedding
@@ -1121,7 +1146,7 @@ async def _set_post_insert(
     """What a committed point write does after its row is in.
 
     Same-key supersession changes which rows a read serves (its record awaited, its
-    graph follow left in `follows` for after the write's relations), and the chained
+    graph follow left in `follows` for after the write's relations), and the hash-only
     audit row is the write's receipt: both stay awaited, in ONE round trip, not two.
     The entity-graph projection is a fail-open side effect nothing on this path reads (the
     entity_extractor worker re-projects a row it missed): it is written beside the response
@@ -1130,7 +1155,6 @@ async def _set_post_insert(
     the tail: the close of what it dropped runs next, and keeps an edge open only for a
     value whose edge links are in."""
     from server.memory.app.key_supersession import supersede_same_key_rows
-    from server.observability import audit as _audit_mod
     from server.observability.otel import traced
 
     async def _supersession() -> None:
@@ -1145,30 +1169,16 @@ async def _set_post_insert(
             agent=input.agent,
         )
 
-    # Every point write leaves a hash in the chained audit log: key, id, content hash,
-    # writer, class, verdict — never the value.
-    async def _audit() -> None:
-        try:
-            await _audit_mod.emit(
-                event_type="memory.set",
-                org=input.org,
-                namespace=input.namespace,
-                actor=actor,
-                subject={
-                    "memory_key": input.memory_key,
-                    "memory_id": memory_id,
-                    "content_sha256": content_sha256,
-                    "source_class": source_class,
-                    "verdict": verdict,
-                    "pinned": bool(input.pinned),
-                },
-            )
-        except Exception as e:  # noqa: BLE001 — the audit row never fails the write
-            log.warning("memory.set: audit emit failed (non-fatal): %s", e)
-
     tail = [
         _supersession(),
-        _audit(),
+        _audit_set_receipt(
+            input,
+            memory_id=memory_id,
+            content_sha256=content_sha256,
+            source_class=source_class,
+            verdict=verdict,
+            actor=actor,
+        ),
         *_entity_projection_tail(
             input, memory_id=memory_id, content_sha256=content_sha256, revised=revised
         ),

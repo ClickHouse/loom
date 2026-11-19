@@ -17,11 +17,13 @@ def native_lifetime(monkeypatch):
 
     gate = retirement.get_gate()
     model_gate = ModelWorkGate()
+    finishes = []
 
     async def enroll():
         gate.enrolled = True
 
     async def finish():
+        finishes.append(gate.enrolled)
         gate.stopped()
 
     # These store-admission cases keep the real owner contexts with fake native I/O.
@@ -30,6 +32,7 @@ def native_lifetime(monkeypatch):
     monkeypatch.setattr(provider_command, "_adopt_overrides", AsyncMock(return_value=True))
     monkeypatch.setattr(provider_command, "_finish_participant", finish)
     monkeypatch.setattr(provider_command, "get_model_work_gate", lambda: model_gate)
+    return SimpleNamespace(gate=gate, finishes=finishes)
 
 
 def test_missing_credential_names_only_the_environment_variable(monkeypatch):
@@ -299,7 +302,10 @@ async def test_init_checks_actual_deployment_before_external_record_and_closes_b
     record.connect.assert_awaited_once()
     record.disconnect.assert_awaited_once()
     deployment.disconnect.assert_awaited_once()
-    close_pool.assert_awaited_once()
+    assert native_lifetime.finishes == [True]
+    assert native_lifetime.gate.closed
+    # The participant teardown owns terminal PG closure; the outer wrapper must not wait again.
+    close_pool.assert_not_awaited()
     assert events[-2:] == ["record disconnect", "deployment disconnect"]
 
 

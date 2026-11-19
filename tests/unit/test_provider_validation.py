@@ -32,6 +32,24 @@ async def test_missing_keys_never_call_providers(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_native_bedrock_uses_deployment_credentials_without_saved_keys(monkeypatch):
+    llm, embed = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(validation, "_probe_llm", llm)
+    monkeypatch.setattr(validation, "_probe_embedding", embed)
+    setup = setup_input(
+        llm={"provider": "bedrock", "model": "bedrock:profile"},
+        embedding={"provider": "bedrock", "model": "cohere.embed-v4:0"},
+    )
+    result = await validation.validate_providers(setup, {})
+    assert result.ready
+    assert setup.embedding.dimensions == 1536
+    llm.assert_awaited_once_with("bedrock", "bedrock:profile", "")
+    embed.assert_awaited_once_with("bedrock", "cohere.embed-v4:0", "", 1536, "", False)
+    with pytest.raises(ValueError):
+        setup_input(keys={"bedrock": "not-a-supported-secret"})
+
+
+@pytest.mark.asyncio
 async def test_keys_are_used_without_mutating_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     llm, embed = AsyncMock(), AsyncMock()
     monkeypatch.setattr(validation, "_probe_llm", llm)

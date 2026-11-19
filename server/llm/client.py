@@ -137,6 +137,10 @@ def _build_llm_client(provider: str, model: str, *, fake_label: str, warn: str) 
         from server.llm.fake import FakeLLMClient
 
         return FakeLLMClient(model=fake_label)
+    if provider == "bedrock":
+        from server.llm.bedrock import BedrockLLMClient
+
+        return BedrockLLMClient(model=model)
     if provider == "openai":
         from server.llm.openai import OpenAILLMClient
 

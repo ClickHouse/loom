@@ -1,0 +1,309 @@
+"""Live search owns private work until cancellation or final publication."""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import AsyncExitStack, asynccontextmanager
+from copy import deepcopy
+from types import SimpleNamespace
+
+import pytest
+
+from server.auth.session_protection import protected_for, request_declaration
+from server.core import request_tail, request_work
+from server.core.diagnostics import codes_only
+from server.knowledge.app import live_search
+from server.knowledge.domain.sources import MIRRORED_ACCESS
+from server.memory.api.models_loom_search import SearchInput
+from tests.unit.principals import acting_as, principal
+
+
+@asynccontextmanager
+async def _request(auth, *, bag=True, tail=True, protected=True):
+    async with AsyncExitStack() as stack:
+        stack.enter_context(request_work.http_owner({}))
+        headers = [(b"x-loom-session-protection", b"v1")] if protected else []
+        stack.enter_context(request_declaration({"headers": headers}))
+        stack.enter_context(acting_as(auth))
+        work = request_work.RequestWork()
+        if bag:
+            stack.enter_context(request_work.bind(work))
+        if tail:
+            await stack.enter_async_context(request_tail.streaming_scope())
+        yield work
+
+
+@pytest.fixture
+def native(monkeypatch):
+    from server.knowledge.store import mirror_latch
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "knowledge_mirrored_sources_enabled", True)
+    auth = principal("viewer", org="org", namespaces=("allowed",), service_account=False)
+    source = SimpleNamespace(
+        namespace="allowed",
+        name="personal",
+        source_id="original-source",
+        active=True,
+        credential_mode="connected",
+        owner_subject="canonical@example.test",
+        access=MIRRORED_ACCESS,
+        kind="gdrive",
+    )
+    state = SimpleNamespace(
+        auth=auth,
+        source=source,
+        sources=[source],
+        events=[],
+        resolutions=[],
+        authorities=[],
+        access=object(),
+        deadline=None,
+        revoked=False,
+        revocation_seen=False,
+        block=False,
+        started=asyncio.Event(),
+        closed=asyncio.Event(),
+    )
+    hit = live_search.live_provider_search.LiveProviderHit(
+        "private-id",
+        "Private title",
+        "https://drive.google.com/file/d/private-id",
+        "gdrive",
+        "private excerpt",
+    )
+
+    def private(stage):
+        state.events.append(stage)
+        assert request_work.mirror_marked()
+        assert request_work.http_mirror_marked()
+        if stage in ("subject", "sources", "latch", "resolve", "provider"):
+            assert request_tail.required_active()
+        assert protected_for(auth)
+        assert codes_only()
+
+    async def own_subject(actual):
+        private("subject")
+        assert actual is auth
+        return "org", "canonical@example.test"
+
+    async def connected_sources(org, subject):
+        private("sources")
+        assert (org, subject) == ("org", "canonical@example.test")
+        return state.sources
+
+    async def ensure():
+        private("latch")
+
+    class Authority:
+        def __init__(self, selected):
+            self.source = selected
+
+        async def run(self, callback):
+            private("authority")
+            if state.revoked:
+                state.revocation_seen = True
+                raise RuntimeError("authority revoked")
+            return await callback(state.access)
+
+    async def resolve(org, namespace, name, *, deadline, expected_source_id):
+        private("resolve")
+        assert (org, namespace, name) == ("org", "allowed", "personal")
+        assert expected_source_id == source.source_id
+        state.resolutions.append((namespace, name, expected_source_id, deadline))
+        state.deadline = deadline
+        authority = Authority(source)
+        state.authorities.append(authority)
+        return authority
+
+    async def search(selected, access, query, *, top_k, deadline):
+        private("provider")
+        assert selected is source and access is state.access
+        assert query == "question" and top_k == 2
+        assert deadline == state.deadline
+        state.started.set()
+        try:
+            if state.block:
+                await asyncio.Event().wait()
+            return [hit]
+        finally:
+            state.closed.set()
+
+    async def revalidate(selected, access, actual_hit, *, deadline):
+        private("membership")
+        assert selected is source and access is state.access and actual_hit is hit
+        assert deadline == state.deadline
+        return True
+
+    monkeypatch.setattr(live_search.connected_accounts, "own_subject", own_subject)
+    monkeypatch.setattr(live_search.source_store, "connected_sources", connected_sources)
+    monkeypatch.setattr(live_search.connected_accounts, "resolve", resolve)
+    monkeypatch.setattr(mirror_latch, "ensure", ensure)
+    monkeypatch.setattr(live_search.live_provider_search, "search", search)
+    monkeypatch.setattr(live_search.live_provider_search, "revalidate", revalidate)
+    return state
+
+
+@pytest.mark.parametrize("missing", ["bag", "tail", "protection"])
+async def test_live_search_requires_real_request_privacy_ownership(native, missing):
+    async with _request(
+        native.auth, bag=missing != "bag", tail=missing != "tail", protected=missing != "protection"
+    ):
+        assert await live_search.search("org", ["allowed"], "question", top_k=2) is None
+    assert native.events == []
+    assert not native.started.is_set()
+
+
+async def test_live_search_keeps_only_asker_connected_authorized_sources_and_original_authority(
+    native,
+):
+    base = vars(native.source)
+    native.sources = [
+        SimpleNamespace(**{**base, **change})
+        for change in (
+            {"namespace": "foreign"},
+            {"credential_mode": "shared"},
+            {"owner_subject": "other@example.test"},
+            {"active": False},
+            {"access": "shared"},
+        )
+    ] + [native.source]
+    async with _request(native.auth):
+        result = await live_search.search("org", ["allowed"], "question", top_k=2)
+        assert result is not None
+        assert len(native.resolutions) == len(result.contributions) == 1
+        assert result.contributions[0].authority is native.authorities[0]
+        assert result.deadline == native.deadline
+        assert await live_search.publish(result) is result
+        assert result.fresh()
+        assert native.events[:4] == ["subject", "sources", "latch", "resolve"]
+        assert native.events.count("provider") == native.events.count("membership") == 1
+
+
+async def test_live_search_expiry_joins_the_started_native_call(native, monkeypatch):
+    native.block = True
+    monkeypatch.setattr(live_search.settings, "knowledge_live_search_timeout_s", 0)
+    async with _request(native.auth) as bag:
+        task = asyncio.create_task(live_search.search("org", ["allowed"], "question", top_k=2))
+        assert await task is None
+        assert task.done()
+        assert native.started.is_set() and native.closed.is_set()
+        assert bag.mirror_marked
+
+
+async def test_final_response_publication_refuses_revoked_live_authority(native):
+    sent = []
+
+    async def app(scope, receive, send):
+        result = await live_search.search("org", ["allowed"], "question", top_k=2)
+        assert result is not None
+        assert await live_search.publish(result) is result
+        native.revoked = True
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"private bytes"})
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    async with _request(native.auth, tail=False):
+        with pytest.raises(request_tail.RequiredTailError):
+            await request_tail.RequestTailMiddleware(app)({"type": "http"}, receive, send)
+    assert native.events.count("authority") == 3
+    assert native.revocation_seen
+    assert sent == []
+
+
+def _indexed():
+    return {
+        "memory": {"results": [], "term_leg": "empty", "abstain": True},
+        "knowledge": {"results": []},
+        "profile": {"results": []},
+        "conversations": {"results": []},
+    }
+
+
+@pytest.fixture
+def indexed(monkeypatch):
+    from server.auth import fanout
+    from server.memory.app.loom_search import handler
+    from server.observability import capture_consent
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "knowledge_gaps_enabled", False)
+
+    async def namespaces(*args):
+        return ["allowed"], []
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    async def sections(**kwargs):
+        return deepcopy(_indexed())
+
+    monkeypatch.setattr(fanout, "namespaces_to_search", namespaces)
+    monkeypatch.setattr(handler, "repo_namespace_in_scope", nothing)
+    monkeypatch.setattr(handler, "prepare_tracker_search", nothing)
+    monkeypatch.setattr(capture_consent, "narrow_to", nothing)
+    monkeypatch.setattr(handler, "search_sections", sections)
+    return handler
+
+
+async def test_delivered_live_answer_prevents_an_otherwise_recorded_gap(
+    native, indexed, monkeypatch
+):
+    from server.knowledge.app import gaps
+    from server.settings import settings
+
+    misses = []
+    monkeypatch.setattr(settings, "knowledge_gaps_enabled", True)
+    monkeypatch.setattr(gaps, "reads_whole_namespace", lambda: True)
+    monkeypatch.setattr(gaps, "record_miss", lambda **kwargs: misses.append(kwargs))
+    request = SearchInput(org="org", namespace="allowed", query="question", top_k=2, live=True)
+    indexed._record_gap_miss(request, _indexed(), "")
+    assert len(misses) == 1
+    async with _request(native.auth):
+        output = await indexed.handle_search(request)
+    assert output.live is not None and output.live.results[0].id == "private-id"
+    assert output.memory == _indexed()["memory"]
+    assert len(misses) == 1
+
+
+@pytest.mark.parametrize("outcome", ["indexed_failure", "caller_cancel"])
+async def test_handler_cancels_and_joins_started_live_work(native, indexed, monkeypatch, outcome):
+    native.block = True
+
+    async def sections(**kwargs):
+        await native.started.wait()
+        if outcome == "indexed_failure":
+            raise ValueError("indexed failed")
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(indexed, "search_sections", sections)
+    request = SearchInput(org="org", namespace="allowed", query="question", top_k=2, live=True)
+    async with _request(native.auth):
+        task = asyncio.create_task(indexed.handle_search(request))
+        await asyncio.wait_for(native.started.wait(), 1)
+        if outcome == "caller_cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(ValueError, match="indexed failed"):
+                await task
+        assert task.done() and native.closed.is_set()
+
+
+@pytest.mark.parametrize(
+    "options", [{}, {"live": True, "tags": ["tag"]}, {"live": True, "page": "page"}]
+)
+async def test_default_filtered_and_page_calls_do_not_start_live_work(native, indexed, options):
+    request = SearchInput(org="org", namespace="allowed", query="question", top_k=2, **options)
+    async with _request(native.auth):
+        output = await indexed.handle_search(request)
+    assert output.live is None
+    assert native.events == []
+    assert not native.started.is_set()

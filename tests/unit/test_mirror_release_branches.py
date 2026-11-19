@@ -157,6 +157,7 @@ def _cfg(**kw: Any) -> Any:
         "git_remote": "r",
         "git_branch": "master",
         "github_token": "",
+        "git_proxy_identity": "",
         "git_extra_branches": "2[5-9].*",
     }
     base.update(kw)
@@ -166,14 +167,14 @@ def _cfg(**kw: Any) -> Any:
 def test_extra_fetch_runs_once_per_mirror_per_pass_and_never_fails_the_pass(monkeypatch) -> None:
     calls: list[str] = []
 
-    async def _remote(git_dir, remote, *, token=""):
+    async def _remote(git_dir, remote, *, token="", proxy_identity=""):
         calls.append("ls-remote")
         return gitrepo.parse_ls_remote_heads(LS_REMOTE)
 
     async def _local(git_dir):
         return {"master": SHA_A, "25.8": SHA_B}
 
-    async def _fetch(git_dir, remote, branches, *, token=""):
+    async def _fetch(git_dir, remote, branches, *, token="", proxy_identity=""):
         calls.append(f"fetch:{','.join(branches)}")
         return len(branches)
 
@@ -198,7 +199,7 @@ def test_extra_fetch_runs_once_per_mirror_per_pass_and_never_fails_the_pass(monk
     )
     assert calls == ["ls-remote", "fetch:25.8-broken-test,26.3"] and res.errors == []
 
-    async def _boom(git_dir, remote, *, token=""):
+    async def _boom(git_dir, remote, *, token="", proxy_identity=""):
         raise gitrepo.GitError("remote down")
 
     monkeypatch.setattr(gitrepo, "remote_branches", _boom)
@@ -225,7 +226,7 @@ def test_missing_merge_sweep_walks_the_ledger_and_wraps(monkeypatch) -> None:
     async def _missing(git_dir, shas):
         return [s for s in shas if s == SHA_B]
 
-    async def _fetch(git_dir, remote, shas, *, token=""):
+    async def _fetch(git_dir, remote, shas, *, token="", proxy_identity=""):
         fetched.append(list(shas))
         return len(shas)
 

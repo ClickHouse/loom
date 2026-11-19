@@ -32,6 +32,10 @@ agent, or by a person at the dashboard. This page shows how that works and where
 - **Per-user memory for your own agent.** The Python and TypeScript SDKs write and read
   memory per end user. [Your first agent](../getting-started/first-agent.md)
 
+For a team deployment, [evaluate cross-client recall and namespace isolation](../getting-started/evaluate.md#shared-memory-across-clients)
+separately. A second client finding a shared fact does not prove that an identity
+outside the team cannot read it.
+
 ## Measured
 
 On 100 paired LongMemEval-S questions with the same `gpt-5` reader, answers from Loom's

@@ -78,6 +78,8 @@ _CALLERS = {
     "(a carry, an approval) projects only its own commit",
     "server/knowledge/store/documents.py": "reads beside the writer's own commit; "
     "the worker's sends are its durable claims",
+    "server/memory/app/blacklist_guard.py": "captures a value guard; each resulting write "
+    "commits with its policy generations rechecked",
     "server/memory/app/blacklist_sweep.py": "tombstones through its own commit",
     "server/memory/app/bulk_set.py": "decides a write, which commits; a dedup against "
     "an undelivered keeper answers the caller, and its usage event may name an id a "

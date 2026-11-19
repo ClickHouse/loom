@@ -7,10 +7,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import importlib
+import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -26,6 +29,7 @@ from loom import Agent as LoomAgent
 from loom import SyncAgent
 from loom.integrations.agent_framework import LoomContextProvider, _loom_session
 from loom.memory import MemorySearchHit, MemorySearchResult
+from loom.session_protection import AutomaticCaptureSuppressed, SessionProtection
 
 
 class _FakeMemory:
@@ -44,9 +48,15 @@ class _FakeMemory:
         self.calls.append(("set_from_messages", (messages,), kw))
 
 
+@dataclasses.dataclass
+class _TransportState:
+    session_protection: SessionProtection | None = None
+
+
 class _Loom:
     def __init__(self, memory: _FakeMemory) -> None:
         self.memory = memory
+        self.transport = _TransportState()
 
 
 class _Client(BaseChatClient):  # type: ignore[misc]
@@ -319,3 +329,190 @@ def test_a_streamed_loop_sends_its_last_reply() -> None:
     asyncio.run(go())
     extracts = [c for c in fake.calls if c[0] == "set_from_messages"]
     assert [[m["content"] for m in c[1][0]] for c in extracts] == [["Plan my trip", "Step two."]]
+
+
+def _protected_agent(
+    family: SessionProtection | None,
+    respond: Callable[[httpx.Request], httpx.Response],
+) -> LoomAgent:
+    agent = LoomAgent(
+        org="acme",
+        namespace="travel",
+        agent="bot",
+        base_url="http://inert.invalid",
+        api_key="test-token",
+        session_protection=family,
+        pacing=False,
+        coalesce_sets=False,
+        auto_run=False,
+        mentor_brief=False,
+        retry={"max_attempts": 1},
+    )
+    agent.transport._client._transport = httpx.MockTransport(respond)
+    return agent
+
+
+@pytest.mark.parametrize("constructor_context", ["bound", "ambient"])
+def test_constructor_contributors_block_native_run_after_client_rebinding(
+    tmp_path: Path, constructor_context: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(original if constructor_context == "bound" else None, respond)
+        try:
+            if constructor_context == "ambient":
+                with original.automatic():
+                    provider = LoomContextProvider(loom)
+            else:
+                provider = LoomContextProvider(loom)
+            loom.transport.session_protection = replacement
+            original.mark()
+            native = Agent(client=_Client(), context_providers=[provider])
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await native.run("Keep this turn private", session=native.create_session())
+            assert posts == []
+            assert not replacement.protected
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_marked_recall_reaches_native_model_before_capture_is_suppressed(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "mirrored": True,
+                "results": [
+                    {
+                        "memory_key": "example",
+                        "memory_type": "semantic",
+                        "content_excerpt": "private recalled content",
+                        "distance": 0.1,
+                        "similarity": 0.9,
+                    }
+                ],
+            },
+        )
+
+    async def go() -> None:
+        loom = _protected_agent(family, respond)
+        client = _Client()
+        native = Agent(client=client, context_providers=[LoomContextProvider(loom)])
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await native.run("Recall a preference", session=native.create_session())
+            assert family.protected
+            assert "private recalled content" in _instructions(client.sent[0])
+            assert posts == ["/v1/memory.search"]
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_before_run_contributor_survives_until_native_after_run(tmp_path: Path) -> None:
+    contributor = SessionProtection.create(base=tmp_path / "contributor")
+    bound = SessionProtection.create(base=tmp_path / "bound")
+    posts: list[str] = []
+
+    class ContributingProvider(LoomContextProvider):
+        async def before_run(self, **kwargs: Any) -> None:
+            with contributor.automatic():
+                await super().before_run(**kwargs)
+
+    class MarkingClient(_Client):
+        def _inner_get_response(self, **kwargs: Any) -> Any:
+            contributor.mark()
+            return super()._inner_get_response(**kwargs)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(bound, respond)
+        native = Agent(client=MarkingClient(), context_providers=[ContributingProvider(loom)])
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await native.run("Retain the callback contributor", session=native.create_session())
+            assert posts == ["/v1/memory.search"]
+            assert contributor.protected and not bound.protected
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_callback_binding_marked_during_authentication_prevents_native_dispatch(
+    tmp_path: Path,
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    callback = SessionProtection.create(base=tmp_path / "callback")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(original, respond)
+        provider = LoomContextProvider(loom)
+        loom.transport.session_protection = callback
+
+        class RebindingAuth(httpx.Auth):
+            async def async_auth_flow(self, request: httpx.Request):
+                await asyncio.sleep(0)
+                callback.mark()
+                loom.transport.session_protection = replacement
+                yield request
+
+        loom.transport._client.auth = RebindingAuth()
+        native = Agent(client=_Client(), context_providers=[provider])
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await native.run("Guard the callback binding", session=native.create_session())
+            assert posts == []
+            assert not original.protected and not replacement.protected
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_marked_native_extraction_batch_stops_following_batches(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    batches: list[list[dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("set_from_messages"):
+            batches.append(json.loads(request.content)["messages"])
+            return httpx.Response(200, json={"mirrored": True})
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(family, respond)
+        native = Agent(client=_Client(), context_providers=[LoomContextProvider(loom)])
+        turns = [Message(role="user", contents=[f"fact {index}"]) for index in range(401)]
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await native.run(turns, session=native.create_session())
+            assert [len(batch) for batch in batches] == [400]
+            assert family.protected
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())

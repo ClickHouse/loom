@@ -1,7 +1,7 @@
 """The OpenAI client learns each model's request shape from its refusals: a refused
 field is dropped and never sent again, a refused effort settles on the lowest one the
 model lists, and reasoning tokens the model reports become room over the caller's cap.
-No model name decides any of it."""
+Documented sampling restrictions are tested in test_llm_sampling_capabilities.py."""
 
 from __future__ import annotations
 

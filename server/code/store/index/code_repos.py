@@ -21,7 +21,8 @@ class CodeReposMixin(CodeRepoBase):
         (`repos._with_registry`)."""
         rows: list[dict[str, Any]] = await self._ch.query_all(
             """
-            -- A removed row's repository, remote, branch, paths and token read empty.
+            -- A removed row's repository, remote, branch, paths, token and git proxy
+            -- identity read empty.
             SELECT org, namespace, if(active, repo, '') AS repo,
                    if(active, git_remote, '') AS git_remote,
                    if(active, git_branch, '') AS git_branch,
@@ -30,6 +31,7 @@ class CodeReposMixin(CodeRepoBase):
                    toString(classification) AS classification,
                    toString(join_policy) AS join_policy,
                    if(active, github_token_enc, '') AS github_token_enc,
+                   if(active, git_proxy_identity, '') AS git_proxy_identity,
                    exclude_generated, toString(scip_producer) AS scip_producer,
                    row_kind, active
             FROM loom.code_repos FINAL

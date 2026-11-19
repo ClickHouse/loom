@@ -60,7 +60,10 @@ class ChildWorkers:
     """The supervisor's start/stop/status surface, backed by a child process."""
 
     def __init__(
-        self, lease: leader.SupervisorLease, *, retire_child: Callable[[str], Awaitable[None]]
+        self,
+        lease: leader.SupervisorLease,
+        *,
+        retire_child: Callable[[str, float], Awaitable[None]],
     ) -> None:
         self._lease = lease
         self._retire_callback = retire_child
@@ -228,10 +231,9 @@ class ChildWorkers:
         ):
             return
         try:
-            async with asyncio.timeout(
-                min(settings.workers_child_retirement_timeout_s, max(0.0, end - time.monotonic()))
-            ):
-                await self._retire_callback(proof)
+            end = min(end, time.monotonic() + settings.workers_child_retirement_timeout_s)
+            async with asyncio.timeout_at(end):
+                await self._retire_callback(proof, end)
         except Exception:  # noqa: BLE001 — unproved retirement must not replace child cleanup
             log.warning("reaped workers child retirement remains unproved")
 
@@ -328,7 +330,7 @@ _RUNNER: WorkerSupervisor | ChildWorkers | None = None
 
 
 def worker_runner(
-    lease: leader.SupervisorLease, *, retire_child: Callable[[str], Awaitable[None]]
+    lease: leader.SupervisorLease, *, retire_child: Callable[[str, float], Awaitable[None]]
 ) -> WorkerSupervisor | ChildWorkers:
     """What runs the workers here: a child process for an `auto` lease holder
     (`LOOM_WORKERS_PROCESS=child`), else the in-process supervisor."""

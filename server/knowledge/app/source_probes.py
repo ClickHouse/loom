@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.clients._checked_access import CheckedAccess, Credential
 from server.knowledge.domain.sources import (
     SAMPLE_ITEMS,
     include_in,
@@ -66,7 +67,7 @@ def sample(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def _check_gdrive_item(
-    gdrive: Any, token: str, item: dict[str, Any]
+    gdrive: Any, token: Credential, item: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Check one item is one the account sees: the item as the store names it, and a
     file item's metadata (so the listing reads it once), else None."""
@@ -100,7 +101,7 @@ async def _check_gdrive_item(
 
 
 async def _check_items(
-    gdrive: Any, token: str, items: list[dict[str, Any]]
+    gdrive: Any, token: Credential, items: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Check every item at once: the items as the store names them, and the file items'
     metadata by id. The first failure cancels the rest and is raised."""
@@ -115,15 +116,21 @@ async def _check_items(
 
 
 async def _probe_gdrive(
-    items: list[dict[str, Any]], config: dict[str, Any], credential: str
+    items: list[dict[str, Any]], config: dict[str, Any], credential: Credential
 ) -> Probe:
     from server.clients import gdrive
 
     include = include_in(config)
     mime_types = include_mime_types(include)
     try:
-        account = gdrive.parse_service_account(credential)
-        token = await gdrive.access_token(account)
+        token: Credential
+        if isinstance(credential, CheckedAccess):
+            if credential.kind != "gdrive":
+                raise CredentialRefused("the connection is not a folder-store account")
+            token = credential
+        else:
+            account = gdrive.parse_service_account(credential)
+            token = await gdrive.access_token(account)
         # Every item must be one the account sees (an unshared folder lists empty,
         # not refused); the checks run together, then one listing page per query.
         checked, files = await _check_items(gdrive, token, items)
@@ -158,7 +165,7 @@ async def _probe_gdrive(
 
 async def _gdrive_first_pages(
     gdrive: Any,
-    token: str,
+    token: Credential,
     items: list[dict[str, Any]],
     files: dict[str, dict[str, Any]],
     mime_types: list[str],
@@ -195,7 +202,7 @@ async def _gdrive_first_pages(
 
 
 async def _probe_linear(
-    items: list[dict[str, Any]], config: dict[str, Any], credential: str
+    items: list[dict[str, Any]], config: dict[str, Any], credential: Credential
 ) -> Probe:
     from server.clients import linear
 
@@ -229,7 +236,7 @@ _SAMPLED_DATABASES = 3  # not a setting: a bound on one probe's requests
 
 
 async def _probe_notion(
-    items: list[dict[str, Any]], config: dict[str, Any], credential: str
+    items: list[dict[str, Any]], config: dict[str, Any], credential: Credential
 ) -> Probe:
     from server.clients import notion
 
@@ -272,11 +279,13 @@ async def _probe_notion(
 
 
 async def _probe_recording(
-    items: list[dict[str, Any]], config: dict[str, Any], credential: str
+    items: list[dict[str, Any]], config: dict[str, Any], credential: Credential
 ) -> Probe:
     from server.clients import recording
     from server.knowledge.app import source_sync_recording
 
+    if not isinstance(credential, str):
+        raise CredentialRefused("a recording source requires its shared credential")
     try:
         session = await source_sync_recording.open_session(config["provider"], credential)
         found, lost = await source_sync_recording.list_recordings(session, config["ids"])
@@ -291,7 +300,9 @@ async def _probe_recording(
     return Probe(documents=min(len(found), 1000), sample=titles, more=len(found) > 1000)
 
 
-PROBES: dict[str, Callable[[list[dict[str, Any]], dict[str, Any], str], Awaitable[Probe]]] = {
+PROBES: dict[
+    str, Callable[[list[dict[str, Any]], dict[str, Any], Credential], Awaitable[Probe]]
+] = {
     "gdrive": _probe_gdrive,
     "linear": _probe_linear,
     "notion": _probe_notion,
@@ -302,7 +313,7 @@ PROBES: dict[str, Callable[[list[dict[str, Any]], dict[str, Any], str], Awaitabl
 async def probe(
     kind: str,
     config: dict[str, Any],
-    credential: str,
+    credential: Credential,
     *,
     items: list[dict[str, Any]],
 ) -> Probe:
@@ -317,7 +328,9 @@ async def probe(
         raise SourceUnreachable(f"the source did not answer within {limit:g} s") from None
 
 
-async def resolve(kind: str, items: list[dict[str, Any]], credential: str) -> list[dict[str, Any]]:
+async def resolve(
+    kind: str, items: list[dict[str, Any]], credential: Credential
+) -> list[dict[str, Any]]:
     """`items` with each tracker project named by its short id (a link's) named by
     its UUID, bounded by LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S; SourceUnreachable
     names a short id the tracker does not know."""

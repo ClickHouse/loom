@@ -32,7 +32,6 @@ _CODE_TEXT_EXTENSIONS: frozenset[str] = frozenset(
         ".swift",
         ".scala",
         ".sc",
-        ".lua",
         ".zig",
         ".cs",
         ".dart",

@@ -89,6 +89,14 @@ Postgres did not answer or the role cannot see `pg_stat_replication`.
 Point `LOOM_PG_DSN` at the manager's primary endpoint (the service or address that
 follows the leader), never at one host, so a promotion moves Loom with it.
 
+Participant retirement also uses that endpoint. A process can remain unretired
+after it exits if an attributed backend, including an idle one, is still present
+or the store pair cannot be verified. Retry recovery after the backend is absent;
+transport abort and heartbeat expiry are not settlement evidence. During an
+upgrade, generic `loom` sessions from clients without participant tags must all
+drain before their identities can be recertified. See the
+[participant lifecycle baseline](../architecture/cells.md#participant-lifecycle-baseline).
+
 A primary with one standby and no manager, as `dev/ci_start_postgres.sh` starts for
 tests, shows the settings:
 

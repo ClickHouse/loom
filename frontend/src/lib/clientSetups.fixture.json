@@ -127,6 +127,22 @@
         "config_toml": "",
         "command": "",
         "env": {}
+      },
+      "gemini": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "httpUrl": "http://x/mcp?toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
       }
     }
   },
@@ -249,6 +265,22 @@
           "context_servers": {
             "loom": {
               "url": "http://x/mcp?a=1",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "gemini": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "httpUrl": "http://x/mcp?a=1&toolset=coding",
               "headers": {
                 "Authorization": "Bearer T"
               }
@@ -394,6 +426,22 @@
           "context_servers": {
             "loom": {
               "url": "http://x/mcp?mytoolset=x",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "gemini": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "httpUrl": "http://x/mcp?mytoolset=x&toolset=coding",
               "headers": {
                 "Authorization": "Bearer T"
               }

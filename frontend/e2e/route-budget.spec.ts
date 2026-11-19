@@ -20,6 +20,7 @@ const ROUTES: Array<[string, string]> = [
   ["Memories", "/memories"],
   ["Recall", "/recall"],
   ["Settings", "/settings"],
+  ["Connected accounts", "/settings/connected-accounts"],
   ["Repositories", "/repositories"],
   ["Flow", "/flow"],
   ["Library", "/library"],

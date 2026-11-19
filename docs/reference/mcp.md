@@ -55,10 +55,10 @@ instructions.
 
 `LOOM_MCP_AUTH_MODE` decides which methods need a bearer:
 
-| Mode                 | Bearer required on                                            |
-| -------------------- | ------------------------------------------------------------- |
-| `required` (default) | every method except notifications                             |
-| `discovery_only`     | `tools/call` only; every other method is open                 |
+| Mode                 | Bearer required on                                                             |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `required` (default) | every method except notifications                                              |
+| `discovery_only`     | `tools/call` only; every other method is open                                  |
 | `open`               | nothing; a cryptographically invalid bearer is ignored (trusted networks only) |
 
 A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
@@ -216,6 +216,25 @@ queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_o
 on every toolset except `assistant` (`readonly` included). Its write twin,
 `memory.extraction_retry_mine`, replays the caller's failed batches once more;
 `loom_op` routes it on every toolset but `readonly` and `assistant`.
+
+**Compiler-tier uploads.** `LOOM_MCP_CODE_UPLOAD_TOOLS=true` (default off) takes
+`code.scip_ingest` and `code.scip_status` off the hidden ops, for a deployment whose
+uploader of compiler-tier indexes reaches Loom through MCP only. Both are then callable
+on every toolset but `assistant`, by tool name and through `loom_op` (which routes only
+`code.scip_status` on `readonly`). `all` lists them by its own rules, so only with
+`LOOM_MCP_CODE_TOOLS=true`, and `readonly` then lists `code.scip_status`; no curated
+roster lists either. Each keeps its role: writer for the upload, viewer for the status.
+
+With the setting on, `code.scip_ingest` accepts a part only for a namespace that has a
+repository entry, self-service or operator-configured
+([adding repositories](../features/code-index/repositories.md)), over HTTP as over MCP.
+Without that rule a caller could store upload batches in any namespace it may write,
+its own memory namespace included. A part for another namespace answers
+`RESOURCE_NOT_FOUND` (404 over HTTP). Send the namespace itself: when a code tool's
+`namespace` names a repository and is not a namespace the caller can read, MCP resolves
+it to the index of the repository's default branch, and the upload lands there.
+`ops.capabilities` and the generated [operations reference](./operations.md) describe
+the default: they report both ops as hidden whatever the setting.
 
 ### Toolsets
 
