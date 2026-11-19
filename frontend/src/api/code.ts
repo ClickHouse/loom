@@ -302,7 +302,7 @@ export interface CodeSearchResult {
   trace_run_id?: string;
   abstain_code?: "" | "no_match" | "below_threshold" | "low_calibrated_confidence" | "not_covered";
   as_of?: CodeAsOf;
-  /** "lexical only until embeddings finish (41% embedded)" below the ready threshold; absent/empty otherwise. */
+  /** Warning when embedding coverage or unavailable retrieval limits the results. */
   note?: string;
 }
 

@@ -99,10 +99,12 @@ exists. Failed-leg results are neither memoized nor saved as continuation pools;
 retry after restoring the provider or store. Choosing `legs: "lexical"` deliberately
 is not a failure.
 
-Provider failures appear in `/v1/health` under `providers_degraded` and `problems`,
-and in the dashboard's Health view. Check provider credentials, permissions and
-quota; a successful provider call clears its warning. Health reads make no provider
-calls and cannot detect expired credentials before a real request encounters them.
+Providers that record request outcomes expose failures in `/v1/health` under
+`providers_degraded` and `problems`, and in the dashboard's Health view. A successful
+recorded call clears its warning. Other providers and constructor failures can
+produce a search warning without a health warning. Check credentials, permissions
+and quota. Health reads make no provider calls and cannot detect expired credentials
+before a real request encounters them.
 
 In `mode: "message"`, a pattern that matches no statement template (a code line rather
 than a rendered message) is grepped once more as a literal and the answer says
