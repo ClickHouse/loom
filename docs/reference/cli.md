@@ -362,6 +362,7 @@ python scripts/codegen/docs_reference.py
 | `loom whoami` | Show who the stored session signs you in as. |  |
 | `loom call` | Call any operation or API route with the stored session (`loom call --help`). |  |
 | `loom token` | Make, list and revoke your own tokens for CI and agents (`loom token --help`). |  |
+| `loom connect` | Print the dashboard link to connect your own Google, Notion or Linear account. |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

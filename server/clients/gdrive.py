@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.clients._checked_access import Credential
 from server.clients._http import get_client
 from server.clients._vendor import (
     CredentialRefused,
@@ -107,7 +108,7 @@ async def access_token(account: ServiceAccount) -> str:
     return str(answer["access_token"])
 
 
-async def require_folder(token: str, folder_id: str) -> dict[str, Any]:
+async def require_folder(token: Credential, folder_id: str) -> dict[str, Any]:
     """The folder's metadata, with its `driveId` (a shared drive's own id names its
     root folder); NotFound when the account cannot see `folder_id` or it is no folder."""
     what = f"folder {folder_id}"
@@ -123,7 +124,7 @@ async def require_folder(token: str, folder_id: str) -> dict[str, Any]:
     return data
 
 
-async def require_drive(token: str, drive_id: str) -> None:
+async def require_drive(token: Credential, drive_id: str) -> None:
     """NotFound when the account is no member of the shared drive `drive_id`."""
     if not valid_file_id(drive_id):
         raise ValueError("not a drive id")
@@ -165,7 +166,7 @@ def filter_query(item: dict[str, Any], mime_types: list[str]) -> str:
 
 
 async def list_files(
-    token: str, query: str, *, drive_id: str = "", fields: str = _PAGE_FIELDS
+    token: Credential, query: str, *, drive_id: str = "", fields: str = _PAGE_FIELDS
 ) -> tuple[list[dict[str, Any]], bool]:
     """One page (1000 at most) of the files `query` matches, most recently changed
     first, and whether more may match: a next page, or a search the store did not
@@ -215,7 +216,7 @@ def valid_stamp(stamp: str) -> bool:
 
 
 async def list_all(
-    token: str,
+    token: Credential,
     folder_ids: list[str],
     mime_types: list[str],
     *,
@@ -239,7 +240,7 @@ async def list_all(
 
 
 async def list_query(
-    token: str,
+    token: Credential,
     query: str,
     *,
     drive_id: str = "",
@@ -280,7 +281,7 @@ async def list_query(
 
 
 async def subfolders(
-    token: str, parent_ids: list[str], *, limit: int, pace_s: float = PAGE_PACE_S
+    token: Credential, parent_ids: list[str], *, limit: int, pace_s: float = PAGE_PACE_S
 ) -> tuple[list[str], bool]:
     """The ids of the folders directly in any of `parent_ids`, and whether the store
     searched everything; MAX_PARENTS parents per query, and no page read once more
@@ -299,7 +300,7 @@ async def subfolders(
     return [f for f in found if valid_file_id(f)], whole
 
 
-async def any_subfolder(token: str, parent_ids: list[str], seen: set[str]) -> bool:
+async def any_subfolder(token: Credential, parent_ids: list[str], seen: set[str]) -> bool:
     """Whether any of `parent_ids` holds a folder not in `seen`, from one page per
     MAX_PARENTS parents; a page with more to follow, or from a search the store did not
     finish, counts as holding one."""
@@ -311,7 +312,7 @@ async def any_subfolder(token: str, parent_ids: list[str], seen: set[str]) -> bo
     return False
 
 
-async def file_meta(token: str, file_id: str, *, fields: str = LISTED) -> dict[str, Any]:
+async def file_meta(token: Credential, file_id: str, *, fields: str = LISTED) -> dict[str, Any]:
     """One file as a listing reads it (`fields`), with `trashed`; NotFound when the
     account cannot see it."""
     return await bearer_get(
@@ -324,7 +325,7 @@ async def file_meta(token: str, file_id: str, *, fields: str = LISTED) -> dict[s
 
 
 async def file_permissions(
-    token: str, file_id: str, *, pace_s: float = PAGE_PACE_S
+    token: Credential, file_id: str, *, pace_s: float = PAGE_PACE_S
 ) -> list[dict[str, Any]] | None:
     """Every permission of one file, read page by page; None when the store will not
     say (the file is gone, or the account may not see who it is shared with). A rate
@@ -360,7 +361,7 @@ async def file_permissions(
         await asyncio.sleep(pace_s)
 
 
-async def file_state(token: str, file_id: str) -> dict[str, Any]:
+async def file_state(token: Credential, file_id: str) -> dict[str, Any]:
     """What says whether a file is still a source's: `trashed`, `parents`, `driveId`,
     and what a filter matches (`name`, `mimeType`, `modifiedTime`); NotFound when the
     account cannot see it."""
@@ -376,7 +377,7 @@ async def file_state(token: str, file_id: str) -> dict[str, Any]:
     )
 
 
-async def export_markdown(token: str, file_id: str, *, max_bytes: int) -> str:
+async def export_markdown(token: Credential, file_id: str, *, max_bytes: int) -> str:
     """A native document exported as Markdown."""
     data = await get_capped(
         get_client(),
@@ -389,7 +390,7 @@ async def export_markdown(token: str, file_id: str, *, max_bytes: int) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str, Any]:
+async def presentation(token: Credential, file_id: str, *, max_bytes: int) -> dict[str, Any]:
     """A native presentation's slides, shapes and speaker notes, its description
     read up to `max_bytes`."""
     if not valid_file_id(file_id):
@@ -401,7 +402,7 @@ async def presentation(token: str, file_id: str, *, max_bytes: int) -> dict[str,
     return json_object(data, what)
 
 
-async def download(token: str, file_id: str, *, max_bytes: int) -> bytes:
+async def download(token: Credential, file_id: str, *, max_bytes: int) -> bytes:
     """An uploaded file's bytes."""
     return await get_capped(
         get_client(),

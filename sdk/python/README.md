@@ -152,6 +152,42 @@ async with agent.session("thread-42", user_id="u1") as s:
 
 `agent.tools(user_id=..., session_id=...)` gives a model six loom verbs — `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note` — as `definitions("openai" | "anthropic" | "generic")` and one `await execute(name, arguments)` that returns the string the model reads. The schemas are the same as the TypeScript SDK's.
 
+An explicit code namespace offers a read-only code lookup before the memory tools.
+The model chooses `symbol`, `search`, `callers` or `impact`; tenant scope and request
+budgets stay in the application. Use `only` for a code-only tool loop:
+
+```python
+tools = agent.tools(code_namespace="code-repo", only=["loom_code_lookup"], max_result_chars=12_000)
+definitions = tools.definitions("anthropic")
+result = await tools.execute("loom_code_lookup", {"kind": "symbol", "target": "pkg.Reader.read"})
+```
+
+Code results preserve valid JSON within the character cap and disclose whole-body or
+row omissions. Honor abstention, ambiguity, source citations and graph lower bounds.
+See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) and
+[`examples/code_lookup.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/code_lookup.py).
+
+`loom_remember` returns the server's receipt: `stored` confirms a persisted row, while
+`noop` and `merged_into_key` distinguish reuse of an existing fact. Conflicts retain their
+peers and next action. `loom_recall` preserves abstention, code freshness, row status,
+provenance and verification fields when the server supplies them. `retrieval_risk` and
+`retrieval_confidence` score non-governed hits; `governed` identifies authoritative
+definitions and `term_leg` reports the definition lookup status. A missing attestation
+is not verification. Memory results remain valid JSON: whole memories that do not fit are
+counted in `omitted`; metadata that cannot fit returns `insufficient` and
+`metadata_omitted`. A budget too small for that marker is rejected before the call.
+
+For a durable fact about code, the application can use `agent.memory.set(...,
+files=["src/reader.py"], tags=[repo_tag])`, where `repo_tag` is the matching `repo:<id>`
+tag established by the integration. It is not an arbitrary repository name. A configured
+code namespace also identifies the repository; `code.repos` reports its
+`primary_namespace` for shared file rules.
+`files=None` detects references from the value; `files=[]` clears prior references.
+The compact `loom_remember` schema does not expose these fields: use the direct SDK call
+when file or repository association matters. Linking is asynchronous, so a saved receipt
+does not confirm a resolved link. Read the link state before relying on the claim; see
+[memories linked to code](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memories-linked-to-code).
+
 ## Retries and logging
 
 The retry policy is one frozen dataclass, set on the Agent and overridable per call with a `RetryPolicy` or a dict of its fields; every field is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff doubling to 5 s with ±25 % jitter; 408 and 5xx retried for registry-idempotent ops (any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running it), except an answer the server classes `configuration`; connection errors retried; a read timeout, a cut-off response or a write that broke off retried only for an op the registry marks idempotent and not read-only (the server dedups its `Idempotency-Key`); a `Retry-After` on a retried status honoured up to 60 s. A 429 is paced, not retried.

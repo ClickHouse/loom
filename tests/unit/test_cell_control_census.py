@@ -226,6 +226,8 @@ GENERIC_SQL_EXCLUSIONS = {
     "server/knowledge/store/chunks.py": {
         ("_record_supersessions", "INSERT INTO", "{SUPERSESSIONS_TABLE}"): 1
     },
+    # Account erasure deletes only the connected registry, not cell control rows.
+    "server/knowledge/store/connected_accounts.py": {("erase", "DELETE FROM", "{TABLE}"): 1},
     "server/knowledge/store/conversations.py": {
         ("mark_message_saved", "ALTER TABLE", "{table}"): 1,
         ("unsave_message", "DELETE FROM", "{table}"): 1,
@@ -246,6 +248,8 @@ GENERIC_SQL_EXCLUSIONS = {
         ("delete_builds", "DELETE FROM", "{GAPS}"): 1,
     },
     "server/knowledge/store/restore.py": {("unretire", "DELETE FROM", "{SUPERSESSIONS_TABLE}"): 1},
+    # The stopped owner and namespace lease scope deletion to knowledge sources.
+    "server/knowledge/store/sources.py": {("erase_connected_owner", "DELETE FROM", "{TABLE}"): 1},
     "server/memory/app/reembed.py": {
         ("in_database_sql", "INSERT INTO", "loom.{table}"): 1,
         ("delete_off_model", "DELETE FROM", "loom.{table}"): 1,

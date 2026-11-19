@@ -1,10 +1,8 @@
 """A chunk hit obeys the read's filters.
 
-`memory_chunks` carries no tags, `valid_at` or `status`; the fact leg's hard
-tag filter, `as_of` anchor and served-status set reach the chunk leg through
-the parent row in `memory_embeddings`, with the fact leg's own predicate
-helpers and parameter names. Both stages carry the predicate. Without a
-filter the leg is unchanged.
+The canonical memory parent supplies the served-status and time gate. Hard
+tags additionally require a matching `memory_embeddings` parent. Both stages
+and neighbour windows share the predicates; session-only chunks remain eligible.
 """
 
 from __future__ import annotations
@@ -17,7 +15,12 @@ import pytest
 from tests.unit.test_memory_search_service import StubCH, _q
 
 _PARENT_IN = "c.parent_memory_key IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
-_PARENT_NOT_IN = "c.parent_memory_key NOT IN (SELECT memory_key FROM loom.memory_embeddings FINAL"
+_PARENT_NOT_IN = (
+    "(c.agent, if(c.user_id = '', '-', c.user_id), "
+    "if(c.session_id = '', '-', c.session_id), c.parent_memory_key) NOT IN "
+    "(SELECT agent, if(user_id = '', '-', user_id), "
+    "if(session_id = '', '-', session_id), memory_key FROM loom.memory FINAL"
+)
 
 
 def _cands(*pairs: tuple[str, int]) -> list[dict[str, Any]]:
@@ -38,18 +41,24 @@ async def _both_stages(q) -> tuple[tuple[str, dict], tuple[str, dict]]:
     return ch.query_all_calls[0], ch.query_all_calls[1]
 
 
-def test_no_filter_leaves_the_leg_unchanged() -> None:
+def test_default_read_excludes_nonserved_known_parents_without_dropping_orphans() -> None:
     from server.memory.app.retrieval.chunks import _chunk_parent_pred
 
     params: dict[str, Any] = {}
-    assert _chunk_parent_pred(_q(), params) == "" and params == {}
+    pred = _chunk_parent_pred(_q(), params)
+    assert _PARENT_NOT_IN in pred
+    assert "NOT (tombstoned_at IS NULL AND status IN ('active', 'conflicted'))" in pred
+    assert "WHERE org = {org:String} AND namespace = {ns:String}" in pred
+    assert _PARENT_IN not in pred  # A session without a memory parent is still evidence.
 
 
 def test_soft_tags_are_a_boost_not_a_gate() -> None:
     from server.memory.app.retrieval.chunks import _chunk_parent_pred
 
     params: dict[str, Any] = {}
-    assert _chunk_parent_pred(_q(tags=["workflow:w"], tags_soft=True), params) == ""
+    pred = _chunk_parent_pred(_q(tags=["workflow:w"], tags_soft=True), params)
+    assert _PARENT_NOT_IN in pred
+    assert "hasAny(tags" not in pred
 
 
 @pytest.mark.asyncio
@@ -154,3 +163,37 @@ def test_the_neighbour_fallback_binds_every_parameter_its_predicate_names(
     named = set(re.findall(r"\{(\w+):", sql))
     assert named <= set(bound), named - set(bound)
     assert "chunk_limit" not in bound
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flag,status",
+    [
+        ("include_duplicates", "duplicate"),
+        ("include_superseded", "superseded"),
+        ("include_proposed", "proposed"),
+    ],
+)
+async def test_default_parent_status_gate_respects_explicit_include_flags(flag, status) -> None:
+    for enabled in (False, True):
+        (sql1, _), (sql2, _) = await _both_stages(_q(**{flag: enabled}))
+        for sql in (sql1, sql2):
+            assert _PARENT_NOT_IN in sql
+            assert (f"'{status}'" in sql) is enabled
+
+
+@pytest.mark.asyncio
+async def test_hard_tag_lookup_cannot_replace_the_known_parents_status_gate() -> None:
+    (sql1, _), (sql2, _) = await _both_stages(_q(tags=["topic"]))
+    for sql in (sql1, sql2):
+        assert _PARENT_NOT_IN in sql
+        assert _PARENT_IN in sql
+
+
+def test_knowledge_time_replays_retirement_and_deletion_of_the_known_parent() -> None:
+    from server.memory.app.retrieval.chunks import _chunk_parent_pred
+
+    pred = _chunk_parent_pred(_q(as_of=datetime(2020, 1, 1), as_of_basis="knowledge_time"), {})
+    assert _PARENT_NOT_IN in pred
+    assert "invalid_at > {as_of:DateTime}" in pred
+    assert "tombstoned_at > {as_of:DateTime}" in pred

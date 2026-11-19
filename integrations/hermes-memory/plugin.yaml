@@ -1,0 +1,10 @@
+name: loom-memory
+version: "0.1.0"
+description: Explicit cross-session recall and point facts in ClickHouse Loom.
+requires_hermes: ">=0.23.2"
+requires_env:
+  - HERMES_LOOM_BASE_URL
+  - HERMES_LOOM_API_KEY
+  - HERMES_LOOM_ORG
+  - HERMES_LOOM_NAMESPACE
+  - HERMES_LOOM_USER_ID

@@ -1,0 +1,153 @@
+{
+  "requests": {
+    "code.symbol": {
+      "org": "o",
+      "namespace": "code-x",
+      "name": "Parser.parse_record",
+      "include_lessons": false,
+      "consumer": "claude-code-prompt-pack",
+      "token_budget": 600,
+      "include_body": false,
+      "include_history": false,
+      "include_examples": false,
+      "uses": false,
+      "uses_brief": false
+    },
+    "code.callers": {
+      "org": "o",
+      "namespace": "code-x",
+      "name": "Parser.parse_record",
+      "include_lessons": false,
+      "consumer": "claude-code-prompt-pack",
+      "depth": 1,
+      "max_nodes": 3,
+      "include_ambiguous": false
+    },
+    "code.impact": {
+      "org": "o",
+      "namespace": "code-x",
+      "name": "Parser.parse_record",
+      "include_lessons": false,
+      "consumer": "claude-code-prompt-pack",
+      "depth": 1,
+      "per_hop_limit": 3
+    }
+  },
+  "responses": {
+    "code.search": {
+      "route": "hybrid",
+      "abstain": false,
+      "retrieval_confidence": 0.8,
+      "results": [
+        {
+          "path": "src/parser.py",
+          "start_line": 10,
+          "end_line": 14,
+          "symbol": "Parser.parse_record",
+          "signature": "(value)"
+        }
+      ]
+    },
+    "code.symbol": {
+      "definitions": [
+        {
+          "path": "src/parser.py",
+          "start_line": 10,
+          "end_line": 14,
+          "symbol": "Parser.parse_record",
+          "signature": "(value)"
+        }
+      ],
+      "ambiguous": false
+    },
+    "code.callers": {
+      "edges": [
+        {
+          "path": "src/loader.py",
+          "line": 8,
+          "from_symbol": "Loader.load",
+          "to_symbol": "Parser.parse_record",
+          "from_symbol_id": "caller",
+          "to_symbol_id": "parser",
+          "edge_kind": "calls",
+          "tier": "treesitter",
+          "confidence": 0.8
+        }
+      ],
+      "seed_symbols": ["Parser.parse_record"],
+      "counts_floor": true,
+      "epistemic": "lower_bound",
+      "causes": ["treesitter_only_files"]
+    },
+    "code.impact": {
+      "impacted_symbols": [
+        {
+          "qualified_name": "Loader.load",
+          "path": "src/loader.py",
+          "hop": 1,
+          "tier": "treesitter"
+        }
+      ],
+      "impacted_tests": [
+        {
+          "test_path": "tests/test_parser.py",
+          "src_path": "src/parser.py",
+          "confidence": 0.8
+        }
+      ],
+      "co_change_files": [],
+      "counts_floor": true,
+      "epistemic": "lower_bound",
+      "causes": ["treesitter_only_files"]
+    }
+  },
+  "empty_responses": {
+    "code.symbol": {
+      "definitions": [],
+      "ambiguous": true
+    },
+    "code.callers": {
+      "edges": [],
+      "seed_symbols": [],
+      "ambiguous": true
+    },
+    "code.impact": {
+      "impacted_symbols": [],
+      "impacted_tests": [],
+      "co_change_files": [],
+      "counts_floor": true,
+      "epistemic": "lower_bound",
+      "causes": ["no_static_callers"]
+    }
+  },
+  "symbol_body": {
+    "request": {
+      "org": "o",
+      "namespace": "code-x",
+      "name": "Parser.parse_record",
+      "include_lessons": false,
+      "consumer": "claude-code-prompt-pack",
+      "token_budget": 600,
+      "include_body": true,
+      "include_history": false,
+      "include_examples": false,
+      "uses": false,
+      "uses_brief": false
+    },
+    "response": {
+      "definitions": [
+        {
+          "path": "src/parser.py",
+          "start_line": 10,
+          "end_line": 14,
+          "symbol": "Parser.parse_record",
+          "signature": "(value)",
+          "body": "def parse_record(value):\n    return value.strip()\n",
+          "elided": false
+        }
+      ],
+      "ambiguous": false,
+      "tokens_returned": 120
+    }
+  }
+}

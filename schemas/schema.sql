@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 195 tables + 5 views + 19 materialized views.
+-- Counts: 196 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (195)
+-- Tables (196)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -924,7 +924,8 @@ CREATE TABLE IF NOT EXISTS loom.code_repos
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     `exclude_generated` Bool DEFAULT false,
     `scip_producer` LowCardinality(String) DEFAULT '',
-    `row_kind` LowCardinality(String) DEFAULT ''
+    `row_kind` LowCardinality(String) DEFAULT '',
+    `git_proxy_identity` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)
@@ -1311,6 +1312,28 @@ CREATE TABLE IF NOT EXISTS loom.conflict_allowlist
 ENGINE = ReplacingMergeTree(allowed_at)
 ORDER BY (org, namespace, memory_key_a, memory_key_b)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.connected_accounts
+CREATE TABLE IF NOT EXISTS loom.connected_accounts
+(
+    `org` LowCardinality(String),
+    `subject` String,
+    `kind` LowCardinality(String),
+    `connection_id` String,
+    `account_id` String DEFAULT '',
+    `workspace_id` String DEFAULT '',
+    `account_email_enc` String DEFAULT '',
+    `credential_enc` String DEFAULT '',
+    `scopes` Array(String),
+    `active` Bool DEFAULT false,
+    `refresh_id` String DEFAULT '',
+    `connected_at` Nullable(DateTime64(3, 'UTC')),
+    `disconnected_at` Nullable(DateTime64(3, 'UTC')),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, subject, kind)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.consolidation_runs
 CREATE TABLE IF NOT EXISTS loom.consolidation_runs
@@ -2292,7 +2315,10 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `source_kind` LowCardinality(String) DEFAULT '',
     `items_json` String DEFAULT '[]',
     `secret_enc` String DEFAULT '',
-    `access` LowCardinality(String) DEFAULT 'namespace'
+    `access` LowCardinality(String) DEFAULT 'namespace',
+    `credential_mode` LowCardinality(String) DEFAULT 'shared',
+    `owner_subject` String DEFAULT '',
+    `connection_id` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)

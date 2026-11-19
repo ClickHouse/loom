@@ -42,6 +42,8 @@ class CompilerTier(Protocol):
 class StateInputs:
     # `loom.chunks` rows that are live (the knowledge plane's predicate)
     live_chunk_sql: str
+    # the memory types that never get an embedding row (the memory plane's)
+    unembedded_memory_types: tuple[str, ...]
     # the usage event kinds an agent, not the server, writes
     agent_label_kinds: tuple[str, ...]
     # the configured code repositories, as of the call

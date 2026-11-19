@@ -3,6 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -18,11 +19,15 @@ def native(monkeypatch):
     from server import boot
     from server.core import ch, pg, pg_profile
     from server.memory.app import embedder_calibration
+    from server.settings import settings
 
     events = []
     gate = retirement.get_gate()
     client = SimpleNamespace(connected=False)
     errors = {}
+    terminal_ends = []
+    reversible_closes = []
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     model_gate = ModelWorkGate()
 
     def event(name):
@@ -39,7 +44,21 @@ def native(monkeypatch):
         event("ch")
 
     async def close_pg():
+        assert not (gate.role == "command" and gate.closed)
+        reversible_closes.append(True)
         event("pg")
+
+    async def close_pg_until(*, end):
+        assert gate.pg_sealed and gate.quiescent
+        assert end > asyncio.get_running_loop().time()
+        terminal_ends.append(end)
+        assert terminal_ends == [terminal_ends[0]] * len(terminal_ends)
+        event("pg")
+        return True
+
+    async def authority(sql, params=None):
+        assert sql == pg_profile._CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
 
     async def verify(_):
         assert not gate.enrolled
@@ -59,16 +78,19 @@ def native(monkeypatch):
     async def flush():
         event("flush")
 
-    async def certificate(proof):
-        assert gate.quiescent and gate.enrolled and client.connected
+    async def certificate(proof, *, ch):
+        assert ch is client
+        assert gate.quiescent and gate.pg_sealed and gate.enrolled and client.connected
         assert proof.version > proof.after
-        assert events[-1] == "flush"
+        assert events[-1] == "pg"
+        assert terminal_ends and not reversible_closes
         event("certificate")
 
-    client.connect, client.disconnect = connect, close_ch
+    client.connect, client.disconnect, client.query_one = connect, close_ch, authority
     monkeypatch.setattr(ch, "get_client", lambda: client)
     monkeypatch.setattr(command, "get_client", lambda: client, raising=False)
     monkeypatch.setattr(pg, "close_pool", close_pg)
+    monkeypatch.setattr(pg, "close_pool_until", close_pg_until)
     monkeypatch.setattr(pg_profile, "check_configured", verify)
     monkeypatch.setattr(_ch, "check_orgs", acceptance)
     monkeypatch.setattr(command, "register_process", enroll)
@@ -88,7 +110,14 @@ def native(monkeypatch):
     monkeypatch.setattr(barrier, "record_retirement", certificate)
     monkeypatch.setattr(embedder_calibration, "stop_refresh_loop", lambda: event("stop"))
     return SimpleNamespace(
-        events=events, errors=errors, client=client, gate=gate, model_gate=model_gate, event=event
+        events=events,
+        errors=errors,
+        client=client,
+        gate=gate,
+        model_gate=model_gate,
+        event=event,
+        terminal_ends=terminal_ends,
+        reversible_closes=reversible_closes,
     )
 
 
@@ -112,7 +141,17 @@ def test_native_first_entry_or_work_error_survives_all_close_boundaries(
     with pytest.raises(first_class) as caught:
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
-    assert native.events[-2:] == ["pg", "ch"]
+    if entry == "verify":
+        assert native.events[-2:] == ["pg", "ch"]
+        assert native.reversible_closes == [True] and not native.terminal_ends
+    else:
+        assert not native.reversible_closes and len(native.terminal_ends) == 1
+        if secondary == "pg":
+            assert native.events[-2:] == ["pg", "ch"]
+            assert "certificate" not in native.events
+        else:
+            assert native.events[-3:] == ["pg", "certificate", "ch"]
+    assert native.events.count("pg") == native.events.count("ch") == 1
     assert not native.client.connected
     assert native.model_gate.active == native.gate.active == 0
     if entry != "work":
@@ -163,7 +202,17 @@ def test_required_native_cleanup_error_after_success_is_fatal(native, cleanup, f
     with pytest.raises(first_class) as caught:
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
-    assert native.events[-2:] == ["pg", "ch"]
+    assert not native.reversible_closes
+    if cleanup in ("stop", "flush"):
+        assert native.events[-2:] == [cleanup, "ch"]
+        assert not native.terminal_ends and "pg" not in native.events
+        assert "certificate" not in native.events
+    elif cleanup == "pg":
+        assert native.events[-3:] == ["flush", "pg", "ch"]
+        assert len(native.terminal_ends) == 1 and "certificate" not in native.events
+    else:
+        assert native.events[-3:] == ["pg", "certificate", "ch"]
+        assert len(native.terminal_ends) == 1
     assert not native.client.connected
 
 
@@ -183,7 +232,9 @@ def test_first_required_cleanup_error_wins_and_all_safe_cleanup_runs(native, mon
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
     assert "stop" in native.events and "flush" in native.events
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["flush", "pg", "ch"]
+    assert "certificate" not in native.events
+    assert len(native.terminal_ends) == 1 and not native.reversible_closes
 
 
 @pytest.mark.parametrize("first_class", FIRST)
@@ -240,8 +291,9 @@ def test_unacknowledged_cleanup_refuses_without_early_certification(
     if first is not None:
         assert caught.value is first
     assert calls == [phase]
-    assert "certificate" not in native.events
-    assert native.events[-2:] == ["pg", "ch"]
+    assert "certificate" not in native.events and "pg" not in native.events
+    assert not native.terminal_ends and not native.reversible_closes
+    assert native.events[-2:] == ["flush" if phase == "retire" else "stop", "ch"]
 
 
 def test_actual_deferred_descendant_and_role_producer_end_before_certificate(native):
@@ -271,7 +323,7 @@ def test_actual_deferred_descendant_and_role_producer_end_before_certificate(nat
     assert native.events.index("producer-ended") < native.events.index("certificate")
     assert native.events.index("descendant") < native.events.index("certificate")
     assert native.gate.quiescent and native.model_gate.active == 0
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
 
 
 @pytest.mark.parametrize("first_class", [SystemExit, KeyboardInterrupt])
@@ -304,7 +356,7 @@ def test_real_override_keeper_fatal_is_retrieved_before_native_cleanup(
     with pytest.raises(first_class) as caught:
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert native.gate.quiescent
 
 
@@ -322,8 +374,9 @@ def test_clean_native_success_has_one_certified_exit_and_no_keeper_left(native, 
 
     monkeypatch.setattr(command, "_keep_overrides", keeper)
     assert _ch.run_connected(work, orgs=("o",)) == 7
-    assert native.events.count("certificate") == 1
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events.count("certificate") == native.events.count("pg") == 1
+    assert len(native.terminal_ends) == 1 and not native.reversible_closes
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert keepers and all(task.done() for task in keepers)
 
 
@@ -347,7 +400,7 @@ def test_caller_cancellation_during_keeper_stop_is_not_swallowed(native, monkeyp
     monkeypatch.setattr(command, "_keep_overrides", keeper)
     with pytest.raises(asyncio.CancelledError, match="cleanup cancellation"):
         _ch.run_connected(work, orgs=("o",))
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert keepers and all(task.done() for task in keepers)
 
 
@@ -369,7 +422,8 @@ def test_unfinished_role_producer_prevents_success_and_certificate(native, monke
 
     with pytest.raises(RuntimeError, match="producers did not stop"):
         _ch.run_connected(work, orgs=("o",))
-    assert "certificate" not in native.events
+    assert "certificate" not in native.events and "pg" not in native.events
+    assert not native.terminal_ends and not native.reversible_closes
     assert not native.gate.producers_stopped
     assert producers and all(task.done() for task in producers)
 
@@ -394,7 +448,7 @@ def test_first_role_producer_failure_is_retrieved_and_does_not_skip_safe_drain(n
     with pytest.raises(OSError) as caught:
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert all(task.done() and not task._log_traceback for task in producers)
 
 

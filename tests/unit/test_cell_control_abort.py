@@ -81,20 +81,33 @@ async def test_outer_signal_wins_over_later_close_and_abort_failures(
     monkeypatch.setattr(cell_control.asyncio, "wait", wait)
     task = asyncio.create_task(outcome(owner.close))
     try:
-        await entered.wait()
+        await asyncio.wait_for(entered.wait(), timeout=0.5)
         original_end = owner.close_end
         task.cancel("original outer cancellation")
         await asyncio.sleep(0)
         assert len(seen) == 1 and not task.done()
         finish.set()
+        done, _ = await asyncio.wait({task}, timeout=0.5)
+        if not done:
+            raise TimeoutError("owned test task did not finish")
         result = await task
         assert result is seen[0]
         assert owner.close_end == original_end
         assert owner._close_task.done()
         assert owner._close_task.cancelled() or not owner._close_task._log_traceback
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
     finally:
         finish.set()
-        await asyncio.gather(task, return_exceptions=True)
+        owned_tasks = {task, *owner._tasks}
+        if owner._close_task is not None:
+            owned_tasks.add(owner._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 @pytest.mark.parametrize("abort_kind", ABORT_ERRORS)

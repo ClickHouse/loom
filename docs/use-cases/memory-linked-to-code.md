@@ -36,8 +36,10 @@ the SDKs on the repositories a self-hosted Loom indexes (the
 - **Lessons wherever the agent reads code.** `code.symbol` returns the memories linked to a
   definition as `lessons`; `code.search`, `code.callers`, `code.callees`, `code.impact`,
   `code.outline` and a task's `code.context_pack` attach the lessons for the files they
-  return; each lesson carries its link state. The Claude Code and Codex hooks show a file's
-  memories (`memory.for_file`) before an agent edits it, and the Cline hooks when it reads
+  return; each lesson carries its link state. A slow or failed file read leaves the
+  completed files' lessons intact within the enrichment timeout. The Claude Code and
+  Codex hooks show a file's memories (`memory.for_file`) before an agent edits it, and
+  the Cline hooks when it reads
   or edits one. [`code.symbol`](../reference/operations/code.md#codesymbol) ·
   [Claude Code plugin](../features/integrations/claude-code.md) ·
   [Codex plugin](../features/integrations/codex.md) ·

@@ -19,6 +19,7 @@ export type View =
   | "code"
   | "tasks"
   | "setup"
+  | "connected-accounts"
   | "admin:review_queue"
   | "admin:health"
   | "admin:guardrails"
@@ -43,6 +44,7 @@ export const ALL_VIEWS: View[] = [
   "code",
   "tasks",
   "setup",
+  "connected-accounts",
   "admin:review_queue",
   "admin:health",
   "admin:guardrails",
@@ -63,6 +65,7 @@ const CANONICAL_PATH: Partial<Record<View, string>> = {
   sharing: "flow",
   browse: "spaces",
   setup: "settings",
+  "connected-accounts": "settings/connected-accounts",
 };
 
 /** View → URL path segment, e.g. "admin:health" → "admin/health". */
@@ -93,6 +96,7 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   tasks: ["inbox", "task"],
   // Settings carries its open tab (`?tab=memory|system`).
   setup: ["tab"],
+  "connected-accounts": ["kind"],
   // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
   // the memory in the drawer, the document in the preview, the thread in the replay.
   memories: ["memory"],

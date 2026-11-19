@@ -461,6 +461,8 @@ ROUTES: dict[str, str] = {
     "/v1/auth/agent-signup POST": "named",
     "/v1/auth/login POST": "password sign-in: the account is this cell's",
     "/v1/auth/self-signup POST": "named",
+    "/v1/connect/{kind}/start POST": "token",
+    "/v1/connect/{kind}/callback GET": "named",
     "/v1/health GET": "health probe",
     "/v1/health/live GET": "health probe",
     "/v1/health/ready GET": "health probe",
@@ -547,7 +549,7 @@ def _checks(endpoint: Any) -> bool:
     return False
 
 
-def test_every_route_is_tenancy_checked_or_org_free() -> None:
+def _assert_every_route_is_tenancy_checked_or_org_free() -> None:
     from server.main import app
     from server.operations.registry import ALL_OPERATIONS
 
@@ -571,6 +573,31 @@ def test_every_route_is_tenancy_checked_or_org_free() -> None:
     endpoints = {key: ep for key, ep in _endpoints(app.routes)}
     missing = [key for key, how in ROUTES.items() if how == "named" and not _checks(endpoints[key])]
     assert not missing, f"these routes name an org but check none: {missing}"
+
+
+def test_every_route_is_tenancy_checked_or_org_free() -> None:
+    import os
+    import subprocess
+
+    # Route attachment is decided when the app is built, before request handling.
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from server.settings import settings\n"
+            "settings.auth_required = True\n"
+            "settings.identity_provider = 'trust-network'\n"
+            "settings.oauth_enabled = False\n"
+            "from tests.unit.test_cell_tenancy import "
+            "_assert_every_route_is_tenancy_checked_or_org_free as check\n"
+            "check()\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "LOOM_ENV_FILE": ""},
+    )
+    assert check.returncode == 0, check.stdout + check.stderr
 
 
 @pytest.mark.parametrize("mode", ["recording", "enforced"])

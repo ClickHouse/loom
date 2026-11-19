@@ -8,14 +8,19 @@ import asyncio
 import importlib
 import json
 import sys
+from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 from loom import Agent
 from loom.errors import LoomError
-from loom.integrations.openai_agents import loom_tools
+from loom.integrations.openai_agents import LoomSession, loom_tools
+from loom.session_protection import AutomaticCaptureSuppressed, SessionProtection
 from loom.tools import LOOM_TOOL_SPECS
 
 
@@ -73,14 +78,23 @@ def test_recall_runs_memory_search_in_the_bound_scope() -> None:
 
 
 def test_remember_runs_memory_set() -> None:
-    agent = _FakeAgent({"version": 2})
+    receipt = {
+        "version": 2,
+        "memory_id": "5ec521fa-3762-4e56-aa7a-5f4c691bb572",
+        "memory_key": "seat",
+        "content_sha256": "a" * 64,
+        "status": "active",
+        "conflict_verdict": "clear",
+        "noop": False,
+    }
+    agent = _FakeAgent(receipt)
     (remember,) = loom_tools(agent, only=["loom_remember"])  # type: ignore[arg-type]
     out = _invoke(remember, {"memory_key": "seat", "value": "Alice prefers aisle seats"})
     assert agent.calls[0][:2] == (
         "memory.set",
         {"memory_key": "seat", "value": "Alice prefers aisle seats"},
     )
-    assert json.loads(out)["stored"] is True
+    assert json.loads(out) == {**receipt, "stored": True, "verdict": "clear"}
 
 
 def test_without_openai_agents_the_import_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,8 +149,8 @@ def test_max_result_chars_caps_what_the_model_reads() -> None:
     )
     (recall,) = loom_tools(agent, only=["loom_recall"], max_result_chars=100)  # type: ignore[arg-type]
     out = _invoke(recall, {"query": "seat"})
-    assert out.endswith("…[truncated]")
-    assert len(out) == 100 + len("…[truncated]")
+    assert json.loads(out) == {"memories": [], "omitted": 1}
+    assert len(out) <= 100
 
 
 # ---- LoomSession -------------------------------------------------------------
@@ -202,6 +216,7 @@ class _Rows:
 class _Memory:
     def __init__(self, rows: _Rows) -> None:
         self.memory = rows
+        self.transport = SimpleNamespace(session_protection=None)
 
     async def call(self, op: str, body: dict[str, Any], **scope: Any) -> dict[str, Any]:
         assert op == "memory.set"
@@ -473,3 +488,234 @@ def test_a_runner_reads_and_extends_the_history_through_the_session() -> None:
     assert [i.get("content") if isinstance(i, dict) else None for i in second_input][0] == "first"
     history = asyncio.run(session.get_items())
     assert [h.get("role") for h in history] == ["user", "assistant", "user", "assistant"]
+
+
+def _protected_session_agent(
+    family: SessionProtection,
+    respond: Callable[[httpx.Request], httpx.Response],
+) -> Agent:
+    agent = Agent(
+        org="acme",
+        namespace="support",
+        agent="bot",
+        base_url="http://inert.invalid",
+        api_key="test-token",
+        session_protection=family,
+        pacing=False,
+        coalesce_sets=False,
+        auto_run=False,
+        mentor_brief=False,
+        retry={"max_attempts": 1},
+    )
+    agent.transport._client._transport = httpx.MockTransport(respond)
+    return agent
+
+
+_HISTORY_KEY = "openai-agents/00000000000000000001-12345678"
+
+
+def _history_page(*, mirrored: bool = False, truncated: bool = False) -> dict[str, Any]:
+    return {
+        "mirrored": mirrored,
+        "truncated": truncated,
+        "entries": [{"memory_key": _HISTORY_KEY, "value": _msg("user", "retained history")}],
+    }
+
+
+@pytest.mark.parametrize("method", ["get_items", "add_items"])
+@pytest.mark.parametrize("origin", ["bound", "ambient"])
+def test_native_history_retains_constructor_family_after_rebinding(
+    tmp_path: Path,
+    method: str,
+    origin: str,
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(
+            200, json=_history_page() if request.url.path.endswith("list") else {}
+        )
+
+    async def go() -> None:
+        agent = _protected_session_agent(original if origin == "bound" else replacement, respond)
+        try:
+            if origin == "ambient":
+                with original.automatic():
+                    session = LoomSession(agent, "native-history")
+            else:
+                session = LoomSession(agent, "native-history")
+            agent.transport.session_protection = replacement
+            original.mark()
+            with pytest.raises(AutomaticCaptureSuppressed):
+                if method == "get_items":
+                    await session.get_items()
+                else:
+                    await session.add_items([_msg("assistant", "new automatic item")])
+            assert posts == [] and not replacement.protected
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_first_marked_native_history_marks_all_contributors_before_return(tmp_path: Path) -> None:
+    contributor = SessionProtection.create(base=tmp_path / "contributor")
+    bound = SessionProtection.create(base=tmp_path / "bound")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json=_history_page(mirrored=True))
+
+    async def go() -> None:
+        agent = _protected_session_agent(bound, respond)
+        try:
+            with contributor.automatic():
+                session = LoomSession(agent, "native-history")
+            assert await session.get_items() == [_msg("user", "retained history")]
+            assert contributor.protected and bound.protected
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await session.add_items([_msg("assistant", "derived reply")])
+            assert posts == ["/v1/memory.list"]
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_callback_native_history_contributor_survives_ambient_scope_exit(tmp_path: Path) -> None:
+    contributor = SessionProtection.create(base=tmp_path / "contributor")
+    bound = SessionProtection.create(base=tmp_path / "bound")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json=_history_page())
+
+    async def go() -> None:
+        agent = _protected_session_agent(bound, respond)
+        session = LoomSession(agent, "native-history")
+        try:
+            with contributor.automatic():
+                assert await session.get_items() == [_msg("user", "retained history")]
+            contributor.mark()
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await session.add_items([_msg("assistant", "derived reply")])
+            assert posts == ["/v1/memory.list"] and not bound.protected
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_marked_native_history_write_stops_before_the_next_item(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    writes: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        writes.append(json.loads(request.content))
+        return httpx.Response(200, json={"mirrored": True})
+
+    async def go() -> None:
+        agent = _protected_session_agent(family, respond)
+        try:
+            session = LoomSession(agent, "native-history")
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await session.add_items([_msg("user", "first"), _msg("assistant", "second")])
+            assert len(writes) == 1 and json.loads(writes[0]["value"]) == _msg("user", "first")
+            assert family.protected
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_marked_native_history_page_stops_automatic_followup(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(
+            200, json=_history_page(mirrored=len(posts) == 1, truncated=len(posts) == 1)
+        )
+
+    async def go() -> None:
+        agent = _protected_session_agent(family, respond)
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await LoomSession(agent, "native-history").get_items()
+            assert posts == ["/v1/memory.list"] and family.protected
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_native_history_rechecks_callback_family_after_credentials(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    callback = SessionProtection.create(base=tmp_path / "callback")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json=_history_page())
+
+    async def go() -> None:
+        agent = _protected_session_agent(original, respond)
+        session = LoomSession(agent, "native-history")
+        agent.transport.session_protection = callback
+
+        class RebindingAuth(httpx.Auth):
+            async def async_auth_flow(self, request: httpx.Request):
+                await asyncio.sleep(0)
+                callback.mark()
+                agent.transport.session_protection = replacement
+                yield request
+
+        agent.transport._client.auth = RebindingAuth()
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await session.get_items()
+            assert posts == [] and not original.protected and not replacement.protected
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("method", ["pop_item", "clear_session"])
+def test_explicit_native_history_delete_observes_retained_contributors(
+    tmp_path: Path,
+    method: str,
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        if request.url.path.endswith("list"):
+            return httpx.Response(200, json=_history_page(mirrored=True))
+        return httpx.Response(200, json={"deleted": True})
+
+    async def go() -> None:
+        agent = _protected_session_agent(original, respond)
+        session = LoomSession(agent, "native-history")
+        agent.transport.session_protection = replacement
+        replacement.mark()
+        try:
+            if method == "pop_item":
+                assert await session.pop_item() == _msg("user", "retained history")
+            else:
+                assert await session.clear_session() is None
+            assert original.protected and replacement.protected
+            assert posts == ["/v1/memory.list", "/v1/memory.delete"]
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())

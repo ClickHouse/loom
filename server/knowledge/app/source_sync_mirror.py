@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.clients import gdrive
+from server.clients._checked_access import Credential
 from server.code.app.index.pass_budget import PassBudget
 from server.core.ch import sequential_reads
 from server.core.pg_lease import PublicationPending
@@ -105,7 +106,7 @@ async def _own_state(src: KnowledgeSource, mirror: str, asked: dict[str, Any]) -
 
 async def _in_mirror(
     src: KnowledgeSource,
-    opened: tuple[str, gdrive_items.Listing, list[dict[str, Any]]],
+    opened: tuple[Credential, gdrive_items.Listing, list[dict[str, Any]]],
     detail: dict[str, Any],
     started: datetime,
     run: sync.Pass,
@@ -136,7 +137,7 @@ async def _in_mirror(
     stored = sync.index_with_room(result, [c for c in copies if c["searchable"]])
     try:
         for f in files:
-            read_access = functools.partial(_file_access, token, f, result)
+            read_access = functools.partial(_source_access, src, token, f, result)
             prior = stored.get(str(f["id"]))
             uri = _address(src, f)
             if not await sync.sync_file(
@@ -168,7 +169,8 @@ async def _in_mirror(
         return  # the cycle goes on from its cursor in the next turn
     pass_context.check_stop()
     await sync.require_current(src)  # an erasure since the last write lands no row
-    await mirror_store.record_listing(src.org, src.mirror, src.source_id, src.name, vouched)
+    async with sync.publication_guard(src):
+        await mirror_store.record_listing(src.org, src.mirror, src.source_id, src.name, vouched)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -231,7 +233,7 @@ def _note(result: sync.TurnResult, note: str, *, first: bool = False) -> None:
 
 async def _refresh_lists(
     src: KnowledgeSource,
-    token: str,
+    token: Credential,
     copies: list[dict[str, str]],
     listed: dict[str, dict[str, Any]],
     whole: bool,
@@ -266,7 +268,9 @@ async def _refresh_lists(
                     # the full interval do not wait on a source's lists fitting one turn.
                     stopped_at = stopped_at or uri
                     continue
-                access = access_list.UNREAD if f is None else await _file_access(token, f, result)
+                access = (
+                    access_list.UNREAD if f is None else await _source_access(src, token, f, result)
+                )
                 stored = access_list.from_json(held[uri])
                 if f is not None and revision[uri] != str(f.get("modifiedTime") or ""):
                     # The copy is behind the file: its text was shared under the old
@@ -286,8 +290,21 @@ async def _refresh_lists(
     return all_written, stopped_at
 
 
+async def _source_access(
+    src: KnowledgeSource, token: Credential, f: dict[str, Any], result: sync.TurnResult
+) -> access_list.AccessList:
+    access = await _file_access(token, f, result)
+    if src.credential_mode != "connected":
+        return access
+    # Being listed by this person's own account proves the owner arm even when
+    # the provider withholds its share list. Discoverable explicit shares remain.
+    return dataclasses.replace(
+        access if not access.unread else access_list.AccessList(), owner=src.owner_subject
+    )
+
+
 async def _file_access(
-    token: str, f: dict[str, Any], result: sync.TurnResult
+    token: Credential, f: dict[str, Any], result: sync.TurnResult
 ) -> access_list.AccessList:
     """The file's permission list. The listing leaves it out for a shared drive's files
     and for one the account may not share, so it is read then and kept on `f`. A file
@@ -317,6 +334,14 @@ async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.Access
     list stays as it was."""
     if not lists:
         return True
+    if len(lists) > _REWRITE_BATCH:
+        items = list(lists.items())
+        complete = True
+        for start in range(0, len(items), _REWRITE_BATCH):
+            complete = (
+                await _write_lists(src, dict(items[start : start + _REWRITE_BATCH])) and complete
+            )
+        return complete
     pass_context.check_stop()
     with sequential_reads():  # a replica behind the last write would carry old content
         found = await documents.get_many_by_uris(src.org, src.mirror, list(lists))
@@ -331,8 +356,9 @@ async def _write_lists(src: KnowledgeSource, lists: dict[str, access_list.Access
             )
             for d in docs
         ]
-        with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
-            await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
+        async with sync.publication_guard(src):
+            with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
+                await documents.insert_many(rows, over={d.source_uri: d.version for d in docs})
     return len(docs) == len(found)
 
 

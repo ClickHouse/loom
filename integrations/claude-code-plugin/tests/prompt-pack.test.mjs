@@ -1,7 +1,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accept, renderPack, searchBody, searchQuery, shouldAsk, SEEN_CAP } from "../lib/prompt-pack.mjs";
+import { accept, renderPack, searchBody, searchQuery, shouldAsk, codeLookup, lookupBody } from "../lib/prompt-pack.mjs";
 
 const RES = {
   abstain: false,
@@ -28,24 +28,51 @@ test("accept follows the index's own abstain and confidence", () => {
   assert.equal(accept(null), false);
 });
 
-test("renderPack emits at most cap unseen pointers and remembers them", () => {
-  const first = renderPack(RES, [], { cap: 3 });
+test("renderPack caps and deduplicates one answer without hiding later evidence", () => {
+  const reply = { ...RES, results: [RES.results[0], ...RES.results] };
+  const first = renderPack(reply, { cap: 3 });
   assert.match(first.text, /confidence 0\.81/);
   assert.match(first.text, /- src\/A.cpp:10-40 DB::A::run — void run\(\)/);
-  assert.equal(first.text.split("\n").length, 5, "header + 3 pointers + the instruction");
+  assert.equal(first.text.split("\n").length, 5);
+  assert.equal(first.text.match(/src\/A.cpp/g).length, 1);
   assert.match(first.text, /do not run the search again/);
-  assert.deepEqual(first.seen, ["src/A.cpp:10-40", "src/B.cpp:5-9", "src/C.cpp:1-3"]);
-  const second = renderPack(RES, first.seen, { cap: 3 });
-  assert.equal(second.text.split("\n").length, 3, "only the unseen fourth hit");
-  assert.match(second.text, /src\/D.cpp:7-8/);
-  const third = renderPack(RES, second.seen, { cap: 3 });
-  assert.equal(third.text, "", "nothing new -> silence, not a repeat");
+  assert.doesNotMatch(first.text, /src\/D.cpp/);
+  const changed = structuredClone(reply);
+  changed.results[0].signature = "void run(bool strict)";
+  assert.match(renderPack(changed).text, /void run\(bool strict\)/);
 });
 
-test("seen list is bounded", () => {
-  const seen = Array.from({ length: SEEN_CAP }, (_, i) => `x${i}:1`);
-  const out = renderPack(RES, seen, { cap: 3 });
-  assert.equal(out.seen.length, SEEN_CAP);
+test("shared qualification skips self-contained tasks while keeping memory and mixed questions", () => {
+  for (const prompt of [
+    "Find the exact error string 'invalid record' locally.",
+    "Review my uncommitted changes in parser.py.",
+    "<issue>Use only the supplied excerpt. What is its return value?</issue>",
+    "Return only this text in uppercase: ready for review",
+  ])
+    assert.equal(shouldAsk(prompt), false, prompt);
+  for (const prompt of [
+    "What did we decide about record prefixes?",
+    "Explain exact string matching in the parser and its callers.",
+    "How does the parser handle tracked and untracked files?",
+  ])
+    assert.equal(shouldAsk(prompt), true, prompt);
+});
+
+test("typed selection stays conservative and refuses secret-bearing identifiers", () => {
+  const repo = { org: "o", namespace: "code-x" };
+  assert.equal(codeLookup("Where is API_TOKEN defined?", "API_TOKEN"), null);
+  assert.equal(lookupBody(repo, { op: "code.callers", name: "API_TOKEN" }, { token: "API_TOKEN" }), null);
+  assert.equal(lookupBody(repo, { op: "code.callers", name: "Parser.parse; secret" }), null);
+  for (const prompt of [
+    "Can you explain where the parser is defined and why?",
+    "Which callers use a parser when a record is incomplete?",
+    "Who calls Parser.parse-record in this checkout?",
+    "Who calls the parser in this module?",
+    "Which callers of this function can you establish?",
+    "Explain exact string matching in the parser and its callers.",
+  ])
+    assert.equal(codeLookup(prompt).op, "code.search", prompt);
+  assert.equal(codeLookup("What did we decide about record prefixes?"), null);
 });
 
 test("the index is asked about the request, not about how to answer it", () => {

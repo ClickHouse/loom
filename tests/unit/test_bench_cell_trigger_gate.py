@@ -18,6 +18,210 @@ import pytest
 from bench import cell_trigger_gate as gate
 
 
+@pytest.mark.parametrize("fault", ["", "query", "overflow"])
+async def test_physical_cost_diagnostics_are_bounded_and_exclude_query_text(monkeypatch, fault):
+    from server.core import ch_names
+
+    monkeypatch.setattr(ch_names, "database", lambda: "gate_cell")
+    monkeypatch.setattr(ch_names, "telemetry_database", lambda: "gate_cell_t")
+    cost = {
+        "shape": 123,
+        "calls": 25,
+        "elapsed_ms": 900,
+        "max_ms": 75,
+        "read_rows": 10000,
+        "read_bytes": 20000,
+        "written_rows": 6,
+        "cpu_us": 100000,
+        "kind_mask": 1,
+        "table_mask": 8,
+        "query": "secret-token raw SQL",
+        "log_comment": "secret-subject",
+    }
+    costs = [cost] * (21 if fault == "overflow" else 1)
+    observation = RuntimeError("secret-token") if fault == "query" else costs
+    ch = SimpleNamespace(query_all=AsyncMock(side_effect=[observation, [{"rows": 1, "parts": 1}]]))
+    conn = SimpleNamespace(fetch=AsyncMock(return_value=[]), fetchval=AsyncMock(return_value=1))
+    query_costs = await gate._query_costs(ch, ["gate_cell", "gate_cell_t"])
+    assert query_costs.get("window_seconds") == 60
+    result = await gate._physical(conn, ch, query_costs=query_costs)
+    expected = (
+        {
+            "window_seconds": 60,
+            "error_type": "RuntimeError" if fault == "query" else "Invalid",
+            "error_code": 0,
+        }
+        if fault
+        else {
+            "window_seconds": 60,
+            "rows": [{key: value for key, value in cost.items() if type(value) is int}],
+        }
+    )
+    assert result.get("clickhouse_query_costs") == expected
+    assert result["clickhouse_parts"] == [{"rows": 1, "parts": 1}]
+    assert result["postgres_rows"] == dict.fromkeys(
+        ("memory_current", "memory_revisions", "memory_deliveries", "audit_outbox"), 1
+    )
+    assert "secret" not in json.dumps(result)
+    sql = ch.query_all.await_args_list[0].args[0]
+    assert "normalized_query_hash" in sql and "LIMIT 20" in sql
+    assert "max_execution_time=3" in sql and "max_rows_to_read=1000000" in sql
+    assert "max_bytes_to_read=134217728" in sql and "max_result_bytes=16384" in sql
+    pg_sql = conn.fetch.await_args.args[0]
+    assert "seq_tup_read" in pg_sql and "idx_tup_fetch" in pg_sql
+
+
+@pytest.mark.parametrize("kind,table", [(1, 8), (2, 0), (4, 0), (7, 8191)])
+async def test_query_cost_window_preserves_only_numeric_masked_metrics(kind, table):
+    row = dict.fromkeys(
+        (
+            "shape",
+            "calls",
+            "elapsed_ms",
+            "max_ms",
+            "read_rows",
+            "read_bytes",
+            "written_rows",
+            "cpu_us",
+        ),
+        1,
+    )
+    row.update(kind_mask=kind, table_mask=table)
+    private = {
+        "query": "secret raw SQL",
+        "log_comment": "secret token",
+        "tables": ["foreign.secret"],
+        "query_kind": "secret unsupported kind",
+    }
+    ch = SimpleNamespace(query_all=AsyncMock(return_value=[{**row, **private}]))
+    result = await gate._query_costs(ch, ["gate_cell", "gate_cell_t"])
+    assert result == {"window_seconds": 60, "rows": [row]}
+    assert "secret" not in json.dumps(result)
+    assert ch.query_all.await_count == 1
+
+
+@pytest.mark.parametrize("kind,table", [(True, 0), (8, 0), (1, 8192), (1, -1)])
+async def test_query_cost_masks_refuse_unbounded_values(kind, table):
+    row = dict.fromkeys(
+        (
+            "shape",
+            "calls",
+            "elapsed_ms",
+            "max_ms",
+            "read_rows",
+            "read_bytes",
+            "written_rows",
+            "cpu_us",
+        ),
+        0,
+    )
+    row.update(kind_mask=kind, table_mask=table)
+    ch = SimpleNamespace(query_all=AsyncMock(return_value=[row]))
+    result = await gate._query_costs(ch, ["gate_cell", "gate_cell_t"])
+    assert result == {"window_seconds": 60, "error_type": "Invalid", "error_code": 0}
+    assert ch.query_all.await_count == 1
+
+
+@pytest.mark.parametrize("code", [241, 158, 0, 65536])
+async def test_query_cost_failure_emits_only_bounded_numeric_code(code):
+    ch = SimpleNamespace(
+        query_all=AsyncMock(side_effect=RuntimeError(f"Code: {code}. secret SQL token address"))
+    )
+    result = await gate._query_costs(ch, ["gate_cell", "gate_cell_t"])
+    assert result == {
+        "window_seconds": 60,
+        "error_type": "RuntimeError",
+        "error_code": code if 0 <= code <= 65535 else 0,
+    }
+    assert "secret" not in json.dumps(result)
+    assert ch.query_all.await_count == 1
+
+
+async def test_query_cost_window_and_fixed_masks_never_select_private_text():
+    ch = SimpleNamespace(query_all=AsyncMock(return_value=[]))
+    result = await gate._query_costs(ch, ["gate_cell", "gate_cell_t"])
+    assert result == {"window_seconds": 60, "rows": []}
+    sql, params = ch.query_all.await_args.args
+    assert params == {"dbs": ["gate_cell", "gate_cell_t"]}
+    assert "INTERVAL 60 SECOND" in sql and "INTERVAL 2 HOUR" not in sql
+    assert "query_kind='Select'" in sql and "query_kind='Insert'" in sql
+    assert "groupBitOr" in sql and "kind_mask" in sql and "table_mask" in sql
+    assert "arrayExists(db -> has(tables, concat(db," in sql
+    assert "'.memory_chunks'" in sql and "'.audit_log'" in sql
+    assert "ELSE" not in sql
+    assert "log_comment" not in sql and "query AS" not in sql
+    assert "max_result_rows=20" in sql and "result_overflow_mode='throw'" in sql
+
+
+async def test_query_cost_observation_preserves_cancellation():
+    first = asyncio.CancelledError("first cancellation")
+    ch = SimpleNamespace(query_all=AsyncMock(side_effect=first))
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await gate._query_costs(ch, ["gate_cell", "gate_cell_t"])
+    assert caught.value is first
+    assert ch.query_all.await_count == 1
+
+
+async def test_api_cost_sample_precedes_settlement_and_is_reused(monkeypatch):
+    from server.core import background, ch_names
+
+    events = []
+    costs = {"window_seconds": 60, "rows": []}
+    monkeypatch.setattr(ch_names, "database", lambda: "gate_cell")
+    monkeypatch.setattr(ch_names, "telemetry_database", lambda: "gate_cell_t")
+    monkeypatch.setattr(gate.asyncpg, "connect", AsyncMock(return_value=object()))
+    monkeypatch.setattr(gate, "_proof", AsyncMock(return_value={}))
+    triggers = SimpleNamespace(tables=(), invariant="fixed", org="fixed", set=AsyncMock())
+    monkeypatch.setattr(gate.Triggers, "capture", AsyncMock(return_value=triggers))
+    monkeypatch.setattr(gate, "_arm_order", lambda: (True,))
+
+    async def memory_set(*_args, **_kwargs):
+        events.append("memory_set")
+        return [SimpleNamespace(measured=True, elapsed_ms=12.0)]
+
+    async def query_costs(ch, dbs):
+        events.append("query_costs")
+        assert dbs == ["gate_cell", "gate_cell_t"]
+        return costs
+
+    async def settle(*_args):
+        events.append("settlement")
+
+    async def physical(*_args, query_costs):
+        assert query_costs is costs
+        events.append("physical")
+        return {"clickhouse_query_costs": query_costs}
+
+    monkeypatch.setattr(gate, "_memory_set", memory_set)
+    monkeypatch.setattr(gate, "_query_costs", query_costs)
+    monkeypatch.setattr(gate, "_settle_api", settle)
+    monkeypatch.setattr(gate, "_build_block", AsyncMock(return_value=SimpleNamespace(rows=[])))
+    monkeypatch.setattr(gate, "_stage", AsyncMock())
+    monkeypatch.setattr(gate, "_delivery", AsyncMock(return_value=1.0))
+    monkeypatch.setattr(gate, "_verify", AsyncMock())
+    monkeypatch.setattr(gate, "_physical", physical)
+    monkeypatch.setattr(gate, "_statistics", lambda samples: {})
+    monkeypatch.setattr(gate, "_cleanup", AsyncMock())
+    monkeypatch.setattr(background, "drain_task_sets", AsyncMock(return_value=True))
+    monkeypatch.setattr(background, "flush_registered_buffers", AsyncMock(return_value=True))
+    emitted = []
+
+    def emit(kind, **fields):
+        events.append(kind)
+        emitted.append((kind, fields))
+
+    result = await gate._run(
+        argparse.Namespace(pg_dsn="unused"), None, SimpleNamespace(emit=emit), object()
+    )
+    assert result == {}
+    assert events.index("memory_set") < events.index("query_costs")
+    assert events.index("query_costs") < events.index("api_costs") < events.index("settlement")
+    assert events.index("settlement") < events.index("physical")
+    assert events.count("query_costs") == 1
+    sample = next(fields for kind, fields in emitted if kind == "api_costs")
+    assert sample == {"arm": 0, **costs}
+
+
 @pytest.fixture(autouse=True)
 def no_external_io(monkeypatch):
     async def forbidden(*_args, **_kwargs):
@@ -799,16 +1003,29 @@ async def test_restore_preserves_primary_failure_and_survives_second_cancellatio
     monkeypatch.setattr(gate, "_close_pg", close)
     artifact = SimpleNamespace(emit=lambda kind, **kw: events.append(kind))
     task = asyncio.create_task(gate._run(args(), fixture, artifact, object()))
-    await restoring.wait()
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
-    release.set()
-    with pytest.raises(ValueError) as raised:
-        await task
-    assert raised.value is failure and conn.closed
-    assert "triggers_restored" in events
-    assert settings.pg_delivery_batch_rows > 0
+    try:
+        await asyncio.wait_for(restoring.wait(), timeout=0.5)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        release.set()
+        with pytest.raises(ValueError) as raised:
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
+            await task
+        assert raised.value is failure and conn.closed
+        assert "triggers_restored" in events
+        assert settings.pg_delivery_batch_rows > 0
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("cleanup_failure", [False, True])

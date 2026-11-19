@@ -89,6 +89,10 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
         "jsonnet bindings, members and imports — a lane module outside the "
         "stamp like lang_proto.py; rows arrive by a targeted backfill"
     ),
+    "lang_lua.py": (
+        "lua functions, call sites and require candidates — a lane module outside the "
+        "stamp like lang_proto.py; rows arrive by a targeted backfill"
+    ),
     "lang_k8s.py": (
         "plain Kubernetes manifests (documents, references, facets) — a lane "
         "module outside the stamp like lang_proto.py; rows arrive by a targeted backfill"

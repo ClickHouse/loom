@@ -31,6 +31,11 @@ from server.code.app.common import (
     resolve_code_identity,
     schedule_code_trace,
 )
+from server.code.app.coverage_freshness import (
+    measured_for,
+    partition_coverage_rows,
+    span_identities,
+)
 from server.code.app.files import attach_reference_siblings
 from server.code.app.spans import code_span, set_code_span_attributes, span_attrs
 from server.code.domain.index import coverage_claim as cc
@@ -365,38 +370,20 @@ def executed_rows(
 
 
 def subject_spans(rows: list[dict[str, Any]]) -> dict[str, list[tuple[int, int]]]:
-    """path -> the line spans of a resolved symbol's definitions."""
+    """Definition spans by path, omitting paths with an unknown line extent."""
     out: dict[str, list[tuple[int, int]]] = {}
+    unknown: set[str] = set()
     for r in rows:
         path, a, b = (
             str(r.get("path") or ""),
             int(r.get("start_line") or 0),
             int(r.get("end_line") or 0),
         )
-        if path and a > 0:
-            out.setdefault(path, []).append((a, max(a, b)))
-    return out
-
-
-async def measured_for(
-    repo: CodeRepo,
-    org: str,
-    ns: str,
-    src_paths: list[str],
-    spans: dict[str, list[tuple[int, int]]] | None,
-) -> dict[str, Any]:
-    """What the newest imported coverage run says about the subject (`measured_execution`),
-    {} when no run covered its files."""
-    files = await repo.coverage_files_for(org, ns, src_paths) if src_paths else {}
-    if not files:
-        return {}
-    ranges = {p: cr.json_ranges(str(f.get("lines") or "[]")) for p, f in files.items()}
-    whole = {p: [(1, 10**9)] for p in src_paths}
-    out = cc.measured_execution(spans if spans else whole, ranges)
-    if not out["measured"]:
-        return {}
-    out["commit"] = str(next(iter(files.values())).get("commit_sha") or "")
-    return out
+        if path and (a <= 0 or b < a):
+            unknown.add(path)
+        elif path:
+            out.setdefault(path, []).append((a, b))
+    return {path: extents for path, extents in out.items() if path not in unknown}
 
 
 async def claim_tests(
@@ -410,15 +397,17 @@ async def claim_tests(
     limit: int,
     terms: dict[str, str] | None = None,
     spans: dict[str, list[tuple[int, int]]] | None = None,
+    span_commits: dict[str, set[str]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """The coverage claim's reads and merge, without the verdict: the test
     map rows for the subject's source files and a textual grep over the test trees for each
     literal in `terms` (literal -> tier), merged per test file (map methods + `grep`), each
     row carrying the strongest `tier` of its evidence, strongest first, and the largest grep
     total before its cap. Shared with `code.conventions` so rule 7 asks the same question
-    the op does, minus the trace row. Measured `coverage` rows count when their executed
-    ranges meet the subject's span in `spans` (path -> line spans); a path absent from
-    `spans`, or `spans` None, counts every row of the path."""
+    the op does, minus the trace row. Measured rows need matching source, test and
+    symbol-span identities before their ranges meet the subject's span in `spans`.
+    A symbol without span identities keeps only historical file associations; a path
+    subject counts every verified row of the file."""
     cap = limit * 3
     terms = default_terms(subject_kind, subject) if terms is None else terms
     exact_terms = {t for t, tier in terms.items() if tier == cc.EXACT_SCOPED}
@@ -429,7 +418,14 @@ async def claim_tests(
         _grep_tests_many(repo, org, ns, [(t, cap) for t, _ in ordered_terms]),
         repo.coverage_rows_for(org, ns, src_paths) if src_paths else _empty_list(),
     )
-    map_rows = list(map_rows) + executed_rows(cov_rows, spans)
+    current, historical = await partition_coverage_rows(
+        repo,
+        org,
+        ns,
+        cov_rows,
+        span_commits=span_identities(spans, span_commits) if subject_kind == "symbol" else None,
+    )
+    map_rows = list(map_rows) + executed_rows(current, spans) + historical
     # The content references' evidence is registered vocabulary (the crossref
     # whitelist): a subject whose bare name is in it is itself a SQL-level
     # name, so its bare grep names the subject, not a short method name.
@@ -460,7 +456,11 @@ async def claim_tests(
         ev = str(r.get("evidence") or "")
         if m and m not in row["methods"]:
             row["methods"].append(m)
-        row["tiers"].append(cc.tier_of_method(m, scoped=_scoped_reference(ev, exact_terms)))
+        row["tiers"].append(
+            cc.FILE_REFERENCE
+            if m == "coverage_history"
+            else cc.tier_of_method(m, scoped=_scoped_reference(ev, exact_terms))
+        )
         row["confidence"] = max(row["confidence"], float(r.get("confidence") or 0.0))
         row["evidence"] = row["evidence"] or ev
     grep_total = 0
@@ -783,6 +783,14 @@ async def handle_code_coverage_claim(input: Any) -> Any:
             )[:20]
         terms = await search_terms(repo, org, ns, subject_kind, subject, rows, resolved_by)
     spans = subject_spans(rows) if subject_kind == "symbol" else None
+    span_commits = (
+        {
+            p: {str(r.get("indexed_commit") or "") for r in rows if r.get("path") == p}
+            for p in src_paths
+        }
+        if subject_kind == "symbol"
+        else None
+    )
     with code_span("coverage_claim.reads", seeds=len(src_paths)):
         (ordered, grep_total), units, measured = await asyncio.gather(
             claim_tests(
@@ -795,11 +803,12 @@ async def handle_code_coverage_claim(input: Any) -> Any:
                 limit=input.limit,
                 terms=terms,
                 spans=spans,
+                span_commits=span_commits,
             ),
             unit_tests_reaching(repo, org, ns, rows, subject, src_paths, subject_kind=subject_kind)
             if subject_kind != "setting"
             else _empty_list(),
-            measured_for(repo, org, ns, src_paths, spans),
+            measured_for(repo, org, ns, src_paths, spans, span_commits=span_commits),
         )
     if units:
         ordered = merge_test_rows(ordered, units)
@@ -815,8 +824,20 @@ async def handle_code_coverage_claim(input: Any) -> Any:
     verdict = cc.coverage_verdict(
         ordered,
         control_ok=control_ok,
-        measured_unexecuted=bool(measured) and not measured.get("executed"),
+        measured_unexecuted=measured.get("freshness") == "verified"
+        and bool(measured.get("run_current"))
+        and bool(measured.get("measured"))
+        and not measured.get("executed"),
     )
+    if verdict in {cc.UNCOVERED, cc.WEAK_EVIDENCE} and (
+        (
+            bool(measured)
+            and (measured.get("freshness") != "verified" or not measured.get("run_current"))
+        )
+        or (verdict == cc.UNCOVERED and measured.get("executed"))
+        or any("coverage_history" in r["methods"] for r in ordered)
+    ):
+        verdict = cc.UNKNOWN
     trace_run_id = new_trace_run_id()
     served = ordered[: input.limit]
     schedule_code_trace(

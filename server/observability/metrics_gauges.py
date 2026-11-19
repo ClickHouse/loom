@@ -310,7 +310,8 @@ def _register_backlog_gauges(meter: Any, _reading: Callable[[str], Callable[[Any
     meter.create_observable_gauge(
         name="loom.embed.pending",
         callbacks=[_reading("embed_pending")],
-        description="Rows awaiting embedding (embedding_dim=0) — worker backlog",
+        description="Live memories that get an embedding and have no vector yet "
+        "(episodic, profile and high memories never do) — worker backlog",
         unit="1",
     )
     meter.create_observable_gauge(

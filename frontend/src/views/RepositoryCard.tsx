@@ -914,14 +914,14 @@ export const RepositoryCard = memo(function RepositoryCard({
               </FacetRow>
             )}
             {docs && (
-              // Where those documents are pulled from, and each source's last sync
+              // Shared sources retain the admin gate used for credential rotation.
               <FacetRow icon="connect" label="Sources">
                 <Suspense fallback={null}>
                   <SourcesList
                     org={docs.org}
                     namespace={docs.namespace}
                     place={{ label: card.repo, noun: "repository" }}
-                    manageable={canCallOn("knowledge.source.add", docs, whoami)}
+                    manageable={canCallOn("knowledge.source.rotate", docs, whoami)}
                     busy={anyBusy}
                   />
                 </Suspense>

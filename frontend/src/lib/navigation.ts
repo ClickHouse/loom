@@ -7,6 +7,11 @@ export function goToSso(nonce: string): void {
   window.location.assign(`/oauth/sso?n=${encodeURIComponent(nonce)}`);
 }
 
+/** Leave for the consent URL returned by Loom's authenticated connection-start route. */
+export function goToConnectionConsent(url: string): void {
+  window.location.assign(url);
+}
+
 let reloading = false;
 
 /** Load the page again from the server; once, however many changes ask for it. */

@@ -19,6 +19,7 @@ class _Cfg:
         self.org, self.namespace, self.label = "o", "code-r", "o/code-r"
         self.git_dir, self.git_remote = git_dir, git_remote
         self.git_branch, self.github_token, self.classification = "main", "", "standard"
+        self.git_proxy_identity = ""
         self.source = "config"
 
 
@@ -216,7 +217,9 @@ async def test_a_fresh_clone_pins_the_ledger_merges_it_lacks(monkeypatch, tmp_pa
 
     sent: list[list[str]] = []
 
-    async def _fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str = "") -> int:
+    async def _fetch_shas(
+        git_dir: str, remote: str, shas: list[str], *, token: str = "", proxy_identity: str = ""
+    ) -> int:
         sent.append(list(shas))
         return len(shas)
 

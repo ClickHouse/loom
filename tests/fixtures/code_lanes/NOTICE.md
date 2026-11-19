@@ -29,6 +29,7 @@ bats test, a Jinja template, a platform-suffixed Go file), so don't reformat or
 | js/, ts/constructs/, ts/synthetic/ | synthetic: CommonJS, IIFE, class expressions, overloads, React components, SQL in template literals | — |
 | vue/ | synthetic single-file components and a composable | — |
 | proto/, helm/ | synthetic | — |
+| lua/ | synthetic: a vector module and a menu scene that requires it | — |
 | rust/synthetic/ | synthetic: a trait and its impl, a declarative macro, an async function | — |
 | sql/views/ | synthetic: a ClickHouse table, a materialized view into its rollup, a view and a CTE | — |
 | tla/, fbs/, cmake/, md/ | synthetic: one toy ledger described in TLA+, FlatBuffers, CMake and Markdown (with fenced code) | — |

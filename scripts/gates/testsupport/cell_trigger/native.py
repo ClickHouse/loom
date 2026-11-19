@@ -441,7 +441,8 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
                 or dict(host=socket.gethostname(), pid=workload.driver["pid"]),
             )
             if item["kind"] == "delivery":
-                equal(row, codec.row(item["row"], comparison=True))
+                checked_delivery_row = codec.row(item["row"], comparison=True)
+                equal(row, checked_delivery_row)
                 equal(audit, item["audit"])
             need(audit["row_hash"] not in seen_hash, "unique workload audit identity")
             seen_hash.add(audit["row_hash"])
@@ -459,7 +460,7 @@ async def verify_pages(conn, ch, context, workload, codec, native_hash):
                 content_sha256=row["content_sha256"],
             )
             if item["kind"] == "delivery":
-                intent.update(row=codec.row(item["row"], comparison=True), audit=item["audit"])
+                intent.update(row=checked_delivery_row, audit=item["audit"])
                 observed.update(row=row, audit=audit)
             chain_update(expected_chain, count, intent)
             chain_update(observed_chain, count, observed)
@@ -662,15 +663,171 @@ def api(context: dict, output: Path) -> None:
             "configuration_artifact": artifact,
         },
     )
-    uvicorn.run(
-        "server.main:app",
-        app_dir=context["root"],
-        host="127.0.0.1",
-        port=context["ports"]["api"],
-        loop="asyncio",
-        workers=1,
-        reload=False,
-    )
+    from contextlib import contextmanager
+    from contextvars import ContextVar
+
+    from server.core.ch import current_query_tag
+    from server.observability import otel
+
+    # These ordinals count POST memory.set ASGI calls, not successful writes.
+    samples = (8192, 10240, 12288, 14336, 16384, 18432)
+    stages = {
+        "entity.resolve": 1,
+        "pg.commit.memory": 2,
+        "pg.publish": 3,
+        "embed.compute": 4,
+        "conflicts.check_on_commit": 5,
+        "memory.set.post_insert": 6,
+        "ch.query.existing_memory": 7,
+        "ch.query.type_config": 8,
+        "blacklist.enforce": 9,
+    }
+    sample_var = ContextVar("native_request_cost_sample", default=None)
+    ordinal = emitted = dropped = byte_count = 0
+    disabled = False
+    stream = None
+    origin = time.perf_counter_ns()
+    try:
+        stream = (folder / "request-costs.jsonl").open("x", encoding="ascii")
+    except OSError:
+        disabled = True
+
+    def emit_cost(row):
+        nonlocal emitted, dropped, byte_count, disabled
+        if disabled:
+            return
+        data = json.dumps(row, separators=(",", ":")) + "\n"
+        if (
+            len(data) > 512
+            or byte_count + len(data) > 65536
+            or (row[0] in (1, 2) and emitted >= 192)
+        ):
+            dropped += 1
+            return
+        try:
+            stream.write(data)
+            stream.flush()
+            byte_count += len(data)
+            emitted += int(row[0] in (1, 2))
+        except (OSError, ValueError):
+            disabled = True
+
+    emit_cost([0, 1, *samples])
+    original_traced = otel.traced
+
+    def measured_traced(name, **attrs):
+        sample = sample_var.get()
+        stage = stages.get(name)
+        if sample is None or stage is None:
+            return original_traced(name, **attrs)
+
+        @contextmanager
+        def measured_span():
+            started, cpu = time.perf_counter_ns(), time.process_time_ns()
+            # Only a digest of the actual transport-bound tag leaves this process.
+            tag = current_query_tag()
+            tag_hash = int.from_bytes(hashlib.sha256(tag.encode()).digest()) if tag else 0
+            try:
+                with original_traced(name, **attrs) as span:
+                    yield span
+            finally:
+                emit_cost(
+                    [
+                        1,
+                        sample["ordinal"],
+                        stage,
+                        started - origin,
+                        time.perf_counter_ns() - started,
+                        time.process_time_ns() - cpu,
+                        tag_hash,
+                        0,
+                        int(sys.exc_info()[0] is not None),
+                        sample["done"],
+                        0,
+                    ]
+                )
+
+        return measured_span()
+
+    def measured_application():
+        # Uvicorn still imports the normal app on its running loop, before lifespan.
+        from server.main import app
+
+        async def measured(scope, receive, send):
+            nonlocal ordinal
+            if scope.get("type") != "http":
+                return await app(scope, receive, send)
+            if scope.get("method") == "POST" and scope.get("path") == "/v1/memory.set":
+                ordinal += 1
+                selected = ordinal in samples
+            else:
+                selected = False
+            sample = {"ordinal": ordinal, "done": 0} if selected else None
+            token = sample_var.set(sample)
+            status = tag_hash = body_finished = 0
+            started, cpu = time.perf_counter_ns(), time.process_time_ns()
+
+            async def measured_send(message):
+                nonlocal status, tag_hash, body_finished
+                await send(message)
+                # Observation follows the successful send and never changes a message.
+                try:
+                    if message["type"] == "http.response.start":
+                        status = int(message["status"])
+                        for key, value in message.get("headers", ()):
+                            if key.lower() == b"x-request-id" and len(value) <= 64:
+                                tag_hash = int.from_bytes(
+                                    hashlib.sha256(b"memory.set " + value).digest()
+                                )
+                    elif message["type"] == "http.response.body" and not message.get("more_body"):
+                        body_finished = 1
+                except (AttributeError, TypeError, ValueError):
+                    tag_hash = 0
+
+            try:
+                return await app(scope, receive, measured_send if selected else send)
+            finally:
+                if sample is not None:
+                    sample["done"] = 1
+                    emit_cost(
+                        [
+                            2,
+                            sample["ordinal"],
+                            0,
+                            started - origin,
+                            time.perf_counter_ns() - started,
+                            time.process_time_ns() - cpu,
+                            tag_hash,
+                            status,
+                            int(sys.exc_info()[0] is not None),
+                            1,
+                            body_finished,
+                        ]
+                    )
+                sample_var.reset(token)
+
+        return measured
+
+    otel.traced = measured_traced
+    try:
+        uvicorn.run(
+            measured_application,
+            factory=True,
+            app_dir=context["root"],
+            host="127.0.0.1",
+            port=context["ports"]["api"],
+            loop="asyncio",
+            workers=1,
+            reload=False,
+        )
+    finally:
+        otel.traced = original_traced
+        emit_cost([3, ordinal, emitted, dropped, int(disabled)])
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
 
 
 @asynccontextmanager

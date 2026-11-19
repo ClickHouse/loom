@@ -1829,7 +1829,8 @@ def test_the_wide_integer_check_is_linear_in_a_deep_table_of_long_keys() -> None
     20,000 levels of 1,000-character keys would copy about 200 GB. It runs under
     a trace function, as under coverage, where CPython does not extend a string
     in place. Four times the depth must cost under eight times the time (linear
-    is 4x, quadratic 16x), a ratio a slower machine does not change."""
+    is 4x, quadratic 16x). As with other CPU bounds, garbage collection is paused
+    so the measurement does not include earlier tests' heaps."""
     from loom_extractor.tomlfile import _wide_integer
 
     def deep(levels: int) -> dict[str, object]:
@@ -1847,12 +1848,12 @@ def test_the_wide_integer_check_is_linear_in_a_deep_table_of_long_keys() -> None
         return best
 
     small, large = deep(5_000), deep(20_000)
-    previous = sys.gettrace()
-    sys.settrace(lambda *_: None)
-    try:
-        ratio = seconds(large) / seconds(small)
-    finally:
-        sys.settrace(previous)
+    with untraced():
+        sys.settrace(lambda *_: None)
+        try:
+            ratio = seconds(large) / seconds(small)
+        finally:
+            sys.settrace(None)
     assert ratio < 8, f"4x the depth took {ratio:.1f}x the time"
     path = _wide_integer(large)
     assert path.endswith(".v") and path.count(".") == 20_000

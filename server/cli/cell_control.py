@@ -15,7 +15,7 @@ from uuid import UUID
 from server.cli import cell_attach_pg as apg
 from server.cli.cell_ch import Refusal
 from server.cli.cell_ch import Refused as Refused
-from server.core import pg
+from server.core import pg, retirement
 from server.router.directory import CONTROL_FIELDS, CONTROL_MAX_S
 from server.settings import settings
 
@@ -131,7 +131,13 @@ class Owner:
         self._tasks: set[asyncio.Task[Any]] = set()
 
     def _start[T](self, work: Callable[[], Awaitable[T]]) -> asyncio.Task[T | _Fatal]:
-        task = asyncio.create_task(_captured(work))
+        gate = retirement.get_gate()
+
+        async def admitted() -> T | _Fatal:
+            async with gate.admit():
+                return await _captured(work)
+
+        task = asyncio.create_task(admitted())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(pg._retrieve_task)
@@ -143,12 +149,6 @@ class Owner:
             # A connector returning after cancellation cannot publish a usable session.
             await self.close()
             raise _refused("connection arrived after the control attempt ended")
-        try:
-            await pg._check_deployment(self.conn)
-            await pg.init_connection(self.conn)
-        except Exception as error:  # Classify unavailable openings; keep other failures.
-            pg._raise_if_unavailable(error)
-            raise
         refused = await apg.direct_refusals(self.conn, what)
         refused += await apg.encoding_refusals(self.conn)
         if refused:

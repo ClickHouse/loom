@@ -1038,3 +1038,106 @@ def test_fallback_pass_propagates_english_parser_errors_without_fragment_shortcu
             lc.repair_english_fallbacks()
         else:
             lc.link_failures()
+
+
+@pytest.mark.parametrize("anchor", ["", "#beta"])
+def test_import_retargets_missing_native_destinations_to_live_english(
+    repo: pathlib.Path, anchor: str
+) -> None:
+    put(repo, "docs/a.md", f"# Alpha\n\n[guide](b.md{anchor})\n")
+    text = translated("docs/a.md").replace(
+        f"{t.REPO_URL}/blob/main/docs/b.md{anchor}", f"b.md{anchor}"
+    )
+    path = "i18n/ja/docs/a.md"
+    assert lc.candidate_problems(path, text) == []
+    sha = pending_branch(repo, path, text)
+    assert t.import_pending(sha, ["ja"]) == 1
+    expected = text.replace(f"](b.md{anchor})", f"]({t.REPO_URL}/blob/main/docs/b.md{anchor})")
+    assert (repo / path).read_text() == expected
+    assert lc.link_problems() == []
+
+
+@pytest.mark.parametrize("target", ["published", "batch"])
+def test_import_keeps_available_native_destinations(repo: pathlib.Path, target: str) -> None:
+    put(repo, "docs/a.md", "# Alpha\n\n[guide](b.md#beta)\n")
+    text = translated("docs/a.md").replace(f"{t.REPO_URL}/blob/main/docs/b.md", "b.md")
+    if target == "batch":
+        # The target exists only in the same data-only proposal.
+        put(repo, "i18n/.pending/ja/docs/b.md", translated("docs/b.md"))
+    sha = pending_branch(repo, "i18n/.pending/ja/docs/a.md", text)
+    if target == "published":
+        publish(repo, "docs/b.md")
+    assert t.import_pending(sha, ["ja"]) == (1 if target == "published" else 2)
+    assert (repo / "i18n/ja/docs/a.md").read_text() == text
+    assert lc.link_problems() == []
+
+
+@pytest.mark.parametrize("blocked", ["anchor", "deleted", "existing_bad_anchor"])
+def test_import_does_not_mask_invalid_destinations(repo: pathlib.Path, blocked: str) -> None:
+    anchor = "#missing" if blocked == "anchor" else "#beta"
+    put(repo, "docs/a.md", f"# Alpha\n\n[guide](b.md{anchor})\n")
+    text = translated("docs/a.md").replace(f"{t.REPO_URL}/blob/main/docs/b.md", "b.md")
+    sha = pending_branch(repo, "i18n/ja/docs/a.md", text)
+    if blocked == "deleted":
+        (repo / "docs/b.md").unlink()
+    elif blocked == "existing_bad_anchor":
+        put(repo, "i18n/ja/docs/b.md", translated("docs/b.md").replace('id="beta"', 'id="old"'))
+    t.import_pending(sha, ["ja"])
+    assert not (repo / "i18n/ja/docs/a.md").exists()
+
+
+def test_import_fallback_preserves_code_labels_and_unselected_locale(repo: pathlib.Path) -> None:
+    english = "# Alpha\n\n[guide](b.md)\n\n`[guide](b.md)`\n\n```md\n[guide](b.md)\n```\n"
+    put(repo, "docs/a.md", english)
+    prepared, line = t.prepare("docs/a.md", JA)
+    body = t.in_prose(
+        "\n".join(t.english_requests(prepared)),
+        lambda prose: prose.replace("# Alpha", "# Uno").replace("[guide]", "[guía]"),
+    )
+    text = t.render("docs/a.md", JA, body, line, t.DEFAULT_MODEL).replace(
+        f"{t.REPO_URL}/blob/main/docs/b.md", "b.md"
+    )
+    assert lc.candidate_problems("i18n/ja/docs/a.md", text) == []
+    sha = pending_branch(repo, "i18n/ja/docs/a.md", text)
+    es = next(lang for lang in t.LANGUAGES if lang.code == "es")
+    retained = t.header("docs/b.md", es, t.DEFAULT_MODEL, "0" * 40) + "# Retenido\n"
+    put(repo, "i18n/.pending/es/docs/b.md", retained)
+    assert t.import_pending(sha, ["ja"]) == 1
+    after = (repo / "i18n/ja/docs/a.md").read_text()
+    assert after == text.replace("[guía](b.md)", f"[guía]({t.REPO_URL}/blob/main/docs/b.md)")
+    assert (repo / "i18n/.pending/es/docs/b.md").read_text() == retained
+
+
+def test_import_does_not_rebase_active_refresh_proofs(repo: pathlib.Path) -> None:
+    from scripts.i18n import refresh
+
+    put(repo, "docs/a.md", "# Alpha\n\n[guide](b.md)\n")
+    text = translated("docs/a.md").replace(f"{t.REPO_URL}/blob/main/docs/b.md", "b.md")
+    sha = pending_branch(repo, "i18n/ja/docs/a.md", text)
+    job = refresh.plan(every=True, codes=["ja"])
+    assert job
+    job["completed"]["i18n/ja/docs/a.md"] = {
+        "blob": t.blob("docs/a.md"),
+        "sha256": refresh.digest(text),
+        "base": "",
+    }
+    refresh.save(job)
+    before = (repo / refresh.PATH).read_bytes()
+    assert t.import_pending(sha, ["ja"]) == 1
+    assert not (repo / "i18n/ja/docs/a.md").exists()
+    assert (repo / "i18n/.pending/ja/docs/a.md").read_text() == text
+    assert (repo / refresh.PATH).read_bytes() == before
+
+
+@pytest.mark.parametrize("route", ["../../es/docs/b.md", "b.md#missing"])
+def test_import_keeps_unavailable_cross_locale_or_anchor_links_pending(
+    repo: pathlib.Path, route: str
+) -> None:
+    source_route = "b.md#missing" if "#" in route else "b.md"
+    put(repo, "docs/a.md", f"# Alpha\n\n[guide]({source_route})\n")
+    text = translated("docs/a.md").replace(f"{t.REPO_URL}/blob/main/docs/{source_route}", route)
+    assert lc.candidate_problems("i18n/ja/docs/a.md", text) == []
+    sha = pending_branch(repo, "i18n/ja/docs/a.md", text)
+    assert t.import_pending(sha, ["ja"]) == 1
+    assert not (repo / "i18n/ja/docs/a.md").exists()
+    assert (repo / "i18n/.pending/ja/docs/a.md").read_text() == text

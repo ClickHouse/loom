@@ -16,8 +16,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
-from server.code.domain.index.state import IndexState
+from server.code.domain.index.state import GIT_PROXY_REFUSAL, GIT_PROXY_REFUSED, IndexState
 from server.core.datetimes import parse_iso_dt, to_naive_utc
+from server.settings import settings
 
 STATE_PREFIX = "tier_health:"
 # The compiler tiers by producer; `clang_full` is the weekly C++ full re-index, kept apart
@@ -207,6 +208,23 @@ _SSH_REFUSED = re.compile(r"permission denied \([a-z-]+(?:,[a-z-]+)*\)", re.IGNO
 # The Go harness's line for a module it skipped because it would not build.
 _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)
 
+# git's words for a CONNECT a proxy answered with a refusal, in either phrasing of its
+# HTTP library. The sandbox proxy refuses a host or port with 403 and a method with 405;
+# its 502 (the vetted address did not answer) and 503 (tunnel cap) are network. An
+# operator's git proxy also answers 407 to credentials it does not take.
+_CONNECT_REFUSED = re.compile(
+    r"received http code 40[357] from proxy|connect tunnel failed, response 40[357]\b",
+    re.IGNORECASE,
+)
+
+
+def refused_connect_status(text: str) -> str:
+    """The status a proxy refused git's CONNECT with, as git's output names it ('403',
+    '405' or '407'); '' when the output names no such refusal."""
+    found = _CONNECT_REFUSED.search(text or "")
+    return "".join(ch for ch in found.group(0) if ch.isdigit()) if found else ""
+
+
 # First match wins: a missing credential also makes the submodule pin look missing
 # ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -242,9 +260,11 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "egress",
         re.compile(
-            # the sandbox proxy refuses a host or port with 403 and a method with 405;
-            # its 502 (the vetted address did not answer) and 503 (tunnel cap) are network
-            r"received http code 40[35] from proxy|connect tunnel failed, response 40[35]\b",
+            # a proxy's refusal in git's words, the fixed sentence a clone and the add's
+            # ls-remote show for one by the operator's git proxy, and Loom's own refusal
+            # of a job that cannot go through that proxy
+            rf"{_CONNECT_REFUSED.pattern}|{re.escape(GIT_PROXY_REFUSED)}"
+            rf"|{re.escape(GIT_PROXY_REFUSAL)}",
             re.IGNORECASE,
         ),
     ),
@@ -375,6 +395,18 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         return (
             f"A pinned commit is gone upstream{at}: the submodule's history was rewritten. "
             "Point the pin at a commit that exists, or mirror the submodule."
+        )
+    if kind == "egress" and GIT_PROXY_REFUSAL in text:
+        return (
+            "Loom refused the job rather than connect without the operator's git proxy "
+            "(LOOM_CODE_GIT_PROXY_URL): the error names what the proxy setup lacks."
+        )
+    if kind == "egress" and (settings.code_git_proxy_url or GIT_PROXY_REFUSED in text):
+        return (
+            f"The operator's git proxy (LOOM_CODE_GIT_PROXY_URL) refused the connection{at}. "
+            "A 407 means it did not take the identity (the entry's git_proxy_identity, else "
+            "LOOM_CODE_GIT_PROXY_IDENTITY) or the token in LOOM_CODE_GIT_PROXY_TOKEN_FILE; "
+            "any other answer is the proxy's own rule for that identity and repository."
         )
     if kind == "egress":
         return (

@@ -9,20 +9,20 @@ path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/
 
 ## Plugin or plain MCP
 
-| You run                                       | Use                                                                                          | You get                                                                                                                                          |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude Code                                   | the [Claude Code plugin](claude-code.md)                                                     | tools, capture hooks, code shunt, skills, the code-scope header                                                                                  |
-| Codex                                         | the [Codex plugin](codex.md)                                                                 | the same, with Codex wiring                                                                                                                      |
-| Cursor                                        | the [Cursor plugin](cursor.md#plugin) (untested in Cursor) or `loom install --client cursor` | the tools; the `loom` and `loom-code` skills from the plugin; capture through the [`sessionEnd` hook](cursor.md#transcript-capture) you register |
-| Claude Desktop, VS Code, Cline, Windsurf, Zed | `loom install --client <name>` ([below](#wire-a-client-with-loom-install))                   | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks)                                                       |
-| an orchestrator running several agents        | one MCP mount per agent ([frameworks.md](frameworks.md))                                     | shared memory across the agents                                                                                                                  |
+| You run                                                   | Use                                                                                          | You get                                                                                                                                          |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code                                               | the [Claude Code plugin](claude-code.md)                                                     | tools, capture hooks, code shunt, skills, the code-scope header                                                                                  |
+| Codex                                                     | the [Codex plugin](codex.md)                                                                 | the same, with Codex wiring                                                                                                                      |
+| Cursor                                                    | the [Cursor plugin](cursor.md#plugin) (untested in Cursor) or `loom install --client cursor` | the tools; the `loom` and `loom-code` skills from the plugin; capture through the [`sessionEnd` hook](cursor.md#transcript-capture) you register |
+| Claude Desktop, VS Code, Cline, Windsurf, Zed, Gemini CLI | `loom install --client <name>` ([below](#wire-a-client-with-loom-install))                   | the tools; capture only through a [transcript template](index.md#transcript-capture-hooks)                                                       |
+| an orchestrator running several agents                    | one MCP mount per agent ([frameworks.md](frameworks.md))                                     | shared memory across the agents                                                                                                                  |
 
 A plain MCP entry gives the tools only: no session capture, primer or code shunt. Loom
 still records an implicit run per MCP session and names the agent after the client's
 `clientInfo.name` (`Cursor` becomes `cursor`). To teach the agent when to call the tools,
 add the [agent instructions](agent-instructions.md) block to a coding client's rule file,
 with `?toolset=coding` on the entry's URL (`--toolset coding` with `loom install`, the
-default only for Claude Code, Codex and Cursor).
+default only for Claude Code, Codex, Cursor and Gemini CLI).
 
 ## Wire a client with `loom install`
 
@@ -33,15 +33,15 @@ and Codex, runs their `mcp add` command:
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
 ```
 
-| Flag           | Default                                                                                         | Meaning                                                                                                                                      |
-| -------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--client`     | every supported client whose config directory exists                                            | one or more of `claude-desktop`, `claude-code`, `codex`, `cursor`, `vscode`, `cline`, `windsurf`, `zed`                                      |
-| `--server-url` | `LOOM_BASE_URL`, then `~/.loom/config.json`, else `http://localhost:7777`                       | the Loom base URL; the entry points at `<url>/mcp`                                                                                           |
-| `--token`      | `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`                                | the JWT the entry authenticates with; required                                                                                               |
-| `--name`       | `loom`                                                                                          | the server key in the config file, and the name `claude mcp add` / `codex mcp add` registers                                                 |
-| `--toolset`    | empty: `coding` for Claude Code, Codex and Cursor, else the server default (`LOOM_MCP_TOOLSET`) | appended as `?toolset=`; a toolset name or a `+` union of curated rosters such as `coding+tracker`; anything else is rejected before writing |
-| `--dry-run`    | off                                                                                             | print what would be written or run, touching nothing                                                                                         |
-| `--force`      | off                                                                                             | Claude Code only: add the user-scope entry even when the `loom` plugin is installed                                                          |
+| Flag           | Default                                                                                                                                                           | Meaning                                                                                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--client`     | every supported client whose config directory exists (Gemini CLI: its `settings.json` or the `gemini` binary, since Google Antigravity also creates `~/.gemini/`) | one or more of `claude-desktop`, `claude-code`, `codex`, `cursor`, `vscode`, `cline`, `windsurf`, `zed`, `gemini`                            |
+| `--server-url` | `LOOM_BASE_URL`, then `~/.loom/config.json`, else `http://localhost:7777`                                                                                         | the Loom base URL; the entry points at `<url>/mcp`                                                                                           |
+| `--token`      | `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`                                                                                                  | the JWT the entry authenticates with; required                                                                                               |
+| `--name`       | `loom`                                                                                                                                                            | the server key in the config file, and the name `claude mcp add` / `codex mcp add` registers                                                 |
+| `--toolset`    | empty: `coding` for Claude Code, Codex, Cursor and Gemini CLI, else the server default (`LOOM_MCP_TOOLSET`)                                                       | appended as `?toolset=`; a toolset name or a `+` union of curated rosters such as `coding+tracker`; anything else is rejected before writing |
+| `--dry-run`    | off                                                                                                                                                               | print what would be written or run, touching nothing                                                                                         |
+| `--force`      | off                                                                                                                                                               | Claude Code only: add the user-scope entry even when the `loom` plugin is installed                                                          |
 
 Restart the client afterwards. Exit codes: `2` no token, `5` no client detected, `1` any
 client failed (the others still run). See the [CLI reference](../../reference/cli.md).
@@ -54,19 +54,22 @@ that only reads can use a `viewer` token; see
 
 ### What it writes per client
 
-| Client           | Config file (Linux; macOS and Windows use the platform equivalent)                          | Section           | Entry shape                                        |
-| ---------------- | ------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------- |
-| `claude-desktop` | `~/.config/Claude/claude_desktop_config.json`                                               | `mcpServers`      | `npx mcp-remote` bridge                            |
-| `cursor`         | `~/.cursor/mcp.json`                                                                        | `mcpServers`      | `url` + `headers`                                  |
-| `vscode`         | `~/.config/Code/User/mcp.json` (a separate file, so `settings.json` is left alone)          | `servers`         | `url` + `headers` + `type: "http"`                 |
-| `cline`          | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | `mcpServers`      | `npx mcp-remote` bridge                            |
-| `windsurf`       | `~/.codeium/windsurf/mcp_config.json`                                                       | `mcpServers`      | `url` + `headers`                                  |
-| `zed`            | `~/.config/zed/settings.json`                                                               | `context_servers` | `url` + `headers`                                  |
-| `claude-code`    | none: runs `claude mcp add … -s user`                                                       |                   | see [Claude Code](#claude-code-without-the-plugin) |
-| `codex`          | none: runs `codex mcp add`                                                                  |                   | see [Codex](#codex-without-the-plugin)             |
+| Client           | Config file (Linux; macOS and Windows use the platform equivalent)                          | Section           | Entry shape                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
+| `claude-desktop` | `~/.config/Claude/claude_desktop_config.json`                                               | `mcpServers`      | `npx mcp-remote` bridge                                                 |
+| `cursor`         | `~/.cursor/mcp.json`                                                                        | `mcpServers`      | `url` + `headers`                                                       |
+| `vscode`         | `~/.config/Code/User/mcp.json` (a separate file, so `settings.json` is left alone)          | `servers`         | `url` + `headers` + `type: "http"`                                      |
+| `cline`          | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | `mcpServers`      | `npx mcp-remote` bridge                                                 |
+| `windsurf`       | `~/.codeium/windsurf/mcp_config.json`                                                       | `mcpServers`      | `url` + `headers`                                                       |
+| `zed`            | `~/.config/zed/settings.json`                                                               | `context_servers` | `url` + `headers`                                                       |
+| `gemini`         | `~/.gemini/settings.json`                                                                   | `mcpServers`      | `httpUrl` + `headers` (Gemini CLI reads streamable HTTP from `httpUrl`) |
+| `claude-code`    | none: runs `claude mcp add … -s user`                                                       |                   | see [Claude Code](#claude-code-without-the-plugin)                      |
+| `codex`          | none: runs `codex mcp add`                                                                  |                   | see [Codex](#codex-without-the-plugin)                                  |
 
 The file is replaced atomically with mode 0600; every other key is kept. A file that is
-not a valid JSON object is refused, not overwritten.
+not a valid JSON object is refused, not overwritten. A file that holds `//` or `/* */`
+comments (Gemini CLI allows them in `settings.json`) is refused as well, since a rewrite
+would drop them, and the entry to paste is printed with the token as `<token>`.
 
 Zed reads `context_servers` from `settings.json`. On macOS that file is
 `~/.config/zed/settings.json`, the same path as on Linux. On Windows it is

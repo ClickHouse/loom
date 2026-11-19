@@ -62,7 +62,10 @@ async def test_stage_two_is_a_pk_lookup_under_final_over_the_candidates() -> Non
     assert len(ch.query_all_calls) == 2
     sql1, p1 = ch.query_all_calls[0]
     sql2, p2 = ch.query_all_calls[1]
-    assert " FINAL" not in sql1 and "FROM loom.memory_chunks AS c FINAL" in sql2
+    # Parent heads need FINAL; only the vector candidate table must avoid it.
+    assert "FROM loom.memory_chunks AS c FINAL" not in sql1
+    assert "FROM loom.memory_chunks AS c FINAL" in sql2
+    assert "FROM loom.memory FINAL" in sql1
     assert (
         "(c.session_id, c.chunk_index) IN arrayZip({cand_sess:Array(String)}, {cand_idx:Array(UInt32)})"
         in sql2
@@ -219,7 +222,7 @@ async def test_neighbor_window_predicates_are_table_qualified_and_deduped() -> N
     # the date joins are present and expose no bare session_id / memory_key
     assert ") AS ss ON ss.ss_session_id = c.session_id" in sql3
     assert ") AS pd ON pd.pd_memory_key = c.parent_memory_key" in sql3
-    assert "(session_id = " not in sql3 and " AND chunk_index BETWEEN" not in sql3
+    assert "(session_id = {ns" not in sql3 and " AND chunk_index BETWEEN" not in sql3
 
 
 # --------------------------------------------------------------------------

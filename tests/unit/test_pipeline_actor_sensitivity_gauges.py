@@ -1335,7 +1335,7 @@ def test_the_probe_reads_the_three_new_keys_from_the_shared_sql() -> None:
         result_rows = [(0, 0, 0, 0, 0, 0, 0, 0, 156, 1957, 23, 1)]
 
     class _Sync:
-        def query(self, sql: str) -> _Rows:
+        def query(self, sql: str, **_kwargs: Any) -> _Rows:
             captured.append(sql)
             return _Rows()
 

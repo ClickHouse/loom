@@ -109,7 +109,13 @@ async def _reconcile(args: argparse.Namespace) -> int:
         await connect_declared(get_client(), org_free=reads("reads"))
     repo = CodeRepo()
     if not args.no_fetch:
-        await gitrepo.fetch(cfg.git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+        await gitrepo.fetch(
+            cfg.git_dir,
+            cfg.git_remote,
+            cfg.git_branch,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
+        )
     head = await gitrepo.head_sha(cfg.git_dir, cfg.git_branch)
     found = await find_stale_paths(
         repo,

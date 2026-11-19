@@ -22,7 +22,7 @@
   <!-- languages -->
   <a href="../../README.md">English</a> · <a href="../zh-CN/README.md">简体中文</a> · 日本語 · <a href="../ko/README.md">한국어</a> · <a href="../pt-BR/README.md">Português (Brasil)</a> · <a href="../es/README.md">Español</a>
   <br>
-  <a href="https://clickhouse.github.io/loom/ja/use-cases/">ドキュメント</a>
+  <a href="https://clickhouse.github.io/loom/ja/">ドキュメント</a>
   <!-- /languages -->
 </p>
 
