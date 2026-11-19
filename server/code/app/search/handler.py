@@ -39,6 +39,7 @@ from server.code.store.index import CodeRepo
 from server.core.ch import caller_shaped
 from server.core.llm_free import reads_llm_free
 from server.identity.domain.read_scope import ReadFilters
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -185,7 +186,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         abstain_threshold=abstain_threshold,
         kind_prior=input.kind_prior,
         pr_leg_before=input.pr_leg_before,
-        embedding_model=input.embedding_model,
+        embedding_model=embedding_model,
         noise_floor=noise_floor,
         bodies=bodies,
         min_fan_in=input.min_fan_in,
@@ -231,6 +232,11 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
     )
 
 
+def _served_model_name(embedder: Any) -> str:
+    name: str = getattr(embedder, "model_name", "") or ""
+    return name or settings.embedding_model
+
+
 def _search_embedder(input: CodeSearchInput) -> tuple[Any, str]:
     """The embedder the legs query with (None: lexical only) and the label they read: the
     embedder's, or the request's twin label — keyed into the memo, the trace and the
@@ -240,10 +246,12 @@ def _search_embedder(input: CodeSearchInput) -> tuple[Any, str]:
         from server.embedding.embedder import get_embedder
 
         embedder = get_embedder()
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — lexical-only degrade
         logger.warning("code.search: embedder unavailable (%s)", e)
 
-    embedding_model = input.embedding_model or (getattr(embedder, "model_name", "") or "")
+    embedding_model = input.embedding_model or _served_model_name(embedder)
     if input.vector_model:
         # A second vector model is a deployment allow-list entry, refused as bad input otherwise
         # (never a silent fallback).
@@ -461,12 +469,16 @@ def _units_tier(units: list[Any]) -> str:
 
 
 def _embedding_model_name() -> str:
+    embedder = None
     try:
         from server.embedding.embedder import get_embedder
 
-        return getattr(get_embedder(), "model_name", "") or ""
-    except Exception:  # noqa: BLE001 — lexical-only deployments have none
-        return ""
+        embedder = get_embedder()
+    except customer.HOLDS:
+        raise
+    except Exception:  # noqa: BLE001 — stored partitions remain readable without the client
+        pass
+    return _served_model_name(embedder)
 
 
 def _search_params_hash(input: CodeSearchInput, embedding_model: str) -> str:

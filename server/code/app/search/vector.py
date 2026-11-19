@@ -12,6 +12,7 @@ from server.code.app.search.state import _POOL, _model_name
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,8 @@ async def _vector_leg_rows(
                     # a second model's query vector cannot score the
                     # served model's rows (track_path reads those)
                     qvec = None
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — lexical-only degrade
             logger.warning("code.search vector leg failed: %s", e)
             work["vector_leg_failed"] = 1
