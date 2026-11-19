@@ -35,7 +35,7 @@ function witnessEnv() {
   owned.add(directory);
   return {
     ...process.env,
-    LOOM_PRIVATE_COMPILER_BASE: path.join(directory, "compiler"),
+    LOOM_PRIVATE_COMPILER_BASE: path.join(fs.realpathSync(directory), "compiler"),
     LOOM_PRIVATE_COMPILATION_ID: crypto.randomBytes(16).toString("hex"),
     LOOM_PRIVATE_DEADLINE_UTC: String(Date.now() + 1500),
   };
