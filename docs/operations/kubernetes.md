@@ -678,7 +678,8 @@ env:
 `proxy-ca.crt` is one more key of the `git-proxy-ca` config map here. It is not
 `LOOM_CODE_GIT_PROXY_CA_FILE`, which verifies the remotes behind a proxy that terminates
 their TLS: a proxy that does both under one authority gets the same file in both
-settings.
+settings. The proxy's certificate must name `git-proxy.example`, the host the URL
+spells.
 
 The proxy and the [repository-job sandbox](#repository-job-sandbox) are not used
 together. `sandbox.required: false` alone does not keep the sandbox off: a pod whose

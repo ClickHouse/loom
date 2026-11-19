@@ -849,10 +849,13 @@ Loom's user and can read the token file. Run compiler tiers there only for repos
 you trust.
 
 **The CA bundles.** There are two, one for each TLS connection, and neither stands in
-for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo`: the
-bundle git verifies an `https://` proxy's own certificate with, before it sends the
-identity and the token. Without it git checks the proxy against its default roots, so a
-proxy whose certificate comes from an authority of your own needs it.
+for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
+since release 2.27, older than the git every repository job already needs): the bundle
+git verifies an `https://` proxy's own certificate with, before it sends the identity
+and the token. Without it git checks the proxy against its default roots, so a proxy
+whose certificate comes from an authority of your own needs it. The certificate must
+also name the host the URL spells, as a DNS name or, for an address, as an IP address:
+git checks the name as well as the authority.
 `LOOM_CODE_GIT_PROXY_CA_FILE` is git's `http.sslCAInfo`, which replaces git's default
 roots for the remotes of these jobs: it must hold every authority the remotes present
 through the proxy, the proxy's own for a remote whose TLS it terminates and the public
@@ -861,12 +864,14 @@ that names no file fails the job there.
 
 A certificate git cannot verify fails the job in git's own words, the same for the
 proxy's certificate and a remote's (`SSL certificate problem: unable to get local issuer
-certificate` with one TLS library; the wording is the library's). When it is the
+certificate` with one TLS library; the wording is the library's). A certificate that
+names another host fails the same way, in other words of the library. When it is the
 proxy's, git ends the handshake before its first request, so neither the identity nor
 the token leaves. A fetch records git's words on the `fetch` tier, as an unclassified
 error. A clone shows `git clone failed (exit 128)` with git's words in the server log,
 and the `ls-remote` before an add shows `git ls-remote failed for <repository>`: check
-the two bundles when an entry's first contact fails that way.
+the two bundles and the name on the proxy's certificate when an entry's first contact
+fails that way.
 
 **Refused jobs.** Each of these stops the job before any process starts, with a fixed
 reason that the entry's `fetch` tier, its stage and the mirror counts in `/v1/health`
