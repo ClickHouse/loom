@@ -17,7 +17,8 @@ export type ClientId =
   | "cline"
   | "windsurf"
   | "zed"
-  | "gemini";
+  | "gemini"
+  | "opencode";
 
 interface MCPClient {
   id: ClientId;
@@ -34,6 +35,7 @@ export const CLIENTS: MCPClient[] = [
   { id: "windsurf", label: "Windsurf" },
   { id: "zed", label: "Zed" },
   { id: "gemini", label: "Gemini CLI" },
+  { id: "opencode", label: "OpenCode" },
 ];
 
 /** True for a value naming one of CLIENTS — a stored or picked id is checked, not cast. */
@@ -49,7 +51,13 @@ const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "cline"]
 // tools, which the deployment default `core` lists only with LOOM_MCP_CODE_TOOLS.
 // `?toolset=` rides the URL, so one server serves both.
 const CODING_TOOLSET = "coding";
-export const CODING_TOOLSET_CLIENTS: ReadonlySet<ClientId> = new Set(["claude-code", "codex", "cursor", "gemini"]);
+export const CODING_TOOLSET_CLIENTS: ReadonlySet<ClientId> = new Set([
+  "claude-code",
+  "codex",
+  "cursor",
+  "gemini",
+  "opencode",
+]);
 
 // Codex reads the bearer from an environment variable it is told the NAME of;
 // the token itself never sits in ~/.codex/config.toml.
@@ -109,7 +117,9 @@ export function formatMcpConfig(args: { client: ClientId; token: string; mcpUrl:
         ? "context_servers"
         : args.client === "codex"
           ? "mcp_servers"
-          : "mcpServers";
+          : args.client === "opencode"
+            ? "mcp"
+            : "mcpServers";
 
   const mcpUrl = CODING_TOOLSET_CLIENTS.has(args.client) ? withToolset(args.mcpUrl, CODING_TOOLSET) : args.mcpUrl;
 
@@ -138,12 +148,19 @@ export function formatMcpConfig(args: { client: ClientId; token: string; mcpUrl:
         if (args.client === "claude-code" || args.client === "vscode") {
           e.type = "http";
         }
+        if (args.client === "opencode") {
+          // OpenCode 2.x: a remote server, the bearer header as its credential and no OAuth flow.
+          return { type: "remote", url: mcpUrl, headers: e.headers, oauth: false };
+        }
         return e;
       })();
 
   const out: FormattedMcpConfig = {
     configKey,
-    block: { [configKey]: { loom: entry } },
+    // OpenCode 2.x keeps its servers under `mcp.servers`.
+    block: {
+      [configKey]: args.client === "opencode" ? { servers: { loom: entry } } : { loom: entry },
+    },
   };
   if (args.client === "claude-code") {
     out.command = claudeMcpAddCommand({ mcpUrl, token: args.token });

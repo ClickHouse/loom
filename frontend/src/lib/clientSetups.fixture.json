@@ -143,6 +143,26 @@
         "config_toml": "",
         "command": "",
         "env": {}
+      },
+      "opencode": {
+        "config_key": "mcp",
+        "config": {
+          "mcp": {
+            "servers": {
+              "loom": {
+                "type": "remote",
+                "url": "http://x/mcp?toolset=coding",
+                "headers": {
+                  "Authorization": "Bearer T"
+                },
+                "oauth": false
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
       }
     }
   },
@@ -283,6 +303,26 @@
               "httpUrl": "http://x/mcp?a=1&toolset=coding",
               "headers": {
                 "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "opencode": {
+        "config_key": "mcp",
+        "config": {
+          "mcp": {
+            "servers": {
+              "loom": {
+                "type": "remote",
+                "url": "http://x/mcp?a=1&toolset=coding",
+                "headers": {
+                  "Authorization": "Bearer T"
+                },
+                "oauth": false
               }
             }
           }
@@ -444,6 +484,26 @@
               "httpUrl": "http://x/mcp?mytoolset=x&toolset=coding",
               "headers": {
                 "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "opencode": {
+        "config_key": "mcp",
+        "config": {
+          "mcp": {
+            "servers": {
+              "loom": {
+                "type": "remote",
+                "url": "http://x/mcp?mytoolset=x&toolset=coding",
+                "headers": {
+                  "Authorization": "Bearer T"
+                },
+                "oauth": false
               }
             }
           }

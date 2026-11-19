@@ -113,6 +113,7 @@ async def test_the_default_token_follows_live_grants_and_drops_org_wide_roles(
         "windsurf",
         "zed",
         "gemini",
+        "opencode",
     }
     assert out["token"] in str(out["clients"]["cursor"]["config"])
 
