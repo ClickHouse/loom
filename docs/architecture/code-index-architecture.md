@@ -479,6 +479,23 @@ Every column is in the generated [schema reference](../reference/schema.md).
 | `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                   |
 | `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                          |
 
+### Symbol bodies
+
+A definition body covers every declared source line without conflicting overlaps,
+missing lines or skeleton substitutions. Doc-comment copies and continuation headers
+are removed from chunk prefixes when placing the retained lines. The read uses live
+rows under one served embedding label, scoped to one organization, namespace, path and
+line span, with a bounded row count. An unchanged chunk's introduction commit may
+differ from its neighbors; it does not establish the current file revision. This read
+follows live-row publication and does not provide a snapshot across an indexing pass.
+A compiler declaration alone does not establish a larger function body.
+
+If the retained span cannot be established, exceeds 12,000 characters or needs more
+than 400 chunk rows, the definition carries `elided: true`, `granularity: card` and a
+ranged `next` read. HTTP and MCP preserve that omission. Enclosing-body lookups omit
+unavailable text, and verification cannot use an unread body as negative evidence.
+No source text is fetched from a network or fabricated to fill a gap.
+
 ## Invariants
 
 - A code namespace is one branch; every `code_*` row is keyed by `(org, namespace)`.

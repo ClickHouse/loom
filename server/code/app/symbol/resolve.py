@@ -11,7 +11,9 @@ from typing import Any
 
 from server.code.app.common import repo_relative
 from server.code.app.index import symbol_forms
+from server.code.domain.symbol_body import complete_source_span
 from server.code.store.index import CodeRepo
+from server.embedding.embedder import get_embedder
 
 logger = logging.getLogger(__name__)
 
@@ -122,17 +124,15 @@ async def near_misses(
 
 
 async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) -> str:
-    """The chunk content covering the symbol's definition (whole unit)."""
+    """The whole retained definition, or no body when completeness is not established."""
     path = str(sym["path"])
-    bodies = await repo.chunk_bodies_with_symbol(org, ns, path, str(sym["symbol_id"]))
-    if not bodies:
-        # Unchanged chunks keep their original symbol_ids array (they are
-        # content-addressed and never rewritten), so after a symbol-id
-        # normalization change the array can be stale — fall back to the
-        # innermost chunk covering the symbol's first line.
-        inner = await repo.innermost_chunk_at(org, ns, path, int(sym.get("start_line") or 0))
-        bodies = [inner] if inner is not None else []
-    return "\n".join(bodies)[:12000]
+    start, end = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
+    if start <= 0 or end < start or end - start + 1 > 12000:
+        return ""
+    rows = await repo.source_chunks_for_span(org, ns, path, start, end, get_embedder().model_name)
+    if len(rows) > 400:
+        return ""
+    return complete_source_span(rows, start, end, max_chars=12000)
 
 
 async def _file_row(repo: CodeRepo, org: str, ns: str, path: str) -> dict[str, Any] | None:

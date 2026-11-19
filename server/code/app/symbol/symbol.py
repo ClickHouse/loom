@@ -220,37 +220,46 @@ async def _chunk_hashes(
 
 async def _symbol_bodies(
     repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput, head: list[dict[str, Any]]
-) -> list[tuple[str, list[dict[str, Any]], str, bool]]:
-    """`(body, outline, outline_next, skeleton)` per definition, the reads gathered. A
+) -> list[tuple[str, list[dict[str, Any]], str, str]]:
+    """`(body, outline, next, granularity)` per definition, the reads gathered. A
     200+ line class is not a body to join up to 12k chars: it ships its skeleton (method
     bodies elided) plus the member outline with line spans, each member one code.symbol
     away."""
 
-    async def one(r: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str, bool]:
+    async def one(r: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str, str]:
         if input.include_body and _is_large_container(r):
             body, outline, outline_next = await _container_skeleton(
                 repo, org, ns, r, input.token_budget
             )
-            return body, outline, outline_next, True
+            return body, outline, outline_next, "skeleton"
         if input.include_body:
-            return await symbol_body(repo, org, ns, r), [], "", False
-        return "", [], "", False
+            text = await symbol_body(repo, org, ns, r)
+            if text:
+                return text, [], "", "unit"
+            start = int(r.get("start_line") or 1)
+            span = max(1, int(r.get("end_line") or start) - start + 1)
+            return "", [], f"Read {r['path']} offset={start} limit={span}", "card"
+        return "", [], "", "unit"
 
     return list(await asyncio.gather(*(one(r) for r in head)))
 
 
 def _unit_with_body(
-    r: dict[str, Any], body: tuple[str, list[dict[str, Any]], str, bool], hashes: dict[str, str]
+    r: dict[str, Any], body: tuple[str, list[dict[str, Any]], str, str], hashes: dict[str, str]
 ) -> Any:
     from server.code.domain.units import unit_from_symbol
 
-    text, outline, outline_next, skeleton = body
+    text, outline, next_step, granularity = body
     u = unit_from_symbol(r, body=text)
     u.body_hash = hashes.get(str(r.get("symbol_id") or ""), "")
-    if skeleton:
+    if granularity == "skeleton":
         u.outline = outline
         u.granularity = "skeleton"
-        u.next = outline_next
+        u.next = next_step
+    elif granularity == "card":
+        u.elided = True
+        u.granularity = "card"
+        u.next = next_step
     return u
 
 
