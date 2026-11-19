@@ -151,7 +151,11 @@ def test_wrong_key_and_mismatched_deployment_refuse_without_effect(cells):
                 json={"context": context},
             )
             assert answer.status_code == 403
-            assert answer.json()["detail"] == {"code": "cell_identity_changed"}
+            assert answer.json()["detail"] == {
+                "code": "cell_identity_changed",
+                "category": "auth",
+                "retryable": False,
+            }
 
     asyncio.run(refused())
     assert _row(cells, alpha) == before
