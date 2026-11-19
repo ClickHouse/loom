@@ -24,6 +24,8 @@ loom.delete("seat_pref");
 For a team server, pass `.token(...)` and your org and namespace, or build with
 `LoomClient.fromEnv(org, namespace, agent)` to read `LOOM_BASE_URL` and `LOOM_API_KEY`.
 
+A key that holds nothing is not an error: `get` returns a result whose `found()` is false.
+
 Each method has an overload taking a `Map` of the op's other input fields (`tags`,
 `memory_type`, `user_id`, `session_id`, …), named as
 [the operations reference](../../docs/reference/operations/memory.md) names them. Each

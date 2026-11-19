@@ -137,6 +137,9 @@ public final class LoomClient {
     String requestId = UUID.randomUUID().toString();
     HttpRequest.Builder req =
         HttpRequest.newBuilder(URI.create(baseUrl + "/v1/" + op))
+            // HTTP/1.1: the default HTTP/2 sends an h2c upgrade on http:// URLs, which
+            // uvicorn answers with 400 "Invalid HTTP request received".
+            .version(HttpClient.Version.HTTP_1_1)
             .timeout(timeout)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")

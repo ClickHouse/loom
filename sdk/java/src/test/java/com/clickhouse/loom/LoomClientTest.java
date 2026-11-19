@@ -197,6 +197,15 @@ class LoomClientTest {
   }
 
   @Test
+  void requestsAreHttp11WithoutAnH2cUpgrade() {
+    // uvicorn rejects an "Upgrade: h2c" request with 400; the default HTTP/2 client sends one.
+    answer(200, "{\"deleted\":true}");
+    client(null).delete("k");
+    assertNull(seen.get(0).header("Upgrade"));
+    assertNull(seen.get(0).header("HTTP2-Settings"));
+  }
+
+  @Test
   void notFoundIsMatchedByCode() {
     answer(404, "{\"detail\":{\"code\":\"NOT_FOUND\",\"message\":\"no such key\","
         + "\"category\":\"input\",\"retryable\":false}}");
