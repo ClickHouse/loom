@@ -396,3 +396,28 @@ async def test_transport_restricted_kill_switch_precedes_repository_read(
         assert response["result"]["isError"], response
     transports.read.assert_not_awaited()
     transports.audit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("op_name", ["memory.set", "memory.update", "memory.delete"])
+@pytest.mark.parametrize("claim", ["missing", "other-org", "named"])
+async def test_repository_read_authority_does_not_widen_member_writes(
+    repository, monkeypatch, op_name, claim
+):
+    from server.code.app.member_writes import admitted_as_code_member, authorize_op
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    monkeypatch.setattr(authz, "grant_role_for", AsyncMock(return_value=Role.VIEWER))
+    monkeypatch.setattr(authz, "_lookup_grant", AsyncMock(return_value=Role.VIEWER))
+    auth = _admin()
+    if claim == "other-org":
+        auth = replace(auth, org="other", namespaces=(NS,))
+    elif claim == "named":
+        auth = replace(auth, namespaces=(NS,))
+    await authz.check_authorized(auth, Role.VIEWER, ORG, NS)
+    if claim == "named":
+        await authorize_op(auth, OPERATIONS_BY_NAME[op_name], org=ORG, namespace=NS)
+        assert admitted_as_code_member()
+    else:
+        with pytest.raises(PermissionError):
+            await authorize_op(auth, OPERATIONS_BY_NAME[op_name], org=ORG, namespace=NS)
+        assert not admitted_as_code_member()

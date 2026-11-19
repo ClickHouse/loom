@@ -65,7 +65,10 @@ async def code_member_may_write(
     if not subject or await _lookup_grant(org, namespace, subject) is None:
         return False
     try:
-        await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
+        # Membership writes retain token ceilings even when platform authority reads more.
+        await check_authorized(
+            auth, Role.VIEWER, org=org, namespace=namespace, allow_repository_read=False
+        )
     except (PermissionError, IdentityIncompleteError):
         return False
     return True

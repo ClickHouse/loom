@@ -362,6 +362,9 @@ grant management and every non-repository namespace keep their existing checks. 
 and mirror boundaries run before repository admission; a repository read does not expose
 its document mirrors or internal data.
 
+The member-write fallback checks the ordinary read rules without the platform read
+exception. A live viewer grant alone cannot widen a token's restricted write scope.
+
 Classification must remain available, `restricted_serve=false` refuses restricted reads
 even for platform administrators, and tenancy and token verification still run first.
 Revoked or unverifiable credentials gain no authority. HTTP, MCP, row-scoped checks and

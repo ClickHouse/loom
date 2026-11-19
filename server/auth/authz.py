@@ -233,6 +233,7 @@ async def check_authorized(
     row_scoped: bool = False,
     known_grant: Role | None | _Unknown = _UNKNOWN_GRANT,
     grants: GrantMap | None = None,
+    allow_repository_read: bool = True,
 ) -> None:
     """Raise PermissionError if `auth` lacks `required_role` or access to `(org,
     namespace)`. Consults `loom.namespace_grants` as a fallback when the JWT role alone
@@ -285,13 +286,22 @@ async def check_authorized(
 
     # Restricted reads retain their safety guards before repository admission.
     if org is not None and namespace is not None and await may_be_restricted(org, namespace):
-        await _check_restricted(auth, required_role, org, namespace, grants)
+        await _check_restricted(
+            auth,
+            required_role,
+            org,
+            namespace,
+            grants,
+            allow_repository_read=allow_repository_read,
+        )
         return
 
     if (
         org is not None
         and namespace is not None
-        and await _standard_code_read(auth, required_role, org, namespace)
+        and await _standard_code_read(
+            auth, required_role, org, namespace, allow_repository_read=allow_repository_read
+        )
     ):
         return
 
@@ -545,7 +555,12 @@ def _scoped_role(
 
 
 async def _standard_code_read(
-    auth: AuthInfo, required_role: Role, org: str, namespace: str
+    auth: AuthInfo,
+    required_role: Role,
+    org: str,
+    namespace: str,
+    *,
+    allow_repository_read: bool,
 ) -> bool:
     """Read exceptions for code after restricted safety guards have run.
 
@@ -554,7 +569,7 @@ async def _standard_code_read(
     end user is no member of its org's code. Directory visibility affects joining,
     never reading. Writes keep the ordinary claim and grant checks.
     """
-    if _platform_repository_read(auth, required_role, org, namespace):
+    if allow_repository_read and _platform_repository_read(auth, required_role, org, namespace):
         return True
     return (
         required_role.value <= Role.VIEWER.value
@@ -631,6 +646,8 @@ async def _check_restricted(
     org: str,
     namespace: str,
     grants: GrantMap | None = None,
+    *,
+    allow_repository_read: bool = True,
 ) -> None:
     """The two-factor gate for restricted namespaces. Raises PermissionError unless:
 
@@ -660,7 +677,7 @@ async def _check_restricted(
     except ClassificationUnavailable as e:
         note_unreadable()
         raise refusal from e
-    if _platform_repository_read(auth, required_role, org, namespace):
+    if allow_repository_read and _platform_repository_read(auth, required_role, org, namespace):
         from server.auth import tenancy
 
         # restricted_allows also calls this gate directly, outside check_authorized.
