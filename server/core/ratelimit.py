@@ -750,8 +750,6 @@ class Limiter:
             and self._shared_key != expected
         ):
             raise BoundedReadError("Rate-limit shared backend is not initialized")
-        if _wants_table(mode, workers) and self._shared_key != expected:
-            raise BoundedReadError("Rate-limit shared backend settings changed")
 
     def set_namespace_limit(self, namespace: str, op_class: str, limit: Limit) -> None:
         """Install a per-namespace override for one op_class."""
