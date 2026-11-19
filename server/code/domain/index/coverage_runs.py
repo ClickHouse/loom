@@ -60,17 +60,23 @@ def specificity(min_tests: int) -> float:
 
 def test_path_candidates(test_name: str, check_name: str) -> list[str]:
     """The repository paths a run's test name may stand for, most likely
-    first: an integration job's names are module paths under the integration
-    tree, a stateless job's are file names under the query trees."""
-    name = str(test_name or "").strip().lstrip("/")
+    first: a repository-relative file, then the integration or query layout
+    for a job that reports paths relative to its test directory."""
+    name = str(test_name or "").strip().split("::", 1)[0]
+    path, separator, phase = name.rpartition("|")
+    if separator and phase in {"setup", "run", "teardown"}:
+        name = path
+    name = name.lstrip("/")
+    while name.startswith("./"):
+        name = name[2:]
     if not name:
         return []
     if name.startswith("tests/"):
         return [name]
     integration = "integration" in str(check_name or "").lower() or "/" in name
     if integration:
-        return [_INTEGRATION_DIR + name.split("::", 1)[0]]
-    out = [d + name for d in _STATELESS_DIRS]
+        return [name, _INTEGRATION_DIR + name]
+    out = [name, *(d + name for d in _STATELESS_DIRS)]
     if name.endswith(".gen.sql"):
         # a run names a rendered template by its output; the repository holds the template
         out += [d + name.removesuffix(".gen.sql") + ".sql.j2" for d in _STATELESS_DIRS]

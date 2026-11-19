@@ -789,7 +789,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, read scope, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
-        payload = gates.with_target(payload, target)
+        payload = gates.with_target(op, payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)

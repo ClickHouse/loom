@@ -226,6 +226,40 @@ class Settings(
         return self
 
     @model_validator(mode="after")
+    def _check_unsandboxed_git(self) -> Settings:
+        """`code_self_service_git_unsandboxed` lets a plain git process connect to the
+        host and port a self-service entry's remote names, with no egress proxy to vet
+        the address, so it loads only where platform admins alone name that remote:
+        with the platform-admin rule, and with authentication on every transport.
+        That rule passes a call without a principal where auth is off; an MCP
+        endpoint in open mode takes such calls with auth on, which the rule refuses,
+        and the setting stays off that deployment as well. Where the sandbox is
+        required no job runs as a plain process: the two settings contradict each
+        other."""
+        if not self.code_self_service_git_unsandboxed:
+            return self
+        if not self.code_self_service_platform_admin_only:
+            raise ValueError(
+                "LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED needs "
+                "LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY: without the sandbox nothing vets "
+                "the host a repository's git jobs connect to, so only a platform admin may "
+                "name one"
+            )
+        if not self.auth_actually_required() or self.mcp_auth_mode == "open":
+            raise ValueError(
+                "LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED needs authentication on every transport "
+                "(LOOM_AUTH_REQUIRED on, LOOM_IDENTITY_PROVIDER not single-user, "
+                "LOOM_MCP_AUTH_MODE not open): only an authenticated platform admin may name "
+                "the host a git job connects to"
+            )
+        if self.code_sandbox_required:
+            raise ValueError(
+                "LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED contradicts LOOM_CODE_SANDBOX_REQUIRED, "
+                "which refuses every repository job where the sandbox cannot run: unset one"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_inference_identity(self) -> Settings:
         """Signing its own identity tokens, Loom needs an https public address
         for their issuer (the gateway fetches the keys there, and a key swapped

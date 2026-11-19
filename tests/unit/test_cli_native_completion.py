@@ -49,7 +49,10 @@ def test_healthy_heartbeat_finishes_after_native_owner_requests_stop(
         assert caught.value is first
     assert attempts == [True]
     assert not heartbeat.running
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert len(native.terminal_ends) == native.events.count("pg") == 2
+    assert native.terminal_ends[0] == native.terminal_ends[1]
+    assert not native.reversible_closes
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
 
 
 @pytest.mark.parametrize("first_class", [None, *FIRST])
@@ -116,7 +119,10 @@ def test_repeated_owner_cancellation_keeps_first_and_allows_finite_heartbeat_com
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is (first if first is not None else cancellations[0])
     assert len(attempts) == 3 and len(cancellations) == 2
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert len(native.terminal_ends) == native.events.count("pg") == len(attempts) + 1
+    assert native.terminal_ends == [native.terminal_ends[0]] * (len(attempts) + 1)
+    assert not native.reversible_closes
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
 
 
 @pytest.mark.parametrize("first_class", [None, *FIRST])
@@ -141,7 +147,7 @@ def test_real_track_completed_failure_is_observed_before_native_cleanup(native, 
     with pytest.raises(first_class or OSError) as caught:
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is (first if first is not None else producer_error)
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
     assert all(task.done() and not task._log_traceback for task in tasks)
 
 
@@ -228,7 +234,7 @@ def test_actual_calibration_consumer_failure_survives_finished_track_callback(na
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
     assert tasks[0].done() and not tasks[0]._log_traceback
-    assert native.events[-3:] == ["certificate", "pg", "ch"]
+    assert native.events[-3:] == ["pg", "certificate", "ch"]
 
 
 @pytest.mark.parametrize("phase", ["flush", "certificate"])
@@ -247,6 +253,8 @@ def test_dependency_cancellation_is_not_retried_as_owner_cancellation(native, mo
         _ch.run_connected(work, orgs=("o",))
     assert caught.value is first
     assert required.await_count == 1
-    assert native.events[-2:] == ["pg", "ch"]
+    assert "pg" not in native.events and "certificate" not in native.events
+    assert not native.terminal_ends and not native.reversible_closes
+    assert native.events[-2:] == ["stop" if phase == "flush" else "flush", "ch"]
     assert not native.client.connected
     assert native.gate.closed and native.gate.active == 0

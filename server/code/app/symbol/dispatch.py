@@ -5,7 +5,6 @@ and overrides a method seed stands for, whether the namespace's compiler tier ca
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from server.code.app.candidates import overrides_of
@@ -71,17 +70,6 @@ async def _dispatch_missing(
     if not attempted:
         return True
     return not await _namespace_has_override_edges(repo, org, ns)
-
-
-_re_interface = re.compile(r"^I[A-Z]\w*$")
-
-
-def _arity(sig: str) -> int:
-    """Parameter count from a signature; 0 for `()` or no parameter list."""
-    if "(" not in sig:
-        return 0
-    inner = sig.split("(", 1)[1].rsplit(")", 1)[0].strip()
-    return 0 if not inner else inner.count(",") + 1
 
 
 _OVR_CACHE: TtlCache[tuple[str, str], bool] = TtlCache(3600.0)
@@ -171,14 +159,11 @@ async def _dispatch_seeds(
 ) -> list[dict[str, Any]]:
     """Base declarations an override's call sites actually bind to.
 
-    The index stores no `virtual`/`override` keywords (tree-sitter keeps the
-    parameter list, scip a hash), so this is structural: for a `Class::method`
-    seed, (1) walk `inherits` edges from Class up to 3 hops and take every
-    `Base::method`; (2) when the hierarchy edge is missing (tree-sitter skips
-    some `class X final : public Y` forms) take same-name, same-arity methods
-    declared on a class that something else inherits from. Each row carries
-    `via` (inherits | virtual_by_name). Free functions and seeds without a
-    class scope return []."""
+    Indexed `overrides` edges identify the base directly. Otherwise, walk
+    `inherits` edges from the seed's class up to three hops and resolve the
+    method on those bases. A shared name or signature on an unrelated class
+    is not evidence of virtual dispatch. Each row carries `via` (overrides |
+    inherits). Free functions and seeds without a class scope return []."""
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     exact_for: set[str] = set()  # qualified names already resolved via an overrides edge
@@ -191,7 +176,7 @@ async def _dispatch_seeds(
         cls, method = q.rsplit("::", 1)
         # 0. exact: `overrides` edges from the compiler index (scip-clang
         #    relationships). When present they are authoritative and the
-        #    heuristics below are skipped for this seed.
+        #    hierarchy walk below is skipped for this seed.
         try:
             ov = await repo.edges_for_symbols(
                 org,
@@ -221,27 +206,16 @@ async def _dispatch_seeds(
             exact_for.add(q)
             continue
         # Once the compiler tier carries `overrides` edges for this namespace, "no
-        # overrides edge" is the answer, not a gap: skip the hierarchy walk and the by-name
-        # scan (measured at 82% of callers latency, empty for 29 of 40 replayed symbols).
-        # Heuristics remain for namespaces whose producer emits no relationships.
+        # overrides edge" is the answer, not a gap: skip the hierarchy walk.
+        # The walk remains for namespaces whose producer emits no relationships.
         # scip-go's relationships name the standard library's interfaces (fmt.Stringer,
         # sql.Scanner) and few of the repository's own, so for the languages whose compiler
         # tier is known to be partial the bounded hierarchy walk (rung 1: the seed's type →
-        # `inherits` → `Base::method`, three keyed reads) still runs; only the by-name scan
-        # (rung 2) stays behind the gate.
+        # `inherits` → `Base::method`, three keyed reads) still runs.
         has_overrides = await _namespace_has_override_edges(repo, org, ns)
         if has_overrides and not _partial_relationships(str(s.get("path") or "")):
             continue
-        # scip stores a hash as the signature; take the arity from any seed row
-        # with a real parameter list, else leave it unknown (-1 = don't filter).
-        real_sigs = [
-            str(x.get("signature") or "")
-            for x in seeds
-            if str(x.get("qualified_name")) == q
-            and not str(x.get("signature") or "").startswith("(scip:")
-        ]
-        arity = _arity(real_sigs[0]) if real_sigs else -1
-        # 1. hierarchy walk
+        # The seed class must reach each candidate base through indexed inheritance.
         bases: list[str] = []
         try:
             cls_rows = await repo.symbols_by_name(org, ns, cls, limit=5)
@@ -267,57 +241,10 @@ async def _dispatch_seeds(
                         frontier.append(str(e["to_symbol_id"]))
         except Exception:  # noqa: BLE001 — hierarchy is best-effort
             bases = []
-        found_here = False
         for b in bases:
             for r in await repo.symbols_by_name(org, ns, f"{b}::{method}", limit=3):
                 sid = str(r["symbol_id"])
                 if sid not in seen and str(r["qualified_name"]) != q:
                     seen.add(sid)
                     out.append({**r, "via": "inherits"})
-                    found_here = True
-        if found_here or has_overrides:
-            continue
-        # 2. same name + arity, declared on a class something inherits from
-        checked_cls: dict[str, bool] = {}
-        for r in await repo.methods_named(org, ns, method, limit=300):
-            rq = str(r["qualified_name"])
-            if rq == q or "::" not in rq:
-                continue
-            if arity >= 0 and _arity(str(r.get("signature") or "")) != arity:
-                continue
-            rcls = rq.rsplit("::", 1)[0]
-            if rcls == cls:
-                continue
-            if rcls not in checked_cls:
-                if len(checked_cls) >= 15:
-                    break
-                # Interface naming (IStorage, IColumn, IProcessor …) is the
-                # codebase's own contract for "this is the base you dispatch
-                # through"; it covers the families whose `class X final :
-                # public IBase` clause the hierarchy extractor misses.
-                is_base = bool(_re_interface.match(rcls.rsplit("::", 1)[-1]))
-                try:
-                    crow = await repo.symbols_by_name(org, ns, rcls, limit=3)
-                    cids = [
-                        str(x["symbol_id"]) for x in crow if x.get("kind") in ("class", "struct")
-                    ]
-                    if cids and not is_base:
-                        inbound = await repo.edges_for_symbols(
-                            org,
-                            ns,
-                            cids,
-                            direction="callers",
-                            edge_kinds=["inherits"],
-                            limit=1,
-                        )
-                        is_base = bool(inbound)
-                except Exception:  # noqa: BLE001
-                    is_base = False
-                checked_cls[rcls] = is_base
-            if not checked_cls[rcls]:
-                continue
-            sid = str(r["symbol_id"])
-            if sid not in seen:
-                seen.add(sid)
-                out.append({**r, "via": "virtual_by_name"})
     return out[:6]

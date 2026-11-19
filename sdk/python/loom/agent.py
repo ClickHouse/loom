@@ -54,6 +54,7 @@ from loom.profile import ProfileClient
 from loom.retry import RetryPolicy
 from loom.run import AmbientRun, RunClient, current_run_id, stamp_write
 from loom.session import Session
+from loom.session_protection import SessionProtection
 from loom.tasks import TasksClient
 from loom.tools import AgentTools
 from loom.tracker import TrackerClient
@@ -135,6 +136,7 @@ class Agent:
         consumer: str = "",
         mentor_brief: bool | None = None,
         profile: str | None = None,
+        session_protection: SessionProtection | None = None,
     ) -> None:
         """The options are described in docs/reference/python-sdk.md ("Construction").
         `auto_run` (None reads `LOOM_AUTO_RUN`) is off by default because a
@@ -188,6 +190,7 @@ class Agent:
             retry=retry,
             consumer=consumer,
             auth=auth,
+            session_protection=session_protection,
         )
         #: The consumer label as the transport stamps it ('' = none).
         self.consumer: str = self.transport.consumer
@@ -487,6 +490,7 @@ class Agent:
         run_id: str | None = None,
         only: list[str] | None = None,
         max_result_chars: int = 8_000,
+        code_namespace: str | None = None,
     ) -> AgentTools:
         """Loom's verbs as the model's tools, bound to a scope: see `AgentTools`."""
         return AgentTools(
@@ -496,6 +500,7 @@ class Agent:
             run_id=run_id,
             only=only,
             max_result_chars=max_result_chars,
+            code_namespace=code_namespace,
         )
 
     async def probe(

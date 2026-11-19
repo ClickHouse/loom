@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.unit.git_repo import git
+
 _HARNESS = Path(__file__).resolve().parents[2] / "scripts" / "scip_harness"
 
 _FAKE_SCIP = """#!/usr/bin/env bash
@@ -94,6 +96,7 @@ def test_the_typescript_worker_resolves_its_checkout_to_an_absolute_path(
     from server.code.workers.scip_ts_delta import _resolve_paths
 
     (tmp_path / "var" / "co" / "node_modules").mkdir(parents=True)
+    git(tmp_path / "var" / "co", "init", "-q")
     (tmp_path / "var" / "x.git").mkdir()
     compiler = tmp_path / "scip-typescript"
     compiler.touch()
@@ -125,6 +128,7 @@ def test_the_typescript_worker_skips_when_the_binary_is_missing(
 
     checkout = tmp_path / "co"
     (checkout / "node_modules").mkdir(parents=True)
+    git(checkout, "init", "-q")
     bare = tmp_path / "x.git"
     bare.mkdir()
     monkeypatch.setattr(

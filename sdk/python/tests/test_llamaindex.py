@@ -8,10 +8,15 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import importlib
+import json
 import sys
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.base.llms.types import ChatMessage
@@ -23,6 +28,12 @@ from loom import Agent
 from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever, aflush, flush
 from loom.knowledge import SearchHit
 from loom.memory import MemorySearchHit, MemorySearchResult
+from loom.session_protection import (
+    AutomaticCaptureSuppressed,
+    SessionProtection,
+    SessionProtectionUnavailable,
+    observation_scope,
+)
 from loom.sync import SyncAgent
 
 
@@ -668,3 +679,551 @@ def test_flush_refuses_a_memory_with_any_loom_block_on_an_async_agent() -> None:
     mem = _new_memory(session_id="s-4", memory_blocks=[on_sync, on_async])
     with pytest.raises(TypeError, match="aflush"):
         flush(mem)
+
+
+@asynccontextmanager
+async def _protected_agent(
+    family: SessionProtection | None,
+    respond: Callable[[httpx.Request], httpx.Response],
+    *,
+    attempts: int = 1,
+) -> AsyncIterator[Agent]:
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("NO_PROXY", "*")
+        environment.setenv("no_proxy", "*")
+        async with Agent(
+            org="acme",
+            namespace="support",
+            agent="bot",
+            base_url="http://inert.invalid",
+            api_key="test-token",
+            session_protection=family,
+            pacing=False,
+            coalesce_sets=False,
+            auto_run=False,
+            mentor_brief=False,
+            retry={"max_attempts": attempts, "backoff_s": 0.01, "backoff_jitter": 0},
+        ) as agent:
+            mock = httpx.MockTransport(respond)
+            agent.transport._client._transport = mock
+            assert (
+                agent.transport._client._transport_for_url(
+                    httpx.URL("http://inert.invalid/v1/memory.search")
+                )
+                is mock
+            )
+            yield agent
+
+
+def _callback_reply(request: httpx.Request, *, mirrored: bool = False) -> httpx.Response:
+    if request.url.path == "/v1/memory.search":
+        return httpx.Response(
+            200,
+            json={
+                "mirrored": mirrored,
+                "results": [
+                    {
+                        "memory_key": "prefs/seat",
+                        "memory_type": "preference",
+                        "content_excerpt": "Alice prefers aisle seats",
+                        "distance": 0.1,
+                        "similarity": 0.9,
+                    }
+                ],
+            },
+        )
+    if request.url.path == "/v1/knowledge.search":
+        return httpx.Response(
+            200,
+            json={
+                "mirrored": mirrored,
+                "results": [
+                    {
+                        "source_uri": "doc://refunds",
+                        "chunk_idx": 0,
+                        "content": "Annual plans refund pro rata.",
+                        "tags": [],
+                        "distance": 0.1,
+                        "similarity": 0.9,
+                    }
+                ],
+                "embedding_model": "m",
+            },
+        )
+    assert request.url.path == "/v1/memory.set_from_messages"
+    return httpx.Response(200, json={"deferred": True, "queue_id": "queued-turn"})
+
+
+async def _block_callback(block: LoomMemoryBlock, operation: str) -> Any:
+    messages = [ChatMessage(role="user", content="I prefer aisle seats")]
+    if operation == "read":
+        return await block.aget(messages)
+    assert operation == "write"
+    return await block.aput(messages, session_id="native-session")
+
+
+@pytest.mark.parametrize("constructor_context", ["bound", "ambient"])
+@pytest.mark.parametrize("operation", ["read", "write", "retrieve"])
+def test_automatic_callbacks_retain_constructor_contributors(
+    tmp_path: Path, constructor_context: str, operation: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(
+            original if constructor_context == "bound" else None, respond
+        ) as agent:
+            with observation_scope((original,) if constructor_context == "ambient" else ()):
+                block = LoomMemoryBlock(agent=agent)
+                retriever = LoomRetriever(agent)
+            agent.transport.session_protection = replacement
+            original.mark()
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                if operation == "retrieve":
+                    await retriever.aretrieve("refunds")
+                else:
+                    await _block_callback(block, operation)
+            assert posts == []
+            assert not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["write", "flush"])
+def test_automatic_capture_retains_an_earlier_callback_contributor(
+    tmp_path: Path, operation: str
+) -> None:
+    earlier = SessionProtection.create(base=tmp_path / "earlier")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(None, respond) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            mem = _new_memory(session_id="native-session", memory_blocks=[block])
+            with observation_scope((earlier,)):
+                assert await _block_callback(block, "read") == "- Alice prefers aisle seats"
+            await mem.aput(ChatMessage(role="user", content="I prefer aisle seats"))
+            earlier.mark()
+            agent.transport.session_protection = current
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                if operation == "write":
+                    await _block_callback(block, "write")
+                else:
+                    await aflush(mem)
+            assert posts == ["/v1/memory.search"]
+            assert [m.content for m in await mem.aget_all(status=MessageStatus.ACTIVE)] == [
+                "I prefer aisle seats"
+            ]
+            assert await mem.aget_all(status=MessageStatus.ARCHIVED) == []
+            assert not current.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_marked_recall_blocks_later_flush_without_archiving_its_window(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    recalled = SessionProtection.create(base=tmp_path / "recalled")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request, mirrored=True)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            mem = _new_memory(session_id="native-session", memory_blocks=[block])
+            await mem.aput(ChatMessage(role="user", content="Which seat?"))
+            with recalled.automatic():
+                history = await mem.aget()
+            assert "Alice prefers aisle seats" in str(history[0].content)
+            assert original.protected and recalled.protected
+            await mem.aput(ChatMessage(role="assistant", content="An aisle seat."))
+            agent.transport.session_protection = current
+            for _ in range(2):
+                with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                    await aflush(mem)
+                assert [m.content for m in await mem.aget_all(status=MessageStatus.ACTIVE)] == [
+                    "Which seat?",
+                    "An aisle seat.",
+                ]
+                assert await mem.aget_all(status=MessageStatus.ARCHIVED) == []
+            assert posts == ["/v1/memory.search"]
+            assert not current.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+class _ReadBarrierStore(_ListStore):
+    on_read: Any = None
+
+    async def get_messages(
+        self,
+        key: str,
+        status: MessageStatus | None = MessageStatus.ACTIVE,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[ChatMessage]:
+        if self.on_read is not None:
+            callback, self.on_read = self.on_read, None
+            await asyncio.sleep(0)
+            callback()
+        return await super().get_messages(key, status=status, limit=limit, offset=offset)
+
+
+def test_flush_freezes_entry_contributors_before_reading_native_buffer(tmp_path: Path) -> None:
+    entry = SessionProtection.create(base=tmp_path / "entry")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(None, respond) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            mem = _new_memory(session_id="native-session", memory_blocks=[block])
+            store = _ReadBarrierStore()
+            mem.sql_store = store
+            await mem.aput(ChatMessage(role="user", content="I prefer aisle seats"))
+            agent.transport.session_protection = entry
+
+            def mark_and_rebind() -> None:
+                entry.mark()
+                agent.transport.session_protection = replacement
+
+            store.on_read = mark_and_rebind
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await aflush(mem)
+            assert store.on_read is None
+            assert [m.content for m in await mem.aget_all(status=MessageStatus.ACTIVE)] == [
+                "I prefer aisle seats"
+            ]
+            assert await mem.aget_all(status=MessageStatus.ARCHIVED) == []
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await aflush(mem)
+            assert posts == []
+            assert not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_capture_retains_constructor_control_across_auth_await(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            agent.transport.session_protection = current
+
+            class MarkingAuth(httpx.Auth):
+                async def async_auth_flow(
+                    self, request: httpx.Request
+                ) -> AsyncIterator[httpx.Request]:
+                    await asyncio.sleep(0)
+                    original.mark()
+                    agent.transport.session_protection = replacement
+                    yield request
+
+            agent.transport._client.auth = MarkingAuth()
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await _block_callback(block, "write")
+            assert posts == []
+            assert not current.protected and not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_protected_flush_does_not_retry_a_failed_send_or_archive_the_buffer(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(json.loads(request.content))
+        original.mark()
+        if len(posts) == 1:
+            return httpx.Response(408, json={"detail": "unavailable"})
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond, attempts=2) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            mem = _new_memory(session_id="native-session", memory_blocks=[block])
+            await mem.aput(ChatMessage(role="user", content="I prefer aisle seats"))
+            agent.transport.session_protection = current
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await aflush(mem)
+            assert len(posts) == 1
+            assert posts[0]["messages"] == [{"role": "user", "content": "I prefer aisle seats"}]
+            assert [m.content for m in await mem.aget_all(status=MessageStatus.ACTIVE)] == [
+                "I prefer aisle seats"
+            ]
+            assert await mem.aget_all(status=MessageStatus.ARCHIVED) == []
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await aflush(mem)
+            assert len(posts) == 1
+            assert not current.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_a_mark_between_native_capture_batches_stops_unacknowledged_work(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(json.loads(request.content))
+        original.mark()
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            agent.transport.session_protection = current
+            batches = [[ChatMessage(role="user", content=f"turn {i}")] for i in range(3)]
+            acknowledged: list[int] = []
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                for index, batch in enumerate(batches):
+                    await block.aput(
+                        batch, from_short_term_memory=True, session_id="native-session"
+                    )
+                    acknowledged.append(index)
+            assert acknowledged == [0]
+            assert [body["messages"] for body in posts] == [[{"role": "user", "content": "turn 0"}]]
+            assert [[m.content for m in batch] for batch in batches] == [
+                ["turn 0"],
+                ["turn 1"],
+                ["turn 2"],
+            ]
+            assert not current.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_failed_retained_mark_attempts_every_family_and_withholds_recall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = SessionProtection.create(base=tmp_path / "broken")
+    earlier = SessionProtection.create(base=tmp_path / "earlier")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    mark = SessionProtection.mark
+    attempted: list[SessionProtection] = []
+    posts: list[str] = []
+
+    def fail_one(family: SessionProtection) -> None:
+        attempted.append(family)
+        if family == broken:
+            raise SessionProtectionUnavailable()
+        mark(family)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request, mirrored=len(posts) > 1)
+
+    async def run() -> None:
+        async with _protected_agent(broken, respond) as agent:
+            block = LoomMemoryBlock(agent=agent)
+            with observation_scope((earlier,)):
+                assert await _block_callback(block, "read") == "- Alice prefers aisle seats"
+            agent.transport.session_protection = current
+            monkeypatch.setattr(SessionProtection, "mark", fail_one)
+            returned: list[str] = []
+            with producer.automatic(), pytest.raises(SessionProtectionUnavailable):
+                returned.append(await _block_callback(block, "read"))
+            assert returned == []
+            assert {family.id for family in attempted} == {
+                broken.id,
+                earlier.id,
+                current.id,
+                producer.id,
+            }
+            assert earlier.protected and current.protected and producer.protected
+            assert posts == ["/v1/memory.search", "/v1/memory.search"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["read", "write", "retrieve"])
+def test_protected_explicit_native_operations_keep_their_ownership_and_observers(
+    tmp_path: Path, operation: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    observer = SessionProtection.create(base=tmp_path / "observer")
+    current = SessionProtection.create(base=tmp_path / "current")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request, mirrored=True)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            with observation_scope((observer,)):
+                block = LoomMemoryBlock(agent=agent)
+                retriever = LoomRetriever(agent)
+            original.mark()
+            agent.transport.session_protection = current
+            if operation == "retrieve":
+                found = await retriever.aretrieve("refunds")
+                assert found[0].node_id == "support/doc://refunds#0"
+            else:
+                result = await _block_callback(block, operation)
+                assert result == ("- Alice prefers aisle seats" if operation == "read" else None)
+            assert len(posts) == 1
+            assert current.protected is (operation != "write")
+            assert observer.protected is (operation != "write")
+            assert original.protected
+
+    asyncio.run(run())
+
+
+def test_clean_native_memory_recall_and_deferred_flush_keep_payloads(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(family, respond) as agent:
+            block = LoomMemoryBlock(agent=agent, top_k=2, tags=["customer"], user_id="alice")
+            mem = _new_memory(session_id="native-session", memory_blocks=[block])
+            with producer.automatic():
+                await mem.aput(ChatMessage(role="user", content="Which seat?"))
+                history = await mem.aget()
+                assert "Alice prefers aisle seats" in str(history[0].content)
+                await mem.aput(ChatMessage(role="assistant", content="An aisle seat."))
+                await aflush(mem)
+                await aflush(mem)
+            assert await mem.aget_all(status=MessageStatus.ACTIVE) == []
+            assert [m.content for m in await mem.aget_all(status=MessageStatus.ARCHIVED)] == [
+                "Which seat?",
+                "An aisle seat.",
+            ]
+            assert [path for path, _ in posts] == [
+                "/v1/memory.search",
+                "/v1/memory.set_from_messages",
+            ]
+            search, extract = (body for _, body in posts)
+            assert {
+                key: search[key]
+                for key in (
+                    "query",
+                    "top_k",
+                    "tags",
+                    "user_id",
+                    "namespace_scope",
+                    "bodies",
+                    "explain",
+                )
+            } == {
+                "query": "Which seat?",
+                "top_k": 2,
+                "tags": ["customer"],
+                "user_id": "alice",
+                "namespace_scope": "this",
+                "bodies": "full",
+                "explain": False,
+            }
+            assert extract["messages"] == [
+                {"role": "user", "content": "Which seat?"},
+                {"role": "assistant", "content": "An aisle seat."},
+            ]
+            assert (
+                extract["session_id"],
+                extract["user_id"],
+                extract["extra_tags"],
+                extract["defer"],
+            ) == ("native-session", "alice", ["customer"], True)
+            assert not family.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["read", "flush", "retrieve"])
+def test_sync_native_callbacks_retain_constructor_control_across_threads(
+    tmp_path: Path, operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+    with SyncAgent(
+        org="acme",
+        namespace="support",
+        agent="bot",
+        base_url="http://inert.invalid",
+        api_key="test-token",
+        session_protection=original,
+        pacing=False,
+        coalesce_sets=False,
+        auto_run=False,
+        mentor_brief=False,
+        retry={"max_attempts": 1},
+    ) as agent:
+        mock = httpx.MockTransport(respond)
+        agent.transport._client._transport = mock
+        assert (
+            agent.transport._client._transport_for_url(
+                httpx.URL("http://inert.invalid/v1/memory.search")
+            )
+            is mock
+        )
+        block = LoomMemoryBlock(agent=agent)
+        retriever = LoomRetriever(agent)
+        mem = _new_memory(session_id="native-session", memory_blocks=[block])
+        mem.put(ChatMessage(role="user", content="I prefer aisle seats"))
+        agent.transport.session_protection = current
+        original.mark()
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            if operation == "read":
+                mem.get()
+            elif operation == "flush":
+                flush(mem)
+            else:
+                asyncio.run(retriever.aretrieve("refunds"))
+        assert posts == []
+        assert [m.content for m in asyncio.run(mem.aget_all(status=MessageStatus.ACTIVE))] == [
+            "I prefer aisle seats"
+        ]
+        assert asyncio.run(mem.aget_all(status=MessageStatus.ARCHIVED)) == []
+        assert not current.protected and not producer.protected

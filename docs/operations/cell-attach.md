@@ -81,9 +81,10 @@ loom cell attach --cell <cell> \
 
 `--dry-run` runs the refusals and step 2's scan, prints the count and a sample of the orgs
 per source table, the ones it would skip, and whether the scan fit in half of
-`--scan-budget`, and writes nothing; the router's own checks at `attach/begin` (the probe,
-the hosts, the upstream) do not run. Name every ClickHouse user, user directory, object and
-replica that may write the configured databases with `--ch-allow-user`,
+`--scan-budget`. Cell state, tenancy triggers and placements stay unchanged; normal
+participant enrollment and retirement are still recorded. The router's own checks at
+`attach/begin` (the probe, the hosts, the upstream) do not run. Name every ClickHouse user,
+user directory, object and replica that may write the configured databases with `--ch-allow-user`,
 `--ch-allow-user-directory`, `--ch-allow-object` and `--ch-allow-replica`, and every
 Postgres role besides attach's own that may make an org held with `--pg-allow-role`; each
 list is audited by the router. `--wait` (default 600 s) is the wall time the waits share;

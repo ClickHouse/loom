@@ -109,9 +109,23 @@ remote, and any host can rebuild the mirror from it.
   `LOOM_CODE_REPOS_ROOT`: mirrors, `checkout-*` trees and mirror lock files no active
   entry names (restricted entries included) and half-done clones. It sweeps nothing
   when the registry cannot be read.
-- **Sandbox.** A host without the repository-job sandbox never clones or fetches a
-  viewer-added entry with a network remote, on the read path as in the worker
-  (`compiler_tier.unsandboxed_skip`).
+- **Sandbox.** A host without the repository-job sandbox clones or fetches a
+  self-registered entry with a network remote only where
+  `LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` is set, on the read path as in the worker
+  (`compiler_tier.unsandboxed_skip`). The entry's compiler tiers are skipped there
+  either way.
+- **A forward proxy.** With `LOOM_CODE_GIT_PROXY_URL`, every clone and fetch above
+  (the pass's, the host loop's, a read's), the `ls-remote` before an add and a
+  checkout's submodule update connect through the operator's proxy as the entry's
+  `git_proxy_identity`, else the deployment's default (`code/app/index/git_proxy.py`).
+  The proxy and its password are added where a repository job starts as a plain
+  process (`sandbox.run_job`), to the environment of that one git process: not to
+  `auth_env`, whose git settings a build harness copies, and not to a sandboxed job,
+  where repository code runs. A job that cannot go through the proxy is refused with a
+  fixed reason, so git never connects directly; a host that runs the sandbox, whose
+  egress proxy is not chained through this one, refuses network git while the setting
+  is set. A host round fetches a shared mirror as its first entry
+  ([git through a forward proxy](../operations/code-index-operations.md#git-through-a-forward-proxy)).
 - **Merges the remote lost.** A ledger merge the remote no longer serves ("not our
   ref" in two calls, so one transient refusal does not count) is recorded in the
   mirror (`loom-unpinned-merges`), never asked for again, and
@@ -249,6 +263,12 @@ count leaves out. Constructor calls (`T x(...)`, `new T`, `make_unique<T>`) are 
 `T::T`. Receiver-type modules (`cpp_receivers.py`, `py_receivers.py`, `ts_receivers.py`,
 `go_receivers.py`) bind member calls. Edge kinds are `calls`, `includes`, `inherits`,
 `overrides`, `uses_type`, `fixture_use`, `reads` and `writes`.
+
+`code.callers` and `code.impact` expand a method to its base declarations through
+indexed `overrides` edges or a bounded `inherits` walk from its class. A matching
+method name or signature on an unrelated class does not establish virtual dispatch.
+Missing relationships leave the graph answer a lower bound, with the missing-dispatch
+cause disclosed when the compiler tier cannot rule it out.
 
 **Dependents.** Edges resolve against a repository-wide name table, so a commit that
 adds, removes or re-signs a symbol changes the edges of untouched files that name it.
@@ -464,6 +484,8 @@ Every column is in the generated [schema reference](../reference/schema.md).
 - The server never parses SCIP protobuf.
 - Per-commit coverage is an ancestry check on the mirror, never a watermark.
 - Retrieval filters `embedding_dim > 0`; a stub chunk is searchable lexically only.
+- With `LOOM_CODE_GIT_PROXY_URL` set, git reaches a network remote through that proxy
+  or not at all, and the proxy's password is in the environment of that git process only.
 
 ## Source entry points
 
@@ -479,6 +501,7 @@ Every column is in the generated [schema reference](../reference/schema.md).
 | `server/code/workers/scip_*.py`, `scripts/scip_harness/`                                                                           | Compiler tier.                                                                                |
 | `server/code/workers/embed_recovery.py`, `summary.py`, `graph_stats.py`, `pr_history.py`, `backport_gaps.py`, `coverage_notify.py` | Background workers.                                                                           |
 | `server/code/domain/index/repos.py`; `server/code/app/index/repo_registry.py`, `registry.py`, `retire.py`, `gitrepo.py`            | Entries, mirrors, namespaces.                                                                 |
+| `server/code/app/index/sandbox.py`, `egress.py`, `git_proxy.py`                                                                    | Repository jobs and how they reach the network.                                               |
 | `server/code/app/search/`, `server/code/store/index/`                                                                              | Reads and writes.                                                                             |
 
 ## Related

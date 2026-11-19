@@ -45,6 +45,83 @@ def test_filename_identity_comes_from_the_source_link_target(name):
     assert protected(Label(name, links=((name, "other.md"),)), "docs/other.md", files=files) == ()
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "overview.md",
+        "tracker/overview.md",
+        "features/tracker/overview.md",
+        "docs/features/tracker/overview.md",
+    ],
+)
+def test_filename_path_suffix_is_attested_by_its_tracked_target(name):
+    target = "docs/features/tracker/overview.md"
+    node = Label(name, links=((name, t.REPO_URL + "/blob/main/" + target),))
+    atoms = protected(
+        node, "docs/features/code-index/overview.md", files=frozenset({target}), repo_url=t.REPO_URL
+    )
+    assert atoms == (name,)
+    assert project(node, atoms)[0].strip() == ""
+    source = f"[{name}]({t.REPO_URL}/blob/main/{target})\n"
+    assert t.differences(source, source, source_path="docs/features/code-index/overview.md") == []
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "tracker/summary.md",
+        "other/overview.md",
+        "tracker overview.md",
+        "overview.md",
+        "overview",
+        "跟踪器概览",
+    ],
+)
+def test_filename_path_suffix_cannot_drop_or_translate_a_source_component(changed):
+    source = f"[tracker/overview.md]({t.REPO_URL}/blob/main/docs/features/tracker/overview.md)\n"
+    output = source.replace("[tracker/overview.md]", f"[{changed}]")
+    assert any(
+        "protected source strings" in p
+        for p in t.differences(source, output, source_path="docs/features/code-index/overview.md")
+    )
+
+
+def test_filename_path_suffix_leaves_ordinary_descriptors_translatable():
+    source = (
+        f"[tracker/overview.md guide]({t.REPO_URL}/blob/main/docs/features/tracker/overview.md)\n"
+    )
+    assert any(
+        "left in English" in p
+        for p in t.differences(source, source, source_path="docs/features/code-index/overview.md")
+    )
+    assert (
+        t.differences(
+            source,
+            source.replace(".md guide]", ".md 指南]"),
+            source_path="docs/features/code-index/overview.md",
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_filename_path_suffix_requires_the_actual_repository_target(tracked):
+    target = "docs/features/tracker/overview.md"
+    url = ("https://example.test" if tracked else t.REPO_URL) + "/blob/main/" + target
+    node = Label("tracker/overview.md", links=(("tracker/overview.md", url),))
+    files = frozenset({target}) if tracked else frozenset()
+    assert (
+        protected(node, "docs/features/code-index/overview.md", files=files, repo_url=t.REPO_URL)
+        == ()
+    )
+
+
+def test_path_protection_does_not_allow_a_standalone_tracker_heading():
+    assert t.differences(
+        "# Tracker\n", "# Tracker\n", source_path="docs/features/code-index/overview.md"
+    )
+
+
 def test_quoted_prose_is_not_a_returned_string_declaration():
     quoted = '"Install the package" / "Getting started"'
     assert protected(Label(quoted), "docs/other.md") == ()
@@ -141,6 +218,61 @@ def test_names_do_not_exempt_one_word_qualifiers_or_mixed_cells(path, label, tra
     source = _table(f"| {label} | | |")
     assert t.differences(source, source, source_path=path)
     assert t.differences(source, _table(f"| {translated} | | |"), source_path=path) == []
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "code", "expected"),
+    [
+        (
+            "docs/features/code-index/overview.md",
+            "Protocol Buffers ( )",
+            (".proto",),
+            ("Protocol Buffers",),
+        ),
+        ("docs/features/code-index/overview.md", "FlatBuffers ( )", (".fbs",), ("FlatBuffers",)),
+        ("docs/other.md", "Protocol Buffers ( )", (".proto",), ()),
+        ("docs/features/code-index/overview.md", "Protocol Buffers", (), ()),
+        ("docs/features/code-index/overview.md", "Protocol Buffers ( )", (".fbs",), ()),
+        ("docs/features/code-index/overview.md", "FlatBuffers ( )", (".proto",), ()),
+        ("docs/features/code-index/overview.md", "Protocol Buffers .proto", (), ()),
+    ],
+)
+def test_format_names_require_their_source_extension(path, text, code, expected):
+    assert protected(Label(text, code=code), path) == expected
+
+
+def test_source_format_names_pass_in_a_translated_table():
+    source = _table(
+        "| Protocol Buffers (`.proto`), FlatBuffers (`.fbs`) | yes | imports, type uses |"
+    )
+    target = source.replace("Field", "形式").replace("Type", "種類").replace("Meaning", "意味")
+    target = target.replace("yes", "はい").replace("imports, type uses", "インポート、型の使用")
+    path = "docs/features/code-index/overview.md"
+    assert t.differences(source, target, source_path=path) == []
+    for changed in ("Protocol Buffer", "形式", ""):
+        assert any(
+            "protected source strings" in problem
+            for problem in t.differences(
+                source, target.replace("Protocol Buffers", changed), source_path=path
+            )
+        )
+    for changed in ("FlatBuffer", "形式", ""):
+        assert any(
+            "protected source strings" in problem
+            for problem in t.differences(
+                source, target.replace("FlatBuffers", changed), source_path=path
+            )
+        )
+
+
+@pytest.mark.parametrize("qualifier", ["supported languages", "imports", "type uses"])
+def test_format_names_leave_ordinary_qualifiers_translatable(qualifier):
+    source = _table(f"| Protocol Buffers (`.proto`), FlatBuffers (`.fbs`) {qualifier} | | |")
+    path = "docs/features/code-index/overview.md"
+    assert any(
+        "left in English" in problem for problem in t.differences(source, source, source_path=path)
+    )
+    assert t.differences(source, source.replace(qualifier, "対応形式"), source_path=path) == []
 
 
 def test_returned_wire_values_are_required_even_without_backticks():
@@ -274,7 +406,7 @@ def test_stored_page_check_uses_the_same_source_preservation_guard(monkeypatch, 
     monkeypatch.setattr(t, "ROOT", tmp_path)
     monkeypatch.setattr(t, "sources", lambda: (source_path,))
     monkeypatch.setattr(t, "LANGUAGES", (lang,))
-    monkeypatch.setattr(t, "prepare", lambda source_path, lang: (source, ""))
+    monkeypatch.setattr(t, "prepare", lambda source_path, lang, *, inventory=None: (source, ""))
     output = tmp_path / t.target_path(lang.code, source_path)
     output.parent.mkdir(parents=True)
     output.write_text(source)

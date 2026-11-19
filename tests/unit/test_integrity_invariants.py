@@ -86,6 +86,21 @@ def test_invariant_queries_scope_to_live_rows() -> None:
     assert "if(live5 = 0, sum(ev_rows), 0) AS orphan_ev5" in sql
 
 
+def test_embed_pending_counts_only_memories_that_get_a_vector() -> None:
+    """Episodic, profile and `high` memories never get a vector, and the episodic
+    ones grow with every session. Counting them would keep the backlog gauge
+    rising on a healthy deployment, and a backlog alert on it would never clear."""
+    from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
+    from server.observability import otel_probes
+
+    sql = _census_sql()
+    assert "memory_type NOT IN {unembedded:Array(String)}" in sql
+    assert "AND sensitivity != 'high' AS embeds" in sql
+    assert "if(e_vec = 0, sum(is_m AND live AND embeds), 0) AS pending" in sql
+    assert "sum(s.pending) AS embed_pending" in sql
+    assert otel_probes._invariants_parameters() == {"unembedded": sorted(NON_SEARCHABLE_TYPES)}
+
+
 def test_divergence_compares_sorted_arrays() -> None:
     """`entities` is an unordered set in practice. Comparing raw arrays would
     report divergence on ordering alone, which is noise, and noise is how a

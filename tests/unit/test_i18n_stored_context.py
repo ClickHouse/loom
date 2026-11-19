@@ -1,5 +1,7 @@
 """Stored bodies retain source identities without treating metadata as source prose."""
 
+import posixpath
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -49,7 +51,7 @@ def _stored_page(monkeypatch, source):
     read_text = Path.read_text
     monkeypatch.setattr(t, "sources", lambda: ("README.md",))
     monkeypatch.setattr(t, "LANGUAGES", (lang,))
-    monkeypatch.setattr(t, "prepare", lambda source_path, language: (source, ""))
+    monkeypatch.setattr(t, "prepare", lambda source_path, language, *, inventory=None: (source, ""))
     monkeypatch.setattr(
         Path,
         "read_text",
@@ -86,3 +88,81 @@ def test_rendered_metadata_tampering_remains_stale(monkeypatch, changed):
         assert any("protected source strings" in p for p in t.untranslated_pages())
     else:
         assert t.untranslated_pages() == []
+
+
+def _routed_stored_page(
+    monkeypatch, tmp_path, stored_route, target_available, source="docs/guide.md"
+):
+    target = "docs/other.md"
+    lang = t.LANGUAGES[1]
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    monkeypatch.setattr(t, "LANGUAGES", (lang,))
+    monkeypatch.setattr(t, "sources", lambda: (source, target))
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    relative_target = posixpath.relpath(target, posixpath.dirname(source) or ".")
+    for path, text in (
+        (source, f"[other.md]({relative_target})\n" * 2),
+        (target, "# Other\n"),
+    ):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
+    subprocess.run(["git", "add", source, target], cwd=tmp_path, check=True)
+    if target_available:
+        translated_target = tmp_path / t.target_path(lang.code, target)
+        translated_target.parent.mkdir(parents=True, exist_ok=True)
+        translated_target.write_text(t.render(target, lang, "# 別\n", "", t.DEFAULT_MODEL))
+    destination = (
+        posixpath.relpath(
+            t.target_path(lang.code, target), posixpath.dirname(t.target_path(lang.code, source))
+        )
+        if stored_route == "localized"
+        else f"{t.REPO_URL}/blob/main/{target}"
+    )
+    body = f"[other.md]({destination})\n" * 2
+    output = tmp_path / t.target_path(lang.code, source)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(t.render(source, lang, body, "", t.DEFAULT_MODEL))
+    return source, lang, body, output
+
+
+@pytest.mark.parametrize("stored_route", ["localized", "fallback"])
+@pytest.mark.parametrize("target_available", [False, True])
+@pytest.mark.parametrize("source", ["docs/guide.md", "README.md"])
+def test_stored_filename_labels_survive_routing_changes(
+    monkeypatch, tmp_path, stored_route, target_available, source
+):
+    _routed_stored_page(monkeypatch, tmp_path, stored_route, target_available, source)
+    assert t.untranslated_pages() == []
+
+
+@pytest.mark.parametrize("stored_route", ["localized", "fallback"])
+@pytest.mark.parametrize("damage", ["label", "destination", "missing"])
+def test_routing_comparison_retains_protected_filename_checks(
+    monkeypatch, tmp_path, stored_route, damage
+):
+    source, lang, body, output = _routed_stored_page(monkeypatch, tmp_path, stored_route, True)
+    if damage == "label":
+        body = body.replace("[other.md]", "[別]", 1)
+    elif damage == "destination":
+        body = (
+            body.replace("](other.md)", "](https://example.test/other.md)", 1)
+            if stored_route == "localized"
+            else body.replace(t.REPO_URL, "https://example.test", 1)
+        )
+    else:
+        body = body.splitlines(keepends=True)[0]
+    output.write_text(t.render(source, lang, body, "", t.DEFAULT_MODEL))
+    assert any("protected source strings" in p for p in t.untranslated_pages())
+
+
+@pytest.mark.parametrize("stored_route", ["localized", "fallback"])
+def test_routing_comparison_still_rejects_untranslated_link_prose(
+    monkeypatch, tmp_path, stored_route
+):
+    source, lang, body, output = _routed_stored_page(monkeypatch, tmp_path, stored_route, True)
+    english = tmp_path / source
+    english.write_text(english.read_text().replace("[other.md]", "[other.md guide]"))
+    body = body.replace("[other.md]", "[other.md guide]")
+    output.write_text(t.render(source, lang, body, "", t.DEFAULT_MODEL))
+    assert any("left in English" in p for p in t.untranslated_pages())

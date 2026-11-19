@@ -46,20 +46,30 @@
     "n8n-workflow": "*"
   },
   "devDependencies": {
-    "@n8n/node-cli": "0.56.4",
-    "n8n-workflow": "2.47.2",
-    "@types/node": "^24",
-    "typescript": "5.9.3",
-    "eslint": "9.29.0",
     "@clickhouse/loom": ">=1.2.0 <2",
     "@langchain/classic": "1.0.27",
     "@langchain/core": "1.4.0",
+    "@n8n/node-cli": "0.56.4",
+    "@types/node": "^24",
+    "esbuild": "0.28.1",
+    "eslint": "9.29.0",
+    "n8n-workflow": "2.47.2",
     "prettier": "3.8.3",
-    "esbuild": "0.27.4"
+    "typescript": "5.9.3"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
-  "packageManager": "pnpm@10.32.1"
+  "packageManager": "pnpm@10.34.9",
+  "pnpm": {
+    "overrides": {
+      "minimatch@>=7 <11.0.1": "11.0.8",
+      "qs@>=6.7.0 <6.16.1": "6.16.1",
+      "uuid@10.0.0": "11.1.1"
+    },
+    "patchedDependencies": {
+      "stream-json@1.9.1": "patches/stream-json@1.9.1.patch"
+    }
+  }
 }

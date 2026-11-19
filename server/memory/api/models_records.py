@@ -60,7 +60,8 @@ class MemorySchemaRegisterInput(BaseModel):
     fields: list[SchemaFieldInput] = Field(min_length=1, max_length=64)
     # Author fallback, stored only when the request has no principal to stamp.
     created_by: str = ""
-    # `active` is writable at once; `proposed` waits for memory_schema.approve.
+    # For `memory_schema.register`, `active` is writable at once and `proposed` waits
+    # for approval; `memory_schema.propose` always stores `proposed`, regardless of this field.
     status: Literal["active", "proposed"] = "active"
 
 
@@ -71,7 +72,8 @@ class MemorySchemaRegisterOutput(BaseModel):
     name: str
     # How many fields the schema declares.
     field_count: int
-    # The status it was stored with: `active` or `proposed`.
+    # The stored status: `active` or `proposed` for `memory_schema.register`,
+    # always `proposed` for `memory_schema.propose`.
     status: str
 
 

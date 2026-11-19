@@ -3,10 +3,10 @@ their own nearest facts."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
+from server.core.vectors.private_first import each
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scoring import _anchor_rank_score
@@ -100,7 +100,12 @@ async def _run_digest_descent(ctx: SearchContext) -> None:
                 log.warning("digest descent failed for %s/%s (non-fatal): %s", ns, sid, e)
                 return ns, sid, []
 
-        results = await asyncio.gather(*[_rows(ns, sid) for ns, sid in targets])
+        async def _rows_for_target(
+            target: tuple[str, str],
+        ) -> tuple[str, str, list[dict[str, Any]]]:
+            return await _rows(*target)
+
+        results = await each(_rows_for_target)(targets)
         added = 0
         for ns, sid, rows in results:
             for row in rows:

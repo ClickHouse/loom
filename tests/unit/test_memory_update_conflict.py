@@ -181,7 +181,14 @@ async def test_clear_verdict_writes_an_active_version_and_resets_the_old_mark(wi
     assert not calls.marked and not calls.refined
     # Same-key supersession ran with the value-carrying one-row batch.
     assert calls.superseded == [
-        [{"memory_id": _ID_A, "memory_key": "deploy_day", "value": '"Deploys happen on Thursday"'}]
+        [
+            {
+                "memory_id": _ID_A,
+                "memory_key": "deploy_day",
+                "value": '"Deploys happen on Thursday"',
+                "user_id": "-",
+            }
+        ]
     ]
 
 

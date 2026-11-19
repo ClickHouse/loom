@@ -956,6 +956,10 @@ class CodeSettings(BaseModel):
     # for a namespace a member added from the page is skipped.
     # Off = the operator's JSON is the only source.
     code_self_service_enabled: bool = True
+    # True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to
+    # platform admins: a token scoped to namespaces, or a trusted caller acting for
+    # another subject, is refused too. False: each op's own role decides.
+    code_self_service_platform_admin_only: bool = False
     # Where the code ingest worker clones a self-service entry's bare mirror (one per
     # GitHub repository, shared by its branches).
     code_repos_root: str = "var/code_repos/self"
@@ -1030,6 +1034,13 @@ class CodeSettings(BaseModel):
     # missing sandbox as an error. False: without the sandbox, jobs fall back
     # to plain processes as "Without the sandbox" in code-index-operations.md says.
     code_sandbox_required: bool = False
+    # True lets a host without the sandbox add and fetch a self-service entry with a
+    # network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and
+    # it gets no compiler tier. Refused at load without
+    # code_self_service_platform_admin_only, where a request can carry no principal
+    # (auth off, or mcp_auth_mode open), and with code_sandbox_required. False: such an
+    # entry needs the sandbox.
+    code_self_service_git_unsandboxed: bool = False
     # Largest file one process of a sandboxed repository job may write, in MiB (a
     # pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
@@ -1062,6 +1073,66 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # The code index's network git (clone, fetch, ls-remote, submodule update) through
+    # an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such
+    # a git job connects through it or is refused: never directly.
+    # --- git through a forward proxy ---
+    # The proxy: `http://host:port` or `https://host:port`, the port named, with no
+    # credentials, path or query. Empty = git connects directly.
+    code_git_proxy_url: str = ""
+    # File holding the proxy password, read again for every git job. Empty = no password;
+    # a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url.
+    code_git_proxy_token_file: str = ""
+    # PEM bundle git verifies TLS with through the proxy, in place of its default roots
+    # (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url.
+    code_git_proxy_ca_file: str = ""
+    # PEM bundle git verifies the proxy's own certificate with, in place of its default
+    # roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one
+    # is for the remote, behind a proxy that terminates TLS under its own authority; this
+    # one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url.
+    code_git_proxy_tls_ca_file: str = ""
+    # The proxy user of an entry that names no `git_proxy_identity`: letters, digits and
+    # `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs
+    # code_git_proxy_url.
+    code_git_proxy_identity: str = ""
+
+    @model_validator(mode="after")
+    def _check_git_proxy(self) -> CodeSettings:
+        """A proxy URL git cannot use, or a proxy setting without the proxy, fails at
+        load, not at the first fetch. The URL holds no credentials, so it is not a secret."""
+        url = self.code_git_proxy_url
+        if url:
+            parts = urlsplit(url)
+            if not is_http_url(url) or "@" in parts.netloc or parts.path not in ("", "/"):
+                raise ValueError(
+                    "LOOM_CODE_GIT_PROXY_URL must be http://host:port or https://host:port, "
+                    "with no credentials, path or query"
+                )
+            if parts.port is None:
+                # git's HTTP library would otherwise assume 1080 for an http proxy.
+                raise ValueError("LOOM_CODE_GIT_PROXY_URL must name the proxy's port")
+        identity = self.code_git_proxy_identity
+        needs_url = {
+            "LOOM_CODE_GIT_PROXY_TOKEN_FILE": self.code_git_proxy_token_file,
+            "LOOM_CODE_GIT_PROXY_CA_FILE": self.code_git_proxy_ca_file,
+            "LOOM_CODE_GIT_PROXY_TLS_CA_FILE": self.code_git_proxy_tls_ca_file,
+            "LOOM_CODE_GIT_PROXY_IDENTITY": identity,
+        }
+        for variable, value in needs_url.items():
+            if value and not url:
+                raise ValueError(f"{variable} needs LOOM_CODE_GIT_PROXY_URL")
+        if self.code_git_proxy_tls_ca_file and urlsplit(url).scheme != "https":
+            raise ValueError(
+                "LOOM_CODE_GIT_PROXY_TLS_CA_FILE needs an https:// LOOM_CODE_GIT_PROXY_URL: "
+                "an http:// proxy has no TLS of its own to verify"
+            )
+        if identity and not GIT_PROXY_IDENTITY.fullmatch(identity):
+            raise ValueError(
+                "LOOM_CODE_GIT_PROXY_IDENTITY takes letters, digits and . _ ~ @ - only, "
+                "at most 128 characters"
+            )
+        return self
+
     # --- open-PR fill ---
     # Open-PR rows per pass whose head_sha / base_sha / files the PR-history
     # worker fills from the mirror; rows the mirror lacks fall back to GitHub
@@ -2330,9 +2401,62 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
+    # OAuth client id for personal Drive connections; empty disables the provider.
+    connect_gdrive_client_id: str = ""
+    # Secret of that Drive OAuth registration; kept outside source rows.
+    connect_gdrive_client_secret: str = ""
+    # Public-integration client id for personal page-store connections; empty disables it.
+    connect_notion_client_id: str = ""
+    # Secret of that page-store registration; kept outside source rows.
+    connect_notion_client_secret: str = ""
+    # OAuth client id for personal project-tracker connections; empty disables it.
+    connect_linear_client_id: str = ""
+    # Secret of that project-tracker registration; kept outside source rows.
+    connect_linear_client_secret: str = ""
+    # The operator has restricted the public integration to read-content capability.
+    # Its token response cannot prove this registration setting; false disables it.
+    connect_notion_read_content_only: bool = False
+    # Seconds for the whole optional live-search leg, including final membership checks.
+    # At most five; provider credential deadlines may shorten it further.
+    knowledge_live_search_timeout_s: float = Field(default=5.0, gt=0, le=5.0)
+    # Connected registrations searched per live-search request, from one to three.
+    knowledge_live_search_max_sources: int = Field(default=3, ge=1, le=3)
+    # Live hits across all registrations, and the per-provider page bound, from one to ten.
+    knowledge_live_search_max_hits: int = Field(default=10, ge=1, le=10)
+    # Bytes read from one live-search provider response, at most 256 KiB.
+    # The document-source download limit may shorten this bound further.
+    knowledge_live_search_response_max_bytes: int = Field(default=256 * 1024, ge=1, le=256 * 1024)
+    # Registered Drive items searched per source, from one to four; no pagination.
+    knowledge_live_search_max_items: int = Field(default=4, ge=1, le=4)
+    # Native parent lookups per Notion membership check, from zero to three.
+    # Zero accepts directly registered pages and database membership without parent fetches.
+    knowledge_live_search_max_ancestors: int = Field(default=3, ge=0, le=3)
+    # Seconds for local connection stops, including their source retirement writes.
+    knowledge_connected_stop_timeout_s: float = Field(default=20.0, gt=0)
+    # Seconds for best-effort provider revocation after every local stop has committed.
+    knowledge_connected_revoke_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds the renewed account-generation lease lives. Source leases follow it;
+    # provider requests hold neither.
+    knowledge_connected_lease_ttl_s: float = Field(default=60.0, gt=0)
+    # Seconds a connection change waits for another holder's account-generation lease.
+    knowledge_connected_lease_wait_s: float = Field(default=5.0, ge=0)
+    # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
+    knowledge_connected_registry_scan_limit: int = Field(default=4096, ge=1)
+    # Registrations per page during root-secret resealing.
+    knowledge_connected_registry_page_size: int = Field(default=256, ge=1, le=4096)
+    # Seconds one connected-account OAuth request may take, including its response.
+    # The caller's remaining deadline can shorten this bound.
+    knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)
+    # Bytes read from a connected-account token or identity response; larger metadata
+    # replies are refused before parsing.
+    knowledge_connected_oauth_response_max_bytes: int = Field(default=64 * 1024, ge=1024)
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # Active connected sources per namespace, separate from the shared/crawl quota.
+    knowledge_connected_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=64, ge=1)
+    # Active connected sources one canonical person may register in one namespace.
+    knowledge_connected_sources_max_per_person: Annotated[int, LIVE] = Field(default=8, ge=1)
     # Seconds a document source's probe (add, update, check, rotate) or tracker short-id
     # lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE
     # and check answers reachable: false.
@@ -2348,6 +2472,9 @@ class KnowledgeSettings(BaseModel):
     # Mirrored reads require a complete listing and group observation within this
     # many seconds; missing or older evidence admits nobody.
     knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
+    # Maximum team and member rows read for one project's complete permission list.
+    # A larger list refuses publication rather than granting from a partial page.
+    knowledge_source_acl_max_entries: int = Field(default=10000, ge=1)
     # Enable optional source push setup, callbacks and Drive renewal; false keeps polling only.
     knowledge_source_push_enabled: bool = False
     # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
@@ -2542,18 +2669,17 @@ class McpSettings(BaseModel):
     #                 naming another toolset gets it, and the token is the boundary.
     #   "all"       — the stable ops plus the experimental ops the core or atomic
     #                 roster lists; the other experimental ops stay callable by name,
-    #                 and _MCP_HIDDEN_OPS are never listed.
+    #                 and _MCP_HIDDEN_OPS are never listed, the two upload ops under
+    #                 mcp_code_upload_tools aside.
     # An unknown value is "core".
     mcp_toolset: str = "core"
     # tools/list schema profile: "standard" (curated prose + inputSchema),
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # Ops whose tools/list entry carries `_meta: {"anthropic/alwaysLoad": true}`, so a host
-    # that defers MCP tools behind tool search lists these up front and an agent calls them
-    # on its first turn instead of spending a turn loading them. Comma-separated op names;
-    # empty = none.
-    mcp_always_load_tools: str = "code.search,code.symbol"
+    # Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad.
+    # Empty leaves loading to the host; set names to keep selected tools upfront.
+    mcp_always_load_tools: str = ""
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
@@ -2570,6 +2696,10 @@ class McpSettings(BaseModel):
     # List code.* tools on the MCP surface (core toolset union). Off = code
     # ops are HTTP/SDK-only.
     mcp_code_tools: bool = False
+    # Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP, which
+    # hides both when off. On, an upload is accepted, on every transport, only for a
+    # namespace that has a repository entry.
+    mcp_code_upload_tools: bool = False
 
 
 # ===== Memory =================================================================
@@ -4252,7 +4382,7 @@ class ObservabilitySettings(BaseModel):
     otel_environment: str = "dev"
     # Comma-separated path regexes the FastAPI instrumentation opens no span
     # for (health polls). "" = instrument every path but the sign-in routes
-    # (/oauth/), which are always left out: their URLs carry codes.
+    # (/oauth/ and /v1/connect/), which are always left out: their URLs carry codes.
     otel_excluded_urls: str = "/v1/health"
 
     # Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py,
@@ -4429,8 +4559,9 @@ def host_list_refusal(setting: str, hosts: str) -> str:
     return ""
 
 
-# The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
+# The gateway check merges these settings with the proposed dashboard configuration.
 _GATEWAY_CHECKED = (
+    "llm_provider",
     "openai_base_url",
     "anthropic_base_url",
     "local_llm_base_url",
@@ -4460,6 +4591,9 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
 # A customer or feature name sent as a header value: the same characters, at least one.
 _HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
+# The user name a repository's git presents to LOOM_CODE_GIT_PROXY_URL: those characters
+# without the colon, which would split the Basic pair it travels in.
+GIT_PROXY_IDENTITY = re.compile(r"[A-Za-z0-9._~@-]{1,128}")
 # What an identity header template names, each as `{name}` (server/llm/identity.py).
 IDENTITY_PLACEHOLDERS = ("org", "namespace", "agent", "tenant", "subject", "user_id", "email")
 IDENTITY_PLACEHOLDER = re.compile(r"\{(" + "|".join(IDENTITY_PLACEHOLDERS) + r")\}")
@@ -4535,6 +4669,9 @@ _SENDER_HEADERS = frozenset(
         "content-type",
         "content-length",
         "host",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
     }
 )
 
@@ -4581,11 +4718,11 @@ class ProviderSettings(ModelSettings):
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
     # → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin
-    # "openai", "gemini", "local", "fake".
+    # "openai", "gemini", "bedrock" (Cohere Embed v4), "local", "fake".
     # Switching providers changes the embedding space: a full re-embed is
     # required.
     embedding_provider: Annotated[
-        Literal["", "openai", "gemini", "compatible", "local", "fake"], CaseFolded
+        Literal["", "openai", "gemini", "compatible", "bedrock", "local", "fake"], CaseFolded
     ] = ""
     # API root for an explicitly selected OpenAI-compatible embedding service,
     # e.g. https://provider.example/v1. Empty is invalid for compatible providers.
@@ -4604,6 +4741,9 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
+    # Region for native Bedrock model requests; empty uses the AWS SDK's region chain.
+    # AWS credentials use the SDK's role, profile or environment credential chain.
+    bedrock_region: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
     local_llm_base_url: str = "http://localhost:11434/v1"
@@ -4721,11 +4861,12 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+    # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
     # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
     # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
     # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-    # overridden. Run `make bench-quick` before making anthropic a default.
+    # overridden. Bedrock requires llm_model and the SDK credential chain.
+    # Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
     # (production) makes it an `error` and `status: degraded`, which preflight
@@ -4754,6 +4895,21 @@ class ProviderSettings(ModelSettings):
             return self
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
+            self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_bedrock_embedding_dim(self) -> ProviderSettings:
+        """Cohere Embed v4 uses its native width unless the operator pins one."""
+        native = self.embedding_provider == "bedrock" or (
+            not self.embedding_provider and self.embedding_model.startswith("bedrock:")
+        )
+        if native and (
+            not self.embedding_model.strip() or self.embedding_model.startswith("fake-ngram")
+        ):
+            raise ValueError("LOOM_EMBEDDING_PROVIDER=bedrock requires a Cohere Embed v4 model")
+        if "embedding_dim" not in self.model_fields_set and native:
+            self.embedding_dim = 1536
             self._inferred_fields |= {"embedding_dim"}
         return self
 
@@ -4925,6 +5081,8 @@ class ProviderSettings(ModelSettings):
         pair = frozenset({"llm_provider", "llm_model"})
         inferred = pair if not (pair & self.model_fields_set) else frozenset()
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
+        if resolved.provider == "bedrock" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
@@ -5018,6 +5176,8 @@ class ProviderSettings(ModelSettings):
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
         saved = dict(changes or {})
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
+        if v["llm_provider"] == "bedrock":
+            return f"{why} refuses native Bedrock: use the inference gateway"
         # Both hosted API roots count, a provider unused included: a model named per
         # request may be either provider's. The local root is called only while it is
         # the provider, since no model name reaches it otherwise.
@@ -5026,7 +5186,7 @@ class ProviderSettings(ModelSettings):
             ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
             ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
         ]
-        if self.llm_provider == "local":
+        if v["llm_provider"] == "local":
             roots.append(("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL"))
         for field, what in roots:
             host = self.off_gateway(v[field]) if v[field] else ""
@@ -5052,12 +5212,13 @@ class ProviderSettings(ModelSettings):
                 provider = inferred_provider(v["embedding_model"])
             except ValueError:
                 provider = ""  # an unknown model is refused where the embedder is built
-        if provider == "gemini":
+        if provider in {"gemini", "bedrock"}:
             # The Gemini embedder calls Google's own API, never a gateway.
+            label = "Bedrock" if provider == "bedrock" else "Gemini"
             which = (
-                "the saved Gemini embedder"
+                f"the saved {label} embedder"
                 if "embedding_provider" in saved
-                else "the Gemini embedder"
+                else f"the {label} embedder"
             )
             return f"{why} refuses {which}: embed through the gateway"
         return ""
@@ -5976,6 +6137,10 @@ class TrackerSettings(BaseModel):
 # the handler time a budget measures.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
+    # Own connection listing rechecks current identity and provider registration;
+    # disconnect includes bounded local retirement followed by best-effort revocation.
+    "connection.list": 1000,
+    "connection.disconnect": 30000,
     "admin.users": 300,
     "agents.connected": 120,
     # One agent answer: a model turn per tool call (measured p95 10.7 s, at most 15 s

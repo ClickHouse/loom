@@ -27,6 +27,30 @@ Use [unified search](./unified-search.md) to retrieve both, then `knowledge.get`
 with `knowledge.upsert`; the memory claim is revised separately through the
 [memory write operations](./memory/writing.md).
 
+For a claim your agent writes, `memory.set` accepts `source_resource_id` and
+[`memory.provenance`](./memory/history-and-provenance.md#who-wrote-it-actor-and-source-class)
+returns that pointer. The writer supplies it; storing it does not verify that the
+document supports the claim.
+
+The [read-only Python walkthrough](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md#fact_document_evidencepy)
+retrieves an existing fact and a caller-selected document section, preserving the
+returned provenance and passage fields for operator review. It makes no model call
+and leaves support unevaluated.
+
+[`loom decisions extract`](./tasks-and-decisions.md#extract-decisions-from-a-document)
+is a separate operator command for decisions stated in a document. It checks quotations
+against the document text, checks the claims with the configured model, and writes
+decisions with a source reference of the form
+`knowledge:<namespace>/<source_uri>#<section breadcrumb>`. It calls the model even in a
+dry run. Open the cited document with `knowledge.get`, or select a section with
+`knowledge.outline`.
+
+[`memory.evidence`](./memory/history-and-provenance.md#evidence-which-turns-a-fact-came-from)
+returns source conversation turns and consolidation lineage. Document search returns
+passages with their own citations; a passage retrieved beside a memory does not by itself
+establish that it supports the memory. The extractor's section reference does not add
+document quotation spans to `memory.evidence`.
+
 ## What Loom does with a document
 
 1. **Stores the text and, optionally, the original file.** `knowledge.add` takes
@@ -114,6 +138,27 @@ source's files into the namespace's documents ([syncing](#syncing-a-source)); `l
 says whether this deployment runs it (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`,
 off by default). The design of connected accounts and access that follows the store's
 permissions is in [document sources](../architecture/document-sources.md).
+
+Open **Settings → Connected accounts** to connect your Google Drive, Notion or Linear
+account. Choose **Connect**, complete the provider's consent screen, and return to the
+dashboard to see its status. An account email appears only when the provider supplies
+one. **Reconnect** repeats consent; **Disconnect** asks for confirmation and stops your
+document sources that use that connection. Connections belong to your signed-in account
+in the current organization, independently of the namespace selected in the dashboard.
+The deployment must have that provider's OAuth application configured; consent requires
+a personal primary sign-in session.
+
+[`connection.list`](../reference/operations/connection.md#connectionlist) returns a
+`connect_url` that opens this page on the named provider. Browser consent returns to the
+page without OAuth parameters. API clients receive the JSON callback result unless
+their HTTP `Accept` header prefers `text/html` over `application/json`.
+
+`loom connect google`, `loom connect notion` and `loom connect linear` print the
+server's dashboard link for your account. They use the session from `loom login`;
+`--profile` selects another session and `--server` selects a server. Open the link,
+sign in to the dashboard as the intended account owner, and choose Connect or Reconnect.
+Consent completes in that browser. `google` selects the `gdrive` source kind. The command
+does not wait for consent or report that the account is connected.
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
 Sources, and the Library's **Sources** button, in the header's actions and counting them

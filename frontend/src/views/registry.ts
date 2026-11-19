@@ -19,6 +19,7 @@ export const VIEW_LOADERS: Record<View, () => Promise<unknown>> = {
   code: () => import("./Code"),
   tasks: () => import("./Tasks"),
   setup: () => import("./Setup"),
+  "connected-accounts": () => import("./ConnectedAccounts"),
   "admin:review_queue": () => import("./admin/ReviewQueue"),
   "admin:health": () => import("./admin/Health"),
   "admin:guardrails": () => import("./admin/Blacklist"),

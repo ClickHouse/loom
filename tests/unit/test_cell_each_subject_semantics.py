@@ -47,3 +47,88 @@ def test_ordinary_cli_global_subject_is_recorded_and_finished_without_org_expans
     assert calls[1][2]["org"] == "-"
     assert calls[0][2]["by"] == calls[1][2]["by"]
     assert calls[0][2]["by"].startswith("cli:")
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True], ids=["closed", "unavailable"])
+async def test_bounded_subject_completion_requires_connected_account_cleanup(
+    monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
+) -> None:
+    import time
+
+    from fastapi import HTTPException
+
+    from server.auth import (
+        account_lifecycle,
+        oauth_store,
+        revocation,
+        service_accounts,
+        subject_revocation,
+    )
+    from server.insights.app import cell_admin_security_actions as actions
+
+    subject = "sa:retired"
+    events = []
+    recorded = []
+    audits = []
+    row = {"jti": subject, "issued_before": None}
+
+    async def record(value, *, progress, **kwargs):
+        assert value == subject
+        recorded.append(dict(row))
+        progress["recorded"] = True
+        events.append("recorded")
+        return row, False
+
+    async def cutoffs(subjects, **kwargs):
+        assert subjects == [subject]
+        assert kwargs["deadline"] > time.monotonic()
+        return {subject: None}
+
+    async def cleanup(subjects, *, respect_cutoff):
+        assert recorded == [row]
+        assert subjects == [subject] and respect_cutoff is True
+        events.append("cleanup")
+        if cleanup_fails:
+            raise ConnectionError("connected-account cleanup unavailable")
+        events.append("closed")
+
+    async def families(value, **kwargs):
+        assert value == subject and "closed" in events
+        events.append("sessions")
+        return {"family": 0}
+
+    async def revoke_created(value, **kwargs):
+        assert value == subject and "closed" in events
+        events.append("tokens")
+        return [{"name": "retired-child"}]
+
+    async def audit(*args, **kwargs):
+        audits.append(kwargs)
+
+    monkeypatch.setattr(actions, "current_auth", lambda: SimpleNamespace(subject="operator"))
+    monkeypatch.setattr(subject_revocation, "record", record)
+    monkeypatch.setattr(revocation, "cutoffs_bounded", cutoffs)
+    monkeypatch.setattr(revocation, "is_revoked", lambda _family: False)
+    monkeypatch.setattr(account_lifecycle, "stop_connections", cleanup)
+    monkeypatch.setattr(oauth_store, "session_families", families)
+    monkeypatch.setattr(service_accounts, "revoke_created_by_bounded", revoke_created)
+    monkeypatch.setattr(subject_revocation, "audit_revocation", audit)
+    command = SimpleNamespace(subject=subject, reason="retire")
+    if cleanup_fails:
+        with pytest.raises(HTTPException) as caught:
+            await actions.subject_revoke(command, deadline=time.monotonic() + 30, ch=object())
+        assert caught.value.status_code == 503
+        assert caught.value.detail == {
+            "code": "SUBJECT_REVOCATION_INCOMPLETE",
+            "recorded": True,
+            "sessions_at_least": 0,
+            "tokens_at_least": 0,
+        }
+        assert events == ["recorded", "cleanup"]
+    else:
+        result = await actions.subject_revoke(command, deadline=time.monotonic() + 30, ch=object())
+        assert result["recorded"] is True and result["outright"] is True
+        assert result["sessions"] == result["tokens"] == 1
+        assert events == ["recorded", "cleanup", "closed", "sessions", "tokens"]
+    assert recorded == [row]
+    assert len(audits) == 1

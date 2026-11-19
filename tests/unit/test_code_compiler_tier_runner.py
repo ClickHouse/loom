@@ -164,20 +164,26 @@ class _RegistryNetworkCfg(_RegistryCfg):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("worker", "module", "watermark"), TIERS)
 @pytest.mark.parametrize("sandboxed", [False, True])
+@pytest.mark.parametrize("git_unsandboxed", [False, True], ids=["git-gated", "git-unsandboxed"])
 async def test_without_the_sandbox_a_self_registered_network_repo_gets_no_tier(
     worker: str,
     module: str,
     watermark: str,
     sandboxed: bool,
+    git_unsandboxed: bool,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every tier's jobs reach the network (submodules, `go mod download`,
-    package installs); the plain-process fallback has no egress proxy."""
+    package installs); the plain-process fallback has no egress proxy.
+    LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED covers the entry's clone and fetch,
+    never a tier: each one still skips it, and says so."""
     from server.code.app.index import sandbox
+    from server.settings import settings
 
     w = importlib.import_module(module)
     monkeypatch.setattr(sandbox, "_available", sandboxed)
+    monkeypatch.setattr(settings, "code_self_service_git_unsandboxed", git_unsandboxed)
     ran: list[str] = []
 
     async def run_repo(_repo: Any, cfg: Any, _result: Any) -> None:
@@ -188,6 +194,8 @@ async def test_without_the_sandbox_a_self_registered_network_repo_gets_no_tier(
     assert ran == (["code-x"] if sandboxed else [])
     if not sandboxed:
         reason = compiler_tier.UNSANDBOXED_NETWORK_SKIP
+        if git_unsandboxed:
+            reason = compiler_tier.UNSANDBOXED_TIER_SKIP
         if worker == "code_scip_delta":
             reason = compiler_tier.UNSANDBOXED_SKIP
         assert result.skipped == [f"code-x: {reason}"]

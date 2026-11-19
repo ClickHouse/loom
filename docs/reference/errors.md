@@ -424,6 +424,10 @@ Raised in `server/memory/app/handlers.py`.
 
 Raised in `server/knowledge/app/conversations.py`.
 
+#### `CONNECTION_UNAVAILABLE`
+
+Raised in `server/knowledge/app/connected_accounts.py`.
+
 #### `CONSTRAINT_VIOLATION`
 
 Raised in `server/memory/domain/record_values.py`.
@@ -446,7 +450,7 @@ Raised in `server/tracker/app/sources.py`.
 
 #### `CREDENTIAL_REFUSED`
 
-Raised in `server/knowledge/app/sources.py`.
+Raised in `server/knowledge/app/connected_sources.py`, `server/knowledge/app/sources.py`.
 
 #### `CROSS_SITE_REQUEST`
 

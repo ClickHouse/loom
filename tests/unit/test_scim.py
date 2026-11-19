@@ -156,7 +156,8 @@ def test_active_takes_booleans_and_their_strings() -> None:
 
 class _Table:
     """loom.scim_users, loom.namespaces as `_subjects` reads it, and
-    loom.revoked_tokens as the revocation module reads and writes it."""
+    loom.revoked_tokens as the revocation module reads and writes it,
+    with an empty connected-account inventory."""
 
     def __init__(
         self,
@@ -259,6 +260,27 @@ class _Table:
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if sql == (
+            "SELECT org, subject, kind, connection_id, account_id, workspace_id, "
+            "account_email_enc, credential_enc, scopes, active, refresh_id, connected_at, "
+            "disconnected_at, version FROM loom.connected_accounts FINAL "
+            "WHERE subject IN {subjects:Array(String)} "
+            "ORDER BY org, subject, kind LIMIT {limit:UInt64}"
+        ):
+            assert set(params) == {"subjects", "limit"}
+            assert isinstance(params["subjects"], list) and params["subjects"]
+            assert all(isinstance(subject, str) for subject in params["subjects"])
+            assert params["limit"] == settings.knowledge_connected_registry_scan_limit + 1
+            return []
+        if sql == (
+            "SELECT DISTINCT org, subject FROM loom.connected_accounts FINAL "
+            "ORDER BY org, subject LIMIT {limit:UInt64}"
+        ):
+            assert params == {
+                "org": "",
+                "limit": settings.knowledge_connected_registry_scan_limit + 1,
+            }
+            return []
         if "loom.service_accounts" in sql:
             rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
             if self.shuffle is not None:

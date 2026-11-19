@@ -41,7 +41,10 @@ _TOKEN_ORG_PREFIXES = ("/scim/v2/Groups", "/v1/me/")
 
 
 def acts_in_token_org(path: str) -> bool:
-    return path in _TOKEN_ORG_ROUTES or path.startswith(_TOKEN_ORG_PREFIXES)
+    connect_start = (
+        path.startswith("/v1/connect/") and path.endswith("/start") and path.count("/") == 4
+    )
+    return connect_start or path in _TOKEN_ORG_ROUTES or path.startswith(_TOKEN_ORG_PREFIXES)
 
 
 # The caller's own routes that serve an org-wide (`*`) or org-less token in the sign-up

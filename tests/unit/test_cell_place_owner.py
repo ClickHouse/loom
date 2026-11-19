@@ -148,7 +148,7 @@ async def test_public_close_defers_repeated_signals_until_acknowledged_within_or
     owner.conn = Connection()
     task = asyncio.create_task(owner.close())
     try:
-        await closing.wait()
+        await asyncio.wait_for(closing.wait(), timeout=0.5)
         original_end = owner.close_end
         task.cancel("first signal")
         await asyncio.sleep(0)
@@ -158,11 +158,24 @@ async def test_public_close_defers_repeated_signals_until_acknowledged_within_or
         assert owner.close_end == original_end
         finish.set()
         with pytest.raises(asyncio.CancelledError, match="first signal"):
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
             await task
         assert events == ["close", "ack"]
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
     finally:
         finish.set()
-        await asyncio.gather(task, return_exceptions=True)
+        owned_tasks = {task, *owner._tasks}
+        if owner._close_task is not None:
+            owned_tasks.add(owner._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 async def test_repeated_signals_cannot_extend_an_expired_public_close(monkeypatch):
@@ -243,15 +256,28 @@ async def test_closed_transport_cannot_acknowledge_pending_public_cancellation()
     owner.conn = Connection()
     task = asyncio.create_task(owner.close())
     try:
-        await closing.wait()
+        await asyncio.wait_for(closing.wait(), timeout=0.5)
         task.cancel("stop")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert not task.done() and events == []
         acknowledged.set()
         with pytest.raises(asyncio.CancelledError, match="stop"):
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
             await task
         assert events == ["ack"]
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
     finally:
         acknowledged.set()
-        await asyncio.gather(task, return_exceptions=True)
+        owned_tasks = {task, *owner._tasks}
+        if owner._close_task is not None:
+            owned_tasks.add(owner._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)

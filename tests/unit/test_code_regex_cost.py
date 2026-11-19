@@ -322,7 +322,9 @@ import faulthandler, json, resource, sys
 faulthandler.dump_traceback_later({_WALK_DEADLINE_S * 3}, exit=True)
 resource.setrlimit(resource.RLIMIT_AS, (3 << 30, 3 << 30))
 from tests.unit.lane_walks import registry_cost
-print(json.dumps(registry_cost(sys.argv[1])))
+diagnostics = {{}}
+timed = registry_cost(sys.argv[1], diagnostics=diagnostics)
+print(json.dumps({{"timed": timed, "diagnostics": diagnostics}}))
 """
 
 
@@ -393,9 +395,39 @@ def test_a_lane_parse_that_fails_is_not_finished(monkeypatch: pytest.MonkeyPatch
         raise ValueError("no parse")
 
     monkeypatch.setitem(ingest_parse._PARSERS, "hcl", fails)
-    pf, finished = _extract("a.tf", b"a = 1\n")
+    diagnostics: dict[str, str] = {}
+    pf, finished = _extract("a.tf", b"a = 1\n", diagnostics=diagnostics)
     # reads as the lane, but its parse failed
     assert getattr(pf, "lang", "") == "hcl" and not finished
+    assert diagnostics == {"parse": "parse: ValueError"}
+
+
+def test_lane_walk_diagnostics_keep_samples_separate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_chunks, ingest_parse
+    from server.code.domain.extract import edges_treesitter
+    from tests.unit.lane_walks import _extract
+
+    def parse(path: str, source: bytes) -> tuple[object, str]:
+        return types.SimpleNamespace(lang="python", tree=object(), source=source), ""
+
+    def chunks(pf: object, path: str, source: bytes, limit: int) -> None:
+        if source == b"bad":
+            raise ValueError("walk failed")
+
+    edges = []
+    monkeypatch.setattr(ingest_parse, "parse_for_ingest", parse)
+    monkeypatch.setattr(ingest_chunks, "_chunks_for", chunks)
+    monkeypatch.setattr(
+        edges_treesitter, "extract_edges_and_misses", lambda pf, *_: edges.append(pf)
+    )
+    failed: dict[str, str] = {}
+    succeeded: dict[str, str] = {}
+    bad, finished_bad = _extract("a.py", b"bad", diagnostics=failed)
+    good, finished_good = _extract("a.py", b"good", diagnostics=succeeded)
+    assert not finished_bad and finished_good
+    assert failed == {"chunks": "ValueError"} and succeeded == {}
+    assert getattr(bad, "tree", None) is not None and getattr(good, "tree", None) is not None
+    assert edges == [bad, good]
 
 
 def test_a_parse_error_a_walk_swallows_is_not_finished(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -405,7 +437,9 @@ def test_a_parse_error_a_walk_swallows_is_not_finished(monkeypatch: pytest.Monke
     def raises(parser: object, source: bytes) -> object:
         raise bounded_parse.ParseTimeout("deadline")
 
-    def extract(path: str, source: bytes) -> tuple[object, bool]:
+    def extract(
+        path: str, source: bytes, *, diagnostics: dict[str, str] | None = None
+    ) -> tuple[object, bool]:
         try:
             bounded_parse.parse(None, source)  # a walk that parses again and swallows it
         except bounded_parse.ParseTimeout:
@@ -421,8 +455,14 @@ def test_a_parse_error_a_walk_swallows_is_not_finished(monkeypatch: pytest.Monke
     monkeypatch.setattr(lane_walks, "_extract", extract)
     monkeypatch.setattr(lane_walks, "judged_step", judged)
     monkeypatch.setattr(lane_walks, "SHAPES", [("one", lambda n: "a\n" * n)])
-    lane_walks.registry_cost("hcl")
+    diagnostics: dict[str, list[dict[str, object]]] = {}
+    lane_walks.registry_cost("hcl", diagnostics=diagnostics)
     assert [(lane, finished) for _t, _b, lane, finished in runs] == [(True, False)]
+    assert len(diagnostics["one"]) == 1
+    sample = diagnostics["one"][0]
+    assert sample["n"] == lane_walks._REGISTRY_N
+    assert sample["lane"] is True and sample["finished"] is False
+    assert sample["errors"] == {"native_parse": "ParseTimeout"}
 
 
 def _registered_lanes() -> list[str]:
@@ -457,7 +497,8 @@ def test_a_registered_lane_costs_linear_time(lang: str) -> None:
     )
     assert done.returncode == 0, done.stderr[-4000:]
     known = KNOWN_SLOW.get(lang, ())
-    timed = json.loads(done.stdout)
+    observed = json.loads(done.stdout)
+    timed = observed["timed"]
     # a shape that reads as another lane is that lane's: at least half must read as this one
     assert len(timed) >= len(SHAPES) // 2 and set(known) <= {t[0] for t in timed}, lang
     slow, linear, reparsed = {}, set(), {}
@@ -469,9 +510,11 @@ def test_a_registered_lane_costs_linear_time(lang: str) -> None:
         if parsed_big > 6 * parsed_small + 1000:  # the larger file is 4 times the bytes
             reparsed[shape] = (step, parsed_small, parsed_big)
     new = {shape: t for shape, t in slow.items() if shape not in known}
+    failed_samples = {shape: observed["diagnostics"][shape] for shape in set(new) | set(reparsed)}
     assert not new and not reparsed, (
         f"{lang}, from the step's smaller size (N or 4N) to 4 times it: (step, s, s) {new}; "
-        f"(step, bytes, bytes) {reparsed}"
+        f"(step, bytes, bytes) {reparsed}; samples: {failed_samples}; "
+        f"child diagnostics:\n{done.stderr[-4000:]}"
     )
     fixed = sorted(set(known) & linear)  # clearly linear now, not a timer's doubt
     assert not fixed, f"{lang}: {fixed} run in linear time; drop them from KNOWN_SLOW"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +12,7 @@ from server.auth.aliases import canonical_subject
 from server.auth.answer_tokens import is_answer_token
 from server.auth.authz import check_authorized
 from server.auth.context import current_auth
+from server.auth.jwt import AuthInfo
 from server.auth.reader_identity import ReaderIdentity, reader_subject, resolve_reader
 from server.core import pg, request_work
 from server.core.ch import sequential_reads, set_query_tag
@@ -19,6 +21,7 @@ from server.core.naming import is_mirror_name
 from server.knowledge.domain.access_list import UNREAD, AccessList, allows, from_json
 from server.knowledge.domain.document_access import fresh, source_id
 from server.knowledge.domain.serving import Serving
+from server.knowledge.domain.sources import KnowledgeSource
 from server.knowledge.store import mirrors as mirrors_repo
 from server.knowledge.store import source_access as store
 from server.operations.base import Role
@@ -76,6 +79,11 @@ class ReadPlan:
     _reader_subject: str = field(default="", repr=False)
     discovery_reader: ReaderIdentity | None = field(default=None, repr=False)
     _checking: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _auth: AuthInfo | None = field(default=None, repr=False)
+    _scope_frozen: bool = field(default=False, repr=False)
+    _connected_pins: dict[tuple[str, str], KnowledgeSource] = field(
+        default_factory=dict, repr=False
+    )
 
     @property
     def discovery_sources(self) -> dict[tuple[str, str], str]:
@@ -135,6 +143,9 @@ class ReadPlan:
         initial = self.discovery_sources
         sources = await store.active_sources(self.org, sorted(set(initial.values())))
         snapshot = ReadPlan(self.org)
+        snapshot._auth = self._auth
+        snapshot._scope_frozen = True
+        snapshot._connected_pins = self._connected_pins
         await _prepare(snapshot, sources, self._reader_subject)
         self.sources = {
             key: original
@@ -256,6 +267,7 @@ async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
     """Read public registrations first, then bind one marked, fail-closed mirror plan."""
     plan = ReadPlan(org)
     auth = current_auth()
+    plan._auth = auth
     if (
         auth is None
         or not settings.auth_actually_required()
@@ -292,6 +304,39 @@ async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
 
 
 async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) -> None:
+    from server.knowledge.app.connected_accounts import validate_indexed
+    from server.knowledge.store import sources as source_store
+
+    eligible = []
+    for row in sources:
+        key = row["namespace"], row["source_id"]
+        mode = row.get("credential_mode", "shared")
+        if mode == "shared":
+            if key not in plan._connected_pins:
+                eligible.append(row)
+            continue
+        if mode != "connected" or (plan._scope_frozen and key not in plan._connected_pins):
+            continue
+        try:
+            source = await source_store.latest_source(plan.org, row["namespace"], row["name"])
+            if source is None or source.source_id != row["source_id"]:
+                continue
+            pinned = plan._connected_pins.get(key)
+            if pinned is not None and (
+                source.connection_id != pinned.connection_id
+                or source.owner_subject != pinned.owner_subject
+                or source.kind != pinned.kind
+                or source.items != pinned.items
+                or source.config != pinned.config
+            ):
+                continue
+            await validate_indexed(source, plan._auth)
+            eligible.append(row)
+            if not plan._scope_frozen:
+                plan._connected_pins[key] = copy.deepcopy(source)
+        except Exception:  # noqa: BLE001 — one unverifiable connection admits no private leg
+            continue
+    sources = eligible
     names = sorted({s["namespace"] for s in sources})
     mirrors = await mirrors_repo.mirrors_of(plan.org, names, live_only=True)
     by_original: dict[str, list[str]] = {}

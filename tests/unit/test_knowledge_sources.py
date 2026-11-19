@@ -102,8 +102,14 @@ class _Store:
     async def latest_source(self, org: str, ns: str, name: str) -> KnowledgeSource | None:
         return self.rows.get((org, ns, name))
 
-    async def active_count(self, org: str, ns: str) -> int:
-        return len(await self.list_sources(org, ns))
+    async def active_count(
+        self, org: str, ns: str, *, connected: bool = False, owner_subject: str | None = None
+    ) -> int:
+        return sum(
+            (source.credential_mode == "connected") == connected
+            and (owner_subject is None or source.owner_subject == owner_subject)
+            for source in await self.list_sources(org, ns)
+        )
 
     async def insert_source(self, src: KnowledgeSource) -> None:
         self.rows[(src.org, src.namespace, src.name)] = src
@@ -335,8 +341,34 @@ def test_list_and_inspect_return_config_and_sync_never_the_credential(
     body = KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
     seen = asyncio.run(app.handle_knowledge_source_inspect(body))
     assert seen.documents[0].source_uri == "https://x/1"
-    for text in (listed.model_dump_json(), seen.model_dump_json()):
-        assert "credential" not in text and SECRET not in text and "x/mined" not in text
+    sealed = fake.rows[(ORG, NS, "design-decks")].credential_enc
+    assert sealed and sealed != SECRET
+    for entry in (listed.sources[0], seen):
+        assert (entry.credential_mode, entry.access, entry.owner_subject) == (
+            "shared",
+            "namespace",
+            "",
+        )
+    for answer in (listed, seen):
+        values: list[Any] = [answer.model_dump(mode="json")]
+        while values:
+            value = values.pop()
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    assert "credential" not in key.lower() or key == "credential_mode"
+                    assert key.lower() not in {
+                        "access_token",
+                        "refresh_token",
+                        "client_secret",
+                        "private_key",
+                        "authorization",
+                    }
+                    values.append(item)
+            elif isinstance(value, list):
+                values.extend(value)
+            elif isinstance(value, str):
+                assert all(secret not in value for secret in (SECRET, sealed, "x/mined"))
+        assert all(secret not in answer.model_dump_json() for secret in (SECRET, sealed, "x/mined"))
 
 
 def test_unknown_sources_are_not_found(fake: _Store) -> None:
@@ -670,12 +702,20 @@ def _auth(role: Role, org: str = ORG) -> AuthInfo:
 
 
 @pytest.mark.parametrize("name", ADMIN_OPS)
-def test_writes_and_check_need_the_namespace_admin(no_grant_reads: None, name: str) -> None:
+def test_source_entry_role_keeps_connected_writers_and_shared_admins(
+    no_grant_reads: None, name: str
+) -> None:
     op = OPERATIONS_BY_NAME[name]
-    assert op.required_role == Role.ADMIN and not op.skip_namespace_authz
+    expected = Role.ADMIN if name == "knowledge.source.rotate" else Role.WRITER
+    assert op.required_role == expected and not op.skip_namespace_authz
     assert op.audit == (name != "knowledge.source.check")
     asyncio.run(check_authorized(_auth(Role.ADMIN), op.required_role, ORG, NS))
-    for refused in (_auth(Role.VIEWER), _auth(Role.WRITER), _auth(Role.ADMIN, org="other")):
+    if expected == Role.WRITER:
+        asyncio.run(check_authorized(_auth(Role.WRITER), op.required_role, ORG, NS))
+    refused_callers = [_auth(Role.VIEWER), _auth(Role.ADMIN, org="other")]
+    if expected == Role.ADMIN:
+        refused_callers.append(_auth(Role.WRITER))
+    for refused in refused_callers:
         with pytest.raises(PermissionError):
             asyncio.run(check_authorized(refused, op.required_role, ORG, NS))
 
@@ -1584,6 +1624,23 @@ def test_update_refuses_what_it_cannot_do_before_any_probe(
     stored = _stored(fake)
     assert _code(app.handle_knowledge_source_update(_update(**kw))) == code
     assert fake.probes == [] and _stored(fake) == stored
+
+
+def test_meet_recording_registration_refuses_before_probe(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = dict(fake.rows)
+
+    async def _must_not_probe(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("rejected Meet registration reached a provider probe")
+
+    monkeypatch.setattr(source_probes, "probe", _must_not_probe)
+    config = {"provider": "meet", "ids": ["spaces/old-space"]}
+    assert (
+        _code(app.handle_knowledge_source_add(_add(kind="recording", config=config)))
+        == "BAD_CONFIG"
+    )
+    assert fake.rows == before
 
 
 def test_update_of_a_recording_source_is_refused(fake: _Store) -> None:
@@ -2603,3 +2660,41 @@ def test_redundant_folder_and_drive_entries_count_as_the_items_they_name(
     body = _update(remove_items=[_folder(x), drives[0], _folder(y), drives[1]])
     out = asyncio.run(app.handle_knowledge_source_update(body))
     assert out.items == [_folder()] and out.removed == drives
+
+
+@pytest.mark.parametrize("axis", ["namespace", "person"])
+def test_connected_source_quota_uses_its_own_namespace_and_owner_bounds(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch, axis: str
+) -> None:
+    from dataclasses import replace
+
+    monkeypatch.setattr(
+        settings, "knowledge_connected_sources_max_per_namespace", 1 if axis == "namespace" else 2
+    )
+    monkeypatch.setattr(settings, "knowledge_connected_sources_max_per_person", 1)
+    # Shared credentials consume their separate quota and never stand in for an owner.
+    shared = KnowledgeSource(ORG, NS, "shared", "gdrive", "shared-id")
+    connected = replace(
+        shared,
+        name="connected",
+        source_id="connected-id",
+        credential_mode="connected",
+        owner_subject="person",
+    )
+    fake.rows[(ORG, NS, shared.name)] = shared
+    fake.rows[(ORG, NS, connected.name)] = connected
+    with pytest.raises(ValidationError) as caught:
+        asyncio.run(app._require_free(ORG, NS, "another", owner_subject="person"))
+    assert caught.value.to_detail()["code"] == "SOURCE_QUOTA"
+    assert ("person" in str(caught.value)) == (axis == "person")
+
+
+def test_shared_source_writer_is_refused_before_probe_or_registry_write(
+    fake: _Store, no_grant_reads: None
+) -> None:
+    from server.core.errors import AuthInsufficientError
+    from tests.unit.principals import acting_as
+
+    with acting_as(_auth(Role.WRITER)), pytest.raises(AuthInsufficientError):
+        asyncio.run(app.handle_knowledge_source_add(_add()))
+    assert fake.rows == {} and fake.probes == []

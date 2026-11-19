@@ -29,6 +29,17 @@ describe("canCall", () => {
     expect(canCall("audit.list", "admin", user(["WRITER"]))).toBe(true);
   });
 
+  it.each([
+    "knowledge.source.add",
+    "knowledge.source.check",
+    "knowledge.source.remove",
+    "knowledge.source.sync_now",
+  ] as const)("%s admits a writer but refuses a viewer or unknown role", (op) => {
+    expect(canCall(op, "writer", user(["WRITER"]))).toBe(true);
+    expect(canCall(op, "viewer", user(["VIEWER"]))).toBe(false);
+    expect(canCall(op, null, user(["WRITER"]))).toBe(false);
+  });
+
   it("an admin claim, or auth off, opens everything", () => {
     expect(canCall("conflicts.list", null, user(["ADMIN"]))).toBe(true);
     expect(canCall("admin/workers.status", null, user(["org_admin"]))).toBe(true);
@@ -72,34 +83,47 @@ describe("canCallOn: an op on one repository row's namespace", () => {
   });
 
   it("a standard namespace: an admin claim, or the grant the row states", () => {
-    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["*"]))).toBe(true);
-    expect(canCallOn("knowledge.source.add", row({ my_role: "admin" }), token(["WRITER"], []))).toBe(true);
-    expect(canCallOn("knowledge.source.add", row({ my_role: "writer" }), token(["WRITER"], []))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", row(), token(["ADMIN"], ["*"]))).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row({ my_role: "admin" }), token(["WRITER"], []))).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row({ my_role: "writer" }), token(["WRITER"], []))).toBe(false);
     expect(canCallOn("knowledge.add", row({ my_role: "writer" }), token(["VIEWER"], []))).toBe(true);
     expect(canCallOn("knowledge.delete", row({ my_role: "viewer" }), token(["VIEWER"], ["*"]))).toBe(false);
     expect(canCallOn("knowledge.add", row(), null)).toBe(false);
     expect(canCallOn("knowledge.add", row({ my_role: "writer" }), null)).toBe(true);
   });
 
+  it.each([
+    "knowledge.source.add",
+    "knowledge.source.check",
+    "knowledge.source.remove",
+    "knowledge.source.sync_now",
+  ] as const)("%s reaches a writer grant without opening shared-source administration", (op) => {
+    const writer = row({ my_role: "writer" });
+    expect(canCallOn(op, writer, token(["WRITER"], []))).toBe(true);
+    expect(canCallOn(op, row({ my_role: "viewer" }), token(["VIEWER"], []))).toBe(false);
+    expect(canCallOn(op, row(), null)).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", writer, token(["WRITER"], []))).toBe(false);
+  });
+
   it("a claim counts only on a token covering the namespace, and a named one is held to its grant", () => {
-    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["code-x"]))).toBe(true);
-    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["team-x"]))).toBe(false);
-    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["*"], "other"))).toBe(false);
-    expect(canCallOn("knowledge.source.add", row(), token(["ADMIN"], ["*"], "*"))).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row(), token(["ADMIN"], ["code-x"]))).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row(), token(["ADMIN"], ["team-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", row(), token(["ADMIN"], ["*"], "other"))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", row(), token(["ADMIN"], ["*"], "*"))).toBe(true);
     const viewer = row({ my_role: "viewer", my_status: "member" });
-    expect(canCallOn("knowledge.source.add", viewer, token(["ADMIN"], ["code-x"]))).toBe(false);
-    expect(canCallOn("knowledge.source.add", viewer, token(["ADMIN"], ["*"]))).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", viewer, token(["ADMIN"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", viewer, token(["ADMIN"], ["*"]))).toBe(true);
     const pending = row({ my_status: "pending" });
     expect(canCallOn("knowledge.add", pending, token(["WRITER"], ["code-x"]))).toBe(false);
   });
 
   it("a restricted namespace: the grant, and a token of its org naming it whose claim reaches", () => {
     const r = (my_role: RepoRow["my_role"]) => row({ classification: "restricted", my_role });
-    expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["code-x"]))).toBe(true);
-    expect(canCallOn("knowledge.source.add", r(""), token(["PLATFORM_ADMIN"], ["code-x"]))).toBe(false);
-    expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["*"]))).toBe(false);
-    expect(canCallOn("knowledge.source.add", r("admin"), token(["ADMIN"], ["code-x"], "*"))).toBe(false);
-    expect(canCallOn("knowledge.source.add", r("admin"), token(["WRITER"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", r("admin"), token(["ADMIN"], ["code-x"]))).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", r(""), token(["PLATFORM_ADMIN"], ["code-x"]))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", r("admin"), token(["ADMIN"], ["*"]))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", r("admin"), token(["ADMIN"], ["code-x"], "*"))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", r("admin"), token(["WRITER"], ["code-x"]))).toBe(false);
     expect(canCallOn("knowledge.add", r("admin"), token(["WRITER"], ["code-x"]))).toBe(true);
     expect(canCallOn("knowledge.add", r("viewer"), token(["ADMIN"], ["code-x"]))).toBe(false);
     expect(canCallOn("knowledge.add", r("writer"), null)).toBe(false);
@@ -107,8 +131,8 @@ describe("canCallOn: an op on one repository row's namespace", () => {
 
   it("auth off with no token: every op, restricted or not", () => {
     vi.mocked(isAuthDisabled).mockReturnValue(true);
-    expect(canCallOn("knowledge.source.remove", row(), null)).toBe(true);
-    expect(canCallOn("knowledge.source.remove", row({ classification: "restricted" }), null)).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row(), null)).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row({ classification: "restricted" }), null)).toBe(true);
   });
 
   it("auth off with a stored token: the server checks the token, so only the grant counts", () => {
@@ -116,18 +140,18 @@ describe("canCallOn: an op on one repository row's namespace", () => {
     vi.mocked(storedToken).mockReturnValue("a.b.c");
     // The auth-off identity is synthesised as a platform admin; it says nothing of the token.
     const local = token(["PLATFORM_ADMIN"], ["local"]);
-    expect(canCallOn("knowledge.source.remove", row(), local)).toBe(false);
-    expect(canCallOn("knowledge.source.remove", row({ my_role: "writer" }), local)).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", row(), local)).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", row({ my_role: "writer" }), local)).toBe(false);
     expect(canCallOn("knowledge.add", row({ my_role: "writer" }), local)).toBe(true);
-    expect(canCallOn("knowledge.source.remove", row({ my_role: "admin" }), local)).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row({ my_role: "admin" }), local)).toBe(true);
     expect(canCallOn("knowledge.add", row({ my_role: "admin", classification: "restricted" }), local)).toBe(false);
   });
 
   it("auth off behind the proxy: its header is a bearer too", () => {
     vi.mocked(isAuthDisabled).mockReturnValue(true);
     vi.mocked(isProxyMode).mockReturnValue(true);
-    expect(canCallOn("knowledge.source.remove", row(), token(["PLATFORM_ADMIN"], ["local"]))).toBe(false);
-    expect(canCallOn("knowledge.source.remove", row({ my_role: "admin" }), null)).toBe(true);
+    expect(canCallOn("knowledge.source.rotate", row(), token(["PLATFORM_ADMIN"], ["local"]))).toBe(false);
+    expect(canCallOn("knowledge.source.rotate", row({ my_role: "admin" }), null)).toBe(true);
   });
 });
 

@@ -28,6 +28,7 @@ from server.insights.api import ops_cost as cost
 from server.insights.api import ops_mentor as mentor
 from server.insights.api import ops_ops as ops
 from server.insights.api import ops_ui as ui
+from server.knowledge.api import ops_connections as connections
 from server.knowledge.api import ops_conversations as conversations
 from server.knowledge.api import ops_gaps as knowledge_gaps
 from server.knowledge.api import ops_knowledge as knowledge
@@ -66,6 +67,7 @@ _OPERATION_MODULES = (
     memory_records,
     knowledge,
     knowledge_sources,
+    connections,
     knowledge_source_push,
     knowledge_gaps,
     query_history,

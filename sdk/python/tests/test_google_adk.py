@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from google.adk.agents import LlmAgent
 from google.adk.events import Event, EventActions
@@ -27,6 +31,12 @@ from loom import Agent, SyncAgent
 from loom.integrations.google_adk import LoomMemoryService, _entry_id, _loom_session
 from loom.knowledge import SearchHit
 from loom.memory import MemorySearchHit, MemorySearchResult
+from loom.session_protection import (
+    AutomaticCaptureSuppressed,
+    SessionProtection,
+    SessionProtectionUnavailable,
+    observation_scope,
+)
 from pydantic import Field
 
 
@@ -662,3 +672,416 @@ def test_a_fact_without_writer_or_version_has_no_deletion_id(source: str) -> Non
     )
     found = asyncio.run(_service(fake).search_memory(app_name="travel", user_id="alice", query="q"))
     assert [m.id for m in found.memories] == [None, None]
+
+
+@asynccontextmanager
+async def _protected_agent(
+    family: SessionProtection | None,
+    respond: Callable[[httpx.Request], httpx.Response],
+) -> AsyncIterator[Agent]:
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("NO_PROXY", "*")
+        environment.setenv("no_proxy", "*")
+        async with Agent(
+            org="acme",
+            namespace="travel",
+            agent="bot",
+            base_url="http://inert.invalid",
+            api_key="test-token",
+            session_protection=family,
+            pacing=False,
+            coalesce_sets=False,
+            auto_run=False,
+            mentor_brief=False,
+            retry={"max_attempts": 1},
+        ) as agent:
+            mock = httpx.MockTransport(respond)
+            agent.transport._client._transport = mock
+            assert (
+                agent.transport._client._transport_for_url(
+                    httpx.URL("http://inert.invalid/v1/memory.search")
+                )
+                is mock
+            )
+            yield agent
+
+
+def _callback_reply(request: httpx.Request, *, mirrored: bool = False) -> httpx.Response:
+    if request.url.path == "/v1/memory.search":
+        return httpx.Response(
+            200,
+            json={
+                "mirrored": mirrored,
+                "results": [
+                    {
+                        "memory_key": "seat",
+                        "memory_type": "semantic",
+                        "content_excerpt": "Alice prefers aisle seats",
+                        "distance": 0.1,
+                        "similarity": 0.9,
+                    }
+                ],
+            },
+        )
+    if request.url.path == "/v1/knowledge.search":
+        return httpx.Response(200, json={"results": []})
+    assert request.url.path in {
+        "/v1/memory.set",
+        "/v1/memory.set_from_messages",
+        "/v1/memory.delete_version",
+    }
+    return httpx.Response(200, json={"stored": True, "tombstoned": True})
+
+
+async def _native_callback(service: LoomMemoryService, operation: str) -> Any:
+    event = Event(author="user", content=_user("I prefer aisle seats"), timestamp=1)
+    if operation == "search":
+        return await service.search_memory(app_name="travel", user_id="alice", query="seat")
+    if operation == "session":
+        return await service.add_session_to_memory(
+            Session(id="s1", app_name="travel", user_id="alice", events=[event])
+        )
+    if operation == "events":
+        return await service.add_events_to_memory(
+            app_name="travel", user_id="alice", events=[event], session_id="s1"
+        )
+    if operation == "memory":
+        return await service.add_memory(
+            app_name="travel",
+            user_id="alice",
+            memories=[MemoryEntry(content=_user("Alice prefers aisle seats"))],
+        )
+    assert operation == "delete"
+    return await service.delete_memory(
+        app_name="travel", user_id="alice", memory_id=_entry_id("seat", "adk-1", "bot", 1)
+    )
+
+
+@pytest.mark.parametrize("operation", ["search", "session", "events", "memory"])
+@pytest.mark.parametrize("constructor_context", ["bound", "ambient"])
+def test_automatic_callbacks_retain_constructor_contributors_after_rebinding(
+    tmp_path: Path, constructor_context: str, operation: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        bound = original if constructor_context == "bound" else None
+        async with _protected_agent(bound, respond) as agent:
+            with observation_scope((original,) if constructor_context == "ambient" else ()):
+                service = LoomMemoryService(agent, app_name="travel", top_k=1)
+            agent.transport.session_protection = replacement
+            original.mark()
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await _native_callback(service, operation)
+            assert posts == []
+            assert not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_automatic_capture_retains_an_earlier_callback_contributor(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    earlier = SessionProtection.create(base=tmp_path / "earlier")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel", top_k=1)
+            with observation_scope((earlier,)):
+                found = await _native_callback(service, "search")
+            assert found.memories[0].content.parts[0].text == "Alice prefers aisle seats"
+            earlier.mark()
+            agent.transport.session_protection = replacement
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await _native_callback(service, "session")
+            assert posts == ["/v1/memory.search"]
+            assert not original.protected and not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_native_after_agent_callback_retains_its_constructor_contributor(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+    saved: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def save_turn(ctx: Any) -> None:
+        turn = [e for e in ctx.session.events if e.invocation_id == ctx.invocation_id]
+        await ctx.add_events_to_memory(events=turn)
+        saved.append(ctx.invocation_id)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel")
+            agent.transport.session_protection = replacement
+            original.mark()
+            llm = _ScriptedLlm(script=[_model("Noted.")])
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await _run(service, llm, "I prefer aisle seats", after_agent_callback=save_turn)
+            assert len(llm.requests) == 1
+            assert posts == [] and saved == []
+            assert not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_a_marked_recall_withholds_the_optional_knowledge_leg(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request, mirrored=True)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel", top_k=2)
+            agent.transport.session_protection = current
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await _native_callback(service, "search")
+            assert posts == ["/v1/memory.search"]
+            assert SessionProtection.open(original.pointer()).protected
+            assert SessionProtection.open(current.pointer()).protected
+            assert SessionProtection.open(producer.pointer()).protected
+
+    asyncio.run(run())
+
+
+def test_a_mark_between_extraction_batches_stops_without_acknowledging_the_session(
+    tmp_path: Path,
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(json.loads(request.content))
+        original.mark()
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel", defer=False)
+            agent.transport.session_protection = current
+            events = [Event(author="user", content=_user(f"fact {i}")) for i in range(801)]
+            session = Session(id="s1", app_name="travel", user_id="alice", events=events)
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await service.add_session_to_memory(session)
+            assert len(posts) == 1
+            assert [m["content"] for m in posts[0]["messages"]] == [f"fact {i}" for i in range(400)]
+            assert posts[0]["session_id"] == _loom_session("alice", "s1")
+            assert posts[0]["defer"] is False
+            assert len(session.events) == 801
+            assert not current.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_automatic_capture_retains_constructor_control_across_auth_await(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel")
+            agent.transport.session_protection = current
+
+            class RebindingAuth(httpx.Auth):
+                async def async_auth_flow(
+                    self, request: httpx.Request
+                ) -> AsyncIterator[httpx.Request]:
+                    await asyncio.sleep(0)
+                    original.mark()
+                    agent.transport.session_protection = replacement
+                    yield request
+
+            agent.transport._client.auth = RebindingAuth()
+            with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+                await _native_callback(service, "events")
+            assert posts == []
+            assert not current.protected and not replacement.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_failed_retained_observation_withholds_recalled_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = SessionProtection.create(base=tmp_path / "broken")
+    current = SessionProtection.create(base=tmp_path / "current")
+    mark = SessionProtection.mark
+    posts: list[str] = []
+
+    def fail_one(family: SessionProtection) -> None:
+        if family == broken:
+            raise SessionProtectionUnavailable()
+        mark(family)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return _callback_reply(request, mirrored=True)
+
+    async def run() -> None:
+        async with _protected_agent(broken, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel", top_k=1)
+            agent.transport.session_protection = current
+            monkeypatch.setattr(SessionProtection, "mark", fail_one)
+            with pytest.raises(SessionProtectionUnavailable):
+                await _native_callback(service, "search")
+            assert current.protected and posts == ["/v1/memory.search"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["search", "session", "events", "memory", "delete"])
+def test_protected_family_keeps_explicit_native_operations_explicit(
+    tmp_path: Path, operation: str
+) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        return _callback_reply(request, mirrored=True)
+
+    async def run() -> None:
+        async with _protected_agent(family, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel", top_k=1)
+            family.mark()
+            result = await _native_callback(service, operation)
+            assert len(posts) == 1
+            path, body = posts[0]
+            assert body["user_id"] == "alice"
+            if operation == "search":
+                assert path == "/v1/memory.search" and body["query"] == "seat"
+                assert result.memories[0].content.parts[0].text == "Alice prefers aisle seats"
+            elif operation == "memory":
+                assert path == "/v1/memory.set"
+                assert body["memory_key"].startswith("adk/")
+                assert body["value"] == "Alice prefers aisle seats"
+            elif operation == "delete":
+                assert path == "/v1/memory.delete_version"
+                assert (body["memory_key"], body["session_id"], body["agent"], body["version"]) == (
+                    "seat",
+                    "adk-1",
+                    "bot",
+                    "1",
+                )
+            else:
+                assert path == "/v1/memory.set_from_messages"
+                assert body["session_id"] == _loom_session("alice", "s1")
+                assert body["messages"][0]["content"] == "I prefer aisle seats"
+                assert body["messages"][0]["role"] == "user"
+                assert body["messages"][0]["timestamp"] == "1970-01-01T00:00:01+00:00"
+            assert family.protected
+
+    asyncio.run(run())
+
+
+def test_clean_native_preload_and_turn_capture_keep_their_payloads(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        return _callback_reply(request)
+
+    async def save_turn(ctx: Any) -> None:
+        turn = [e for e in ctx.session.events if e.invocation_id == ctx.invocation_id]
+        await ctx.add_events_to_memory(events=turn)
+
+    async def run() -> None:
+        async with _protected_agent(family, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel", top_k=1)
+            llm = _ScriptedLlm(script=[_model("An aisle seat.")])
+            with producer.automatic():
+                sessions = await _run(
+                    service,
+                    llm,
+                    "Which seat?",
+                    tools=[preload_memory],
+                    after_agent_callback=save_turn,
+                )
+            (session,) = (await sessions.list_sessions(app_name="travel", user_id="alice")).sessions
+            assert "Alice prefers aisle seats" in _prompt(llm.requests[0])
+            assert [path for path, _ in posts] == [
+                "/v1/memory.search",
+                "/v1/memory.set_from_messages",
+            ]
+            search, capture = (body for _, body in posts)
+            assert (search["query"], search["top_k"], search["namespace_scope"]) == (
+                "Which seat?",
+                1,
+                "this",
+            )
+            assert search["bodies"] == "full" and search["explain"] is False
+            assert [(m["role"], m["content"]) for m in capture["messages"]] == [
+                ("user", "Which seat?"),
+                ("assistant", "An aisle seat."),
+            ]
+            assert capture["session_id"] == _loom_session("alice", session.id)
+            assert capture["user_id"] == search["user_id"] == "alice"
+            assert capture["defer"] is True
+            assert not family.protected and not producer.protected
+
+    asyncio.run(run())
+
+
+def test_reference_deletion_does_not_become_automatic_content_capture(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        return _callback_reply(request)
+
+    async def run() -> None:
+        async with _protected_agent(original, respond) as agent:
+            service = LoomMemoryService(agent, app_name="travel")
+            agent.transport.session_protection = current
+            original.mark()
+            with producer.automatic():
+                await _native_callback(service, "delete")
+            assert len(posts) == 1
+            path, body = posts[0]
+            assert path == "/v1/memory.delete_version"
+            assert (body["memory_key"], body["session_id"], body["version"]) == (
+                "seat",
+                "adk-1",
+                "1",
+            )
+            assert not current.protected and not producer.protected
+
+    asyncio.run(run())

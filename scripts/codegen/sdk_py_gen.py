@@ -44,6 +44,10 @@ def _wrap(t: str, required: bool) -> str:
     return f"Required[{t}]" if required else f"NotRequired[{t}]"
 
 
+def _literal(value: Any) -> str:
+    return repr(value) if value is None or isinstance(value, bool) else json.dumps(value)
+
+
 #: Keys `Agent.call` / `Agent.identity` stamp on every request body; the
 #: `<Op>Body` TypedDict makes them optional so a caller can type the body it
 #: actually writes (the TypeScript SDK's `Body<K>`).
@@ -139,9 +143,9 @@ class Emitter:
         if "$ref" in s:
             return self._declare_def(str(s["$ref"]))
         if "const" in s:
-            return f"Literal[{json.dumps(s['const'])}]"
+            return f"Literal[{_literal(s['const'])}]"
         if "enum" in s:
-            vals = ", ".join(json.dumps(v) for v in s["enum"])
+            vals = ", ".join(_literal(v) for v in s["enum"])
             return f"Literal[{vals}]" if vals else "Any"
         if "anyOf" in s or "oneOf" in s:
             parts: list[str] = []

@@ -334,9 +334,12 @@ async def held_documents(
 
 
 async def commit_and_publish(
-    rows: Sequence[Mapping[str, Any]], *, ch: _CHClient | None = None
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+    admission: Admission | None = None,
 ) -> Committed:
-    """`insert_memory_versions` under the Postgres authority."""
-    committed = await commit(rows)
+    """`insert_memory_versions` under the Postgres authority, held to its admission."""
+    committed = await commit(rows, admission=admission)
     await publish(committed, ch=ch)
     return committed

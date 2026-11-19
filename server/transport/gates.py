@@ -17,8 +17,9 @@ here, once:
   them out; the HTTP body every later phase reads.
 - `with_resolved_org` / `with_target`: before validation a blank or "-"
   org is set to the org the call acts in and a padded org or namespace is
-  stripped; after authorization an absent code namespace is set to the
-  authorized one, so the handler reads and writes where the call was
+  stripped; after authorization an absent optional namespace is set to the
+  authorized one, and read-only operations take its absent optional org too.
+  The handler therefore reads and writes where the call was
   authorized. A refused default (a member's namespace, or the registry unread)
   sets none and is kept for the request, so the handler refuses too.
 - `authorize`: the refusal of `@me` and of a mirror's name first, then the cell's
@@ -258,21 +259,33 @@ def _absent(name: str, value: Any) -> bool:
     return value is None or (isinstance(value, str) and present(value) is None)
 
 
-def with_target(input_obj: Any, target: Target) -> Any:
-    """The input with an absent namespace set to the one the gate authorized
-    (a code op's plane namespace). A namespace the op requires (the code.repo.*
-    writes) is never filled: "-" must not become the plane's default index.
-    Copied, not validated again, so an absent namespace leads no code fan-out
-    list."""
-    ns_field = type(input_obj).model_fields.get("namespace")
+def with_target(op: Operation, input_obj: Any, target: Target) -> Any:
+    """Fill an absent optional namespace and a read's org from its target.
+
+    Required fields stay subject to validation. The namespace never becomes a
+    code fan-out list. Writes keep their org for stable replay hashes across
+    builds, and an explicit identity is never replaced.
+    """
+    fields = type(input_obj).model_fields
+    update: dict[str, str] = {}
+    org_field = fields.get("org")
+    if (
+        op.read_only
+        and target.org
+        and org_field is not None
+        and not org_field.is_required()
+        and present(input_obj.org) is None
+    ):
+        update["org"] = target.org
+    ns_field = fields.get("namespace")
     if (
         target.register_namespace
         and ns_field is not None
         and not ns_field.is_required()
         and present(input_obj.namespace) is None
     ):
-        return input_obj.model_copy(update={"namespace": target.register_namespace})
-    return input_obj
+        update["namespace"] = target.register_namespace
+    return input_obj.model_copy(update=update) if update else input_obj
 
 
 async def authorize(

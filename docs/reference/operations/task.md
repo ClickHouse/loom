@@ -285,7 +285,7 @@ Tasks in ``inbox`` (owner side) or, with ``posted_by_me``, the tasks the caller 
 
 ## `task.progress`
 
-Record a progress note on a claimed task and extend its lease.
+Record a progress note on a claimed task without extending its lease.
 
 `POST /v1/task.progress` · MCP `loom_task_progress` · role `writer` · write · not listed under the MCP `all` toolset
 

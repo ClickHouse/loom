@@ -1,0 +1,12 @@
+<clickhouse>
+    <!-- Bound how long the server keeps statements and errors. A refused statement's
+         error can quote a metadata value it failed on, and erasure reaches neither log.
+         Changing a log's definition makes ClickHouse rename the existing table to
+         <table>_0 on the next start and keep it: drop that table to remove its rows. -->
+    <query_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </query_log>
+    <text_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </text_log>
+</clickhouse>

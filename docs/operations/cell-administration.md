@@ -28,12 +28,12 @@ endpoints before writing the public pair. Neither private key is sent to the rou
 
 Create a private credential manifest with these fields:
 
-| Field | Value |
-| --- | --- |
-| `version` | `1` |
-| `router_token_file` | Absolute path to the private router operator-token file |
-| `keys` | One entry per target, with `cell`, `deployment_id` and an absolute `key_file` |
-| `ca_file` | Optional absolute path to an explicit CA certificate bundle |
+| Field               | Value                                                                         |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `version`           | `1`                                                                           |
+| `router_token_file` | Absolute path to the private router operator-token file                       |
+| `keys`              | One entry per target, with `cell`, `deployment_id` and an absolute `key_file` |
+| `ca_file`           | Optional absolute path to an explicit CA certificate bundle                   |
 
 The manifest, token and key files must be regular files owned by the current user,
 with private permissions and private containing directories. Symlinks and unsafe
@@ -61,14 +61,14 @@ loom cell each --router "$ROUTER" --credentials "$CREDENTIALS" --state "$STATE" 
 
 The supported command families are closed:
 
-| Family | Actions |
-| --- | --- |
-| `settings` | `list`, `set`, `history` for live settings |
-| `signing-key` | `list`, `rotate`, `retire` |
-| `revoke-token` | One exact global subject |
-| `ratelimit` | Namespace-name limit, shared across orgs with that name |
-| `budget` | Operation budget or consumer multiplier |
-| `blacklist` | Global `add`, `list` |
+| Family         | Actions                                                 |
+| -------------- | ------------------------------------------------------- |
+| `settings`     | `list`, `set`, `history` for live settings              |
+| `signing-key`  | `list`, `rotate`, `retire`                              |
+| `revoke-token` | One exact global subject                                |
+| `ratelimit`    | Namespace-name limit, shared across orgs with that name |
+| `budget`       | Operation budget or consumer multiplier                 |
+| `blacklist`    | Global `add`, `list`                                    |
 
 Tenant policy, org-limit sweeps, arbitrary commands and native store operations are
 not supported. Use `loom cell each --help` for coordinator options. A server lacking

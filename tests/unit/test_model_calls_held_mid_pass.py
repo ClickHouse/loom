@@ -460,8 +460,10 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
     class _Refusing:
         model_name, dim = "m", 2
         per_chunk = 0
+        document_calls = 0
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            self.document_calls += 1
             raise error
 
         async def embed(self, text: str) -> list[float]:
@@ -488,14 +490,22 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
     assert out.reason == "model_calls_held"
     assert resolved == [] and ch.inserted == []  # the row stays open, no chunk written
     assert refusing.per_chunk == 0  # a held batch is not retried chunk by chunk
+    assert refusing.document_calls == 1
 
     class _BatchDown(_Refusing):  # the batch fails on its own; each chunk is then held
-        async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            raise RuntimeError("provider down")
+        batch_failed = False
 
-    monkeypatch.setattr("server.embedding.get_embedder", lambda: _BatchDown())
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            if not self.batch_failed:
+                self.batch_failed = True
+                raise RuntimeError("provider down")
+            return await super().embed_many(texts)
+
+    batch_down = _BatchDown()
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: batch_down)
     (out,) = asyncio.run(pf.retry_failures([failure], ch=ch))
     assert out.reason == "model_calls_held" and resolved == []
+    assert batch_down.batch_failed and batch_down.document_calls == 1
 
 
 @held

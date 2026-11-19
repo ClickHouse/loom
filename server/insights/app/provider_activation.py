@@ -100,7 +100,7 @@ async def rebuild_required() -> bool:
 
 
 async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:
-    refusal = gateway_refusal(setup.embedding)
+    refusal = gateway_refusal(setup)
     if refusal:
         # The check the settings run at load; applied, it would be refused too.
         raise HTTPException(422, refusal)

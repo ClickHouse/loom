@@ -775,6 +775,35 @@ def publish(
     for name in ("source-before.json", "source-after.json", "startup-diagnostics.json"):
         if (folder / name).is_file():
             shutil.copyfile(folder / name, destination / name)
+    # Only the fixed numeric-only API diagnostic is public; raw API logs stay private.
+    costs = fixture / "serving-cell/request-costs.jsonl"
+    diagnostic = None
+    try:
+        if costs.is_file() and not costs.is_symlink():
+            diagnostic = {"schema": 1, "invalid": 1}
+            require(costs.stat().st_size <= 65536, "Bounded request cost diagnostic")
+            rows = [json.loads(line) for line in costs.read_text(encoding="ascii").splitlines()]
+            require(len(rows) <= 194, "Bounded request cost records")
+            for row in rows:
+                require(
+                    type(row) is list and row and all(type(n) is int and n >= 0 for n in row),
+                    "Numeric request cost record",
+                )
+                require(
+                    (row[0] == 0 and len(row) == 8)
+                    or (row[0] in (1, 2) and len(row) == 11)
+                    or (row[0] == 3 and len(row) == 5),
+                    "Closed request cost record",
+                )
+            diagnostic = {"schema": 1, "rows": rows}
+    except (OSError, ValueError, RuntimeError):
+        diagnostic = {"schema": 1, "invalid": 1}
+    if diagnostic is not None:
+        try:
+            write(destination / "request-costs.json", diagnostic)
+        except OSError:
+            # Diagnostic storage cannot replace the work or cleanup outcome.
+            pass
     intent_output = destination / "delivery-intent"
     for arm in range(10):
         for suffix in (".jsonl", "-receipt.json"):

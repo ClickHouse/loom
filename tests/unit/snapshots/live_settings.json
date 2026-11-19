@@ -91,6 +91,8 @@
  "knowledge_bm25_corpus_ttl_s",
  "knowledge_chunk_size",
  "knowledge_chunk_stride",
+ "knowledge_connected_sources_max_per_namespace",
+ "knowledge_connected_sources_max_per_person",
  "knowledge_gaps_max_askers_per_group",
  "knowledge_gaps_max_groups",
  "knowledge_gaps_max_in_flight",

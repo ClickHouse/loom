@@ -10,12 +10,17 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from server.code.domain.search_scope import SearchScope
+from server.core.ch_params import chunks
 
 
 def _batched(items: list[Any], size: int) -> list[list[Any]]:
-    """Fixed-size slices for a parameterised IN list — a file with thousands
-    of symbols stays a handful of point reads, not one giant tuple array."""
-    return [items[i : i + size] for i in range(0, len(items), size)] if items else []
+    """An IN list split by item count and serialized UTF-8 size.
+
+    Long compiler-qualified names can exceed the HTTP form-field limit even when
+    the list stays within its item count. An oversized singleton stays whole;
+    its reader must bind that value in parts.
+    """
+    return [part for i in range(0, len(items), size) for part in chunks(items[i : i + size])]
 
 
 async def _gather_batched[T](

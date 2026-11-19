@@ -196,6 +196,7 @@ async def finish(
     revocation in force all the same, when marking the tokens did not finish;
     run again, it finishes and answers the same counts."""
     from server.auth import oauth_store, service_accounts
+    from server.auth.account_lifecycle import stop_connections
 
     subject = subject.strip()
     outright, in_force, sessions, tokens = False, None, 0, 0
@@ -205,6 +206,7 @@ async def finish(
             if deadline is None
             else await revocation.cutoffs_bounded([subject], deadline=deadline, ch=ch)
         )
+        await stop_connections([subject], respect_cutoff=True)
         if subject in revoked:
             at = revoked[subject]
             outright = at is None
