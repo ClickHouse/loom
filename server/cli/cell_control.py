@@ -143,12 +143,22 @@ class Owner:
         task.add_done_callback(pg._retrieve_task)
         return task
 
+    def _bind(self, conn: Any) -> bool:
+        self.conn = conn
+        return not self.closed
+
+    async def connect(self, *, statement_timeout_ms: int) -> None:
+        if self.conn is not None or self.closed:
+            raise _refused("a control attempt cannot open another session")
+        try:
+            await pg._connect_dedicated(statement_timeout_ms=statement_timeout_ms, bind=self._bind)
+        except BaseException:
+            with contextlib.suppress(BaseException):
+                await self.close()
+            raise
+
     async def _open(self, what: str) -> None:
-        self.conn = await pg._connect_dedicated(statement_timeout_ms=60_000)
-        if self.closed:
-            # A connector returning after cancellation cannot publish a usable session.
-            await self.close()
-            raise _refused("connection arrived after the control attempt ended")
+        await self.connect(statement_timeout_ms=60_000)
         refused = await apg.direct_refusals(self.conn, what)
         refused += await apg.encoding_refusals(self.conn)
         if refused:
