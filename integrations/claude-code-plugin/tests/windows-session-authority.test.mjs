@@ -545,4 +545,102 @@ if (process.platform === "win32") {
     assert.equal(sessionIsProtected(other), false);
     fs.unlinkSync(directory);
   });
+
+  test("compiler diagnostics expose only bounded numeric codes", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "loom-windows-scanner-"));
+    owned.add(directory);
+    const formats =
+      [
+        "warning CS0168: synthetic-private-message",
+        "error CS1234: synthetic-private-message",
+        "error CS1234: synthetic-private-message",
+        "fatal error CS2345: synthetic-private-message",
+        String.raw`C:\synthetic-private\unit.cs(7,9): fatal error CS3456: synthetic-private-message`,
+        "error CS4567: synthetic-private-message",
+      ].join("\n") + "\n";
+    const rejects =
+      [
+        "fatal warning CS0168: synthetic-private-message",
+        "untrusted fatal error CS1234: synthetic-private-message",
+        "fatal error CS12345: synthetic-private-message",
+        "fatal error CS12x4: synthetic-private-message",
+        "fatal error CS-1234: synthetic-private-message",
+        "Fatal error CS1234: synthetic-private-message",
+        "fatal error CS1234 synthetic-private-message",
+      ].join("\n") + "\n";
+    const prefix = "fatal error CS6789: synthetic-private-message\n";
+    const bounded = prefix + "x".repeat(8192 - prefix.length) + "\nfatal error CS7890: not-read\n";
+    const fixtures = { formats, rejects, bounded, empty: "" };
+    for (const [label, text] of Object.entries(fixtures)) {
+      fs.writeFileSync(path.join(directory, `${label}.log`), text, "ascii");
+    }
+    const source = String.raw`
+      $ErrorActionPreference = 'Stop'
+      . $env:LOOM_TEST_COMPILER_JOB
+      function Write-LoomProtectionPhase([string]$phase, [int]$code = 0) {
+        if ($phase -cnotin @('compile', 'compiler-bytes', 'compiler-format', 'compiler-scanned')) { throw 'Unexpected diagnostic phase' }
+        if ($phase -ceq 'compile' -and ($code -lt 0 -or $code -gt 9999)) { throw 'Unexpected diagnostic code' }
+        if ($phase -ceq 'compiler-bytes' -and ($code -lt 0 -or $code -gt 8192)) { throw 'Unexpected diagnostic count' }
+        if ($phase -ceq 'compiler-format' -and ($code -lt 0 -or $code -gt 6)) { throw 'Unexpected diagnostic format' }
+        if ($phase -ceq 'compiler-scanned' -and $code -ne 0) { throw 'Unexpected diagnostic status' }
+        $script:scannerFrames.Add([ordered]@{ phase = $phase; code = $code })
+      }
+      $observed = @()
+      foreach ($label in @('formats', 'rejects', 'bounded', 'empty')) {
+        $script:scannerFrames = [Collections.Generic.List[object]]::new()
+        Write-LoomCompilerCodes ([IO.Path]::Combine($env:LOOM_TEST_SCANNER_DIRECTORY, $label + '.log'))
+        $observed += [ordered]@{ 'case' = $label; frames = $script:scannerFrames.ToArray() }
+      }
+      [Console]::Out.Write((ConvertTo-Json -InputObject $observed -Compress -Depth 4))
+    `;
+    const system32 = path.join(process.env.SystemRoot, "System32");
+    const powershellHome = path.join(system32, "WindowsPowerShell", "v1.0");
+    const result = spawnSync(
+      path.join(powershellHome, "powershell.exe"),
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", source],
+      {
+        input: "",
+        encoding: "utf8",
+        windowsHide: true,
+        cwd: system32,
+        timeout: 2000,
+        maxBuffer: 1024,
+        env: {
+          SystemRoot: process.env.SystemRoot,
+          WINDIR: process.env.SystemRoot,
+          PATH: system32,
+          PSModulePath: path.join(powershellHome, "Modules"),
+          LOOM_TEST_COMPILER_JOB: fileURLToPath(new URL("../lib/windows-compiler-job.ps1", import.meta.url)),
+          LOOM_TEST_SCANNER_DIRECTORY: directory,
+        },
+      },
+    );
+    assert.equal(Boolean(result.error), false);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr.length, 0);
+    let observed;
+    try {
+      observed = JSON.parse(result.stdout);
+    } catch {
+      assert.fail("Scanner observations were not JSON");
+    }
+    const frames = (codes, bytes, format = 6) => [
+      ...codes.map((code) => ({ phase: "compile", code })),
+      { phase: "compiler-bytes", code: bytes },
+      { phase: "compiler-format", code: format },
+      { phase: "compiler-scanned", code: 0 },
+    ];
+    const expected = [
+      { case: "formats", frames: frames([168, 1234, 2345, 3456], Buffer.byteLength(formats, "ascii")) },
+      { case: "rejects", frames: frames([], Buffer.byteLength(rejects, "ascii")) },
+      { case: "bounded", frames: frames([6789], 8192) },
+      { case: "empty", frames: frames([], 0, 0) },
+    ];
+    assert.equal(
+      JSON.stringify(observed) === JSON.stringify(expected),
+      true,
+      "Scanner observations did not match fixed frames",
+    );
+  });
 }

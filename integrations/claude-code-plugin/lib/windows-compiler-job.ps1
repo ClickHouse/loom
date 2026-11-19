@@ -75,7 +75,7 @@ function Write-LoomCompilerCodes([string]$file) {
         $bytes = [byte[]]::new(8192)
         $count = $stream.Read($bytes, 0, $bytes.Length)
         $text = [Text.Encoding]::ASCII.GetString($bytes, 0, $count)
-        $pattern = '^(?:[^\r\n]{1,2048}\([0-9]{1,6}(?:,[0-9]{1,6})?\): )?(?:error|warning) CS([0-9]{4}):'
+        $pattern = '^(?:[^\r\n]{1,2048}\([0-9]{1,6}(?:,[0-9]{1,6})?\): )?(?:fatal error|error|warning) CS([0-9]{4}):'
         $codes = [Collections.Generic.HashSet[int]]::new()
         foreach ($line in $text.Split([char]10)) {
             $match = [Text.RegularExpressions.Regex]::Match($line, $pattern)
