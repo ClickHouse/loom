@@ -92,7 +92,8 @@ async def add_search_abstain(bot: Agent) -> list[str]:
         print(f"\nQ: {query}")
         for h in hits:
             first_line = next((ln for ln in h.content.splitlines() if ln.strip()), "")
-            print(f"  [{h.source_uri}#{h.chunk_idx}] {h.section or '-'}: {first_line}")
+            cite = f"[{h.source_uri}#{h.chunk_idx}] {h.section or '-'}"
+            print(f"  {cite}: {first_line}  ({h.similarity:.2f})")
         if not hits or hits[0].source_uri != source_uri:
             failures.append(f"{query!r}: the top hit is not {source_uri}")
 
@@ -104,7 +105,10 @@ async def add_search_abstain(bot: Agent) -> list[str]:
     print(f"\nQ: {OFF_TOPIC}")
     if passages:
         for p in passages:
-            print(f"  unexpected passage [{p['source_uri']}#{p['chunk_idx']}]")
+            print(
+                f"  unexpected passage [{p['source_uri']}#{p['chunk_idx']}] "
+                f"similarity {float(p.get('similarity') or 0):.2f}"
+            )
         failures.append(f"{OFF_TOPIC!r}: {len(passages)} knowledge passage(s) came back")
     else:
         print("  no knowledge passage came back: the documents do not answer it")
