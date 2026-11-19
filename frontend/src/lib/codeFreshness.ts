@@ -1,6 +1,7 @@
 import type { CodeRepoSummary } from "../api/code";
+import { BUILDING_STAGES } from "./codeStage";
 import { fmtInt, parseChTime } from "./format";
-export type FreshTone = "ok" | "warn" | "bad" | "muted";
+export type FreshTone = "ok" | "info" | "warn" | "bad" | "muted";
 export type Fresh = { tone: FreshTone; label: string; detail: string };
 
 /** "1 commit", "1,200 commits": one wording for every lag count. */
@@ -27,8 +28,8 @@ export function freshness(
     git_head: string;
     stage?: string;
   } & Pick<CodeRepoSummary, "readable" | "unreadable_reason">,
-  /** Why a failed first index failed, as the branch card words it (`stageLabel`). */
-  failure?: string,
+  /** The current stage's explanation, as the branch card words it (`stageLabel`). */
+  stageDetail?: string,
 ): Fresh {
   if (r.readable === false)
     return {
@@ -43,8 +44,10 @@ export function freshness(
     return {
       tone: "bad",
       label: "Index failed",
-      detail: failure ? `The first index failed. ${failure}` : "The first index failed",
+      detail: stageDetail ? `The first index failed. ${stageDetail}` : "The first index failed",
     };
+  if (BUILDING_STAGES.has(r.stage || ""))
+    return { tone: "info", label: "Indexing", detail: stageDetail || "The first index is in progress." };
   if (!r.git_head)
     return {
       tone: "muted",

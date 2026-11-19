@@ -19,6 +19,8 @@ describe("freshness", () => {
             : "Read access is required to view index status.",
       });
       expect(freshness({ ...redacted, stage: "error" }, "Clone failed").label).toBe("Access required");
+      for (const stage of ["queued", "cloning", "indexing", "embedding"])
+        expect(freshness({ ...redacted, stage }).label).toBe("Access required");
       expect(freshness({ ...redacted, git_head: "abc123", fast_tier_lag: 42 }).label).toBe("Access required");
     },
   );
@@ -26,6 +28,23 @@ describe("freshness", () => {
   it("keeps an explicitly readable empty repository unindexed", () => {
     const empty = { ...base, readable: true, git_head: "", indexed_at: "" };
     expect(freshness(empty)).toMatchObject({ label: "Not indexed", tone: "muted" });
+  });
+
+  it.each(["queued", "cloning", "indexing", "embedding"])(
+    "shows a readable first index in progress before a completed head exists (%s)",
+    (stage) => {
+      const building = { ...base, readable: true, git_head: "", indexed_at: "", stage };
+      expect(freshness(building)).toMatchObject({ label: "Indexing", tone: "info" });
+      expect(freshness({ ...building, git_head: base.git_head }).label).toBe("Indexing");
+      expect(freshness(building).detail).toContain("in progress");
+      expect(freshness(building, "First index in progress. Search works on what is indexed so far.").detail).toBe(
+        "First index in progress. Search works on what is indexed so far.",
+      );
+    },
+  );
+
+  it.each(["", "ready"])("keeps a readable empty repository without active work unindexed (%s)", (stage) => {
+    expect(freshness({ ...base, readable: true, git_head: "", indexed_at: "", stage }).label).toBe("Not indexed");
   });
 
   it("says the first index has not finished, and who runs it for a configured repository", () => {
@@ -61,7 +80,7 @@ describe("freshness", () => {
   });
 
   it("says a first index failed rather than still running", () => {
-    expect(freshness({ fast_tier_lag: 0, scip_lag: 0, git_head: "", stage: "error" })).toMatchObject({
+    expect(freshness({ readable: true, fast_tier_lag: 0, scip_lag: 0, git_head: "", stage: "error" })).toMatchObject({
       label: "Index failed",
       tone: "bad",
     });

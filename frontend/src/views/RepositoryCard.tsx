@@ -30,7 +30,7 @@ import { SplitButton } from "../components/ui/SplitButton";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
-import { stageLabel } from "../lib/codeStage";
+import { BUILDING_STAGES, stageLabel } from "../lib/codeStage";
 import { commits, freshness, type FreshTone } from "../lib/codeFreshness";
 import { failingTiers, failureSummary, kindWord, tierName, unavailableTiers } from "../lib/tierHealth";
 import {
@@ -75,6 +75,7 @@ export const RESTRICTED_SENTENCE =
 
 export const FRESH_STATE: Record<FreshTone, BadgeState> = {
   ok: "success",
+  info: "info",
   warn: "warning",
   bad: "danger",
   muted: "neutral",
@@ -93,7 +94,6 @@ export interface Health {
   rank: number;
 }
 
-const BUILDING = new Set(["queued", "cloning", "indexing", "embedding"]);
 const DAY_MS = 24 * 3600_000;
 const short = (sha: string) => sha.slice(0, 12);
 
@@ -133,7 +133,7 @@ export function branchHealth(b: CodeRepoSummary): Health {
         .join(" "),
     };
   }
-  if (BUILDING.has(stage))
+  if (BUILDING_STAGES.has(stage))
     return { text: "Indexing", state: "info", rank: 1, detail: `${building?.label}. ${building?.title}` };
   if (!b.git_head || !b.indexed_at)
     return { text: "Not indexed", state: "neutral", rank: 3, detail: "Nothing is indexed on this branch yet." };

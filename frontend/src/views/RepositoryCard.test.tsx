@@ -181,6 +181,14 @@ async function openBranchMenu(user: ReturnType<typeof userEvent.setup>, branchNa
 }
 
 describe("branchHealth: one vocabulary for an index's health", () => {
+  it.each(["queued", "cloning", "indexing", "embedding"] as const)(
+    "shows a readable first index in progress before a completed head exists (%s)",
+    (stage) => {
+      const building = branch({ readable: true, git_head: "", indexed_at: "", stage });
+      expect(branchHealth(building)).toMatchObject({ text: "Indexing", state: "info" });
+    },
+  );
+
   it.each(["not_member", "token_scope"] as const)("requires access for a redacted branch (%s)", (reason) => {
     const redacted = branch({
       readable: false,
@@ -1085,6 +1093,11 @@ describe("RepositoryCard: a failing tier", () => {
     expect(list).toHaveTextContent("Fix: No credential with access (github.com/o/private)");
     expect(within(list).queryByText("Mirror fetch")).toBeNull();
     expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("requires access before interpreting a failing tier or an active index", () => {
+    const redacted = branch({ readable: false, tier_health: [failing], stage: "indexing", fast_tier_lag: 413 });
+    expect(branchHealth(redacted)).toMatchObject({ text: "Access required", state: "neutral" });
   });
 
   it("a branch whose tiers are ok shows no failure list", () => {
