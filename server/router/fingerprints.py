@@ -130,6 +130,14 @@ def reservation_refusal(accepted: Sequence[dict[str, Any]], other: Sequence[dict
     return ""
 
 
+class ConfigurationRefused(ValueError):
+    """A configuration action refused for a fixed, caller-facing reason."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def configuration_pair(
     current: dict[str, Any] | None,
     pending: dict[str, Any] | None,
@@ -140,23 +148,27 @@ def configuration_pair(
     if any(not readable(value) for value in (current, target)) or (
         pending is not None and not readable(pending)
     ):
-        raise ValueError("configuration update needs readable fingerprints")
+        raise ConfigurationRefused("configuration update needs readable fingerprints")
     assert current is not None
     if action not in ("config", "finish", "revert"):
-        raise ValueError("configuration action must be config, finish or revert")
+        raise ConfigurationRefused("configuration action must be config, finish or revert")
 
     def same(a: dict[str, Any], b: dict[str, Any]) -> bool:
         return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
     if action == "config":
         if pending is not None and not same(pending, target):
-            raise ValueError("another configuration is pending; finish or revert it first")
+            raise ConfigurationRefused(
+                "another configuration is pending; finish or revert it first"
+            )
         if pending is not None:
             return current, pending
         return current, None if same(current, target) else target
     selected = pending if action == "finish" and pending is not None else current
     if not same(selected, target):
-        raise ValueError("configuration target differs from the selected reserved fingerprint")
+        raise ConfigurationRefused(
+            "configuration target differs from the selected reserved fingerprint"
+        )
     return target, None
 
 

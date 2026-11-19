@@ -1190,8 +1190,8 @@ async def update_configuration(
         current, pending = fingerprints.configuration_pair(
             expected.values.get("current_fp"), expected.values.get("next_fp"), target, action
         )
-    except ValueError as error:
-        raise OperatorRefused(str(error)) from None
+    except fingerprints.ConfigurationRefused as error:
+        raise OperatorRefused(error.reason) from None
     accepted = [value for value in (current, pending) if value is not None]
     desired_orgs = {org for value in accepted for org in value["fields"].get("configured_orgs", [])}
     prior_orgs = {
