@@ -88,7 +88,6 @@ async def test_a_postgres_same_key_read_keeps_the_type(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(ks.pg, "enabled", lambda: True)
     monkeypatch.setattr(ks.pg_memory, "live_key_heads", live_key_heads)
-    monkeypatch.setattr(ks, "request_scope", lambda: None)
     rows = await ks._live_same_key_rows("o", "n", ["definition/arr"], ch=None)
     assert ks.same_key_victims([{"memory_id": "n1", "memory_key": "definition/arr"}], rows) == []
 

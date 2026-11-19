@@ -464,7 +464,7 @@ and acts through tools. `LoomRecallPolicy` is a policy that adds the Loom memori
 the latest user message to the prompt, and `loom_tools` returns Loom's agent verbs as AG2
 tools, the same `AgentTools` as the [OpenAI Agents SDK](#openai-agents-sdk) adapter, so the
 model writes memories with `loom_remember`. Install with
-`pip install 'clickhouse-loom[ag2]'` (`ag2` 1.3).
+`pip install --upgrade --pre 'clickhouse-loom[ag2]'` (`ag2` 1.3).
 
 ```python
 from ag2 import Agent as AG2Agent, Middleware
@@ -510,6 +510,8 @@ ids do not select protection. A protected contributor stops automatic recall wit
 `AutomaticCaptureSuppressed` before dispatch. A marked recall is durably observed before
 its content reaches the current prompt; later automatic recalls stop. Model-selected
 `loom_tools` calls remain explicit operations.
+
+Find more projects using AG2 in [Build with AG2](https://github.com/ag2ai/build-with-ag2).
 
 ## Microsoft Agent Framework
 

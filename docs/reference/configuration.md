@@ -351,6 +351,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_GIT_PROXY_URL` | `str` | `''` |  | The proxy: `http://host:port` or `https://host:port`, the port named, with no credentials, path or query. Empty = git connects directly. |
 | `LOOM_CODE_GIT_PROXY_TOKEN_FILE` | `str` | `''` |  | File holding the proxy password, read again for every git job. Empty = no password; a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url. |
 | `LOOM_CODE_GIT_PROXY_CA_FILE` | `str` | `''` |  | PEM bundle git verifies TLS with through the proxy, in place of its default roots (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url. |
+| `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` | `str` | `''` |  | PEM bundle git verifies the proxy's own certificate with, in place of its default roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one is for the remote, behind a proxy that terminates TLS under its own authority; this one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url. |
 | `LOOM_CODE_GIT_PROXY_IDENTITY` | `str` | `''` |  | The proxy user of an entry that names no `git_proxy_identity`: letters, digits and `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs code_git_proxy_url. |
 
 ### Open-PR fill

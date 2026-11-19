@@ -141,6 +141,7 @@ still gets file-level impact.
 | Terraform / HCL (`.tf`, `.tfvars`, `.hcl`), Kubernetes manifests                       | yes                   | references (`reads`)                                                          | —                 |
 | Jsonnet (`.jsonnet`, `.libsonnet`)                                                     | yes                   | calls, imports                                                                | —                 |
 | Lua (`.lua`)                                                                           | yes                   | calls, `require` includes                                                     | —                 |
+| GraphQL schemas (`.graphql`, `.gql`)                                                   | yes                   | type uses, inherits (`implements`)                                            | —                 |
 | TLA+ (`.tla`, TLC configs), CMake (`CMakeLists.txt`, `.cmake`)                         | yes                   | includes; TLA+ operators; the CMake link graph                                | —                 |
 | Markdown and docs (`.md`, `.mdc`, `.mdx`, `.rst`, `.html`, `.htm`)                     | sections (`.md` only) | relative links, backticked names as `reads` to the code                       | —                 |
 | SQL (`.sql`)                                                                           | with a switch         | table references, with statement records on                                   | —                 |

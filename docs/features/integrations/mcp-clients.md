@@ -81,11 +81,9 @@ or `enabled`. When the file cannot be merged, the command leaves it unchanged an
 entry to add by hand.
 
 Cursor's CLI (`agent`) reads the same `mcp.json` as the editor, so the `cursor` entry
-serves both.
-
-Cursor CLI 2026.11.13-eacade1 discovered distinct disabled entries in both the user
-and project files while signed out. This checks configuration discovery only: no
-connection, token/header behavior or editor plugin was tested.
+serves both. To bind code tools to one repository, use the
+[checkout configuration](cursor.md#connect-an-indexed-checkout), including its code-scope
+header and the CLI approval step.
 
 The two entry shapes, the first as the Cursor command above writes it:
 
