@@ -176,6 +176,7 @@ function Invoke-LoomCompilerProcess([type]$native, [IntPtr]$job, [long]$deadline
         if ($process -eq [IntPtr]::Zero -or $thread -eq [IntPtr]::Zero -or $pidValue -le 0) { throw 'Unavailable' }
         Write-LoomProtectionPhase 'worker-assign'
         if (-not $native::AssignProcessToJobObject($job, $process)) { throw 'Unavailable' }
+        if ($null -ne $observe) { & $observe $process $pidValue $true }
         # A fired timer cannot grant a late compiler a new execution window.
         if ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $deadline) { throw 'Unavailable' }
         if ($native::ResumeThread($thread) -eq [uint32]::MaxValue) { throw 'Unavailable' }
@@ -201,10 +202,6 @@ function Invoke-LoomCompilerProcess([type]$native, [IntPtr]$job, [long]$deadline
             $compilerLog = [IntPtr]::Zero
             Write-LoomProtectionPhase 'compiler-closed'
             Write-LoomCompilerCodes $compilerLogPath
-            if ($null -ne $observe) {
-                try { & $observe $process $pidValue $compilerLogPath }
-                catch { } # Failure observation must not replace refusal or cleanup.
-            }
             throw 'Unavailable'
         }
     } finally {

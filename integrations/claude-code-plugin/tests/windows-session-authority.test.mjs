@@ -108,7 +108,6 @@ function nativePhaseTrail(child) {
     "compiler-scanned",
     "compiler-bytes",
     "compiler-format",
-    "compiler-operand",
     "compiler-stop",
     "compiler-query",
     "compiler-close",
@@ -151,7 +150,6 @@ function nativePhaseTrail(child) {
         code <= 2147483647 &&
         (match[1] !== "compiler-bytes" || (code >= 0 && code <= 8192)) &&
         (match[1] !== "compiler-format" || (code >= 0 && code <= 6)) &&
-        (match[1] !== "compiler-operand" || code === 0 || code === 1) &&
         (!["root-entry", "root-flushed"].includes(match[1]) || code === 0)
       ) {
         if (frames.length === 24) frames.shift();
@@ -648,6 +646,48 @@ if (process.platform === "win32") {
       JSON.stringify(observed) === JSON.stringify(expected),
       true,
       "Scanner observations did not match fixed frames",
+    );
+  });
+
+  test("the startup witness compiles and verifies its fixed real compiler input", () => {
+    const environment = witnessEnv();
+    const system32 = path.join(process.env.SystemRoot, "System32");
+    const powershellHome = path.join(system32, "WindowsPowerShell", "v1.0");
+    const result = spawnSync(
+      path.join(powershellHome, "powershell.exe"),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        fileURLToPath(new URL("./windows-job-witness.ps1", import.meta.url)),
+        "-CompileControl",
+      ],
+      {
+        input: "",
+        encoding: "utf8",
+        windowsHide: true,
+        cwd: system32,
+        timeout: 2000,
+        maxBuffer: 1024,
+        env: {
+          SystemRoot: process.env.SystemRoot,
+          WINDIR: process.env.SystemRoot,
+          PATH: system32,
+          PSModulePath: path.join(powershellHome, "Modules"),
+          LOOM_PRIVATE_COMPILER_BASE: environment.LOOM_PRIVATE_COMPILER_BASE,
+          LOOM_PRIVATE_COMPILATION_ID: environment.LOOM_PRIVATE_COMPILATION_ID,
+          LOOM_PRIVATE_DEADLINE_UTC: environment.LOOM_PRIVATE_DEADLINE_UTC,
+        },
+      },
+    );
+    assert.equal(Boolean(result.error), false, "Compiler control child could not complete");
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout === '{"compiled":true}', true, "Compiler control response was not fixed success");
+    assert.equal(
+      fs.existsSync(path.join(environment.LOOM_PRIVATE_COMPILER_BASE, environment.LOOM_PRIVATE_COMPILATION_ID)),
+      false,
     );
   });
 }
