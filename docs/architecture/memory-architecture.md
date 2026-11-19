@@ -163,6 +163,14 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     by `entity_extractor` if lost. A long value is also split into `memory_chunks`,
     fail-open.
 
+**Embedding purpose.** Stored values, key axes, conversation excerpts, summaries and
+chunks use document embeddings, including single-item writes and serial recovery after
+a batch failure. Queries use query embeddings. Write retries cache each purpose
+separately: one text can have different query and document vectors. The shared document
+helper checks batch cardinality, width and finite values before a write consumes them.
+An embedding provider implements both methods in the `Embedder` protocol; writes never
+substitute a query vector when a document batch is malformed or unavailable.
+
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
 the call and writes nothing. Writers that can wait for a vector (such as
 `memory.promote` on an embed failure and `namespace.rollback`) write a stub:

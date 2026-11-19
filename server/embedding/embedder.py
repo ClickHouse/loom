@@ -22,13 +22,13 @@ class Embedder(Protocol):
     dim: int
 
     async def embed(self, text: str) -> list[float]:
-        """Return a unit-norm embedding vector for `text`; an empty or
+        """Return a unit-norm query embedding for `text`; an empty or
         whitespace-only text may come back as an all-zeros vector (LocalEmbedder
         does), which has no norm to be unit."""
         ...
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        """One vector per text, in input order."""
+        """Document vectors of raw text in input order, including a single document."""
         ...
 
 

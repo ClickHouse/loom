@@ -1226,23 +1226,24 @@ def test_a_nul_character_is_refused_before_the_commit() -> None:
 async def test_a_write_that_starts_over_embeds_each_text_once() -> None:
     from server.memory.app.reused_vectors import ReusedVectors
 
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
     class _Counting:
         model_name, dim = "m", 1
 
         async def embed(self, text: str) -> list[float]:
-            calls.append(text)
-            return [float(len(text))]
+            calls.append(("query", text))
+            return [float(len(text) + 10)]
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            return [await self.embed(t) for t in texts]
+            calls.extend(("document", text) for text in texts)
+            return [[float(len(text))] for text in texts]
 
     vectors = ReusedVectors(_Counting())
     assert await vectors.embed_many(["a", "bb", "a"]) == [[1.0], [2.0], [1.0]]
-    assert await vectors.embed("bb") == [2.0]
+    assert await vectors.embed("bb") == [12.0]
     assert await vectors.embed_many(["ccc", "a"]) == [[3.0], [1.0]]
-    assert calls == ["a", "bb", "ccc"]
+    assert calls == [("document", "a"), ("document", "bb"), ("query", "bb"), ("document", "ccc")]
 
 
 class _Unavailable(Exception):

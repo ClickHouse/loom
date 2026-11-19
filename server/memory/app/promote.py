@@ -25,6 +25,7 @@ from server.core.errors import (
 )
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector
 from server.embedding.embedder import Embedder
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
@@ -121,7 +122,7 @@ async def handle_memory_promote(
     embedder = get_embedder() if is_searchable_type(src.memory_type) else None
     if embedder is not None:
         try:
-            embedding = await embedder.embed(excerpt)
+            embedding = await document_vector(embedder, excerpt)
         except Exception as e:  # noqa: BLE001 — embed failure writes a stub the worker reconciles
             log.warning(
                 "memory.promote: inline embedding failed for "
