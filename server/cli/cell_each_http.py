@@ -25,8 +25,6 @@ if TYPE_CHECKING:
     from server.cli.cell_each import Command
 
 _ACTION_LIMIT = 2 * 1024 * 1024  # not a setting: the server contract fixes the maximum result size
-_CONTEXT_KEYS = {"version", "expected_cell", "expected_deployment_id", "expected_bot"}
-_ACTION_CONTEXT = _CONTEXT_KEYS | {"run_id", "attempt", "command_digest"}
 _LIMITS = {"action_timeout_s": 30, "max_body_bytes": 65536, "max_response_bytes": _ACTION_LIMIT}
 _THUMBPRINT_MEMBERS = {
     "EC": ("crv", "kty", "x", "y"),
