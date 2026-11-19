@@ -125,14 +125,37 @@ def _signed(
         return url, body, dict(request.headers)
 
 
-def _provider_error(response: httpx.Response) -> httpx.HTTPStatusError:
+def _provider_error(
+    response: httpx.Response, raw: bytearray, sent_body: bytes
+) -> httpx.HTTPStatusError:
     code = response.headers.get("x-amzn-errortype", "ProviderError").partition(":")[0]
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", code):
         code = "ProviderError"
+    error = {"code": code}
+    if response.status_code == 400 and code == "ValidationException":
+        try:
+            body = json.loads(raw)
+            config = json.loads(sent_body).get("inferenceConfig", {})
+            message = body.get("message", "")
+            if (
+                isinstance(config, dict)
+                and isinstance(message, str)
+                and any(
+                    term in message.casefold()
+                    for term in ("deprecated", "not supported", "does not support")
+                )
+            ):
+                from server.llm.traits import refused_field
+
+                name = refused_field(body, config, ("temperature",))
+                if name:
+                    error["param"] = name
+        except (ValueError, AttributeError):
+            pass
     safe_response = httpx.Response(
         response.status_code,
         request=response.request,
-        json={"error": {"code": code}},
+        json={"error": error},
     )
     return httpx.HTTPStatusError(
         "Bedrock model request failed",
@@ -156,7 +179,7 @@ async def _post(url: str, body: bytes, headers: dict[str, str], request_timeout_
                 raise ValueError("Bedrock response exceeds the model response limit")
             raw.extend(chunk)
         if response.status_code >= 300:
-            raise _provider_error(response)
+            raise _provider_error(response, raw, body)
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError("Bedrock response must be an object")

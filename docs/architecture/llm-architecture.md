@@ -240,6 +240,9 @@ embedder-specific; a threshold measured for one model is not a deployment-wide d
 The Models & keys form can select Bedrock for either role and validates it using the
 server's AWS credentials. Validation makes billable requests only after Test & apply.
 A missing or expired credential is an error, never a fake-provider fallback.
+An explicitly rejected temperature parameter is omitted on one bounded retry and
+later requests for that model. Other validation errors and authorization failures
+propagate unchanged. The elapsed deadline also covers this negotiation.
 `bedrock:messages` and `bedrock:embeddings` feed the existing provider health report;
 a successful later call clears a recorded failure.
 

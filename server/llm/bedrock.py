@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from functools import partial
 from typing import Any
 
+import httpx
+
 from server.clients import bedrock
-from server.llm import customer
+from server.llm import customer, traits
 from server.llm.client import LLMResult
 from server.llm.json_text import strip_code_fence
-from server.llm.traits import is_complete_stop
 from server.observability.genai import generation_span
 from server.observability.provider_health import recording
 from server.settings import settings
@@ -17,7 +20,7 @@ from server.settings import settings
 def _result(model: str, data: dict[str, Any], *, json_mode: bool) -> LLMResult:
     stop = str(data.get("stopReason") or "")
     message = (data.get("output") or {}).get("message")
-    if message is None and is_complete_stop(stop):
+    if message is None and traits.is_complete_stop(stop):
         raise ValueError("Bedrock completion has no output message")
     content = (message or {}).get("content") or []
     text = "".join(block["text"] for block in content if "text" in block)
@@ -82,7 +85,7 @@ class BedrockLLMClient:
         if json_mode:
             system = f"{system}\nRespond with exactly one valid JSON object, without markdown."
         config: dict[str, Any] = {"maxTokens": max_tokens}
-        if temperature is not None:
+        if temperature is not None and "temperature" not in traits.traits(self.model).refused:
             config["temperature"] = temperature
         payload: dict[str, Any] = {
             "modelId": self._model_id,
@@ -93,7 +96,8 @@ class BedrockLLMClient:
             payload["system"] = [{"text": system}]
         with generation_span(provider=self.provider, model=self.model) as span:
             with recording("bedrock:messages"):
-                data = await bedrock.call(
+                send = partial(
+                    bedrock.call,
                     "converse",
                     payload,
                     who,
@@ -102,6 +106,18 @@ class BedrockLLMClient:
                     max_wait_s=settings.llm_retry_max_wait_s,
                     on_attempt=span.note_attempt,
                 )
+                async with asyncio.timeout(settings.llm_request_timeout_s):
+                    try:
+                        data = await send()
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code != 400:
+                            raise
+                        name = traits.refused_field(exc.response.json(), config, ("temperature",))
+                        if name is None:
+                            raise
+                        traits.traits(self.model).refused.add(name)
+                        config.pop(name)
+                        data = await send()
                 result = _result(self.model, data, json_mode=json_mode)
             _record(span, result, system, user)
         return result
