@@ -489,6 +489,9 @@ line span, with a bounded row count. An unchanged chunk's introduction commit ma
 differ from its neighbors; it does not establish the current file revision. This read
 follows live-row publication and does not provide a snapshot across an indexing pass.
 A compiler declaration alone does not establish a larger function body.
+Parser coordinates, source chunking and oversized-piece boundaries count LF lines;
+other Unicode separators inside a string remain source text. A retained prefix ending
+in an ambiguous non-LF separator cannot establish a complete physical line.
 Hydration and indexing share provider-free label canonicalization, including explicit
 local and fake provider overrides. Hydration constructs no embedder, and missing
 provider credentials do not select a fake label's source chunks.

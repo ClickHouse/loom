@@ -9,6 +9,9 @@ def _source_lines(row: dict[str, Any]) -> list[str] | None:
     if row.get("kind") == "class_skeleton":
         return None
     text = str(row.get("content") or "")
+    # A trailing non-LF separator can be a truncated physical line.
+    if text.endswith(("\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\u0085", "\u2028", "\u2029")):
+        return None
     # Index spans count LF boundaries; Unicode separators inside strings are text.
     parts = text.split("\n")
     lines = [part + "\n" for part in parts[:-1]]
