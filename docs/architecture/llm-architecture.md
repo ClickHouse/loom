@@ -217,8 +217,13 @@ select native inference with `bedrock:<model-or-inference-profile-id>`, includin
 `LOOM_CODE_ASK_LLM_MODEL`; the local `bedrock:` routing prefix is stripped before the
 request. The role needs `bedrock:InvokeModel` for the selected resources.
 
-For text embeddings, select `LOOM_EMBEDDING_PROVIDER=bedrock` and
-`LOOM_EMBEDDING_MODEL=cohere.embed-v4:0`. Cohere Embed v4 supports dimensions 256, 512,
+For text embeddings, select `LOOM_EMBEDDING_PROVIDER=bedrock` and set
+`LOOM_EMBEDDING_MODEL` to a Cohere Embed v4 model or inference-profile ID available
+in the selected region. For a US inference profile, use `us.cohere.embed-v4:0`.
+Some regions require an inference profile rather than the direct model ID;
+`aws bedrock list-inference-profiles --region <region> --type-equals SYSTEM_DEFINED`
+lists the available profiles. The role must allow invocation of the chosen profile
+and its destination models. Cohere Embed v4 supports dimensions 256, 512,
 1024 and 1536; the native default is 1536 when `LOOM_EMBEDDING_DIM` is unset. Single-text
 `embed()` requests use `search_query`; document batches use `search_document`, with at
 most 96 texts per request. Each serialized UTF-8 JSON body is capped at 20,000,000
