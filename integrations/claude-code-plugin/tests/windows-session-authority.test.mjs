@@ -190,17 +190,49 @@ function observerPhase(stderr) {
   const lines = text.slice(-1024).split(/\r?\n/);
   if (text.length > 1024) lines.shift();
   for (const line of lines) {
-    const match = /^LWO1:(entry|parsed|observed|done)$/.exec(line);
+    const match = /^LWO1:(entry|input-read|parsed|observed|done)$/.exec(line);
     if (match) phase = match[1];
   }
   return `LWO1:${phase}`;
+}
+
+function directoryComparison(actual, expected) {
+  const type = actual === null ? "null" : Array.isArray(actual) ? "array" : typeof actual;
+  const facts = {
+    type,
+    actualLength: typeof actual === "string" ? Math.min(4096, actual.length) : -1,
+    expectedLength: Math.min(4096, expected.length),
+    sameBase: false,
+    sameId: false,
+    relation: "not-string",
+  };
+  if (typeof actual !== "string") return JSON.stringify(facts);
+  facts.relation = "long";
+  if (actual.length > 4096 || expected.length > 4096) return JSON.stringify(facts);
+  facts.sameBase = path.win32.dirname(actual) === path.win32.dirname(expected);
+  facts.sameId = path.win32.basename(actual) === path.win32.basename(expected);
+  facts.relation =
+    actual === expected
+      ? "exact"
+      : actual.toLowerCase() === expected.toLowerCase()
+        ? "case-only"
+        : actual.replaceAll("/", "\\") === expected.replaceAll("/", "\\")
+          ? "separator-only"
+          : path.win32.normalize(actual) === path.win32.normalize(expected)
+            ? "normalized"
+            : path.win32.normalize(actual).toLowerCase() === path.win32.normalize(expected).toLowerCase()
+              ? "normalized-case"
+              : "other";
+  return JSON.stringify(facts);
 }
 
 function exactProcesses(identities, kill = false) {
   const source = String.raw`
     $ErrorActionPreference = 'Stop'
     try { [Console]::Error.WriteLine('LWO1:entry'); [Console]::Error.Flush() } catch { }
-    $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    $loomObserverInput = [Console]::In.ReadToEnd()
+    try { [Console]::Error.WriteLine('LWO1:input-read'); [Console]::Error.Flush() } catch { }
+    $r = $loomObserverInput | ConvertFrom-Json
     try { [Console]::Error.WriteLine('LWO1:parsed'); [Console]::Error.Flush() } catch { }
     $live = @()
     foreach ($identity in $r.identities) {
@@ -349,7 +381,9 @@ if (process.platform === "win32") {
         const cleanupSource = String.raw`
           $ErrorActionPreference = 'Stop'
           try { [Console]::Error.WriteLine('LWO1:entry'); [Console]::Error.Flush() } catch { }
-          $r = [Console]::In.ReadToEnd() | ConvertFrom-Json
+          $loomObserverInput = [Console]::In.ReadToEnd()
+          try { [Console]::Error.WriteLine('LWO1:input-read'); [Console]::Error.Flush() } catch { }
+          $r = $loomObserverInput | ConvertFrom-Json
           try { [Console]::Error.WriteLine('LWO1:parsed'); [Console]::Error.Flush() } catch { }
           try { $p = [Diagnostics.Process]::GetProcessById([int]$r.pid) }
           catch [ArgumentException] {
@@ -435,6 +469,14 @@ if (process.platform === "win32") {
       assert.equal(fs.existsSync(receipt.directory), false, "owned compiler directory survived parent death");
       context.diagnostic("LWL1:parent:complete:ok");
     } catch (error) {
+      if (stage === "directory-identity") {
+        // Comparison diagnostics must not replace the original failure.
+        try {
+          context.diagnostic(
+            `LWD1:${directoryComparison(receipt?.directory, path.join(environment.LOOM_PRIVATE_COMPILER_BASE, environment.LOOM_PRIVATE_COMPILATION_ID))}`,
+          );
+        } catch {}
+      }
       lifetimeFailure(context, "parent", stage, error);
       throw error;
     } finally {
