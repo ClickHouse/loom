@@ -10,7 +10,9 @@ documents before it exits, and exits 1 when a check fails.
 
 Run it with a real embedder (the released stack's `local` one, or a provider's): a
 `fake-ngram-*` embedder ranks by character n-grams, so the checks pass or fail by
-chance.
+chance. The off-topic check also needs a knowledge floor
+(LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY) above what the embedder scores
+unrelated text: the README's run used 0.5 with the `local` embedder.
 """
 
 from __future__ import annotations

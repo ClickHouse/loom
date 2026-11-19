@@ -181,7 +181,7 @@ Search two Markdown documents, cite the passages, and abstain on a question they
 LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… LOOM_ORG=acme python document_search.py
 ```
 
-Run it with a real embedder: the released stack's `local` one, or a provider's. A checkout's `.env` pins `fake-ngram-3072`, which ranks by character n-grams, so the checks would pass or fail by chance.
+Run it with a real embedder: the released stack's `local` one, or a provider's. A checkout's `.env` pins `fake-ngram-3072`, which ranks by character n-grams, so the checks would pass or fail by chance. The off-topic check also needs a knowledge floor that suits the embedder. With the `local` embedder (bge-small), the off-topic question below scored 0.34 to 0.43 against these passages, above the default floor of 0.30, so the run below sets `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY=0.5` on the server. The on-topic passages scored 0.88 and 0.89.
 
 1. `namespace.register` — the throwaway namespace; a refusal because it already exists is ignored.
 2. `knowledge.add` ×2 — two short Markdown documents, each with its own `source_uri` and `title`.
@@ -191,7 +191,26 @@ Run it with a real embedder: the released stack's `local` one, or a provider's. 
 
 Every search passes `namespace_scope: "this"`, so documents in your other namespaces cannot satisfy or break a check. The script exits 1 when a check fails. [Lab 2](../../../docs/guides/teaching.md#lab-2-document-search-with-citations) of the teaching guide is the exercise version.
 
-<REAL_RUN>
+A run against a local Loom server from source (ClickHouse 26.10, auth on, the `local` bge-small embedder, `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY=0.5`). The similarities depend on the embedder:
+
+```text
+added docs://example/refunds.md (Refund policy)
+added docs://example/shipping.md (Shipping times)
+
+Q: How many days do customers have to return an item for a refund?
+  [docs://example/refunds.md#0] Refund policy > Eligibility: Customers can return an unopened item within 30 days of delivery for a full refund.  (0.88)
+  [docs://example/refunds.md#1] Refund policy > How refunds are paid: Refunds go back to the original payment method within 5 business days.  (0.80)
+  [docs://example/shipping.md#0] Shipping times > Domestic: Standard domestic orders arrive in 3 to 5 business days.  (0.61)
+
+Q: How long does international shipping take?
+  [docs://example/shipping.md#1] Shipping times > International: International orders ship by air and arrive in 7 to 14 business days.  (0.89)
+  [docs://example/shipping.md#0] Shipping times > Domestic: Standard domestic orders arrive in 3 to 5 business days.  (0.80)
+  [docs://example/refunds.md#1] Refund policy > How refunds are paid: Refunds go back to the original payment method within 5 business days.  (0.57)
+
+Q: What is the boiling point of water at the top of Mount Everest?
+  no knowledge passage came back: the documents do not answer it
+all checks passed
+```
 
 ## multi_agent_handoff.py
 
