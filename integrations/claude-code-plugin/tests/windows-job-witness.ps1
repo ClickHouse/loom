@@ -41,7 +41,8 @@ function Write-LoomWitnessPhase([string]$phase) {
             # Only the validated path needs escaping in this fixed receipt.
             $json = '{"pid":' + $receipt.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
                 ',"started":"' + $receipt.started + '","directory":"' + $directory.Replace('\', '\\') +
-                '","guardian":{"pid":' + $receipt.guardian.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
+                '","compilerDeadline":' + $compilerDeadline.ToString([Globalization.CultureInfo]::InvariantCulture) +
+                ',"guardian":{"pid":' + $receipt.guardian.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
                 ',"started":"' + $receipt.guardian.started + '"}}'
             [Console]::Out.WriteLine($json)
             [Console]::Out.Flush()

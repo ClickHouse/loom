@@ -236,13 +236,23 @@ function processObservationFrames(stderr) {
   for (const line of lines) {
     if (line.length > 64) continue;
     const match =
-      /^LWX1:(p:(?:entry|input-read|parsed|observed|done)|s:[01]:(?:lookup|exited|started|kill|wait):(?:argument|invalid|exited|match|mismatch)):([0-9]{1,5})$/.exec(
+      /^LWX1:(p:(?:entry|input-read|parsed|parse-failed|observed|done)|s:[01]:(?:lookup|exited|started|kill|wait):(?:argument|invalid|exited|match|mismatch)):([0-9]{1,5})(?::(_|-?[0-9]{1,5}):(_|-?[0-9]{1,5}))?$/.exec(
         line,
       );
-    if (match && Number(match[2]) <= 60000) {
-      if (frames.length === 9) frames.shift();
-      frames.push({ boundary: match[1], observerMs: Number(match[2]) });
+    if (!match || Number(match[2]) > 60000) continue;
+    const slot = match[1].startsWith("s:");
+    if (slot !== (match[3] !== undefined)) continue;
+    const endpoint = (value) => (value === "_" ? null : Number(value));
+    const before = slot ? endpoint(match[3]) : null;
+    const after = slot ? endpoint(match[4]) : null;
+    if ((before !== null && Math.abs(before) > 60000) || (after !== null && Math.abs(after) > 60000)) continue;
+    if (frames.length === 9) frames.shift();
+    const frame = { boundary: match[1], observerMs: Number(match[2]) };
+    if (slot) {
+      frame.lookupBeforeCutoffMs = before;
+      frame.lookupAfterCutoffMs = after;
     }
+    frames.push(frame);
   }
   return frames;
 }
@@ -255,6 +265,9 @@ function recordProcessObservation(observation, result, phase, wallStarted, monot
       phase: ["live-identities", "deadline-absence", "final-cleanup"].includes(phase) ? phase : "unknown",
       receiptRemainingMs: observation.receiptRemainingMs,
       receiptElapsedMs: observation.receiptElapsedMs,
+      compilerCutoffLeadMs: Number.isSafeInteger(observation.compilerDeadline)
+        ? bounded(observation.deadline - observation.compilerDeadline)
+        : null,
       spawnRemainingMs: bounded(observation.deadline - wallStarted),
       endRemainingMs: bounded(observation.deadline - Date.now()),
       elapsedMs: bounded(performance.now() - monotonicStarted),
@@ -275,12 +288,26 @@ function exactProcesses(identities, kill = false) {
     $ErrorActionPreference = 'Stop'
     try { $loomObservationWatch = [Diagnostics.Stopwatch]::StartNew() } catch { $loomObservationWatch = $null }
     $loomObservationFrames = 0
-    function Write-LoomObserverFrame([string]$frame) {
+    $loomObserverCompilerDeadline = 0L
+    function Get-LoomLookupRemaining {
+      try {
+        if ($script:loomObserverCompilerDeadline -le 0) { return '_' }
+        $remaining = $script:loomObserverCompilerDeadline - [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        return ([Math]::Max(-60000L, [Math]::Min(60000L, $remaining))).ToString([Globalization.CultureInfo]::InvariantCulture)
+      } catch { return '_' }
+    }
+    function Write-LoomObserverFrame([string]$frame, [string]$before = '_', [string]$after = '_') {
       try {
         if ($null -eq $script:loomObservationWatch -or $script:loomObservationFrames -ge 9 -or $frame.Length -gt 48) { return }
-        if ($frame -cnotmatch '^(?:p:(?:entry|input-read|parsed|observed|done)|s:[01]:(?:lookup|exited|started|kill|wait):(?:argument|invalid|exited|match|mismatch))$') { return }
+        if ($frame -cnotmatch '^(?:p:(?:entry|input-read|parsed|parse-failed|observed|done)|s:[01]:(?:lookup|exited|started|kill|wait):(?:argument|invalid|exited|match|mismatch))$') { return }
         $elapsed = [Math]::Min(60000, $script:loomObservationWatch.ElapsedMilliseconds)
-        [Console]::Error.WriteLine('LWX1:' + $frame + ':' + $elapsed.ToString([Globalization.CultureInfo]::InvariantCulture))
+        $text = 'LWX1:' + $frame + ':' + $elapsed.ToString([Globalization.CultureInfo]::InvariantCulture)
+        if ($frame.StartsWith('s:')) {
+          if ($before -cnotmatch '^(?:_|-?[0-9]{1,5})$' -or $after -cnotmatch '^(?:_|-?[0-9]{1,5})$') { return }
+          $text += ':' + $before + ':' + $after
+        }
+        if ($text.Length -gt 64) { return }
+        [Console]::Error.WriteLine($text)
         [Console]::Error.Flush()
         $script:loomObservationFrames++
       } catch { }
@@ -290,16 +317,21 @@ function exactProcesses(identities, kill = false) {
     $loomObserverInput = [Console]::In.ReadToEnd()
     try { [Console]::Error.WriteLine('LWO1:input-read'); [Console]::Error.Flush() } catch { }
     Write-LoomObserverFrame 'p:input-read'
-    $r = $loomObserverInput | ConvertFrom-Json
+    try { $r = $loomObserverInput | ConvertFrom-Json }
+    catch { Write-LoomObserverFrame 'p:parse-failed'; throw }
     try { [Console]::Error.WriteLine('LWO1:parsed'); [Console]::Error.Flush() } catch { }
     Write-LoomObserverFrame 'p:parsed'
+    try { [void][long]::TryParse([string]$r.identities[1].compilerDeadline, [ref]$loomObserverCompilerDeadline) } catch { }
     $live = @()
     $loomObserverSlot = 0
     foreach ($identity in $r.identities) {
       $loomObserverStage = 'lookup'
       $loomObserverOutcome = 'argument'
+      $loomLookupBefore = Get-LoomLookupRemaining
+      $loomLookupAfter = '_'
       try {
-        $p = [Diagnostics.Process]::GetProcessById([int]$identity.pid)
+        try { $p = [Diagnostics.Process]::GetProcessById([int]$identity.pid) }
+        finally { $loomLookupAfter = Get-LoomLookupRemaining }
         $loomObserverStage = 'exited'
         if (-not $p.HasExited) {
           $loomObserverStage = 'started'
@@ -315,7 +347,7 @@ function exactProcesses(identities, kill = false) {
           } else { $loomObserverOutcome = 'mismatch' }
         } else { $loomObserverOutcome = 'exited' }
       } catch [ArgumentException] { $loomObserverOutcome = 'argument' } catch [InvalidOperationException] { $loomObserverOutcome = 'invalid' }
-      Write-LoomObserverFrame ('s:' + $loomObserverSlot + ':' + $loomObserverStage + ':' + $loomObserverOutcome)
+      Write-LoomObserverFrame ('s:' + $loomObserverSlot + ':' + $loomObserverStage + ':' + $loomObserverOutcome) $loomLookupBefore $loomLookupAfter
       $loomObserverSlot++
     }
     try { [Console]::Error.WriteLine('LWO1:observed'); [Console]::Error.Flush() } catch { }
@@ -530,6 +562,10 @@ if (process.platform === "win32") {
       });
       observation.receiptRemainingMs = Math.max(-60000, Math.min(60000, observation.deadline - Date.now()));
       observation.receiptElapsedMs = Math.min(60000, Math.round(performance.now() - observation.started));
+      observation.compilerDeadline =
+        Number.isSafeInteger(receipt.compilerDeadline) && receipt.compilerDeadline > 0
+          ? receipt.compilerDeadline
+          : null;
       stage = "receipt-schema";
       clearTimeout(timer);
       for (const identity of [receipt, receipt.guardian]) {
