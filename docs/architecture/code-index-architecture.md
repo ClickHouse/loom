@@ -489,8 +489,9 @@ line span, with a bounded row count. An unchanged chunk's introduction commit ma
 differ from its neighbors; it does not establish the current file revision. This read
 follows live-row publication and does not provide a snapshot across an indexing pass.
 A compiler declaration alone does not establish a larger function body.
-Hydration reads the configured embedding label directly without constructing an
-embedder. Missing provider credentials do not select a fake label's source chunks.
+Hydration and indexing share provider-free label canonicalization, including explicit
+local and fake provider overrides. Hydration constructs no embedder, and missing
+provider credentials do not select a fake label's source chunks.
 
 If the retained span cannot be established, exceeds 12,000 characters or needs more
 than 400 chunk rows, the definition carries `elided: true`, `granularity: card` and a
