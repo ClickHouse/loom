@@ -8,7 +8,7 @@ Steps 1 to 4 are the design's, as cells.md numbers them:
 
 - the directory row: on `serving` it is done (exit 0) once the connected authority and
   configured cell and bucket match the registration and the cell reads `enforced`;
-- the refusals, before any write: the stores are the registered ones, the session is
+- the attach preconditions: the stores are the registered ones, the session is
   direct and marked, the cell's processes (their heartbeats), the roles, settings and
   subscriptions that would let an unchecked writer through, the ClickHouse writers, the
   table list, durability, attach's own grants;
@@ -24,7 +24,8 @@ Steps 1 to 4 are the design's, as cells.md numbers them:
   placements (`attach/place`), the final checks and `attach/serving`.
 
 `--wait` bounds the waits in wall time, `--scan-budget` each full scan. `--dry-run` runs
-the refusals and the scan and prints what would be placed, writing nothing.
+the refusals and the scan and prints what would be placed. Participant enrollment and
+retirement are recorded; cell state, tenancy triggers and placements remain unchanged.
 """
 
 from __future__ import annotations
