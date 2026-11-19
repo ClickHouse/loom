@@ -29,7 +29,7 @@ import math
 import time
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from server.core import readiness
 from server.llm import customer
@@ -302,6 +302,8 @@ async def calibrate_embedder(
     paraphrase_pairs: list[tuple[str, str]] | None = None,
     distractor_pairs: list[tuple[str, str]] | None = None,
     question_fact_pairs: list[tuple[str, str]] | None = None,
+    *,
+    paraphrase_pair_purpose: Literal["document_document", "query_document"] = "document_document",
 ) -> CalibrationResult | None:
     """Probe the configured embedder and compute percentile-based
     thresholds. Returns None on probe failure (gates fall through to
@@ -311,7 +313,9 @@ async def calibrate_embedder(
     per-namespace operator-shipped corpus. The operator corpus carries
     only similar/distractor pairs, so per-NS probes keep the module
     question→fact corpus — the question-vs-fact register gap is a
-    property of the embedder, not the domain vocabulary.
+    property of the embedder, not the domain vocabulary. Ordinary memory
+    paraphrases use document/document vectors. Code calibration explicitly
+    supplies query/document positives for both positive distributions.
     """
     from server.embedding.embedder import get_embedder
 
@@ -355,7 +359,9 @@ async def calibrate_embedder(
         return _cosine(va, vb)
 
     try:
-        similar_cosines = await asyncio.gather(*(_embed_pair(a, b, query=False) for a, b in para))
+        similar_cosines = await asyncio.gather(
+            *(_embed_pair(a, b, query=paraphrase_pair_purpose == "query_document") for a, b in para)
+        )
         question_fact_cosines = await asyncio.gather(
             *(_embed_pair(a, b, query=True) for a, b in qf)
         )

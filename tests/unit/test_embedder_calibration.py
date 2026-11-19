@@ -11,8 +11,11 @@ and never skip.
 
 from __future__ import annotations
 
+import json
 import math
 import random
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -182,6 +185,56 @@ async def test_probe_matches_document_pairs_and_query_document_pairs(monkeypatch
     assert result.distractor_p90 == pytest.approx(0.0)
     assert queries == ["question", "unrelated query"]
     assert documents == ["statement one", "statement two", "answer", "distractor"]
+
+
+async def test_code_calibrate_persists_query_document_positive_gates(monkeypatch, tmp_path):
+    from server.code.api.models_ingest import CodeCalibrateInput
+    from server.code.app import admin
+
+    positives = [0.50, 0.55, 0.60, 0.65, 0.70]
+    distractors = [0.05, 0.10, 0.15, 0.20, 0.25]
+    probes = [
+        {"query": f"query{i}", "positive": f"code{i}", "distractor": f"other{i}"}
+        for i in range(len(positives))
+    ]
+    corpus = tmp_path / "probes.jsonl"
+    corpus.write_text("\n".join(json.dumps(probe) for probe in probes))
+    documents = {
+        **{f"query{i}": [0.0, 1.0, 0.0] for i in range(len(positives))},
+        **{f"code{i}": _unit_vec(cosine) for i, cosine in enumerate(positives)},
+        **{f"other{i}": _unit_vec(cosine) for i, cosine in enumerate(distractors)},
+    }
+
+    class Asymmetric:
+        model_name = "asymmetric-code-test"
+
+        async def embed(self, text):
+            return [1.0, 0.0, 0.0]
+
+        async def embed_many(self, texts):
+            return [documents[text] for text in texts]
+
+    insert = AsyncMock()
+    monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(insert=insert))
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", Asymmetric)
+    monkeypatch.setattr(admin, "_PROBES_PATH", corpus)
+    monkeypatch.setattr(admin, "require_code_intel", lambda: None)
+    monkeypatch.setattr(admin, "resolve_code_identity", lambda *args: ("org", "team"))
+    result = await admin.handle_code_calibrate(CodeCalibrateInput())
+    insert.assert_awaited_once()
+    table, rows = insert.call_args.args
+    assert table == "loom.namespace_calibration_result"
+    row = rows[0]
+    assert (row["org"], row["namespace"]) == ("org", "team")
+    assert row["conflict_threshold"] == pytest.approx(0.60)
+    assert row["duplicate_threshold"] == pytest.approx(0.65)
+    assert row["similar_p50"] == pytest.approx(0.60)
+    assert row["similar_p75"] == pytest.approx(0.65)
+    assert row["noise_floor"] == pytest.approx(0.25)
+    assert row["abstain_threshold"] == pytest.approx(0.30)
+    assert result.noise_floor == pytest.approx(row["noise_floor"])
+    assert result.abstain_threshold == pytest.approx(row["abstain_threshold"])
+    assert (result.positives, result.distractors) == (5, 5)
 
 
 async def test_probe_end_to_end_with_stub_embedder(monkeypatch) -> None:

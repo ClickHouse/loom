@@ -121,7 +121,10 @@ A cosine of 0.4 means different things to different embedders. The search gates
 With `LOOM_ADAPTIVE_THRESHOLDS` on (the default), `calibrate_embedder` in
 `server/memory/app/embedder_calibration.py` derives them at boot. It embeds three built-in
 corpora (paraphrase pairs, question-to-fact pairs, distractor pairs) and reads their
-cosine distributions (`derive_thresholds`):
+cosine distributions (`derive_thresholds`). Memory paraphrases use document/document
+vectors; question/fact and distractor pairs use query/document vectors. `code.calibrate`
+explicitly uses query/document vectors for its authored query/code positives in both
+positive distributions, including the persisted conflict and duplicate gates:
 
 | Threshold     | Derived as                                 |
 | ------------- | ------------------------------------------ |
