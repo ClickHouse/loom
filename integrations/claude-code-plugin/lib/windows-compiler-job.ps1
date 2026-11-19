@@ -201,6 +201,10 @@ function Invoke-LoomCompilerProcess([type]$native, [IntPtr]$job, [long]$deadline
             $compilerLog = [IntPtr]::Zero
             Write-LoomProtectionPhase 'compiler-closed'
             Write-LoomCompilerCodes $compilerLogPath
+            if ($null -ne $observe) {
+                try { & $observe $process $pidValue $compilerLogPath }
+                catch { } # Failure observation must not replace refusal or cleanup.
+            }
             throw 'Unavailable'
         }
     } finally {

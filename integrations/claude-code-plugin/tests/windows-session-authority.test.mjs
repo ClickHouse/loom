@@ -108,6 +108,7 @@ function nativePhaseTrail(child) {
     "compiler-scanned",
     "compiler-bytes",
     "compiler-format",
+    "compiler-operand",
     "compiler-stop",
     "compiler-query",
     "compiler-close",
@@ -150,6 +151,7 @@ function nativePhaseTrail(child) {
         code <= 2147483647 &&
         (match[1] !== "compiler-bytes" || (code >= 0 && code <= 8192)) &&
         (match[1] !== "compiler-format" || (code >= 0 && code <= 6)) &&
+        (match[1] !== "compiler-operand" || code === 0 || code === 1) &&
         (!["root-entry", "root-flushed"].includes(match[1]) || code === 0)
       ) {
         if (frames.length === 24) frames.shift();
