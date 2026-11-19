@@ -16,6 +16,8 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 | Plugin hooks                                    | `integrations/*/tests/*.test.mjs`                                    | Node                                                                          | `node --test integrations/claude-code-plugin/tests/*.test.mjs` | `agent-plugins`                                                |
 | Python SDK adapters whose framework is an extra | `sdk/python/tests/`                                                  | `uv`; installs each adapter extra in its own venv under `.venv-sdk-adapters/` | `make test-sdk-adapters`                                       | `sdk-python-adapters`                                          |
 | TypeScript SDK                                  | `sdk/typescript/`                                                    | Node                                                                          | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                                               |
+| Rust SDK                                        | `sdk/rust/`                                                          | Rust and Cargo                                                                | `cargo test --manifest-path sdk/rust/Cargo.toml`               | `sdk-rust`, Rust 1.84.1 and stable                             |
+| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | none                                                           |
 | Benchmarks and gates                            | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                                              | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)                                |
 
 **Why benchmarks stay out of CI.** CI runs with `LOOM_EMBEDDING_MODEL=fake-ngram-1024`
@@ -231,6 +233,7 @@ repository access (`permissions: contents: read`).
 | `integration-postgres` | the memory, knowledge, isolation, idempotency, erasure and restored-id suites and the auth-on gates against a server with `LOOM_STORAGE_AUTHORITY=postgres`, on Postgres 16 and 18 with a synchronous standby ([Postgres](../operations/postgres.md))                                                                                                                                        |
 | `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being `HEAD~1`: on a pull request the first parent of its merge commit, the branch it targets as the merge was made, and on a push the previous commit                                                                                                                                                |
 | `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                                                                                                                                |
+| `sdk-rust`             | dependency resolution with Rust-version fallback, `cargo fmt --check`, `cargo test --locked` (response, HTTP contract and documentation tests), `cargo clippy --locked --all-targets -- -D warnings`, `cargo doc --locked --no-deps` with warnings refused, `cargo package --locked` and packaged license verification; Rust 1.84.1 and stable                                               |
 | `sdk-python-adapters`  | `make test-sdk-adapters`: for each adapter whose framework is an SDK extra, in a venv of its own with that framework, outside `uv.lock`, its tests and `mypy --strict` on its module and on the adapters that need no extra (`__init__.py`, `langgraph.py`, `strands.py`); on Python 3.12, and on 3.11 with every direct requirement (the SDK's own, the extra's, pytest) at its lower bound |
 | `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`, on Python 3.11, 3.12 and 3.14, plus 3.11 and 3.14 with every declared dependency at its lower bound                                                                                                                                                                                 |
 
@@ -254,12 +257,12 @@ paths it leaves out, and why, are in the workflow's header.
 weekly and on demand. It publishes the score the README badge shows and adds the findings
 to code scanning; it does not run on pull requests and blocks no merge.
 
-`.github/workflows/docs-site.yml` builds the documentation site with `mkdocs build
---strict` on pull requests into `main` that touch `docs/`, `mkdocs.yml`,
-`scripts/docs_site/`, `scripts/codegen/page_summary.py` or the workflow itself, and on
-every push to `main`, so a broken link or anchor fails the `docs site / build` check. It
-publishes the site to GitHub Pages from `main` only while the repository variable
-`DOCS_SITE_ENABLED` is `true`.
+`.github/workflows/docs-site.yml` builds the documentation site with `mkdocs build --strict`
+on pull requests into `main` that touch `docs/`, `mkdocs.yml`, `llms.txt`,
+`llms-install.md`, `scripts/docs_site/`, `scripts/codegen/page_summary.py` or the workflow
+itself, and on every push to `main`, so a broken link or anchor fails the
+`docs site / build` check. It publishes the site to GitHub Pages from `main` only while the
+repository variable `DOCS_SITE_ENABLED` is `true`.
 
 A pull request stacked on another branch gets no checks until it is retargeted to `main` or
 a `release/X.Y` line, and a pull request with a merge conflict gets none either: "no checks

@@ -432,7 +432,8 @@ time, each with one org, and placement already bounds them. The cell's own row i
 `loom.cell_self` holds an accepted fingerprint, `current`, and during a change a second,
 `next`. Its rows, and the cell heartbeat (`loom.cell_heartbeats`, keyed by the process's
 `loom.instances` row and written with it, since a KeeperMap table takes no new column:
-the `LOOM_CELL` it runs with, the mode it last read and its fingerprint), hold no memory
+the `LOOM_CELL` it runs with, the state its last read makes, its fingerprint and
+[the keys beside it](#the-heartbeats-keys)), hold no memory
 content and are classified so for erasure. A process matches a value when every field
 both know is equal, a field the value lacks counting as equal only at its default, so
 builds N and N+1 with the same configuration match one row. With `LOOM_CELL` set, while
@@ -501,6 +502,80 @@ A new SCIM token changes no fingerprint and needs no `loom cell update`. A cell 
 its identity provider application as a single deployment does ([SSO and
 SCIM](../operations/sso.md)), with the same limits; nothing in that is particular to
 cells.
+
+### The heartbeat's keys
+
+A process's cell heartbeat reports, beside the `LOOM_CELL` it runs with, its tenancy mode:
+the state its last read of the state rows makes (`open`, `recording`, `enforced` or
+`partial`, a later cell's `recording` read as `enforced`), and `''` only before a read lands
+or in a process that never reads them. Its `fingerprint` JSON holds the fingerprint's
+version and fields, and beside them keys that no fingerprint compares: they are never in
+`loom.cell_self`, the directory's fingerprints or a placement body, and a KeeperMap row
+needs no column for them (`server.core.instances.cell_row`). Their presence proves the build
+that reports them; there is no generation key.
+
+- `serves`: `LOOM_SERVES_TRAFFIC`.
+- `marked`: whether this process's pooled Postgres sessions keep the tenancy marker
+  (`loom.tenancy_checked`). The cell refresh reads it with the state rows, after `RESET ALL`
+  in the same transaction: a startup value survives the reset, a `SET` does not, so a
+  pooler, which a cell must not have ([Postgres](../operations/postgres.md)), reads unmarked
+  whether it strips startup parameters or sends them again with `SET`, and the read runs on
+  the server connection the reset ran on. It costs three round trips more per refresh
+  (`BEGIN`, `RESET ALL` and `COMMIT`), and every process reports a fresh value with no
+  prober. A session the pooler stripped, or a process with `LOOM_CELL` unset under the
+  Postgres authority, reads `false`; `null` means only that no read has landed (a boot with
+  skipped Postgres migrations whose first read failed, or the ClickHouse authority, where
+  nothing is read). The `cell_marker` readiness check of a process with `LOOM_CELL` set
+  reads the same value: it fails in `enforced` and `partial`, where the triggers refuse an
+  unmarked session's writes for an org the cell does not hold and the tenancy row of each
+  newly placed org, and passes with a warning in `recording`, so a first cell behind such a
+  pooler does not stall its rollout before attach, which refuses the process
+  ([troubleshooting](../operations/troubleshooting.md#the-cell_marker-readiness-check-names-the-tenancy-marker)).
+- `router` and `router_why`: with `LOOM_CELL` set, `router` is `null` and `router_why` names
+  why until the `first` row is read, and then both are present on a first cell only (a later
+  cell's state route answers 404, so it neither asks nor reports them). `router` is whether
+  this process's last read of `GET /cells/v1/cells/<cell>` with its own credential answered
+  200 naming the cell: `null` until the first read answers (still booting), `true` on such
+  an answer, and `false` for a configuration that never works: a router setting unset (the
+  process never asks), a URL that cannot be requested, a 404, an answer for another cell, or
+  a 401 that persists past one `LOOM_ROUTER_DIRECTORY_CACHE_S`. That is the router's
+  setting, which the cell's processes carry too: a router replica's cached credential hashes
+  answer 401 for a token rotated a moment ago, so until then the last value stands and
+  `router_why` reads "401, possibly a rotation" (a router run with a longer cache can make
+  attach refuse during a rotation; a rerun clears it). A transient failure (a timeout, a
+  connect error, a 503, a 200 that is not a JSON object naming the cell) keeps the last
+  value, and while `router` is `null` `router_why` names the last such cause.
+
+One background reader per server process asks the route every
+`min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)` on a first cell until it
+has read `serving` (`server/core/cell_router.py`); nothing awaits it, so a slow router
+delays no beat and no request, and the beat reports what it last read, at most one period
+plus `LOOM_CELL_ROUTER_TIMEOUT_S` old when a beat writes it. Every uvicorn process runs one,
+so a thousand pods of eight workers ask up to 1,600 times a second. Each router replica
+answers the route from its own read of the cell's row, made at most once per
+`LOOM_ROUTER_DIRECTORY_CACHE_S`, so the directory sees one read per replica per window; a
+failed read answers 503 for its window, so a down directory is asked no more often and still
+answers 503. A process with no heartbeat (a CLI, the workers child) asks on demand instead,
+at most once every `LOOM_TENANCY_MODE_CACHE_S`.
+
+The reader keeps the directory's last answer for the tenancy check too, as one of four:
+`attaching`, `serving`, another state, or unknown while no read has landed, the last one
+failed, answered for no state of this cell (a 401, a 404, or an answer for another cell), or
+is late (older than the period this process reads at, the background reader's or the
+on-demand window, plus `LOOM_CELL_ROUTER_TIMEOUT_S`). Once a process has read `serving` it
+keeps that for its life and asks no more: only `loom cell restore` lowers it, and that
+restarts the processes. A first cell in `recording` records a new org only on `attaching`. A
+platform or `*`-org principal, or a call with no principal, places no org: on a first cell
+whose directory answers `attaching`, or cannot be read before it has read `serving`, such a
+call for an org the cell does not hold answers 503 ("attach in progress" or the directory
+unreadable), since the org's data may be in this cell until attach places it; once
+`serving`, and on a later cell, it answers 409 `WRONG_CELL`. A process booting after
+`serving` while the router is down answers those calls 503 until its first read lands.
+
+With `LOOM_CELL` set, a non-empty `LOOM_CELL_ROUTER_URL` that is not an http(s) URL with a
+host, a port at most 65535 and no `?` or `#` refuses the boot (`cell.settings_problem`); an
+empty one is allowed, for workers-only pods (`LOOM_SERVES_TRAFFIC=false`), whose heartbeat
+then reports `router` as `false` with the unset settings in `router_why`, logging nothing.
 
 ## The tenancy check and placement
 
@@ -611,10 +686,10 @@ primary alone. The attach command fixes those timeouts, and its tests cover each
 these cases. The mode cache reads the mode with a plain `SELECT`, which takes no row
 lock and never waits on attach. An insert that finds `enforced` (a process whose cache
 still reads `recording`) writes nothing: the request goes on to the placement call as in
-`enforced`, and a CLI command refuses as in `enforced`, naming `loom cell place`. A
-process whose cache still reads `enforced` after step 3 or step 4 returns the cell to
-`recording` places through the router's gate until its cache expires. `loom doctor`
-lists any tenancy row the directory does not place.
+`enforced`, and a CLI command refuses as in `enforced`, naming the org. A process whose
+cache still reads `enforced` after step 3 or step 4 returns the cell to `recording` places
+through the router's gate until its cache expires.
+`loom doctor` lists any tenancy row the directory does not place.
 
 - **It runs after verification, before anything is written for the org.** The op gate
   (`gates.authorize`) checks the org the transport resolves (`gates.resolve_org`, with
@@ -772,12 +847,13 @@ lists any tenancy row the directory does not place.
   one path by which a request brings an org to a cell, whatever created it: a mint, a
   gateway's or a federated issuer's token, an end-user issuer's `prefix*` org, a bot. A
   `*`-org or platform principal acts only in orgs the cell already holds and never
-  places one. For an org the directory does not place yet, the router accepts a
-  placement call only from a `serving` cell (or from the first cell while `attaching`
-  once the directory records `enforced`, which attach step 3 writes before it sets the
-  cell's mode), and only with the calling process's configuration fingerprint, whose
-  fields must match a value of the cell's directory row; a prepared cell's row holds no
-  issuers or org patterns until attach writes them. A failed call, one unanswered within
+  places one (on a first cell before `serving`, see [the heartbeat's
+  keys](#the-heartbeats-keys)). For an org the directory does not place yet, the router
+  accepts a placement call only from a `serving` cell (or from the first cell while
+  `attaching` once the directory records `enforced`, which attach step 3 writes before it
+  sets the cell's mode), and only with the calling process's configuration fingerprint,
+  whose fields must match a value of the cell's directory row; a prepared cell's row holds
+  no issuers or org patterns until attach writes them. A failed call, one unanswered within
   `LOOM_CELL_ROUTER_TIMEOUT_S`, a cell not yet attached or closed to new orgs, or a
   fingerprint that matches neither value answers 503 and writes nothing; a retry is
   safe, since the read-back makes it idempotent. For an org the directory already
@@ -1012,12 +1088,12 @@ deployment, as before the rollout) until that rerun of `loom cell prepare`, whic
 step right after it starts.
 
 A cell's readiness never waits for the directory, so an outage of it holds no cell's
-rollout. A process that reads `recording` records a new org only while the directory
-answers that its cell is `attaching` (read at most every `LOOM_TENANCY_MODE_CACHE_S`);
-while the directory is unreadable or marks the cell `serving`, a new org answers 503 and
-the orgs the cell holds keep serving. A restore to before the first attach's step 3
-whose `loom cell restore` was skipped therefore serves no org it does not hold;
-`loom doctor` names such a cell, and `loom cell restore` raises its mode.
+rollout. A process that reads `recording` records a new org only while the directory answers
+that its cell is `attaching` ([the heartbeat's keys](#the-heartbeats-keys)); while the
+directory is unreadable or marks the cell `serving`, a new org answers 503 and the orgs the
+cell holds keep serving. A restore to before the first attach's step 3 whose
+`loom cell restore` was skipped therefore serves no org it does not hold; `loom doctor`
+names such a cell, and `loom cell restore` raises its mode.
 
 **The directory is a highly available store.** Its Postgres runs with a synchronous
 standby and point-in-time recovery to its last commit, as a cell's does, so a failover
@@ -1136,6 +1212,8 @@ the directory row.
 | No state, tenancy or own row on a cell the directory registers           | open; `loom doctor` names it; `loom cell restore` closes it after a restore, a prepare rerun after a stopped prepare                                                                                                                                                                                                                                                                                                                 |
 | A cell's `first` value is not yet read                                   | every request but health probes and the probe route answers 503 (SCIM with `Retry-After`); the process is unready and runs no worker (a workers child, or a server process with Postgres migrations pending; any other server process fails its boot)                                                                                                                                                                                |
 | A request for another cell's org                                         | 409 `WRONG_CELL` after verification, nothing written                                                                                                                                                                                                                                                                                                                                                                                 |
+| A platform, `*`-org or principal-less call for an unheld org             | on a first cell, 503 while the directory answers `attaching` or cannot be read before a `serving` answer; 409 `WRONG_CELL` once `serving` and on a later cell                                                                                                                                                                                                                                                                        |
+| A pooler that strips the tenancy marker from a cell's sessions           | the `cell_marker` readiness check fails in `enforced` and `partial` and warns in `recording`; the heartbeat reports `marked` false and attach refuses the process                                                                                                                                                                                                                                                                    |
 | A cell restored to an earlier time                                       | `loom cell restore` writes placed orgs' rows back before it starts                                                                                                                                                                                                                                                                                                                                                                   |
 | A first cell restored to before its prepare, not yet attached            | at processes with `LOOM_CELL` set, every request but health probes and the probe route answers 503 until prepare reruns                                                                                                                                                                                                                                                                                                              |
 | The directory lost                                                       | every cell serves the orgs it holds; placements and uncached lookups answer 503, directory commands refuse, until it is back                                                                                                                                                                                                                                                                                                         |
@@ -1165,7 +1243,16 @@ row's rule). With `LOOM_CELL` unset a process reads only the mode and `first` ro
 whether a tenancy or own row exists, and only under the Postgres authority, where a
 deployment never prepared has none (the tables are created empty), so builds N-1 and N
 serve side by side unchanged. The router routes by host, issuer and the first cell,
-never by a cell's ops, so a cell's release does not wait on the router's.
+never by a cell's ops, so a cell's release does not wait on the router's, but for the one
+the next paragraph names.
+
+The keys beside a heartbeat's fingerprint ([the heartbeat's keys](#the-heartbeats-keys)) are
+the attach release's own heartbeat keys: a build before them reads only a fingerprint's
+version and fields, so it takes a newer build's heartbeat as it is, and attach refuses a
+process that reports none. That release waits on the routers': every router replica runs it
+before any cell's processes do, since a prepared first cell asks the state route from its
+first cell-state read until it reads `serving`, and only a router of that release answers it
+from its cache ([upgrades](../operations/upgrades.md#upgrade-procedure)).
 
 ## Invariants
 
@@ -1232,14 +1319,14 @@ never by a cell's ops, so a cell's release does not wait on the router's.
   the routes that name an org; `server/transport/tenancy_gate.py` checks the token's own
   org on the routes outside the registry that act in it, and
   `tests/unit/test_cell_tenancy.py` holds the census of every route;
-- `server/router/app.py` (`loom router serve`): the placement API, the first cell's
-  state read (which `server.auth.tenancy.directory_says_attaching` makes in
-  `recording`), routing by rules 1 to 4 (`server/router/routing.py`, which decides, and
-  the forward), the org lookup with its cache of placed orgs (which `loom login --org`,
-  `loom.credentials.org_server`, asks), their rate limits (`server/router/limits.py`)
-  and the checks a placement passes; its operator API, with the first cell's attach routes,
-  which `loom cell limit`, `loom cell credential` and `loom cell remove`
-  (`server/cli/cell.py`, with `loom cell which`) call with the router's operator credential
+- `server/router/app.py` (`loom router serve`): the placement API, the first cell's state
+  read (which `server/core/cell_router.py` makes on a first cell), routing by rules 1 to 4
+  (`server/router/routing.py`, which decides, and the forward), the org lookup with its
+  cache of placed orgs (which `loom login --org`, `loom.credentials.org_server`, asks),
+  their rate limits (`server/router/limits.py`) and the checks a placement passes; its
+  operator API, with the first cell's attach routes, which `loom cell limit`,
+  `loom cell credential` and `loom cell remove` (`server/cli/cell.py`, with
+  `loom cell which`) call with the router's operator credential
   (`LOOM_ROUTER_OPERATOR_TOKEN`; the router keeps only `LOOM_ROUTER_OPERATOR_SHA256`);
   `server/router/directory.py` and `schemas/router_migrations/`: the directory, in the
   router's own Postgres database (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
@@ -1251,8 +1338,8 @@ builds on:
   runs first;
 - `server/auth/scim.py` (`tokens`) and `server/auth/scim_routes.py`
   (`scim_settings_problem`, `_authorized`): the SCIM token parser and checks;
-- `server/core/instances.py`: the heartbeat that reports mode, fingerprint and
-  `LOOM_CELL`;
+- `server/core/instances.py`: the heartbeat that reports mode, fingerprint, `LOOM_CELL` and
+  the keys beside the fingerprint;
 - `server/workers/leader.py`: the lease a gated process stands aside from;
 - `server/core/pg.py` (`same_deployment`): the deployment id both stores carry;
 - `server/transport/gates.py` (`resolve_org`, `authorize`): where the tenancy check
@@ -1328,8 +1415,8 @@ An integration test with two cells and a router in CI's Postgres job:
   2 and `enforced` is placed by step 4 with no 503; after step 3's write of the cell's
   mode, a process whose cache still reads `recording` sends a new org's request to the
   placement call, which a closed cell answers 503; a CLI command whose insert finds
-  `enforced` refuses, naming `loom cell place`, and makes no placement call; after step
-  3's refused wait or step 4's recheck returns the cell to `recording`, a new org is
+  `enforced` refuses, naming the org, and makes no placement call; after step 3's
+  refused wait or step 4's recheck returns the cell to `recording`, a new org is
   recorded with no placement call, and one at a process whose cache still reads
   `enforced` places through the gate until the cache expires; each ordering of attach's
   write of the mode with a recording insert holds as stated above (running, starting

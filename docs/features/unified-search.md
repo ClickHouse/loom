@@ -1,7 +1,7 @@
 # Unified search and context packs
 
-`loom_search` searches memory, profile, knowledge and past conversations across the caller's namespaces in one round
-trip. `context.pack` builds the bounded bundle an agent loads at the start of a task. This page covers how they combine
+`loom_search` searches memory, profile, knowledge, past conversations and readable issues and PRs across the
+caller's namespaces in one round trip. `context.pack` builds the bounded bundle an agent loads at the start of a task. This page covers how they combine
 the per-plane searches. How each plane ranks is on its own page: [search and ask](./memory/search-and-ask.md),
 [knowledge](./knowledge.md), [conversations](./conversations-and-sessions.md).
 
@@ -18,7 +18,7 @@ flowchart LR
   NS --> K["knowledge.search (+ the scoped repository's docs)"]
   NS --> P["profile sections (words, then meaning)"]
   NS --> C["conversation.search"]
-  Q --> T["tracker duplicate check (defect-shaped query under a code scope)"]
+  Q --> T["tracker search (duplicate verdict for scoped defect reports)"]
   M --> F["floors and home-fact-first"]
   K --> F
   P --> F
@@ -27,37 +27,65 @@ flowchart LR
   F --> R["one response: tracker?, memory, knowledge, profile, conversations"]
 ```
 
-| Leg           | What runs                                                                                                                                                                                                                                                                                                                            | Kept when                                                                       |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| Memory        | `memory.search` over every author with `render="reader"`, `paging=true`, `quality_filter=true`; under a code scope also the `decision` memories in the scoped repository's trunk code namespace, when the caller may read it (1.5 s bound).                                                                                          | The hit clears the precision floor (below).                                     |
-| Knowledge     | `knowledge.search`; under a code scope also the scoped repository's docs (1.5 s bound). Leaves out rules promoted for another agent (tagged `agent:<other>`); see [extraction](./memory/extraction.md#rules-the-assistant-states-about-itself). A [noise section](./knowledge.md#searching) ranks below the hits close to the query. | Similarity ≥ `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY` (0.30).            |
-| Profile       | Profile sections in scope, matched by words, then by cosine against `label` + value.                                                                                                                                                                                                                                                 | A word match, or cosine ≥ `LOOM_MCP_LOOM_SEARCH_PROFILE_MIN_SIMILARITY` (0.38). |
-| Conversations | `conversation.search` over every author.                                                                                                                                                                                                                                                                                             | Cosine ≥ `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` (0.30).                      |
-| Tracker       | For a defect-shaped query (stack frame, error code, "already reported?") from an indexed checkout (`X-Loom-Code-Scope`), the tracker duplicate check (3 s).                                                                                                                                                                          | Its verdict leads the answer.                                                   |
+| Leg           | What runs                                                                                                                                                                                                                                                                                                                            | Kept when                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Memory        | `memory.search` over every author with `render="reader"`, `paging=true`, `quality_filter=true`; under a code scope also the `decision` memories in the scoped repository's trunk code namespace, when the caller may read it (1.5 s bound).                                                                                          | The hit clears the precision floor (below).                                              |
+| Knowledge     | `knowledge.search`; under a code scope also the scoped repository's docs (1.5 s bound). Leaves out rules promoted for another agent (tagged `agent:<other>`); see [extraction](./memory/extraction.md#rules-the-assistant-states-about-itself). A [noise section](./knowledge.md#searching) ranks below the hits close to the query. | Similarity ≥ `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY` (0.30).                     |
+| Profile       | Profile sections in scope, matched by words, then by cosine against `label` + value.                                                                                                                                                                                                                                                 | A word match, or cosine ≥ `LOOM_MCP_LOOM_SEARCH_PROFILE_MIN_SIMILARITY` (0.38).          |
+| Conversations | `conversation.search` over every author.                                                                                                                                                                                                                                                                                             | Cosine ≥ `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` (0.30).                               |
+| Tracker       | `tracker.similar` over readable tracker namespaces. A defect-shaped query under `X-Loom-Code-Scope` uses the duplicate check. One shared 3 s budget includes namespace discovery.                                                                                                                                                    | General matches cite their issue or PR and tracker namespace; a duplicate verdict leads. |
 
 A leg that fails returns `{"error": ...}` under its own key; the other sections still answer.
 
-| Argument  | Meaning                                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------- |
-| `query`   | Required.                                                                                            |
-| `top_k`   | Default 5, 1–100.                                                                                    |
-| `tags`    | Keep rows carrying any of them; a coding session's rows carry `project:<folder>` and `repo:<id>`.    |
-| `recipe`  | `fast`, `balanced`, `quality`, `verbatim`, `code`, `temporal`, `graph`.                              |
-| `bodies`  | `excerpt` (default, 200 characters; a decision or constraint row as stored), `full`, `unit`, `none`. |
-| `page`    | A `memory.next_page` handle from an earlier response.                                                |
-| `explain` | A `why:` note per memory hit; nothing withheld.                                                      |
+| Argument  | Meaning                                                                                                                                                                     |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`   | Required.                                                                                                                                                                   |
+| `top_k`   | Default 5, 1–100.                                                                                                                                                           |
+| `tags`    | Filter memory and knowledge rows carrying any of them; profile, conversations and tracker search ignore tags. Coding-session rows carry `project:<folder>` and `repo:<id>`. |
+| `recipe`  | `fast`, `balanced`, `quality`, `verbatim`, `code`, `temporal`, `graph`.                                                                                                     |
+| `bodies`  | `excerpt` (default, 200 characters; a decision or constraint row as stored), `full`, `unit`, `none`.                                                                        |
+| `page`    | A `memory.next_page` handle from an earlier response.                                                                                                                       |
+| `explain` | A `why:` note per memory hit; nothing withheld.                                                                                                                             |
+| `live`    | Default false. Add ephemeral hits from the asker's connected Drive and Notion sources on an untagged first-page search.                                                     |
+
+### Live connected sources
+
+`live=true` searches the asker's own connected registrations with the provider's
+native search: Drive full-text and Notion titles. It requires the existing
+session-protection contract and mirrored-source configuration. Another person's
+registration or a shared ingestion credential is never used for this leg.
+
+The optional `live` section contains at most ten hits marked `live=true`, with
+their provider, identifier, title and URL. Results are returned to the caller and
+never ingested or stored. It has one five-second budget across at most three
+registrations; queries over 1,000 characters, tags and later pages do not run it.
+Timeout or unavailability leaves the indexed sections unchanged. An attempted
+private read still marks the whole response for protected-client handling.
+
+Coverage is bounded: Drive folders contribute direct children, and explicit file
+items do not widen to an account search. Notion checks each page's registered
+ancestry. Native search failure or incomplete coverage is not proof of absence.
+See [live-source search](../architecture/live-source-search.md) for corpus,
+publication and content boundaries.
 
 ### Which namespaces it reads
 
 The tool has no `namespace` argument; the server picks.
 
 - **Fan-out:** the caller's namespaces of the kinds in `LOOM_MEMORY_SEARCH_FANOUT_KINDS` (default `memory`). Code and
-  tracker namespaces are reached by their own tools, never swept, with two exceptions under a code scope
-  (`X-Loom-Code-Scope`): the tracker duplicate check, and the scoped repository's trunk code namespace (its decision
-  memories and its documents), which the memory and knowledge legs read when the caller may read that namespace. A
+  tracker namespaces have separate legs. Tracker search reads up to `LOOM_TRACKER_DUPCHECK_FANOUT_NAMESPACES`
+  readable records (default 4, general-search ceiling 8). Under a code scope (`X-Loom-Code-Scope`), the memory and
+  knowledge legs also read the scoped repository's trunk decisions and documents when authorized. A
   namespace with no recorded kind counts as memory.
 - **Home first:** the caller's own namespace leads, even when the token's first namespace is a teammate's.
-- **Restricted** namespaces stay out unless the caller passes their read check.
+- **Restricted** namespaces stay out unless the caller passes their read check. A restricted tracker requires its
+  live direct grant; standard tracker reads retain `is_private = 0` and repository allowlists. User- or session-scoped
+  reads search no trackers.
+- **Capture consent:** tracker targets are resolved before any parallel leg starts. Prompt capture uses the most
+  restrictive policy across memory, scoped repository and planned tracker namespaces. Execution cannot add targets.
+- **Tracker budget:** general search uses lexical, field, frame and mention matching without embeddings or model
+  calls. No match, failure or timeout leaves the other sections as they were. The result has `mode="search"` and
+  `results` with `namespace`, `kind`, `number`, `title`, `state`, `url` and `score`; it carries no duplicate verdict.
 
 ### What it withholds
 
@@ -74,7 +102,7 @@ block too. `explain=true` keeps everything.
    because rank includes recency and reinforcement boosts. A fact the search ranks down because its code changed
    (moved, or left in place with nothing below it to pass) never leads, even from the top, where another home fact
    within 0.03 of it may lead instead; it withholds nothing, transcript chunks included.
-3. **Tracker verdict first.** When the tracker leg answers, its verdict leads and Loom's own output quoted back in
+3. **Tracker verdict first.** When the tracker leg returns a duplicate-check verdict, that verdict leads and Loom's own output quoted back in
    memory is dropped.
 
 ### Reading the memory section
@@ -126,13 +154,13 @@ conversation hit.`), then the sections with hits, then a clause for anything wit
 `search.query` (viewer, read-only, idempotent) is served at `POST /v1/search.query` and through the SDKs' generic
 call. It is the same search with the identity explicit:
 
-| Difference                    | MCP `loom_search`                                 | `search.query` over HTTP / SDK                                                                               |
-| ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Identity                      | `org` from the token; the server picks namespaces | `org` and `namespace` required; `namespace` is never rewritten                                               |
-| Scope                         | the fan-out above                                 | `namespace_scope`: `all_mine` (default) adds the caller's memory-kind namespaces; `this` is `namespace` only |
-| Result                        | text summary plus the lean structured result      | `memory`, `knowledge`, `profile`, `conversations`, and `tracker` / `withheld` when they fired                |
-| Tracker leg                   | fires under an `X-Loom-Code-Scope` connection     | does not fire: only an MCP connection sets a code scope                                                      |
-| Repository docs and decisions | read under an `X-Loom-Code-Scope` connection      | not read: only an MCP connection sets a code scope                                                           |
+| Difference                    | MCP `loom_search`                                     | `search.query` over HTTP / SDK                                                                                                                        |
+| ----------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity                      | `org` from the token; the server picks namespaces     | `org` and `namespace` required; `namespace` is never rewritten                                                                                        |
+| Scope                         | the fan-out above                                     | `namespace_scope` limits memory, knowledge, profile and conversations: `all_mine` adds readable memory-kind namespaces; `this` reads `namespace` only |
+| Result                        | text summary plus the lean structured result          | `memory`, `knowledge`, `profile`, `conversations`, and `tracker` / `withheld` when they fired                                                         |
+| Tracker leg                   | general matches; duplicate verdict under a code scope | general matches; no code scope is needed                                                                                                              |
+| Repository docs and decisions | read under an `X-Loom-Code-Scope` connection          | not read: only an MCP connection sets a code scope                                                                                                    |
 
 When the fan-out namespaces cannot be resolved, `all_mine` narrows to `namespace`; it never widens. Which namespaces
 count as the caller's, and the cap on how many are read, are in
@@ -233,8 +261,9 @@ The SDK's `Session.offload` / `Session.fetch` wrap the pair for one session.
 
 - **An empty `loom_search` is not "nothing in Loom".** The memory leg may have abstained or rows may have been
   withheld; the text says which.
-- **Code and tracker namespaces are not in the fan-out.** Only the scoped repository's decisions and documents join
-  under a code scope. Otherwise use the code tools, or `memory.search` with that namespace.
+- **Memory fan-out excludes code and tracker namespaces.** The scoped repository's decisions and documents join
+  under a code scope; a separate tracker leg searches authorized tracker records. For code, use the code tools, or
+  `memory.search` with that namespace.
 - **A decision written moments ago may be missing.** The repository's decision search keeps only the up-front
   read-your-writes check (a namespace marked as just written is read with sequential consistency). It runs no re-read
   of its own, and the home search re-reads only the home namespaces, so a decision written through another replica can

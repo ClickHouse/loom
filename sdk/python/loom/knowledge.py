@@ -206,6 +206,7 @@ class KnowledgeClient:
         window_chars: int = 24000,
         max_answer_chars: int = 8000,
         max_windows: int = 64,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """Complete `task` over whole documents by map-reduce and, with `datasets`
         (each `{"source_uri", "dataset_id", "alias"}`, as knowledge.query takes them),
@@ -217,6 +218,7 @@ class KnowledgeClient:
         body: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
+            "user_id": user_id or self._agent.SENTINEL,
             "source_uris": list(source_uris or []),
             "task": task,
             "window_chars": window_chars,
@@ -360,13 +362,17 @@ class KnowledgeClient:
         limit: int = 50,
         cursor: str | None = None,
         namespaces: list[str] | None = None,
+        uri_prefix: list[str] | None = None,
+        fields: list[str] | None = None,
     ) -> dict[str, Any]:
         """Paginated listing of this namespace's documents, or several namespaces' as one.
 
         Returns {"rows": [...], "next_cursor": str | None}; each row names its
         namespace. Walk pages by threading next_cursor back in. `namespaces`
         lists those too (each must be readable). `tags` matches any one of them,
-        in any case; `tags_every=True` needs every one."""
+        in any case; `tags_every=True` needs every one. `uri_prefix` keeps the
+        documents whose `source_uri` starts with one of them (up to 8), and
+        `fields` names the row fields to return."""
         payload = self._scope()
         payload.update(
             {
@@ -381,6 +387,10 @@ class KnowledgeClient:
             payload["cursor"] = cursor
         if namespaces:
             payload["namespaces"] = namespaces
+        if uri_prefix:
+            payload["uri_prefix"] = list(uri_prefix)
+        if fields:
+            payload["fields"] = list(fields)
         return await self._agent.transport.post("/v1/knowledge.list", payload)
 
     async def delete(

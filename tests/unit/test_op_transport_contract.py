@@ -49,9 +49,9 @@ import server.transport.mcp_outcome as mcp_outcome
 from server.auth.jwt import AuthInfo, TokenError
 from server.operations.base import Operation, Role
 from server.operations.registry import ALL_OPERATIONS
+from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.settings import settings
 from server.transport.mcp_config import _LOOM_ACTIVATE_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME
-from server.transport.mcp_op import _MCP_HIDDEN_OPS
 
 ORG = "acme"
 NAMESPACE = "team"
@@ -376,6 +376,22 @@ def test_an_op_kept_off_mcp_is_refused_there_for_every_role(env: _Env) -> None:
                 failures.append(f"{op.name} as {role.name}: isError={out.get('isError')} {code}")
     _report(failures)
     assert env.ran == []
+
+
+def test_the_upload_ops_keep_their_role_floor_where_mcp_serves_them(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`mcp_code_upload_tools` takes the two upload ops off the hidden roster; the gates
+    then hold them as they hold every op on MCP."""
+    monkeypatch.setattr(settings, "mcp_code_upload_tools", True)
+    by_name = {op.name: op for op in ALL_OPERATIONS}
+    ingest, status = by_name["code.scip_ingest"], by_name["code.scip_status"]
+    refused = _mcp(ingest, _body(ingest), Role.VIEWER)["result"]
+    assert refused["isError"] and refused["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
+    assert env.ran == []
+    assert not _mcp(ingest, _body(ingest), Role.WRITER)["result"]["isError"]
+    assert not _mcp(status, _body(status), Role.VIEWER)["result"]["isError"]
+    assert env.ran == ["code.scip_ingest", "code.scip_status"]
 
 
 def test_another_orgs_admin_reaches_no_handler_the_transport_can_check(env: _Env) -> None:

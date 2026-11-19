@@ -23,6 +23,82 @@ async function open(page: Page, path: string) {
 test.describe("1440 px", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  test("counts documents beside their collections and refreshes after a delete", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 1, collections: COLLECTIONS });
+    let deleted = false;
+    let countReads = 0;
+    let releaseCounts = () => {};
+    const countsReady = new Promise<void>((resolve) => {
+      releaseCounts = resolve;
+    });
+    await page.route("**/v1/collection.list", async (route) => {
+      if (route.request().postDataJSON().include_document_counts) countReads++;
+      if (deleted) await countsReady;
+      return route.fulfill({
+        json: {
+          collections: COLLECTIONS.map((c) => ({
+            ...c,
+            document_count: c.namespace === "col-eng" && !deleted ? 1 : 0,
+          })),
+          next_cursor: null,
+        },
+      });
+    });
+    await page.route("**/v1/knowledge.delete", (route) => {
+      deleted = true;
+      return route.fulfill({ json: { tombstoned: true } });
+    });
+    await page.goto("/library?collection=col-eng");
+    const tree = page.getByRole("navigation", { name: "Library places" });
+    await expect(tree.getByTitle("1 document directly in Engineering").locator("[aria-hidden=true]")).toHaveText("1");
+    await expect(tree.getByTitle("0 documents directly in My files").locator("[aria-hidden=true]")).toHaveText("0");
+    await expect(tree.getByTitle("0 documents directly in Runbooks").locator("[aria-hidden=true]")).toHaveText("0");
+    await page.screenshot({ path: "test-results/library-document-counts.png", fullPage: true });
+    const row = page.locator("main [data-doc-row]").first();
+    await row.getByRole("button", { name: /^Actions for / }).click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(tree.getByTitle("Updating document count for Engineering")).toBeVisible();
+    await page.screenshot({ path: "test-results/library-document-counts-refreshing.png", fullPage: true });
+    releaseCounts();
+    await expect(tree.getByTitle("0 documents directly in Engineering").locator("[aria-hidden=true]")).toHaveText("0");
+    expect(countReads).toBeGreaterThanOrEqual(2);
+    expect(await violations(page)).toEqual([]);
+  });
+
+  test("keeps unavailable counts distinct from zero and offers retry after a failed refresh", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 1, collections: COLLECTIONS });
+    let failCounts = false;
+    await page.route("**/v1/collection.list", (route) =>
+      failCounts
+        ? route.fulfill({ status: 503, json: { detail: { code: "BACKEND_UNAVAILABLE", message: "Try again" } } })
+        : route.fulfill({
+            json: { collections: COLLECTIONS, next_cursor: null, ignored_args: ["include_document_counts"] },
+          }),
+    );
+    await page.route("**/v1/knowledge.delete", (route) => {
+      failCounts = true;
+      return route.fulfill({ json: { tombstoned: true } });
+    });
+    await page.goto("/library?collection=col-eng");
+    const tree = page.getByRole("navigation", { name: "Library places" });
+    const count = tree.getByTitle("Document count unavailable for Engineering").locator("[aria-hidden=true]");
+    await expect(count).toHaveText("—");
+    await page.screenshot({ path: "test-results/library-document-counts-unknown.png", fullPage: true });
+    await page
+      .locator("main [data-doc-row]")
+      .first()
+      .getByRole("button", { name: /^Actions for / })
+      .click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(page.getByText("Couldn't refresh collections:", { exact: false })).toBeVisible();
+    await expect(count).toHaveText("—");
+    await expect(page.getByRole("button", { name: "Load collections again" })).toBeVisible();
+    await page.screenshot({ path: "test-results/library-document-counts-error.png", fullPage: true });
+    expect(await violations(page)).toEqual([]);
+  });
+
   test("the tree lists the places and opens one; the select steps aside", async ({ page }) => {
     await open(page, "/library");
     const tree = page.getByRole("navigation", { name: "Library places" });
@@ -170,13 +246,27 @@ test.describe("1440 px under a reload bar", () => {
     await installApi(page, { knowledgeRows: 2, collections: many });
     // The server's build changes after the page booted: the reload bar shows above the header.
     let build = "aaaaaaaaa1";
-    await page.route("**/v1/health", (route) => route.fulfill({ json: { status: "ok", build_commit: build } }));
+    let finishJump!: () => void;
+    const jumped = new Promise<void>((resolve) => {
+      finishJump = resolve;
+    });
+    await page.route("**/v1/health", async (route) => {
+      const atRequest = build;
+      if (atRequest === "bbbbbbbbb2") await jumped;
+      await route.fulfill({ json: { status: "ok", build_commit: atRequest } });
+    });
+    const initialHealth = page.waitForResponse("**/v1/health");
     await page.goto("/library");
+    await (await initialHealth).finished();
     const tree = page.getByRole("navigation", { name: "Library places" });
     await expect(tree.getByRole("link", { name: "Collection 0", exact: true })).toBeAttached();
     await page.clock.runFor(10_000);
     build = "bbbbbbbbb2";
-    await page.clock.runFor(6 * 60_000);
+    const changedHealth = page.waitForResponse("**/v1/health");
+    // Start the poll after the jump, so its request deadline cannot race the mocked response.
+    await page.clock.fastForward(6 * 60_000);
+    finishJump();
+    await (await changedHealth).finished();
     await expect(page.getByTestId("reload-bar")).toBeVisible();
     await tree.evaluate((el) => {
       el.scrollTop = el.scrollHeight;

@@ -1,17 +1,19 @@
 # Code index freshness
 
 The index trails the repository: it indexes merged commits on a configured branch, pass
-by pass, and each tier advances its own watermark. Every answer says how far behind it
-is.
+by pass, and each tier advances its own watermark. Check the answer's freshness metadata
+when present and the relevant tier's status before relying on indexed code.
 
 ## The `as_of` block
 
-Every conversational answer (`code.search`, `code.ask`, `code.grep`, `code.symbol`, …)
-carries `as_of`:
+Operations that return `as_of` expose the following freshness fields. Ordinary
+`code.symbol` definitions do not include this block or a commit; inspect
+`code.index_status` and verify the returned definition against the relevant source
+revision instead.
 
 | Field           | Meaning                                                                                                                                              |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `commit`        | the commit the index holds for this namespace (`git_head`)                                                                                           |
+| `commit`        | the fast tier's commit for this namespace (`git_head`), not every compiler tier's revision                                                           |
 | `branch`        | the branch the namespace tracks                                                                                                                      |
 | `indexed_at`    | when that commit landed                                                                                                                              |
 | `lag_commits`   | first-parent commits between `commit` and the mirror's fetched tip; `-1` unknown                                                                     |
@@ -23,15 +25,16 @@ carries `as_of`:
 
 The block is cached for 30 seconds per namespace; a pass that moves `git_head`
 invalidates it. It is fail-open: when freshness cannot be read, the block is empty and
-the answer still returns. Treat an empty `as_of` as unknown.
+the answer still returns. Treat an empty or absent `as_of` as unknown.
 
 A failing tier's facts may trail the head even while `stale` is false:
 with `failing_tiers` naming a compiler tier, treat compiler-grade answers (exact call
 graphs, references) as possibly behind and read the code you rely on.
 
-**Gate on `stale`, not on the build state.** A namespace whose first build finished can
-still be commits behind. When `stale` is true, treat line numbers and spans as
-approximate and read files you are about to edit from your checkout.
+**Check freshness, not only the build state.** A namespace whose first build finished
+can still be commits behind. When `as_of` is returned, inspect `stale`; without it,
+inspect the relevant watermark through `code.index_status`. When freshness is stale or
+unknown, read files you are about to edit from your checkout.
 
 ## The mirror's own age
 

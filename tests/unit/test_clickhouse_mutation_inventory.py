@@ -76,6 +76,11 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/store/redaction.py", "memory_versions", "UPDATE"): 1,
         # a deleted code link's suggestion, a rewrite of the redacted text
         ("server/memory/store/redaction.py", "memory_code_links", "UPDATE"): 1,
+        # a shared copy promoted from the key that holds the redacted text
+        ("server/memory/store/redaction.py", "shared", "UPDATE"): 1,
+        # Historical definition redaction scrubs every private candidate version,
+        # including status copies; a replacement row leaves the copied text in history.
+        ("server/memory/store/learnings.py", "learnings_queue", "UPDATE"): 1,
         # Expiry sweep `demote`: clears expires_at and lowers
         # confidence on the key's embedding rows in place — the same mirror
         # memory.touch performs; the memory-table side is a version row.

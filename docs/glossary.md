@@ -34,6 +34,11 @@ Refuse (`blacklist.add`). See [how a write is judged](concepts/memory.md#how-a-w
 **Chunk** — a piece of a knowledge document or a source file, stored and embedded
 separately so retrieval can return the passage rather than the whole document.
 
+**Code link** — a memory's link to a definition or file it names, followed through
+renames and edits. Its state is `fresh`, `moved`, `changed`, `unresolved` or `missing`.
+A code name not yet on trunk waits up to `memory_code_links_pending_days` (14 days).
+See [memories linked to code](concepts/memory.md#memories-linked-to-code).
+
 **Code namespace** — a namespace of kind `code` holding one indexed git repository:
 its chunks, symbols, edges, commits and PR history.
 See [code index](features/code-index/overview.md).

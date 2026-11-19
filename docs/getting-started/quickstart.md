@@ -3,8 +3,9 @@
 This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP. It
 needs no API key and no account. A fresh install of the released stack embeds with a small
 local model the image carries, so search returns meaningful hits with no network (an
-upgraded one keeps the embedder its `.env` names); its LLM is fake, so extraction and
-`memory.ask` answers produce nothing. A checkout's `.env` uses fake providers for both.
+upgraded one keeps the embedder its `.env` names). Its fake LLM returns deterministic
+output for development and tests. Configure a real LLM for meaningful extraction and
+grounded `memory.ask` answers. A checkout's `.env` uses fake providers for both.
 
 **The stock Docker installation is single-user:** no login, localhost-only access and
 a default `dev/local` namespace. One person can connect multiple agents without enabling
@@ -282,12 +283,12 @@ The checkout and release-bundle `.env` templates both select single-user mode.
 The release bundle sets `LOOM_IDENTITY_PROVIDER=single-user` explicitly; the checkout
 leaves it empty and infers the same mode from `LOOM_AUTH_REQUIRED=false`.
 
-| Setting                                                                      | Value         | Effect                                                                    |
-| ---------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
-| `LOOM_AUTH_REQUIRED=false`, `LOOM_IDENTITY_PROVIDER=single-user` (or empty)  | `single-user` | No login. Default namespace `dev/local`. SDK and MCP calls need no token. |
-| `LOOM_LLM_PROVIDER=fake`, `LOOM_LLM_MODEL=fake-echo-1`                       | fake LLM      | Extraction, entity tagging and `memory.ask` synthesis produce nothing.    |
-| `LOOM_EMBEDDING_MODEL=local`, `LOOM_EMBEDDING_DIM=384` (release bundle)      | bge-small     | Semantic search on CPU, from the model files the image carries.           |
-| `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072` (checkout) | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.    |
+| Setting                                                                      | Value         | Effect                                                                                                                              |
+| ---------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_AUTH_REQUIRED=false`, `LOOM_IDENTITY_PROVIDER=single-user` (or empty)  | `single-user` | No login. Default namespace `dev/local`. SDK and MCP calls need no token.                                                           |
+| `LOOM_LLM_PROVIDER=fake`, `LOOM_LLM_MODEL=fake-echo-1`                       | fake LLM      | Deterministic output for development and tests; extraction can synthesize facts. Meaningful extraction needs a configured real LLM. |
+| `LOOM_EMBEDDING_MODEL=local`, `LOOM_EMBEDDING_DIM=384` (release bundle)      | bge-small     | Semantic search on CPU, from the model files the image carries.                                                                     |
+| `LOOM_EMBEDDING_MODEL=fake-ngram-3072`, `LOOM_EMBEDDING_DIM=3072` (checkout) | fake embedder | Search ranks by character n-grams. Enough to check wiring, not recall.                                                              |
 
 Both installers generate a unique `COMPOSE_PROJECT_NAME`, a random JWT signing secret, a
 random extractor token, and `LOOM_BIND_HOST=127.0.0.1`. Separate clones therefore do not
@@ -526,7 +527,7 @@ with the token in it. Then:
    before running the dialog's command, which refuses a name that exists.
 
 `loom install --client <name>` writes the MCP entry for Claude Desktop, Claude Code,
-Codex, Cursor, VS Code, Cline, Windsurf and Zed; with no flag it wires every client it
+Codex, Cursor, VS Code, Cline, Windsurf, Zed and Gemini CLI; with no flag it wires every client it
 finds. [Connect a coding agent](connect-a-coding-agent.md) covers Codex and Cursor.
 
 Start a new session and say _"Remember that I never deploy on Friday."_ The agent calls
@@ -620,7 +621,7 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 
 | Symptom                                                                       | Cause and fix                                                                                                                                                                                                                                                                |
 | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_from_messages` writes no facts                                           | The LLM is the fake one. Follow [Models and keys](./models-and-keys.md) to configure one.                                                                                                                                                                                    |
+| `set_from_messages` writes no facts                                           | An empty result can be valid when the text contains nothing memorable. Check the provider configuration in [Models and keys](./models-and-keys.md); meaningful extraction needs a real LLM.                                                                                  |
 | Search results look arbitrary                                                 | The embedder is a fake one (`fake-ngram-*` in `.env`). Switch it as [Models and keys](./models-and-keys.md) says, which re-embeds what is stored. Do not delete your volumes to change models.                                                                               |
 | 401 `AUTH_INVALID` after turning auth on                                      | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                                                                                                                   |
 | The dashboard returns 503                                                     | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                                                                                                             |

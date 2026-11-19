@@ -477,7 +477,7 @@ describe("the credentials lock", () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(srv.sent).toHaveLength(0);
     store("default", { access_token: "from-the-other-process" }); // what the holder refreshed to
-    await rm(lockDir(), { recursive: true });
+    await releaseHeldLock();
     expect(await done).toBe("from-the-other-process");
     expect(srv.sent).toHaveLength(0);
   });
@@ -487,6 +487,13 @@ describe("the credentials lock", () => {
     mkdirSync(lockDir(), { recursive: true });
     writeFileSync(join(lockDir(), "owner"), JSON.stringify({ pid, host, time: Date.now() / 1000 }));
     age(lockDir(), ageMs);
+  }
+
+  async function releaseHeldLock(): Promise<void> {
+    const released = `${lockDir()}.released`;
+    // A waiter can replace an empty lock directory before recursive removal finishes.
+    fs.renameSync(lockDir(), released);
+    await rm(released, { recursive: true });
   }
 
   function age(path: string, ms: number): void {
@@ -527,7 +534,7 @@ describe("the credentials lock", () => {
     const done = accessToken(undefined, { fetch: srv.fetch });
     await new Promise((r) => setTimeout(r, 150));
     expect(srv.sent).toHaveLength(0);
-    await rm(lockDir(), { recursive: true });
+    await releaseHeldLock();
     expect(await done).toBe("a1");
   });
 

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any
 
+from server.core.naming import not_mirror_sql
 from server.observability.otel_probe_client import _probe_client
 from server.observability.state_inputs import state_inputs
 from server.settings import settings
@@ -592,8 +593,9 @@ _SLI_LAG_SQL = """
 # that). `mark` is read before `rolled`, so a refresh that commits between the
 # two only adds to `rolled`: never a false miss, though that probe can hide a
 # real one in those minutes until the next. A ledger row erasure removed makes
-# a minute read short, never long.
-_SLI_MISSED_SQL = """
+# a minute read short, never long. Marked requests are deliberately absent
+# from both measurement populations; they are not missing rollup rows.
+_SLI_MISSED_SQL = f"""
         WITH (SELECT max(ingested_hwm) FROM loom_telemetry.sli_minute
               WHERE slo_class = '' AND minute >= toStartOfMinute(now() - toIntervalDay(31))
              ) AS mark,
@@ -603,6 +605,7 @@ _SLI_MISSED_SQL = """
             SELECT toStartOfMinute(ts) AS minute, count() AS n
             FROM loom.agent_events
             WHERE kind = 'request' AND slo_class != '' AND ts >= since
+              AND mirror_marked = 0 AND {not_mirror_sql()}
               AND ingested_at > mark - toIntervalDay(1) AND ingested_at <= mark
             GROUP BY minute
         ) AS ledger

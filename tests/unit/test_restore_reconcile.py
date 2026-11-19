@@ -46,8 +46,19 @@ def _restored_reads(monkeypatch: pytest.MonkeyPatch) -> None:
         return []
 
     monkeypatch.setattr(ledger, "trusted_row", none)
+    monkeypatch.setattr(ledger, "mirror_mark", none)
+    monkeypatch.setattr(ledger, "promote_mirror_mark", none)
     monkeypatch.setattr(knowledge_reconcile, "held_sources", no_sources)
     monkeypatch.setattr(knowledge_reconcile, "dataset_sources_lost", no_lost)
+
+    # These cases isolate memory and erasure replay participants. Real connection
+    # cleanup and its publication ordering are covered in test_connected_account_restore.
+    from server.knowledge.app import connected_restore
+
+    async def no_connections(*a: Any, **k: Any) -> None:
+        pass
+
+    monkeypatch.setattr(connected_restore, "restore_all", no_connections)
 
 
 @pytest.fixture(autouse=True)
@@ -1305,3 +1316,88 @@ def test_a_replay_s_audit_row_names_no_mirror_of_its_list_scope(
     )
     [audit] = audits
     assert json.loads(audit["subject"]["scope_value"])["namespaces"] == ["A"]
+
+
+@pytest.mark.parametrize("source", ["entry", "current", "trusted"])
+@pytest.mark.parametrize("action", ["replay", "requeue"])
+def test_a_restore_preserves_privacy_even_when_it_returns_before_running_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    action: str,
+) -> None:
+    from server.core import pg
+    from server.erasure.store import ledger, pg_ledger
+
+    order: list[str] = []
+
+    async def current(*a: Any, **kw: Any) -> bool:
+        return source == "current"
+
+    async def trusted(*a: Any, **kw: Any) -> Any:
+        return {
+            "status": "completed",
+            "completed_at": _now(),
+            "done": set(),
+            "mirror_marked": source == "trusted",
+        }
+
+    async def promote(*a: Any, **kw: Any) -> None:
+        order.append("ch-mark")
+
+    async def record(row: Any) -> None:
+        assert row["mirror_marked"]
+        order.append("pg-mark")
+
+    async def complete(*a: Any, **kw: Any) -> None:
+        order.append("ended")
+
+    async def no_checkpoint(**kw: Any) -> None:
+        raise AssertionError("a completed receipt was replaced")
+
+    monkeypatch.setattr(ledger, "mirror_mark", current)
+    monkeypatch.setattr(ledger, "trusted_row", trusted)
+    monkeypatch.setattr(ledger, "promote_mirror_mark", promote)
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_ledger, "record", record)
+    monkeypatch.setattr(pg_ledger, "complete", complete)
+    monkeypatch.setattr(replay, "checkpoint", no_checkpoint)
+    entry = _completed(mirror_marked=source == "entry")
+    asyncio.run(getattr(replay, action)(entry, "clickhouse", _now()))
+    assert order[:2] == ["pg-mark", "ch-mark"]
+    assert order == ["pg-mark", "ch-mark"] + (["ended"] if action == "requeue" else [])
+
+
+def test_a_replay_discovering_a_mirror_keeps_its_pending_fence_until_it_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import pg
+    from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
+    from server.erasure.store import ledger, pg_ledger
+    from server.knowledge.app import mirrors
+
+    order, checkpoints, _ = _clickhouse_replay(monkeypatch, fail=False)
+    order.clear()
+    checkpoints.clear()
+    marks: list[str] = []
+
+    async def found(*a: Any, **kw: Any) -> dict[str, str]:
+        return {"acl-" + "a" * 24: "team"}
+
+    async def record(row: Any) -> None:
+        assert row["mirror_marked"]
+        marks.append("pg")
+
+    async def promote(*a: Any, **kw: Any) -> None:
+        assert len(checkpoints) == 1
+        assert checkpoints[0]["failure_reason"] == REPLAY_PENDING_REASON
+        marks.append("ch")
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_ledger, "record", record)
+    monkeypatch.setattr(ledger, "promote_mirror_mark", promote)
+    monkeypatch.setattr(mirrors, "mirrors_of", found)
+    entry = _completed(scope_type="namespace", scope_value="team")
+    asyncio.run(replay.replay(entry, "clickhouse", _now()))
+    assert marks == ["pg", "ch"]
+    assert checkpoints[-1]["row"]["mirror_marked"]
+    assert order[-1] == "checkpoint:completed"

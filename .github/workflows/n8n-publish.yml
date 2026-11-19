@@ -1,0 +1,80 @@
+name: n8n community nodes
+
+on:
+  pull_request:
+    paths:
+      - integrations/n8n/**
+      - .github/workflows/n8n-publish.yml
+      - .github/pnpm/**
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install the locked package manager
+        run: |
+          npm ci --prefix .github/pnpm --ignore-scripts --no-fund --no-audit
+          echo "$PWD/.github/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+        working-directory: integrations/n8n
+      - run: pnpm check
+        working-directory: integrations/n8n
+      - run: pnpm pack --out package.tgz
+        working-directory: integrations/n8n
+      - name: Load the packaged nodes without development dependencies
+        run: |
+          mkdir "$RUNNER_TEMP/n8n-package-check"
+          cd "$RUNNER_TEMP/n8n-package-check"
+          npm init --yes
+          npm install --ignore-scripts "$GITHUB_WORKSPACE/integrations/n8n/package.tgz"
+          node -e 'for (const path of ["Loom/Loom.node", "LoomMemory/LoomMemory.node"]) require("@clickhouse/n8n-nodes-loom/dist/nodes/" + path + ".js")'
+
+  publish:
+    if: github.event_name == 'push' && !contains(github.ref_name, '-')
+    needs: check
+    runs-on: ubuntu-latest
+    environment: npm-n8n
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - name: Require a stable release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - name: Install the locked package manager
+        run: |
+          npm ci --prefix .github/pnpm --ignore-scripts --no-fund --no-audit
+          echo "$PWD/.github/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: pnpm install --frozen-lockfile
+        working-directory: integrations/n8n
+      - run: pnpm build
+        working-directory: integrations/n8n
+      - name: Publish using the registered npm trusted publisher
+        working-directory: integrations/n8n
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          if npm view "@clickhouse/n8n-nodes-loom@$VERSION" version >/dev/null 2>&1; then
+            echo "Package version is already published"
+            exit 0
+          fi
+          npm publish --provenance --access public

@@ -268,6 +268,7 @@ LANG_BY_EXTENSION: dict[str, str] = {
     ".tfvars": "hcl",
     ".hcl": "hcl",
     ".jsonnet": "jsonnet",
+    ".lua": "lua",
     ".libsonnet": "jsonnet",
     ".rego": "config",
     ".mdc": "doc",

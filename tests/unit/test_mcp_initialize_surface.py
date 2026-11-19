@@ -321,14 +321,26 @@ def test_initialize_keeps_established_session_id(_mcp_client) -> None:
 
 
 def test_loom_search_output_schema_declares_all_returned_sections() -> None:
+    from server.memory.api.models_loom_search import SearchOutput
     from tests.unit.loom_op_marks import synthetic_descriptors
 
     descriptors = synthetic_descriptors("core")
     loom_search = next(d for d in descriptors if d["name"] == "loom_search")
-    props = set(loom_search["outputSchema"]["properties"])
-    # structuredContent returns exactly these four sections; strict
-    # client validators reject undeclared keys.
-    assert props == {"memory", "knowledge", "profile", "conversations"}
+    schema = loom_search["outputSchema"]
+    sections = {"memory", "knowledge", "profile", "conversations"}
+    # Strict clients must also accept the optional connected-source section.
+    assert set(schema["properties"]) == sections | {"live"}
+    assert schema["properties"]["live"]["type"] == "object"
+    assert "live" not in schema.get("required", [])
+
+    payload = SearchOutput.model_validate({key: {"results": []} for key in sections}).model_dump(
+        mode="json"
+    )
+    assert "live" not in payload
+    for arguments in ({"query": "question"}, {"query": "question", "live": False}):
+        answer = mcp_tools.search_answer(payload, arguments, "scope", "")
+        assert set(answer["structuredContent"]) == set(payload)
+        assert "live" not in answer["structuredContent"]
 
 
 # ---- Description integrity: no references to nonexistent ops ----

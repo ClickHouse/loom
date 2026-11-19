@@ -414,6 +414,8 @@ class KnowledgeSynthesizeInput(BaseModel):
 
     org: str
     namespace: str
+    # Named user whose synthesis spend is checked; a token's user pin takes precedence.
+    user_id: str = "-"
     # The documents to read in full (up to 50; this, `datasets` or both); unknown URIs
     # contribute nothing.
     source_uris: list[str] = Field(default_factory=list, max_length=50)

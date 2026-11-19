@@ -14,7 +14,7 @@ tool runs through: the dispatch-level namespace check, `_call_tool`'s identity
 defaults, code scope, `check_authorized`, `ignored_args`, lean results and the
 ledger. `loom_op {op: "help", query}` (or an unknown op) answers a compact
 catalog: op names, required and optional args and one line of
-purpose. Ops hidden from MCP (`_MCP_HIDDEN_OPS`) stay hidden: they are not in
+purpose. Ops hidden from MCP (`is_hidden`) stay hidden: they are not in
 the catalog and the rewritten call meets the same "not available" refusal a
 direct call does. A connection whose resolved toolset is `readonly` routes
 read ops only.
@@ -33,7 +33,7 @@ from typing import Any
 
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
-from server.operations.toolsets import _MCP_HIDDEN_OPS, resolve_toolset
+from server.operations.toolsets import hidden_from_mcp, resolve_toolset
 from server.transport.mcp_config import _ok
 from server.transport.mcp_ledger import emit_token_refusal
 
@@ -83,6 +83,15 @@ def routes_writes(toolset: str | None) -> bool:
     return resolve_toolset(toolset, settings.mcp_toolset) != "readonly"
 
 
+def is_hidden(name: str) -> bool:
+    """Whether this deployment keeps the op named ``name`` off MCP, neither listed nor
+    callable: a hidden op, less the compiler-tier upload ops where
+    `mcp_code_upload_tools` serves them."""
+    from server.settings import settings
+
+    return hidden_from_mcp(name, code_upload_tools=settings.mcp_code_upload_tools)
+
+
 def reachable(op: Operation, toolset: str | None) -> bool:
     """Whether `loom_op` on this connection routes ``op``: never a hidden op."""
     return _routed(op, routes_writes(toolset))
@@ -90,7 +99,7 @@ def reachable(op: Operation, toolset: str | None) -> bool:
 
 def _routed(op: Operation, writes: bool) -> bool:
     """`reachable` for a connection whose `routes_writes` is already known."""
-    return op.name not in _MCP_HIDDEN_OPS and (op.read_only or writes)
+    return not is_hidden(op.name) and (op.read_only or writes)
 
 
 # Tool name → op: how a `tools/call` resolves its op, and how prose naming a
@@ -300,7 +309,7 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     from server.transport.mcp_tools import name_ops_for_toolset
 
     op = OPERATIONS_BY_NAME.get(name)
-    if op is None or name not in _MCP_HIDDEN_OPS:
+    if op is None or not is_hidden(name):
         return None
     if name in _WRITE_ALTERNATIVE and not routes_writes(toolset):
         instead = _READ_ONLY_CONNECTION
@@ -352,7 +361,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if name.lower() in _HELP:
         return req, _result(req.get("id"), catalog(str(args.get("query") or ""), toolset=toolset))
     # a hidden op is not here, so its name gets hidden_refusal
-    by_name = {op.name: op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS}
+    by_name = {op.name: op for op in ALL_OPERATIONS if not is_hidden(op.name)}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     writes = routes_writes(toolset)
     if op is None and (hidden := hidden_refusal(name, toolset)) is not None:

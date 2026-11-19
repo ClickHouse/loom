@@ -1,14 +1,41 @@
 # Cursor
 
-Cursor gets Loom in two independent pieces:
+Cursor gets Loom in three pieces:
 
-| Piece              | What it gives                                      | How                                                                                                                                |
-| ------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| MCP tools          | the `loom_*` tools in Cursor's agent               | the [install link](#mcp-tools) for a local single-user server, else `loom install --client cursor` ([MCP clients](mcp-clients.md)) |
-| Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh`                                                                 |
+| Piece              | What it gives                                      | How                                                                                                                                                     |
+| ------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP tools          | the `loom_*` tools in Cursor's agent               | the [plugin](#plugin), the [install link](#mcp-tools) for a local single-user server, or `loom install --client cursor` ([MCP clients](mcp-clients.md)) |
+| Skills             | the `loom` and `loom-code` skills                  | the [plugin](#plugin), or `npx skills add ClickHouse/loom --skill loom loom-code`                                                                       |
+| Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh`                                                                                      |
 
-There is no Cursor plugin, so no code shunt and no capture of tool calls, runs or
-working memory; the [Claude Code](claude-code.md) and [Codex](codex.md) plugins have those.
+The Cursor plugin carries the MCP entry and the `loom` and `loom-code` skills, and has no
+hooks: no code shunt and no capture of tool calls, runs or working memory; the
+[Claude Code](claude-code.md) and [Codex](codex.md) plugins have those.
+
+## Plugin
+
+`.cursor-plugin/` at the repository root makes the repository a Cursor plugin marketplace
+with one plugin, `clickhouse-loom`: the `loom` MCP server and the root `skills/`. The
+plugin is not listed in Cursor's marketplace. Its local single-user connection and
+read-only memory search are tested in Cursor. On a Teams or Enterprise plan, a team
+admin adds it under **Dashboard → Plugins & MCPs → Add Marketplace → Import from Repo**
+with `https://github.com/ClickHouse/loom`.
+
+The plugin has one variable, **Loom MCP URL**. A team admin sets it in Cursor's
+dashboard under **Plugins & MCPs**, for every member.
+
+| Server                                     | Loom MCP URL                                             | Sign-in             |
+| ------------------------------------------ | -------------------------------------------------------- | ------------------- |
+| single-user, on each member's machine      | `http://localhost:7777/mcp?toolset=coding` (the default) | none                |
+| team server with `LOOM_OAUTH_ENABLED=true` | `https://<your server>/mcp`                              | browser, per person |
+
+A server with OAuth on takes the bare URL, the resource its protected-resource metadata
+names; tools outside its default toolset run through `loom_op`. The entry sends no
+`Authorization` header, so a team server without OAuth answers 401. Such a team skips the
+plugin: `loom install --client cursor` [below](#mcp-tools) writes the entry with a token,
+and `npx skills add` adds the skills.
+[Clients that sign in by browser](mcp-clients.md#clients-that-sign-in-by-browser) has the
+OAuth details.
 
 ## MCP tools
 

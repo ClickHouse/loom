@@ -1,6 +1,6 @@
 {
   "name": "@clickhouse/loom",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "TypeScript SDK for ClickHouse Loom, a self-hosted server that gives AI agents shared long-term memory, document search and a code index. Typed over every wire operation the server declares, with retries, rate-limit pacing, idempotency keys and an Agent identity binding.",
   "type": "module",
   "sideEffects": false,
@@ -26,6 +26,26 @@
       "require": {
         "types": "./dist/integrations/ai-sdk.d.cts",
         "default": "./dist/integrations/ai-sdk.cjs"
+      }
+    },
+    "./integrations/claude-memory": {
+      "import": {
+        "types": "./dist/integrations/claude-memory.d.mts",
+        "default": "./dist/integrations/claude-memory.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/claude-memory.d.cts",
+        "default": "./dist/integrations/claude-memory.cjs"
+      }
+    },
+    "./integrations/google-adk": {
+      "import": {
+        "types": "./dist/integrations/google-adk.d.mts",
+        "default": "./dist/integrations/google-adk.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/google-adk.d.cts",
+        "default": "./dist/integrations/google-adk.cjs"
       }
     },
     "./integrations/langchain": {
@@ -121,14 +141,22 @@
     "node": ">=20.0.0"
   },
   "peerDependencies": {
+    "@anthropic-ai/sdk": ">=1.8.0 <1.9.0",
     "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@google/adk": ">=2.5.0 <2.6.0",
     "@langchain/core": ">=1.0.0 <2.0.0",
-    "@mastra/core": ">=1.83.0 <2.0.0",
+    "@mastra/core": ">=1.83.0 <1.84.0",
     "@openai/agents": ">=0.22.0 <0.23.0",
     "ai": ">=7.0.0 <8.0.0"
   },
   "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
     "@aws-sdk/client-secrets-manager": {
+      "optional": true
+    },
+    "@google/adk": {
       "optional": true
     },
     "@langchain/core": {
@@ -145,10 +173,13 @@
     }
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.14",
+    "@google/adk": "2.5.0",
     "@langchain/core": "1.4.0",
     "@mastra/core": "1.83.0",
+    "@mastra/memory": "1.41.1",
     "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
     "ai": "7.0.172",

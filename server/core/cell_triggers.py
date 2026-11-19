@@ -23,7 +23,7 @@ import logging
 import re
 from typing import Any
 
-from server.core import cell, pg
+from server.core import cell, pg, readiness
 
 log = logging.getLogger(__name__)
 
@@ -393,3 +393,31 @@ def _function_defects(function: str, fn: Any) -> list[Defect]:
     if (fn["body"], list(fn["config"])) not in expected_functions(function):
         found.append(Defect("function", f"{function}() has a body or settings no migration writes"))
     return found
+
+
+def readiness_check() -> readiness.CheckResult:
+    """The `cell_marker` readiness check of a process with LOOM_CELL set: whether its
+    pooled sessions keep the tenancy marker, as the cell-state read found it
+    (`cell.marked`). Without it the cell's triggers judge this process's writes as an
+    unchecked writer's, so it fails in `enforced` and `partial`; in `recording` it passes
+    with a warning, so a first cell behind a pooler does not stall its rollout before
+    attach. Missing triggers are named by `loom doctor` and attach, not here: a first cell
+    in `recording` has none."""
+    marked = cell.marked()
+    if marked is not False:
+        return readiness.CheckResult(True)
+    lost = (
+        "this process's pooled Postgres sessions do not keep the tenancy marker "
+        f"{pg.TENANCY_MARKER} (a connection pooler between this process and Postgres?)"
+    )
+    refused = (
+        "its writes for an org the cell does not hold, and the tenancy row of each newly placed org"
+    )
+    state = cell.reported_mode()
+    if state == "recording":
+        return readiness.CheckResult(
+            True, f"{lost}; once attach raises the mode, the cell's triggers refuse {refused}"
+        )
+    if state in ("enforced", "partial"):
+        return readiness.CheckResult(False, f"{lost}; the cell's triggers refuse {refused}")
+    return readiness.CheckResult(True)

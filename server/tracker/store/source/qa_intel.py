@@ -20,14 +20,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.ch_errors import error_code
 from server.core.hosts import vet_host
+from server.core.remote_ch import connect
 from server.settings import settings
 from server.tracker.domain import sources as _sources
+from server.tracker.domain.source_circuit import SourceCircuit
 
 log = logging.getLogger("loom.clients.qa_intel")
 
@@ -42,68 +43,16 @@ class QaIntelUnavailable(RuntimeError):
 
 
 @dataclass
-class _Breaker:
-    state: str = "CLOSED"  # CLOSED | OPEN | HALF_OPEN
-    consecutive_failures: int = 0
-    opened_at: float = 0.0
-    name: str = CREDENTIAL
-    # HALF_OPEN admits one probe; the rest are refused until its outcome is
-    # recorded or it is released (a brief's twelve-way fan-out would otherwise
-    # send all twelve at a service that may still be down). Event-loop only —
-    # no lock: every caller is a coroutine on one loop.
-    probing: bool = False
-
-    def allow(self) -> bool:
-        if self.state == "CLOSED":
-            return True
-        if self.state == "OPEN":
-            if (time.monotonic() - self.opened_at) <= _cooldown_s():
-                return False
-            self.state = "HALF_OPEN"
-            log.info("qa_intel[%s] breaker: cooldown elapsed, entering HALF_OPEN", self.name)
-        if self.probing:
-            return False
-        self.probing = True
-        return True
-
-    def release(self) -> None:
-        """Free the probe slot without a verdict (an uncounted error, a cancellation)."""
-        self.probing = False
-
-    def record(self, success: bool) -> None:
-        self.probing = False
-        if success:
-            if self.state != "CLOSED":
-                log.info("qa_intel[%s] breaker: closing (was %s)", self.name, self.state)
-            self.state = "CLOSED"
-            self.consecutive_failures = 0
-            return
-        self.consecutive_failures += 1
-        if self.consecutive_failures >= _failure_threshold() and self.state != "OPEN":
-            self.state = "OPEN"
-            self.opened_at = time.monotonic()
-            log.warning(
-                "qa_intel[%s] breaker: OPEN after %d consecutive failures (cooldown %ds)",
-                self.name,
-                self.consecutive_failures,
-                int(_cooldown_s()),
-            )
-
-    def status(self) -> dict[str, Any]:
-        return {"state": self.state, "consecutive_failures": self.consecutive_failures}
-
-
-@dataclass
 class _Slot:
     client: Any | None = None
-    breaker: _Breaker = field(default_factory=_Breaker)
+    breaker: SourceCircuit = field(default_factory=SourceCircuit)
     # Held while the client is built: reads that arrive together on a cold
     # slot (a brief's fan-out) share one client instead of each building one
     # and all but the last leaking theirs.
     building: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
-_slots: dict[str, _Slot] = {c: _Slot(breaker=_Breaker(name=c)) for c in CREDENTIALS}
+_slots: dict[str, _Slot] = {c: _Slot(breaker=SourceCircuit(name=c)) for c in CREDENTIALS}
 
 
 def credentials() -> tuple[str, ...]:
@@ -137,20 +86,12 @@ def socket_timeout_s(session_timeout_s: float) -> int:
     return int(max(float(session_timeout_s), largest_budget_s())) + 5
 
 
-def _failure_threshold() -> int:
-    return max(1, int(settings.tracker_circuit_failure_threshold))
-
-
-def _cooldown_s() -> float:
-    return max(1.0, float(settings.tracker_circuit_cooldown_s))
-
-
 def _slot(credential: str) -> _Slot:
     """The slot of a configured source, created on first use."""
     if credential not in _slots:
         if credential not in _sources.endpoints():
             raise QaIntelUnavailable(f"unknown tracker credential {credential!r}")
-        _slots[credential] = _Slot(breaker=_Breaker(name=credential))
+        _slots[credential] = _Slot(breaker=SourceCircuit(name=credential))
     return _slots[credential]
 
 
@@ -172,7 +113,7 @@ def circuit_status(credential: str = CREDENTIAL) -> dict[str, Any]:
 def reset_for_tests() -> None:
     _slots.clear()
     for c in CREDENTIALS:
-        _slots[c] = _Slot(breaker=_Breaker(name=c))
+        _slots[c] = _Slot(breaker=SourceCircuit(name=c))
 
 
 # --- clients -----------------------------------------------------------------
@@ -206,45 +147,6 @@ async def _get_client(credential: str) -> Any:
         if slot.client is None:
             slot.client = await _build_client(credential)
     return slot.client
-
-
-async def connect(
-    host: str,
-    *,
-    address: str,
-    port: int,
-    secure: bool,
-    database: str,
-    user: str,
-    password: str,
-    client_name: str,
-    send_receive_timeout: int,
-    query_settings: dict[str, Any] | None = None,
-) -> Any:
-    """The one clickhouse-connect client builder for a tracker host. With a
-    vetted `address` the client connects to it and keeps `host` as the Host
-    header, TLS SNI and the certificate name, so a DNS answer that changes
-    after the vet cannot point it elsewhere; with none it connects by name."""
-    import clickhouse_connect
-
-    return await clickhouse_connect.get_async_client(
-        host=address or host,
-        server_host_name=host if address else None,
-        port=int(port),
-        username=user,
-        password=password,
-        database=database,
-        secure=bool(secure),
-        connect_timeout=settings.tracker_source_connect_timeout_s,
-        send_receive_timeout=send_receive_timeout,
-        compress=True,
-        client_name=client_name,
-        # readonly=2: SELECT only, no DDL and no writes, but settings may be
-        # set — readonly=1 also refuses the `remoteSecure` table function the
-        # upstream's `version_history` / `checks` views are built on ("Cannot
-        # execute query in readonly mode")
-        settings={"readonly": 2, **(query_settings or {})},
-    )
 
 
 async def _build_client(credential: str) -> Any:

@@ -35,7 +35,9 @@ Every step others see is the owner's to start, as AGENTS.md has it: opening or m
 
 ## 2. The release pull request
 
-In a worktree from `origin/main` (`loom-dev-setup` §1), with the tags fetched (`git fetch --tags`) and `gh` signed in:
+Use `prep/release-X.Y.Z` for the release pull request, following the [branch and tag standard](../../../docs/development/release-process.md#branches-and-tags). For a major or minor, create its worktree from `origin/main` (`loom-dev-setup` §1) and target `main`; for a patch, start from and target `release/X.Y` (§7). Reserve `release/` for maintained `release/X.Y` lines. Read the existing branch rules before creating the preparation branch; resolve a refused update under those rules without renaming or retargeting it.
+
+With the tags fetched (`git fetch --tags`) and `gh` signed in:
 
 ```bash
 .venv/bin/python scripts/release/prepare.py bump X.Y.Z
@@ -58,7 +60,7 @@ A tag run whose image build failed on a download from outside GitHub (`curl: (7)
 
 A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
-A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `X.Y.Z-rc.N` under the `next` dist-tag, once its `pypi` and `npm` environments are approved (§4). `releases/latest/download/install.sh` serves the Latest release, which a candidate never becomes, so a candidate installs from its own URL: `https://github.com/ClickHouse/loom/releases/download/vX.Y.Z-rc.N/install.sh`.
+A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, after the tag run passes, `release-check` included, and with the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `X.Y.Z-rc.N` under the `next` dist-tag, once its `pypi` and `npm` environments are approved (§4). `releases/latest/download/install.sh` serves the Latest release, which a candidate never becomes, so a candidate installs from its own URL: `https://github.com/ClickHouse/loom/releases/download/vX.Y.Z-rc.N/install.sh`.
 
 ## 4. The final release
 
@@ -67,7 +69,7 @@ On the same commit as the last release candidate, after `prepare.py notes X.Y.Z`
 ```bash
 git tag vX.Y.Z <that commit>
 git push origin vX.Y.Z                                        # the owner's go-ahead first
-# watch it as in §3; after it passes, the registry dispatch (it reuses the tag run's images):
+# watch it as in §3; after it passes, release-check included, the registry dispatch (it reuses the tag run's images):
 gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-ahead first
 git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # X.Y.0 only: the line's patch branch; the owner's go-ahead first
 ```
@@ -85,7 +87,7 @@ gh api -X POST "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run f
 
 To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([when the clickhouse job stops](../../../docs/development/release-process.md#when-the-clickhouse-job-stops)), send the POST with `-f state=rejected -f comment="Registries not published for $tag"`. The run then fails on those jobs, while the images and the GitHub Release stay published.
 
-The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
+The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, a failed file signing, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process. A failed file signing is recovered with "Re-run failed jobs" on the run that failed, and when that is the tag run, before any dispatch.
 
 ## 5. Check it from outside
 
@@ -95,7 +97,7 @@ After the registry dispatch, check the release as a user meets it:
 gh workflow run release-check.yml -R ClickHouse/loom -f version=X.Y.Z -f previous_version=<the release before>
 ```
 
-Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`, checking that `latest` serves this version, or the version's own URL when it is not Latest) in clean Debian, Ubuntu and Alpine containers on amd64 and arm64: install, a `memory.set`/`memory.search` round trip, a re-run, and an upgrade from the previous release. It verifies both images' signatures (`scripts/release/verify_signatures.sh`) and, unless `-f sdks=false`, installs `clickhouse-loom==X.Y.Z` from PyPI and `@clickhouse/loom@X.Y.Z` from npm, verifying the npm package's registry signatures and attestations (`npm audit signatures`). Then by hand, the MCP Registry listing, npm's dist-tags and PyPI's provenance:
+Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`, checking that `latest` serves this version, or the version's own URL when it is not Latest) in clean Debian, Ubuntu and Alpine containers on amd64 and arm64: install, a `memory.set`/`memory.search` round trip, a re-run, and an upgrade from the previous release. It verifies both images' signatures (`scripts/release/verify_signatures.sh`) and every release file's (`scripts/release/verify_release_files.sh`) and, unless `-f sdks=false`, installs `clickhouse-loom==X.Y.Z` from PyPI and `@clickhouse/loom@X.Y.Z` from npm, verifying the npm package's registry signatures and attestations (`npm audit signatures`). Then by hand, the MCP Registry listing, npm's dist-tags and PyPI's provenance:
 
 ```bash
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z

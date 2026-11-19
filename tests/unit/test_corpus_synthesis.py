@@ -76,7 +76,7 @@ def _patch_reads(monkeypatch: pytest.MonkeyPatch, rows_for: Any) -> None:
     """knowledge.synthesize under no cost cap, reading `rows_for(uri)` for each document."""
     from server.knowledge.store import chunks as knowledge_repo
 
-    async def _over_cap(org: str, ns: str) -> bool:
+    async def _over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     async def _list(org: str, ns: str, uri: str, *, embedding_model: str, ch: Any = None):
@@ -178,7 +178,7 @@ async def test_budget_cap_abstains_before_any_read(monkeypatch: pytest.MonkeyPat
     import server.knowledge.app.synthesize as kh
     from server.knowledge.api.models_knowledge import KnowledgeSynthesizeInput
 
-    async def _over_cap(org: str, ns: str) -> bool:
+    async def _over_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return True
 
     monkeypatch.setattr("server.observability.budget.namespace_over_cap", _over_cap)

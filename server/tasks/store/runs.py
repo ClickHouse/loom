@@ -20,6 +20,7 @@ from server.core.ch import sequential_reads
 from server.core.leases import key_exists
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.observability import degradations, provider_health
+from server.observability.store.event_reads import MASKED_EVENTS
 from server.tasks.store.rows import RunLedgerRow
 
 log = logging.getLogger(__name__)
@@ -381,7 +382,8 @@ async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[R
     no request of their token reached within `idle_seconds`, in random order so
     runs that fail to close cannot hold the front."""
     rows: list[RunLedgerRow] = await ch.query_all(
-        """
+        (
+            """
         WITH candidates AS (
             SELECT run_id FROM loom.agent_runs
             WHERE status = 'active' AND environment = 'mcp'
@@ -391,7 +393,7 @@ async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[R
         -- Calls by run and token; a run that records no subject (no auth) stays
         -- busy while any call reaches it.
         recent AS (
-            SELECT org, run_id, subject FROM loom.agent_events
+            SELECT org, run_id, subject FROM {masked_events}
             WHERE ts >= now64(3) - INTERVAL {idle:UInt32} SECOND AND run_id IN candidates
         )
         SELECT org, namespace, run_id FROM loom.agent_runs FINAL
@@ -408,7 +410,8 @@ async def idle_session_runs(ch: Any, *, idle_seconds: int, limit: int) -> list[R
           )
         ORDER BY rand()
         LIMIT {lim:UInt32}
-        """,
+        """
+        ).replace("{masked_events}", MASKED_EVENTS),
         params={"idle": idle_seconds, "lim": limit},
     )
     return rows
@@ -420,9 +423,10 @@ async def busy_lately(
     """Whether the run was begun or re-opened, or a request of the token
     `subject` ("" = anyone) labelled it, within `idle_seconds`."""
     row = await ch.query_one(
-        """
+        (
+            """
         SELECT
-            (SELECT count() FROM loom.agent_events
+            (SELECT count() FROM {masked_events}
              WHERE org = {org:String} AND run_id = {rid:String}
                AND ts >= now64(3) - INTERVAL {idle:UInt32} SECOND
                AND ({subject:String} = '' OR subject = {subject:String})) > 0
@@ -433,7 +437,8 @@ async def busy_lately(
                 WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {rid:String})
                >= now64(3) - INTERVAL {idle:UInt32} SECOND
             AS busy
-        """,
+        """
+        ).replace("{masked_events}", MASKED_EVENTS),
         params={"org": org, "ns": ns, "rid": run_id, "subject": subject, "idle": idle_seconds},
     )
     return bool((row or {}).get("busy"))

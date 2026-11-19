@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "loom": { "type": "streamable-http", "url": "http://localhost:7777/mcp?toolset=coding" }
+  }
+}

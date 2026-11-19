@@ -21,6 +21,8 @@ from server.memory.app import stack as _stack_mod
 from server.memory.app import update as update_mod
 from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 _NOW = datetime(2026, 6, 10, 12, 0, 0)
 
 

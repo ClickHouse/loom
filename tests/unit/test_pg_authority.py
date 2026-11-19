@@ -223,8 +223,43 @@ def test_a_set_gap_never_clears_a_change_to_one_of_its_peers() -> None:
         embedding=[1.0, 0.0],
         reach=0.3,
         peer_ids={str(far["memory_id"])},
+        user_id="-",
     )
     assert not check([far])
+
+
+def test_a_set_gap_for_a_named_user_ignores_another_users_unpinned_row() -> None:
+    """Another user's row is no peer of the write, so committing it inside the reach
+    leaves the verdict standing; the same row is a peer of a write with no user."""
+    near = _row("near", user_id="alice")
+    pg_admission.remember(identity_key(near), 1, [1.0, 0.1])
+
+    def check(user: str) -> bool:
+        gap = pg_admission.set_gap_check(
+            memory_type="semantic",
+            memory_key="mine",
+            embedding=[1.0, 0.0],
+            reach=0.3,
+            peer_ids=set(),
+            user_id=user,
+        )
+        return gap([near])
+
+    assert check("bob")
+    assert not check("-")
+
+
+def test_a_named_users_peers_keep_only_its_rows_and_every_pinned_one() -> None:
+    from server.memory.app.conflicts import could_be_peer, trim_peers
+
+    alices = {**_row("a1", user_id="alice"), "dist": 0.1}
+    alices_pin = {**_row("a2", user_id="alice", pinned=1), "dist": 0.2}
+    bobs = {**_row("b1", user_id="bob"), "dist": 0.3}
+    assert not could_be_peer(alices, "bob") and could_be_peer(alices, "-")
+    assert could_be_peer(alices_pin, "bob") and could_be_peer(bobs, "bob")
+    kept = trim_peers([alices, alices_pin, bobs], "bob")
+    assert [r["memory_key"] for r in kept] == ["b1", "a2"]
+    assert len(trim_peers([alices, alices_pin, bobs], "-")) == 3  # a write with no user: every row
 
 
 def test_every_postgres_table_is_classified_for_erasure() -> None:
@@ -1387,7 +1422,12 @@ def test_the_authoritys_erasure_step_leads_the_erasing_steps_and_runs_only_under
     assert authority_steps(USER_STEPS)[0][0] == "pg_memory.delete"
     # A namespace's sources stop first, so no sync turn writes into what the steps erase.
     names = [name for name, _ in authority_steps(NAMESPACE_STEPS)]
-    assert names[:2] == ["knowledge_sources.retire", "pg_memory.delete"]
+    assert names[:4] == [
+        "knowledge_sources.retire",
+        "knowledge_source_push.delete",
+        "pg_memory.delete",
+        "pg_knowledge.delete",
+    ]
     assert set(PG_CENSUS) <= set(census_tables("user_id"))
     monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     for steps in (USER_STEPS, NAMESPACE_STEPS):
@@ -1588,6 +1628,7 @@ def test_a_parked_page_keeps_what_its_hits_are_checked_by(monkeypatch: pytest.Mo
     hit._row_chunk, hit._chunk_typed = ("a", "u", 2, "sha"), True
     back = search_pages.unparked(json.loads(json.dumps(search_pages._parked(hit))))
     assert back is not None
+    assert back.model_dump()["agent"] == "a"
     assert (back._row_identity, back._row_chunk, back._chunk_typed) == (
         ("a", "u", "s"),
         ("a", "u", 2, "sha"),
@@ -1614,7 +1655,9 @@ def _parked_page(hits: list[Any], **kw: Any) -> dict[str, Any]:
 
 
 def _page_input(top_k: int) -> Any:
-    return SimpleNamespace(org="o", namespace="n", top_k=top_k)
+    from server.memory.api.models_search import MemorySearchInput
+
+    return MemorySearchInput(org="o", namespace="n", query="q", top_k=top_k)
 
 
 @pytest.mark.asyncio
@@ -2851,6 +2894,7 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     than its parent's time left."""
     from contextlib import ExitStack
 
+    from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search import handler, pg_validation
 
     seen: list[tuple[str, list[str], float | None]] = []
@@ -2862,8 +2906,9 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     monkeypatch.setattr(pg_validation, "admit", _admit)
     run = SimpleNamespace(namespaces=["n"], sequential_scope=ExitStack())
     budget = SimpleNamespace(wall_left_s=lambda: 0.4)
-    search = SimpleNamespace(org="o", _pass_depth=depth)
-    await handler._admit(search, run, budget)
+    search = MemorySearchInput(org="o", namespace="n", query="q", memory_type="semantic")
+    search._pass_depth = depth
+    await handler._admit(search, run, budget, None, "fake-ngram-1024")
     assert seen == [("o", ["n"], cap)]
 
 
@@ -3478,6 +3523,7 @@ async def test_a_no_migration_boot_only_checks_the_record(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_refused_by_an_erasure_answers_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3530,6 +3576,7 @@ async def test_a_restore_refused_by_an_erasure_answers_not_found(
     ],
 )
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     monkeypatch: pytest.MonkeyPatch, error: Exception, checked: bool
 ) -> None:
@@ -3575,6 +3622,7 @@ async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     ("memory_type", "sensitivity", "owed"),
     [("semantic", "", True), ("episodic", "", False), ("semantic", "high", False)],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_committed_restore_whose_document_failed_owes_it_only_when_embedded(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -3710,6 +3758,7 @@ async def test_on_clickhouse_the_status_before_a_retirement_is_read_by_the_rows_
     assert (params["id"], params["version"]) == ("mid", 9)
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_logged(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3749,6 +3798,7 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
     assert "search document failed for k" in caplog.text
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mirrors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3790,6 +3840,7 @@ async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mir
         (False, None, [False]),  # unknown: fenced on the context's own settled read
     ],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_postgres_restore_of_a_high_key_is_fenced_once_its_commit_may_have_landed(
     monkeypatch: pytest.MonkeyPatch, committed: bool, reread: bool | None, fenced: list[bool]
 ) -> None:
@@ -4092,6 +4143,7 @@ async def test_a_gap_is_measured_by_the_embedders_own_model(
     assert asked == ["model-now"]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_leaves_out_the_memories_whose_erasure_evidence_is_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4131,18 +4183,26 @@ def test_a_non_finite_or_out_of_range_float32_is_refused(confidence: float) -> N
         pg_memory.encode_row({"confidence": confidence})
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A large restore commits batch by batch, each within a commit's lease. Once one's
     publication is pending, the rest are only committed, without waiting on ClickHouse
     again, and the restore completes: the delivery worker publishes them."""
-    from server.memory.app import snapshot_rows
+    from server.memory.app import blacklist_guard, snapshot_rows
     from server.settings import settings
 
     calls: list[tuple[int, bool]] = []
+    checked_policy = {("", "*"): 1, ("o", "*"): 4}
 
-    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True) -> int:
+    async def checked(rows: Any) -> dict[tuple[str, str], int]:
+        return checked_policy
+
+    monkeypatch.setattr(blacklist_guard, "enforce_rows", checked)
+
+    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True, policy: Any) -> int:
+        assert policy == checked_policy, "every batch keeps the policy checked for the payload"
         calls.append((len(rows), publish_now))
         if len(calls) == 2:
             raise pg_lease.PublicationPending()
@@ -4155,6 +4215,7 @@ async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_wor
     assert calls == [(2, True), (2, True), (2, False), (1, False)]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_an_erasure_between_batches_refuses_the_batch_it_meets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6583,6 +6644,7 @@ async def test_a_clickhouse_restore_never_settles_that_it_did_not_land(
     assert await restore._restore_landed(None, _row("k", version=7)) is landed
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6613,6 +6675,7 @@ async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     assert raised.value.extra["outcome_unknown"] is True
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_cancelled_while_it_reads_a_lost_commit_back_is_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7070,3 +7133,70 @@ async def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage(
             await c.fetch("SELECT 1")
     assert expired == [True] and conn.terminated
     assert not pg.is_outage(_InRecovery("some other internal error"))
+
+
+async def test_a_postgres_point_write_reads_the_peers_of_its_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import conflicts, set_commit
+
+    reads: list[dict[str, object]] = []
+
+    async def distance(*a: object, **kw: object) -> float:
+        return 0.3
+
+    async def peer_rows(**kw: object) -> list[object]:
+        reads.append(kw)
+        return []
+
+    monkeypatch.setattr(conflicts, "peer_distance", distance)
+    monkeypatch.setattr(conflicts, "peer_rows", peer_rows)
+    input = MemorySetInput(
+        org="o", namespace="n", agent="a", user_id="bob", memory_key="seat", value="aisle"
+    )
+    w = set_commit._SetWrite(
+        input=input, version=1, retyped_from="", existing=None, expires_at=None
+    )
+    w.embedding = [0.1, 0.2]
+    await set_commit._pg_peer_rows(w, SimpleNamespace(policy="auto_reinforce"))
+    assert [r["user_id"] for r in reads] == ["bob"]
+
+
+async def test_absorb_rejoins_a_gap_row_only_for_a_write_it_could_be_a_peer_of(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit of Alice's unpinned row inside the reach joins the peers of a write with no
+    user, and is no peer of Bob's write, as on the verdict's first round."""
+    alices = _row("hers", user_id="alice", value="Prefers aisle seats", run_id="-", valid_at=None)
+    pg_admission.remember(identity_key(alices), 1, [1.0, 0.0])
+
+    async def gap(*_a: object) -> tuple[int, list[dict[str, object]]]:
+        return 7, [alices]
+
+    async def measure(*_a: object) -> list[list[float] | None]:
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(pg_admission, "_gap", gap)
+    monkeypatch.setattr(pg_admission, "_measure", measure)
+
+    async def peers(user: str) -> list[str]:
+        out = await pg_admission.absorb(
+            captured={},
+            moved={},
+            org="o",
+            namespace="n",
+            memory_type="semantic",
+            memory_key="mine",
+            embedding=[1.0, 0.0],
+            max_distance=0.3,
+            peers=[],
+            user_id=user,
+        )
+        assert out is not None
+        return [str(r["memory_key"]) for r in out[1]]
+
+    assert await peers("bob") == []
+    assert await peers("-") == ["hers"]

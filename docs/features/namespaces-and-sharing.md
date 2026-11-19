@@ -93,6 +93,33 @@ Inside a namespace every writer's rows are visible to every reader by default
 | `memory.copy_to`       | writer on the target | Self-service copy of a memory you can read into a namespace you can write, by key. Non-destructive; the target is re-embedded by its own embedder.                        |
 | `memory.cross_promote` | admin on both ends   | The operator form, addressed by memory id, with `cross_promoted_from_*` lineage on the target.                                                                            |
 
+`memory.copy_to` reads the source row by key and records the caller as the copy's actor, so it needs a signed-in
+caller: with `LOOM_AUTH_REQUIRED=true` and a token that reads the source and writes the target. The stock single-user
+stack refuses it. The Python SDK reaches it through `agent.client`:
+
+```python
+from loom import Agent
+from loom.errors import NotFound
+
+async with Agent(org="acme", namespace="support", agent="triage-bot") as agent:
+    try:
+        result = await agent.client.memory.copy_to(
+            from_org="acme",
+            from_namespace="support",
+            memory_key="customer/4812/plan",
+            to_namespace="billing",
+            rationale="Billing checks invoices against this plan.",
+        )
+    except NotFound:
+        ...  # no live row under that key in the source namespace
+    else:
+        print(result["copied"], result["target_key"])  # True customer/4812/plan
+```
+
+The copy keeps the source key unless `target_key` names another, and it is namespace-owned in the target
+(`target_agent="-"`) unless you name an agent. `from_agent="*"` (the default) copies the most recently written row
+for the key. The rationale is not stored as text: the audit row keeps its SHA-256 and length.
+
 Copies are not atomic across namespaces: a copy that fails
 halfway leaves the source intact and the target without the row. The learnings queue
 (`learnings.*`), which proposes rows worth promoting, is covered in

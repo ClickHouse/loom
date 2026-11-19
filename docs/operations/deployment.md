@@ -97,6 +97,8 @@ switches an install back to the bundled container.
   a server Loom shares, a self-managed admin can keep both to Loom's own:
   `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
+- **Log retention.** A self-managed server keeps `system.query_log` and
+  `system.text_log` rows until you set a TTL on them ([log retention](#log-retention)).
 - **Switching.** Run the install command again with `--clickhouse` (the table above) to
   move an install to your own server; Loom starts on an empty `loom` database there. The
   bundled container keeps running on its old volume until you stop it (the installer
@@ -149,6 +151,7 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 | `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer for ad-hoc `lemmatize('en', …)` queries. Loom lemmatizes in Python.                              |
 | `nlp_user_settings.xml`                 | The `loom_reader` user and profile (below), the per-tenant quota, and the experimental NLP and AI SQL flags.            |
 | `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` tables work.                                                         |
+| `system_logs.xml`                       | `system.query_log` and `system.text_log` keep 30 days of rows ([log retention](#log-retention)).                        |
 | `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
 
 - **Read-only user.** Loom runs the reads a caller shapes (`code.grep`, a patterned
@@ -608,6 +611,42 @@ inspect both tables by hand.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 
+### Log retention
+
+ClickHouse records each statement in `system.query_log` and its server log in
+`system.text_log`. A refused statement's error can quote the value it failed on, such as
+a memory key, a title or a user id, and [erasure](../features/memory/retention-and-erasure.md)
+reaches neither log. ClickHouse's default configuration keeps both logs' rows with no TTL.
+
+The bundled ClickHouse and the Helm chart's dev ClickHouse keep 30 days of each, from
+`deploy/clickhouse-config/system_logs.xml`. On a self-managed server, put the same file
+in `/etc/clickhouse-server/config.d/` and restart the server:
+
+```xml
+<clickhouse>
+    <query_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </query_log>
+    <text_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </text_log>
+</clickhouse>
+```
+
+A `<text_log>` element turns `system.text_log` on, at trace level, on a server whose
+configuration had it off; keep only the `<query_log>` block there.
+
+When a log's definition changes, ClickHouse renames the existing table on the next start
+to the first free name of `query_log_0`, `query_log_1` and so on (`text_log_0` for the
+server log), keeps it with its rows and its old TTL, and creates the log again. A server
+that ran with no TTL keeps those rows in `query_log_0` and `text_log_0` until you drop
+them. Read what you need from the old tables, then drop them:
+
+```sql
+DROP TABLE IF EXISTS system.query_log_0;
+DROP TABLE IF EXISTS system.text_log_0;
+```
+
 ## Providers
 
 For ready-to-use configurations and the distinction between agent subscriptions and
@@ -908,7 +947,11 @@ ledger row.
 
 ## Proxy and TLS
 
-The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
+Put a TLS-terminating proxy or load balancer in front: it holds the certificate clients
+see, and the checks below assume it. The image serves plain HTTP on its port unless
+`LOOM_TLS_CERT_FILE` and `LOOM_TLS_KEY_FILE` name a certificate and key; then the port
+serves HTTPS only, which encrypts the hop from the proxy to Loom
+([TLS on the Loom port](#tls-on-the-loom-port)).
 
 - Loom sends `Strict-Transport-Security` itself, with `max-age` from
   `LOOM_HSTS_MAX_AGE_SECONDS` (default `31536000`, one year); a browser honours it only
@@ -974,6 +1017,46 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
 | `X-Forwarded-Proto` from the terminator | Keeps the client-facing scheme, so Loom hands clients `https://` URLs.                        |
 | `access_log off`                        | The request ledger (`loom.agent_events`) is the access log.                                   |
 
+### TLS on the Loom port
+
+- `LOOM_TLS_CERT_FILE` is a PEM certificate chain and `LOOM_TLS_KEY_FILE` its PEM key, not
+  encrypted (a key that needs a passphrase is refused); set both or neither. With both, the
+  port answers TLS only: a plain HTTP request gets no answer, so the proxy and every health
+  check use `https://`.
+- Turning TLS on or off on a running deployment changes the port for every client at once:
+  a replica that restarted answers only the new scheme, one that did not only the old. Plan
+  a window for the switch, or start a second deployment with TLS on and move the clients to
+  it.
+- `LOOM_TLS_MIN_VERSION` is the lowest TLS version the port accepts: `1.2` (the default)
+  or `1.3`. Choose `1.3` when every client of the port speaks it.
+- Each web process checks both files at every handshake and loads them again after a
+  change, so a renewed pair is served without a restart; a connection already open keeps
+  the certificate it started with. A pair that does not load (a key that does not match
+  the certificate, or one file replaced before the other) logs a warning and leaves the
+  last good pair in place until the files change again; files the server cannot read yet
+  (their mode, a missing file) leave it in place until a handshake can read them. Replace
+  each file in one rename, or both at once as a Kubernetes Secret mount does. A server
+  that starts while the pair does not load refuses to start. A web process that uvicorn
+  starts in place of one that exited, while the pair does not load, logs it, waits 10 s
+  and exits, and uvicorn starts it again; the other web processes keep serving their last
+  pair.
+- A key file every user on the host can read logs a warning at start.
+- The pair is loaded once before the web processes start, so one that does not load stops
+  the start. `scripts/serve.sh` (the image) and `loom serve` serve it; a server started
+  another way (`uvicorn server.main:app`, `make server`) refuses to start with the
+  settings set rather than serve plain HTTP.
+- The server's user must be able to read both files (`loom`, uid 999, in the image).
+- The image's health check reads `LOOM_TLS_CERT_FILE` from the container's environment
+  to choose `https://`, and does not verify the certificate of its own loopback port:
+  set the pair in the environment, not only in a settings file, or the check fails.
+- The compose files serve plain HTTP: their health checks, which replace the image's, and
+  `loom up` use `http://`.
+- The proxy verifies Loom's certificate against the CA that issued it, under the name it
+  connects to. With nginx: `proxy_ssl_verify on`, `proxy_ssl_trusted_certificate`,
+  `proxy_ssl_name` and `proxy_ssl_server_name on`.
+- The cell probe listener (`LOOM_CELL_PROBE_PORT`) serves plain HTTP, and `loom router
+serve` refuses to start with the settings set.
+
 ## Container images
 
 The repository [`Dockerfile`](../../Dockerfile) builds the server image every rung uses:
@@ -987,9 +1070,10 @@ The repository [`Dockerfile`](../../Dockerfile) builds the server image every ru
 | `node-builder`     | pinned Node, scip-typescript and pnpm for the TypeScript compiler tier; scip-python for the Python tier                                                                             |
 | runtime            | Python 3.12, non-root user `loom` (uid/gid 999), `git`, the `dev/` operator tools, the migrations, `bench/fixtures` for `code.calibrate`, the `local-models` files in `/app/models` |
 
-The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval), and
-runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`
-processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
+The runtime exposes 7777, has a built-in `/v1/health/ready` healthcheck (10 s interval,
+over HTTPS when `LOOM_TLS_CERT_FILE` is in its environment), and
+runs `scripts/serve.sh`, which starts uvicorn through `python -m server.core.web_server`
+(which also serves the TLS pair) with `LOOM_WEB_WORKERS` processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
 (`asyncio`, `auto`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
 that script. Unset, the loop is `asyncio`, in `loom serve` and `make server` too: the
 workers and the code ops spawn git, and uvloop forks the whole process for each spawn,
@@ -1062,6 +1146,23 @@ giving an `.env` without an extractor token one, and the extractor URL unless it
 own) and volumes. An older release's `install.sh` run over a newer install refuses; a
 downgrade on purpose follows [downgrading an installer
 install](./upgrades.md#downgrading-an-installer-install).
+
+## Release files
+
+Each file on a GitHub Release has a keyless signature from the release workflow, in a Sigstore
+bundle beside it named `<file>.sigstore.json` (a release published before the workflow signed its
+files has none). While the workflow publishes a release again, a replaced file verifies once its
+new bundle is attached; one that still does not verify after the release run finished is reported
+as [SECURITY.md](../../SECURITY.md) describes. Download a file with its bundle and check it with
+cosign 3 or later:
+
+```bash
+url=https://github.com/ClickHouse/loom/releases/download/vX.Y.Z
+curl -fsSLO "$url/loom-stack.tar.gz" -O "$url/loom-stack.tar.gz.sigstore.json"
+cosign verify-blob loom-stack.tar.gz --bundle loom-stack.tar.gz.sigstore.json \
+  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 ## N identical replicas
 
@@ -1241,19 +1342,19 @@ proxy (`docker compose -p loom-proxy -f dev/docker-compose.proxy.yml up -d`).
 
 ## Production checklist
 
-| Step            | Do                                                                                                                                                                                                                                                                                                   |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ClickHouse      | Cloud or a self-managed server with a Keeper, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`.                                                                                   |
-| Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                                                                                    |
-| Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                                                                                     |
-| Keys and tokens | A generated `LOOM_JWT_SECRET`, stored where a moved deployment can get it; a rotation plan (`loom signing-key rotate`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                                |
-| Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed. `LOOM_TRUSTED_PROXIES` set to the proxy or load balancer.                                                                                                                               |
-| Replicas        | Identical replicas with `LOOM_BACKGROUND_WORKERS=auto`; startup, liveness and readiness probes as in [N identical replicas](#n-identical-replicas); 75 s stop grace. `.env` validated with `docker compose … config`.                                                                                |
-| Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                                                                           |
-| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                                                                               |
-| Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`.                                                        |
-| Monitoring      | Route on `/v1/health/ready`, alert on `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                                                     |
-| Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal. The live `loom.instances` rows count the replicas the rate limits divide by; `LOOM_REPLICA_COUNT` is only their floor ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)). |
+| Step            | Do                                                                                                                                                                                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ClickHouse      | Cloud or a self-managed server with a Keeper, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`. On a self-managed server, `system_logs.xml` in `config.d/` ([log retention](#log-retention)). |
+| Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                                                                                                |
+| Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                                                                                                 |
+| Keys and tokens | A generated `LOOM_JWT_SECRET`, stored where a moved deployment can get it; a rotation plan (`loom signing-key rotate`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                                            |
+| Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed. `LOOM_TRUSTED_PROXIES` set to the proxy or load balancer.                                                                                                                                           |
+| Replicas        | Identical replicas with `LOOM_BACKGROUND_WORKERS=auto`; startup, liveness and readiness probes as in [N identical replicas](#n-identical-replicas); 75 s stop grace. `.env` validated with `docker compose … config`.                                                                                            |
+| Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                                                                                       |
+| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                                                                                           |
+| Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`.                                                                    |
+| Monitoring      | Route on `/v1/health/ready`, alert on `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                                                                 |
+| Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal. The live `loom.instances` rows count the replicas the rate limits divide by; `LOOM_REPLICA_COUNT` is only their floor ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)).             |
 
 ## Related
 

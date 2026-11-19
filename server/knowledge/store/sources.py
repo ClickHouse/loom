@@ -24,11 +24,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
-from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.knowledge.domain.live_chunks import has_live_chunks_sql
 from server.knowledge.domain.sources import (
     NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
@@ -37,10 +37,10 @@ from server.knowledge.domain.sources import (
     items_from_config,
     json_object,
     options_in,
-    source_tag,
     state_key,
     stored_config,
 )
+from server.settings import settings
 
 TABLE = "loom.knowledge_sources"
 STATE_TABLE = "loom.code_index_state"
@@ -52,7 +52,8 @@ REVISIONS_PAGE = 10_000  # not a setting: a bound on one statement
 
 _COLUMNS = (
     "org, namespace, name, source_id, kind, source_kind, config_json, items_json, "
-    "credential_enc, secret_enc, access, created_by, active, pending_delete, created_at, "
+    "credential_enc, secret_enc, access, credential_mode, owner_subject, connection_id, "
+    "created_by, active, pending_delete, created_at, "
     "updated_at"
 )
 
@@ -83,6 +84,9 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         credential_enc=str(row.get("credential_enc") or ""),
         secret_enc=str(row.get("secret_enc") or ""),
         access=str(row.get("access") or NAMESPACE_ACCESS),
+        credential_mode=str(row.get("credential_mode") or "shared"),
+        owner_subject=str(row.get("owner_subject") or ""),
+        connection_id=str(row.get("connection_id") or ""),
         created_by=str(row.get("created_by") or ""),
         active=bool(row.get("active")),
         pending_delete=bool(row.get("pending_delete")),
@@ -117,6 +121,25 @@ async def sources_in(
         params={"org": org, "names": namespaces},
     )
     return [(str(r["namespace"]), str(r["name"])) for r in rows]
+
+
+async def connected_sources(
+    org: str, subject: str, *, ch: _CHClient | None = None
+) -> list[KnowledgeSource]:
+    """Every owned source, including inactive rows whose cleanup may still be owed."""
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE org = {{org:String}} "
+        "AND credential_mode = 'connected' AND owner_subject = {subject:String} "
+        "ORDER BY namespace, name LIMIT {limit:UInt64}",
+        params={
+            "org": org,
+            "subject": subject,
+            "limit": settings.knowledge_connected_registry_scan_limit + 1,
+        },
+    )
+    if len(rows) > settings.knowledge_connected_registry_scan_limit:
+        raise RuntimeError("connected_source_owner_bound")
+    return [_source(dict(row)) for row in rows]
 
 
 async def all_active_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSource]:
@@ -198,13 +221,52 @@ async def latest_source(
     return _source(row) if row else None
 
 
-async def active_count(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+async def active_count(
+    org: str,
+    namespace: str,
+    *,
+    connected: bool = False,
+    owner_subject: str = "",
+    ch: _CHClient | None = None,
+) -> int:
     row = await (ch or _default_client()).query_one(
         f"SELECT count() AS n FROM {TABLE} FINAL "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND active",
-        params={"org": org, "ns": namespace},
+        "WHERE org = {org:String} AND namespace = {ns:String} AND active "
+        "AND (credential_mode = 'connected') = {connected:Bool} "
+        "AND ({owner:String} = '' OR owner_subject = {owner:String})",
+        params={"org": org, "ns": namespace, "connected": connected, "owner": owner_subject},
     )
     return int((row or {}).get("n") or 0)
+
+
+async def connected_owner_namespaces(
+    org: str, subject: str, kind: str, *, ch: _CHClient | None = None
+) -> list[str]:
+    """Include historical bindings hidden by a newer source of a different owner."""
+    maximum = settings.knowledge_connected_registry_scan_limit
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT DISTINCT namespace FROM {TABLE} "
+        "WHERE org = {org:String} AND owner_subject = {owner:String} "
+        "AND credential_mode = 'connected' AND source_kind = {kind:String} "
+        "ORDER BY namespace LIMIT {limit:UInt64}",
+        params={"org": org, "owner": subject, "kind": kind, "limit": maximum + 1},
+    )
+    if len(rows) > maximum:
+        raise RuntimeError("connected_source_owner_bound")
+    return [str(row["namespace"]) for row in rows]
+
+
+async def erase_connected_owner(
+    org: str, namespace: str, subject: str, kind: str, *, ch: _CHClient | None = None
+) -> None:
+    """The caller holds the stopped account and this namespace's source lease."""
+    await (ch or _default_client()).execute(
+        f"DELETE FROM {TABLE} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
+        "AND owner_subject = {owner:String} AND credential_mode = 'connected' "
+        "AND source_kind = {kind:String}",
+        params={"org": org, "ns": namespace, "owner": subject, "kind": kind},
+        settings={"lightweight_deletes_sync": 2},
+    )
 
 
 async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) -> None:
@@ -225,6 +287,9 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
         "credential_enc": src.credential_enc,
         "secret_enc": src.secret_enc,
         "access": src.access,
+        "credential_mode": src.credential_mode,
+        "owner_subject": src.owner_subject,
+        "connection_id": src.connection_id,
         "created_by": src.created_by,
         "active": src.active,
         "pending_delete": src.pending_delete,
@@ -285,9 +350,10 @@ async def write_state(
 
 
 async def source_documents(
-    org: str, namespace: str, name: str, *, ch: _CHClient | None = None
+    org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The source's live documents, newest first, at most DOCUMENTS_LIMIT.
+    """The live documents the sync wrote under `tag` (`domain.home`), newest first, at
+    most DOCUMENTS_LIMIT.
     A tag filter over the namespace's key prefix: `metadata` is a JSON string
     the table's key does not cover."""
     rows = await (ch or _default_client()).query_all(
@@ -298,7 +364,7 @@ async def source_documents(
         "AND actor = {actor:String} AND superseded_at IS NULL "
         "ORDER BY ingested_at DESC, source_uri "
         f"LIMIT {DOCUMENTS_LIMIT}",
-        params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
+        params={"org": org, "ns": namespace, "tag": tag, "actor": SYNC_WORKER_ACTOR},
     )
     return [dict(r) for r in rows]
 
@@ -308,38 +374,63 @@ async def source_documents(
 _INLINE_PICTURE = r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*<?data:"
 
 
+async def every_copy(
+    org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
+) -> list[dict[str, str]]:
+    """Every live document the sync wrote under `tag`, as `source_revisions` reads
+    them, each with `searchable` ("1" or "") saying whether its chunks are live and its
+    permission list (`access_json`); one read where a mirrored turn needs both."""
+    return await _revisions(org, namespace, tag, searchable="flag", pictures=False, ch=ch)
+
+
 async def source_revisions(
     org: str,
     namespace: str,
-    name: str,
+    tag: str,
     *,
     searchable_only: bool = True,
     pictures: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, str]]:
-    """Each live document of the source: its address, the store's file id it came
-    from, the revision stamp of the ingested copy, and for a kind that keeps them
-    (else "") when the copy was read (`read_at`) and the exact hash of what was
-    written (`text_sha256`). With `pictures`, also whether the stored text still
-    holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
-    ""), as a native document stored by an earlier conversion does, and the SHA-256
-    of the stored text (`stored_content_sha256`): that reads every document's text,
-    so only a full listing asks; the hash is computed only for a flagged copy. A tag
-    filter over the namespace's key prefix like `source_documents`, read in pages of
-    `REVISIONS_PAGE` by address, so no document is left out.
+    """Each live document the sync wrote under `tag` (`domain.home`): its address, the
+    store's file id it came from, the revision stamp of the ingested copy, and for a kind
+    that keeps them (else "") when the copy was read (`read_at`) and the exact hash of what
+    was written (`text_sha256`). With `pictures`, also whether the stored text still holds a
+    picture's bytes as a reference definition (`inline_pictures`, "1" or ""), as a native
+    document stored by an earlier conversion does, and the SHA-256 of the stored text
+    (`stored_content_sha256`): that reads every document's text, so only a full listing
+    asks; the hash is computed only for a flagged copy. A tag filter over the namespace's
+    key prefix like `source_documents`, read in pages of `REVISIONS_PAGE` by address, so no
+    document is left out.
 
-    With `searchable_only`, only a version whose chunks are live counts: a write cut
+    With `searchable_only`, only a document whose chunks are live counts: a write cut
     between its document row and its chunks leaves a version nobody can search, and
-    its revision must not let the next turn skip the file. Without it every live
-    document counts, which is what removal needs."""
-    chunks = (
-        "AND (source_uri, version) IN ("
-        "SELECT source_uri, doc_version FROM loom.chunks "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
-        f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}) "
-        if searchable_only
-        else ""
+    its revision must not let the next turn skip the file. Its chunks are those of its
+    version or of its revision, since a rewrite of the row alone (a new list, a
+    metadata edit) keeps the revision and its chunks. Without it every live document
+    counts, which is what removal needs."""
+    searchable: Literal["only", "ignore"] = "only" if searchable_only else "ignore"
+    return await _revisions(org, namespace, tag, searchable=searchable, pictures=pictures, ch=ch)
+
+
+async def _revisions(
+    org: str,
+    namespace: str,
+    tag: str,
+    *,
+    searchable: Literal["only", "flag", "ignore"],
+    pictures: bool,
+    ch: _CHClient | None,
+) -> list[dict[str, str]]:
+    """`source_revisions` and `every_copy`: the copies whose chunks are live
+    (`only`), every copy flagged `searchable` (`flag`), or every copy (`ignore`)."""
+    has_live_chunks = has_live_chunks_sql(
+        "org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
+        "AND source_uri > {after:String}"
     )
+    only = f"AND {has_live_chunks} " if searchable == "only" else ""
+    # A mirror's flagged read also takes each copy's list, which no other caller reads.
+    flag = f"{has_live_chunks} AS searchable, access_json, " if searchable == "flag" else ""
     checks = (
         "match(content, {pic:String}) AS inline_pictures, "
         "if(inline_pictures, lower(hex(SHA256(content))), '') AS stored_content_sha256"
@@ -351,17 +442,17 @@ async def source_revisions(
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
         "JSONExtractString(metadata, 'read_at') AS read_at, "
         "JSONExtractString(metadata, 'text_sha256') AS text_sha256, "
-        f"{checks} "
+        f"{flag}{checks} "
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
         "AND source_uri > {after:String} "
-        f"{chunks}ORDER BY source_uri LIMIT {REVISIONS_PAGE}"
+        f"{only}ORDER BY source_uri LIMIT {REVISIONS_PAGE}"
     )
     params = {
         "org": org,
         "ns": namespace,
-        "tag": source_tag(name),
+        "tag": tag,
         "actor": SYNC_WORKER_ACTOR,
         **({"pic": _INLINE_PICTURE} if pictures else {}),
     }
@@ -374,8 +465,9 @@ async def source_revisions(
         if len(page) < REVISIONS_PAGE:
             break
         after = str(page[-1]["source_uri"])
-    return [
-        {
+    found = []
+    for r in rows:
+        doc = {
             "source_uri": str(r.get("source_uri") or ""),
             "file_id": str(r.get("file_id") or ""),
             "source_revision": str(r.get("source_revision") or ""),
@@ -384,19 +476,22 @@ async def source_revisions(
             "inline_pictures": "1" if r.get("inline_pictures") else "",
             "stored_content_sha256": str(r.get("stored_content_sha256") or ""),
         }
-        for r in rows
-    ]
+        if searchable == "flag":
+            doc["searchable"] = "1" if r.get("searchable") else ""
+            doc["access_json"] = str(r.get("access_json") or "")
+        found.append(doc)
+    return found
 
 
 async def count_documents(
-    org: str, namespace: str, name: str, *, ch: _CHClient | None = None
+    org: str, namespace: str, tag: str, *, ch: _CHClient | None = None
 ) -> int:
-    """How many live documents the source has."""
+    """How many live documents the sync wrote under `tag` (`domain.home`)."""
     row = await (ch or _default_client()).query_one(
         "SELECT count() AS n FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL",
-        params={"org": org, "ns": namespace, "tag": source_tag(name), "actor": SYNC_WORKER_ACTOR},
+        params={"org": org, "ns": namespace, "tag": tag, "actor": SYNC_WORKER_ACTOR},
     )
     return int((row or {}).get("n") or 0)
 
@@ -410,6 +505,7 @@ __all__ = [
     "all_active_sources",
     "count_documents",
     "directory_row",
+    "every_copy",
     "get_source",
     "inactive_namespaces",
     "insert_source",
@@ -422,3 +518,36 @@ __all__ = [
     "sources_in",
     "write_state",
 ]
+
+
+async def connected_history(
+    *, owner: tuple[str, str, str] | None = None, ch: _CHClient | None = None
+) -> list[KnowledgeSource]:
+    """Metadata of every historical connected source id, including replaced names."""
+    where = "credential_mode = 'connected'"
+    if owner:
+        where += " AND (org, owner_subject, source_kind) = {owner:Tuple(String, String, String)}"
+    maximum = settings.knowledge_connected_registry_scan_limit
+    rows = await (ch or _default_client()).query_all(
+        "SELECT DISTINCT org, namespace, name, source_id, source_kind, owner_subject, "
+        f"connection_id FROM {TABLE} WHERE {where} "
+        "ORDER BY org, owner_subject, source_kind, namespace, name, source_id, connection_id "
+        "LIMIT {limit:UInt64}",
+        params={"owner": owner or ("", "", ""), "limit": maximum + 1},
+    )
+    if len(rows) > maximum:
+        raise RuntimeError("connected_restore_inventory_bound")
+    return [
+        KnowledgeSource(
+            org=row["org"],
+            namespace=row["namespace"],
+            name=row["name"],
+            kind=row["source_kind"],
+            source_id=row["source_id"],
+            owner_subject=row["owner_subject"],
+            connection_id=row["connection_id"],
+            credential_mode="connected",
+            access="mirrored",
+        )
+        for row in rows
+    ]

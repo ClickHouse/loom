@@ -78,7 +78,7 @@ only with a real LLM provider configured.
 ```python
 Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_s=60.0,
       pacing=True, coalesce_sets=True, ratelimit_max_wait_s=None, auto_run=None,
-      retry=None, consumer="", mentor_brief=None, profile=None)
+      retry=None, consumer="", mentor_brief=None, profile=None, session_protection=None)
 ```
 
 | Argument                    | Meaning                                                                                                                                                                                                                                                                                                                                   |
@@ -92,6 +92,41 @@ Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_
 | `coalesce_sets`             | From the third `memory.set` inside one 200 ms window, gather sets with the same identity into one `memory.bulk_set`. A coalesced result carries `coalesced: true` and no `memory_id` / `content_sha256`; a set with `if_match_sha256` or an expiry policy is never coalesced. `memory.flush_sets()` sends a batch now; `close()` flushes. |
 | `auto_run`                  | Bind an ambient run to the Agent's lifetime (or `LOOM_AUTO_RUN=1`): writes carry its `run_id`, reads are labelled with `X-Loom-Run-Id`. Off by default, because a write under a run is scoped to it: a restatement of another scope's row is stored as a duplicate, not merged.                                                           |
 | `mentor_brief`              | Fetch `mentor.brief` in the background on the first call (or `LOOM_MENTOR_BRIEF=on`); `await bot.mentor()` does it explicitly.                                                                                                                                                                                                            |
+
+### Session protection
+
+`session_protection` accepts an application-owned `SessionProtection` from
+`loom.session_protection`. Share the same capsule across clients, servers and tokens
+that serve one logical conversation. Create it explicitly for an independent family
+before receiving content; reopen its saved pointer on restore. Missing, damaged or
+inaccessible state suppresses automatic capture. The capsule stores control state,
+not conversation text, and requires private POSIX files. Native Windows refuses until
+a durable ACL-backed adapter is available.
+
+JSON responses are observed before typed conversion, error handling or retry. Bound
+SSE responses retain every opening producer and observe each complete frame before
+releasing its original bytes, including through raw buffered requests. Pending frames
+are limited to 4 MiB; malformed or interrupted observations protect the family and
+withhold unconfirmed bytes. Bound assistant streams request identity encoding and
+refuse compressed responses before output. Unbound streams keep their existing
+behavior.
+
+A marked response durably protects every known family before returning. A failed durable mark
+withholds the response. `with family.automatic():` classifies an application's callback;
+the final request hook checks protection after authentication and on every replay.
+Explicit actions outside automatic callbacks remain available after protection and still
+observe responses. This option does not declare protocol capability. The serving build,
+other consumers, launchers and framework callbacks require their separate qualification
+before mirrored reads are enabled.
+
+`Session.resume()` and `history()` are automatic reads. The first marked recall can
+return after durable observation; a marked pack skips the optional history request.
+Subsequent automatic reads and writes stop. `append()` and `flush()` retain their
+producer families across buffering and carry-over, discard protected text rather than
+retrying it, and stop a multi-turn append after a response marks the family. Explicit
+`offload()`, `fetch()` and `note()` remain available and observe replies for the retained
+families. Deferred coalesced writes keep their producer's automatic status and run context,
+including when another caller flushes them.
 
 ### Identity defaults
 
@@ -208,6 +243,20 @@ What an agent framework holds between turns:
   `await execute(name, arguments)` that returns the string the model reads:
   `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`,
   `loom_note`. The schemas match the TypeScript SDK's.
+  An explicit `code_namespace` offers `loom_code_lookup` first; `only=["loom_code_lookup"]`
+  selects just that read-only tool. The application fixes the code scope separately
+  from memory. See [code tools](../guides/code-tools.md) for arguments, evidence limits
+  and valid JSON result budgeting.
+  `loom_remember` also accepts `files`, `tags` and `source_resource_id`. These
+  preserve a finding's supporting references; inspect the server receipt before
+  claiming a code link was resolved. `only=["loom_recall", "loom_update"]`
+  opts into correction of an existing key. This optional tool requires an explicit
+  named `user_id`; `None`, an empty name and `"-"` refuse before a request because
+  they mean all users to the key-update operation. Names with surrounding whitespace
+  also refuse rather than resolve under a different identity. A correction keeps
+  the configured namespace and user scope, resolves the key across writing agents
+  and sessions, and preserves ambiguity and hash-precondition refusals. The default six tools
+  do not include `loom_update`.
 - `bot.run_scope(goal=...)` is an `async with` block that begins a run, stamps
   its `run_id` on the writes inside and labels the reads with it (the
   `X-Loom-Run-Id` header, not a filter), and on exit credits the keys a
@@ -242,9 +291,13 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   block when `Memory` is used through `get` / `put` or with `flush`;
   `aflush(memory)` hands what is left in the window to the `Memory`'s blocks
   and archives it.
+- `loom.integrations.haystack.LoomDocumentStore(org, namespace, ...)` stores native
+  Haystack documents in Loom knowledge; `LoomRetriever(store)` is a retrieval
+  component. Install the `[haystack]` extra.
 - `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
-  `AgentTools` as OpenAI Agents SDK `FunctionTool`s; install the
-  `[openai-agents]` extra.
+  `AgentTools` as OpenAI Agents SDK `FunctionTool`s, and
+  `LoomSession(agent, session_id, user_id=...)` is its `Session`, the history kept as
+  episodic memories; install the `[openai-agents]` extra.
 - `loom.integrations.crewai.LoomCrewMemory(agent=...)` is a CrewAI `Memory`
   over a `SyncAgent`: `recall` is `memory.search`, a task's output goes to
   `memory.set_from_messages`; install the `[crewai]` extra.
@@ -255,6 +308,25 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   assembly policy that adds the memories `memory.search` finds for the latest
   user message to the prompt, and `loom_tools(agent, user_id=...)` returns
   `AgentTools` as AG2 tools; install the `[ag2]` extra.
+- `loom.integrations.agent_framework.LoomContextProvider(agent, user_id=...)` is a
+  Microsoft Agent Framework `ContextProvider`: before each run it adds the
+  `memory.search` matches of the user's input to the instructions, and after the run
+  it sends the turn to `memory.set_from_messages`; install the `[agent-framework]`
+  extra.
+- `loom.integrations.claude_memory.AsyncLoomMemoryTool(agent, store=...)` and
+  `LoomMemoryTool(sync_agent, store=...)` run the Claude API memory tool's commands
+  against Loom documents (`knowledge.get`, `knowledge.upsert`, `knowledge.list`,
+  `knowledge.bulk_delete`); install the `[claude-memory]` extra.
+- `loom.integrations.google_adk.LoomMemoryService(agent, app_name=...)` is a
+  Google ADK `BaseMemoryService` for one ADK app: a saved session or turn goes
+  to `memory.set_from_messages`, `add_memory` is `memory.set`, `search_memory`
+  uses `memory.search` scoped to the ADK user, then fills remaining slots with
+  up to 100 shared namespace documents from `knowledge.search`; `delete_memory`
+  calls `memory.delete_version` for the exact writer and version carried in the
+  search entry id. Install the
+  `[google-adk]` extra.
+- `loom.integrations.agno.LoomMemoryDb(sync_agent, user_id=...)` implements Agno
+  `BaseDb` user-memory methods over episodic Loom rows; install the `[agno]` extra.
 - `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
   `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
   extra.
@@ -268,6 +340,11 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
   nothing when Loom abstains, and leaves out memories below the floor, unless
   `honour_abstain=False`.
+- `loom.integrations.pipecat.LoomMemoryService(agent, user_id=...)` is a Pipecat
+  memory service: its recall processor adds the `memory.search` matches of the
+  turn's user text to the shared `LLMContext`, and its capture processor sends
+  the completed turn to `memory.set_from_messages`; install the `[pipecat]`
+  extra.
 
 The LangGraph and Strands adapters import without their framework installed. See
 [Frameworks](../features/integrations/frameworks.md).

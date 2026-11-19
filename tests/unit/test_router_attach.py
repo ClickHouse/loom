@@ -1166,3 +1166,174 @@ def test_remove_never_connects_clickhouse(
     monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
     monkeypatch.setattr(cell_cli, "_read_first_cell", _read)
     assert cell_cli._cmd_remove(_remove_args()) == 0
+
+
+# The state route's cache (`Router._state_row`): a change this replica makes, or learns of,
+# reaches its next state read at once, without the clock moving.
+
+CELL = "lcr_" + "c" * 128
+
+
+@pytest.fixture
+def cell_credential(store: _Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cell's own credential, its hashes read from the store as the directory's are."""
+    store.cells["eu-1"]["credential_sha256"] = hashlib.sha256(CELL.encode()).hexdigest()
+
+    async def _credentials() -> dict[str, tuple[str, ...]]:
+        return {
+            name: tuple(h for h in (r["credential_sha256"], r["credential_next_sha256"]) if h)
+            for name, r in store.cells.items()
+        }
+
+    monkeypatch.setattr(directory, "credentials", _credentials)
+
+
+def _state(client: TestClient) -> Any:
+    return client.get("/cells/v1/cells/eu-1", headers={"Authorization": f"Bearer {CELL}"})
+
+
+def test_attach_serving_reaches_this_replicas_next_state_read(
+    client: TestClient, store: _Store, cell_credential: None
+) -> None:
+    _enforced(client)
+    assert _state(client).json()["state"] == "attaching"
+    r = _call(client, "POST", "attach/serving", {"deployment_id": "dep-1", "nonces": NONCES})
+    assert r.status_code == 200
+    assert _state(client).json()["state"] == "serving"
+
+
+def test_a_rotation_drops_this_replicas_cached_state(
+    client: TestClient, store: _Store, cell_credential: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rotation's `next` step forgets the cached hashes and the rows read with them: the
+    next state read reads the row again (here marked `serving` by another replica)."""
+    assert _state(client).json()["state"] == "attaching"
+    store.cells["eu-1"]["state"] = "serving"
+    assert _state(client).json()["state"] == "attaching"  # cached
+
+    async def _rotate(name: str, step: str, sha: str) -> directory.Cell:
+        store.cells[name]["credential_next_sha256"] = sha
+        return directory._cell(_Conn(store)._row(name, ""))
+
+    monkeypatch.setattr(directory, "rotate_credential", _rotate)
+    r = _call(client, "POST", "credential", {"step": "next", "sha256": "d" * 64})
+    assert r.status_code == 200
+    assert _state(client).json()["state"] == "serving"
+
+
+def test_a_remove_drops_this_replicas_cached_state(
+    client: TestClient, store: _Store, cell_credential: None
+) -> None:
+    assert _state(client).json()["state"] == "attaching"
+    assert _call(client, "DELETE").status_code == 200
+    assert _state(client).status_code == 401  # no row, so no credential either
+
+
+def _blocked_state_read(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """`directory.first_cell_named` whose first call reads the row, then waits for `go`
+    before it returns (`started` set once it has read)."""
+    real = directory.first_cell_named
+    started, go = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def _read(name: str) -> directory.Cell | None:
+        nonlocal calls
+        calls += 1
+        row = await real(name)
+        if calls == 1:
+            started.set()
+            await go.wait()
+        return row
+
+    monkeypatch.setattr(directory, "first_cell_named", _read)
+    return started, go
+
+
+def test_a_state_read_begun_before_a_change_is_not_cached(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The read answers what it read, but a change made while it ran (`_forget_credentials`)
+    keeps its row out of the cache, so the next read reads again."""
+    router = router_app.Router()
+    started, go = _blocked_state_read(store, monkeypatch)
+
+    async def _run() -> None:
+        read = asyncio.create_task(router._state_row("eu-1"))
+        await started.wait()
+        router._forget_credentials()
+        go.set()
+        assert (await read).row is not None
+        assert "eu-1" not in router._states
+
+    asyncio.run(_run())
+
+
+def test_a_state_read_slower_than_the_window_serves_the_requests_behind_it(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The window is timed from when a read ends: a read that takes longer than
+    LOOM_ROUTER_DIRECTORY_CACHE_S still answers the next request from the cache."""
+    now = [0.0]
+    router = router_app.Router(clock=lambda: now[0])
+    real = directory.first_cell_named
+    calls = 0
+
+    async def _slow(name: str) -> directory.Cell | None:
+        nonlocal calls
+        calls += 1
+        now[0] += 2 * settings.router_directory_cache_s
+        return await real(name)
+
+    monkeypatch.setattr(directory, "first_cell_named", _slow)
+
+    async def _run() -> None:
+        await router._state_row("eu-1")
+        await router._state_row("eu-1")
+
+    asyncio.run(_run())
+    assert calls == 1
+
+
+def test_attach_serving_waits_for_a_state_read_in_flight_and_drops_its_row(
+    store: _Store, listener: _Listener, cell_credential: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state read that read `attaching` before the commit and stores it after: the drop
+    after attach/serving runs once that read is done, so the next read answers `serving`."""
+    router = router_app.Router(probe_transport=httpx.MockTransport(listener))
+    with TestClient(router_app.build_app(router)) as setup:
+        _enforced(setup)
+    started, go = _blocked_state_read(store, monkeypatch)
+    committed = asyncio.Event()
+    real_serving = directory.attach_serving
+
+    async def _serving(*a: Any) -> Any:
+        found = await real_serving(*a)
+        committed.set()
+        return found
+
+    monkeypatch.setattr(directory, "attach_serving", _serving)
+    app = router_app.build_app(router)
+
+    async def _run() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://router") as c:
+            headers = {"Authorization": f"Bearer {CELL}"}
+            first = asyncio.create_task(c.get("/cells/v1/cells/eu-1", headers=headers))
+            await started.wait()  # it read `attaching`, and holds the cache's lock
+            serving = asyncio.create_task(
+                c.post(
+                    "/cells/v1/operator/cells/eu-1/attach/serving",
+                    json={"deployment_id": "dep-1", "nonces": NONCES},
+                    headers={"Authorization": f"Bearer {OPERATOR}"},
+                )
+            )
+            await committed.wait()
+            go.set()
+            assert (await first).json()["state"] == "attaching"
+            assert (await serving).status_code == 200
+            again = await c.get("/cells/v1/cells/eu-1", headers=headers)
+            assert again.json()["state"] == "serving"
+
+    asyncio.run(_run())

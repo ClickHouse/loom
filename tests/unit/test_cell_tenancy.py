@@ -18,7 +18,7 @@ import pytest
 
 from server.auth import tenancy
 from server.auth.jwt import AuthInfo
-from server.core import cell, errors
+from server.core import cell, cell_router, errors
 from server.operations.base import Role
 from server.settings import settings
 
@@ -79,8 +79,9 @@ def cell_pg(monkeypatch: pytest.MonkeyPatch) -> _PG:
     monkeypatch.setattr(tenancy, "_elsewhere", {})
     monkeypatch.setattr(tenancy, "_not_held", {})
     monkeypatch.setattr(tenancy, "_placing", {})
-    # The directory answers that this first cell is `attaching` (its own tests below).
-    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=True))
+    # The directory answers that this first cell is `attaching` (its own tests are in
+    # test_cell_router.py).
+    monkeypatch.setattr(cell_router, "directory_answer", AsyncMock(return_value="attaching"))
     monkeypatch.setattr(cell, "_deployment_id", "dep-eu-1")
     monkeypatch.setattr(cell, "mode", lambda: fake.mode)
     monkeypatch.setattr(pg, "fetchval", fake.fetchval)
@@ -391,7 +392,7 @@ async def test_the_middleware_checks_a_raw_routes_token_org(
 # Every route outside the op registry, and how the org it acts in is checked:
 #   "token": it acts only in the verified token's own org, which the middleware checks;
 #   "named": its request names the org, and its module checks that org itself
-#            (check_authorized, admit_org or tenancy.ensure_held);
+#            (check_authorized, admit_org, ensure_held or a fail-closed is_held);
 #   anything else: why it acts in no org.
 _ORG_FREE_MODULES = {
     "server.identity.app.dashboard_routes": "the dashboard's pages and assets: no data",
@@ -400,6 +401,7 @@ _ORG_FREE_MODULES = {
 ROUTES: dict[str, str] = {
     "/.well-known/oauth-authorization-server GET": "discovery document: no data",
     "/assets WS": "the dashboard's static assets",
+    "/hooks/knowledge/{namespace}/{source_id}/{generation} POST": "named",
     "/mcp DELETE": "ends an MCP session: no org's data",
     "/mcp POST": "op transport: the op gate checks each call's org",
     "/oauth/agent-claim GET": "the claim page: no data",
@@ -459,6 +461,8 @@ ROUTES: dict[str, str] = {
     "/v1/auth/agent-signup POST": "named",
     "/v1/auth/login POST": "password sign-in: the account is this cell's",
     "/v1/auth/self-signup POST": "named",
+    "/v1/connect/{kind}/start POST": "token",
+    "/v1/connect/{kind}/callback GET": "named",
     "/v1/health GET": "health probe",
     "/v1/health/live GET": "health probe",
     "/v1/health/ready GET": "health probe",
@@ -467,6 +471,7 @@ ROUTES: dict[str, str] = {
     "/v1/knowledge.upload POST": "named",
     "/v1/me/service_accounts GET": "token",
     "/v1/me/service_accounts.create POST": "token",
+    "/v1/me/personal_tokens.create POST": "token",
     "/v1/me/service_accounts.revoke POST": "token",
     "/v1/me/set-default-namespace POST": "token",
     "/v1/me/sharing-summary GET": "token",
@@ -477,7 +482,7 @@ ROUTES: dict[str, str] = {
 # SCIM's user routes, mounted only with SCIM on: the accounts are this cell's, in the
 # org it was attached with (`oidc_jit_org`, placed at attach).
 SCIM_USERS = "server.auth.scim_routes"
-_CHECKS = {"check_authorized", "admit_org", "ensure_held"}
+_CHECKS = {"check_authorized", "admit_org", "ensure_held", "is_held"}
 
 
 def _routes(routes: list[Any], prefix: str = "") -> list[tuple[str, str]]:
@@ -544,7 +549,7 @@ def _checks(endpoint: Any) -> bool:
     return False
 
 
-def test_every_route_is_tenancy_checked_or_org_free() -> None:
+def _assert_every_route_is_tenancy_checked_or_org_free() -> None:
     from server.main import app
     from server.operations.registry import ALL_OPERATIONS
 
@@ -568,6 +573,61 @@ def test_every_route_is_tenancy_checked_or_org_free() -> None:
     endpoints = {key: ep for key, ep in _endpoints(app.routes)}
     missing = [key for key, how in ROUTES.items() if how == "named" and not _checks(endpoints[key])]
     assert not missing, f"these routes name an org but check none: {missing}"
+
+
+def test_every_route_is_tenancy_checked_or_org_free() -> None:
+    import os
+    import subprocess
+
+    # Route attachment is decided when the app is built, before request handling.
+    check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from server.settings import settings\n"
+            "settings.auth_required = True\n"
+            "settings.identity_provider = 'trust-network'\n"
+            "settings.oauth_enabled = False\n"
+            "from tests.unit.test_cell_tenancy import "
+            "_assert_every_route_is_tenancy_checked_or_org_free as check\n"
+            "check()\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "LOOM_ENV_FILE": ""},
+    )
+    assert check.returncode == 0, check.stdout + check.stderr
+
+
+@pytest.mark.parametrize("mode", ["recording", "enforced"])
+@pytest.mark.parametrize("state", ["held", "unheld", "unread"])
+def test_provider_callback_requires_an_already_held_org_without_placement(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch, mode: str, state: str
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.knowledge.app import source_push_routes
+
+    cell_pg.mode = mode
+    cell_pg.down = state == "unread"
+    org = "held" if state == "held" else "new"
+    calls = _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
+    receive = AsyncMock()
+    monkeypatch.setattr(source_push_routes, "receive", receive)
+    app = FastAPI()
+    source_push_routes.attach(app)
+    url = (
+        "/hooks/knowledge/docs/12345678-1234-1234-1234-123456789abc/"
+        f"22345678-1234-1234-1234-123456789abc?org={org}"
+    )
+    with TestClient(app) as client:
+        result = client.post(url, content=b"provider signal")
+    assert result.status_code == (200 if state == "held" else 403)
+    assert receive.await_count == int(state == "held")
+    assert cell_pg.writes == []
+    assert calls == []
 
 
 def test_scim_user_routes_act_in_the_cells_own_accounts() -> None:
@@ -1463,152 +1523,22 @@ def test_a_recording_cell_the_directory_marks_serving_records_no_new_org(
     """A restore to before attach's step 3 reads `recording` again; the directory says
     `serving`, so a new org answers 503 and nothing is written, while a held org serves."""
     cell_pg.mode = "recording"
-    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=False))
+    monkeypatch.setattr(cell_router, "directory_answer", AsyncMock(return_value="serving"))
     with pytest.raises(errors.BackendUnavailableError, match="attaching"):
         asyncio.run(tenancy.ensure_held("new", _auth("new")))
     assert cell_pg.writes == [] and "new" not in cell_pg.held
     asyncio.run(tenancy.ensure_held("held", _auth("held")))
 
 
-def _state_router(monkeypatch: pytest.MonkeyPatch, answer: Any, status: int = 200) -> list[str]:
-    calls: list[str] = []
-
-    def _handler(request: httpx.Request) -> httpx.Response:
-        calls.append(f"{request.method} {request.url.path} {request.headers.get('authorization')}")
-        if isinstance(answer, Exception):
-            raise answer
-        return httpx.Response(status, json=answer)
-
-    real = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_handler), **kw)
-    )
-    return calls
-
-
-@pytest.fixture
-def state_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "cell", "eu-1")
-    monkeypatch.setattr(settings, "cell_router_url", "https://router.test/")
-    monkeypatch.setattr(settings, "cell_router_token", "lcr_" + "0" * 128)
-    monkeypatch.setattr(tenancy, "_attaching", None)
-    monkeypatch.setattr(tenancy, "_attaching_read", None)
-
-
-@pytest.mark.parametrize(
-    "answer,status,attaching",
-    [
-        ({"cell": "eu-1", "state": "attaching"}, 200, True),
-        ({"cell": "eu-1", "state": "serving"}, 200, False),
-        ({"error": "not the first cell"}, 404, False),
-        ({"error": "no cell"}, 401, False),
-        (["attaching"], 200, False),
-        (httpx.ConnectError("down"), 200, False),
-    ],
-)
-def test_the_state_read_is_attaching_only_on_that_answer(
-    state_read: None, monkeypatch: pytest.MonkeyPatch, answer: Any, status: int, attaching: bool
-) -> None:
-    calls = _state_router(monkeypatch, answer, status)
-    assert asyncio.run(tenancy.directory_says_attaching()) is attaching
-    assert calls == [f"GET /cells/v1/cells/eu-1 Bearer lcr_{'0' * 128}"]
-
-
-def test_the_state_read_is_read_once_per_window_and_shared(
-    state_read: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls = _state_router(monkeypatch, {"cell": "eu-1", "state": "attaching"})
-
-    async def _burst() -> list[bool]:
-        return list(await asyncio.gather(*(tenancy.directory_says_attaching() for _ in range(5))))
-
-    assert asyncio.run(_burst()) == [True] * 5
-    assert asyncio.run(tenancy.directory_says_attaching()) is True
-    assert len(calls) == 1
-    answer, at = tenancy._attaching
-    tenancy._attaching = (answer, at - settings.tenancy_mode_cache_s)  # the window has passed
-    assert asyncio.run(tenancy.directory_says_attaching()) is True
-    assert len(calls) == 2
-
-
-def test_the_state_read_without_a_router_is_not_attaching(
-    state_read: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "cell_router_url", "")
-    calls = _state_router(monkeypatch, {"cell": "eu-1", "state": "attaching"})
-    assert asyncio.run(tenancy.directory_says_attaching()) is False and calls == []
-
-
-def test_a_state_read_slower_than_the_timeout_is_not_attaching(
-    state_read: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "cell_router_timeout_s", 0.2)
-
-    async def _slow(_request: httpx.Request) -> httpx.Response:
-        await asyncio.sleep(5)
-        return httpx.Response(200, json={"cell": "eu-1", "state": "attaching"})
-
-    real = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_slow), **kw)
-    )
-    started = time.monotonic()
-    assert asyncio.run(tenancy.directory_says_attaching()) is False
-    assert time.monotonic() - started < 2
-
-
-def test_a_false_state_read_stands_for_the_window_too(
-    state_read: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A router outage costs one call per window, not one per new-org request."""
-    calls = _state_router(monkeypatch, httpx.ConnectError("down"))
-    assert [asyncio.run(tenancy.directory_says_attaching()) for _ in range(3)] == [False] * 3
-    assert len(calls) == 1
-
-
-def test_a_cancelled_waiter_leaves_the_shared_state_read_to_the_others(
-    state_read: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[str] = []
-
-    async def _answer(_request: httpx.Request) -> httpx.Response:
-        calls.append("read")
-        await asyncio.sleep(0.05)
-        return httpx.Response(200, json={"cell": "eu-1", "state": "attaching"})
-
-    real = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_answer), **kw)
-    )
-
-    async def _burst() -> list[Any]:
-        waiters = [asyncio.create_task(tenancy.directory_says_attaching()) for _ in range(3)]
-        await asyncio.sleep(0.01)
-        waiters[0].cancel()
-        return await asyncio.gather(*waiters, return_exceptions=True)
-
-    results = asyncio.run(_burst())
-    assert isinstance(results[0], asyncio.CancelledError) and results[1:] == [True, True]
-    assert calls == ["read"]
-
-
 def test_a_recording_cell_with_no_router_names_the_settings_it_lacks(
     cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cell_pg.mode = "recording"
-    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=False))
+    monkeypatch.setattr(cell_router, "directory_answer", AsyncMock(return_value="unknown"))
     monkeypatch.setattr(settings, "cell_router_token", "")
     with pytest.raises(errors.BackendUnavailableError, match="LOOM_CELL_ROUTER_TOKEN unset"):
         asyncio.run(tenancy.ensure_held("new", _auth("new")))
     assert cell_pg.writes == []
-
-
-def test_a_malformed_router_url_is_no_state_read_answer(
-    state_read: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(settings, "cell_router_url", "https://router.test:notaport")
-    calls = _state_router(monkeypatch, {"cell": "eu-1", "state": "attaching"})
-    assert asyncio.run(tenancy.directory_says_attaching()) is False and calls == []
 
 
 def test_a_malformed_router_url_answers_a_placement_503_and_writes_nothing(

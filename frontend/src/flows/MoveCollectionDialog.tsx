@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { moveCollection, type CollectionEntry } from "../api";
-import { collectionTitle, distinctTitle, repeatedTitles } from "../lib/collections";
+import { collectionTitle, distinctTitle, isUnder, repeatedTitles } from "../lib/collections";
 import { humanizeError } from "../lib/errorWords";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { toast } from "../components/Toast";
@@ -19,7 +19,10 @@ export function MoveCollectionDialog({
   collection,
   parents,
   all,
+  initialParent,
+  onMoved,
   onClose,
+  onCloseAutoFocus,
 }: {
   org: string;
   collection: CollectionEntry;
@@ -27,9 +30,16 @@ export function MoveCollectionDialog({
   parents: CollectionEntry[];
   /** Every collection the person sees, so the tree walks through ones they only read. */
   all: CollectionEntry[];
+  /** The parent it opens on, "" for the top level (a drop in the Library's tree); its
+   *  current parent otherwise. */
+  initialParent?: string;
+  /** After the move succeeded, before it closes. */
+  onMoved?: () => void;
   onClose: () => void;
+  /** Where focus goes once it closes, as the Modal's. */
+  onCloseAutoFocus?: (e: Event) => void;
 }) {
-  const [parent, setParent] = useState(collection.parent || TOP);
+  const [parent, setParent] = useState((initialParent ?? collection.parent) || TOP);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const target = parent === TOP ? "" : parent;
@@ -49,6 +59,7 @@ export function MoveCollectionDialog({
       await moveCollection(org, collection.namespace, target);
       invalidateSharedCollections();
       toast(target ? `Moved ${self} into ${shown(target)}` : `${self} is top-level`, "ok");
+      onMoved?.();
       onClose();
     } catch (e) {
       setError(humanizeError(e));
@@ -57,7 +68,13 @@ export function MoveCollectionDialog({
   };
 
   return (
-    <Modal open onOpenChange={(v) => !v && onClose()} title={`Move ${self}`} className="w-full max-w-[480px]">
+    <Modal
+      open
+      onOpenChange={(v) => !v && onClose()}
+      onCloseAutoFocus={onCloseAutoFocus}
+      title={`Move ${self}`}
+      className="w-full max-w-[480px]"
+    >
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -69,7 +86,7 @@ export function MoveCollectionDialog({
           <Select id="move-collection-parent" label="Inside" value={parent} onSelect={setParent} showSearch>
             <Select.Item value={TOP}>Top level</Select.Item>
             {parents
-              .filter((c) => !under(c.namespace, collection.namespace, parentOf))
+              .filter((c) => !isUnder(c.namespace, collection.namespace, parentOf))
               .map((c) => (
                 <Select.Item key={c.namespace} value={c.namespace}>
                   {distinctTitle(c, repeated)}
@@ -91,21 +108,11 @@ export function MoveCollectionDialog({
   );
 }
 
-/** Whether `name` is `root` or sits somewhere under it. */
-function under(name: string, root: string, parentOf: Map<string, string>): boolean {
-  const seen = new Set<string>();
-  for (let at: string | undefined = name; at && !seen.has(at); at = parentOf.get(at)) {
-    if (at === root) return true;
-    seen.add(at);
-  }
-  return false;
-}
-
 /** Who reaches the collection after the move: its own members always, the new parent's
  *  readers when it has one. The old parent's readers lose the access they had through it,
  *  unless the new parent sits under the old one. */
 function moveEffect(from: string, to: string, parentOf: Map<string, string>, shown: (name: string) => string): string {
-  const keeps = !from || (!!to && under(to, from, parentOf));
+  const keeps = !from || (!!to && isUnder(to, from, parentOf));
   const lose = keeps ? "" : ` Whoever reached it only through ${shown(from)} loses it.`;
   const gain = to ? `Everyone who reaches ${shown(to)} reaches it too.` : "At the top, only its own members reach it.";
   return gain + lose;

@@ -33,6 +33,8 @@ from server.memory.store import (
     MemoryRow,
 )
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 _T0 = datetime(2024, 1, 1, 12, 0, 0)
 
 

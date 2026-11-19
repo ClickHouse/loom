@@ -259,12 +259,12 @@
           "default": 5.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a whole placement call to the router may take before the request answers 503."
+          "description": "Seconds a whole call to the router may take: a placement call, after which the request answers 503, and a cell's state read, which is also the margin past its read period before that read's answer counts as late."
         },
         "cell_router_url": {
           "default": "",
           "type": "string",
-          "description": "The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; \"\" = none: in `enforced`, a new org answers 503."
+          "description": "The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; \"\" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a value other than an http(s) URL with a host, a port at most 65535 and no '?' or '#' refuses the boot."
         },
         "ch_analysis_max_concurrent": {
           "default": 8,
@@ -318,6 +318,14 @@
           "minimum": 1,
           "type": "integer",
           "description": "Threads one statement may use (pinned as a MAX, so a statement cannot take the host)."
+        },
+        "ch_analysis_observer_urls": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array",
+          "description": "Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse."
         },
         "ch_analysis_probe_interval_s": {
           "default": 60.0,
@@ -1124,6 +1132,26 @@
           "default": 200,
           "type": "integer",
           "description": "Max PR heads fetched per shared mirror per ingest pass."
+        },
+        "code_git_proxy_ca_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM bundle git verifies TLS with through the proxy, in place of its default roots (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url."
+        },
+        "code_git_proxy_identity": {
+          "default": "",
+          "type": "string",
+          "description": "The proxy user of an entry that names no `git_proxy_identity`: letters, digits and `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_token_file": {
+          "default": "",
+          "type": "string",
+          "description": "File holding the proxy password, read again for every git job. Empty = no password; a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_url": {
+          "default": "",
+          "type": "string",
+          "description": "The proxy: `http://host:port` or `https://host:port`, the port named, with no credentials, path or query. Empty = git connects directly."
         },
         "code_git_remote": {
           "default": "",
@@ -2121,10 +2149,20 @@
           "type": "boolean",
           "description": "Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); a configured entry for a namespace a member added from the page is skipped. Off = the operator's JSON is the only source."
         },
+        "code_self_service_git_unsandboxed": {
+          "default": false,
+          "type": "boolean",
+          "description": "True lets a host without the sandbox add and fetch a self-service entry with a network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and it gets no compiler tier. Refused at load without code_self_service_platform_admin_only, where a request can carry no principal (auth off, or mcp_auth_mode open), and with code_sandbox_required. False: such an entry needs the sandbox."
+        },
         "code_self_service_max_repos": {
           "default": 20,
           "type": "integer",
           "description": "Active self-service entries per org (branches count); past it the add refuses with a message."
+        },
+        "code_self_service_platform_admin_only": {
+          "default": false,
+          "type": "boolean",
+          "description": "True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to platform admins: a token scoped to namespaces, or a trusted caller acting for another subject, is refused too. False: each op's own role decides."
         },
         "code_setting_control": {
           "default": "",
@@ -2297,6 +2335,26 @@
           "type": "number",
           "description": "memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold."
         },
+        "connect_gdrive_client_id": {
+          "default": "",
+          "type": "string",
+          "description": "OAuth client id for personal Drive connections; empty disables the provider."
+        },
+        "connect_linear_client_id": {
+          "default": "",
+          "type": "string",
+          "description": "OAuth client id for personal project-tracker connections; empty disables it."
+        },
+        "connect_notion_client_id": {
+          "default": "",
+          "type": "string",
+          "description": "Public-integration client id for personal page-store connections; empty disables it."
+        },
+        "connect_notion_read_content_only": {
+          "default": false,
+          "type": "boolean",
+          "description": "The operator has restricted the public integration to read-content capability. Its token response cannot prove this registration setting; false disables it."
+        },
         "consolidation_merge_concurrency": {
           "default": 4,
           "type": "integer",
@@ -2349,6 +2407,13 @@
           "type": "string",
           "description": "Comma-separated origin list. \"*\" allows all (acceptable when auth_required=True). Empty disables CORS entirely."
         },
+        "cost_budget_alert_share": {
+          "default": 0.8,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "type": "number",
+          "description": "Fraction of a cap that warns its namespace's configured inbox on the next check."
+        },
         "dashboard_redirect_url": {
           "default": "",
           "type": "string",
@@ -2358,6 +2423,12 @@
           "default": 1.0,
           "type": "number",
           "description": "Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers."
+        },
+        "default_daily_user_cost_cap_usd": {
+          "default": 0.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it. A namespace's daily_user_cost_cap_usd overrides this default when positive."
         },
         "default_namespace": {
           "default": "local",
@@ -3029,6 +3100,67 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_connected_lease_ttl_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the renewed account-generation lease lives. Source leases follow it; provider requests hold neither."
+        },
+        "knowledge_connected_lease_wait_s": {
+          "default": 5.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds a connection change waits for another holder's account-generation lease."
+        },
+        "knowledge_connected_oauth_response_max_bytes": {
+          "default": 65536,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing."
+        },
+        "knowledge_connected_oauth_timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound."
+        },
+        "knowledge_connected_registry_page_size": {
+          "default": 256,
+          "maximum": 4096,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Registrations per page during root-secret resealing."
+        },
+        "knowledge_connected_registry_scan_limit": {
+          "default": 4096,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum complete owner scan; exceeding it refuses instead of stopping a subset."
+        },
+        "knowledge_connected_revoke_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds for best-effort provider revocation after every local stop has committed."
+        },
+        "knowledge_connected_sources_max_per_namespace": {
+          "default": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Active connected sources per namespace, separate from the shared/crawl quota."
+        },
+        "knowledge_connected_sources_max_per_person": {
+          "default": 8,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Active connected sources one canonical person may register in one namespace."
+        },
+        "knowledge_connected_stop_timeout_s": {
+          "default": 20.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds for local connection stops, including their source retirement writes."
+        },
         "knowledge_gaps_enabled": {
           "default": false,
           "type": "boolean",
@@ -3119,6 +3251,53 @@
           "type": "integer",
           "description": "Seconds one pass, which runs one job, may take before it is cancelled: the extractor's timeout plus embedding the largest source. A job cut off runs again from its start and counts toward its attempts."
         },
+        "knowledge_live_search_max_ancestors": {
+          "default": 3,
+          "maximum": 3,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Native parent lookups per Notion membership check, from zero to three. Zero accepts directly registered pages and database membership without parent fetches."
+        },
+        "knowledge_live_search_max_hits": {
+          "default": 10,
+          "maximum": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Live hits across all registrations, and the per-provider page bound, from one to ten."
+        },
+        "knowledge_live_search_max_items": {
+          "default": 4,
+          "maximum": 4,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Registered Drive items searched per source, from one to four; no pagination."
+        },
+        "knowledge_live_search_max_sources": {
+          "default": 3,
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Connected registrations searched per live-search request, from one to three."
+        },
+        "knowledge_live_search_response_max_bytes": {
+          "default": 262144,
+          "maximum": 262144,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes read from one live-search provider response, at most 256 KiB. The document-source download limit may shorten this bound further."
+        },
+        "knowledge_live_search_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "maximum": 5.0,
+          "type": "number",
+          "description": "Seconds for the whole optional live-search leg, including final membership checks. At most five; provider credential deadlines may shorten it further."
+        },
+        "knowledge_mirrored_sources_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set."
+        },
         "knowledge_noise_filter": {
           "default": true,
           "type": "boolean",
@@ -3129,6 +3308,72 @@
           "minimum": 60,
           "type": "integer",
           "description": "Seconds a no-row source's chunks must have aged before a delete retires them (a first write's are younger); never less than an ingest pass plus 5 minutes of clock skew."
+        },
+        "knowledge_query_history_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Permit opt-in ClickHouse query-history sources to queue definition drafts."
+        },
+        "knowledge_query_history_interval_seconds": {
+          "default": 3600,
+          "minimum": 300,
+          "type": "integer",
+          "description": "Seconds between query-history passes."
+        },
+        "knowledge_query_history_max_breakers": {
+          "default": 1000,
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Query-history circuit states kept per process, at most; older sources are evicted first."
+        },
+        "knowledge_query_history_max_drafts": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Drafts one source may queue in a worker turn, at most."
+        },
+        "knowledge_query_history_max_groups": {
+          "default": 200,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most-used query groups inspected per source turn before skipping existing drafts."
+        },
+        "knowledge_query_history_max_pass_seconds": {
+          "default": 120.0,
+          "maximum": 600.0,
+          "minimum": 30.0,
+          "type": "number",
+          "description": "Deadline of one query-history pass; it starts no new group after half this budget."
+        },
+        "knowledge_query_history_max_sources": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Sources one pass reads, at most; each turn is separately time bounded."
+        },
+        "knowledge_query_history_min_users": {
+          "default": 3,
+          "minimum": 3,
+          "type": "integer",
+          "description": "Distinct initial ClickHouse accounts required before drafting a query group."
+        },
+        "knowledge_query_history_read_timeout_s": {
+          "default": 30,
+          "exclusiveMinimum": 0,
+          "maximum": 120,
+          "type": "number",
+          "description": "Seconds allowed for one query-history source read."
+        },
+        "knowledge_query_history_window_days": {
+          "default": 7,
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Days of finished SELECT query history a turn groups."
         },
         "knowledge_repo_docs_list_ttl_s": {
           "default": 60.0,
@@ -3178,6 +3423,18 @@
           "type": "integer",
           "description": "How many fused hits a rerank reads (the legs fetch at least this many)."
         },
+        "knowledge_source_acl_max_entries": {
+          "default": 10000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Maximum team and member rows read for one project's complete permission list. A larger list refuses publication rather than granting from a partial page."
+        },
+        "knowledge_source_acl_stale_seconds": {
+          "default": 3600,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody."
+        },
         "knowledge_source_max_documents": {
           "default": 50000,
           "maximum": 200000,
@@ -3185,12 +3442,59 @@
           "type": "integer",
           "description": "Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square."
         },
+        "knowledge_source_mirror_documents_per_pass": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share."
+        },
         "knowledge_source_probe_timeout_s": {
           "default": 20.0,
           "exclusiveMinimum": 0,
           "maximum": 25.0,
           "type": "number",
           "description": "Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
+        },
+        "knowledge_source_push_cleanup_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait."
+        },
+        "knowledge_source_push_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Enable optional source push setup, callbacks and Drive renewal; false keeps polling only."
+        },
+        "knowledge_source_push_interval_seconds": {
+          "default": 300,
+          "minimum": 60,
+          "type": "integer",
+          "description": "Seconds between bounded channel-renewal pages; channels renew a day before expiry."
+        },
+        "knowledge_source_push_max_pass_seconds": {
+          "default": 120.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows."
+        },
+        "knowledge_source_push_provider_timeout_s": {
+          "default": 40.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds one push setup or Drive renewal may spend on provider work, before cleanup."
+        },
+        "knowledge_source_push_stop_timeout_s": {
+          "default": 2.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds allowed to stop one superseded or unpublished Drive channel."
+        },
+        "knowledge_source_retire_documents_per_pass": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off."
         },
         "knowledge_source_sync_cap_share": {
           "default": 0.25,
@@ -3203,7 +3507,7 @@
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass."
+          "description": "Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass."
         },
         "knowledge_source_sync_enabled": {
           "default": false,
@@ -3426,9 +3730,9 @@
           "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
         },
         "mcp_always_load_tools": {
-          "default": "code.search,code.symbol",
+          "default": "",
           "type": "string",
-          "description": "Ops whose tools/list entry carries `_meta: {\"anthropic/alwaysLoad\": true}`, so a host that defers MCP tools behind tool search lists these up front and an agent calls them on its first turn instead of spending a turn loading them. Comma-separated op names; empty = none."
+          "description": "Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront."
         },
         "mcp_auth_mode": {
           "default": "required",
@@ -3444,6 +3748,11 @@
           "default": false,
           "type": "boolean",
           "description": "List code.* tools on the MCP surface (core toolset union). Off = code ops are HTTP/SDK-only."
+        },
+        "mcp_code_upload_tools": {
+          "default": false,
+          "type": "boolean",
+          "description": "Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP, which hides both when off. On, an upload is accepted, on every transport, only for a namespace that has a repository entry."
         },
         "mcp_loom_search_floor_mode": {
           "default": "drop",
@@ -3521,7 +3830,7 @@
         "mcp_toolset": {
           "default": "core",
           "type": "string",
-          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\"); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed. An unknown value is \"core\"."
+          "description": "Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on \"assistant\"); on every toolset but \"assistant\" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on \"readonly\" routes read ops only. \"core\"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). \"coding\"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. \"tracker\", \"tasks\" — the tracker plane and the task inbox rosters. \"atomic\"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. \"readonly\"  — the \"all\" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. \"assistant\" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. \"all\"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is \"core\"."
         },
         "memory_ask_aggregational_window": {
           "default": 40,
@@ -5026,6 +5335,12 @@
           "type": "number",
           "description": "Seconds the entity vocabulary of a namespace's summaries is cached for the summary read leg."
         },
+        "memory_term_leg_wait_ms": {
+          "default": 100,
+          "minimum": 1,
+          "type": "integer",
+          "description": "How much longer memory.search waits for its term leg once the other legs are done; past it the leg adds nothing (docs/concepts/identities-and-namespaces.md)."
+        },
         "memory_usage_fold_acted_max_rows_per_pass": {
           "default": 5000,
           "minimum": 1,
@@ -5531,7 +5846,7 @@
         "otel_excluded_urls": {
           "default": "/v1/health",
           "type": "string",
-          "description": "Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). \"\" = instrument every path but the sign-in routes (/oauth/), which are always left out: their URLs carry codes."
+          "description": "Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). \"\" = instrument every path but the sign-in routes (/oauth/ and /v1/connect/), which are always left out: their URLs carry codes."
         },
         "otel_exporter": {
           "default": "",
@@ -5557,6 +5872,12 @@
           "default": 3600,
           "type": "integer",
           "description": "Seconds between the state probe's whole-table readings (embed backlog, integrity invariants), taken on the lease holder only. The invariants read 0 and exist to catch drift, so an hour is enough; each reading is one FINAL pass over memory, memory_embeddings and entity_vectors."
+        },
+        "otel_metrics_cardinality_limit": {
+          "default": 20000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most series per metric; past it, new attribute sets join one `otel.metric.overflow` series. Request metrics need about operations x namespaces x transports x outcomes."
         },
         "otel_metrics_delta_temporality": {
           "default": false,
@@ -6027,7 +6348,7 @@
           "default": 5.0,
           "minimum": 1.0,
           "type": "number",
-          "description": "Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed org's lookup answer before reading again; a new credential or host works within this."
+          "description": "Seconds (at least 1) a router replica keeps the cells' credential hashes, a placed org's lookup answer and the first cell's state-route answer before reading again; a new credential or host works within this. A cell's processes carry the router's value: 401s from the state route last this long before the heartbeat's `router` turns false."
         },
         "router_lookups_per_minute": {
           "default": 60,
@@ -6316,7 +6637,7 @@
           "default": 5.0,
           "minimum": 1.0,
           "type": "number",
-          "description": "Seconds (at least 1) between reads of the cell state rows once the first read landed (every second until then), in every process that reads them under the Postgres authority, and before an org read as not held is read again; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
+          "description": "Seconds (at least 1) between reads of the cell state rows once the first read landed (every second until then), in every process that reads them under the Postgres authority, and before an org read as not held is read again; also the most a first cell's server process waits between reads of the router's state route (with LOOM_INSTANCE_HEARTBEAT_SECONDS) and the window of a process that reads it on demand. LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
         },
         "tenant_max_concurrent_requests": {
           "default": 256,
@@ -6363,6 +6684,25 @@
           "default": "warm",
           "type": "string",
           "description": "Volume named in tiering TTL clauses; must match a volume in the cluster's storage_policies."
+        },
+        "tls_cert_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both \"\", HTTP."
+        },
+        "tls_key_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused."
+        },
+        "tls_min_version": {
+          "default": "1.2",
+          "enum": [
+            "1.2",
+            "1.3"
+          ],
+          "type": "string",
+          "description": "Lowest TLS version the web port accepts with tls_cert_file: \"1.2\" or \"1.3\"."
         },
         "tracker_bisect_component_dirs": {
           "default": 8,

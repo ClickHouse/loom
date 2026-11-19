@@ -565,7 +565,7 @@ async def test_a_context_pack_makes_no_llm_call(
         return _h
 
     for mod, name in (
-        (knowledge_mod, "handle_knowledge_search"),
+        (knowledge_mod, "run_checked_search"),
         (conversations_mod, "handle_conversation_search"),
     ):
         monkeypatch.setattr(mod, name, recorded(name, getattr(mod, name)))
@@ -587,7 +587,7 @@ async def test_a_context_pack_makes_no_llm_call(
     assert llm_attempts == []
     assert "memories" in out.sections  # answered from the vector query alone
     # The opt-in sections ran (an empty one that raised would pass the check above).
-    assert {"handle_knowledge_search", "handle_conversation_search"} <= set(ran)
+    assert {"run_checked_search", "handle_conversation_search"} <= set(ran)
     assert searched  # the memories search, and the procedures section's
     for search_out in searched:
         _assert_plans_no_llm(search_out)

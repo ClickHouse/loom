@@ -264,7 +264,7 @@ python scripts/codegen/docs_reference.py
 | `loom okf-lint` | Lint an OKF bundle directory offline — the compile gate a mirror repository's CI runs. | `<path>`, `--json`, `--strict` |
 | `loom up` | Boot the local stack (Loom, its document extractor and ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
-| `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql`, `--print-analyst-sql` |
+| `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql`, `--print-analyst-sql`, `--apply-analyst-sql` |
 | `loom participant` | The Loom processes a provider change waits for. |  |
 | `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
 | `loom deployment` | The configuration every replica checks itself against. |  |
@@ -334,6 +334,10 @@ python scripts/codegen/docs_reference.py
 | `loom tracker-contract-check` | Read-only: does each tracker source's schema meet the record contract (docs/features/tracker/record-contract.md)? | `--source`, `--namespace`, `--json` |
 | `loom tracker-dupcheck-fit` | Refit tracker.duplicate_check's calibrated confidence for one tracker namespace now: replays the duplicate gold at filing time, fits, stores the fit. | `--namespace`, `--org`, `--negatives`, `--dry-run`, `--out` |
 | `loom tracker-embed-reset` | Clear the tracker_embed pass cursors of one tracker namespace so the next pass re-walks the window and re-embeds every item whose text recipe changed. | `--namespace`, `--org`, `--kind`, `--apply`, `--dry-run` |
+| `loom tracker-feed` | Maintain a team's GitHub tracker record |  |
+| `loom tracker-feed init` |  | `--org`, `--writer-user`, `--writer-password-env`, `--host`, `--port`, `--database`, `--insecure` |
+| `loom tracker-feed configure` |  | `--org`, `--writer-user`, `--writer-password-env`, `--source`, `--repo`, `--token-env`, `--read-only-token`, `--max-pages` |
+| `loom tracker-feed sync` |  | `--org`, `--writer-user`, `--writer-password-env`, `--source`, `--repo` |
 | `loom namespaces-adopt` | Give namespaces that hold live memory and no registry row an owner row: kind=bench under the bench prefixes, else memory; retention_days 0, no TTL. | `--org`, `--owner`, `--prefix`, `--namespace`, `--kind`, `--apply`, `--dry-run`, `--show` |
 | `loom sensitivity-sweep` | Label live rows the sensitivity detector would have labelled on write but a path skipped. | `--org`, `--namespace`, `--since-days`, `--limit`, `--show`, `--only-shape`, `--apply`, `--dry-run` |
 | `loom integrity-repair` | Read the row-level integrity gauges (dim-0 rows holding a vector, tombstoned_at/status drift, active rows past valid_to) and, with --apply, re-emit the dim-0 rows with their true dimension so search… | `--org`, `--namespace`, `--limit`, `--show`, `--apply`, `--dry-run` |
@@ -352,6 +356,7 @@ python scripts/codegen/docs_reference.py
 | `loom whoami` | Show who the stored session signs you in as. |  |
 | `loom call` | Call any operation or API route with the stored session (`loom call --help`). |  |
 | `loom token` | Make, list and revoke your own tokens for CI and agents (`loom token --help`). |  |
+| `loom connect` | Print the dashboard link to connect your own Google, Notion or Linear account. |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

@@ -659,6 +659,7 @@ async def get_many_by_keys(
     ch: _CHClient | None = None,
     strong: bool = False,
     exclude_high_sensitivity: bool = False,
+    max_value_chars: int | None = None,
 ) -> list[MemoryRow]:
     """Bulk read: one round trip for N keys under one identity tuple. Under Postgres the
     authority's heads (`pg_memory.heads_for_identity`), so a write ClickHouse has not
@@ -670,7 +671,8 @@ async def get_many_by_keys(
     `memory_keys` → empty result, no CH call. `exclude_high_sensitivity`
     (the procedure, search-body and extraction-prompt reads) leaves 'high'
     rows out of the locate, so under an open axis the newest other row of
-    the key answers instead.
+    the key answers instead. `max_value_chars` bounds the aggregate stored body
+    length before hydration; exceeding it raises TimeoutError for optional reads.
     """
     if not memory_keys:
         return []
@@ -689,7 +691,7 @@ async def get_many_by_keys(
             # A strong read feeds a write (memory.touch may extend the window) and sees it.
             retained_only=not strong,
         )
-        return [_hydrate(h) for h in heads.values()]
+        return _hydrate_bulk(list(heads.values()), max_value_chars)
     ch = ch or _default_client()
     # agent="*" is the documented wildcard — fan out across agents (mirrors
     # search_sql.py); procedure.match relies on it. The "-" sentinel stays a
@@ -774,7 +776,7 @@ async def get_many_by_keys(
         if len(again) >= len(rows):
             rows = again
     if not rows or all(_is_full_row(r) for r in rows):
-        return [_hydrate(r) for r in rows]
+        return _hydrate_bulk(rows, max_value_chars)
     # `strong`: the heads feed a write — memory.touch writes
     # a version row from each — so the fetch takes whole rows (every column
     # the builder carries forward), never bulk_get's subset: a missing column
@@ -790,7 +792,22 @@ async def get_many_by_keys(
     )
     order = {(str(r["memory_id"]), int(r["version"])): i for i, r in enumerate(rows)}
     fetched.sort(key=lambda r: order.get((str(r["memory_id"]), int(r["version"])), len(order)))
-    return [_hydrate(r) for r in fetched]
+    return _hydrate_bulk(fetched, max_value_chars)
+
+
+def _hydrate_bulk(rows: list[dict[str, Any]], max_value_chars: int | None) -> list[MemoryRow]:
+    """An optional read's body budget is checked before JSON decoding and hashing."""
+    if max_value_chars is not None:
+        remaining = max_value_chars
+        for row in rows:
+            raw = row.get("value")
+            if not isinstance(raw, (str, bytes)):
+                # The budget applies to stored bytes, never to a serialization we just made.
+                raise TimeoutError
+            remaining -= len(raw)
+            if remaining < 0:
+                raise TimeoutError
+    return [_hydrate(r) for r in rows]
 
 
 # The bulk read's second statement — the located

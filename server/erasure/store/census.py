@@ -3,7 +3,8 @@ that owns it in each scope, and the count that proves a saga left nothing.
 
 `_CENSUS` is the one registry the census, the sagas' step lists and a
 resumed saga's re-opened steps all read; `STEP_ONLY_TABLES` and
-`NO_MEMORY_CONTENT` classify the rest of the schema. One count is not a
+`NO_MEMORY_CONTENT` classify the rest of the schema. `CANONICAL_OWNER_TABLES`
+classifies auth-owner registries erased by their private lifecycle. One count is not a
 table's: `OBJECT_RESIDUE`, the scope's objects in the document bucket, which
 re-opens `documents.tombstone`.
 """
@@ -53,6 +54,13 @@ log = logging.getLogger(__name__)
 OBJECT_RESIDUE = "objects.document_originals"
 _OBJECT_OWNER = "documents.tombstone"
 
+# Canonical sign-in owners are independent of namespace and end-user scopes.
+# Their private lifecycle physically erases provider identity and credential history;
+# sealed PII is counted here rather than exempted as non-memory configuration.
+CANONICAL_OWNER_TABLES: dict[str, str] = {
+    "loom.connected_accounts": "connected_accounts.erase",
+}
+
 
 # One census row per substrate: the live predicate the census counts ("1" =
 # every row), the user-scope predicate (None → namespace-only), and the saga
@@ -83,6 +91,9 @@ class Substrate:
 _HOLDS_TEXT = "(answer != '' OR citations != '')"
 
 _CENSUS: tuple[Substrate, ...] = (
+    # Sealed provider setup is namespace configuration; retirement fences writers
+    # before the settled deletion, including historical credential versions.
+    Substrate("loom.knowledge_source_push", "1", None, "knowledge_source_push.delete", None),
     # In the user scope `memory.tombstone` only stamps these rows, which the later steps
     # read the user's keys from; `memory.retire` owns them and, in a purge, deletes them.
     # A live summary built from the user's memories counts too: `memory.retire` retires
@@ -315,6 +326,12 @@ _CENSUS: tuple[Substrate, ...] = (
     # A gap names no user, so the census counts it in the namespace scope only; the
     # user's search_misses.delete step also deletes the builds of the user's namespaces.
     Substrate("loom.knowledge_gaps", "1", None, "knowledge_gaps.delete", None),
+    # When each mirrored source last listed, under its mirror's name: names and times.
+    Substrate(
+        "loom.knowledge_source_listings", "1", None, "knowledge_source_listings.delete", None
+    ),
+    # Source-scoped ACL evidence, under the mirror: retain none after its erasure.
+    Substrate("loom.knowledge_group_members", "1", None, "knowledge_group_members.delete", None),
     # A replayed response body quotes whatever the op returned. The rows name
     # the caller's org and subject but no namespace and no end user, so both
     # scopes clear and count the org's rows (a cache — the cost is one miss
@@ -376,7 +393,7 @@ _CENSUS: tuple[Substrate, ...] = (
     # Task inbox plane: the brief and the notes quote source
     # and issue text; keyed on the inbox's owner namespace, no user axis.
     Substrate("loom.tasks", "is_deleted = 0", None, "tasks.delete", None),
-    Substrate("loom.task_events", "1", None, "tasks.delete", None, final=False),
+    Substrate("loom.task_events", "1", UID, "tasks.delete", "tasks.delete", final=False),
     Substrate("loom.agent_runs", "1", UID, "agent_runs.delete", "agent_runs.delete"),
     Substrate("loom.operator_edges", LIVE, None, "curation.tombstone", None),
     Substrate("loom.conflict_allowlist", LIVE, None, "curation.tombstone", None),
@@ -514,7 +531,7 @@ CODE_INDEX_STEP_ONLY_TABLES: tuple[str, ...] = (
 
 STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
-    "agent_events.scrub": ("loom.agent_events",),
+    "agent_events.scrub": ("loom.agent_events", "loom.agent_events_private"),
     "subject_last_seen.delete": ("loom.subject_last_seen",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
     "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
@@ -534,6 +551,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # Deactivates the namespace's sources and clears their credentials: configuration
     # an admin wrote (ids, names, a filter's name fragment), no memory or document content.
     "knowledge_sources.retire": ("loom.knowledge_sources",),
+    # Connection metadata and sealed credentials, no query text; removed so the source
+    # cannot draft again into the erased namespace.
+    "query_history_sources.delete": ("loom.query_history_sources",),
     # Which `acl-` namespaces hold a namespace's mirrored documents: names only, no
     # content. Every step also purges the mirrors; this one writes them `deleted`.
     "knowledge_mirrors.forget": ("loom.knowledge_mirrors",),
@@ -549,6 +569,10 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
 # a CREATE TABLE that is in none of the three lists, so a new table is
 # classified the day it lands.
 NO_MEMORY_CONTENT: dict[str, str] = {
+    "loom.knowledge_mirror_latch": (
+        "One deployment-wide enablement timestamp; no identity or content. Tenant erasure "
+        "cannot lift protection; only the deployment mirror eraser clears this row last."
+    ),
     "loom.analysis_canary": (
         "One constant row in a reserved scope (org '', namespace '') that insights.query's "
         "probe reads; no content."
@@ -664,7 +688,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.machine_identities": "auth plane: registered bots and their public keys; no memory.",
     "loom.org_model_calls": "whether an org's data may go to a model, and who said so; no memory.",
     "loom.extraction_policies": "the operator's rules for what extraction stores; no memory.",
-    "loom.sso_links": "auth plane: which password accounts SSO sign-ins reach; no memory.",
+    "loom.sso_links": (
+        "auth plane: verified account links and signed issuer/domain evidence; no memory content."
+    ),
     "loom.scim_users": (
         "auth plane: the people the identity provider provisions (email, the emails "
         "list it sent, userName, active) and the subjects a deactivation revoked; no memory."
@@ -749,7 +775,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
 
 def classified_tables() -> dict[str, str]:
     """Every table the registry knows → which list holds it
-    (`census` | `step_only` | `no_memory_content`)."""
+    (`census` | `step_only` | `no_memory_content` | `canonical_owner`)."""
     out: dict[str, str] = {}
     for sub in _CENSUS:
         out[sub.table] = "census"
@@ -758,7 +784,62 @@ def classified_tables() -> dict[str, str]:
             out.setdefault(t, "step_only")
     for t in NO_MEMORY_CONTENT:
         out.setdefault(t, "no_memory_content")
+    for t in CANONICAL_OWNER_TABLES:
+        out.setdefault(t, "canonical_owner")
     return out
+
+
+async def connected_account_residue(
+    org: str,
+    subject: str,
+    kind: str,
+    *,
+    keep_connection: str | None = None,
+    ch: _CHClient | None = None,
+) -> int:
+    """Count every historical row for one canonical owner, never a namespace/user id.
+
+    Disconnect may retain exactly its empty inactive marker. A canonical-person
+    deletion passes no marker and counts every row, including that identity key.
+    """
+    predicate = "org = {org:String} AND subject = {subject:String} AND kind = {kind:String}"
+    params = {"org": org, "subject": subject, "kind": kind}
+    if keep_connection is not None:
+        predicate += (
+            " AND NOT (connection_id = {keep:String} AND NOT active "
+            "AND account_id = '' AND workspace_id = '' AND account_email_enc = '' "
+            "AND credential_enc = '' AND empty(scopes) AND refresh_id = '' "
+            "AND connected_at IS NULL)"
+        )
+        params["keep"] = keep_connection
+    row = await (ch or _default_client()).query_one(
+        "SELECT count() AS n FROM loom.connected_accounts WHERE " + predicate,
+        params=params,
+    )
+    if row is None or "n" not in row:
+        raise RuntimeError("connected_account_census_unavailable")
+    return int(row["n"])
+
+
+async def connected_source_residue(
+    org: str,
+    namespace: str,
+    subject: str,
+    kind: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Canonical-owner deletion includes historical bindings, without matching user_id."""
+    row = await (ch or _default_client()).query_one(
+        "SELECT count() AS n FROM loom.knowledge_sources "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        "AND owner_subject = {owner:String} AND credential_mode = 'connected' "
+        "AND source_kind = {kind:String}",
+        params={"org": org, "ns": namespace, "owner": subject, "kind": kind},
+    )
+    if row is None or "n" not in row:
+        raise RuntimeError("connected_source_census_unavailable")
+    return int(row["n"])
 
 
 def _pg_census() -> dict[str, str]:
@@ -961,3 +1042,21 @@ async def _owned_on_first_page(bucket: str, org: str, namespace: str) -> int:
         if owned or not page.more or not page.objects:
             return owned
         after = page.objects[-1].key
+
+
+async def connected_restore_residue(*, ch: _CHClient | None = None) -> int:
+    """Offline restore purges all account and connected-source history in this deployment."""
+    from server.core.ch import set_query_tag
+
+    set_query_tag("erasure.connected_accounts.restore")
+    client = ch or _default_client()
+    total = 0
+    for table, predicate in (
+        ("loom.connected_accounts", "1"),
+        ("loom.knowledge_sources", "credential_mode = 'connected'"),
+    ):
+        row = await client.query_one(f"SELECT count() AS n FROM {table} WHERE {predicate}")
+        if row is None or "n" not in row:
+            raise RuntimeError("connected_restore_census_unavailable")
+        total += int(row["n"])
+    return total

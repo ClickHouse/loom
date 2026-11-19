@@ -20,15 +20,20 @@ from pydantic import BaseModel, ValidationError
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
-from server.core.errors import LoomServerError, WrongCellError, unverified_class
+from server.core.errors import (
+    LoomServerError,
+    SessionProtectionRequiredError,
+    WrongCellError,
+    unverified_class,
+)
 from server.core.errors import ValidationError as LoomValidationError
 from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
 from server.observability import genai
 from server.observability.consumer import ASSISTANT_CONSUMER
+from server.observability.ledger import required_call_exit, run_id_of
 from server.operations.base import Operation
 from server.operations.toolsets import (
-    _MCP_HIDDEN_OPS,
     ASSISTANT_DROPPED_ARGS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
@@ -36,7 +41,13 @@ from server.operations.toolsets import (
 )
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
-from server.transport._common import begin_call, bind_request, validation_note
+from server.transport._common import (
+    begin_call,
+    bind_request,
+    ledger_identity,
+    sli_columns,
+    validation_note,
+)
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
@@ -50,7 +61,7 @@ from server.transport.mcp_config import (
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
-from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal
+from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal, is_hidden
 from server.transport.mcp_outcome import (
     _emit_success,
     _handler_failed,
@@ -212,8 +223,8 @@ async def _call_tool(
     toolset: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
-    resolve the tool → bind the caller's identity → stamp the session run's
-    id → argument refusal + validation → authorization → admission (traffic
+    resolve the tool → session-content admission → bind the caller's identity →
+    stamp the session run's id → argument refusal + validation → authorization → admission (traffic
     class, policy, rate limit) → the session run begins → idempotency replay
     (only for an admitted caller) → open the trace → span identity
     (inline) → the handler → success telemetry → the response. Every phase
@@ -235,6 +246,9 @@ async def _call_tool(
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
 
+    if (refused := await _session_content_refusal(req_id, op, auth)) is not None:
+        return refused
+
     refused = await _another_cells_org(req_id, op, arguments, auth)
     if refused is not None:
         return refused
@@ -254,7 +268,7 @@ async def _call_tool(
     target = await _authorize_call(req_id, op, input_obj, arguments, auth, request_id)
     if isinstance(target, dict):
         return target  # AUTH_INSUFFICIENT — nothing below (limiter, handler) runs
-    input_obj = gates.with_target(input_obj, target)
+    input_obj = gates.with_target(op, input_obj, target)
 
     # The resolved tenant the telemetry and post-handler rows name, as HTTP's
     # identity does after authorization.
@@ -318,39 +332,55 @@ async def _call_tool(
         # caches and refuse.
         genai.set_identity(operation=op.name, capture_level="off")
 
-    start = time.perf_counter()
-    try:
-        with (
-            gates.tenant_slot(auth, target),
-            llm_free.serving(op),
-            hint_naming(toolset) as namer,
-        ):
-            result = await op.handler(input_obj)
-    except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
-        return _handler_failed(
-            e,
-            req_id,
-            name,
-            op,
-            arguments,
-            input_obj,
-            auth,
-            request_id,
-            mcp_session_id,
-            rl_ns=rl_ns,
-            rl_org=rl_org,
-            elapsed_ms=int((time.perf_counter() - start) * 1000),
+    with required_call_exit(
+        op_name=op.name,
+        identity=ledger_identity(arguments),
+        request_id=request_id,
+        run_id=run_id_of(arguments),
+        **sli_columns(op.name, "mcp"),
+    ):
+        start = time.perf_counter()
+        try:
+            with (
+                gates.tenant_slot(auth, target),
+                llm_free.serving(op),
+                hint_naming(toolset) as namer,
+            ):
+                result = await op.handler(input_obj)
+        except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
+            return _handler_failed(
+                e,
+                req_id,
+                name,
+                op,
+                arguments,
+                input_obj,
+                auth,
+                request_id,
+                mcp_session_id,
+                rl_ns=rl_ns,
+                rl_org=rl_org,
+                elapsed_ms=int((time.perf_counter() - start) * 1000),
+            )
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        mentor_hint = _emit_success(
+            op, arguments, elapsed_ms, request_id, result, mcp_session_id, namer
         )
-    elapsed_ms = int((time.perf_counter() - start) * 1000)
-    mentor_hint = _emit_success(
-        op, arguments, elapsed_ms, request_id, result, mcp_session_id, namer
-    )
 
-    _record_success_telemetry(call, result, elapsed_ms)
+        _record_success_telemetry(call, result, elapsed_ms)
 
-    return await _success_response(
-        call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
-    )
+        return await _success_response(
+            call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
+        )
+
+
+async def _session_content_refusal(req_id: Any, op: Operation, auth: Any) -> dict[str, Any] | None:
+    """Refuse session content before identity, validation, replay or implicit writes."""
+    try:
+        await gates.session_content(op, auth)
+    except SessionProtectionRequiredError as error:
+        return _ok(req_id, refusal_result(error))
+    return None
 
 
 def _stamp_session_run(
@@ -483,7 +513,7 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    if op is None or (op.name in _MCP_HIDDEN_OPS and not allow_hidden):
+    if op is None or (is_hidden(op.name) and not allow_hidden):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.

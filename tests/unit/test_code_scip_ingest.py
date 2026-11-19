@@ -1,7 +1,8 @@
 """code.scip_ingest: one part of a chunked SCIP delta upload. Size, count and
 sequence bounds refuse before any write; a part lands with its sha256; the
 batch row is created pending, refreshed by a re-upload, and never reset once
-applied or failed; completion counts distinct parts received."""
+applied or failed; completion counts distinct parts received. Where MCP serves
+the upload ops, a part is accepted only for a namespace with a repository entry."""
 
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from pydantic import ValidationError as InputValidationError
 
 from server.code.api.models_ingest import CodeScipIngestInput
 from server.code.app import ingest as h
-from server.core.errors import ValidationError
+from server.core.errors import NotFoundError, ValidationError
 from server.settings import settings
 
 BATCH = str(uuid.UUID(int=7))
@@ -187,3 +188,64 @@ def test_an_unfenced_upload_reads_no_lease(repo: _Repo, lock_table: Any) -> None
     lock_table.seed(_LEASE, "other-host:7:zz")
     assert _ingest().parts_received == 1
     assert lock_table.sql == []
+
+
+# -- where MCP serves the upload ops, an upload needs a repository entry ----------
+
+
+def test_an_upload_needs_a_repository_entry_only_where_mcp_serves_the_upload_ops(
+    repo: _Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Over MCP every writer of some namespace reaches the op, so such a deployment
+    takes uploads for its repositories only; elsewhere the op is as open as before."""
+    assert _ingest().parts_received == 1  # off: `o/n` has no entry and the part lands
+    monkeypatch.setattr(settings, "mcp_code_upload_tools", True)
+    with pytest.raises(NotFoundError, match="o/n is not a repository index") as refused:
+        _ingest(seq=1)
+    assert "LOOM_MCP_CODE_UPLOAD_TOOLS" in refused.value.message
+    assert set(repo.parts) == {0} and len(repo.upserts) == 1
+
+
+@pytest.mark.parametrize("source", ["config", "registry"])
+def test_an_operators_entry_and_one_added_through_the_api_both_take_uploads(
+    repo: _Repo, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(settings, "mcp_code_upload_tools", True)
+    if source == "config":
+        entry = '[{"org": "o", "namespace": "n", "repo": "acme/widgets"}]'
+        monkeypatch.setattr(settings, "code_repos_json", entry)
+    else:
+        monkeypatch.setattr(settings, "code_self_service_enabled", True)
+        for name in ("_registry_repos", "_registry_namespaces", "_page_namespaces"):
+            monkeypatch.setattr(repos, name, getattr(repos, name))  # put back afterwards
+        added = repos.RepoConfig(
+            org="o",
+            namespace="n",
+            repo="acme/widgets",
+            git_dir="",
+            git_remote="",
+            git_branch="main",
+            path_prefixes=(),
+            github_token="",
+            source="registry",
+            row_kind="page",
+        )
+        repos.set_registry_repos([added], frozenset({("o", "n")}))
+    assert _ingest().parts_received == 1
+
+
+def test_an_upload_waits_for_the_registry_read_where_mcp_serves_the_upload_ops(
+    repo: _Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Until the self-service registry is read, which namespaces have an entry is not
+    known: the op answers 503 and stores nothing."""
+    from server.code.domain.index import repos
+
+    monkeypatch.setattr(settings, "mcp_code_upload_tools", True)
+    monkeypatch.setattr(settings, "code_self_service_enabled", True)
+    monkeypatch.setattr(repos, "_registry_loaded", False)
+    with pytest.raises(repos.RegistryUnread):
+        _ingest()
+    assert repo.parts == {} and repo.upserts == []

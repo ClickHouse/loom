@@ -97,6 +97,7 @@ def current_generation_attrs() -> dict[str, str]:
 _KNOWN_STAGES: frozenset[str] = frozenset(
     {
         "provider_validation",
+        "definition_draft",
         "dupcheck_rerank",
         "hyde",
         "iterative_judge",
@@ -232,6 +233,10 @@ def request_org() -> str:
     it once the token was verified; "" outside a request. A worker's identity
     is not one: a pass stamps the org of the row it last worked on, which says
     nothing about whose the next text is."""
+    from server.core.diagnostics import codes_only
+
+    if codes_only():
+        return ""
     ident = _identity.get() or {}
     op = str(ident.get("operation") or "")
     org = str(ident.get("org") or "")
@@ -699,6 +704,11 @@ def _provider_span(name: str, attrs: dict[str, Any]) -> Iterator[Any]:
     exception's type only, not its message, which can quote the provider's
     reply; a cancellation is not the provider's error and leaves status
     unset."""
+    from server.core.diagnostics import codes_only
+
+    if codes_only():
+        yield None
+        return
     span_cm: Any = None
     span: Any = None
     started = time.perf_counter()

@@ -78,6 +78,8 @@ class Operation:
         idempotent: if true, safe to retry on transient failure.
         required_role: minimum role required to call this operation.
         audit: if true, success writes one row to audit_log.
+        session_content: a hook or client sends session text or derived figures
+            without an agent choosing the content, including dual-use operations.
         maturity: ``stable`` | ``experimental`` (MATURITIES).
             Declared per op; the reach census (scripts/codegen/op_reach_census.py,
             tests/unit/test_op_reach_census.py) fails an op that has no
@@ -113,6 +115,7 @@ class Operation:
     # is safe (a feedback row, a watch registration, a seen-marker). Only
     # such ops set it: a WRITER+ role or `audit=True` already says "writes".
     writes: bool = False
+    session_content: bool = False
     maturity: Maturity = "stable"
     # The MCP tool name when it is not derived from `name`: an op MCP serves
     # through a hand-written synthetic descriptor under a name clients already

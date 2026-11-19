@@ -30,7 +30,7 @@ from server.operations.toolsets import (
     op_toolsets,
     resolve_toolset,
 )
-from server.settings import settings
+from server.settings import Settings, settings
 from server.transport import mcp_op, mcp_primer
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
@@ -245,7 +245,10 @@ def test_activation_triggers_are_one_list_on_both_tiers():
     core_s = next(d for d in synthetic_descriptors("core") if d["name"] == "loom_search")
     coding_s = next(d for d in synthetic_descriptors("coding") if d["name"] == "loom_search")
     assert coding_s["description"] == coding_search_description(core_s["description"])
-    assert "profile, knowledge and past conversations" in coding_s["description"]
+    assert (
+        "profile, knowledge, past conversations and readable issues and pull requests"
+        in coding_s["description"]
+    )
     assert "(uploaded documents)" in core_s["description"]
     for must in (
         "One call per question",
@@ -375,15 +378,34 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
     )
 
 
-def test_the_core_code_tools_ask_to_be_loaded_up_front() -> None:
-    import asyncio
+@pytest.mark.parametrize("profile", ["standard", "compact", "full"])
+def test_coding_tools_leave_eager_loading_to_the_host_by_default(monkeypatch, profile) -> None:
+    default = Settings.model_fields["mcp_always_load_tools"].get_default()
+    monkeypatch.setattr(settings, "mcp_always_load_tools", default)
+    tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+    assert len(tools) == 21
+    assert not any("anthropic/alwaysLoad" in tool.get("_meta", {}) for tool in tools)
 
-    from server.transport.mcp_tools import _tools_descriptor
 
-    for profile in ("standard", "compact"):
-        tools = asyncio.run(_tools_descriptor(schema_profile=profile, toolset="coding"))
-        flagged = {t["name"] for t in tools if (t.get("_meta") or {}).get("anthropic/alwaysLoad")}
-        assert flagged == {"loom_code_search", "loom_code_symbol"}, profile
+@pytest.mark.parametrize("profile", ["standard", "compact", "full"])
+def test_eager_opt_in_changes_only_loading_metadata(monkeypatch, profile) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "")
+    deferred = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "code.search,code.symbol")
+    eager = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+    flagged = {tool["name"] for tool in eager if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
+    assert flagged == {"loom_code_search", "loom_code_symbol"}
+    unmarked = []
+    for tool in eager:
+        descriptor = {**tool}
+        meta = {**descriptor.get("_meta", {})}
+        meta.pop("anthropic/alwaysLoad", None)
+        if meta:
+            descriptor["_meta"] = meta
+        else:
+            descriptor.pop("_meta", None)
+        unmarked.append(descriptor)
+    assert unmarked == deferred
 
 
 def test_mcp_always_load_tools_names_the_flagged_ops(monkeypatch) -> None:

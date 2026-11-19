@@ -383,7 +383,7 @@ class CodeCallersOutput(_LessonsOut):
     candidates: list[str] = Field(default_factory=list)
     # Virtual dispatch: when the seed is an override, calls in the code go to
     # the BASE declaration, so its callers are included and listed here as
-    # {"symbol", "via": "overrides" | "inherits" | "virtual_by_name"}. Empty
+    # {"symbol", "via": "overrides" | "inherits"}. Empty
     # when the seed is not an override or no base could be resolved. With
     # `include_ambiguous` a base seed's overrides join the list as
     # {"symbol", "via": "overridden_by"}.

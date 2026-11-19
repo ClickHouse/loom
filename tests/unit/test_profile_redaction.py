@@ -2,13 +2,15 @@
 
 A profile version names the memories it was built from in its trace
 (`profile.fold:<label>:<memory ids>`); redacting one of them scrubs every
-version that names it, and leaves the versions built without it. A lock on
-the profile key refuses the redact before anything is scrubbed. However many
+version that names it, and leaves the versions built without it. A lock on the
+profile key refuses the redact before anything is scrubbed. However many
 versions match, the named version and the profile versions are scrubbed in one
 statement per version table, and the cached answers and precedents whose window
 held a scrubbed profile key are deleted. A retry after a failure reaches the
-same profile keys. A version that does not exist scrubs nothing. The memory and
-each profile key it scrubbed are announced as `memory.redacted`.
+same profile keys. The answers whose window held a shared copy's key are deleted
+too, and the namespace's write mark moves. A version that does not exist scrubs
+nothing. The memory and each profile key it scrubbed are announced as
+`memory.redacted`.
 """
 
 from __future__ import annotations
@@ -74,6 +76,7 @@ _PROFILE_TABLES = (
     ddl("memory_embeddings"),
     ddl("memory_chunks"),
     ddl("memory_code_links"),
+    ddl("shared"),
 )
 
 
@@ -310,6 +313,41 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
     code = await ch.query_all("SELECT answer FROM loom.code_answers")
     assert [r["answer"] for r in code] == ["other"]
     assert await ch.query_all("SELECT answer FROM loom.memory_ask_precedents") == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redact_deletes_the_answers_whose_window_held_a_shared_copy(monkeypatch) -> None:
+    """A copy an earlier redact scrubbed, under another key: the answers that quoted it
+    go, and the namespace's write mark moves."""
+    from server.core import namespace_write_marks
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+
+    ch = _redact_setup(monkeypatch)
+    ch.setup += [
+        "INSERT INTO loom.shared (org, namespace, memory_key, value, memory_type, confidence, "
+        "promoted_from, promotion_event, promoted_by, reversible_until, version) VALUES "
+        "('o', 'n', 'renamed', '\"[REDACTED]\"', 'fact', 1, ['o/n/a/u1/-/user_timezone'], "
+        "generateUUIDv4(), 'sa:p', now(), 1)",
+        "INSERT INTO loom.llm_response_cache (model, key, org, text, window_keys) VALUES "
+        "('m', 'k3', 'o', 'secret place', ['renamed'])",
+    ]
+
+    bumps: list[tuple[str, str, str]] = []
+
+    async def bump(org: str, namespace: str, plane: str) -> None:
+        bumps.append((org, namespace, plane))
+
+    monkeypatch.setattr(namespace_write_marks, "bump", bump)
+    out = await curation.handle_memory_redact(
+        MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+    )
+
+    assert out.redacted and out.cache_rows_deleted == 3 and out.precedent_rows_deleted == 1
+    cached = await ch.query_all("SELECT key FROM loom.llm_response_cache ORDER BY key")
+    assert [r["key"] for r in cached] == ["k2"]
+    assert bumps == [("o", "n", "memory")]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

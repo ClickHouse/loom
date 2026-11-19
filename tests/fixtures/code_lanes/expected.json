@@ -32,6 +32,9 @@
   "js/constructs/src/cjs.js | calls | function": 1,
   "js/constructs/src/iife.js | calls | function": 1,
   "js/synthetic/lib/reply.js | calls | function": 3,
+  "lua/game/lib/vec.lua | calls | function": 1,
+  "lua/game/scenes/menu.lua | calls | function": 4,
+  "lua/game/scenes/menu.lua | includes | file": 1,
   "md/design.md | includes | file": 2,
   "md/design.md | reads | operator": 2,
   "md/design.md | reads | variable": 1,
@@ -528,6 +531,24 @@
    "specifiers": [],
    "symbols": {
     "const": 1,
+    "function": 4
+   }
+  },
+  "lua/game/lib/vec.lua": {
+   "facets": {},
+   "includes": [],
+   "lang": "lua",
+   "symbols": {
+    "function": 3
+   }
+  },
+  "lua/game/scenes/menu.lua": {
+   "facets": {},
+   "includes": [
+    "lua/game/lib/vec.lua"
+   ],
+   "lang": "lua",
+   "symbols": {
     "function": 4
    }
   },

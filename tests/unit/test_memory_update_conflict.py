@@ -282,6 +282,21 @@ async def test_update_by_id_reports_the_same_verdict(wired, monkeypatch) -> None
     assert calls.marked[0]["new_memory_id"] == _ID_A
 
 
+@pytest.mark.asyncio
+async def test_an_update_is_judged_against_its_rows_user(wired, monkeypatch) -> None:
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+
+    async def _in_scope(*_: Any, **__: Any) -> bool:
+        return True
+
+    monkeypatch.setattr("server.auth.authz.row_in_scope", _in_scope)
+    _ch, calls = wired(ConflictResult(verdict="clear", peers=[]), row=_row(user_id="alice"))
+    await update_mod.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="Deploys happen on Friday")
+    )
+    assert calls.check[0]["new_user_id"] == "alice"
+
+
 def test_own_key_is_excluded_by_the_check_itself() -> None:
     """The row's earlier versions share its key; check_on_commit's candidate
     query excludes the caller's own key, so an update is never its own peer."""

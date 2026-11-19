@@ -114,6 +114,13 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
 )
 
 
+# The compiler-tier upload ops. Hidden with the rest of the ingest surface, except on a
+# deployment whose uploader reaches Loom through MCP only (LOOM_MCP_CODE_UPLOAD_TOOLS=true):
+# there both are callable by tool name and through loom_op, and `all` lists them by its
+# own rules. No curated roster names them, so the default listings stay as they are.
+_MCP_CODE_UPLOAD_OPS: frozenset[str] = frozenset({"code.scip_ingest", "code.scip_status"})
+
+
 # Code-intelligence tools joining the core listing when the deployment
 # enables them (LOOM_MCP_CODE_TOOLS=true). callees/impact/examples/history/map
 # stay callable by name so the taught arbitration in the tool descriptions
@@ -511,13 +518,23 @@ def curated_roster(toolset: str, *, code_tools: bool) -> frozenset[str] | None:
     return None
 
 
-def listed_under_all(op: Operation) -> bool:
+def hidden_from_mcp(name: str, *, code_upload_tools: bool) -> bool:
+    """Whether MCP neither lists nor calls the op named ``name``: a hidden op, less the
+    compiler-tier upload ops on a deployment that serves them (``code_upload_tools``)."""
+    if code_upload_tools and name in _MCP_CODE_UPLOAD_OPS:
+        return False
+    return name in _MCP_HIDDEN_OPS
+
+
+def listed_under_all(op: Operation, *, code_upload_tools: bool = False) -> bool:
     """Whether a `tools/list` on ``all`` carries ``op``: never a hidden op,
     always a synthetic tool, else the stable surface plus every op the core
     (code tools included) or atomic roster names regardless of maturity, so
     core ⊆ all holds. The experimental remainder stays callable by name.
-    The `code.*` ops also need the code tools flag; the listing applies it."""
-    if op.name in _MCP_HIDDEN_OPS:
+    The `code.*` ops also need the code tools flag; the listing applies it.
+    ``code_upload_tools`` is the deployment's switch for the compiler-tier upload
+    ops, which the listing passes; the catalogue describes the default, off."""
+    if hidden_from_mcp(op.name, code_upload_tools=code_upload_tools):
         return False
     if op.name in SYNTHETIC_TOOL_OPS or op.maturity == "stable":
         return True

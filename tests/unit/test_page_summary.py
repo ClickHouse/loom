@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.codegen.page_summary import first_sentence, page_summary, shorten
+from scripts.codegen.page_summary import first_sentence, page_key, page_summary, shorten
 
 
 @pytest.mark.parametrize(
@@ -50,7 +50,49 @@ def test_a_long_link_target_does_not_push_the_cut_inside_the_link(tmp_path: Path
         ("one two three", 20, "one two three"),  # it fits
         ("one two three", 10, "one two…"),  # the slice ends inside "three"
         ("one two three four", 14, "one two three…"),  # the slice ends on a whole word
+        ("one two three, four", 14, "one two three…"),  # a word that ends at a comma fits
+        ("abcdefghij", 5, "abcd…"),  # a first word longer than the limit is cut
+        ("one two/ three", 10, "one two…"),  # a trailing slash goes with the cut
     ],
 )
 def test_shorten_keeps_whole_words_from_the_start(text, limit, cut) -> None:
     assert shorten(text, limit) == cut
+
+
+def test_page_key_orders_a_section_as_the_sidebar_does() -> None:
+    uris = [
+        "features/integrations/grep-shim.md",
+        "features/zeta.md",
+        "features/integrations/index.md",
+        "features/index.md",
+        "features/alpha.md",
+        "features/code-index/overview.md",
+        "features/code-index/freshness.md",
+        "getting-started/evaluate.md",
+        "getting-started/quickstart.md",
+        "getting-started/overview.md",
+    ]
+    features = sorted((u for u in uris if u.startswith("features/")), key=page_key)
+    assert features == [
+        "features/index.md",
+        "features/alpha.md",
+        "features/zeta.md",
+        # A folder without an index.md is led by its overview.md.
+        "features/code-index/overview.md",
+        "features/code-index/freshness.md",
+        "features/integrations/index.md",
+        "features/integrations/grep-shim.md",
+    ]
+    start = sorted((u for u in uris if u.startswith("getting-started/")), key=page_key)
+    assert start == [
+        "getting-started/overview.md",
+        "getting-started/quickstart.md",
+        "getting-started/evaluate.md",
+    ]
+
+
+def test_no_docs_folder_has_both_an_index_and_an_overview() -> None:
+    # page_key leads a folder with either one; both would tie.
+    docs = Path(__file__).resolve().parents[2] / "docs"
+    both = [p.parent for p in docs.rglob("overview.md") if (p.parent / "index.md").exists()]
+    assert both == []

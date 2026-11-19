@@ -195,6 +195,7 @@ from server.operations.base import Operation, Role
 OPERATIONS: list[Operation] = [
     Operation(
         name="code.search",
+        session_content=True,
         input_model=CodeSearchInput,
         output_model=CodeSearchOutput,
         handler=result_lessons.WithLessons(handle_code_search, result_lessons.search_paths),
@@ -211,6 +212,7 @@ OPERATIONS: list[Operation] = [
     ),
     Operation(
         name="code.symbol",
+        session_content=True,
         input_model=CodeSymbolInput,
         output_model=CodeSymbolOutput,
         handler=handle_code_symbol,
@@ -236,6 +238,7 @@ OPERATIONS: list[Operation] = [
     ),
     Operation(
         name="code.impact",
+        session_content=True,
         input_model=CodeImpactInput,
         output_model=CodeImpactOutput,
         handler=result_lessons.WithLessons(handle_code_impact, result_lessons.impact_paths),
@@ -244,6 +247,7 @@ OPERATIONS: list[Operation] = [
     ),
     Operation(
         name="code.test_gate",
+        session_content=True,
         maturity="experimental",
         input_model=CodeTestGateInput,
         output_model=CodeTestGateOutput,
@@ -378,6 +382,7 @@ OPERATIONS: list[Operation] = [
     ),
     Operation(
         name="code.enclosing",
+        session_content=True,
         input_model=CodeEnclosingInput,
         output_model=CodeEnclosingOutput,
         handler=handle_code_enclosing,
@@ -472,6 +477,7 @@ OPERATIONS: list[Operation] = [
     ),
     Operation(
         name="code.outcome",
+        session_content=True,
         input_model=CodeOutcomeInput,
         output_model=CodeOutcomeOutput,
         handler=handle_code_outcome,

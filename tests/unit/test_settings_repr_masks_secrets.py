@@ -61,8 +61,10 @@ def test_a_load_error_names_the_field_never_the_environment(bad: dict[str, objec
 
 
 # Names with a secret's word in them that hold no secret: TTLs, the token-exchange
-# endpoint's parameters.
+# endpoint's parameters, the path of the web port's TLS key, the path of a git proxy's
+# password file.
 _NOT_SECRETS = {
+    "code_git_proxy_token_file",
     "password_link_ttl_seconds",
     "oauth_access_token_ttl_seconds",
     "inference_token_url",
@@ -71,6 +73,7 @@ _NOT_SECRETS = {
     "inference_token_audience",
     "inference_token_scope",
     "inference_token_exchange_timeout_s",
+    "tls_key_file",
 }
 
 

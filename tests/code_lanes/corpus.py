@@ -135,6 +135,12 @@ LANES: tuple[Lane, ...] = (
         "js/", "javascript", "CommonJS exports, prototype methods, an IIFE and function expressions"
     ),
     Lane(
+        "lua/",
+        "lua",
+        "module functions, methods, a local function, calls across files and `require` "
+        "includes resolved from an ancestor directory",
+    ),
+    Lane(
         "md/",
         "doc",
         "sections, cross-document links, backticked references to the TLA+ spec's names, "
@@ -426,7 +432,7 @@ def _summarize() -> dict[str, Any]:
                         pf.includes.append(hit)
         elif pf.lang == "rust":
             pf.includes = resolve_uses(rel, pf.includes, present)
-        elif pf.lang in ("proto", "thrift", "gotemplate"):
+        elif pf.lang in ("proto", "thrift", "gotemplate", "lua"):
             # Import candidates settle against the corpus paths
             lane = _lane_module(pf.lang)
             pf.includes = lane.resolve_imports(rel, list(pf.includes), present)
@@ -553,7 +559,7 @@ def _summarize() -> dict[str, Any]:
                 ]
         if pf.lang == "prisma":
             es = [*es, *prisma_edges(pf)]
-        if pf.lang in ("proto", "thrift", "gotemplate"):
+        if pf.lang in ("proto", "thrift", "gotemplate", "lua"):
             # The reference sites over the lane's table
             lane = _lane_module(pf.lang)
             es = [*es, *bind_sites(pf, lane.reference_sites(pf), gated, lane.SITE_RULES)]
@@ -582,6 +588,7 @@ def _summarize() -> dict[str, Any]:
             "proto",
             "thrift",
             "gotemplate",
+            "lua",
             "config",
             "python",
         ):
@@ -596,8 +603,10 @@ def _summarize() -> dict[str, Any]:
 
 def _lane_module(lang: str) -> Any:
     """The tree-less lane modules, as `ingest._lane_module`."""
-    from server.code.domain.extract import lang_gotemplate, lang_proto, lang_thrift
+    from server.code.domain.extract import lang_gotemplate, lang_lua, lang_proto, lang_thrift
 
+    if lang == "lua":
+        return lang_lua
     if lang == "thrift":
         return lang_thrift
     return lang_proto if lang == "proto" else lang_gotemplate

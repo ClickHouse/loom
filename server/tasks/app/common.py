@@ -31,6 +31,7 @@ from fastapi import HTTPException
 
 from server.core.datetimes import UNIX_EPOCH
 from server.core.datetimes import utc_now as _now
+from server.identity.domain.read_scope import ReadFilters
 from server.tasks.api.models_task import (
     InboxPayload,
     PolicyPayload,
@@ -151,6 +152,18 @@ def _caller_subject(fallback: str = "") -> str:
     if auth is not None and auth.subject:
         return str(auth.subject)
     return fallback
+
+
+def _warning_read_filters() -> ReadFilters | None:
+    """An incomplete identity hides warnings while shared task reads remain available."""
+    from server.auth.context import current_auth
+    from server.core.errors import IdentityIncompleteError
+    from server.identity.domain.read_scope import request_read_filters
+
+    try:
+        return request_read_filters(current_auth())
+    except IdentityIncompleteError:
+        return None
 
 
 def _actor(fallback: str) -> str:

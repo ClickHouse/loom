@@ -154,6 +154,17 @@ describe("restorePlace and arriveAt", () => {
     expect(document.activeElement).toBe(main.querySelector("[data-row-open]"));
   });
 
+  it("finds a row keyed by its place and address, whose key holds a line break", () => {
+    // The Library keys a row of a list of several places as "<namespace>\n<address>".
+    const key = "doc:col-eng\nrunbooks/drain.md";
+    const main = page('<h1>Library</h1><div class="list-row"><button data-row-open="">drain</button></div>');
+    main.querySelector(".list-row")!.setAttribute("data-focus-key", key);
+    tall(main, 2000);
+    restorePlace({ scrollTop: 0, focusKey: key, inspected: null, inspectedAgent: "", inspectedOwner: null }, true);
+    vi.advanceTimersByTime(20);
+    expect(document.activeElement).toBe(main.querySelector("[data-row-open]"));
+  });
+
   it("without a focus key, a changed view focuses its h1", () => {
     const main = page("<h1>Library</h1>");
     tall(main, 2000);

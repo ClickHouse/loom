@@ -138,7 +138,7 @@ def test_a_failed_read_keeps_the_last_rows(monkeypatch: pytest.MonkeyPatch) -> N
     async def _down(*_a, **_k):
         raise ConnectionError("postgres is down")
 
-    monkeypatch.setattr(pg, "fetchrow", _down)
+    monkeypatch.setattr(pg, "fetchrow_reset", _down)
 
     assert asyncio.run(cell.refresh()) is False
     assert cell.gate_reason() == ""
@@ -188,9 +188,10 @@ def test_refresh_reads_the_three_rows(monkeypatch: pytest.MonkeyPatch) -> None:
             "mode": "recording",
             "own": {"current_fp": value, "next_fp": None},
             "tenancy": False,
+            "marked": True,
         }
 
-    monkeypatch.setattr(pg, "fetchrow", _row)
+    monkeypatch.setattr(pg, "fetchrow_reset", _row)
 
     assert asyncio.run(cell.refresh()) is True
     assert cell.mode() == "recording"
@@ -340,7 +341,12 @@ def test_the_heartbeat_reports_the_cell_and_a_gated_process_is_not_serving(
     assert reported["cell"] == "eu-1"
     assert reported["tenancy_mode"] == "enforced"
     assert reported["instance_id"] == instances.row()["instance_id"]
-    assert json.loads(reported["fingerprint"]) == cell.as_value(cell.mine())
+    # A later cell reports no `router` key; a view built here has no marker read.
+    assert json.loads(reported["fingerprint"]) == {
+        **cell.as_value(cell.mine()),
+        "serves": True,
+        "marked": None,
+    }
 
 
 def test_outside_a_cell_the_heartbeat_still_reports_the_fingerprint(
@@ -393,9 +399,9 @@ def test_an_unprepared_cell_reads_absent_rows_and_stays_gated(
     _view(monkeypatch)
 
     async def _empty(*_a, **_k):
-        return {"first": None, "mode": None, "own": None, "tenancy": False}
+        return {"first": None, "mode": None, "own": None, "tenancy": False, "marked": True}
 
-    monkeypatch.setattr(pg, "fetchrow", _empty)
+    monkeypatch.setattr(pg, "fetchrow_reset", _empty)
     assert asyncio.run(cell.refresh()) is True
     assert "first row is absent" in cell.gate_reason()
 
@@ -469,9 +475,10 @@ def test_a_malformed_own_row_is_a_failed_read_and_keeps_the_last_view(
             "mode": "enforced",
             "own": {"current_fp": json.loads(bad), "next_fp": None},
             "tenancy": False,
+            "marked": True,
         }
 
-    monkeypatch.setattr(pg, "fetchrow", _row)
+    monkeypatch.setattr(pg, "fetchrow_reset", _row)
     assert asyncio.run(cell.refresh()) is False
     assert cell._view.error == "MalformedRow"
     assert cell.gate_reason() == ""  # the last view, as for any failed read

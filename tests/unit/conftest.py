@@ -62,6 +62,46 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
+def no_blacklisted_values(monkeypatch):
+    """Lifecycle field/ordering cases have no refusal policy. The guard's real cache,
+    encoded values and commit generations are covered in test_blacklist_restore_paths."""
+    from server.memory.app import blacklist_guard
+
+    async def allow(rows, *, policy=None):
+        return {}
+
+    async def capture(org):
+        return {}
+
+    monkeypatch.setattr(blacklist_guard, "capture_policy", capture)
+    monkeypatch.setattr(blacklist_guard, "enforce_rows", allow)
+
+
+@pytest.fixture(autouse=True)
+def auth_account_lifecycle(monkeypatch):
+    """Direct auth unit calls receive the same mandatory implementation as HTTP/CLI."""
+    from server.auth import account_lifecycle
+    from server.knowledge.app.connected_accounts import stop_subjects
+
+    monkeypatch.setattr(account_lifecycle, "_stopper", stop_subjects)
+
+
+@pytest.fixture(autouse=True)
+def mirror_latch_world(monkeypatch):
+    """A fresh control-plane store, separate from a test's business-domain client.
+
+    Admission uses its real store algorithm; this models the CH boundary and
+    makes no claim about native Keeper ordering or real checked HTTP sessions.
+    """
+    from server.knowledge.store import mirror_latch
+    from tests.unit.mirror_latch_fake import KeeperWorld
+
+    world = KeeperWorld()
+    monkeypatch.setattr(mirror_latch, "get_client", lambda: world)
+    yield world
+
+
+@pytest.fixture
 def stub_model_command(monkeypatch):
     """Isolate native CLI business/connection tests from provider policy/CH.
 
@@ -883,6 +923,17 @@ def _identity_caches_left_cold() -> Iterator[None]:
 
     key_axis._KEY_AXIS_AUTO.clear()
     summaries._SUMMARY_ENTITY_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def _cell_router_fresh() -> Iterator[None]:
+    """`server.core.cell_router` keeps the directory's answer, a sticky `serving` and whether
+    a background reader runs for the process's life: every test starts with none read."""
+    from server.core import cell_router
+
+    cell_router._reset_for_tests()
+    yield
+    cell_router._reset_for_tests()
 
 
 def _reset_deferred_ledgers() -> None:

@@ -627,8 +627,9 @@ async def first_cell() -> Cell | None:
 
 
 async def first_cell_named(cell_name: str) -> Cell | None:
-    """The first cell's row when it is `cell_name`, else None: the state read a first
-    cell in `recording` makes. Not a lookup: it takes no lookup slot."""
+    """The first cell's row when it is `cell_name`, else None: the state route's read
+    (`Router._state_row`), at most once per replica per window. Not a lookup: it takes no
+    lookup slot."""
     async with _reading(), _connection() as conn:
         row = await conn.fetchrow(f"{_CELL} WHERE is_first AND cell = $1", cell_name)
     return _cell(row) if row else None

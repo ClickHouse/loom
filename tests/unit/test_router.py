@@ -8,6 +8,7 @@ import dataclasses
 import hashlib
 from contextlib import asynccontextmanager
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -56,6 +57,7 @@ class _Directory:
         self.placements: dict[str, str] = {}
         self.down = False
         self.credential_reads = 0
+        self.state_reads = 0
         self.pings = 0
 
     def _check(self) -> None:
@@ -75,6 +77,7 @@ class _Directory:
         return next((r for r in self.cells.values() if r.is_first), None)
 
     async def first_cell_named(self, name: str) -> directory.Cell | None:
+        self.state_reads += 1
         self._check()
         row = self.cells.get(name)
         return row if row is not None and row.is_first else None
@@ -647,18 +650,67 @@ def test_a_state_read_with_no_bearer_reads_nothing(fake: _Directory) -> None:
     assert r.status_code == 401 and fake.credential_reads == 0
 
 
-def test_a_replaced_credential_still_cached_is_refused_on_the_state_read(
+def test_a_replaced_credential_is_refused_on_the_state_read_once_the_window_passes(
     fake: _Directory,
 ) -> None:
+    """The credential hashes and the row are both read once a window: a credential replaced
+    meanwhile reads the cached state until then, and is refused after."""
     fake.cells["eu-1"] = _row(is_first=True, state="attaching")
-    client = _client()
+    clock = ManualClock()
+    client = _client(clock)
     assert _state(client).status_code == 200
     replaced = "replaced-credential-0123456789abcdef"
     sha = hashlib.sha256(replaced.encode()).hexdigest()
     fake.cells["eu-1"] = _row(is_first=True, state="attaching", credential_sha256=sha)
-    assert _state(client).status_code == 401  # judged on the row, not the cache
+    assert _state(client).status_code == 200  # this replica's read, within its window
+    clock.advance(settings.router_directory_cache_s)
+    assert _state(client).status_code == 401
     assert _state(client, token=replaced).status_code == 200
     assert fake.credential_reads == 2
+
+
+def test_a_rotated_credential_reads_its_state_when_only_the_row_cache_predates_it(
+    fake: _Directory,
+) -> None:
+    """The two caches' windows can end apart: a credential the credential cache already
+    accepts, against a cached row that predates the rotation, reads the row again rather
+    than answering 401."""
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    clock = ManualClock()
+    router = router_app.Router(clock=clock)
+    client = TestClient(router_app.build_app(router))
+    assert _state(client).status_code == 200
+    stale = router._states["eu-1"]
+    rotated = "rotated-credential-0123456789abcdef"
+    sha = hashlib.sha256(rotated.encode()).hexdigest()
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching", credential_sha256=sha)
+    clock.advance(settings.router_directory_cache_s)
+    assert _state(client, token=rotated).status_code == 200  # both caches read again
+    # The row cache alone holding the row from before the rotation:
+    router._states["eu-1"] = stale._replace(read_at=clock())
+    reads = fake.state_reads
+    assert _state(client, token=rotated).json() == {"cell": "eu-1", "state": "attaching"}
+    assert fake.state_reads == reads + 1
+
+
+def test_a_credential_the_reread_row_does_not_hold_answers_401_after_one_read(
+    fake: _Directory,
+) -> None:
+    """A cached row that does not hold the credential is read again once; a row that still
+    does not answers 401, and that second read stays cached for its window."""
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    clock = ManualClock()
+    router = router_app.Router(clock=clock)
+    client = TestClient(router_app.build_app(router))
+    assert _state(client).status_code == 200
+    other = hashlib.sha256(b"another-credential-0123456789abcdef").hexdigest()
+    router._states["eu-1"] = router._states["eu-1"]._replace(
+        row=_row(is_first=True, state="attaching", credential_sha256=other)
+    )
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching", credential_sha256=other)
+    reads = fake.state_reads
+    assert _state(client).status_code == 401
+    assert fake.state_reads == reads + 1 and "eu-1" in router._states
 
 
 def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) -> None:
@@ -666,19 +718,65 @@ def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) 
     assert _state(_client()).status_code == 503
 
 
-def test_a_state_read_with_its_credential_cached_answers_503_when_the_directory_goes_down(
+def test_the_state_route_reads_the_directory_once_a_window_per_replica(
     fake: _Directory,
 ) -> None:
-    """The credential comes from the cache and the row read fails: the read answers 503
-    with the directory's reason."""
+    """Every process of a first cell asks each period: a replica answers them all from one
+    read of the row per LOOM_ROUTER_DIRECTORY_CACHE_S, and a change reaches it within that
+    window."""
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    clock = ManualClock()
+    client = _client(clock)
+    for _ in range(10):
+        assert _state(client).json() == {"cell": "eu-1", "state": "attaching"}
+        clock.advance(settings.router_directory_cache_s / 20)
+    assert fake.state_reads == 1
+    fake.cells["eu-1"] = _row(is_first=True, state="serving")
+    assert _state(client).json()["state"] == "attaching"
+    clock.advance(settings.router_directory_cache_s / 2)
+    assert _state(client).json()["state"] == "serving" and fake.state_reads == 2
+
+
+def test_a_failed_state_read_answers_503_for_its_window_and_then_reads_again(
+    fake: _Directory,
+) -> None:
+    """Past the window a down directory answers 503 with its reason, and is asked once a
+    window, not once a call; the first read after it is back answers the row."""
     fake.cells["eu-1"] = _row(is_first=True)
-    client = _client()
+    clock = ManualClock()
+    client = _client(clock)
     assert _state(client).status_code == 200
     fake.down = True
+    assert _state(client).status_code == 200  # the last read, still within its window
+    clock.advance(settings.router_directory_cache_s)
+    fake.cells["eu-1"] = _row(is_first=True)  # the credentials are read again too
     r = _state(client)
     assert r.status_code == 503
     assert r.json()["error"] == "the directory could not be read: OSError"
-    assert fake.credential_reads == 1  # the credential came from the cache
+    reads = fake.state_reads
+    for _ in range(10):
+        assert _state(client).status_code == 503
+    assert fake.state_reads == reads
+    fake.down = False
+    clock.advance(settings.router_directory_cache_s)
+    assert _state(client).status_code == 200
+
+
+def test_a_failed_row_read_answers_503_with_the_credential_read(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The credential hashes read and the row's read fails: 503 with the directory's
+    reason, which stands for the window without another read."""
+    fake.cells["eu-1"] = _row(is_first=True)
+    down = directory.DirectoryUnavailable("the directory could not be read: OSError")
+    failing = AsyncMock(side_effect=down)
+    monkeypatch.setattr(directory, "first_cell_named", failing)
+    client = _client()
+    for _ in range(3):
+        r = _state(client)
+        assert r.status_code == 503
+        assert r.json()["error"] == "the directory could not be read: OSError"
+    assert failing.await_count == 1 and fake.credential_reads == 1
 
 
 def _lookup(client: TestClient, org: str) -> Any:

@@ -166,7 +166,7 @@ def _make_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
     state: dict[str, Any] = {"payload": "full", "asked": []}
 
     async def _sections(**kw: Any) -> dict[str, Any]:
-        state["asked"].append({k: v for k, v in kw.items()})
+        state["asked"].append({k: v for k, v in kw.items() if k != "tracker_plan"})
         return _payload(state["payload"])
 
     async def _fanout(org: str, *_: object) -> Fanout:
@@ -191,6 +191,9 @@ def _make_harness(monkeypatch: pytest.MonkeyPatch) -> Any:
         def check(self, *_a: Any, **_k: Any) -> None:
             return None
 
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(handler_mod, "prepare_tracker_search", AsyncMock(return_value=None))
     for mod in (handler_mod, mcp_tools):
         monkeypatch.setattr(mod, "search_sections", _sections, raising=False)
     for mod in (mcp_call, mcp_tools):

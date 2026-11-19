@@ -136,11 +136,21 @@ async def test_two_sets_go_out_as_two_point_writes(agent: Agent) -> None:
     assert r1["memory_id"] == "id-a" and "coalesced" not in r2
 
 
-async def test_third_set_inside_the_window_starts_a_bulk(agent: Agent) -> None:
+async def test_third_set_inside_the_window_starts_a_bulk(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     t.row_verdicts = {"d": "merge", "e": "conflict"}
     t.bulk_extra = {"merged": ["d"], "conflicted": ["e"]}
-    results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    pending = asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     assert sorted(t.paths()) == ["/v1/memory.bulk_set", "/v1/memory.set", "/v1/memory.set"]
     bulk = [p for path, p in t.calls if path == "/v1/memory.bulk_set"][0]
     assert [e["memory_key"] for e in bulk["entries"]] == ["c", "d", "e"]
@@ -193,9 +203,17 @@ async def test_a_coalesced_set_the_blacklist_could_not_check_is_sent_alone(agent
 
 async def _sets_of_one_key(agent: Agent, values: list[str]) -> list[Any]:
     """Two point writes, then `values` as sets of key `k` in one batch."""
-    sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b")]
-    sets += [agent.memory.set("k", v) for v in values]
-    return list(await asyncio.gather(*sets, return_exceptions=True))
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(loop, "time", ManualClock(t=loop.time()))
+        sets = [agent.memory.set("a", "a"), agent.memory.set("b", "b")]
+        sets += [agent.memory.set("k", v) for v in values]
+        pending = asyncio.gather(*sets, return_exceptions=True)
+        await asyncio.sleep(0)
+        await agent.memory.flush_sets()
+        return list(await pending)
 
 
 def _alone_values(t: Any) -> list[str]:
@@ -232,14 +250,22 @@ async def test_an_unchecked_set_is_written_when_the_later_one_of_its_key_is_refu
 
 
 async def test_unchecked_sets_go_out_again_in_batches_the_size_the_budget_checked(
-    agent: Agent,
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     # 200 sets of 2 KB where a request checks about 80 KB: each further batch is the
     # size the last one checked, so a handful of requests answer all, in order.
     t: Any = agent.transport
     t.budget_bytes = 80_000
     values = [f"{i:04d}" + "v" * 2_000 for i in range(200)]
-    results = await asyncio.gather(*[agent.memory.set(f"k{i}", v) for i, v in enumerate(values)])
+    pending = asyncio.gather(*[agent.memory.set(f"k{i}", v) for i, v in enumerate(values)])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     assert t.paths().count("/v1/memory.bulk_set") <= 6
     assert t.paths().count("/v1/memory.set") == 2  # the first two of the window
     sent = [e["value"] for path, p in t.calls if path.endswith("bulk_set") for e in p["entries"]]
@@ -694,8 +720,13 @@ async def test_close_waits_for_a_first_set_queued_behind_a_flush(agent: Agent) -
 
 
 async def test_a_first_set_its_caller_cancels_still_lands_before_the_windows_flush(
-    agent: Agent,
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     t.set_gates = {"v1": asyncio.Event()}
     x = asyncio.create_task(agent.memory.set("x", "x"))
@@ -786,11 +817,12 @@ async def test_close_returns_while_a_writer_keeps_setting(agent: Agent) -> None:
 async def test_a_set_made_after_a_cancelled_close_began_is_written(agent: Agent) -> None:
     t: Any = agent.transport
     t.bulk_gate = asyncio.Event()
+    t.set_gates["a"] = t.bulk_gate
     earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
     await _settle()
     closing = asyncio.create_task(agent.close())
     await _settle()
-    closing.cancel()
+    assert closing.cancel()
     await _settle()
     late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
     await _settle()

@@ -6,6 +6,12 @@ on:
     branches: [main, "release/**"]
   pull_request:
     branches: [main, "release/**"]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact generated translation commit to validate
+        required: true
+        type: string
 
 # A new push to a pull request cancels its superseded run. Every push (to main
 # or a release/X.Y line) runs to completion in its own group, so a failure on
@@ -25,7 +31,26 @@ env:
   UV_VERSION: "0.12.19"
 
 jobs:
+  validate-ref:
+    name: validate requested commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Bind a dispatched run to its generated commit
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            test "$REF" = "refs/heads/i18n/update"
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            test "$SHA" = "$EXPECTED_SHA"
+          fi
+
   clickhouse:
+    needs: validate-ref
     name: the ClickHouse release this run tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,6 +68,7 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
   lint:
+    needs: validate-ref
     name: ruff + mypy-gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -112,7 +138,7 @@ jobs:
   # coverage data and applies the floors.
   unit:
     name: pytest unit part ${{ matrix.part }}
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -167,7 +193,8 @@ jobs:
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+          pytest tests/unit -vv -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+            -o faulthandler_timeout=300 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
       # Also after a failure: the failing part's test times are what a reader needs.
@@ -186,7 +213,7 @@ jobs:
 
   unit-coverage:
     name: pytest unit coverage, floors and bench
-    needs: unit
+    needs: [validate-ref, unit]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -244,6 +271,7 @@ jobs:
           path: coverage.xml
 
   sandbox:
+    needs: validate-ref
     name: repository-job sandbox (real bubblewrap)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -279,7 +307,7 @@ jobs:
 
   schema-check:
     name: schema.sql in sync with migrations
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -318,6 +346,7 @@ jobs:
         run: make schema-check
 
   ts-typecheck:
+    needs: validate-ref
     name: tsc (frontend)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -340,6 +369,7 @@ jobs:
         run: npm run budget
 
   format:
+    needs: validate-ref
     name: format (biome, prettier, taplo, shfmt)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -366,6 +396,7 @@ jobs:
         run: git ls-files '*.sh' ':!tests/fixtures' | xargs shfmt -d
 
   helm:
+    needs: validate-ref
     name: helm chart (lint, kubeconform)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -388,7 +419,9 @@ jobs:
           on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
           extractor=(--set extractor.enabled=true --set secrets.extractorToken="$(openssl rand -hex 24)")
           assistant=(--set assistant.enabled=true --set assistant.existingSecret=ci)
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}" "${assistant[@]}")
+          # TLS on Loom's port, which the assistant (in "all") cannot reach: its own render.
+          tls=(--set tls.secretName=ci --set 'ingress.annotations.alb\.ingress\.kubernetes\.io/backend-protocol=HTTPS' --set workers.enabled=true --set networkPolicy.enabled=true "${on[@]}" "${extractor[@]}")
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set alerts.prometheusRule.enabled=true --set mustMatchChange.publish=ci --set cellProbe.port=8777 --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}" "${extractor[@]}" "${assistant[@]}")
           # The PrometheusRule's schema: the CRD catalog at a pinned commit.
           crd='https://raw.githubusercontent.com/datreeio/CRDs-catalog/c86448cbf1a840ca62d119259864863897c8748a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
@@ -400,6 +433,8 @@ jobs:
             helm lint --strict "$chart" "${args[@]}" "${all[@]}"
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
             helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0 -schema-location default -schema-location "$crd"
+            helm lint --strict "$chart" "${args[@]}" "${tls[@]}"
+            helm template loom "$chart" "${args[@]}" "${tls[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
           done
           kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
           # Values the chart must refuse, each with its own message. A refused render
@@ -422,6 +457,8 @@ jobs:
           refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
           refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012
           refused "assistant.existingSecret is required" --set assistant.enabled=true
+          refused "assistant.enabled calls Loom's port over plain HTTP" "${assistant[@]}" --set tls.secretName=ci
+          refused 'set ingress.annotations."alb.ingress.kubernetes.io/backend-protocol" to HTTPS' -f "$chart/values-eks.yaml" --set tls.secretName=ci
           # The release Secret (named after the release here) and envFrom Secrets reach every pod.
           shared="is a Secret every web and workers pod loads"
           refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom
@@ -456,8 +493,14 @@ jobs:
       # The Postgres authority's DSN, password, CA mount and egress, and its refusals.
       - name: postgres
         run: python3 -m scripts.gates.helm_postgres
+      # TLS on Loom's port: the Secret's mount, the settings, HTTPS probes, and the refusals.
+      - name: tls
+        run: python3 -m scripts.gates.helm_tls
+      - name: private cell probe
+        run: python3 -m scripts.gates.helm_cell_probe
 
   agent-plugins:
+    needs: validate-ref
     name: coding-agent plugins (node --test)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -489,6 +532,7 @@ jobs:
   # The dashboard's vitest and Playwright suites share nothing but `npm ci`, so
   # each runs as its own job, split into parts on separate runners.
   frontend-vitest:
+    needs: validate-ref
     name: frontend vitest part ${{ matrix.part }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -515,6 +559,7 @@ jobs:
 
   # With fullyParallel: false, --shard splits by spec file per project, not by test.
   frontend-e2e:
+    needs: validate-ref
     name: frontend playwright part ${{ matrix.part }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -557,7 +602,7 @@ jobs:
   # analyzer corpus.
   integration:
     name: pytest integration ${{ matrix.part == 'isolation' && 'isolation gates' || format('part {0} of 4', matrix.part) }}
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -626,6 +671,17 @@ jobs:
       - name: Apply migrations
         id: migrate
         run: python -m server.core.schema.migrate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.part == '1'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install native framework clients
+        if: matrix.part == '1'
+        run: |
+          uv pip install --python "$PWD/.venv/bin/python" --target "$RUNNER_TEMP/loom-adk-client" './sdk/python[google-adk]'
+          npm --prefix sdk/typescript ci --no-audit --no-fund
       # Provider staging tests create private, UUID-owned copies and run before
       # the web process starts, against this job's disposable migrated database.
       - name: Provider rebuild storage and recovery
@@ -682,6 +738,12 @@ jobs:
           echo "control plane never became healthy"
           tail -100 server.log
           exit 1
+      - name: Mastra native memory against the control plane
+        if: matrix.part == '1'
+        run: |
+          token="$(python -c 'from server.auth import keyring; keyring.sign_with_root_only(); from server.auth.jwt import mint_token; print(mint_token(subject="ci-mastra-memory", org="mastra-memory-ci", namespaces=["native"], roles=["writer"], ttl_seconds=600, is_service_account=True))')"
+          echo "::add-mask::$token"
+          LOOM_API_KEY="$token" LOOM_ORG=mastra-memory-ci LOOM_NAMESPACE=native make test-sdk-mastra-memory-live
       # A local S3-compatible store for the document object-store tests
       # (tests/integration/test_document_object_store_live.py).
       - name: Start a local S3-compatible store
@@ -695,13 +757,19 @@ jobs:
           done
           curl -sf http://127.0.0.1:5000/ >/dev/null
           echo "LOOM_TEST_S3_ENDPOINT=http://127.0.0.1:5000" >> "$GITHUB_ENV"
-      # The whole directory on every pull request, split over the parts; no test
-      # is slow enough to justify a separate merge-only tier.
+      # Split ordinary integration cases over the parts. Signed mirror HTTP cases
+      # run in the authenticated isolation step below on every pull request.
       - name: pytest (this part of tests/integration)
         if: matrix.part != 'isolation'
         env:
           LOOM_TEST_SHARD: ${{ matrix.part }}/4
-        run: pytest tests/integration -q --durations=20
+        run: >-
+          pytest tests/integration -q --durations=20
+          --ignore=tests/integration/test_mirror_checked_search_http.py
+          --ignore=tests/integration/test_mirror_checked_list_http.py
+      - name: Native Google ADK live tests (Python and TypeScript)
+        if: matrix.part == '1'
+        run: python -m tests.integration._google_adk_ci "$RUNNER_TEMP/loom-adk-client"
       # The tenant-isolation gates against a server that enforces auth. The numbered
       # parts run them with auth off, where every token is ignored and no refusal is seen.
       # The three checks of the isolation gates part are independent: a failure in
@@ -727,6 +795,33 @@ jobs:
           echo "auth-on control plane never became healthy"
           tail -100 server-auth.log
           exit 1
+      - name: Install the native Pipecat client in a private target
+        id: pipecat_client
+        if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
+        run: >-
+          uv pip install --python "$PWD/.venv/bin/python"
+          --target "$RUNNER_TEMP/loom-pipecat-native" './sdk/python[pipecat]'
+      - name: Native Pipecat text example (auth on)
+        id: pipecat_demo
+        if: >-
+          matrix.part == 'isolation' && !cancelled()
+          && steps.pipecat_client.outcome == 'success'
+        timeout-minutes: 5
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_BASE_URL: http://localhost:7778
+          PYTHONPATH: ${{ runner.temp }}/loom-pipecat-native
+          LOOM_PIPECAT_EVIDENCE: ${{ runner.temp }}/pipecat-native-demo.json
+        run: pytest -q tests/integration/_pipecat_demo_ci.py
+      - name: Upload native Pipecat qualification receipt
+        if: >-
+          always() && matrix.part == 'isolation'
+          && steps.pipecat_demo.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pipecat-native-demo
+          path: ${{ runner.temp }}/pipecat-native-demo.json
+          if-no-files-found: error
       - name: pytest isolation gates (auth on)
         if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
         env:
@@ -740,6 +835,7 @@ jobs:
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_extraction_status_mine.py
           tests/integration/test_token_mint.py
+          tests/integration/_sdk_handoff_ci.py
           tests/integration/test_onboard_tenant.py
           tests/integration/test_session_briefs.py
           tests/integration/test_blacklist.py
@@ -747,6 +843,8 @@ jobs:
           tests/integration/test_run_begin_claims.py
           tests/integration/test_mcp_session_run_scope.py
           tests/integration/test_projection_failures_restricted.py
+          tests/integration/test_mirror_checked_search_http.py
+          tests/integration/test_mirror_checked_list_http.py
       # The statement corpus: every builder's shapes through
       # EXPLAIN QUERY TREE on the migrated service, and shapes.txt in step
       # with the builders. ~10 s; a rejection here is a statement that would
@@ -766,7 +864,7 @@ jobs:
 
   integration-postgres:
     name: pytest integration (Postgres ${{ matrix.postgres }} memory authority)
-    needs: clickhouse
+    needs: [validate-ref, clickhouse]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # The oldest supported major and the newest.
@@ -899,6 +997,23 @@ jobs:
           tests/integration/test_cell_unset_gate_pg.py
           tests/integration/test_cell_prepare.py
           tests/integration/test_cell_org_triggers_pg.py
+          tests/integration/test_source_access_store.py
+          tests/integration/test_source_document_store.py
+          tests/integration/test_mirror_reader_evidence.py
+          tests/integration/test_mirror_session_latch_native.py
+          tests/integration/test_mirror_search_chunk_keys.py
+          tests/integration/test_mirror_title_projection.py
+          tests/integration/test_mirror_ask_http.py
+          tests/integration/test_marked_admin_events_native.py
+          tests/integration/test_marked_analytics_export_native.py
+          tests/integration/test_marked_assistant_ledger_native.py
+          tests/integration/test_marked_cost_summary_native.py
+          tests/integration/test_marked_derived_activity_native.py
+          tests/integration/test_marked_event_readers_native.py
+          tests/integration/test_marked_mentor_agents_native.py
+          tests/integration/test_marked_rollup_migration_native.py
+          tests/integration/test_marked_durable_folds_native.py
+          tests/integration/test_marked_sql_surface_native.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).
@@ -908,6 +1023,7 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_INSTANCE_LABEL: "ci:integration-postgres-auth"
+          LOOM_CH_ANALYSIS_PROBE_INTERVAL_S: "10"
         run: |
           LOOM_WEB_WORKERS=3 PORT=7778 nohup sh scripts/serve.sh > server-auth.log 2>&1 &
           for _ in $(seq 1 60); do
@@ -927,15 +1043,20 @@ jobs:
         env:
           LOOM_AUTH_REQUIRED: "true"
           LOOM_BASE_URL: http://localhost:7778
+          LOOM_CH_ANALYSIS_PROBE_INTERVAL_S: "10"
         run: >-
           pytest -q
           tests/integration/test_cross_principal_leakage.py
           tests/integration/test_read_scope_isolation.py
           tests/integration/test_session_briefs.py
           tests/integration/test_token_mint.py
+          tests/integration/_sdk_handoff_ci.py
           tests/integration/test_mcp_session_run_scope.py
           tests/integration/test_onboard_tenant.py
           tests/integration/test_blacklist.py
+          tests/integration/test_mirror_checked_search_http.py
+          tests/integration/test_mirror_checked_list_http.py
+          tests/integration/test_analysis_isolation.py
           tests/integration/test_sensitivity_high_canary.py
           tests/integration/test_pg_authority.py
           -k "not test_a_duplicate_never_resolves_to_a_canonical_outside_the_scope
@@ -955,9 +1076,12 @@ jobs:
             server-auth.log
 
   mixed-version:
+    needs: [validate-ref, clickhouse]
     name: builds N-1 and N on one ClickHouse
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      LOOM_CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -987,8 +1111,54 @@ jobs:
       # target branch's tip can carry a newer migration by the time the run starts.
       - name: Mixed-version gate
         run: python scripts/gates/mixed_version.py --require --base HEAD~1
+      - name: Published build ordinary-event compatibility
+        run: python scripts/gates/mixed_version.py --require --base 1cbaf0411114512957b96ec5ea7bbb8058828543
+
+  sdk-rust:
+    needs: validate-ref
+    name: rust sdk (${{ matrix.rust }}, fmt, tests, clippy, docs, package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.84.1", stable]
+    defaults:
+      run:
+        working-directory: sdk/rust
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust with format and lint components
+        run: |
+          rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
+          rustup override set "${{ matrix.rust }}"
+      # The library leaves dependency locking to its consumers; each toolchain resolves once.
+      - name: Resolve dependencies for this toolchain
+        run: cargo generate-lockfile
+      - name: Rust formatting
+        run: cargo fmt --check
+      - name: Unit, HTTP contract and documentation tests
+        run: cargo test --locked
+      - name: Lint the library, tests and examples
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: API documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps
+      - name: Verify the distributable crate and its license
+        run: |
+          cargo package --locked
+          for archive in target/package/clickhouse-loom-*.crate; do
+            package="$(basename "$archive" .crate)"
+            tar -xOf "$archive" "$package/LICENSE" | cmp - ../../LICENSE
+          done
 
   sdk-typescript:
+    needs: validate-ref
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1033,6 +1203,7 @@ jobs:
         run: npm run check:dist
 
   sdk-python-adapters:
+    needs: validate-ref
     name: python sdk adapters (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1060,6 +1231,7 @@ jobs:
         run: make test-sdk-adapters SDK_ADAPTERS_PYTHON="$(which python)" SDK_ADAPTERS_RESOLUTION="${{ matrix.lowest && 'lowest-direct' || 'highest' }}"
 
   sdk-python-package:
+    needs: validate-ref
     name: python sdk wheel (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1102,3 +1274,43 @@ jobs:
           uv pip list --python /tmp/sdk-venv/bin/python
       - name: Smoke-test the installed wheel
         run: /tmp/sdk-venv/bin/python scripts/gates/sdk_wheel_smoke.py dist/*.whl
+
+  langflow-extension:
+    needs: validate-ref
+    name: Langflow extension wheel (py ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the SDK and extension distributions
+        run: |
+          uv build sdk/python --out-dir "$RUNNER_TEMP/langflow-sdk-dist"
+          uv build integrations/langflow --out-dir "$RUNNER_TEMP/langflow-extension-dist"
+          mkdir "$RUNNER_TEMP/langflow-sdist"
+          tar -xzf "$RUNNER_TEMP"/langflow-extension-dist/*.tar.gz -C "$RUNNER_TEMP/langflow-sdist"
+          uv build "$RUNNER_TEMP"/langflow-sdist/* --wheel --out-dir "$RUNNER_TEMP/langflow-rebuilt-dist"
+      - name: Install and discover the extension outside the checkout
+        run: |
+          uv venv --python "$(command -v python)" "$RUNNER_TEMP/langflow-extension-venv"
+          uv pip install --python "$RUNNER_TEMP/langflow-extension-venv/bin/python" \
+            "$RUNNER_TEMP"/langflow-sdk-dist/*.whl \
+            "$RUNNER_TEMP"/langflow-rebuilt-dist/*.whl "lfx==1.13.3"
+          uv pip check --python "$RUNNER_TEMP/langflow-extension-venv/bin/python"
+          cd "$RUNNER_TEMP"
+          env -u PYTHONPATH "$RUNNER_TEMP/langflow-extension-venv/bin/python" -I \
+            "$GITHUB_WORKSPACE/scripts/gates/langflow_extension_smoke.py" \
+            "$GITHUB_WORKSPACE" "$RUNNER_TEMP/langflow-extension-dist" \
+            "$RUNNER_TEMP/langflow-rebuilt-dist" \
+            "$RUNNER_TEMP/langflow-sdk-dist"

@@ -56,7 +56,13 @@ class _CH:
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         self.sql = sql
-        return self.row
+        if self.row is None:
+            return None
+        return {
+            k: v
+            for k, v in self.row.items()
+            if k not in {"daily_user_cost_cap_usd", "budget_alert_inbox"} or k in sql
+        }
 
 
 async def _get(monkeypatch: pytest.MonkeyPatch, row: dict[str, Any] | None) -> Any:
@@ -95,3 +101,11 @@ async def test_a_missing_namespace_says_nothing_about_classification(
     assert out.found is False
     assert out.classification is None
     assert out.model_dump(exclude_none=True) == {"found": False, "namespace": "n"}
+
+
+async def test_budget_policy_round_trips_in_namespace_get(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = _row("standard")
+    row.update(daily_user_cost_cap_usd=2.5, budget_alert_inbox="warnings")
+    out = await _get(monkeypatch, row)
+    assert out.daily_user_cost_cap_usd == 2.5
+    assert out.budget_alert_inbox == "warnings"

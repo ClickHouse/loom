@@ -7,6 +7,7 @@ names what the triggers lack. Each test runs in a database of its own (`_pg_data
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import shutil
 from collections.abc import AsyncIterator
@@ -711,3 +712,90 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
         )
         texts = {d.text for d in await cell_triggers.missing(conn)}
         assert "loom.tenancy_refuse_unmarked() has a body or settings no migration writes" in texts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loom_cell", ["eu-1", ""])
+async def test_the_cell_refresh_reads_the_marker_its_pool_sends(
+    monkeypatch: pytest.MonkeyPatch, loom_cell: str
+) -> None:
+    """The pool sends the marker as a startup value with LOOM_CELL set: the refresh reads it
+    after RESET ALL; without LOOM_CELL it reads false, never null."""
+    from server.settings import settings
+
+    async with _cell("recording") as (dsn, _conn):
+        await pg.close_pool()
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", loom_cell)
+        monkeypatch.setattr(pg, "_expected", None)
+        monkeypatch.setattr(cell, "_view", cell._view)
+        try:
+            assert await cell.refresh() is True
+            assert cell.marked() is bool(loom_cell)
+            assert cell.reported_mode() == "recording"
+        finally:
+            await pg.close_pool()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_refresh_returns_its_connection_idle_with_no_loop_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read that fails inside the refresh's transaction is rolled back before the pool
+    takes the connection back, so the release logs nothing through the loop's handler."""
+    from server.settings import settings
+
+    async with _cell("recording") as (dsn, _conn):
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", "eu-1")
+        monkeypatch.setattr(pg, "_expected", None)
+        loop = asyncio.get_running_loop()
+        errors: list[dict[str, Any]] = []
+        handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: errors.append(context))
+        try:
+            with pytest.raises(pg.PostgresRefusedError):
+                await pg.fetchrow_reset("SELECT 1 / 0")
+            await asyncio.sleep(0.1)  # a release callback would have run by now
+            assert errors == []
+            # The pool hands the connection out again, outside any transaction.
+            async with pg.connection() as conn:
+                assert not conn.is_in_transaction()
+                assert await conn.fetchval("SELECT 1") == 1
+        finally:
+            loop.set_exception_handler(handler)
+            await pg.close_pool()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "marked,leaked,expected",
+    [(True, False, True), (False, True, False), (False, False, False)],
+    ids=["startup-marker", "leaked-set", "no-marker"],
+)
+async def test_the_refresh_reads_marked_from_the_session_it_runs_on(
+    monkeypatch: pytest.MonkeyPatch, marked: bool, leaked: bool, expected: bool
+) -> None:
+    """`cell.refresh` on one real session: a startup marker reads true; a session `SET` of
+    it, as a pooler that re-sends client parameters would make, is dropped by the RESET ALL
+    in the read's transaction and reads false, as no marker does."""
+    from server.settings import settings
+
+    async with _cell("recording") as (dsn, _conn):
+        monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", "eu-1")  # the startup marker goes with it
+        monkeypatch.setattr(pg, "_expected", None)
+        monkeypatch.setattr(cell, "_view", cell._View())
+        async with pg.dedicated(marked=marked) as session:
+            if leaked:
+                await session.execute("SET loom.tenancy_checked = 'on'")
+                assert await session.fetchval("SHOW loom.tenancy_checked") == "on"
+
+            @contextlib.asynccontextmanager
+            async def _connection() -> AsyncIterator[Any]:
+                yield session
+
+            monkeypatch.setattr(pg, "connection", _connection)
+            assert await cell.refresh() is True
+            assert cell.marked() is expected
+            assert cell.reported_mode() == "recording"

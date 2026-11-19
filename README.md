@@ -16,7 +16,7 @@
 
 <p align="center">
   <!-- languages -->
-  English · <a href="./i18n/zh-CN/README.md">简体中文</a> · <a href="./i18n/ja/README.md">日本語</a> · <a href="./i18n/ko/README.md">한국어</a> · <a href="./i18n/pt-BR/README.md">Português (Brasil)</a> · <a href="./i18n/es/README.md">Español</a> · <a href="./i18n/ru/README.md">Русский</a>
+  English · <a href="./i18n/zh-CN/README.md">简体中文</a> · <a href="./i18n/ja/README.md">日本語</a> · <a href="./i18n/ko/README.md">한국어</a> · <a href="./i18n/pt-BR/README.md">Português (Brasil)</a> · <a href="./i18n/es/README.md">Español</a>
   <!-- /languages -->
 </p>
 
@@ -37,6 +37,8 @@
 
 Loom is an open-source, self-hosted MCP server that gives your agents long-term, shared
 memory: what one agent learns in a session, the next agent or tool can find.
+In an authenticated team deployment, each agent uses a token scoped to namespaces and
+read or write roles. [Check shared memory and denied access](./docs/getting-started/connect-a-coding-agent.md#share-a-team-namespace-with-separate-credentials).
 
 Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
 [on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
@@ -57,7 +59,11 @@ into one place.
   [Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode) ·
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
 - **A code index of your repositories** that coding agents query for definitions,
-  callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
+  callers and change impact. [Code index](./docs/use-cases/code-intelligence.md) ·
+  [Language support and limits](./docs/features/code-index/overview.md#language-support)
+- **Memories linked to the code they are about**, which follow it through refactors, are
+  flagged when it changes and appear when an agent reads or edits it.
+  [Memory linked to code](./docs/use-cases/memory-linked-to-code.md)
 - **Lower model cost for coding agents**, as [measured](#measured-results) below.
   [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
@@ -71,7 +77,19 @@ into one place.
   supplied, and PR and tracker history.
   [Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
 
+**Memory for a software factory.** Loom gives implementation and review agents shared
+lessons, issue context and source provenance across sessions. Scope each principal's
+access with tokens, await required writes and task handoffs in your application, and
+recheck code-linked lessons against the current source before review. The same service
+supports multi-agent workflows and autonomous bots; your orchestration runs the agents,
+tests and approvals. Offering a tool does not guarantee the model uses it.
+[Multi-agent workflow](./docs/use-cases/multi-agent.md) ·
+[Autonomous-agent memory](./docs/use-cases/autonomous-agents.md)
+
 Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
+
+Read [Choosing memory for a software factory](https://github.com/ClickHouse/loom/discussions/939)
+for memory architecture choices, data ownership and operating responsibilities.
 
 Loom is not an in-process library for one agent's short-lived memory, nor an agent
 framework. [When Loom does not fit](./docs/getting-started/overview.md#when-it-does-not-fit)
@@ -210,8 +228,11 @@ Start a new session; the first one connects to `http://localhost:7777`. In Codex
 `codex` interactively once and approve the plugin's hooks; until then only the tools
 work. Tell the agent something worth keeping, then ask about it in the next session.
 
-For Cursor on the machine running a personal installation, the button below adds the
-[local MCP entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
+For Cursor, on a Teams or Enterprise plan, a team admin can import this repository as a
+team marketplace; its [Cursor plugin](./docs/features/integrations/cursor.md#plugin),
+untested in Cursor, installs the MCP entry and Loom's skills. On the machine running a
+personal installation, the button below adds the [local MCP
+entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
 
 [![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwP3Rvb2xzZXQ9Y29kaW5nIn0%3D)
 
@@ -235,8 +256,9 @@ tokens in **Settings → Tokens**. Cursor and other MCP clients, and
   corrections traceable, and a namespace can be rolled back to any point in time.
   [Memory](./docs/concepts/memory.md)
 - **Code intelligence with evidence.** Find definitions, callers, change impact and
-  relevant tests; connect code to commits, pull requests and issues. Results identify
-  their revision, source location and completeness. [Code index](./docs/features/code-index/overview.md)
+  relevant tests; connect code to commits, pull requests and issues. Use source
+  locations, completeness signals and per-tier freshness to check a result.
+  [Code index](./docs/features/code-index/overview.md)
 - **Grounded retrieval.** Search permitted memories, documents, conversations and
   tracker records. Answers cite their sources; low-confidence retrieval can abstain.
   [Retrieval](./docs/concepts/retrieval-and-ranking.md)
@@ -252,7 +274,7 @@ tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 | Integration                                                                                                                                                                                                                                                                                   | What it connects                                                              |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | [Claude Code](./docs/features/integrations/claude-code.md), [Codex](./docs/features/integrations/codex.md), [Cursor](./docs/features/integrations/cursor.md) and [other MCP clients](./docs/features/integrations/mcp-clients.md) ([all integrations](./docs/features/integrations/index.md)) | Memory and code intelligence in your existing agent workflow.                 |
-| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md) and [HTTP](./docs/reference/operations.md)                                                                                                                                                         | Your own agents and applications.                                             |
+| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md), [Rust](./sdk/rust/README.md), [Go](./sdk/go/README.md) and [HTTP](./docs/reference/operations.md)                                                                                                 | Your own agents and applications.                                             |
 | [Langfuse](./docs/features/integrations/langfuse.md)                                                                                                                                                                                                                                          | Request traces, model costs, retrieval scores and prompt-version attribution. |
 | [ClickStack / HyperDX](./docs/features/integrations/clickstack.md)                                                                                                                                                                                                                            | OpenTelemetry traces, logs and metrics in ClickHouse.                         |
 
@@ -289,6 +311,7 @@ For shared agent context, code intelligence and permissioned retrieval, start wi
 
 [Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·
 [Contributing](./CONTRIBUTING.md) · [Security reporting](./SECURITY.md) ·
-[`llms.txt`](./llms.txt)
+[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
+[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
 
 Apache-2.0 · [License](./LICENSE) · [Notice](./NOTICE)

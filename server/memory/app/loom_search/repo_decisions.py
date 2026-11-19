@@ -15,6 +15,8 @@ import logging
 import math
 from typing import Any
 
+from server.core.errors import VectorInputTooLargeError
+from server.core.shielded import to_its_end
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
 from server.memory.domain import code_change
 from server.settings import settings
@@ -27,8 +29,8 @@ async def search_repo_decisions(
 ) -> tuple[MemorySearchOutput, MemorySearchInput] | None:
     """The decision memories in `repo_namespace` that match `mem_input`'s
     query, with the input the search settled on; None when there is nothing to
-    add, when the search abstains, or on any failure. The read scope the token
-    allows is pinned inside the search, as for the base search."""
+    add, when the search abstains, or on ordinary backend failures. Typed input
+    refusals propagate. The token read scope is pinned as for the base search."""
     from server.memory.app.search import handle_memory_search
     from server.memory.app.search.scoring import one_per_key, per_key_fetch
 
@@ -73,6 +75,8 @@ async def search_repo_decisions(
         out = await asyncio.wait_for(
             handle_memory_search(decision_input), timeout=settings.memory_repo_decisions_timeout_s
         )
+    except VectorInputTooLargeError:
+        raise
     except Exception as e:  # noqa: BLE001 — an additive leg never fails the caller
         log.info(
             "repo decisions search on %s/%s did not answer: %s", mem_input.org, repo_namespace, e
@@ -108,8 +112,7 @@ def merge_memory_hits(
     caller's `top_k` (`search_repo_decisions` keeps one per key), and a base hit
     pushed out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
-    # the similarity each base row holds its slot at: none for one moved for stale code
-    slot_sims = [-math.inf if code_change.moved_for_stale_code(b) else b.similarity for b in base]
+    slot_sims = [_slot_similarity(b) for b in base]
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
     added: list[_MemorySearchHit] = []
@@ -128,13 +131,23 @@ def merge_memory_hits(
     return out, added
 
 
+def _slot_similarity(b: _MemorySearchHit) -> float:
+    """The similarity a base row holds its slot at: a governed definition stays above every
+    extra hit, and a row moved for stale code holds none."""
+    if b.governed:
+        return math.inf
+    if code_change.moved_for_stale_code(b):
+        return -math.inf
+    return b.similarity
+
+
 async def memory_with_repo_decisions(
     mem_input: MemorySearchInput, *, repo_namespace: str
 ) -> MemorySearchOutput:
     """`loom_search`'s memory leg: the memory search, and — when the code
     scope names a repository the caller may read (`repo_namespace`) — its
-    decisions, merged into the one section. Raises only what the base search
-    raises."""
+    decisions, merged into the one section. Base failures and typed input
+    refusals from either read propagate."""
     from server.memory.app.search import handle_memory_search
     from server.memory.app.search.request import apply_explain_default
     from server.memory.app.search.telemetry import credit_merged_hits
@@ -142,10 +155,18 @@ async def memory_with_repo_decisions(
     if not repo_namespace:
         return await handle_memory_search(mem_input)
     extra = asyncio.create_task(search_repo_decisions(mem_input, repo_namespace))
+
+    async def stopped() -> None:
+        await asyncio.gather(extra, return_exceptions=True)
+
     try:
         base = await handle_memory_search(mem_input)
     except BaseException:
         extra.cancel()
+        try:
+            await to_its_end(stopped(), name="memory.search.repo.cleanup")
+        except asyncio.CancelledError:
+            pass  # Preserve the base read's first failure after its sibling stops.
         raise
     found = await extra
     if found is None:

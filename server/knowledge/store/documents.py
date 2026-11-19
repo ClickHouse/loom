@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +22,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 class DocumentRow(BaseModel):
@@ -183,6 +184,22 @@ async def current_document_tally(
     return (int(row["n"]), row["latest"]) if row else (0, None)
 
 
+async def current_document_counts(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """Live documents directly in each requested namespace, including empty ones."""
+    if not namespaces:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT namespace, count() AS n FROM loom.documents FINAL "
+        "WHERE org = {org:String} AND namespace IN {ns:Array(String)} "
+        "AND superseded_at IS NULL GROUP BY namespace LIMIT {lim:UInt32}",
+        params={"org": org, "ns": namespaces, "lim": len(namespaces)},
+    )
+    return dict.fromkeys(namespaces, 0) | {str(r["namespace"]): int(r["n"]) for r in rows}
+
+
 async def get_many_by_uris(
     org: str,
     namespace: str,
@@ -295,6 +312,35 @@ async def live_versions(
         params={"org": org, "ns": namespace, "uris": source_uris, "n": len(source_uris)},
     )
     return {str(r["source_uri"]): int(r["version"]) for r in rows}
+
+
+async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> dict[str, str]:
+    """Each source's permission list as its committed head holds it under the Postgres
+    authority, a commit ClickHouse has not published yet included; empty under the
+    ClickHouse authority, where a sequential read of the rows is already current."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return {}
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.head_lists(org, namespace, source_uris)
+
+
+async def publications_owed(
+    org: str, namespace: str, uri_suffix: str
+) -> Literal["parked", "owed", ""]:
+    """Whether a commit of the namespace's documents whose address ends in `uri_suffix`
+    still waits on its publication to ClickHouse, under the Postgres authority:
+    `parked`, `owed` or "" (`pg_documents.owed_ending`); "" under the ClickHouse
+    authority."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return ""
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.owed_ending(org, namespace, uri_suffix)
 
 
 class DocumentListRow(TypedDict):
@@ -790,7 +836,7 @@ async def agent_opens(
         """
         SELECT args['source_uri'] AS source_uri, count() AS reads,
                uniqExact(agent) AS agents, max(ts) AS last_read_at
-        FROM loom.agent_events
+        FROM {masked_events}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ts >= now64(3) - toIntervalDay({days:UInt8})
           AND operation = 'knowledge.get' AND success
@@ -800,7 +846,7 @@ async def agent_opens(
         GROUP BY source_uri
         ORDER BY reads DESC
         LIMIT 200
-        """,
+        """.replace("{masked_events}", MASKED_EVENTS),
         params={
             "org": org,
             "ns": namespace,

@@ -12,6 +12,11 @@ operator prefers) serves the same wire contract:
 [extractor contract](../docs/reference/extractor-contract.md).
 The design is in [document extraction](../docs/architecture/document-extraction.md).
 
+The service logs startup diagnostics, with HTTP access logs disabled. It drains
+child stderr without logging it and returns request failures through the coded
+HTTP response. Per-request log records could expose source names, content or
+the number of files extracted.
+
 Run it as a user of its own, and install it where that user cannot write, since
 a file of that user's on `sys.path` would change what every later extraction
 imports ([what an extraction can do](../docs/architecture/document-extraction.md#the-service-boundary)).

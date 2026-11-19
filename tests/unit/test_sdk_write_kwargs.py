@@ -55,17 +55,20 @@ async def test_a_coalesced_set_keeps_its_source_class(agent: Agent) -> None:
     assert entries and all(e["source_class"] == "imported" for e in entries)
 
 
-async def test_pin_sends_what_set_sends(agent: Agent) -> None:
+@pytest.mark.parametrize(
+    "precondition", [{"if_match_sha256": "abc"}, {"if_match_sha256": "absent"}]
+)
+async def test_pin_sends_what_set_sends(agent: Agent, precondition: dict[str, Any]) -> None:
     t: Any = agent.transport
     kw: dict[str, Any] = dict(
         tags=["ops"],
         entities=["E1"],
-        if_match_sha256="abc",
         valid_at=datetime(2026, 1, 2, tzinfo=UTC),
         source_resource_id="doc-1",
         source_class="derived",
         agent_id="other",
     )
+    kw.update(precondition)
     await agent.memory.pin("k", "v", **kw)
     await agent.memory.set("k", "v", **kw)  # a lone set takes the point path
     assert t.last("/v1/memory.pin") == t.last("/v1/memory.set")
@@ -118,6 +121,17 @@ async def test_a_set_with_relations_is_never_coalesced(agent: Agent) -> None:
     await asyncio.gather(*[agent.memory.set(k, "v", relations=[_FACT]) for k in "abcd"])
     assert not [o for o, _ in t.calls if o == "/v1/memory.bulk_set"]
     assert len([o for o, _ in t.calls if o == "/v1/memory.set"]) == 4
+
+
+async def test_create_only_sets_keep_their_precondition_on_the_point_path(agent: Agent) -> None:
+    t: Any = agent.transport
+    await asyncio.gather(*[agent.memory.set(k, "v", if_match_sha256="absent") for k in "abcd"])
+    assert len(t.calls) == 4
+    assert all(
+        op == "/v1/memory.set" and body["if_match_sha256"] == "absent" for op, body in t.calls
+    )
+    await agent.memory.set("ordinary", "v")
+    assert "if_match_sha256" not in t.last("/v1/memory.set")
 
 
 async def test_set_from_messages_sends_defer_only_when_given(agent: Agent) -> None:

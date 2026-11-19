@@ -3,9 +3,12 @@ namespace's mirrored documents (docs/architecture/document-sources.md, The mirro
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from server.core.repo_base import _CHClient, _default_client
 
 TABLE = "loom.knowledge_mirrors"
+LISTINGS = "loom.knowledge_source_listings"
 
 
 async def mirrors_of(
@@ -36,4 +39,39 @@ async def forget_mirrors(org: str, mirrors: dict[str, str], *, ch: _CHClient | N
         await (ch or _default_client()).insert(TABLE, rows)
 
 
-__all__ = ["TABLE", "forget_mirrors", "mirrors_of"]
+async def add_mirror(org: str, namespace: str, mirror: str, *, ch: _CHClient | None = None) -> None:
+    """Register `mirror` as the namespace's live mirror."""
+    await (ch or _default_client()).insert(
+        TABLE, [{"org": org, "namespace": namespace, "mirror": mirror, "deleted": False}]
+    )
+
+
+async def record_listing(
+    org: str,
+    mirror: str,
+    source_id: str,
+    name: str,
+    started_at: datetime,
+    *,
+    ch: _CHClient | None = None,
+) -> None:
+    """The start of a mirrored source's last complete listing, written once every list
+    that listing changed is written."""
+    row = {
+        "org": org,
+        "namespace": mirror,
+        "source_id": source_id,
+        "name": name,
+        "started_at": started_at,
+    }
+    await (ch or _default_client()).insert(LISTINGS, [row])
+
+
+__all__ = [
+    "LISTINGS",
+    "TABLE",
+    "add_mirror",
+    "forget_mirrors",
+    "mirrors_of",
+    "record_listing",
+]

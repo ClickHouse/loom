@@ -1,6 +1,6 @@
 """Semantic conflict detection on memory.set.
 
-Four scenarios pinned at the SDK level — exercises the full HTTP path
+Five scenarios pinned at the SDK level — exercises the full HTTP path
 through transport, auth, RBAC, embedding, conflict detection, and the
 conflicts.list / conflicts.resolve wire ops:
 
@@ -8,9 +8,11 @@ conflicts.list / conflicts.resolve wire ops:
      flagged status='conflicted', cross-linked via conflict_with.
   2. Canonical merge: a write whose canonical-normalized text matches
      an existing peer's returns that peer's memory_id (no INSERT).
-  3. Pinned short-circuit: a non-pinned write conflicting with a
+  3. Another user's restatement: written as that user's own row, and each
+     user's search finds their own.
+  4. Pinned short-circuit: a non-pinned write conflicting with a
      pinned peer is rejected with 409 PINNED_CONFLICT.
-  4. Resolve via revise: the chosen memory wins, peers tombstoned,
+  5. Resolve via revise: the chosen memory wins, peers tombstoned,
      conflicts.list returns empty.
 
 Each conflict-triggering write first waits until the prior write's embedding
@@ -132,6 +134,60 @@ async def test_canonical_match_returns_existing_id(
             f"canonical-match should return first's id "
             f"{first['memory_id']!r}, got {second['memory_id']!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_restatement_by_another_user_keeps_its_own_row(
+    control_plane_url,
+    mint_test_token,
+) -> None:
+    """A namespace-wide token writing for two users: the second user's
+    restatement is written as that user's row, and each user's search finds
+    their own. Merged into the first user's row, it would be invisible to the
+    second user's reads."""
+    from loom import Agent
+
+    ns = f"canon-users-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
+    async with Agent(
+        org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=tok
+    ) as a:
+        alice = await a.memory.set(
+            "seat_a", "Prefers aisle seats", memory_type="semantic", user_id="alice"
+        )
+        await _wait_for_embedding(a, "aisle seats", "seat_a")
+        bob = await a.memory.set(
+            "seat_b", "prefers AISLE seats.", memory_type="semantic", user_id="bob"
+        )
+        assert bob["conflict_verdict"] == "clear" and not bob.get("noop"), bob
+        assert bob["memory_id"] != alice["memory_id"]
+        row = await a.memory.get("seat_b", user_id="bob")
+        assert row is not None
+        fields = ("value", "agent", "user_id", "session_id", "memory_type", "status", "pinned")
+        assert [row[f] for f in fields] == [
+            "prefers AISLE seats.",
+            "t",
+            "bob",
+            "-",
+            "semantic",
+            "active",
+            False,
+        ]
+        assert row["memory_id"] == bob["memory_id"]
+        assert (row["duplicate_of"], row.get("conflict_with") or []) == ("", [])
+        # The same user's restatement still merges.
+        again = await a.memory.set(
+            "seat_a2", "Prefers aisle seats", memory_type="semantic", user_id="alice"
+        )
+        assert again["memory_id"] == alice["memory_id"], again
+
+        async def own(user: str) -> list[str] | None:
+            hits = await a.memory.search("aisle seats", user_id=user, top_k=5)
+            keys = [h.memory_key for h in hits]
+            return keys or None
+
+        assert await eventually(lambda: own("bob"), description="bob's row") == ["seat_b"]
+        assert await own("alice") == ["seat_a"]
 
 
 @pytest.mark.asyncio

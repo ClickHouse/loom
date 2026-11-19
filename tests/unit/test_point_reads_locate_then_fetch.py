@@ -342,3 +342,45 @@ async def test_bulk_get_answers_what_memory_get_answers_for_the_same_row() -> No
     # A read-then-write (the dashboard's pin) sends these back to keep them.
     assert plain["source_trace"] == "conversation:t1" and plain["source_resource_id"] == "doc-1"
     assert plain == whole
+
+
+@pytest.mark.parametrize("authority", ["postgres", "clickhouse_full", "clickhouse_fetch"])
+async def test_optional_bulk_body_budget_refuses_before_any_value_is_hydrated(
+    monkeypatch: pytest.MonkeyPatch, authority: str
+) -> None:
+    from server.memory.store import reads
+
+    rows = [_full("a"), _full("b", mid="00000000-0000-0000-0000-000000000002")]
+    for row in rows:
+        row["value"] = '{"body":"' + "x" * 100 + '"}'
+    limit = sum(len(row["value"]) for row in rows)
+    hydrated: list[str] = []
+    original = reads._hydrate
+
+    def hydrate(row: dict[str, Any]) -> Any:
+        hydrated.append(row["memory_key"])
+        return original(row)
+
+    async def heads(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {r["memory_key"]: r for r in rows}
+
+    monkeypatch.setattr(reads.pg, "enabled", lambda: authority == "postgres")
+    monkeypatch.setattr(reads.pg_memory, "heads_for_identity", heads)
+    monkeypatch.setattr(reads, "read_your_writes_enabled", lambda: False)
+    monkeypatch.setattr(reads, "_hydrate", hydrate)
+    located = (
+        rows
+        if authority == "clickhouse_full"
+        else [_located(r["memory_key"], mid=r["memory_id"]) for r in rows]
+    )
+    ch = _CH(located, rows)
+    with pytest.raises(TimeoutError):
+        await reads.get_many_by_keys(
+            _IDENT, ["a", "b"], scope=WHOLE_NAMESPACE, ch=ch, max_value_chars=limit - 1
+        )
+    assert hydrated == []
+    result = await reads.get_many_by_keys(
+        _IDENT, ["a", "b"], scope=WHOLE_NAMESPACE, ch=ch, max_value_chars=limit
+    )
+    assert [r.memory_key for r in result] == ["a", "b"]
+    assert hydrated == ["a", "b"]

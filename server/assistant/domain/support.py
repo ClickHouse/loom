@@ -55,6 +55,7 @@ class RunCalls:
     failed: bool
     ran: frozenset[str]
     cut: bool = False
+    unknown: bool = False
 
 
 # The rows one read of a run takes; a read asks for one more, so a run past it is known cut.
@@ -71,12 +72,18 @@ class CallRow:
     success: bool
     out_found: str = ""
     out_hits: str = ""
+    protected: bool = False
 
     @property
     def found(self) -> bool:
         """The call found data unless its row says it found nothing (a miss, an empty list,
         an abstention)."""
-        return self.success and self.out_found != "false" and self.out_hits != "0"
+        return (
+            not self.protected
+            and self.success
+            and self.out_found != "false"
+            and self.out_hits != "0"
+        )
 
 
 def kept_rows(rows: list[CallRow]) -> tuple[list[CallRow], bool]:
@@ -91,9 +98,10 @@ def derive(rows: list[CallRow]) -> RunCalls:
     kept, cut = kept_rows(rows)
     return RunCalls(
         frozenset(r.operation for r in kept if r.found),
-        any(not r.success for r in kept),
-        frozenset(r.operation for r in kept if r.success),
+        any(not r.success and not r.protected for r in kept),
+        frozenset(r.operation for r in kept if r.success and not r.protected),
         cut=cut,
+        unknown=any(r.protected for r in kept),
     )
 
 
@@ -121,7 +129,8 @@ def support_of(
       own; or it cites nothing although a citable op's call found data, or ran and found
       nothing while no other call found data or failed (a claim nothing backs);
     - unchecked: otherwise (its checks could not say, what it read has no citation form, a
-      call failed, or its run was cut, unless a citable op's call found data).
+      call failed, an outcome is protected, or its run was cut, unless a citable
+      op's call found data).
     """
     if not text.strip():
         return NONE
@@ -141,7 +150,7 @@ def support_of(
     if found & citable:
         return UNSUPPORTED
     # A cut run is a part of the run: only a decided outcome holds.
-    if found or calls.failed or calls.cut:
+    if found or calls.failed or calls.cut or calls.unknown:
         return UNCHECKED
     if (calls.ran - no_data) & citable:
         return UNSUPPORTED

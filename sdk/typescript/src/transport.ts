@@ -58,6 +58,7 @@ import {
   withLevel,
 } from "./logging.js";
 import type { TokenProvider } from "./machine.js";
+import { protectEventStream } from "./protected-stream.js";
 import {
   backoffDelayMs,
   DEFAULT_RETRY_POLICY,
@@ -67,6 +68,16 @@ import {
 } from "./retry.js";
 import { retryAfterFrom, retryHint } from "./retry-after.js";
 import { envVar, isBrowser, runtimeIdent } from "./runtime.js";
+import {
+  boundProtection,
+  observeJsonResponse,
+  refuseResponse,
+  requireAutomaticAllowed,
+  requireAutomaticLocallyAllowed,
+  responseRoots,
+  type SessionCapture,
+  type SessionProtection,
+} from "./session-protection.js";
 import { trimTrailingSlashes } from "./slashes.js";
 import { decodeTokenClaims, type TokenClaims } from "./token.js";
 import { SDK_IDENT } from "./version.js";
@@ -75,6 +86,8 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface TransportOptions {
   baseUrl: string;
+  /** Application-owned durable control; binding alone does not declare protocol capability. */
+  sessionProtection?: SessionProtection;
   apiKey?: string;
   /** A credential fetched per request (a bot's `MachineLogin`, a `StoredLogin`); not with `apiKey`. */
   tokenProvider?: TokenProvider;
@@ -103,6 +116,10 @@ export interface TransportOptions {
 }
 
 export interface CallOptions {
+  /** Explicit SDK control for automatic work, outside the operation body. */
+  capture?: SessionCapture;
+  /** Retained response observers for an explicit invocation; does not make it automatic. */
+  observe?: SessionCapture;
   timeoutMs?: number;
   idempotencyKey?: string;
   /** Sent as `X-Request-Id` when it is 1 to 64 letters, digits, `.`, `_` or `-` (the form the
@@ -165,6 +182,7 @@ function isSendable(url: string): boolean {
 
 export class Transport {
   readonly baseUrl: string;
+  readonly sessionProtection: SessionProtection | undefined;
   /** Distinct `X-Loom-Hint` texts already logged by this transport. */
   private readonly hintsSeen = new Set<string>();
   /** The bearer token; a private field, invisible to JSON.stringify / inspect. */
@@ -173,7 +191,8 @@ export class Transport {
   #provider: TokenProvider | undefined;
   /** Every non-credential header sent with each request. */
   private readonly headers: Record<string, string>;
-  private readonly timeoutMs: number;
+  /** Configured attempt timeout, also bounding durable Session state barriers. */
+  readonly timeoutMs: number;
   /** The resolved retry policy. */
   readonly retry: RetryPolicy;
   readonly log: Logger;
@@ -186,6 +205,7 @@ export class Transport {
   readonly consumer: string;
 
   constructor(opts: TransportOptions) {
+    this.sessionProtection = opts.sessionProtection;
     this.baseUrl = trimTrailingSlashes(opts.baseUrl);
     // A URL fetch cannot send fails before it leaves, which would read as a lost call.
     if (!isSendable(this.baseUrl))
@@ -301,8 +321,16 @@ export class Transport {
   async stream(
     path: string,
     body: unknown,
-    opts: { headers?: Record<string, string>; signal?: AbortSignal } = {},
+    opts: {
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+      capture?: SessionCapture;
+      observe?: SessionCapture;
+    } = {},
   ): Promise<Response> {
+    const roots = responseRoots(this.sessionProtection, opts.capture, opts.observe);
+    const automatic = opts.capture !== undefined;
+    const payload = JSON.stringify(body);
     if (!path.startsWith("/") || path.startsWith("//"))
       throw classed(new LoomError(`not a path on ${this.baseUrl}: ${path}`), "input", false);
     const url = `${this.baseUrl}${path}`;
@@ -332,9 +360,11 @@ export class Transport {
         );
         if (bearer) headers.Authorization = `Bearer ${bearer}`;
       }
+      if (automatic) await boundProtection(requireAutomaticAllowed(roots, true), roots, this.timeoutMs, opts.signal);
+      requireAutomaticLocallyAllowed(roots, automatic);
       let res: Response;
       try {
-        res = await this.fetchImpl(url, { method: "POST", headers, body: JSON.stringify(body), signal: opts.signal });
+        res = await this.fetchImpl(url, { method: "POST", headers, body: payload, signal: opts.signal });
       } catch (e) {
         if (opts.signal?.aborted) throw aborted(e);
         const err = new BackendUnavailable(`${path}: cannot reach ${this.baseUrl}: ${describe(e)}`, {
@@ -345,16 +375,23 @@ export class Transport {
         });
         throw classed(err, "dependency", false);
       }
-      if (res.ok) return res;
+      if (res.ok) {
+        if (!roots.length) return res;
+        return protectEventStream(res, roots, this.timeoutMs, opts.signal);
+      }
       let text = "";
       try {
         text = await res.text();
       } catch (e) {
+        if (roots.length) return boundProtection(refuseResponse(roots), roots, this.timeoutMs, opts.signal);
         if (opts.signal?.aborted) throw aborted(e);
       }
       const echoed = res.headers.get("X-Request-Id") ?? requestId;
       const retryAfterS = res.status === 429 ? retryAfterFrom(res.headers, this.now()) : undefined;
-      const err = errorFromResponse(path, res.status, parseBody(text), echoed, retryAfterS);
+      const observed = roots.length
+        ? await boundProtection(observeJsonResponse(text, res.status, roots), roots, this.timeoutMs, opts.signal)
+        : parseBody(text);
+      const err = errorFromResponse(path, res.status, observed, echoed, retryAfterS);
       if (res.status !== 401 || !bearer || refusal) throw err;
       // The token may have been revoked or rotated: once more with a fresh one.
       refused = bearer;
@@ -401,6 +438,8 @@ export class Transport {
       headers,
       opts,
       policy,
+      roots: responseRoots(this.sessionProtection, opts.capture, opts.observe),
+      automatic: opts.capture !== undefined,
       idempotent: isGet || spec?.idempotent === true,
       deduplicated: spec?.idempotent === true && !spec.readOnly,
       startedAt: this.now(),
@@ -465,6 +504,11 @@ export class Transport {
     const onOuter = () => ctrl.abort();
     signal?.addEventListener("abort", onOuter, { once: true });
     try {
+      if (ctx.automatic) {
+        await boundProtection(requireAutomaticAllowed(ctx.roots, true), ctx.roots, timeoutMs, ctrl.signal);
+      }
+      throwIfAborted(ctx);
+      requireAutomaticLocallyAllowed(ctx.roots, ctx.automatic);
       let res: Response;
       try {
         res = await this.fetchImpl(ctx.url, {
@@ -480,6 +524,9 @@ export class Transport {
       try {
         return { res, text: await readBody(res, ctrl.signal) };
       } catch (e) {
+        if (ctx.roots.length) {
+          return await boundProtection(refuseResponse(ctx.roots), ctx.roots, timeoutMs, ctrl.signal);
+        }
         return { failed: "body", error: e };
       }
     } finally {
@@ -647,6 +694,14 @@ export class Transport {
         throw classed(err, "dependency", unsent || ctx.idempotent);
       }
       const { res, text } = ex;
+      const observed = ctx.roots.length
+        ? await boundProtection(
+            observeJsonResponse(text, res.status, ctx.roots),
+            ctx.roots,
+            Math.max(0, timeoutMs - (Date.now() - asked)),
+            opts.signal,
+          )
+        : undefined;
       this.recordRate(op, res);
       if (res.status === 401 && this.#provider && ctx.bearer && !ctx.reauthed) {
         // The token may have been revoked or rotated: once more with a fresh
@@ -664,7 +719,7 @@ export class Transport {
       if (res.ok) {
         let data: T;
         try {
-          data = (text ? JSON.parse(text) : {}) as T;
+          data = (ctx.roots.length ? observed : text ? JSON.parse(text) : {}) as T;
         } catch (e) {
           throw new LoomError(`${op}: HTTP ${res.status} response is not JSON (${text.length} bytes)`, {
             op,
@@ -743,6 +798,8 @@ function markMaybeApplied(err: LoomError, idempotent: boolean): void {
 }
 
 interface AttemptContext {
+  roots: readonly SessionProtection[];
+  automatic: boolean;
   op: string;
   method: "GET" | "POST";
   url: string;

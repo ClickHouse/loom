@@ -1,5 +1,5 @@
-"""search.query — one question over memory, profile, knowledge, conversations and,
-for a defect report under a code scope, the tracker record.
+"""search.query — one question over memory, profile, knowledge, conversations and
+authorized tracker records. A scoped defect report gets a duplicate verdict.
 
 The same fan-out the MCP `loom_search` tool answers with (the op's tool name
 is `loom_search`; MCP serves it through a synthetic descriptor that keeps its
@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    model_serializer,
+)
 
 
 class SearchInput(BaseModel):
@@ -28,12 +35,14 @@ class SearchInput(BaseModel):
     agent: str = "-"
     # The question, searched in every plane at once.
     query: str = Field(min_length=1)
-    # At most this many hits per section (1-100); the tracker leg caps it at 10.
+    # At most this many hits per section (1-100); tracker search caps it at 50,
+    # duplicate checks at 10.
     top_k: int = Field(default=5, ge=1, le=100)
     # Tag filter for the memory and knowledge legs; profile and conversations ignore it.
     tags: list[str] = Field(default_factory=list)
-    # `this` searches `namespace` only; `all_mine` (the default) also reads the
-    # caller's own memory-kind namespaces.
+    # Memory, knowledge, profile and conversation scope: `this` reads the addressed
+    # namespace; `all_mine` (default) adds readable memory-kind namespaces.
+    # Tracker search independently reads authorized tracker namespaces.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...);
     # empty = the server's defaults.
@@ -44,29 +53,56 @@ class SearchInput(BaseModel):
     bodies: Literal["full", "excerpt", "none", "unit"] = "excerpt"
     # Every section unwithheld, and the ranking terms of each memory hit.
     explain: bool = False
+    # Search the asker's connected sources without storing their results; off by default.
+    live: StrictBool = False
     # A `memory.next_page` handle from an earlier answer, to read the memory leg's next page;
     # empty = the first page.
     page: str = Field(default="", max_length=120)
 
 
+class LiveSearchHit(BaseModel):
+    """One ephemeral result from the asker's connected source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=1024)
+    title: str = Field(max_length=1024)
+    url: str = Field(min_length=1, max_length=4096)
+    provider: Literal["gdrive", "notion", "linear"]
+    content: str = Field(default="", max_length=200)
+    live: Literal[True] = True
+
+
+class LiveSearchResults(BaseModel):
+    """Connected-source results returned only in this response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    live: Literal[True] = True
+    results: list[LiveSearchHit] = Field(default_factory=list, max_length=10)
+
+
 class SearchOutput(BaseModel):
     """The sections, each `{"results": [...], ...}` as its plane's search
     returns it, or `{"error": ..., "results": []}` when that leg failed.
-    `tracker` (the duplicate-check verdict) leads when the question was a
+    `tracker` carries similar issues and PRs; a duplicate-check verdict leads for a
     defect report; `withheld` counts what the answer-first rules held back
     and why."""
 
     @model_serializer(mode="wrap")
     def _drop_absent_sections(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data: dict[str, Any] = handler(self)
-        for key in ("tracker", "withheld"):
+        for key in ("tracker", "withheld", "live"):
             if data.get(key) is None:
                 data.pop(key, None)
         return data
 
-    # The duplicate-check verdict for a defect-shaped query under a code scope;
-    # absent otherwise, or when that leg failed or timed out.
+    # Cited issue/PR matches, or a duplicate-check verdict for a scoped defect report
+    # even with no matches; absent for empty general search or an unavailable, failed
+    # or timed-out tracker leg.
     tracker: dict[str, Any] | None = None
+    # Ephemeral connected-source hits; absent unless the optional live leg answered.
+    live: LiveSearchResults | None = None
     # The `memory.search` result plus the scoped repository's decisions, rendered as a
     # reader block, without the hits the calibration flagged below its threshold
     # (unless every hit is flagged).

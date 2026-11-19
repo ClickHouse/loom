@@ -44,9 +44,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from server.core import readiness
+from server.core import pg, readiness
 from server.core.errors import caller_text
 from server.settings import settings
+from server.settings.catalog import is_http_url
 
 log = logging.getLogger(__name__)
 
@@ -248,6 +249,9 @@ class _View:
     current: dict[str, Any] | None = None
     next: dict[str, Any] | None = None
     has_tenancy: bool = False
+    # Whether the pooled session the read ran on keeps the tenancy marker; None until a
+    # read lands.
+    marked: bool | None = None
     error: str = ""
 
     def state(self) -> str:
@@ -286,6 +290,31 @@ def deployment_id() -> str:
 
 def mine() -> dict[str, Any]:
     return fingerprint(_deployment_id)
+
+
+def is_first() -> bool | None:
+    """Whether this cell is the deployment's first, as its `first` row last read says;
+    None before a read lands or while the row is absent."""
+    return None if _view.first is None else _view.first[0]
+
+
+def rows_read() -> bool:
+    """Whether a read of the state rows has landed in this process."""
+    return _view.read_at is not None
+
+
+def marked() -> bool | None:
+    """Whether this process's pooled sessions keep the tenancy marker, as the last read
+    found it (`refresh`); None until a read lands, so under the ClickHouse authority, where
+    nothing is read, always None."""
+    return _view.marked
+
+
+def reported_mode() -> str:
+    """The state a heartbeat reports as its tenancy mode: the state the last read rows make
+    (`open`, `recording`, `enforced` or `partial`; a later cell's `recording` reads
+    `enforced`), '' only before a read lands or in a process that never reads them."""
+    return _view.state() if rows_read() else ""
 
 
 def mode() -> str:
@@ -349,8 +378,6 @@ def gated_by_state() -> bool:
     """Whether this deployment's server processes read the state rows and are gated on
     them: under the Postgres authority, `LOOM_CELL` set or not (a cell needs that
     authority, `settings_problem`). Under the ClickHouse authority nothing is read."""
-    from server.core import pg
-
     return pg.enabled()
 
 
@@ -447,7 +474,10 @@ _READ = (
     "SELECT (SELECT row_to_json(f) FROM (SELECT is_first, cell FROM loom.cell_first) f) AS first, "
     "(SELECT mode FROM loom.tenancy_mode) AS mode, "
     "(SELECT row_to_json(s) FROM (SELECT current_fp, next_fp FROM loom.cell_self) s) AS own, "
-    "EXISTS (SELECT 1 FROM loom.tenancy) AS tenancy"
+    "EXISTS (SELECT 1 FROM loom.tenancy) AS tenancy, "
+    # On a cell read after RESET ALL (`refresh`): a startup value survives it, a SET does
+    # not, so a pooler (a cell has none) reads false whether it strips or re-sends it.
+    f"COALESCE(current_setting('{pg.TENANCY_MARKER}', true) = 'on', false) AS marked"
 )
 
 
@@ -501,13 +531,15 @@ async def read_state_if_present(conn: Any) -> tuple[str, str]:
 
 
 async def refresh() -> bool:
-    """Read the state rows in one statement. A failed read, or rows that do not
+    """Read the state rows and the session's marker in one statement: on a cell after RESET
+    ALL in the same transaction (`pg.fetchrow_reset`), so the marker read is the startup
+    value of the server connection the read ran on; with LOOM_CELL unset a plain read,
+    where no marker is sent and `marked` reads false. A failed read, or rows that do not
     decode, keeps the last view and is retried on schedule."""
     global _view
-    from server.core import pg
-
     try:
-        _view = _decoded(await pg.fetchrow(_READ))
+        read = pg.fetchrow_reset if settings.cell else pg.fetchrow
+        _view = _decoded(await read(_READ))
     except Exception as e:  # noqa: BLE001 — a failed read keeps the last rows; the gate holds
         # The reason reaches callers in a 503: only what a caller may see.
         _view = dataclasses.replace(_view, error=caller_text(e))
@@ -521,15 +553,17 @@ class MalformedRow(ValueError):
 
 
 def _decoded(row: Any) -> _View:
-    first = json_object(row["first"]) if row else None
-    own = json_object(row["own"]) if row else None
+    """`_READ`'s one row (a SELECT with no FROM always returns one)."""
+    first = json_object(row["first"])
+    own = json_object(row["own"])
     return _View(
         read_at=time.monotonic(),
         first=(bool(first["is_first"]), str(first["cell"])) if first else None,
-        mode=str(row["mode"] or "") if row else "",
+        mode=str(row["mode"] or ""),
         current=json_object(own.get("current_fp")) if own else None,
         next=json_object(own.get("next_fp")) if own else None,
-        has_tenancy=bool(row["tenancy"]) if row else False,
+        has_tenancy=bool(row["tenancy"]),
+        marked=bool(row["marked"]),
     )
 
 
@@ -581,6 +615,13 @@ def settings_problem() -> str:
         )
     if settings.oauth_issuer and not normalise_host(settings.oauth_issuer):
         return "LOOM_OAUTH_ISSUER has no valid host"
+    # Empty stays allowed (a workers-only pod calls no router); a URL that cannot be
+    # requested never fixes itself.
+    if settings.cell_router_url and not is_http_url(settings.cell_router_url):
+        return (
+            "LOOM_CELL_ROUTER_URL is not an http(s) URL with a host, a port at most 65535 "
+            "and no '?' or '#'"
+        )
     return ""
 
 

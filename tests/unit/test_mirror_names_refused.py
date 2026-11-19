@@ -353,7 +353,8 @@ async def test_the_admin_ledger_reads_leave_out_a_mirror_s_rows() -> None:
         stmt
         for ns in ("team", MIRROR)
         for stmt in (
-            "INSERT INTO loom.agent_events (ts, org, namespace, operation, kind)"
+            f"INSERT INTO loom.{'agent_events_private' if ns == MIRROR else 'agent_events'} "
+            "(ts, org, namespace, operation, kind)"
             f" VALUES (now64(3), 'o', '{ns}', 'memory.get', 'request')",
             "INSERT INTO loom.audit_log (ts, org, namespace, event_type)"
             f" VALUES (now64(3), 'o', '{ns}', 'e')",
@@ -366,7 +367,7 @@ async def test_the_admin_ledger_reads_leave_out_a_mirror_s_rows() -> None:
         f" VALUES (now(), 'o', '{ns}', 'agent', 'opened_file')"
         for ns in ("team", MIRROR)
     ]
-    tables = ("agent_events", "audit_log", "events", "code_search_outcome")
+    tables = ("agent_events", "agent_events_private", "audit_log", "events", "code_search_outcome")
     ch = LocalCH(*(local_ddl(t) for t in tables), *rows)
     tail = await admin_store.events_tail(3600, 10, ch=ch)
     assert {r["namespace"] for r in tail} == {"team"}

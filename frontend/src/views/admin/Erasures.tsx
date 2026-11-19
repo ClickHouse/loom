@@ -430,7 +430,9 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
           {status.failure_reason && <MetaRow label="Failure">{status.failure_reason}</MetaRow>}
           <MetaRow label="Left behind">
             {!status.verified_at
-              ? "Not checked yet"
+              ? status.status === "in_progress"
+                ? "Not checked yet"
+                : "Counts unavailable"
               : residue.length === 0
                 ? "Nothing"
                 : residue.map(([table, n]) => (

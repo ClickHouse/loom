@@ -107,7 +107,7 @@ The set-wide backport report: which merged fixes labelled for backport does a re
 | `branch` | `str` | the branch asked for ('' = every configured release branch) |
 | `branch_namespace` | `str` | The namespace of the branch asked for; "" when every branch was read. |
 | `branches` | `list[str]` | the release-branch namespaces the rows cover, newest first |
-| `rows` | `list[dict[str, Any]]` | one row per (fix, branch), gaps first, wanted-on-this-branch first, newest fix first: {pr_number, title, merged_at, minor_version, branch, branch_namespace, verdict, epistemic, basis, reason, cherry_pick {pr_number, merge_sha}… |
+| `rows` | `list[dict[str, Any]]` | one row per (fix, branch), gaps first, wanted-on-this-branch first, newest fix first: {pr_number, title, merged_at, minor_version, branch, branch_namespace, verdict, epistemic, basis, reason, cherry_pick {pr_number, merge_sha}, backport_pr… |
 | `counts` | `dict[str, int]` | verdict → rows returned |
 | `counts_by_branch` | `dict[str, dict[str, int]]` | branch version → verdict → rows |
 | `fixes` | `int` | How many distinct fixes the returned rows cover. |
@@ -298,7 +298,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 | `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
-| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits" \| "virtual_by_name"}. |
+| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
 | `note` | `str` | Plain-text notes on how the walk ran: dispatch or member folding, the ambiguity refusal, declined call sites, stale compiler-tier files; "" when none apply. |
 | `truncated` | `bool` | True when the walk stopped short: `max_nodes` held or a hop's edge read hit its cap. |
 | `counts_floor` | `bool` | Epistemic contract: edge counts are FLOORS, never totals. |
@@ -352,7 +352,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 | `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
-| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits" \| "virtual_by_name"}. |
+| `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
 | `note` | `str` | Plain-text notes on how the walk ran: dispatch or member folding, the ambiguity refusal, declined call sites, stale compiler-tier files; "" when none apply. |
 | `truncated` | `bool` | True when the walk stopped short: `max_nodes` held or a hop's edge read hit its cap. |
 | `counts_floor` | `bool` | Epistemic contract: edge counts are FLOORS, never totals. |
@@ -568,7 +568,7 @@ Is this already tested?
 | `search_terms` | `dict[str, str]` | The literals the grep ran, each with the tier a hit counts as — the SQL names the class registers and the qualified form are `exact_scoped`, the bare method name `short_name_grep`. |
 | `resolved_by` | `str` | `registration` when the subject was a SQL-level name bound to its implementing class through the registration statement; '' and off the wire otherwise. |
 | `control` | `dict[str, Any]` | {symbol, ok[, via]}: the positive control this call ran; ok=False ⇒ unknown. |
-| `measured` | `dict[str, Any]` | What the newest imported coverage run measured, {} when no run covered the subject's files: {measured, executed, paths, hits: {path: [[start, end], ...]}, commit}. |
+| `measured` | `dict[str, Any]` | Imported execution evidence, {} when none exists: measured, executed, paths, hits, commit (empty for mixed commits), commits, index_commit, run_current, files (per-path commit, indexed_commit, symbol_commits, freshness), freshness… |
 | `trace_run_id` | `str` | Id of this call's row in `loom.code_search_trace`. |
 
 ## `code.enclosing`
@@ -1146,11 +1146,12 @@ Add a repository's branch as a new read-only index.
 | `join_policy` | `Literal['open', 'approval']` | `'open'` | `open`: any org member joins at once; `approval`: a maintainer approves each request. |
 | `classification` | `Literal['standard', 'restricted']` | `'standard'` | `standard` or `restricted` (a reader needs an approved grant and a token that names the namespace). |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; stored encrypted, never returned. |
+| `git_proxy_identity` | `str` | `''` | The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. |
 | `path_prefixes` | `list[str]` | *(computed)* | Path prefixes to index (`src/`, `lib/`); blank entries are dropped, [] indexes the whole tree. |
 | `exclude` | `list[str]` | *(computed)* | Globs never indexed for this repository (`vendor/`, `*.generated.go`); [] keeps the deployment's default exclude list. |
 | `exclude_generated` | `bool` | `True` | Refuse generated content (Go's `// Code generated … DO NOT EDIT.` header, the `@generated` marker, the repository's `.gitattributes` linguist rules) — on unless the maintainer says otherwise |
 | `scip_producer` | `Literal['', 'go', 'typescript', 'clang', 'python']` | `''` | The compiler tier's producer; "" infers it from the tree's manifests (go.mod → go, tsconfig / package.json → typescript, a root CMakeLists.txt → clang, pyproject → python) |
-| `branches` | `list[str]` | *(computed)* | More branches chosen at add time, each its own index sharing the mirror and inheriting rule, token and paths; per-branch refusals come back in `skipped`, never undoing the ones registered. |
+| `branches` | `list[str]` | *(computed)* | More branches chosen at add time, each its own index sharing the mirror and inheriting rule, token, git proxy identity and paths; per-branch refusals come back in `skipped`, never undoing the ones registered. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1207,6 +1208,7 @@ What a Git remote shows before anything is written — every branch with its hea
 | `org` | `str` | required | The org adding the repository. |
 | `repo` | `str` | required | GitHub owner/name or an HTTPS/SSH Git URL. |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; used once. |
+| `git_proxy_identity` | `str` | `''` | The user name this read presents to the deployment's git proxy; only a platform admin may set it. |
 | `query` | `str` | `''` | Case-insensitive substring of the branch name to match. |
 | `limit` | `int` | `60` | How many matching branches to return (default 60). |
 
@@ -1754,7 +1756,7 @@ Verify one closed-form claim against the index and return a three-valued verdict
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `verdict` | `Literal['confirmed', 'refuted', 'not_established']` | A subject or object that resolves no symbol is a RESOURCE_NOT_FOUND refusal, not a verdict; its detail carries `role` (subject \| object) and `did_you_mean`, up to 5 of code.symbol's near misses {qualified_name, path, kind, tier… |
+| `verdict` | `Literal['confirmed', 'refuted', 'not_established']` | A subject or object that resolves no symbol is a RESOURCE_NOT_FOUND refusal, not a verdict; its detail carries `role` (subject \| object) and `did_you_mean`, up to 5 of code.symbol's near misses {qualified_name, path, kind, tier, start_line… |
 | `reason` | `str` | Machine-readable cause, stable for bots to branch on. |
 | `explanation` | `str` | A human-readable account of how the verdict was reached. |
 | `evidence` | `list[dict[str, Any]]` | Positive rows behind the verdict: edges (a call chain, in order), symbol rows, or content excerpts — shape depends on kind. |

@@ -3,7 +3,7 @@ register for Loom to pull from. No output carries a credential."""
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -106,6 +106,12 @@ class KnowledgeSourceEntry(BaseModel):
     # page store's pages and databases; `recording`: the transcripts of a meeting
     # store's recordings).
     kind: str
+    # The registration's credential class; never the credential or account identity.
+    credential_mode: str = "shared"
+    # Namespace-wide or checked mirrored document access.
+    access: str = "namespace"
+    # Canonical connected owner, only in the owner's permitted detail projection.
+    owner_subject: str = ""
     # The things the source reads (folders, files, shared drives, filters, pages,
     # databases, projects); [] for a recording source.
     items: list[dict[str, Any]] = Field(default_factory=list)
@@ -207,8 +213,12 @@ class KnowledgeSourceAddInput(BaseModel):
         description="gdrive with items or links: the file kinds read, of docs, slides, pdf, "
         "pptx, docx (default all but docx).",
     )
+    credential_mode: Literal["shared", "connected"] = Field(
+        "shared",
+        description="Use the supplied shared credential, or your own mirrored connected account.",
+    )
     credential: str = Field(
-        ...,
+        "",
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
         "account that sees the projects; notion: an integration token with read content "
@@ -363,6 +373,12 @@ class KnowledgeSourceInspectOutput(BaseModel):
     name: str
     # The source's kind.
     kind: str
+    # The registration's credential class; never the credential or account identity.
+    credential_mode: str = "shared"
+    # Namespace-wide or checked mirrored document access.
+    access: str = "namespace"
+    # Canonical connected owner, only in the owner's permitted detail projection.
+    owner_subject: str = ""
     # The things the source reads; [] for a recording source.
     items: list[dict[str, Any]] = Field(default_factory=list)
     # The file kinds a gdrive source reads; [] for another kind.
@@ -383,7 +399,8 @@ class KnowledgeSourceInspectOutput(BaseModel):
 class KnowledgeSourceCheckInput(BaseModel):
     """Probe a registered document source with its stored credential now (a check of
     every item, or of the 20 added last, and a listing), nothing written. A namespace
-    admin may, since the probe spends the source's rate limit."""
+    admin may; a connected owner may also check their own source. An administrator
+    checking another person's connection receives source-level standing only."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The namespace the source's documents live in.")
@@ -440,12 +457,14 @@ class KnowledgeSourceRotateOutput(BaseModel):
 
 class KnowledgeSourceRemoveInput(BaseModel):
     """Retire a registered document source: its registry row goes inactive and its
-    credential is cleared. Its documents stay; with `delete_documents` true the
+    credential is cleared. A namespace source's documents stay; with `delete_documents` true the
     request to retire them is recorded on the row, and the sync worker retires them
     over its next passes. With `delete_documents` true it also takes a source already
     retired (removed keeping its documents, or retired with its namespace), so those
     documents can still go; without it such a source answers SOURCE_NOT_FOUND. A
-    namespace admin may; `confirm` must equal the name."""
+    namespace admin may; `confirm` must equal the name. A mirrored source always
+    queues retirement of its own copies, regardless of `delete_documents`, and
+    answers no document count."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The namespace the source's documents live in.")
@@ -453,15 +472,17 @@ class KnowledgeSourceRemoveInput(BaseModel):
     confirm: str = Field(..., description="Type the source name to confirm.")
     delete_documents: bool = Field(
         False,
-        description="Record a request to retire the source's documents (default keep them).",
+        description=(
+            "Retire a namespace source's documents (default keep); implied for mirrored sources."
+        ),
     )
 
 
 class KnowledgeSourceRemoveOutput(BaseModel):
     # The source retired.
     name: str
-    # Live documents the recorded delete request covers (none retired yet), 0 without
-    # `delete_documents`.
+    # Live documents queued for retirement; always zero for a mirrored source because its
+    # counts are withheld, or without `delete_documents` for a namespace source.
     documents_pending: int = 0
 
 

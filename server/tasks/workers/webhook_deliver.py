@@ -30,6 +30,7 @@ import httpx
 from server.core import webhooks
 from server.core.datetimes import to_naive_utc as _naive
 from server.core.webhook_secrets import webhook_secret_org_prefix
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.settings import settings
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.store import repo as repo
@@ -169,6 +170,7 @@ async def _deliver_inbox(
         org,
         since_seq=last_seq,
         lag_s=task_cursors.LAG_SECONDS,
+        warning_scope=WHOLE_NAMESPACE,
         inbox=inbox,
         limit=settings.task_webhook_batch_limit,
     )

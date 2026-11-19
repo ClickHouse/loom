@@ -722,7 +722,8 @@ def check(
         params = params_for(stmt, entry.params)
         t0 = time.perf_counter()
         try:
-            client.query(f"EXPLAIN QUERY TREE {stmt}", parameters=params)
+            # Keep an explicit stream FORMAT; query() appends a second FORMAT Native.
+            client.raw_query(f"EXPLAIN QUERY TREE {stmt}", parameters=params)
             out.append(Verdict(s, cls, True, ms=(time.perf_counter() - t0) * 1000))
         except Exception as exc:  # noqa: BLE001 — the message is the finding
             out.append(Verdict(s, cls, False, str(exc)[:400], (time.perf_counter() - t0) * 1000))

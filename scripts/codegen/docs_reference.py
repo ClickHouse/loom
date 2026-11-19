@@ -47,7 +47,12 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
-from scripts.codegen.page_summary import SECTIONS, first_sentence, page_summary  # noqa: E402
+from scripts.codegen.page_summary import (  # noqa: E402
+    SECTIONS,
+    first_sentence,
+    page_key,
+    page_summary,
+)
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 from server.core.errors import (  # noqa: E402
     CLASS_BY_CODE,
@@ -389,6 +394,25 @@ def render_group_pages() -> dict[str, str]:
 # --- llms.txt -----------------------------------------------------------------
 
 LLMS_TXT = ROOT / "llms.txt"
+_AGENT_SETUP_TXT = "https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt"
+
+
+# llms.txt's sections in order: what Loom is for and how to use it first ("faq" is the FAQ and
+# glossary block), then operations and reference; Development is last, as the Optional section
+# the llms.txt format lets a reader skip.
+_LLMS_ORDER = (
+    "getting-started",
+    "use-cases",
+    "faq",
+    "concepts",
+    "features",
+    "guides",
+    "operations",
+    "reference",
+    "architecture",
+    "benchmarks",
+    "development",
+)
 
 
 def render_llms_txt() -> str:
@@ -402,37 +426,46 @@ def render_llms_txt() -> str:
         "with Postgres as an option for live memory and knowledge state, and serves it over "
         "MCP, HTTP and the Python and TypeScript SDKs.",
         "",
-        "Start with docs/index.md (the map). To install Loom, a coding agent reads "
-        "docs/getting-started/agent-setup.md and follows the agent-setup.txt each release "
-        "attaches, with its pins filled in. To connect to a running server: "
-        "docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: "
-        "docs/getting-started/overview.md; for one need, docs/use-cases/index.md. "
-        "Every operation's fields are in docs/reference/operations/.",
+        "Start with [the docs map](docs/index.md). To install Loom, a coding agent reads "
+        "[agent setup](docs/getting-started/agent-setup.md) and follows "
+        f"[agent-setup.txt]({_AGENT_SETUP_TXT}), "
+        "which each release attaches with its pins filled in; for Cline or another MCP "
+        "client, it follows [llms-install.md](llms-install.md). To connect to a running "
+        "server: [connect a coding agent](docs/getting-started/connect-a-coding-agent.md). "
+        "To decide whether Loom fits: [the overview](docs/getting-started/overview.md); for "
+        "one need, [use cases](docs/use-cases/index.md). Every operation's fields are in "
+        "[operations](docs/reference/operations.md) and the pages it links.",
         "",
     ]
-    for heading, sub in SECTIONS:
-        # A section's own index.md comes first, the rest by path.
+
+    def entry(path: Path) -> str:
+        title, outcome = page_summary(path)
+        rel = path.relative_to(ROOT).as_posix()
+        return f"- [{title}]({rel})" + (f": {outcome}" if outcome else "")
+
+    titles = {sub: heading for heading, sub in SECTIONS}
+    if sorted(_LLMS_ORDER) != sorted([*titles, "faq"]):
+        raise ValueError("_LLMS_ORDER must name every section in SECTIONS once")
+    for sub in _LLMS_ORDER:
+        if sub == "faq":
+            out.append("## FAQ and glossary\n")
+            out += [entry(docs / "faq.md"), entry(docs / "glossary.md"), ""]
+            continue
+        # In the sidebar's order (page_key); the per-group operation pages are reached through
+        # docs/reference/operations.md.
         pages = sorted(
             (p for p in (docs / sub).rglob("*.md") if p.parent != GROUP_DIR),
-            key=lambda p: (p != docs / sub / "index.md", p),
+            key=lambda p: page_key(p.relative_to(docs).as_posix()),
         )
         if not pages:
             continue
-        out.append(f"## {heading}\n")
-        for p in pages:
-            title, outcome = page_summary(p)
-            rel = p.relative_to(ROOT).as_posix()
-            out.append(f"- [{title}]({rel})" + (f": {outcome}" if outcome else ""))
+        out.append(f"## {'Optional' if sub == 'development' else titles[sub]}\n")
+        out += [entry(p) for p in pages]
+        if sub == "getting-started":
+            # The other install route, for clients without a Loom plugin, closes the section.
+            out.append(entry(ROOT / "llms-install.md"))
         out.append("")
-    out.append("## Optional\n")
-    for p in (docs / "glossary.md", docs / "faq.md"):
-        if p.exists():
-            title, outcome = page_summary(p)
-            out.append(
-                f"- [{title}]({p.relative_to(ROOT).as_posix()})"
-                + (f": {outcome}" if outcome else "")
-            )
-    return "\n".join(out) + "\n"
+    return "\n".join(out).rstrip("\n") + "\n"
 
 
 # --- workers ------------------------------------------------------------------

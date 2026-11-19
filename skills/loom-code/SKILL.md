@@ -2,7 +2,7 @@
 name: loom-code
 license: Apache-2.0
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
 description: "Route-then-read code intelligence for a loom-indexed repository. WHEN: the repo is indexed by loom (LOOM_BASE_URL set, or a `.loom` marker), and you would otherwise read whole files, grep the tree, or guess who calls a function. Use loom's code.* tools to find the exact unit first, then read only that. FOR SINGLE OPERATIONS: call the code.* MCP tool directly."
 ---
 
@@ -83,8 +83,8 @@ router still works through the shell.
 
 ## Install
 
-Install either this skill (`loom-code-skill`) or the `loom` plugin, not
-both: the plugin ships its own skill named `loom-code`.
+In Claude Code, install either this skill (`loom-code-skill`) or the `loom`
+plugin, not both: the plugin ships its own skill named `loom-code`.
 
 ## Identity
 

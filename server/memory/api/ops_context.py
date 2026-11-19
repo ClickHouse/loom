@@ -9,6 +9,7 @@ from server.operations.base import Operation, Role
 
 context_pack = Operation(
     name="context.pack",
+    session_content=True,
     input_model=ContextPackInput,
     output_model=ContextPackOutput,
     handler=records_served(rendered_rows)(handle_context_pack),

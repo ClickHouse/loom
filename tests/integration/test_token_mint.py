@@ -7,6 +7,7 @@ it with every MCP client's setup and where its unaddressed calls save.
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 import uuid
@@ -321,3 +322,128 @@ async def test_a_restricted_namespace_beside_star_reads_at_the_persons_grant(
     r = await _mcp_post(control_plane_url, _tool_call("loom_memory_set", write), token)
     assert r.json()["result"]["isError"] is True
     await _assert_unaddressed_write_lands_in(control_plane_url, token, home)
+
+
+def _personal_token_row(ch_client: Any, org: str, name: str) -> dict[str, Any] | None:
+    rows = list(
+        ch_client.query(
+            "SELECT * FROM loom.service_accounts FINAL "
+            "WHERE org = {org:String} AND name = {name:String}",
+            parameters={"org": org, "name": name},
+        ).named_results()
+    )
+    return dict(rows[0]) if rows else None
+
+
+async def test_personal_agent_mint_preserves_its_real_row_and_revocation(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from server.auth.jwt import mint_token
+
+    org = unique_org("personal-token")
+    person, namespace, name = (uuid.uuid4().hex for _ in range(3))
+    _grant_writer(ch_client, org, namespace, person, revoke=False)
+    parent = mint_token(
+        person,
+        org,
+        [namespace],
+        ["writer"],
+        is_service_account=False,
+        session_id=f"sign-in-{uuid.uuid4().hex}",
+        first_party=True,
+        ttl_seconds=3600,
+    )
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10) as client:
+        headers = {"Authorization": f"Bearer {parent}"}
+        response = await client.post(
+            "/v1/me/personal_tokens.create",
+            headers=headers,
+            json={
+                "name": name,
+                "namespaces": [namespace],
+                "ttl_days": 1,
+                "creator": "another-person",
+            },
+        )
+        if not await _auth_on(control_plane_url):
+            assert response.status_code == 403
+            assert _personal_token_row(ch_client, org, name) is None
+            return
+        assert response.status_code == 200, response.text
+        body = response.json()
+        claims = pyjwt.decode(body["token"], options={"verify_signature": False})
+        assert claims["reads_as_creator"] is True and claims["creator"] == person
+        row = _personal_token_row(ch_client, org, name)
+        assert row is not None and row["version"] > 0
+        assert row == {
+            "org": org,
+            "name": name,
+            "sa_subject": body["sa_subject"],
+            "namespaces": [namespace],
+            "roles": ["writer"],
+            "ns_roles": json.dumps({namespace: "writer"}),
+            "ttl_days": 1,
+            "created_by": person,
+            "created_at": datetime.fromisoformat(body["created_at"]),
+            "expires_at": datetime.fromisoformat(body["expires_at"]),
+            "revoked_at": None,
+            "revoked_by": "",
+            "version": row["version"],
+            "kind": "personal_agent",
+            "client": "",
+            "inherit_creator_grants": True,
+            "lineage": [person],
+            "saves_to": namespace,
+        }
+        listed = await client.get("/v1/me/service_accounts", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert (
+            next(r for r in listed.json()["rows"] if r["name"] == name)["kind"] == "personal_agent"
+        )
+        removed = await client.post(
+            "/v1/me/service_accounts.revoke", headers=headers, json={"name": name}
+        )
+        assert removed.status_code == 200, removed.text
+        after = _personal_token_row(ch_client, org, name)
+        assert after is not None and after["revoked_at"] is not None
+        assert after["version"] > row["version"]
+        assert after == {
+            **row,
+            "revoked_at": after["revoked_at"],
+            "revoked_by": person,
+            "version": after["version"],
+        }
+
+        async def refused() -> bool:
+            result = await client.get(
+                "/v1/me/service_accounts", headers={"Authorization": f"Bearer {body['token']}"}
+            )
+            return result.status_code == 401
+
+        await eventually(refused, description="revoked personal token is refused")
+
+
+async def test_personal_agent_mint_refuses_general_credentials_before_persistence(
+    control_plane_url: str, ch_client: Any
+) -> None:
+    from server.auth.jwt import mint_token
+
+    org = unique_org("personal-token-refused")
+    person, namespace = uuid.uuid4().hex, uuid.uuid4().hex
+    _grant_writer(ch_client, org, namespace, person, revoke=False)
+    variants = [
+        {"is_service_account": False},
+        {"is_service_account": True, "session_id": "session", "first_party": True},
+        {"is_service_account": False, "session_id": "session", "first_party": False},
+    ]
+    async with httpx.AsyncClient(base_url=control_plane_url, timeout=10) as client:
+        for i, extra in enumerate(variants):
+            token = mint_token(person, org, [namespace], ["writer"], ttl_seconds=600, **extra)
+            name = f"refused-{i}"
+            response = await client.post(
+                "/v1/me/personal_tokens.create",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"name": name, "namespaces": [namespace], "reads_as_creator": True},
+            )
+            assert response.status_code == 403, response.text
+            assert _personal_token_row(ch_client, org, name) is None

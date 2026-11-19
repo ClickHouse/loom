@@ -62,8 +62,7 @@ def test_relationship_edges_skip_mixed_and_unparseable() -> None:
 
 
 class _Repo:
-    """Override seed with an exact `overrides` edge indexed; the heuristic
-    fallbacks must not run (methods_named would raise)."""
+    """An exact override edge resolves the base without a hierarchy walk."""
 
     async def edges_for_symbols(self, org, ns, ids, *, direction, edge_kinds=None, limit=200):
         if edge_kinds == ["overrides"] and ids == ["ovr"] and direction == "callees":
@@ -77,10 +76,7 @@ class _Repo:
         return []
 
     async def symbols_by_name(self, org, ns, name, *, limit=50):
-        return []
-
-    async def methods_named(self, org, ns, method, *, limit=300):
-        raise AssertionError("heuristic fallback must not run when overrides edges exist")
+        raise AssertionError("the hierarchy walk must not run when override edges exist")
 
 
 @pytest.mark.asyncio

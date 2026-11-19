@@ -80,6 +80,10 @@ def test_the_library_page_asks_for_the_fields_its_rows_read() -> None:
     assert (
         "content_preview" not in fields and {"source_uri", "title", "description", "tags"} <= fields
     )
-    # Every knowledge.list read on the page names them: the first page, Load more and the
-    # read behind a link past the loaded rows.
-    assert src.count("fields: LIBRARY_LIST_FIELDS") == src.count("listKnowledge(") >= 2
+    # Every knowledge.list read on the page names them: the first page and Load more (through
+    # listAcross, which hands its options to knowledge.list) and the read behind a link past
+    # the loaded rows.
+    reads = src.count("listKnowledge(") + src.count("listAcross(")
+    assert src.count("fields: LIBRARY_LIST_FIELDS") == reads >= 2
+    across = (_ROOT / "frontend/src/lib/libraryAcross.ts").read_text()
+    assert "{ ...opts, " in across[across.index("listKnowledge(") :]

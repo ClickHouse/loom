@@ -1,0 +1,80 @@
+<!-- i18n: source=docs/getting-started/whats-included.md blob=62311ea2165c49b6c91511404f1308be7524c42a model=claude-sonnet-5-5 -->
+> 이 페이지는 [영어 원문](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/whats-included.md)을 기계 번역한 것이며, 영어 원문이 기준입니다.
+> Machine-translated from the [English page](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/whats-included.md), which is authoritative.
+
+<a id="whats-included"></a>
+
+# 포함된 기능
+
+이 페이지는 Apache-2.0 저장소에서 셀프 호스팅으로 사용할 수 있는 Loom의 주요 기능을 영역별로 나누어 나열합니다. 각 행은 해당 내용을 다루는 페이지로 연결됩니다. [문서 색인](https://github.com/ClickHouse/loom/blob/main/docs/index.md)에서 나머지 문서를 확인할 수 있습니다. 일부 기능은 직접 켜야 하며, 방법은 연결된 페이지에 나와 있습니다. 기본값이 false로 로드되는 불리언 스위치는 [상태](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md)에 정리되어 있습니다. 임베더는 직접 선택할 수 있습니다. 번들로 제공되는 로컬 모델, 호스팅 제공자, 또는 직접 운영하는 OpenAI 호환 엔드포인트 중에서 고르면 됩니다. 추출, 요약, 출처가 표시되는 답변에는 실제 LLM이 필요합니다([모델과 API 키](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md)).
+
+<a id="memory"></a>
+
+## 메모리
+
+| 기능                        | 설명                                                                                                                                   | 페이지                                                                           |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 공유 장기 메모리            | 네임스페이스에서 키마다 하나의 주장을 저장하며, 저장되기 전에 이미 있는 사실과 대조해 판단합니다                                       | [메모리 쓰기](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/writing.md)                                  |
+| 타입 레코드                 | 식별성이 있는 데이터를 위한 정확한 필드를 가진 행으로, 텍스트를 파싱하지 않고 조건 질문에 답합니다                                     | [타입 레코드](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/writing.md#typed-records)                     |
+| 검색과 질문                 | 순위가 매겨진 결과 또는 메모리 키를 인용하는 답변을 제공하며, 메모리가 뒷받침하지 않으면 둘 다 답하지 않습니다                         | [검색과 질문](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/search-and-ask.md)                           |
+| 충돌과 거부                 | 비슷하지만 다른 값은 충돌로 표시되고 네임스페이스 소유자가 어떤 사실을 유지할지 결정하며, 등록된 패턴과 일치하는 쓰기는 거부됩니다     | [충돌과 거부](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/conflicts-and-refusal.md)             |
+| 이력과 출처                 | 모든 쓰기는 새 버전이 되며, 작성자와 메모리에 들어온 방식이 함께 기록됩니다                                                            | [이력과 출처](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/history-and-provenance.md)           |
+| 대화 기록에서 추출          | 대화 기록 중 오래 보존할 내용을 서버가 결정합니다                                                                                      | [추출](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/extraction.md)                                   |
+| 가져오기                    | 다른 메모리 시스템이 이미 정제한 사실을 다른 쓰기와 동일한 검사를 거쳐 저장합니다                                                      | [가져오기](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/writing.md#importing-from-another-memory-system)  |
+| 변경 웹훅                   | 메모리가 쓰기, 수정, 삭제, 복원, 가림 처리 또는 지워질 때, 네임스페이스 관리자가 등록한 URL로 서명된 이벤트를 전송합니다               | [변경 웹훅](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/writing.md#change-webhooks)                 |
+| 작업 메모리와 프로필        | 에이전트에 매번 제공되는 이름 붙은 작은 블록과 프로필 텍스트                                                                           | [작업 메모리와 프로필](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/working-memory-and-profiles.md) |
+| 절차와 학습 내용            | 보고된 실행, 회고, 후보 사실의 검토 대기열에서 학습한 단계                                                                             | [절차와 학습 내용](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/procedures-and-learnings.md)       |
+| 코드에 연결된 메모리        | 코드에 관한 메모리가 언급한 정의를 따라, 정의가 이동하거나 변경되어도 함께 갱신됩니다                                                  | [코드에 연결된 메모리](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memories-linked-to-code)         |
+| 엔티티 그래프               | 메모리 행과 함께 엔티티와 그 관계를 저장합니다                                                                                         | [엔티티 그래프](https://github.com/ClickHouse/loom/blob/main/docs/features/entity-graph.md)                                      |
+
+<a id="documents-code-and-work-records"></a>
+
+## 문서, 코드, 작업 기록
+
+| 기능                          | 설명                                                                                                                                                                    | 페이지                                                                                                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 문서 검색               | 문서를 섹션으로 나누고, 임베딩하고, 검색하며, 구절 단위로 인용합니다. 아무것도 찾지 못한 검색은 지식 공백으로 묶입니다                                     | [지식 문서](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md) · [지식 공백](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#knowledge-gaps)                                                     |
+| 파일 및 문서 소스    | PDF, DOCX, PPTX, XLSX, CSV 등을 추출기 서비스가 파싱하며, 등록된 소스를 네임스페이스로 동기화합니다                                                          | [파일 수집](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#ingesting-files) · [문서 소스](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#document-sources)                                     |
+| 통합 검색                | 메모리, 프로필, 문서, 과거 대화를 한 번의 호출로 검색하고, 작업을 위한 컨텍스트 팩을 제공합니다                                                                            | [통합 검색](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md)                                                                                                                 |
+| AI에게 질문하기                        | 네임스페이스에 담긴 내용에 대해 답하는 대시보드 내 어시스턴트로, 모든 주장에 인용을 붙입니다. 모델 응답은 Loom 옆에 배포하는 채팅 서버에서 실행됩니다 | [대시보드](https://github.com/ClickHouse/loom/blob/main/docs/features/dashboard.md#ask-ai) · [채팅 서버 설정](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/librechat.md#the-deployed-assistant)                                |
+| 코드 인덱스                    | git 리포지토리에 대해 정의, 호출자, 영향 범위, 의미 기반 검색을 제공합니다                                                                                           | [코드 인덱스](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/overview.md)                                                                                                                |
+| PR 및 릴리스 이력        | 병합된 풀 리퀘스트를 현재의 심볼, 호출자, 테스트와 조인합니다                                                                                                  | [이력, PR 및 릴리스](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/history-and-prs.md)                                                                                          |
+| 트래커                       | 이슈, 풀 리퀘스트, 인시던트, CI 실행을 사용자의 ClickHouse에서 실시간으로 읽습니다                                                                                         | [트래커 플레인](https://github.com/ClickHouse/loom/blob/main/docs/features/tracker/overview.md)                                                                                                                |
+| 대화 및 세션    | 관리자가 네임스페이스의 로깅을 켜면 기록되는 검색 가능한 원문 대화록과, 에이전트가 이어서 작업할 수 있는 세션 요약을 제공합니다                                    | [대화 및 세션](https://github.com/ClickHouse/loom/blob/main/docs/features/conversations-and-sessions.md) · [기록](https://github.com/ClickHouse/loom/blob/main/docs/features/conversations-and-sessions.md#recording-is-the-owners-choice) |
+| 실행                          | 작업 실행마다 하나의 레코드를 남기며, 해당 작업이 참고한 메모리를 포함합니다                                                                                                         | [실행](https://github.com/ClickHouse/loom/blob/main/docs/features/runs.md)                                                                                                                                     |
+| 작업, 결정, 정책 | 작업 수신함, 결정 기록, 에이전트 간 조율을 위한 정책을 제공합니다                                                                                            | [작업, 결정, 정책](https://github.com/ClickHouse/loom/blob/main/docs/features/tasks-and-decisions.md)                                                                                             |
+
+<a id="access-governance-and-operations"></a>
+
+## 접근, 거버넌스 및 운영
+
+| 기능                           | 설명                                                                                                                          | 페이지                                                                                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 네임스페이스와 공유            | 조직 내에서 격리와 공유의 단위이며, 모든 읽기는 하나의 네임스페이스로 범위가 제한됩니다                                       | [네임스페이스와 공유](https://github.com/ClickHouse/loom/blob/main/docs/features/namespaces-and-sharing.md)                                                                                          |
+| 토큰과 역할                    | 네임스페이스별 토큰, 권한 부여(grant), 역할                                                                                   | [토큰과 권한 부여](https://github.com/ClickHouse/loom/blob/main/docs/guides/tokens-and-grants.md)                                                                                                      |
+| 싱글 사인온과 SCIM             | 대시보드, CLI, MCP 클라이언트를 위한 OIDC 로그인과 SCIM을 통한 프로비저닝 해제                                                | [싱글 사인온](https://github.com/ClickHouse/loom/blob/main/docs/operations/sso.md)                                                                                                                   |
+| 감사 로그                      | 감사 대상 작업 또는 서버 이벤트마다 한 행이 기록되며, 자유 텍스트 값은 해시로 저장되고 검증된 체크포인트 체인으로 봉인됩니다   | [감사 로그](https://github.com/ClickHouse/loom/blob/main/docs/features/observability/audit.md)                                                                                                          |
+| 보존과 삭제                    | 만료, 설정된 보존 기간, 그리고 Loom이 보관하는 모든 위치에서 특정 범위를 삭제하는 기능                                        | [보존과 삭제](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/retention-and-erasure.md)                                                                                     |
+| 민감한 값                      | `high` 민감도 메모리는 임베딩되지 않으며 감사되는 읽기를 통해 키로만 읽을 수 있습니다. 감지 방식은 설정할 수 있습니다         | [메모리 유형](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memory-types)                                                                                                       |
+| 모델 호출 제어                 | 조직 관리자는 조직 데이터에 대한 모든 모델 호출을 끌 수 있으며, 배포 환경에서는 모델 호출을 추론 게이트웨이를 통해 라우팅할 수 있습니다 | [모델 호출 끄기](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md#switching-an-orgs-model-calls-off) · [추론 게이트웨이](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md#through-an-inference-gateway) |
+| 비용과 사용량                  | 모든 임베딩 및 LLM 비용이 해당 비용을 발생시킨 작업별로 기록됩니다                                                            | [비용과 사용량](https://github.com/ClickHouse/loom/blob/main/docs/features/observability/cost-and-usage.md)                                                                                            |
+| 텔레메트리                     | 작업별 원장, OpenTelemetry 트레이스, 로그, 메트릭, 그리고 쿼리 귀속                                                           | [텔레메트리](https://github.com/ClickHouse/loom/blob/main/docs/features/observability/telemetry.md)                                                                                                      |
+| 대시보드                       | 충돌, 제안, 태스크, 권한 요청, 정책을 사람이 결정하는 웹 앱                                                                   | [대시보드](https://github.com/ClickHouse/loom/blob/main/docs/features/dashboard.md)                                                                                                                    |
+| SQL 접근                       | 테넌트의 메모리, 이력, 대화, 요청 원장에 대한 읽기 전용 ClickHouse 뷰이며, Postgres에서도 읽을 수 있습니다                    | [SQL 인터페이스](https://github.com/ClickHouse/loom/blob/main/docs/reference/sql-surface.md) · [Postgres에서 쿼리하기](https://github.com/ClickHouse/loom/blob/main/docs/guides/query-from-postgres.md)                                                     |
+| 레플리카와 Kubernetes          | 하나의 URL 뒤에 있는 동일한 레플리카와 Helm 차트                                                                              | [N개 레플리카 실행](https://github.com/ClickHouse/loom/blob/main/docs/operations/replicas.md) · [Kubernetes](https://github.com/ClickHouse/loom/blob/main/docs/operations/kubernetes.md)                                                              |
+| Postgres 메모리 권한 저장소    | 선택 사항: 최초 부팅 시 선택하며, 라이브 메모리와 문서 헤드를 Postgres에 보관합니다                                           | [Postgres](https://github.com/ClickHouse/loom/blob/main/docs/operations/postgres.md)                                                                                                                    |
+| 백업과 복구                    | ClickHouse 백업, 그리고 사용하는 경우 문서 버킷과 Postgres                                                                    | [백업과 복구](https://github.com/ClickHouse/loom/blob/main/docs/operations/backup-and-recovery.md)                                                                                              |
+| 업그레이드                     | 이미지를 교체하면 부팅 시 마이그레이션이 적용되며, 새로 설치할 때도 같은 경로를 따릅니다                                      | [업그레이드](https://github.com/ClickHouse/loom/blob/main/docs/operations/upgrades.md)                                                                                                                    |
+| 네임스페이스 복사와 OKF 번들   | 네임스페이스를 일정에 따라 다른 Loom으로 복사하거나 OKF 번들로 내보내고 가져옵니다                                            | [네임스페이스 복사](https://github.com/ClickHouse/loom/blob/main/docs/operations/okf-sync.md) · [OKF 번들](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/okf.md)                                                        |
+| 사용량 내보내기                | UTC 기준 하루치 사용량과 네임스페이스 스냅샷을 데이터 웨어하우스용 Parquet으로 S3에 기록합니다                                | [분석 내보내기](https://github.com/ClickHouse/loom/blob/main/docs/operations/analytics-export.md)                                                                                                    |
+
+<a id="ways-to-connect"></a>
+
+## 연결 방법
+
+모든 MCP 클라이언트를 위한 MCP, Claude Code와 Codex용 플러그인, 프레임워크 어댑터, HTTP API, Python 및 TypeScript SDK, 그리고 `loom` CLI를 사용할 수 있습니다:
+[통합](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/index.md) ·
+[MCP 클라이언트](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/mcp-clients.md) ·
+[프레임워크](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md) ·
+[HTTP API](https://github.com/ClickHouse/loom/blob/main/docs/reference/http-api.md) · [Python SDK](https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md) ·
+[TypeScript SDK](https://github.com/ClickHouse/loom/blob/main/docs/reference/typescript-sdk.md) · [CLI](https://github.com/ClickHouse/loom/blob/main/docs/reference/cli.md).

@@ -10,14 +10,16 @@ for the org a verified call acts in, before anything is written:
   held: a held org is never wrong to serve) passes with no further read;
 - in `recording` (the first cell before its attach finishes) the org is recorded by
   one statement that inserts its row only while the mode is still `recording`, and only
-  while the directory answers that this cell is `attaching` (`GET /cells/v1/cells/<cell>`,
-  read at most every LOOM_TENANCY_MODE_CACHE_S); while it is unreadable or answers
-  anything else, a new org answers 503 and the orgs the cell holds keep serving; a new
-  org longer than `cell.ORG_MAX_BYTES` answers 422 and is never recorded;
+  while the directory answers that this cell is `attaching` (`server.core.cell_router`);
+  while it is unreadable or answers anything else, a new org answers 503 and the orgs the
+  cell holds keep serving; a new org longer than `cell.ORG_MAX_BYTES` answers 422 and is
+  never recorded;
 - in `enforced`, a principal scoped to the org asks the router to place it (insert,
   then read the winner back): placed here, the cell writes its row and serves; placed
   elsewhere, the call answers 409 `WRONG_CELL` and nothing is written. A platform or
-  `*`-org principal never places an org. A failed placement call answers 503, and the
+  `*`-org principal, or a call with no principal, never places an org: it answers 409
+  `WRONG_CELL`, or 503 on a first cell whose directory answers `attaching` or cannot be
+  read before it has read `serving`. A failed placement call answers 503, and the
   router's refusal of a new org past the length limit answers 422.
 """
 
@@ -29,6 +31,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from server.core import cell, cell_router
 from server.core.cell import ORG_FREE
 from server.core.errors import (
     BackendUnavailableError,
@@ -55,10 +58,6 @@ _elsewhere: dict[str, str] = {}
 # Orgs `is_held` read as not held, and when (monotonic): read again after
 # LOOM_TENANCY_MODE_CACHE_S, so a caller acting in another org reads it once a window.
 _not_held: dict[str, float] = {}
-# The directory's answer to "is this cell `attaching`?" and when it was read (monotonic),
-# and the read running now: a burst of new orgs shares one router call per window.
-_attaching: tuple[bool, float] | None = None
-_attaching_read: asyncio.Task[bool] | None = None
 # The placement running in this process for each org: requests arriving together for a
 # new org share one router call.
 _placing: dict[str, asyncio.Task[tuple[str, str]]] = {}
@@ -138,7 +137,7 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
         return
     if org in _elsewhere:
         raise WrongCellError(org, cell=_elsewhere[org])
-    from server.core import cell, pg
+    from server.core import pg
 
     try:
         held = bool(await pg.fetchval(_HOLDS, org))
@@ -153,14 +152,7 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
             raise ValidationError(reason)
         # A restore to before attach's step 3 whose `loom cell restore` was skipped reads
         # `recording` too: the directory, which says `serving` then, tells the two apart.
-        if not await directory_says_attaching():
-            missing = _router_unset()
-            why = f"{', '.join(missing)} unset" if missing else "unreadable or serving now"
-            raise BackendUnavailableError(
-                f"org {org!r} is new to this cell, which records new orgs only while the "
-                f"directory answers that it is attaching ({why})",
-                operation="tenancy",
-            )
+        await _require_attaching(org)
         try:
             # Recorded now, or by another process a moment ago (the insert then conflicts).
             if await pg.fetchval(_RECORD, org) or await pg.fetchval(_HOLDS, org):
@@ -181,7 +173,7 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
             operation="tenancy",
         )
     if not scoped_to(auth, org):
-        raise WrongCellError(org)
+        await _refuse_unscoped(org)
     winner, deployment_id = await _place_once(org)
     if winner != settings.cell:
         if len(_elsewhere) >= _ORG_CACHE_MAX:
@@ -209,69 +201,60 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     _held.add(org)
 
 
+# Why a first cell's directory answer records no new org, by `directory_answer`.
+_ANSWERED = {
+    cell_router.SERVING: "serving now",
+    cell_router.OTHER: "in another state",
+    cell_router.UNKNOWN: "unreadable",
+}
+
+
+async def _require_attaching(org: str) -> None:
+    """Refuse (503) a new org's recording unless the directory answers `attaching`."""
+    answer = await cell_router.directory_answer()
+    if answer != cell_router.ATTACHING:
+        missing = cell_router.unset()
+        why = f"{', '.join(missing)} unset" if missing else _ANSWERED[answer]
+        raise BackendUnavailableError(
+            f"org {org!r} is new to this cell, which records new orgs only while the "
+            f"directory answers that it is attaching ({why})",
+            operation="tenancy",
+        )
+
+
+async def _refuse_unscoped(org: str) -> None:
+    """Refuse an unheld org for a principal that places none: 409 `WRONG_CELL`, or 503 on a
+    first cell whose directory answers `attaching` or cannot be read before it has read
+    `serving`, since the org's data may be in this cell until attach places it."""
+    if cell.is_first():
+        missing = cell_router.unset()
+        if missing and not cell_router.has_reader():
+            # No background reader and a router setting unset (a CLI past `recording` holds
+            # no token, `_ch.check_orgs`): nothing to ask, so the org alone is named.
+            raise BackendUnavailableError(
+                f"org {org!r} is not held by this cell", operation="tenancy"
+            )
+        answer = await cell_router.directory_answer()
+        if answer == cell_router.ATTACHING:
+            raise BackendUnavailableError(
+                f"org {org!r} is not held by this cell yet: attach in progress, which may "
+                "still place it here",
+                operation="tenancy",
+            )
+        if answer == cell_router.UNKNOWN:
+            why = f"{', '.join(missing)} unset" if missing else "the directory is unreadable"
+            raise BackendUnavailableError(
+                f"org {org!r} is not held by this cell, and {why}", operation="tenancy"
+            )
+    raise WrongCellError(org)
+
+
 def _unread(org: str, e: Exception) -> BackendUnavailableError:
     log.warning("tenancy: %s unread: %s", org, e)
     return BackendUnavailableError(
         f"this cell cannot tell whether it holds org {org!r}: {caller_text(e)}",
         operation="tenancy",
     )
-
-
-def _router_url() -> str:
-    return settings.cell_router_url.rstrip("/")
-
-
-def _router_unset() -> list[str]:
-    """The router settings a call to it needs and does not have."""
-    values = (
-        ("LOOM_CELL_ROUTER_URL", _router_url()),
-        ("LOOM_CELL_ROUTER_TOKEN", settings.cell_router_token),
-    )
-    return [name for name, value in values if not value]
-
-
-async def directory_says_attaching() -> bool:
-    """Whether the directory answers that this cell is `attaching`, read at most every
-    LOOM_TENANCY_MODE_CACHE_S and shared by the requests waiting on it; a failed,
-    refused or late answer is False and stands for the window too."""
-    global _attaching, _attaching_read
-    if _attaching is not None and time.monotonic() - _attaching[1] < settings.tenancy_mode_cache_s:
-        return _attaching[0]
-    if _attaching_read is None or _attaching_read.done():
-        _attaching_read = asyncio.create_task(_read_attaching())
-        # Retrieved here too: every waiter may have gone.
-        _attaching_read.add_done_callback(lambda t: t.cancelled() or t.exception())
-    return await asyncio.shield(_attaching_read)
-
-
-async def _read_attaching() -> bool:
-    global _attaching
-    answer = await _ask_attaching()
-    _attaching = (answer, time.monotonic())
-    return answer
-
-
-async def _ask_attaching() -> bool:
-    url = _router_url()
-    if missing := _router_unset():
-        log.warning("cell state: no router to ask (%s unset)", ", ".join(missing))
-        return False
-    import httpx
-
-    limit = float(settings.cell_router_timeout_s)
-    try:
-        async with asyncio.timeout(limit), httpx.AsyncClient(timeout=limit) as c:
-            r = await c.get(
-                f"{url}/cells/v1/cells/{settings.cell}",
-                headers={"Authorization": f"Bearer {settings.cell_router_token}"},
-            )
-        answer = r.json() if r.status_code == 200 else None
-    except (httpx.HTTPError, httpx.InvalidURL, TimeoutError, ValueError) as e:
-        log.warning("cell state: the router did not answer: %s", type(e).__name__)
-        return False
-    if r.status_code != 200:
-        log.warning("cell state: the router answered %s", r.status_code)
-    return isinstance(answer, dict) and answer.get("state") == "attaching"
 
 
 async def _place_once(org: str) -> tuple[str, str]:
@@ -295,10 +278,8 @@ async def _place(org: str) -> tuple[str, str]:
     """Ask the router to place `org` in this cell; the (cell, deployment id) that holds
     it. The router inserts the placement if absent and reads the winner back, so a
     retry is safe."""
-    from server.core import cell
-
-    url = _router_url()
-    if missing := _router_unset():
+    url = cell_router.router_url()
+    if missing := cell_router.unset():
         raise BackendUnavailableError(
             f"this cell has no router to place a new org with ({', '.join(missing)} unset)",
             operation="placement",

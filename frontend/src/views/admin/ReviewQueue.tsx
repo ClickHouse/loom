@@ -760,6 +760,21 @@ function supportLabel(r: LearningEntry): string {
   return plural(r.supporter_count, "supporter");
 }
 
+const isDefinitionDraft = (r: LearningEntry) => r.source_kind === "query_history" || r.source_kind === "knowledge_gap";
+
+function DefinitionDraftValue({ value }: { value: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = formatValue(value);
+  return (
+    <div className="mb-2">
+      <div className="text-sm text-text whitespace-pre-wrap break-words">{expanded ? text : truncate(text, 240)}</div>
+      <Button type="empty" htmlType="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        {expanded ? "Hide full definition" : "Review full definition"}
+      </Button>
+    </div>
+  );
+}
+
 function LearningsPanel({
   initialPending,
   onSeedUsed,
@@ -877,6 +892,8 @@ function LearningsPanel({
               {isAgentRule(r) && (r.proposed_value === null || r.proposed_value === "") ? (
                 // A user erasure took the rule's last supporter: only the decision is kept.
                 <div className="text-sm text-text-muted mb-2">Rule removed by a user erasure; the decision stands.</div>
+              ) : isDefinitionDraft(r) ? (
+                <DefinitionDraftValue value={r.proposed_value} />
               ) : (
                 <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
               )}
@@ -888,6 +905,12 @@ function LearningsPanel({
                 <>
                   {isAgentRule(r) && r.agent !== undefined && (
                     <div className="text-sm text-text-muted mb-2">{promoteNote(r)}</div>
+                  )}
+                  {isDefinitionDraft(r) && (
+                    <div className="text-sm text-text-muted mb-2">
+                      Promote publishes this entire definition, including all evidence, to everyone who can read this
+                      namespace.
+                    </div>
                   )}
                   <TextAreaField
                     label="Reason for the decision"

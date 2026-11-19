@@ -12,6 +12,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException
+
 import server.memory.store as memory_repo
 from server.core import pg
 from server.core.error_summary import error_summary
@@ -26,6 +28,7 @@ from server.memory.api.models_admin import (
     MemoryConsolidateOutput,
     MemoryConsolidateResult,
 )
+from server.memory.app import blacklist_guard
 from server.memory.app.drops import record_drop
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.lock import refuses_cross_key_retirement
@@ -482,6 +485,12 @@ class _Unmerged(Exception):
     reason = ""
 
 
+class _Blacklisted(_Unmerged):
+    """The generated summary matches the target namespace's refusal policy."""
+
+    drop, reason = "blacklisted", "the summary matches a blacklist pattern"
+
+
 class _HeldSince(_Unmerged):
     """A row the merge reads or writes over is not its to take: a merged row changed,
     pinned, locked, redacted, deleted or erased since the read."""
@@ -599,6 +608,18 @@ async def _write_canonical(
     embedded raises `_EmbedFailed`, before anything is written. A merged row at the key
     changed since the read raises `_HeldSince`; under Postgres, a merged row deleted,
     rewritten, redacted or erased before the commit raises it too."""
+    try:
+        policy = await blacklist_guard.enforce_rows(
+            [{"org": input.org, "namespace": input.namespace, "value": canonical_value}]
+        )
+    except HTTPException as error:
+        if (
+            error.status_code != 422
+            or not isinstance(error.detail, dict)
+            or error.detail.get("code") != "BLACKLISTED"
+        ):
+            raise
+        raise _Blacklisted() from error
     sensitivity = _summary_sensitivity(cluster, canonical_value)
     high = sensitivity == "high"
     try:  # before any key is claimed or read
@@ -677,6 +698,7 @@ async def _write_canonical(
                 documented=[embedding is not None],
                 sources=[(str(r["memory_id"]), int(r["version"])) for r in cluster],
                 live_sources=True,  # a merged row deleted or rewritten since refuses it too
+                policy=policy,
                 on_commit=answer.mark_committed,
             )
     except (AdmissionContendedError, MemoryErased) as e:

@@ -11,6 +11,7 @@ from server.operations.base import Operation, Role
 
 ui_vitals = Operation(
     name="ui.vitals",
+    session_content=True,
     input_model=UiVitalsInput,
     output_model=UiVitalsOutput,
     handler=handle_ui_vitals,

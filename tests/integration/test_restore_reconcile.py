@@ -303,7 +303,7 @@ async def test_the_ledger_copy_fills_in_what_postgres_missed_and_keeps_what_it_e
         return {
             "org": org, "id": ids[key], "scope_type": "user_id", "scope_value": key, "purge": True,
             "requester": "drill", "urgency": "normal", "requested_at": at,
-            "completed_at": completed, "abandoned_at": abandoned,
+            "completed_at": completed, "abandoned_at": abandoned, "mirror_marked": False,
         }  # fmt: skip
 
     ch_rows = [

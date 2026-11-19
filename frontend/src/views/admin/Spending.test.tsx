@@ -81,6 +81,26 @@ afterEach(() => {
 });
 
 describe("Spending budget cap editor", () => {
+  it("shows withheld spend without a fabricated zero or a numeric progress bar", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue({
+      ...budget("team-a", 1, 2, "namespace"),
+      spent_24h_usd: null,
+      pct_of_cap: null,
+      over_cap: true,
+    });
+    vi.mocked(api.getOrgBudgetStatus).mockResolvedValue({
+      ...budget("", 1, 2, "org"),
+      spent_24h_usd: null,
+      pct_of_cap: null,
+    });
+    render(<Spending />);
+    expect(await screen.findByText("Spend withheld / $2.00 (namespace)")).toBeInTheDocument();
+    expect(screen.getByText("Daily cost cap reached for this namespace")).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByText("Org-wide 24h spend")).toBeNull();
+    expect(screen.queryByText("$0.0000 / $2.00 (namespace)")).toBeNull();
+  });
+
   it("re-reads the budget after removing a cap and shows the global cap", async () => {
     vi.mocked(api.getBudgetStatus)
       .mockResolvedValueOnce(budget("team-a", 0.5, 5, "namespace"))

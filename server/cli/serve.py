@@ -10,11 +10,19 @@ from typing import Any
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
+    import sys
+
     import uvicorn
 
+    from server.core import tls
     from server.core.paths import REPO_ROOT
     from server.settings import settings
 
+    try:
+        tls_options = tls.uvicorn_options()
+    except tls.TLSRefused as e:
+        print(f"loom serve: {e}", file=sys.stderr)
+        return 2
     # Every process outside the compose deployment carries a
     # label; `loom serve` names itself when the operator did not.
     os.environ.setdefault("LOOM_INSTANCE_LABEL", f"cli:serve:{args.port}")
@@ -35,6 +43,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         reload=args.reload,
         # only this package: a checkout can hold worktrees under .claude/worktrees/
         reload_dirs=[str(REPO_ROOT / "server")] if args.reload else None,
+        **tls_options,
     )
     return 0
 

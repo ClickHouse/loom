@@ -15,6 +15,7 @@ single sign-on's `u-…` names and a mirror's `acl-` and 24 hex digits.
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 NAMESPACE_MAX_LEN = 128
@@ -54,6 +55,11 @@ def reserved_for_sso(namespace: str) -> bool:
 _MIRROR_FORM = "acl-[0-9a-f]{24}"
 _MIRROR_NAME = re.compile(_MIRROR_FORM)
 MIRROR_REFUSED = "names of the form acl-<24 hex> are reserved for mirrors"
+
+
+def new_mirror_name() -> str:
+    """A fresh mirror name, of the form `is_mirror_name` reads."""
+    return "acl-" + secrets.token_hex(12)
 
 
 def is_mirror_name(namespace: str) -> bool:

@@ -88,7 +88,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         for line in result.errors:
             print(f"error: {line}", file=sys.stderr)
         await _record(args.namespace, started, result)
-        return 1 if result.failed else 0
+        return 1 if result.failed or result.errors else 0
 
     return run_connected(_run, orgs=(args.org,))
 
@@ -163,6 +163,18 @@ async def _record(namespace: str, started: float, result: Any) -> None:
     try:
         counts = outcome(result)
         pass_started, pass_finished = status_store.wall_from_monotonic(started)
+        if getattr(result, "private_work", False):
+            failed = bool(result.failed or result.errors)
+            await status_store.record_manual_pass(
+                "knowledge_source_sync",
+                namespace=namespace,
+                status="failed" if failed else "ok",
+                started=pass_started,
+                finished=pass_started,
+                error_class="SYNC_FAILED" if failed else "",
+                error="SYNC_FAILED" if failed else "",
+            )
+            return
         await status_store.record_manual_pass(
             "knowledge_source_sync",
             namespace=namespace,
@@ -176,4 +188,5 @@ async def _record(namespace: str, started: float, result: Any) -> None:
             detail=status_store.detail_text(counts, {"command": "loom knowledge sync"}),
         )
     except Exception as e:  # noqa: BLE001 — health reporting never fails the command
-        print(f"note: worker_status row not written: {e}", file=sys.stderr)
+        message = "SYNC_FAILED" if getattr(result, "private_work", False) else str(e)
+        print(f"note: worker_status row not written: {message}", file=sys.stderr)

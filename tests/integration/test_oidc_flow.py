@@ -61,12 +61,6 @@ def oidc_stack(ch_client, request):
     params = getattr(request, "param", {})
     seed = params.get("seed", True)
     jit = params.get("jit", False)
-    # Ports come from the kernel, never from a fixed list: under random test
-    # order two default-param variants can run back to back, and the previous
-    # fake IdP had not yet released 8097 when the next one tried to bind it.
-    loom_port = params.get("loom_port") or free_port()
-    base = f"http://127.0.0.1:{loom_port}"
-
     if os.environ.get("LOOM_CH_SECURE", "").lower() == "true":
         pytest.skip("OIDC e2e seeds a local namespaces row; skip against Cloud CH")
 
@@ -117,21 +111,25 @@ def oidc_stack(ch_client, request):
         )
 
     idp = FakeIdP(user_email)
-    env = {
-        "LOOM_OAUTH_ENABLED": "true",
-        "LOOM_AUTH_REQUIRED": "true",
-        "LOOM_OAUTH_LOGIN_PROVIDER": "oidc",
-        "LOOM_OIDC_ISSUER": idp.url,
-        "LOOM_OIDC_CLIENT_ID": CLIENT_ID,
-        "LOOM_OIDC_CLIENT_SECRET": CLIENT_SECRET,
-        "LOOM_OAUTH_ISSUER": base,
-        "LOOM_JWT_SECRET": _JWT_SECRET,
-    }
-    if jit:
-        env.update(LOOM_OIDC_JIT_PROVISION="true", LOOM_OIDC_JIT_ORG=org)
-    with idp.running(), loom_server("oidc", env, port=loom_port) as served:
-        assert served == base
-        yield user_email, (ns if seed else None), base
+    with idp.running():
+        # Bind the IdP before the kernel chooses a different free Loom port.
+        loom_port = params.get("loom_port") or free_port()
+        base = f"http://127.0.0.1:{loom_port}"
+        env = {
+            "LOOM_OAUTH_ENABLED": "true",
+            "LOOM_AUTH_REQUIRED": "true",
+            "LOOM_OAUTH_LOGIN_PROVIDER": "oidc",
+            "LOOM_OIDC_ISSUER": idp.url,
+            "LOOM_OIDC_CLIENT_ID": CLIENT_ID,
+            "LOOM_OIDC_CLIENT_SECRET": CLIENT_SECRET,
+            "LOOM_OAUTH_ISSUER": base,
+            "LOOM_JWT_SECRET": _JWT_SECRET,
+        }
+        if jit:
+            env.update(LOOM_OIDC_JIT_PROVISION="true", LOOM_OIDC_JIT_ORG=org)
+        with loom_server("oidc", env, port=loom_port) as served:
+            assert served == base
+            yield user_email, (ns if seed else None), base
 
 
 def _drive_brokered_login(base: str) -> dict:

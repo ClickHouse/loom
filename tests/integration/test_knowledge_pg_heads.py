@@ -170,6 +170,74 @@ async def test_a_delete_is_a_deleted_head_and_the_get_finds_nothing(
     assert not again["deleted"]
 
 
+async def test_the_head_lists_answer_each_live_head_s_permission_list(
+    call: Any, pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.domain import access_list
+    from server.knowledge.store import documents, pg_documents
+
+    await call("knowledge.add", {"source_uri": "docs/kept.md", "content": "Kept."})
+    await call("knowledge.add", {"source_uri": "docs/listed.md", "content": "Listed."})
+    await call("knowledge.add", {"source_uri": "docs/gone.md", "content": "Soon gone."})
+    await call("knowledge.delete", {"source_uri": "docs/gone.md"})
+    # A row whose list a mirrored source's turn wrote, as that turn writes it.
+    listed = access_list.to_json(access_list.AccessList(emails=("ann@example.com",)))
+    doc = await documents.get_one(org, ns, "docs/listed.md")
+    assert doc is not None
+    row = documents.build_document_row(
+        doc, version=documents.version_past(doc.version), access_json=listed
+    )
+    await documents.insert_one(row, over=doc.version)
+    uris = ["docs/kept.md", "docs/listed.md", "docs/gone.md", "docs/none.md"]
+    lists = await pg_documents.head_lists(org, ns, uris)
+    assert lists == {"docs/kept.md": "", "docs/listed.md": listed}
+    # The rewrite carried the row's chunks: the document is still found by its text.
+    head = await _head(pg_conn, org, ns, "docs/listed.md")
+    assert head["revision"] == doc.revision
+    hits = await call("knowledge.search", {"query": "Listed", "top_k": 5})
+    assert any(h["source_uri"] == "docs/listed.md" for h in hits["results"])
+
+
+async def test_an_owed_delivery_counts_only_for_the_source_whose_addresses_it_ends(
+    pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.store import pg_documents
+
+    # Leased a day ahead, so no delivery worker claims these rows; removed at the end.
+    for uri in ("https://docs.example.com/d/1#sid-a", "https://docs.example.com/d/2#sid-b"):
+        await pg_conn.execute(
+            "INSERT INTO loom.knowledge_deliveries "
+            "(org, namespace, source_uri, version, user_id, row, targets, lease_until) "
+            "VALUES ($1, $2, $3, 1, '-', '{}'::jsonb, 1, now() + interval '1 day')",
+            org,
+            ns,
+            uri,
+        )
+    try:
+        assert await pg_documents.owed_ending(org, ns, "#sid-a") == "owed"
+        assert await pg_documents.owed_ending(org, ns, "#sid-c") == ""
+        await pg_conn.execute(
+            "UPDATE loom.knowledge_deliveries SET settled = true "
+            "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-a'",
+            org,
+            ns,
+        )
+        assert await pg_documents.owed_ending(org, ns, "#sid-a") == ""
+        assert await pg_documents.owed_ending(org, ns, "#sid-b") == "owed"  # the other's
+        await pg_conn.execute(
+            "UPDATE loom.knowledge_deliveries SET lease_until = 'infinity', "
+            "fenced_until = now(), attempts = 10 "
+            "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-b'",
+            org,
+            ns,
+        )
+        assert await pg_documents.owed_ending(org, ns, "#sid-b") == "parked"
+    finally:
+        await pg_conn.execute(
+            "DELETE FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2", org, ns
+        )
+
+
 async def test_a_commit_over_a_version_its_writer_did_not_read_is_refused(
     call: Any, pg_conn: Any, org: str, ns: str
 ) -> None:

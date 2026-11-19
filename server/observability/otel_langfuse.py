@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.diagnostics import public_diagnostics
 from server.observability import genai
 from server.settings import settings
 
@@ -166,6 +167,8 @@ def _langfuse_processor_class() -> Any:
         # can fail a request. Losing telemetry is always the better failure.
 
         def on_start(self, span: Any, parent_context: Any = None) -> None:
+            if not public_diagnostics():
+                return
             try:
                 # Set at start, while the span is still writable; the ClickHouse
                 # export sees these keys too, but only when Langfuse is configured.
@@ -178,6 +181,8 @@ def _langfuse_processor_class() -> Any:
                 self._suppress("on_start", e)
 
         def _on_ending(self, span: Any) -> None:
+            if not public_diagnostics():
+                return
             # Private SDK hook, called on every span end. Overridden purely to
             # guarantee it cannot raise, whatever a future SDK version does with it.
             try:
@@ -188,6 +193,8 @@ def _langfuse_processor_class() -> Any:
                 self._suppress("_on_ending", e)
 
         def on_end(self, span: Any) -> None:
+            if not public_diagnostics():
+                return
             try:
                 if not self._filter.keep(span):
                     self.dropped += 1

@@ -10,14 +10,17 @@ column fails here until the repository carries it.
 from __future__ import annotations
 
 import importlib
+from dataclasses import asdict
 from typing import Any
 
 import pytest
 
-from tests.unit.schema_ddl import column_names
+from tests.unit.ch_fake import RecordingCH
+from tests.unit.schema_ddl import column_names, columns
 
 # (repository module, constant, table, columns the DDL fills and no writer sends)
 CASES: list[tuple[str, str, str, frozenset[str]]] = [
+    ("server.knowledge.store.query_history", "_COLUMNS", "loom.query_history_sources", frozenset()),
     (
         "server.tracker.store.daily",
         "TRACKER_TEST_DAILY_COLS",
@@ -102,3 +105,33 @@ def test_the_column_set_is_the_tables(
     assert len(cols) == len(set(cols)), f"{const} repeats a column"
     schema = set(column_names(table.removeprefix("loom."), materialized=False))
     assert set(cols) == schema - ddl_only, set(cols) ^ (schema - ddl_only)
+
+
+async def test_source_push_put_carries_every_persisted_registration_column() -> None:
+    from server.knowledge.domain.source_push import PushRegistration
+    from server.knowledge.store import source_push
+
+    registration = PushRegistration(
+        org="o",
+        namespace="n",
+        name="notes",
+        source_id="source-id",
+        provider="notion",
+        generation="generation",
+        fingerprint="fingerprint",
+        provider_id="workspace",
+        status="active",
+        secret_enc="sealed",
+        agent="agent",
+        user_id="user",
+        session_id="session",
+        actor="process:writer",
+    )
+    ch = RecordingCH()
+    await source_push.put(registration, ch=ch)  # type: ignore[arg-type]
+    [row] = ch.inserted("knowledge_source_push")
+    assert row == {**asdict(registration), "source_class": "derived"}
+    schema = columns("knowledge_source_push", materialized=False)
+    assert set(row) == set(schema) - {"updated_at", "version"}
+    assert schema["updated_at"] == "DateTime64(3) DEFAULT now64(3)"
+    assert schema["version"] == "UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))"

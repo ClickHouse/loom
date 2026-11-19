@@ -149,8 +149,14 @@ def test_the_analyzer_check_accepts_and_rejects(migrated_ch) -> None:
     corpus is not an analyzer that answers yes to everything."""
     stmts = {
         "sound": "SELECT count() FROM loom.memory WHERE org = {org:String}",
+        "formatted_sound": (
+            "SELECT count() FROM loom.memory WHERE org = {org:String} FORMAT JSONEachRow"
+        ),
         "cte_without_with": "SELECT memory_key FROM latest WHERE org = {org:String}",
         "unknown_column": "SELECT no_such_column FROM loom.memory WHERE org = {org:String}",
+        "formatted_unknown_column": (
+            "SELECT no_such_column FROM loom.memory WHERE org = {org:String} FORMAT JSONEachRow"
+        ),
         "outer_alias_in_subquery": (
             "SELECT memory_key AS k FROM loom.memory WHERE org IN (SELECT k) "
             "AND namespace = {org:String}"
@@ -163,8 +169,10 @@ def test_the_analyzer_check_accepts_and_rejects(migrated_ch) -> None:
     ok = {v.shape: v.ok for v in corpus.check(shapes, migrated_ch)}
     assert ok == {
         "sound": True,
+        "formatted_sound": True,
         "cte_without_with": False,
         "unknown_column": False,
+        "formatted_unknown_column": False,
         "outer_alias_in_subquery": False,
         "alias_shadows_filter": False,
     }

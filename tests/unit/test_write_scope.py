@@ -75,8 +75,8 @@ def store(monkeypatch):
 
     calls: dict[str, list[Any]] = {"writes": [], "usage": []}
 
-    async def get_by_key(identity, key, *, scope, **kw):
-        ok = key == _V_ROW.memory_key and row_in_read_scope(
+    async def get_by_key(identity, memory_key, *, scope, **kw):
+        ok = memory_key == _V_ROW.memory_key and row_in_read_scope(
             scope, _V_ROW.user_id, _V_ROW.session_id
         )
         return _V_ROW if ok else None
@@ -173,6 +173,38 @@ def test_if_match_probe_does_not_disclose_another_users_hash(store) -> None:
         _run_as(_pinned("U"), lambda: _set_check_if_match(w))
     assert exc.value.status_code == 409
     assert exc.value.detail["current_sha256"] == ""
+
+
+def test_absence_precondition_refuses_a_live_row_without_probing_another_user(
+    store, monkeypatch
+) -> None:
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import conflicts, write
+    from tests.unit.test_memory_key_write_lock import FakeKeeper, _locks
+
+    _locks(FakeKeeper(), monkeypatch)
+    monkeypatch.setattr(conflicts, "start_write_config", lambda *args: None)
+
+    async def checked(input):
+        _, head = await write._set_fetch_existing(input)
+        await write._set_check_if_match(SimpleNamespace(input=input, existing=head))
+
+    monkeypatch.setattr(write, "_memory_set_phases", checked)
+    present = MemorySetInput(
+        org="o",
+        namespace="n",
+        agent="bot",
+        user_id="V",
+        memory_key="k",
+        value="new",
+        if_match_sha256="absent",
+    )
+    with pytest.raises(HTTPException) as exc:
+        _run_as(None, lambda: write._handle_memory_set(present))
+    assert exc.value.status_code == 409 and exc.value.detail["code"] == "PRECONDITION_FAILED"
+    own = present.model_copy(update={"user_id": "U"})
+    _run_as(_pinned("U"), lambda: write._handle_memory_set(own))
+    assert store["writes"] == []
 
 
 @pytest.mark.parametrize("by", ["id", "key"])
@@ -652,7 +684,13 @@ class _PinnedV(_NamespaceCH):
     rows = [_V_PINNED_ROW]
 
 
-def _check_on_commit(monkeypatch, ch: _SqlCH, memory_type: str = "semantic") -> Any:
+def _check_on_commit(
+    monkeypatch,
+    ch: _SqlCH,
+    memory_type: str = "semantic",
+    value: str = "U lives in Lisbon",
+    user_id: str = "-",
+) -> Any:
     from server.memory.app import conflicts
 
     monkeypatch.setattr(conflicts, "get_client", lambda: ch)
@@ -662,7 +700,8 @@ def _check_on_commit(monkeypatch, ch: _SqlCH, memory_type: str = "semantic") -> 
         agent="bot",
         memory_type=memory_type,
         memory_key="k",
-        new_value="U lives in Lisbon",
+        new_value=value,
+        new_user_id=user_id,
         new_embedding=[0.1, 0.2],
         resolved_threshold=0.85,
         resolved_duplicate_threshold=0.9,
@@ -675,9 +714,9 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
     monkeypatch,
 ) -> None:
     ch = _PinnedV()
-    out = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, ch))
+    out = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, ch, user_id="U"))
     stage_a = [s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]
-    # The writer's own stage A, then the namespace's pinned rows, unscoped.
+    # The writer's own stage A and, beside it, the namespace's pinned rows, unscoped.
     assert ["scope_uid" in s for s in stage_a] == [True]
     pinned = [s for s, _ in ch.sql if "m.pinned = 1" in s]
     assert len(pinned) == 1 and "scope_uid" not in pinned[0]
@@ -685,11 +724,41 @@ def test_conflict_peers_are_the_writers_and_a_foreign_pinned_row_still_blocks(
     assert all(p.memory_id != "v1" for p in out.peers), "the foreign row is never named"
 
 
-def test_a_namespace_wide_writer_runs_no_separate_pinned_statement(monkeypatch) -> None:
+def test_a_namespace_wide_write_naming_no_user_runs_no_separate_pinned_statement(
+    monkeypatch,
+) -> None:
     ch = _PinnedV()
     out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch))
     assert len([s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]) == 1
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
+
+
+def test_a_write_naming_its_user_reads_its_rows_and_is_still_blocked_by_a_pin(
+    monkeypatch,
+) -> None:
+    """A namespace-wide token writing for U reads U's rows and, beside them, the
+    namespace's pinned ones: V's pin still refuses a close different value, and a
+    restatement of it is written as U's row."""
+    ch = _PinnedV()
+    out = _run_as(None, lambda: _check_on_commit(monkeypatch, ch, user_id="U"))
+    stage_a = [s for s, _ in ch.sql if "LIMIT {k:UInt32}" in s]
+    assert ["scope_uid" in s for s in stage_a] == [True]
+    assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
+    restated = _run_as(
+        None,
+        lambda: _check_on_commit(monkeypatch, _PinnedV(), value="V lives in Oslo", user_id="U"),
+    )
+    assert restated.verdict == "clear"
+
+
+def test_a_narrowed_writer_restating_a_foreign_pin_is_refused(monkeypatch) -> None:
+    """Under a token bounded to U, a restatement of V's pinned value answers as any
+    close write does, so the answer does not tell which value V pinned."""
+    out = _run_as(
+        _pinned("U"),
+        lambda: _check_on_commit(monkeypatch, _PinnedV(), value="V lives in Oslo", user_id="U"),
+    )
+    assert out.verdict == "rejected"
 
 
 def test_a_definition_is_judged_against_no_peer(monkeypatch) -> None:
@@ -707,7 +776,7 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
     _run_as(
         _pinned("U"),
         lambda: candidate_rows_many(
-            org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
+            user_id="U", org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
         ),
     )
     candidates, pinned = ch.sql
@@ -719,14 +788,14 @@ def test_batched_conflict_candidates_are_the_writers_rows() -> None:
     assert "LIMIT 10 BY qidx" in pinned[0]
 
 
-def test_a_namespace_wide_bulk_writer_runs_no_pinned_statement() -> None:
+def test_a_namespace_wide_bulk_write_naming_no_user_runs_no_pinned_statement() -> None:
     from server.memory.app.conflicts import candidate_rows_many
 
     ch = _SqlCH()
     _run_as(
         None,
         lambda: candidate_rows_many(
-            org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
+            user_id="-", org="o", namespace="n", items=[("semantic", "k", [0.1], 0.3)], ch=ch
         ),
     )
     assert len(ch.sql) == 1 and "LIMIT 10 BY qidx" in ch.sql[0][0]
@@ -784,9 +853,13 @@ class _CloserOwnRowsOfBothTypes(_NamespaceCH):
         _PinnedRowWithAnotherTypesVector,
     ],
 )
+@pytest.mark.parametrize("token", ["bounded to U", "namespace-wide"])
 def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
-    monkeypatch, namespace_rows: type[_NamespaceCH]
+    monkeypatch, namespace_rows: type[_NamespaceCH], token: str
 ) -> None:
+    """A write for U, under a token bounded to U or a namespace-wide one naming U, is
+    refused by V's close pinned row through the per-fact read and the batched
+    candidates' pinned arm alike."""
     from server.memory.app import conflicts
 
     ch = namespace_rows()
@@ -794,6 +867,7 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
 
     def check(candidate_rows: Any) -> Any:
         return conflicts.check_on_commit(
+            new_user_id="U",
             org="o",
             namespace="n",
             agent="bot",
@@ -810,14 +884,17 @@ def test_bulk_and_single_both_reject_a_write_close_to_a_foreign_pinned_row(
 
     async def bulk() -> Any:
         rows = await conflicts.candidate_rows_many(
-            org="o", namespace="n", items=[("semantic", "k", [0.1, 0.2], 0.3)], ch=ch
+            user_id="U", org="o", namespace="n", items=[("semantic", "k", [0.1, 0.2], 0.3)], ch=ch
         )
         return await check(rows[0])
 
-    single = _run_as(_pinned("U"), lambda: check(None))
-    batched = _run_as(_pinned("U"), bulk)
+    auth = _pinned("U") if token == "bounded to U" else None
+    single = _run_as(auth, lambda: check(None))
+    ch.sql.clear()
+    batched = _run_as(auth, bulk)
     assert single.verdict == batched.verdict == "rejected"
     assert single.pinned_blocker_id == batched.pinned_blocker_id == "v1"
+    assert any("m.pinned = 1" in s and "BY qidx" in s for s, _ in ch.sql)
 
 
 class _OwnPinnedRowBeyondTen(_NamespaceCH):
@@ -837,11 +914,14 @@ def test_a_narrowed_writers_own_rows_get_the_namespace_wide_verdict(monkeypatch)
     row past its 10 places does not block, as it does not for a namespace-wide
     writer; V's pinned row still does."""
     wide = _run_as(None, lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTen()))
-    own = _run_as(_pinned("U"), lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTen()))
+    own = _run_as(
+        _pinned("U"), lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTen(), user_id="U")
+    )
     assert own.verdict == wide.verdict != "rejected"
     assert [p.memory_id for p in own.peers] == [p.memory_id for p in wide.peers]
     out = _run_as(
-        _pinned("U"), lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTenAndVs())
+        _pinned("U"),
+        lambda: _check_on_commit(monkeypatch, _OwnPinnedRowBeyondTenAndVs(), user_id="U"),
     )
     assert out.verdict == "rejected" and out.pinned_blocker_id == "v1"
 
@@ -849,6 +929,7 @@ def test_a_narrowed_writers_own_rows_get_the_namespace_wide_verdict(monkeypatch)
         from server.memory.app import conflicts
 
         rows = await conflicts.candidate_rows_many(
+            user_id="U",
             org="o",
             namespace="n",
             items=[("semantic", "k", [0.1, 0.2], 0.3)],
@@ -867,6 +948,7 @@ def test_a_bulk_fact_with_prefetched_rows_runs_no_pinned_statement(monkeypatch) 
 
     def check() -> Any:
         return conflicts.check_on_commit(
+            new_user_id="U",
             org="o",
             namespace="n",
             agent="bot",

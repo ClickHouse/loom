@@ -167,7 +167,9 @@ from server.memory.store.redaction import (
     profile_keys_built_from,
     redact_versions,
     run_scrubs,
+    scrub_shared_copies,
     set_chunk_count,
+    shared_copies,
 )
 from server.memory.store.rows import (
     EMBEDDING_PERSISTED_COLS,
@@ -331,6 +333,8 @@ __all__ = [
     "profile_keys_built_from",
     "redact_versions",
     "run_scrubs",
+    "scrub_shared_copies",
+    "shared_copies",
     "reemit_embedding_rows_for_key",
     "reemit_embedding_rows_for_keys",
     "retire_copies_under_unembedded_heads",

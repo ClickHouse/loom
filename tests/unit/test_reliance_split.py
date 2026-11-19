@@ -498,13 +498,13 @@ def test_admin_consumers_window_carries_the_tagging_rows(monkeypatch: pytest.Mon
     app.include_router(admin_router)
     client = TestClient(app)
 
-    async def _consumers(since, limit, *, org=None, ch=None):
+    async def _consumers(since, limit, *, org=None, operator=False, ch=None):
         return []
 
     async def _outcomes(since, limit, *, org=None, ch=None):
         return []
 
-    async def _tagging(since, limit, *, org=None, ch=None):
+    async def _tagging(since, limit, *, org=None, operator=False, ch=None):
         return [
             {
                 "org": "clickhouse",

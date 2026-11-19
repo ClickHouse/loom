@@ -45,7 +45,13 @@ from server.observability.consumer import (
     explicit_consumer,
     set_current_consumer,
 )
-from server.observability.ledger import current_trace_id, emit_agent_event, set_hint_context
+from server.observability.ledger import (
+    current_trace_id,
+    emit_agent_event,
+    required_call_exit,
+    run_id_of,
+    set_hint_context,
+)
 from server.observability.traffic_class import (
     bind_claimed_class,
     current_traffic_class,
@@ -748,7 +754,7 @@ async def _finish_success(
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
     async def endpoint(request: Request, response: Response) -> Any:
         # The phases run in this order and each refusal raises its own HTTP
-        # error: token, body, validation, authorization, policy, rate limit,
+        # error: token, session protection, body, validation, authorization, policy, rate limit,
         # idempotency replay, then the handler. Nothing after a gate runs
         # when it refuses; a replay is served only to an admitted caller.
         call = _HttpCall(request_id=_begin_request(op, request, response))
@@ -766,6 +772,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
 
         set_current_auth(auth)
         bind_claimed_class(auth)
+        await gates.session_content(op, auth)
         body = await _read_body(op, request, request_id, auth)
         call.raw_body = raw_body = await gates.with_single_user_identity(op, body, auth)
 
@@ -782,7 +789,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, read scope, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
-        payload = gates.with_target(payload, target)
+        payload = gates.with_target(op, payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
@@ -790,11 +797,19 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
             return replay.hit.body
         await _start_telemetry(op, response, call)
 
-        result, elapsed_ms = await _run_handler(op, payload, call)
-        _success_headers(response, elapsed_ms, op, raw_body, result)
-        return await _finish_success(
-            op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
-        )
+        with required_call_exit(
+            op_name=op.name,
+            identity=ledger_identity(raw_body),
+            request_id=request_id,
+            run_id=run_id_of(raw_body),
+            impersonated_by=(auth.impersonated_by or "") if auth is not None else "",
+            **sli_columns(op.name, "http"),
+        ):
+            result, elapsed_ms = await _run_handler(op, payload, call)
+            _success_headers(response, elapsed_ms, op, raw_body, result)
+            return await _finish_success(
+                op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
+            )
 
     return endpoint
 

@@ -234,7 +234,7 @@ def test_admin_consumers_reports_claimed_rows_and_the_claim_bound_share_of_tagge
     from server.insights.store import admin as admin_repo
 
     async def _consumers(
-        since: int, limit: int, *, org: str | None = None, ch: Any = None
+        since: int, limit: int, *, org: str | None = None, operator: bool = False, ch: Any = None
     ) -> list[dict[str, Any]]:
         return [
             {

@@ -2,12 +2,21 @@
 
 Each page's meta description is its first sentence, the line llms.txt lists for it, cut to
 160 characters, so a search result shows the answer the page opens with. An inline
-Markdown link or image that leaves docs/ (source files, the README, llms.txt) points at
-the file on GitHub instead of a missing page; links in code blocks and code spans are left
+Markdown link or image that leaves docs/ (source files, the README) points at the file on
+GitHub instead of a missing page, except the root files the site serves itself (`llms.txt`,
+`llms-install.md`), which point at the site; links in code blocks and code spans are left
 as written, and reference-style links are not rewritten (the docs use inline links). The
-sidebar follows llms.txt's section order, with Overview and Quickstart first in Getting
-started, and a generated page gets no edit button (its source is the generator, not the
-page).
+sidebar follows the sections' order in `SECTIONS`, the FAQ and glossary last; within a
+folder its index page (`index.md`, or `overview.md` without one) comes first, then
+Quickstart in Getting started; a generated page gets no edit button (its source is the
+generator, not the page).
+
+After the build, the site also serves what agents fetch instead of HTML: each page's
+Markdown beside it (`use-cases/agent-memory.md`) and at the page URL plus `index.html.md` (a
+section index also at `<folder>.md`, such as `use-cases.md`), `llms.txt` with its links
+pointing at those files, `llms-full.txt` with the full text of the pages that say what Loom
+is and how to start (the whole docs are several megabytes), and the repository's
+`llms-install.md`.
 """
 
 from __future__ import annotations
@@ -16,12 +25,14 @@ import html
 import posixpath
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.codegen.page_summary import SECTIONS, page_summary, shorten  # noqa: E402
+from scripts.codegen.page_summary import SECTIONS, page_key, page_summary, shorten  # noqa: E402
+from scripts.docs_site.paths import page_path  # noqa: E402
 
 BLOB = "https://github.com/ClickHouse/loom/blob/main/"
 RAW = "https://raw.githubusercontent.com/ClickHouse/loom/main/"
@@ -36,13 +47,78 @@ _WHOLLY_GENERATED = re.compile(
 _TOKEN = re.compile(
     r"(?P<fence>^[ \t]*(?P<mark>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=mark)[ \t]*$)"
     r"|(?P<link>(?P<bang>!?)(?P<text>\[(?:`[^`\n]*`|!(?!\[)|[^\]`!])*\]\()"
-    r"(?P<target>[^)\s#]+)(?P<anchor>#[^)\s]*)?(?P<tail>(?:\s+\"[^\"]*\")?\)))"
+    r"(?P<target>[^)\s#]*)(?P<anchor>#[^)\s]*)?(?P<tail>(?:\s+\"[^\"]*\")?\)))"
     r"|(?P<code>``(?:[^`]|`(?!`))+?``|`(?:[^`\n]|\n(?![ \t]*\n))+`)",
     re.DOTALL | re.MULTILINE,
 )
 
 
 _DESCRIPTION_MAX = 160
+
+
+def on_page_context(context, page, config, nav):
+    heading = html.unescape(re.sub(r"<[^>]*>", "", page.meta.get("title") or page.title))
+    title = heading
+    if page.is_homepage:
+        title = config["site_name"] + ": agent memory, document search and code index"
+    else:
+        full = title + " - " + config["site_name"]
+        if len(full) <= 70:
+            title = full
+    context["loom_title"] = title
+    description = html.unescape(page.meta.get("description") or config["site_description"])
+    software_id = config["site_url"] + "#software"
+    if page.is_homepage:
+        graph = [_software_schema(config, description, software_id)]
+    else:
+        graph = [
+            {
+                "@type": "TechArticle",
+                "headline": heading,
+                "description": description,
+                "url": page.canonical_url,
+                "about": {"@id": software_id},
+            },
+            {
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": config["site_name"],
+                        "item": config["site_url"],
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": heading,
+                        "item": page.canonical_url,
+                    },
+                ],
+            },
+        ]
+    context["loom_schema"] = {"@context": "https://schema.org", "@graph": graph}
+    return context
+
+
+def _software_schema(config, description, software_id):
+    return {
+        "@type": ["SoftwareApplication", "SoftwareSourceCode"],
+        "@id": software_id,
+        "name": config["site_name"],
+        "alternateName": "Loom",
+        "description": description,
+        "url": config["site_url"],
+        "codeRepository": "https://github.com/ClickHouse/loom",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "programmingLanguage": ["Python", "TypeScript"],
+        "applicationCategory": "DeveloperApplication",
+        "sameAs": [
+            "https://github.com/ClickHouse/loom",
+            "https://pypi.org/project/clickhouse-loom/",
+            "https://www.npmjs.com/package/@clickhouse/loom",
+        ],
+    }
 
 
 def on_page_markdown(markdown, page, config, files):
@@ -57,18 +133,60 @@ def on_page_markdown(markdown, page, config, files):
         page.meta["description"] = html.escape(description)
     if _WHOLLY_GENERATED.search(markdown):
         page.edit_url = None
-    page_dir = posixpath.dirname("docs/" + page.file.src_uri)
+    return _rewrite_links(markdown, page.file.src_uri, config["site_url"], to_site=False)
+
+
+class _RenderedAnchors(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.ids = set()
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            if value is not None and (name == "id" or (tag == "a" and name == "name")):
+                self.ids.add(value)
+
+
+def on_page_content(html, page, config, files):
+    # Raw Markdown code literals can hide later anchors from MkDocs' HTML collector.
+    # Validate against the rendered elements, excluding escaped code and comments.
+    parser = _RenderedAnchors()
+    parser.feed(html)
+    parser.close()
+    page.present_anchor_ids = parser.ids
+    return html
+
+
+# Files at the repository root that the site serves itself (on_post_build).
+_SITE_FILES = ("llms.txt", "llms-install.md")
+
+
+def _rewrite_links(markdown: str, src_uri: str, site_url: str, *, to_site: bool) -> str:
+    """`markdown` of the docs/ file at `src_uri` with its links to the site's root files on
+    `site_url`, other links that leave docs/ on GitHub, and, if `to_site`, links to other
+    pages on the site's Markdown copies (otherwise left relative)."""
+    page_dir = posixpath.dirname("docs/" + src_uri)
 
     def rewrite(m: re.Match[str]) -> str:
         if not m.group("link"):
             return m.group(0)
         target = m.group("target")
+        if not target and not m.group("anchor"):
+            return m.group(0)
         if "://" in target or target.startswith(("mailto:", "/")):
             return m.group(0)
-        resolved = posixpath.normpath(posixpath.join(page_dir, target))
+        # A heading on the same page (`#anchor`) resolves to the page itself.
+        resolved = posixpath.normpath(
+            posixpath.join(page_dir, target or posixpath.basename(src_uri))
+        )
         if resolved.startswith("docs/"):
-            return m.group(0)
-        base = RAW if m.group("bang") else BLOB
+            if not to_site:
+                return m.group(0)
+            base, resolved = site_url, resolved[len("docs/") :]
+        elif resolved in _SITE_FILES:
+            base = site_url
+        else:
+            base = RAW if m.group("bang") else BLOB
         anchor = m.group("anchor") or ""
         return f"{m.group('bang')}{m.group('text')}{base}{resolved}{anchor}{m.group('tail')}"
 
@@ -76,7 +194,6 @@ def on_page_markdown(markdown, page, config, files):
 
 
 _SECTION_RANK = {folder: rank for rank, (_title, folder) in enumerate(SECTIONS)}
-_FIRST_PAGES = ("getting-started/overview.md", "getting-started/quickstart.md")
 
 
 def _folder(section) -> str:
@@ -85,23 +202,18 @@ def _folder(section) -> str:
 
 
 def _top_key(item) -> tuple[int, str]:
-    """The home page, then the sections in llms.txt's order, then loose pages (FAQ, glossary)."""
+    """The home page, then the sections in `SECTIONS` order, then loose pages (FAQ, glossary)."""
     if item.is_page:
         uri = item.file.src_uri
         return (-1, uri) if uri == "index.md" else (len(SECTIONS) + 1, uri)
     return (_SECTION_RANK.get(_folder(item), len(SECTIONS)), str(item.title))
 
 
-def _child_key(item) -> tuple[int, int, str]:
-    """Inside a section: its index page, the lead pages, the other pages, then subsections."""
+def _child_key(item) -> tuple[int, object]:
+    """Inside a section: its pages in `page_key` order, then subsections by title."""
     if not item.is_page:
-        return (1, 0, str(item.title))
-    uri = item.file.src_uri
-    if uri.endswith("/index.md"):
-        return (0, 0, uri)
-    if uri in _FIRST_PAGES:
-        return (0, 1 + _FIRST_PAGES.index(uri), uri)
-    return (0, 1 + len(_FIRST_PAGES), uri)
+        return (1, str(item.title))
+    return (0, page_key(item.file.src_uri))
 
 
 def _pages(items) -> list:
@@ -111,14 +223,156 @@ def _pages(items) -> list:
     return out
 
 
-def on_nav(nav, config, files):
-    nav.items.sort(key=_top_key)
-    for item in nav.items:
+def _sort_sections(items) -> None:
+    """Every section's children, nested ones too, in `_child_key` order."""
+    for item in items:
         if item.is_section:
             item.children.sort(key=_child_key)
+            _sort_sections(item.children)
+
+
+def on_nav(nav, config, files):
+    nav.items.sort(key=_top_key)
+    _sort_sections(nav.items)
     # MkDocs links each page to its neighbours before this event; relink them in the new order.
     nav.pages = _pages(nav.items)
     for i, page in enumerate(nav.pages):
         page.previous_page = nav.pages[i - 1] if i else None
         page.next_page = nav.pages[i + 1] if i + 1 < len(nav.pages) else None
     return nav
+
+
+# llms-full.txt holds these sections in full, plus the single pages `_FULL_FIRST` names (the
+# FAQ and glossary); every other page is one fetch away through llms.txt.
+_FULL_SECTIONS = ("getting-started", "use-cases", "concepts")
+# Fetchers often cut a long file short, so llms-full.txt opens with the pages that say what
+# Loom is for and closes with the setup steps.
+_FULL_FIRST = (
+    "getting-started/overview.md",
+    "use-cases/",
+    "faq.md",
+    "getting-started/whats-included.md",
+    "glossary.md",
+    "concepts/",
+)
+_FULL_LAST = (
+    "getting-started/quickstart.md",
+    "getting-started/agent-setup.md",
+    "getting-started/models-and-keys.md",
+)
+# A docs/ page named in llms.txt, not the tail of a longer path or URL.
+_DOCS_PAGE = re.compile(r"(?<![\w/.-])docs/([\w./-]*\.md)")
+
+
+def _with_source(body: str, site_url: str, uri: str) -> str:
+    """A copied page with a quoted line under its title naming its HTML page, which a
+    citation should point at, so the title stays the first line."""
+    source = f"> Source: {site_url}{page_path(f'docs/{uri}')} (Markdown: {site_url}{uri})"
+    body = body.strip()
+    title, _, rest = body.partition("\n")
+    if not title.startswith("# "):
+        return f"{source}\n\n{body}\n"
+    return f"{title}\n\n{source}\n{rest}\n"
+
+
+def _full_text_pages(docs: Path) -> list[str]:
+    """The pages llms-full.txt holds, as docs/-relative paths, in `_FULL_FIRST` order, then the
+    rest of the sections, then `_FULL_LAST`."""
+    pages = [
+        p.relative_to(docs).as_posix()
+        for folder in _FULL_SECTIONS
+        for p in (docs / folder).rglob("*.md")
+    ] + [page for page in _FULL_FIRST if "/" not in page]
+    pages.sort(key=page_key)
+
+    def rank(uri: str) -> int:
+        for i, first in enumerate(_FULL_FIRST):
+            if uri == first or (first.endswith("/") and uri.startswith(first)):
+                return i
+        if uri in _FULL_LAST:
+            return len(_FULL_FIRST) + 1 + _FULL_LAST.index(uri)
+        return len(_FULL_FIRST)
+
+    return sorted(pages, key=rank)
+
+
+def _full_holds() -> str:
+    """What llms-full.txt holds, as llms.txt and llms-full.txt name it."""
+    names = [title for title, folder in SECTIONS if folder in _FULL_SECTIONS]
+    return f"{', '.join(names[:-1])} and {names[-1]} pages, the FAQ and the glossary"
+
+
+def _site_llms_txt(llms: str, url: str) -> tuple[str, str]:
+    """The site's llms.txt from the repository's: each docs/ path becomes its Markdown copy
+    ("docs/use-cases/index.md" -> "<site>/use-cases/index.md"), and a Full text section
+    names llms-full.txt right after the use cases, where an agent reading from the top
+    finds it early. Also returns the rewritten part before the first section (title,
+    summary and opening), which opens llms-full.txt too."""
+    llms = _DOCS_PAGE.sub(lambda m: url + m.group(1), llms)
+    llms = llms.replace("](llms-install.md)", f"]({url}llms-install.md)")
+    opening, sep, rest = llms.partition("\n\n## ")
+    holds = _full_holds()
+    head = (
+        opening
+        + f" The full text of the {holds} is in one file: [llms-full.txt]({url}llms-full.txt)."
+    )
+    full = f"## Full text\n\n- [llms-full.txt]({url}llms-full.txt): The {holds}, in one file.\n\n"
+    lead, uc, after = rest.partition("\n## Use cases\n")
+    cases, nxt, tail = after.partition("\n## ")
+    if not (uc and nxt):
+        raise ValueError("llms.txt needs a Use cases section with another section after it")
+    rest = f"{lead}{uc}{cases.rstrip()}\n\n{full}## {tail}"
+    return f"{head}{sep}{rest}".rstrip("\n") + "\n", opening
+
+
+def _site_install(install: str, url: str) -> str:
+    """The site's llms-install.md: links resolve from the repository root, one level above
+    docs/, and a relative link to a docs page goes to its Markdown copy. Past the title and
+    opening paragraph (addressed to people, who want the HTML pages), an absolute link to a
+    site page goes to its Markdown copy too, as llms.txt's do; one in the opening stays."""
+    install = _rewrite_links(install, "../llms-install.md", url, to_site=True)
+    title, opening, steps = install.split("\n\n", 2)
+    steps = re.sub(
+        rf"\]\({re.escape(url)}([\w./-]+)/(#[^)\s]*)?\)",
+        lambda m: f"]({url}{m.group(1)}.md{m.group(2) or ''})",
+        steps,
+    )
+    return f"{title}\n\n{opening}\n\n{steps}"
+
+
+def on_post_build(config):
+    site = Path(config["site_dir"])
+    url = config["site_url"]
+    docs = ROOT / "docs"
+    copies: dict[str, str] = {}
+    for src in sorted(docs.rglob("*.md")):
+        uri = src.relative_to(docs).as_posix()
+        # Links are absolute, so the same text serves both places the copy lives: beside
+        # the page (llms.txt and the page's <link> name it) and at the page URL plus
+        # index.html.md, where the llms.txt format looks for a page's Markdown.
+        body = _rewrite_links(src.read_text(encoding="utf-8"), uri, url, to_site=True)
+        text = copies[uri] = _with_source(body, url, uri)
+        places = [site / uri, site / page_path(f"docs/{uri}") / "index.html.md"]
+        # A section index is also at its URL with the slash swapped for `.md`
+        # (`use-cases/` -> `use-cases.md`), where agents guess a page's Markdown.
+        if uri.endswith("/index.md"):
+            places.append(site / f"{uri[: -len('/index.md')]}.md")
+        for out in places:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text, encoding="utf-8")
+
+    llms, opening = _site_llms_txt((ROOT / "llms.txt").read_text(encoding="utf-8"), url)
+    (site / "llms.txt").write_text(llms, encoding="utf-8")
+    # The install steps a coding agent follows, at the root as in the repository.
+    install = _site_install((ROOT / "llms-install.md").read_text(encoding="utf-8"), url)
+    (site / "llms-install.md").write_text(install, encoding="utf-8")
+
+    # llms.txt's title, summary quote and opening (where to start and how to install) open
+    # llms-full.txt too, so a reader that cuts the file short still has them.
+    parts = [
+        f"{opening}\n\nThis file holds the {_full_holds()} in full; {url}llms.txt lists the"
+        " other pages.\n"
+    ]
+    for uri in _full_text_pages(docs):
+        parts.append(copies[uri])
+    (site / "llms-full.txt").write_text("\n---\n\n".join(parts), encoding="utf-8")

@@ -19,7 +19,7 @@ The table is KeeperMap, one key per process that the leader sweeps an hour after
 it stops beating.
 
 Each beat also writes the process's `loom.cell_heartbeats` row (its `LOOM_CELL`,
-tenancy mode and fingerprint, `cell_row`), the values the `loom cell`
+tenancy mode, fingerprint and the keys beside it, `cell_row`), the values the `loom cell`
 commands (prepare, attach, update) compare across a cell's live processes
 (docs/architecture/cells.md); the leader sweeps its old keys as it sweeps the instances'.
 """
@@ -39,7 +39,7 @@ from datetime import UTC, datetime
 from functools import cache
 from typing import Any
 
-from server.core import cell, deployment_config, readiness
+from server.core import cell, cell_router, deployment_config, readiness
 from server.core.ch import query_tag, set_query_tag
 from server.settings import settings
 
@@ -136,12 +136,23 @@ async def beat(ch: Any, *, stopped: bool = False) -> None:
 
 
 def cell_row() -> dict[str, Any]:
-    """What this process reports about its cell (`loom.cell_heartbeats`)."""
+    """What this process reports about its cell (`loom.cell_heartbeats`). Beside the
+    fingerprint's version and fields, its JSON carries keys no fingerprint compares
+    (docs/architecture/cells.md, "The heartbeat's keys"): `serves` (LOOM_SERVES_TRAFFIC),
+    `marked` (whether this process's pooled sessions keep the tenancy marker, null until a
+    cell-state read lands), and with LOOM_CELL set, until the `first` row is read and then
+    on a first cell only, `router` and `router_why` (`cell_router.router_key`)."""
+    reported = {
+        **cell.as_value(cell.mine()),
+        "serves": bool(settings.serves_traffic),
+        "marked": cell.marked(),
+        **cell_router.router_key(),
+    }
     return {
         "instance_id": instance_id(),
         "cell": settings.cell,
-        "tenancy_mode": cell.mode(),
-        "fingerprint": json.dumps(cell.as_value(cell.mine()), sort_keys=True),
+        "tenancy_mode": cell.reported_mode(),
+        "fingerprint": json.dumps(reported, sort_keys=True),
     }
 
 

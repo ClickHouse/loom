@@ -140,3 +140,16 @@ def test_no_operation_takes_or_answers_a_permission_list() -> None:
             schema = json.dumps(model.model_json_schema())
             assert "access_json" not in schema, op.name
             assert "AccessList" not in schema, op.name
+
+
+def test_the_common_list_is_never_wider_than_either() -> None:
+    a = access_list.AccessList(
+        emails=("ann@example.com", "bob@example.com"), domains=("example.com",), anyone=True
+    )
+    b = access_list.AccessList(emails=("Ann@example.com",), groups=("eng@example.com",))
+    both = access_list.common(a, b)
+    assert both == access_list.AccessList(emails=("ann@example.com",))
+    assert access_list.common(a, access_list.UNREAD) == access_list.UNREAD
+    assert access_list.common(access_list.AccessList(owner="u1"), access_list.AccessList()) == (
+        access_list.AccessList()
+    )

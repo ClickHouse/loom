@@ -224,6 +224,12 @@ validates required arguments, and truncates past `maxResultChars` (`loom_recall`
 out its lowest-ranked memories whole to fit, counted in `omitted`). The schemas
 match the Python SDK's.
 
+`bot.tools(scope, { codeNamespace: "code-repo" })` offers the read-only
+`loom_code_lookup` first. `only: ["loom_code_lookup"]` selects just that tool; memory
+still uses the Agent's namespace. Code results remain valid JSON under `maxResultChars`
+with explicit omissions. See [code tools](../guides/code-tools.md) for request bounds,
+model guidance and uncertainty.
+
 ```ts
 const session = bot.session("thread-42", { userId: "u1", flushEvery: 8 });
 const { system, messages } = await session.resume({ query: "resume the billing migration" });
@@ -266,7 +272,18 @@ or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
 
 `loomTools(agent, scope)` from `@clickhouse/loom/integrations/mastra` returns `AgentTools`
 as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer
-dependency (`@mastra/core` 1.83 or a later 1.x, which needs Node 22.13 or later). See
+dependency (`@mastra/core` 1.83.x, which needs Node 22.13 or later).
+`LoomMemoryStorage(agent, { resourceId, storeId? })` from the same entry point implements
+the native `MemoryStorage` domain. Bind one canonical end-user resource to each instance;
+it becomes the actual Loom `user_id` for threads, messages and resource working memory.
+Combine it with `MastraCompositeStore({ id, domains: { memory: storage } })` and
+`@mastra/memory` with semantic recall and observational memory disabled. `storeId`
+defaults to `default` and separates applications under one Loom agent and user.
+Lists scan all matching scoped rows; partial updates use hash preconditions. First
+resource updates require server support for `memory.set.if_match_sha256="absent"`;
+older servers safely refuse creation. Deletes use exact observed versions and reject
+concurrent rewrites. The adapter provides no transaction, resource reassignment,
+cloning, run fencing or atomic working-memory merge. See
 [Frameworks](../features/integrations/frameworks.md#mastra).
 
 ## OpenAI Agents SDK adapter

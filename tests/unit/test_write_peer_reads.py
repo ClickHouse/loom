@@ -55,7 +55,9 @@ async def test_each_bulk_fact_reads_its_own_peers_codes_first(monkeypatch) -> No
     entries = [
         SimpleNamespace(memory_type="semantic", memory_key=f"k{i}", valid_at=None) for i in range(3)
     ]
-    put = SimpleNamespace(org="o", namespace="ns", agent="a", run_id="-", valid_at=None)
+    put = SimpleNamespace(
+        org="o", namespace="ns", agent="a", user_id="-", run_id="-", valid_at=None
+    )
     out = await bulk_set._bulk_conflict_verdicts(
         put,
         [{}, {}, {}],
@@ -146,7 +148,9 @@ async def test_value_update_peers_are_read_codes_first_then_by_key(monkeypatch) 
 
 def _bulk(entries: int) -> tuple[Any, list[Any], list[Any], list[list[float]]]:
     """`_bulk_conflict_verdicts`' arguments for `entries` semantic facts."""
-    put = SimpleNamespace(org="o", namespace="n", agent="bot", run_id="-", valid_at=None)
+    put = SimpleNamespace(
+        org="o", namespace="n", agent="bot", user_id="-", run_id="-", valid_at=None
+    )
     metas = [
         (
             SimpleNamespace(memory_type="semantic", memory_key=f"k{i}", valid_at=None),
@@ -241,6 +245,73 @@ async def test_an_append_only_bulk_write_clears_every_entry_without_a_peer_read(
     assert [out[i].verdict for i in range(3)] == ["clear"] * 3
     assert reads == ["n"]  # read once for the batch
     assert not [sql for sql, _ in ch.query_all_calls if "cosineDistance" in sql]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", ["batched", "per_fact"])
+async def test_a_bulk_write_naming_its_user_reads_and_judges_that_users_rows(
+    monkeypatch, read: str
+) -> None:
+    """A namespace-wide token writes Bob's facts beside Alice's row with the same text:
+    the peer statements read Bob's rows, and Alice's row is no peer of Bob's entries."""
+    from server.memory.app import bulk_set
+
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
+    ch = StubCH()
+    alices = {
+        "memory_id": "p1",
+        "memory_key": "earlier",
+        "value": "U lives in Lisbon",
+        "pinned": 0,
+        "agent": "bot",
+        "user_id": "alice",
+        "session_id": "-",
+        "run_id": "-",
+        "valid_at": None,
+        "dist": 0.01,
+    }
+    ch.query_all_returns = [[{**alices, "qidx": q} for q in range(2)]] * 20
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")
+    put, metas, pending, vectors = _bulk(2)
+    put.user_id = "bob"
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
+    assert [out[i].verdict for i in range(2)] == ["clear", "clear"]
+    # The nearest-peer statements read Bob's rows; any other carries no user filter.
+    users = {p.get("scope_uid") for sql, p in ch.query_all_calls if "cosineDistance" in sql}
+    assert "bob" in users and users <= {"bob", None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read", ["batched", "per_fact"])
+async def test_a_bulk_write_naming_its_user_writes_a_restatement_of_another_users_pin(
+    monkeypatch, read: str
+) -> None:
+    """Batched and per fact, Bob's restatement of Alice's pinned value contradicts
+    nothing and is written (the fake serves Alice's row to every statement)."""
+    from server.memory.app import bulk_set
+
+    monkeypatch.setattr(settings, "memory_bulk_peer_read", read)
+    ch = StubCH()
+    pinned = {
+        "memory_id": "p1",
+        "memory_key": "earlier",
+        "value": "U lives in Lisbon",
+        "pinned": 1,
+        "agent": "bot",
+        "user_id": "alice",
+        "session_id": "-",
+        "run_id": "-",
+        "valid_at": None,
+        "dist": 0.01,
+    }
+    ch.query_all_returns = [[{**pinned, "qidx": q} for q in range(2)]] * 20
+    monkeypatch.setattr(conflicts, "get_client", lambda: ch)
+    _no_reads(monkeypatch, "auto_reinforce")
+    put, metas, pending, vectors = _bulk(2)
+    put.user_id = "bob"
+    out = await bulk_set._bulk_conflict_verdicts(put, [{}] * 2, metas, pending, vectors, floors={})
+    assert [out[i].verdict for i in range(2)] == ["clear", "clear"]
 
 
 @pytest.mark.parametrize("read", ["batched", "per_fact"])

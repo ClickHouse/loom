@@ -1,6 +1,6 @@
 [project]
 name = "clickhouse-loom-server"
-version = "1.2.0"
+version = "1.3.0"
 description = "Loom server (control plane). Shared-production agent memory + knowledge plane on ClickHouse. Distributed as a Docker image (ghcr.io/clickhouse/loom) — `pip install` is for local dev / Docker-image build only; do NOT run the server from pip in production."
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
@@ -18,7 +18,7 @@ classifiers = ["Private :: Do Not Upload"]
 
 dependencies = [
   "fastapi>=0.118",
-  "uvicorn[standard]>=0.30",
+  "uvicorn[standard]>=0.50", # ssl_context_factory, and a worker exiting 3 stops all (server/core/tls.py)
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
   # The YAML settings file (server/settings/_file.py); uvicorn[standard] pulls it in too.
@@ -34,8 +34,8 @@ dependencies = [
   # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP
   # collector. ClickStack is the OTel consumer in the Loom stack
   # (docs/features/integrations/clickstack.md); this wires the producer side.
-  "opentelemetry-api>=1.27",
-  "opentelemetry-sdk>=1.27",
+  "opentelemetry-api>=1.45.2",
+  "opentelemetry-sdk>=1.45.2",
   "opentelemetry-exporter-otlp-proto-http>=1.27",
   "opentelemetry-instrumentation-fastapi>=0.48b0",
   "opentelemetry-instrumentation-httpx>=0.48b0",
@@ -98,6 +98,11 @@ dev = [
   "types-PyYAML>=6.0",
   "ruff==0.16.9",
   "build>=1.0",
+  # Translation table verification uses the documentation site's parser.
+  "Markdown==3.11.2",
+  "mdx-truly-sane-lists==1.3",
+  "pymdown-extensions==12.3",
+  "markdown-it-py==4.0.0",
 ]
 # Operator CLI extra — needed only by `dev/loom_ingest.py` to fetch an S3
 # source. Not a server dep; the CLI lazy-imports it with an actionable error
@@ -263,10 +268,24 @@ module = [
   "pydantic_ai.*",
   "ag2",
   "ag2.*",
+  "agno",
+  "agno.*",
+  "haystack",
+  "haystack.*",
+  "agent_framework",
+  "agent_framework.*",
+  "anthropic",
+  "anthropic.*",
+  "google.adk",
+  "google.adk.*",
+  "google.genai",
+  "google.genai.*",
   "langgraph",
   "langgraph.*",
   "strands",
   "strands.*",
+  "pipecat",
+  "pipecat.*",
 ]
 ignore_missing_imports = true
 

@@ -28,6 +28,7 @@ from typing import Any
 
 from loom.agent import Agent
 from loom.retry import RetryPolicy
+from loom.session_protection import SessionProtection
 
 
 class Datapack:
@@ -53,6 +54,7 @@ class Datapack:
         consumer: str = "",
         mentor_brief: bool | None = None,
         profile: str | None = None,
+        session_protection: SessionProtection | None = None,
     ) -> None:
         self.org = org
         self.namespace = namespace
@@ -68,6 +70,7 @@ class Datapack:
             "consumer": consumer,
             "mentor_brief": mentor_brief,
             "profile": profile,
+            "session_protection": session_protection,
         }
 
     def agent(self, name: str, **overrides: Any) -> Agent:

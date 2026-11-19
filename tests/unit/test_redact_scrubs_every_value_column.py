@@ -3,11 +3,12 @@
 The version row carries its text in `value`, `value_json` (which the FINAL
 projection renders when it is populated), `evidence`, `entities` and
 `concepts`, on loom.memory and on the memory_versions mirror. The key's
-embedding and chunk rows carry the text once more, per key. The columns are
-listed in `memory_repo.redaction`. These tests read the statements a
-redaction issues from a stub client, apply their assignments to real rows,
-and check that no copy of the text survives, including the row that
-namespace.rollback would reinstate. CH-free.
+embedding and chunk rows carry the text once more, per key, and a shared copy's
+`value` is rewritten with the same placeholder. The columns are listed in
+`memory_repo.redaction`. These tests read the statements a redaction issues
+from a stub client, apply their assignments to real rows, and check that no
+copy of the text survives, including the row that namespace.rollback would
+reinstate. CH-free.
 """
 
 from __future__ import annotations
@@ -277,7 +278,12 @@ def test_every_scrub_writes_the_one_placeholder() -> None:
     rewrite whole); they all write the module's constant."""
     from server.memory.store import pg_memory
 
-    for sql in (redaction._MEMORY_SCRUB, redaction._VERSIONS_SCRUB, pg_memory._SCRUBBED):
+    for sql in (
+        redaction._MEMORY_SCRUB,
+        redaction._VERSIONS_SCRUB,
+        redaction._SHARED_SCRUB,
+        pg_memory._SCRUBBED,
+    ):
         assert f"'{redaction.REDACTED_VALUE}'" in sql
 
 

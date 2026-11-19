@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from server.boot import InsecureBindRefused, require_safe_bind
+from server.main import attach_browser_middleware
 from server.settings import settings
 from tests.unit.security_headers import assert_security_headers
 
@@ -427,8 +428,6 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
 def _gated_client(base_url: str) -> TestClient:
     """An app behind the web gate and the header middleware, as server.main attaches them."""
     from fastapi import FastAPI
-
-    from server.main import attach_browser_middleware
 
     app = FastAPI()
     app.get("/")(lambda: {"ok": True})
