@@ -10,8 +10,10 @@ their JWT role for one (org, namespace) but never demotes (the shared-datapack
 A namespace classified `restricted` is the one exception to
 "additive": every default that widens a read — the org-readable code rule,
 `visibility=public`, a wildcard claim, a service account inheriting its
-creator's grant, a platform role — is switched off there, and a read needs
-BOTH a token that names the namespace AND a live direct grant.
+creator's grant — is switched off there, and a read needs BOTH a token that
+names the namespace AND a live direct grant. A platform administrator using
+its own unscoped authority may also read a configured repository, subject to
+the restricted serving kill switch and classification availability.
 """
 
 from __future__ import annotations
@@ -66,11 +68,23 @@ class _Unknown(Enum):
 _UNKNOWN_GRANT = _Unknown.GRANT
 
 
+def is_own_platform_admin(auth: AuthInfo) -> bool:
+    """Platform authority belongs to the unscoped principal itself, never a
+    delegated token or the subject a trusted caller acts for."""
+    return (
+        not auth.has_ns_roles()
+        and not auth.impersonated_by
+        and not auth.creator
+        and not auth.parents
+        and auth.has_role(Role.PLATFORM_ADMIN)
+    )
+
+
 def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     """Whether `auth` may act in `org` at all: a token of that org, an
     org-wide (`*`) token, or a platform admin. The one cross-org rule — the
-    transports and every handler's same-org check ask this; a restricted
-    namespace still refuses every other org (`_check_restricted`)."""
+    transports and every handler's same-org check ask this. Restricted
+    non-repository data still requires the namespace's own org."""
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
 
 
@@ -269,28 +283,15 @@ async def check_authorized(
         await _check_delegated(auth, required_role, org, namespace, known_grant, grants)
         return
 
-    # A restricted namespace is decided here and nowhere
-    # below — none of the widening rules that follow may apply to it.
+    # Restricted reads retain their safety guards before repository admission.
     if org is not None and namespace is not None and await may_be_restricted(org, namespace):
         await _check_restricted(auth, required_role, org, namespace, grants)
         return
 
-    # Code namespaces are org-shared reference data, not anyone's memory. When
-    # the deployment says so (LOOM_CODE_ORG_READABLE / per-entry org_readable)
-    # every authenticated principal of that org reads it with the token it
-    # already holds — scoped or flat, no grant, no re-mint. Writes (refresh,
-    # watermark repair) stay grant-driven. Otherwise code namespaces follow
-    # the ordinary rules: a grant (joined) or a token naming the namespace.
-    # The directory row's visibility never widens reads — `join_policy = open`
-    # means joinable in one click, not readable unjoined.
     if (
-        required_role.value <= Role.VIEWER.value
-        and org is not None
+        org is not None
         and namespace is not None
-        and (auth.org == org or auth.has_role(Role.PLATFORM_ADMIN))
-        # A service's end user is no member of the org's code.
-        and not principal_id(auth.subject, USER)
-        and await is_org_readable_code_namespace(org, namespace)
+        and await _standard_code_read(auth, required_role, org, namespace)
     ):
         return
 
@@ -543,6 +544,38 @@ def _scoped_role(
     return role
 
 
+async def _standard_code_read(
+    auth: AuthInfo, required_role: Role, org: str, namespace: str
+) -> bool:
+    """Read exceptions for code after restricted safety guards have run.
+
+    Platform authority reads every repository. Org-readable entries also admit
+    the org's authenticated principals with their existing tokens. A service's
+    end user is no member of its org's code. Directory visibility affects joining,
+    never reading. Writes keep the ordinary claim and grant checks.
+    """
+    if _platform_repository_read(auth, required_role, org, namespace):
+        return True
+    return (
+        required_role.value <= Role.VIEWER.value
+        and (auth.org == org or auth.has_role(Role.PLATFORM_ADMIN))
+        and not principal_id(auth.subject, USER)
+        and await is_org_readable_code_namespace(org, namespace)
+    )
+
+
+def _platform_repository_read(
+    auth: AuthInfo, required_role: Role, org: str, namespace: str
+) -> bool:
+    """Repository read authority, independent of claims and membership. The
+    caller checks tenancy and restricted safety guards before admitting it."""
+    return (
+        is_own_platform_admin(auth)
+        and not is_mirror_name(namespace)
+        and _code_namespace_read(required_role, org, namespace)
+    )
+
+
 def _code_namespace_read(required_role: Role, org: str, namespace: str) -> bool:
     """A read of a configured code namespace, which a scoped token leaves to
     the grant check. On a repository the join IS the read: a code index is
@@ -609,6 +642,8 @@ async def _check_restricted(
     4. a live DIRECT grant for the token's subject reaches `required_role`
        (no service-account → creator inheritance).
 
+    A platform administrator's own unscoped authority also admits repository
+    viewer reads after the kill switch and classification check, within held orgs.
     The refusal text is the generic "cannot access" line so a caller learns
     nothing about whether the namespace exists or why it was refused.
     `LOOM_RESTRICTED_SERVE=false` refuses everyone (kill switch: the plane
@@ -625,6 +660,12 @@ async def _check_restricted(
     except ClassificationUnavailable as e:
         note_unreadable()
         raise refusal from e
+    if _platform_repository_read(auth, required_role, org, namespace):
+        from server.auth import tenancy
+
+        # restricted_allows also calls this gate directly, outside check_authorized.
+        await tenancy.ensure_held(org, auth)
+        return
     if auth.org != org:
         raise refusal
     if not names_namespace(auth, org, namespace):

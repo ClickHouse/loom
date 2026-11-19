@@ -276,13 +276,17 @@ authenticated call, from `gates.authorize` in both transports:
    creator holds that role somewhere in the org, and on a namespace needs its own claim to reach
    the role and the creator's live grant to reach it too (`_check_delegated`; restricted
    namespaces also take the restricted gate). Nothing below applies to it.
-3. A restricted namespace goes to the restricted gate only.
-4. A viewer read of an org-readable code namespace (`LOOM_CODE_ORG_READABLE` or the
+3. A restricted namespace goes to the restricted gate, including its repository read
+   exception below.
+4. An authenticated platform administrator using its own unscoped authority reads every
+   configured or registered repository, including closed and restricted entries. Deployment
+   tenancy still applies. This authority does not admit writes or any other namespace kind.
+5. A viewer read of an org-readable code namespace (`LOOM_CODE_ORG_READABLE` or the
    entry's `org_readable`) passes for any principal of that org.
-5. A scoped token's `ns_roles` decide for the namespaces they name, in the token's org
+6. A scoped token's `ns_roles` decide for the namespaces they name, in the token's org
    only. Grants are not consulted for them, except viewer reads of a code namespace.
-6. A token acts in its own org only (or `*`, or as platform admin).
-7. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
+7. A token acts in its own org only (or `*`, or as platform admin).
+8. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
    in `loom.namespace_grants` decides: unrevoked and `active` (`grant_sql.LIVE_GRANT`); a
    `pending` join request grants nothing. A service account with no grant reads its
    creator's. A grant raises a flat token's role, never lowers it. A failed read of
@@ -333,8 +337,8 @@ foreign row and a missing row look the same.
 ### Restricted namespaces
 
 A namespace classified `restricted` (in `loom.namespaces` or its repository entry; either
-restricts) turns off every widening rule (`_check_restricted` in `server/auth/authz.py`).
-A call passes only when all of these hold:
+restricts) uses `_check_restricted` in `server/auth/authz.py`. Except for the repository
+read authority below, a call passes only when all of these hold:
 
 - the token's org is the namespace's (`*` does not count);
 - the token names the namespace literally;
@@ -342,7 +346,31 @@ A call passes only when all of these hold:
 - a live direct grant for the token's own subject reaches it (a service account does not
   inherit its creator's grant).
 
-No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypasses it. A
+An authenticated `platform_admin` using its own unscoped authority reads every repository
+that `NamespaceDirectory.code_entry` recognizes in the current configuration or registry
+snapshot. This includes restricted, approval and closed repositories across the orgs the
+deployment holds. `authz.is_own_platform_admin` excludes scoped tokens, delegated tokens
+and impersonated subjects, even when their flat roles contain `platform_admin`. Namespace
+`admin` and `org_admin` confer no such authority. A name beginning with `code-` confers
+nothing without a repository entry.
+
+Repository indexes are deployment reference data, so platform administrators need a read
+authority independent of repository membership. Requiring a separate claim and direct
+grant for each repository would make this authority depend on token refreshes and grant
+provisioning. The exception is limited to viewer reads: writes, refreshes, registration,
+grant management and every non-repository namespace keep their existing checks. Collection
+and mirror boundaries run before repository admission; a repository read does not expose
+its document mirrors or internal data.
+
+Classification must remain available, `restricted_serve=false` refuses restricted reads
+even for platform administrators, and tenancy and token verification still run first.
+Revoked or unverifiable credentials gain no authority. HTTP, MCP, row-scoped checks and
+repository listings share this decision through `check_authorized`. The listing returns
+actual heads and counts only after that gate admits the read. Restricted-access audit
+behavior also applies to platform administrators. No schema or stored-grant migration is
+needed. Auth-off behavior is unchanged.
+
+No org-readable rule, `visibility=public` or `org_admin` bypasses the restricted gate. A
 refusal is the generic "cannot access". If the classification cannot be read, access is
 denied.
 

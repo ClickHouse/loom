@@ -21,7 +21,7 @@ of the token. This guide holds the procedures;
 
 ```bash
 loom mint-token --subject my-bot --org acme --namespaces support --roles writer --ttl-days 30 --save
-# /home/you/.loom/token
+# ~/.loom/token
 ```
 
 `loom` ships with the server package and the Docker image, not with the SDK; in a container
@@ -472,12 +472,19 @@ read or write passes only when **all** hold:
 4. a live **direct** grant for the token's own subject reaches it (a service account does
    not inherit its creator's grant).
 
-No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypasses this. A
-refusal is the generic "cannot access" message, so it does not reveal whether the namespace
-exists. If the classification cannot be read, access is denied.
+An authenticated platform administrator using its own unscoped authority can read every
+registered repository, including restricted entries. This authority remains subject to
+deployment tenancy, token validity, classification availability and `LOOM_RESTRICTED_SERVE`.
+It does not extend to scoped or delegated tokens, impersonated subjects, writes or other
+namespace kinds ([repository read authority](../architecture/security.md#restricted-namespaces)).
+No org-readable rule, `visibility=public` or `org_admin` bypasses restriction. A refusal is
+the generic "cannot access" message, so it does not reveal whether the namespace exists.
+If the classification cannot be read, access is denied.
 
 - Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
-  caller cannot read, and `code.repos` hides them.
+  caller cannot read. `code.repos` returns readable metadata only when its authorization
+  gate admits the repository; a same-org caller may see a request-only entry when its
+  join policy permits requests.
 - Each request admitted to the restricted namespace it names writes a
   `namespace.restricted_access` audit row before the answer
   (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,
