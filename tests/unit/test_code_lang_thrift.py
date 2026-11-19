@@ -91,7 +91,9 @@ def test_includes_are_deduplicated_and_resolved_nearest_first() -> None:
 def test_includes_inside_comments_are_not_includes() -> None:
     src = b'/*\ninclude "unused.thrift"\n*/\nstruct Live { 1: i32 x }\n'
     assert th.parse_thrift("idl/main.thrift", src).includes == []
-    text = '// include "a.thrift"\n# include "b.thrift"\ninclude "c.thrift" /* include "d.thrift" */\n'
+    text = (
+        '// include "a.thrift"\n# include "b.thrift"\ninclude "c.thrift" /* include "d.thrift" */\n'
+    )
     assert th.thrift_units("m.thrift", text).includes == ["c.thrift"]
     # an unclosed string is not a file name
     assert th.thrift_units("m.thrift", 'include "x').includes == []
