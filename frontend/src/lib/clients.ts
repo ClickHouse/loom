@@ -149,8 +149,8 @@ export function formatMcpConfig(args: { client: ClientId; token: string; mcpUrl:
           e.type = "http";
         }
         if (args.client === "opencode") {
-          // OpenCode 2.x: a remote server, the bearer header as its credential and no OAuth flow.
-          return { type: "remote", url: mcpUrl, headers: e.headers, oauth: false };
+          // OpenCode 2.x: what `opencode mcp add --url … --header …` writes.
+          return { type: "remote", url: mcpUrl, headers: e.headers };
         }
         return e;
       })();

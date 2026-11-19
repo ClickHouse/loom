@@ -112,14 +112,8 @@ def mcp_entry(client: str, url: str, minted: str) -> dict[str, object]:
     if client == "gemini":
         return {"httpUrl": url, "headers": {"Authorization": f"Bearer {minted}"}}
     if client == "opencode":
-        # `oauth: false`: the bearer header is the credential, so OpenCode does not start
-        # its OAuth flow against a server that also offers OAuth (LOOM_OAUTH_ENABLED).
-        return {
-            "type": "remote",
-            "url": url,
-            "headers": {"Authorization": f"Bearer {minted}"},
-            "oauth": False,
-        }
+        # What `opencode mcp add --url … --header …` writes: a remote server and its header.
+        return {"type": "remote", "url": url, "headers": {"Authorization": f"Bearer {minted}"}}
     if client == "codex":
         # Codex reads the bearer from an env var; the token never sits in config.toml.
         return {"url": url, "bearer_token_env_var": "LOOM_API_KEY"}

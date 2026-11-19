@@ -1485,7 +1485,6 @@ def _opencode_entry(token: str) -> dict[str, object]:
         "type": "remote",
         "url": "https://h/mcp?toolset=coding",
         "headers": {"Authorization": f"Bearer {token}"},
-        "oauth": False,
     }
 
 
@@ -1604,7 +1603,7 @@ def test_install_opencode_refuses_a_file_it_cannot_merge_and_prints_the_entry(
     assert cfg.read_text() == '{"mcp": "not an object"}'
     err = capsys.readouterr().err
     assert f"ERROR (opencode): {cfg} could not be merged (mcp is not an object)" in err
-    assert 'Add this under "mcp.servers" in that file:' in err and '"oauth": false' in err
+    assert 'Add this under "mcp.servers" in that file:' in err and '"type": "remote"' in err
 
 
 def test_opencode_config_path_follows_opencode_lookup(

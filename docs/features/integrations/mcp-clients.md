@@ -63,7 +63,7 @@ that only reads can use a `viewer` token; see
 | `windsurf`       | `~/.codeium/windsurf/mcp_config.json`                                                                                                                | `mcpServers`      | `url` + `headers`                                                       |
 | `zed`            | `~/.config/zed/settings.json`                                                                                                                        | `context_servers` | `url` + `headers`                                                       |
 | `gemini`         | `~/.gemini/settings.json`                                                                                                                            | `mcpServers`      | `httpUrl` + `headers` (Gemini CLI reads streamable HTTP from `httpUrl`) |
-| `opencode`       | `~/.config/opencode/opencode.json`, or `opencode.jsonc` when that is the file there (`$OPENCODE_CONFIG_DIR` or `$XDG_CONFIG_HOME/opencode` when set) | `mcp.servers`     | `type: "remote"` + `url` + `headers` + `oauth: false`                   |
+| `opencode`       | `~/.config/opencode/opencode.json`, or `opencode.jsonc` when that is the file there (`$OPENCODE_CONFIG_DIR` or `$XDG_CONFIG_HOME/opencode` when set) | `mcp.servers`     | `type: "remote"` + `url` + `headers`                                    |
 | `claude-code`    | none: runs `claude mcp add … -s user`                                                                                                                |                   | see [Claude Code](#claude-code-without-the-plugin)                      |
 | `codex`          | none: runs `codex mcp add`                                                                                                                           |                   | see [Codex](#codex-without-the-plugin)                                  |
 
@@ -76,8 +76,8 @@ instead: the entry is spliced in and the file's comments and trailing commas sta
 that cannot be merged that way is left as it is and the entry to paste is printed.
 OpenCode 2.x reads servers from `mcp.servers`, the shape written here; the 1.x
 `opencode-ai` npm package reads them from `mcp` directly and does not see this entry.
-The entry sets `"oauth": false`, so OpenCode sends the token rather than starting its
-OAuth flow when the server also offers OAuth (`LOOM_OAUTH_ENABLED`).
+The entry is what `opencode mcp add loom --url URL --header "Authorization=Bearer <JWT>"`
+writes, so OpenCode's own OAuth setting stays at its default.
 
 Zed reads `context_servers` from `settings.json`. On macOS that file is
 `~/.config/zed/settings.json`, the same path as on Linux. On Windows it is

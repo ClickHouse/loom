@@ -154,8 +154,7 @@
                 "url": "http://x/mcp?toolset=coding",
                 "headers": {
                   "Authorization": "Bearer T"
-                },
-                "oauth": false
+                }
               }
             }
           }
@@ -321,8 +320,7 @@
                 "url": "http://x/mcp?a=1&toolset=coding",
                 "headers": {
                   "Authorization": "Bearer T"
-                },
-                "oauth": false
+                }
               }
             }
           }
@@ -502,8 +500,7 @@
                 "url": "http://x/mcp?mytoolset=x&toolset=coding",
                 "headers": {
                   "Authorization": "Bearer T"
-                },
-                "oauth": false
+                }
               }
             }
           }
