@@ -173,6 +173,26 @@ memory.get of a missing key → found=False
 unknown op → NotFound (RESOURCE_NOT_FOUND)
 ```
 
+## document_search.py
+
+Search two Markdown documents, cite the passages, and abstain on a question they do not answer.
+
+```bash
+LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… LOOM_ORG=acme python document_search.py
+```
+
+Run it with a real embedder: the released stack's `local` one, or a provider's. A checkout's `.env` pins `fake-ngram-3072`, which ranks by character n-grams, so the checks would pass or fail by chance.
+
+1. `namespace.register` — the throwaway namespace; a refusal because it already exists is ignored.
+2. `knowledge.add` ×2 — two short Markdown documents, each with its own `source_uri` and `title`.
+3. `knowledge.search` per subject — each hit printed as a citation: `source_uri#chunk_idx`, the section and the passage's first line. The top hit has to be the document the question is about.
+4. `search.query` with an off-topic question — `knowledge.search` alone still returns its nearest chunks, so this goes through `search.query`, which drops knowledge hits below the similarity floor (`LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`, 0.30). No passage has to come back.
+5. `knowledge.delete` ×2 — in a `finally`, so both documents are gone even when a step fails.
+
+Every search passes `namespace_scope: "this"`, so documents in your other namespaces cannot satisfy or break a check. The script exits 1 when a check fails. [Lab 2](../../../docs/guides/teaching.md#lab-2-document-search-with-citations) of the teaching guide is the exercise version.
+
+<REAL_RUN>
+
 ## multi_agent_handoff.py
 
 A planner posts a task, a worker claims it with a lease fence and writes the result,

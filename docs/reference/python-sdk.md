@@ -491,6 +491,8 @@ its [GitHub Release](https://github.com/ClickHouse/loom/releases) notes.
 
 - [`sdk/python/examples/agent_memory.py`](../../sdk/python/examples/agent_memory.py):
   probe → remember → recall → ask with citations → outcome → typed errors.
+- [`sdk/python/examples/document_search.py`](../../sdk/python/examples/document_search.py):
+  add two documents → search with citations → abstain on an off-topic question → delete.
 - [`examples/`](../../examples/): `claude_agent_loop.py` (needs an Anthropic
   key), `ledger_run.py`, `log_conversation.py`, `onboarding_walkthrough.py`.
 
