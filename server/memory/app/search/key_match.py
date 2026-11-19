@@ -4,11 +4,11 @@ change the served window."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import Any
 
+from server.core.vectors.private_first import each
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scoring import _anchor_rank_score, rows_per_key
@@ -340,7 +340,7 @@ async def _run_key_match_pool(ctx: SearchContext) -> None:
                 log.warning("key-match arm failed for ns=%s (non-fatal): %s", ns, e)
                 return ns, [], False
 
-        results = await asyncio.gather(*[_rows_for_ns(ns) for ns in ctx.namespaces])
+        results = await each(_rows_for_ns)(ctx.namespaces)
         ctx.actual_work["key_match_precheck_skipped"] = sum(
             1 for (_ns, _rows, skipped) in results if skipped
         )

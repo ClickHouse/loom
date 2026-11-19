@@ -8,10 +8,11 @@ from typing import Any
 from server.core import deployment_config, embedding_space, settings_overrides
 from server.core.background import drain_task_sets
 from server.core.ch import get_client, set_query_tag
+from server.core.llm_provider import provider_of
 from server.core.model_work_gate import get_model_work_gate
 from server.core.provider_keys import install_provider_keys
 from server.embedding import embedder
-from server.insights.api.models_provider_setup import EmbeddingSetup, ProviderSetupInput
+from server.insights.api.models_provider_setup import ProviderSetupInput
 from server.insights.app.provider_credentials import open_configuration
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.domain.provider_serving_policy import serving_vector_settings
@@ -103,16 +104,28 @@ def current_embedding() -> embedding_space.Identity:
     return embedding_space.identity(settings.model_dump())
 
 
-def gateway_refusal(embedding: EmbeddingSetup) -> str:
-    """Why a configuration with this embedding would send model calls off the
-    gateway, as the settings check it at load; "" when it would not."""
-    return settings.gateway_refusal(
+def gateway_refusal(setup: ProviderSetupInput) -> str:
+    """Apply the gateway policy to every route in the proposed saved setup."""
+    embedding = setup.embedding
+    refusal = settings.gateway_refusal(
         {
+            "llm_provider": setup.llm.provider,
             "embedding_provider": embedding.provider,
             "embedding_model": embedding.model,
             "embedding_base_url": embedding.base_url,
         }
     )
+    if refusal or not settings.gateway_required():
+        return refusal
+    models = [*setup.llm.overrides.values(), *(setup.llm.verification_models or [])]
+    if any(
+        provider_of(model, setup.llm.model, setup.llm.provider) == "bedrock" for model in models
+    ):
+        return (
+            f"{settings.gateway_required_by()} refuses native Bedrock model overrides: "
+            "use the inference gateway"
+        )
+    return ""
 
 
 def refused_configuration() -> str:
@@ -295,12 +308,11 @@ async def load_active_configuration() -> None:
 def _refuse(setup: ProviderSetupInput, hold: bool, config_id: str) -> bool:
     """Whether the gateway check refuses the committed `setup`, as it refuses
     it at load. Then nothing of it applies, its serving vector settings
-    included. The check reads only the embedding, so a refused one is never
-    the one in force: the index may be built for that other space, and
-    unless a queued row holds requests already (`hold` false), model work
+    included. A refused setup never takes effect: the index may use its space.
+    Unless a queued row holds requests already (`hold` false), model work
     stays held until a configuration the check accepts replaces it."""
     global _refused
-    refusal = gateway_refusal(setup.embedding)
+    refusal = gateway_refusal(setup)
     if refusal and refusal != _refused:
         log.error("saved model configuration not applied: %s", refusal)
     _refused = refusal

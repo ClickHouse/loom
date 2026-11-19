@@ -251,7 +251,13 @@ def test_tool_definitions_in_three_shapes_match_the_typescript_sdk() -> None:
 async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
     a, calls = _agent(
         {
-            "memory.set": {"memory_key": "seat", "version": 3, "conflict_verdict": "new"},
+            "memory.set": {
+                "memory_key": "seat",
+                "version": 3,
+                "memory_id": "m1",
+                "content_sha256": "abc",
+                "conflict_verdict": "clear",
+            },
             "memory.search": {
                 "results": [
                     {
@@ -287,7 +293,10 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
         "stored": True,
         "memory_key": "seat",
         "version": 3,
-        "verdict": "new",
+        "memory_id": "m1",
+        "content_sha256": "abc",
+        "conflict_verdict": "clear",
+        "verdict": "clear",
     }
     assert (
         calls[0][1]["memory_type"] == "preference"
@@ -409,13 +418,12 @@ async def test_tools_refuse_an_integer_outside_the_schema() -> None:
     await a.close()
 
 
-async def test_recall_whose_best_memory_alone_is_over_the_cap_is_cut() -> None:
+async def test_recall_whose_best_memory_alone_is_over_the_cap_is_omitted() -> None:
     hits = [
         {"memory_key": f"m{i}", "content_excerpt": "x" * 900, "similarity": 0.9} for i in range(2)
     ]
     a, _ = _agent({"memory.search": {"results": hits}})
     tools = a.tools(only=["loom_recall"], max_result_chars=500)
     out = await tools.execute("loom_recall", {"query": "seat"})
-    assert out.endswith("…[truncated]")  # one memory is kept, and cut as before
-    assert out.startswith('{"memories": [{"memory_key": "m0"')
+    assert json.loads(out) == {"memories": [], "omitted": 2}
     await a.close()

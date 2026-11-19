@@ -37,6 +37,7 @@ async def insert_memory_versions(
     ch: _CHClient | None = None,
     published: bool = False,
     publish_now: bool = True,
+    policy: Mapping[tuple[str, str], int] | None = None,
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
@@ -50,12 +51,18 @@ async def insert_memory_versions(
     from server.core import pg
 
     if pg.enabled() and not published:
-        from server.memory.store import pg_publish
+        from server.memory.store import pg_memory, pg_publish
 
-        if publish_now:
-            await pg_publish.commit_and_publish(rows, ch=ch)
-        else:
-            await pg_publish.commit(rows, publisher_lease=False)
+        admission = pg_memory.Admission(generations=dict(policy)) if policy else None
+        try:
+            if publish_now:
+                await pg_publish.commit_and_publish(rows, ch=ch, admission=admission)
+            else:
+                await pg_publish.commit(rows, publisher_lease=False, admission=admission)
+        except pg_memory.AdmissionMoved:
+            raise pg_memory.AdmissionContendedError(
+                "the write policy changed while it was checked"
+            ) from None
         return len(rows)
     ch = ch or _default_client()
     await ch.insert(

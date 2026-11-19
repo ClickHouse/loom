@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -16,7 +17,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
+from server.core.ch_errors import error_code
 from server.core.ch_names import qualify
+
+log = logging.getLogger(__name__)
 
 # not a setting: ten seconds of proof plus room for bounded native cleanup.
 _SESSION_TTL_S = 15
@@ -32,6 +36,20 @@ _PARAMETER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 class ObservationUnavailable(RuntimeError):
     def __init__(self) -> None:
         super().__init__("ClickHouse observation authority could not be confirmed")
+
+
+def _log_unavailable(proof_stage: str, error: Exception, http_status: int | None) -> None:
+    # Response bodies and transport errors can contain policy text or credentials.
+    try:
+        log.warning(
+            "Native observation refused: stage=%s exception=%s code=%s http_status=%s",
+            proof_stage,
+            type(error).__name__,
+            error_code(error),
+            http_status,
+        )
+    except Exception:  # noqa: BLE001 — diagnostics must not replace the authority refusal
+        pass
 
 
 def observer_origin(value: str, *, require_tls: bool) -> str:
@@ -109,6 +127,8 @@ class PolicyObserver:
     ) -> list[dict[str, Any]]:
         if self._failed and not closing:
             raise ObservationUnavailable()
+        proof_stage = "prepare"
+        http_status: int | None = None
         try:
             sql = qualify(sql)
             params = {
@@ -143,19 +163,26 @@ class PolicyObserver:
                 params[f"param_{key}"] = value
 
             async def send() -> list[dict[str, Any]]:
+                nonlocal proof_stage, http_status
                 # POST is excluded from aiohttp's automatic connection retry. Redirects
                 # are separate and must not repeat an unchecked session bootstrap.
+                proof_stage = "send"
                 async with self._http.post(
                     self.origin, params=params, data=sql.encode(), allow_redirects=False
                 ) as response:
+                    proof_stage = "http_status"
+                    http_status = response.status
                     if response.status != 200:
                         raise ObservationUnavailable()
+                    proof_stage = "body"
                     body = bytearray()
                     async for chunk in response.content.iter_chunked(65536):
                         if len(body) + len(chunk) > _BODY_BYTES:
                             raise ObservationUnavailable()
                         body.extend(chunk)
+                proof_stage = "json"
                 result = json.loads(body, object_pairs_hook=_unique_object)
+                proof_stage = "result"
                 if (
                     not isinstance(result, dict)
                     or not isinstance(result.get("meta"), list)
@@ -167,6 +194,7 @@ class PolicyObserver:
                 ):
                     raise ObservationUnavailable()
                 columns = result["meta"]
+                proof_stage = "columns"
                 if (
                     not columns
                     or any(
@@ -184,12 +212,14 @@ class PolicyObserver:
                     raise ObservationUnavailable()
                 return cast(list[dict[str, Any]], result["data"])
 
+            proof_stage = "admission"
             return await self._guarded(sql, send)
         except asyncio.CancelledError:
             self._failed = True
             raise
-        except Exception:  # noqa: BLE001 — policy text and transport credentials must stay private
+        except Exception as error:  # noqa: BLE001 — policy text and transport credentials must stay private
             self._failed = True
+            _log_unavailable("close" if closing else proof_stage, error, http_status)
             raise ObservationUnavailable() from None
 
     async def bootstrap(self) -> None:
@@ -213,8 +243,9 @@ class PolicyObserver:
             self.server_uuid = str(identity)
             self.roles = tuple(sorted(roles))
             self._checked = True
-        except Exception:  # noqa: BLE001 — malformed authority evidence must fail closed
+        except Exception as error:  # noqa: BLE001 — malformed authority evidence must fail closed
             self._failed = True
+            _log_unavailable("bootstrap_identity", error, 200)
             raise ObservationUnavailable() from None
 
     async def query_all(
@@ -237,8 +268,9 @@ class PolicyObserver:
                 for row in rows
             ):
                 raise ObservationUnavailable()
-        except Exception:  # noqa: BLE001 — malformed authority evidence must fail closed
+        except Exception as error:  # noqa: BLE001 — malformed authority evidence must fail closed
             self._failed = True
+            _log_unavailable("query_identity", error, 200)
             raise ObservationUnavailable() from None
         return rows
 
@@ -250,8 +282,9 @@ class PolicyObserver:
             if any(len(row) != 1 or not isinstance(next(iter(row.values())), str) for row in rows):
                 raise ObservationUnavailable()
             return [next(iter(row.values())) for row in rows]
-        except Exception:  # noqa: BLE001 — policy text must never appear in a refusal
+        except Exception as error:  # noqa: BLE001 — policy text must never appear in a refusal
             self._failed = True
+            _log_unavailable("policy_result", error, 200)
             raise ObservationUnavailable() from None
 
     async def close(self) -> None:

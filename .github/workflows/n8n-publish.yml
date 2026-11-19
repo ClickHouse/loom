@@ -5,6 +5,7 @@ on:
     paths:
       - integrations/n8n/**
       - .github/workflows/n8n-publish.yml
+      - .github/pnpm/**
   push:
     tags:
       - v*
@@ -22,7 +23,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - run: npm install --global pnpm@10.32.1
+      - name: Install the locked package manager
+        run: |
+          npm ci --prefix .github/pnpm --ignore-scripts --no-fund --no-audit
+          echo "$PWD/.github/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
         working-directory: integrations/n8n
       - run: pnpm check
@@ -34,7 +38,7 @@ jobs:
           mkdir "$RUNNER_TEMP/n8n-package-check"
           cd "$RUNNER_TEMP/n8n-package-check"
           npm init --yes
-          npm install "$GITHUB_WORKSPACE/integrations/n8n/package.tgz"
+          npm install --ignore-scripts "$GITHUB_WORKSPACE/integrations/n8n/package.tgz"
           node -e 'for (const path of ["Loom/Loom.node", "LoomMemory/LoomMemory.node"]) require("@clickhouse/n8n-nodes-loom/dist/nodes/" + path + ".js")'
 
   publish:
@@ -57,7 +61,10 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
-      - run: npm install --global pnpm@10.32.1
+      - name: Install the locked package manager
+        run: |
+          npm ci --prefix .github/pnpm --ignore-scripts --no-fund --no-audit
+          echo "$PWD/.github/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
       - run: pnpm install --frozen-lockfile
         working-directory: integrations/n8n
       - run: pnpm build

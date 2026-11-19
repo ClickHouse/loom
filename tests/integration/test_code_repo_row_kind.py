@@ -170,4 +170,45 @@ async def test_an_operator_entry_over_an_inactive_access_row_writes_a_fresh_one(
         "exclude_generated": False,
         "scip_producer": "",
         "row_kind": "access",
+        "git_proxy_identity": "",
     }
+
+
+async def test_a_page_branch_keeps_its_git_proxy_identity_until_it_is_removed(org: str) -> None:
+    """The identity an add stored is read back with the entry, survives an access
+    change (which copies the row whole) and reads empty once the branch is removed."""
+    await reg.insert_entry(
+        org=org,
+        namespace="code-proxied",
+        repo="it/row-kind",
+        branch="main",
+        classification="standard",
+        join_policy="open",
+        github_token="",
+        path_prefixes=[],
+        exclude=[],
+        created_by="platform",
+        git_proxy_identity="acme.widgets-indexer",
+    )
+    await _add(org, "code-plain")
+    row = await CodeRepo().code_repo_row(org, "code-proxied")
+    assert row is not None and row["git_proxy_identity"] == "acme.widgets-indexer"
+    proxied = dataclasses.replace(_entry(org, "code-proxied"), source="registry")
+    await reg.upsert_access(
+        proxied,
+        classification="restricted",
+        join_policy="approval",
+        created_by="admin",
+        current=await reg.live_row(proxied),
+    )
+    assert await reg.read_registry()
+    read = {c.namespace: c for c in repos.registry_repos() if c.org == org}
+    assert read["code-proxied"].git_proxy_identity == "acme.widgets-indexer"
+    assert read["code-proxied"].classification == "restricted"
+    assert read["code-plain"].git_proxy_identity == ""
+    assert await CodeRepo().deactivate_code_repo(org, "code-proxied")
+    rows = {r["namespace"]: r for r in await CodeRepo().registry_rows() if r["org"] == org}
+    assert (rows["code-proxied"]["active"], rows["code-proxied"]["git_proxy_identity"]) == (
+        False,
+        "",
+    )

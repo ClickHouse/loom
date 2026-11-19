@@ -30,7 +30,10 @@ from server.memory.store import key_write_lock
 from server.memory.store.rows import build_first_version_row
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, view
 
-pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+pytestmark = [
+    pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed"),
+    pytest.mark.usefixtures("no_blacklisted_values"),
+]
 
 # A fixed version for the lift tests: the offset hashes the drawn version, so a fixed one
 # keeps their expected versions the same on every run (a multiple of 1,000, as a clock that
@@ -1761,6 +1764,11 @@ async def test_a_503_writes_its_audit_row_and_the_worker_none(
                     )
     finally:
         request_id_var.reset(rid)
+    setup_receipts = [row for event, row in emitted if event == "memory.set"]
+    assert len(setup_receipts) == int(failure in {"the check after it", "a retry"})
+    if setup_receipts:
+        assert setup_receipts[0]["subject"]["memory_key"] == _KEY
+    emitted[:] = [(event, row) for event, row in emitted if event != "memory.set"]
     calls = 2 if failure == "a retry" else 1
     assert len(emitted) == calls
     expected = MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head).model_dump(

@@ -93,25 +93,27 @@ def test_an_absent_namespace_takes_the_authorized_namespace(
     op = OPERATIONS_BY_NAME["code.search"]
     inp = CodeSearchInput(org="globex", namespace="-", query="q")
     target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
-    out = with_target(inp, target)
+    out = with_target(op, inp, target)
     assert (out.org, out.namespace) == ("globex", "code-shared")
     # A named namespace, or nothing resolved, leaves the input as sent.
     named = CodeSearchInput(org="globex", namespace="mine", query="q")
-    assert with_target(named, target) is named
+    assert with_target(op, named, target) is named
     unresolved = Target(org=None, namespace=None, named_namespace=None, register_namespace=None)
-    assert with_target(inp, unresolved) is inp
+    assert with_target(op, inp, unresolved) is inp
     # Fanned out over a list, a "-" namespace does not lead it either.
     fanned = CodeSearchInput(org="globex", namespace="-", namespaces=["a"], query="q")
     assert fanned.namespaces == ["a"]
-    assert with_target(fanned, target).namespaces == ["a"]
+    assert with_target(op, fanned, target).namespaces == ["a"]
 
 
 def test_a_required_namespace_sent_as_dash_is_left_as_sent() -> None:
     """An admin write on a repository names its namespace: "-" must not
     become the shared code index."""
     from server.code.api.models_repos import CodeRepoSetAccessInput
+    from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport.gates import Target, with_target
 
+    op = OPERATIONS_BY_NAME["code.repo.set_access"]
     assert CodeRepoSetAccessInput.model_fields["namespace"].is_required()
     inp = CodeRepoSetAccessInput.model_validate(
         {"org": "globex", "namespace": "-", "classification": "restricted", "join_policy": "closed"}
@@ -122,7 +124,7 @@ def test_a_required_namespace_sent_as_dash_is_left_as_sent() -> None:
         named_namespace=None,
         register_namespace="code-shared",
     )
-    assert with_target(inp, target).namespace == "-"
+    assert with_target(op, inp, target).namespace == "-"
 
 
 def test_a_code_admin_write_with_a_dash_org_takes_the_code_org(
@@ -144,7 +146,7 @@ def test_a_code_admin_write_with_a_dash_org_takes_the_code_org(
     }
     inp = CodeRepoSetAccessInput.model_validate(_resolved(op, body))
     target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
-    out = with_target(inp, target)
+    out = with_target(op, inp, target)
     assert (out.org, out.namespace) == ("code-org", "repo@main")
 
 
@@ -160,7 +162,7 @@ def test_a_tracker_read_with_an_absent_org_takes_the_tracker_org(
     body = {"org": "-", "namespace": "-", "numbers": [1]}
     inp = TrackerItemInput.model_validate(_resolved(op, body))
     target = authz_target(op, org=inp.org, namespace=inp.namespace, auth=None)
-    out = with_target(inp, target)
+    out = with_target(op, inp, target)
     # The org takes the tracker plane's; a tracker namespace has no plane default.
     assert (out.org, out.namespace) == ("trackers", "-")
 

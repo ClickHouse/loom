@@ -48,6 +48,7 @@ except ImportError as e:  # the framework is an optional extra
     raise ImportError("loom.integrations.ag2 needs ag2: pip install 'clickhouse-loom[ag2]'") from e
 
 from loom.errors import LoomError
+from loom.integrations._session_protection import _CallbackProtection
 from loom.sync import SyncAgent
 from loom.tools import AgentTools
 
@@ -68,6 +69,11 @@ class LoomRecallPolicy:
     trimming policy (``SlidingWindowPolicy``, ``TokenBudgetPolicy``), which can
     cut the user's request out of the events this policy reads. Those policies
     trim events, not the prompt, so ``top_k`` is what bounds the memory block.
+
+    Use one policy per conversation, bound to its application-owned logical
+    session family. Constructor and callback contributors remain bound for the
+    policy's lifetime, including after the client is rebound. Native user and
+    session ids do not select session protection.
     """
 
     name = "loom_memory"
@@ -86,6 +92,7 @@ class LoomRecallPolicy:
         if top_k < 1:
             raise ValueError("top_k must be at least 1")
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._user_id = user_id
         self._tags = list(tags or [])
         self._top_k = min(top_k, 500)  # memory.search's bound
@@ -97,32 +104,35 @@ class LoomRecallPolicy:
         events: list[BaseEvent],
         context: ConversationContext,
     ) -> tuple[list[str], list[BaseEvent]]:
-        query = _latest_user_text(events)
-        if not query:
-            return prompts, events
-        result = await self._agent.memory.search(
-            query,
-            top_k=self._top_k,
-            tags=self._tags or None,
-            user_id=self._user_id,
-            # Read the namespace this policy is bound to, whatever the deployment's default.
-            namespace_scope="this",
-            # Unpinned, a large top_k serves excerpts (above 15 by default)
-            # and drops each hit's explanation.
-            bodies="full",
-            explain=False,
-        )
-        hits = list(result)
-        if self._honour_abstain:
-            if result.abstain:
+        with self._protection.automatic(self._agent.transport.session_protection):
+            query = _latest_user_text(events)
+            if not query:
                 return prompts, events
-            # A response that does not abstain can still carry rows below the floor.
-            hits = [hit for hit in hits if not hit.below_threshold]
-        # Derived rows may come back above the top_k slice: cut after filtering.
-        lines = [f"- {hit.content_excerpt}" for hit in hits[: self._top_k] if hit.content_excerpt]
-        if not lines:
-            return prompts, events
-        return [*prompts, "## Relevant memories from Loom\n\n" + "\n".join(lines)], events
+            result = await self._agent.memory.search(
+                query,
+                top_k=self._top_k,
+                tags=self._tags or None,
+                user_id=self._user_id,
+                # Read the namespace this policy is bound to, whatever the deployment's default.
+                namespace_scope="this",
+                # Unpinned, a large top_k serves excerpts (above 15 by default)
+                # and drops each hit's explanation.
+                bodies="full",
+                explain=False,
+            )
+            hits = list(result)
+            if self._honour_abstain:
+                if result.abstain:
+                    return prompts, events
+                # A response that does not abstain can still carry rows below the floor.
+                hits = [hit for hit in hits if not hit.below_threshold]
+            # Derived rows may come back above the top_k slice: cut after filtering.
+            lines = [
+                f"- {hit.content_excerpt}" for hit in hits[: self._top_k] if hit.content_excerpt
+            ]
+            if not lines:
+                return prompts, events
+            return [*prompts, "## Relevant memories from Loom\n\n" + "\n".join(lines)], events
 
 
 def loom_tools(

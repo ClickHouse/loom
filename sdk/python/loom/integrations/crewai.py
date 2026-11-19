@@ -36,12 +36,14 @@ from typing import Any
 try:
     from crewai.memory.types import MemoryMatch, MemoryRecord
     from crewai.memory.unified_memory import Memory
-    from pydantic import Field
+    from pydantic import Field, PrivateAttr
 except ImportError as e:  # the framework is an optional extra
     raise ImportError(
         "loom.integrations.crewai needs crewai: pip install 'clickhouse-loom[crewai]'"
     ) from e
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 from loom.sync import SyncAgent
 
 _NO_SCOPES = (
@@ -81,12 +83,15 @@ class LoomCrewMemory(Memory):
         default=True, description="Queue the extraction on the server instead of waiting for it."
     )
     key_prefix: str = Field(default="crewai", description="Key prefix of explicit saves.")
+    _protection: _CallbackProtection = PrivateAttr()
 
     def model_post_init(self, __context: Any) -> None:
         """No CrewAI LLM, embedder or storage: Loom does that work."""
+        self._protection = _CallbackProtection(self.agent.transport.session_protection)
 
     def extract_memories(self, content: str) -> list[str]:
         """Loom extracts the facts when ``remember_many`` sends the text."""
+        self._protection.remember(self.agent.transport.session_protection)
         return [content] if content.strip() else []
 
     def remember(
@@ -101,6 +106,8 @@ class LoomCrewMemory(Memory):
         agent_role: str | None = None,
         root_scope: str | None = None,
     ) -> MemoryRecord | None:
+        bound = self.agent.transport.session_protection
+        self._protection.remember(bound)
         if self.read_only:
             return None
         _refuse_private(private)
@@ -109,7 +116,9 @@ class LoomCrewMemory(Memory):
             raise ValueError("nothing to remember: the content is empty")
         key = f"{self.key_prefix}/{hashlib.sha256(text.encode('utf-8')).hexdigest()[:20]}"
         tags = self._tags(categories)
-        self.agent.memory.set(key, text, tags=tags or None, user_id=self.user_id)
+        scope_for = self._protection.automatic if automatic_roots() else self._protection.observing
+        with scope_for(bound):
+            self.agent.memory.set(key, text, tags=tags or None, user_id=self.user_id)
         return MemoryRecord(id=key, content=text, scope="/", categories=tags)
 
     def remember_many(
@@ -125,17 +134,23 @@ class LoomCrewMemory(Memory):
         root_scope: str | None = None,
     ) -> list[MemoryRecord]:
         """Send the texts for extraction; the memories Loom keeps are its own rows."""
+        bound = self.agent.transport.session_protection
+        self._protection.remember(bound)
         if self.read_only:
             return []
         _refuse_private(private)
         turns = [{"role": "assistant", "content": c} for c in contents if c.strip()]
         if turns:
-            self.agent.memory.set_from_messages(
-                turns,
-                extra_tags=self._tags(categories) or None,
-                user_id=self.user_id,
-                defer=self.defer,
+            scope_for = (
+                self._protection.automatic if automatic_roots() else self._protection.observing
             )
+            with scope_for(bound):
+                self.agent.memory.set_from_messages(
+                    turns,
+                    extra_tags=self._tags(categories) or None,
+                    user_id=self.user_id,
+                    defer=self.defer,
+                )
         return []
 
     def recall(
@@ -148,27 +163,31 @@ class LoomCrewMemory(Memory):
         source: str | None = None,
         include_private: bool = False,
     ) -> list[MemoryMatch]:
+        bound = self.agent.transport.session_protection
+        self._protection.remember(bound)
         if not query.strip():
             return []
         # A search keeps rows carrying any listed tag, so the memory's own tags go
         # to the server and the categories narrow its rows here, from a pool of
         # five times the limit: at least 50, at most memory.search's bound of 500.
         wanted = set(categories) if self.tags and categories else set()
-        result = self.agent.memory.search(
-            query,
-            top_k=min(max(limit * 5, 50) if wanted else limit, 500),
-            # Unpinned, a large top_k serves excerpts (above 15 by default)
-            # and drops each hit's explanation.
-            bodies="full",
-            explain=False,
-            # CrewAI's read-only memory does not refresh access times on recall.
-            auto_touch=not self.read_only,
-            tags=list(self.tags or categories or []) or None,
-            include_tags=bool(wanted),
-            user_id=self.user_id,
-            # Read the namespace the crew writes to, whatever the deployment's default.
-            namespace_scope="this",
-        )
+        scope_for = self._protection.automatic if automatic_roots() else self._protection.observing
+        with scope_for(bound):
+            result = self.agent.memory.search(
+                query,
+                top_k=min(max(limit * 5, 50) if wanted else limit, 500),
+                # Unpinned, a large top_k serves excerpts (above 15 by default)
+                # and drops each hit's explanation.
+                bodies="full",
+                explain=False,
+                # CrewAI's read-only memory does not refresh access times on recall.
+                auto_touch=not self.read_only,
+                tags=list(self.tags or categories or []) or None,
+                include_tags=bool(wanted),
+                user_id=self.user_id,
+                # Read the namespace the crew writes to, whatever the deployment's default.
+                namespace_scope="this",
+            )
         hits = list(result)
         if wanted:
             hits = [hit for hit in hits if wanted & set(hit.tags)]

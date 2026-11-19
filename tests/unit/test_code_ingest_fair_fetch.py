@@ -49,7 +49,9 @@ def test_a_shared_mirror_is_fetched_once_for_all_its_branches(
 ) -> None:
     calls: list[tuple[str, tuple[str, ...]]] = []
 
-    async def fetch_many(git_dir: str, remote: str, branches: list[str], token: str = "") -> None:
+    async def fetch_many(
+        git_dir: str, remote: str, branches: list[str], token: str = "", proxy_identity: str = ""
+    ) -> None:
         calls.append((git_dir, tuple(branches)))
 
     monkeypatch.setattr(gitrepo, "fetch_many", fetch_many)
@@ -387,7 +389,9 @@ def test_run_repo_skips_the_fetch_its_mirror_did_and_leaves_the_commits_pending(
 
     fetched: list[str] = []
 
-    async def fetch(git_dir: str, remote: str, branch: str, token: str = "") -> None:
+    async def fetch(
+        git_dir: str, remote: str, branch: str, token: str = "", proxy_identity: str = ""
+    ) -> None:
         fetched.append(branch)
 
     async def head(git_dir: str, branch: str) -> str:

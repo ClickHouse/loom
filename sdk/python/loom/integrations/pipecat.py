@@ -58,6 +58,8 @@ except ImportError as e:  # the framework is an optional extra
     ) from e
 
 from loom.errors import LoomError
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import AutomaticCaptureSuppressed, require_automatic_allowed
 from loom.sync import SyncAgent
 
 if TYPE_CHECKING:
@@ -77,6 +79,11 @@ class LoomMemoryService:
     ``memory.set_from_messages``. The mapping is in
     ``docs/features/integrations/frameworks.md`` (Pipecat). The processors are
     awaited on the pipeline, so the service takes a ``loom.Agent``.
+
+    Use one service per conversation, bound to that conversation's logical
+    session family. Native session ids label extracted turns; they do not select
+    session protection. Constructor and callback contributors remain bound for
+    the service's lifetime, including after the client is rebound.
     """
 
     def __init__(
@@ -98,6 +105,7 @@ class LoomMemoryService:
                 "user_id must name a Loom user without surrounding whitespace, or be None"
             )
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._user_id = user_id
         self._session_id = session_id or uuid.uuid4().hex
         self._top_k = top_k
@@ -120,67 +128,90 @@ class LoomMemoryService:
         # the capture source, and must not be treated as a committed user turn.
         if frame.speculation:
             return
-        context = frame.context
-        self._context = context
-        user_message = _latest_user_message(context.get_messages())
-        if user_message is None:
-            return
-        # Same committed message, including a second frame of this turn: already recalled.
-        # A new message with the same text is a new turn and is searched again.
-        if user_message is self._last_user_message:
-            return
-        query = _message_text(user_message)
-        result = await self._agent.memory.search(
-            query,
-            top_k=self._top_k,
-            user_id=self._user_id,
-            # Read the namespace this service writes to, whatever the deployment's default.
-            namespace_scope="this",
-            # Pinned so every top_k gets full bodies and no per-hit explanation
-            # (the server's defaults switch at 15).
-            bodies="full",
-            explain=False,
-        )
-        self._last_user_message = user_message
-        hits = list(result)
-        if self._honour_abstain:
-            if result.abstain:
-                _replace_memory_message(context, None)
-                return
-            # A response that does not abstain can still carry rows below the floor.
-            hits = [hit for hit in hits if not hit.below_threshold]
-        # Derived rows may come back above the top_k slice: cut after filtering.
-        lines = [f"{i}. {hit.content_excerpt}" for i, hit in enumerate(hits[: self._top_k], 1)]
-        text = f"{_MEMORY_PREFIX}\n" + "\n".join(lines) if lines else None
-        _replace_memory_message(context, text)
+        try:
+            with self._protection.automatic(self._agent.transport.session_protection):
+                context = frame.context
+                self._context = context
+                user_message = _latest_user_message(context.get_messages())
+                if user_message is None:
+                    return
+                # Same committed message, including a second frame of this turn: already recalled.
+                # A new message with the same text is a new turn and is searched again.
+                if user_message is self._last_user_message:
+                    return
+                query = _message_text(user_message)
+                result = await self._agent.memory.search(
+                    query,
+                    top_k=self._top_k,
+                    user_id=self._user_id,
+                    # Read the namespace this service writes to, whatever the deployment's default.
+                    namespace_scope="this",
+                    # Pinned so every top_k gets full bodies and no per-hit explanation
+                    # (the server's defaults switch at 15).
+                    bodies="full",
+                    explain=False,
+                )
+                self._last_user_message = user_message
+                hits = list(result)
+                if self._honour_abstain:
+                    if result.abstain:
+                        _replace_memory_message(context, None)
+                        return
+                    # A response that does not abstain can still carry rows below the floor.
+                    hits = [hit for hit in hits if not hit.below_threshold]
+                # Derived rows may come back above the top_k slice: cut after filtering.
+                lines = [
+                    f"{i}. {hit.content_excerpt}" for i, hit in enumerate(hits[: self._top_k], 1)
+                ]
+                text = f"{_MEMORY_PREFIX}\n" + "\n".join(lines) if lines else None
+                _replace_memory_message(context, text)
+        finally:
+            self._discard_protected_references()
 
     async def _capture(self, context: Any) -> None:
-        # Identity of the source message, not history length: compaction and
-        # set_messages replace the list, which would skip a new turn if we sliced
-        # from a stale cursor.
-        items = _capturable(context.get_messages())
-        # Keep tracked objects alive; discard objects removed by compaction.
-        live = {id(source): source for source, _ in items}
-        self._written_messages = {
-            key: source for key, source in self._written_messages.items() if live.get(key) is source
-        }
-        new = [
-            (source, message)
-            for source, message in items
-            if self._written_messages.get(id(source)) is not source
-        ]
-        if not new:
-            return
-        loom_session = _loom_session(self._user_id or "-", self._session_id)
-        for start in range(0, len(new), _MAX_MESSAGES):
-            batch = new[start : start + _MAX_MESSAGES]
-            await self._agent.memory.set_from_messages(
-                [message for _, message in batch],
-                user_id=self._user_id,
-                session_id=loom_session,
-                defer=self._defer,
-            )
-            self._written_messages.update((id(source), source) for source, _ in batch)
+        try:
+            with self._protection.automatic(self._agent.transport.session_protection):
+                # Identity of the source message, not history length: compaction and
+                # set_messages replace the list, which would skip a new turn if we sliced
+                # from a stale cursor.
+                items = _capturable(context.get_messages())
+                # Keep tracked objects alive; discard objects removed by compaction.
+                live = {id(source): source for source, _ in items}
+                self._written_messages = {
+                    key: source
+                    for key, source in self._written_messages.items()
+                    if live.get(key) is source
+                }
+                new = [
+                    (source, message)
+                    for source, message in items
+                    if self._written_messages.get(id(source)) is not source
+                ]
+                if not new:
+                    return
+                loom_session = _loom_session(self._user_id or "-", self._session_id)
+                for start in range(0, len(new), _MAX_MESSAGES):
+                    batch = new[start : start + _MAX_MESSAGES]
+                    await self._agent.memory.set_from_messages(
+                        [message for _, message in batch],
+                        user_id=self._user_id,
+                        session_id=loom_session,
+                        defer=self._defer,
+                    )
+                    require_automatic_allowed(self._agent.transport.session_protection)
+                    self._written_messages.update((id(source), source) for source, _ in batch)
+        finally:
+            self._discard_protected_references()
+
+    def _remember_protection(self) -> None:
+        self._protection.remember(self._agent.transport.session_protection)
+
+    def _discard_protected_references(self) -> None:
+        if self._protection.protected:
+            # Drop only our retry references, never the application's native history.
+            self._context = None
+            self._last_user_message = None
+            self._written_messages.clear()
 
 
 class LoomRecallProcessor(FrameProcessor):
@@ -191,14 +222,21 @@ class LoomRecallProcessor(FrameProcessor):
         self._service = service
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        await super().process_frame(frame, direction)
-        if isinstance(frame, LLMContextFrame):
-            try:
-                await self._service._recall(frame)
-            except LoomError:
-                # The turn still reaches the model; audio and other frames are unchanged.
-                pass
-        await self.push_frame(frame, direction)
+        committed = isinstance(frame, LLMContextFrame) and not frame.speculation
+        if committed:
+            self._service._remember_protection()
+        try:
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame):
+                try:
+                    await self._service._recall(frame)
+                except (LoomError, AutomaticCaptureSuppressed):
+                    # A protected turn skips automatic recall and still reaches the model.
+                    pass
+            await self.push_frame(frame, direction)
+        finally:
+            if committed:
+                self._service._discard_protected_references()
 
 
 class LoomCaptureProcessor(FrameProcessor):
@@ -209,13 +247,21 @@ class LoomCaptureProcessor(FrameProcessor):
         self._service = service
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        await super().process_frame(frame, direction)
-        if isinstance(frame, LLMContextFrame) and not frame.speculation:
-            self._service._context = frame.context
-        elif isinstance(frame, LLMContextAssistantTurnFrame):
-            # The aggregator writes the assistant message before it broadcasts this frame.
-            await self._capture_from_last_context()
-        await self.push_frame(frame, direction)
+        committed = isinstance(frame, LLMContextFrame) and not frame.speculation
+        completed = isinstance(frame, LLMContextAssistantTurnFrame)
+        if committed or completed:
+            self._service._remember_protection()
+        try:
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMContextFrame) and not frame.speculation:
+                self._service._context = frame.context
+            elif isinstance(frame, LLMContextAssistantTurnFrame):
+                # The aggregator writes the assistant message before broadcasting this frame.
+                await self._capture_from_last_context()
+            await self.push_frame(frame, direction)
+        finally:
+            if committed or completed:
+                self._service._discard_protected_references()
 
     async def _capture_from_last_context(self) -> None:
         context = getattr(self._service, "_context", None)
@@ -223,7 +269,8 @@ class LoomCaptureProcessor(FrameProcessor):
             return
         try:
             await self._service._capture(context)
-        except LoomError:
+        except (LoomError, AutomaticCaptureSuppressed):
+            # A protected turn skips automatic capture without blocking the pipeline.
             return
 
 

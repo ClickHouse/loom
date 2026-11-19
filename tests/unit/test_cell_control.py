@@ -61,11 +61,27 @@ async def test_cancellation_during_body_closes_before_work_cancel():
         await asyncio.Future()
 
     task = asyncio.create_task(owner.transaction(body))
-    await entered.wait()
-    task.cancel("original cancellation")
-    with pytest.raises(asyncio.CancelledError, match="original cancellation"):
-        await task
-    assert conn.executed[-1] == "CLOSE" and "ROLLBACK" not in conn.executed
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=0.5)
+        task.cancel("original cancellation")
+        with pytest.raises(asyncio.CancelledError, match="original cancellation"):
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
+            await task
+        assert conn.executed[-1] == "CLOSE" and "ROLLBACK" not in conn.executed
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
+    finally:
+        owned_tasks = {task, *owner._tasks}
+        if owner._close_task is not None:
+            owned_tasks.add(owner._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 def snapshot():

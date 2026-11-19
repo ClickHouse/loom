@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from server.embedding._provider import MalformedEmbedding
 from server.memory import store as mr
 
 
@@ -152,7 +153,7 @@ def test_a_short_embed_batch_fails_instead_of_pairing_the_wrong_vector(
 ) -> None:
     two = [dict(_memory_mirror_row(), memory_key=k) for k in ("k1", "k2")]
     ch = _CH(two)
-    with pytest.raises(ValueError):
+    with pytest.raises(MalformedEmbedding, match="document vectors"):
         _run_with(monkeypatch, ch, _ShortEmbedder())
     assert ch.inserted == []
 

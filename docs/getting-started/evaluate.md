@@ -104,6 +104,31 @@ Set `--min-recall` and `--min-mrr` only from your pre-registered gates. Use
 `memory.ask` or your production reader on the same questions for answer accuracy; recall
 and answer accuracy are different measurements.
 
+### Shared memory across clients
+
+Evaluate cross-client sharing and namespace isolation separately. Use the
+[team authentication configuration](../guides/tokens-and-grants.md) and distinct test
+identities for these checks; a local single-user setup does not establish team access
+boundaries.
+
+1. Give two test identities separate tokens with access to the same test namespace.
+   Save a fact with one client, then retrieve it from a fresh session in the other
+   client. Check the returned fact and its recorded writer without copying the first
+   conversation into the second.
+2. Correct the fact through the documented memory write path. Repeat the question in
+   both clients and score the current answer separately from the retained
+   [version history](../features/memory/history-and-provenance.md).
+3. Use a third identity without access to that namespace. Test key lookup, semantic
+   search and lookup by a known memory ID. Check the documented refusal or missing
+   response for each interface; neither the fact nor its existence should be exposed.
+4. Include a revoked or expired credential as a separate negative case. Record the
+   authorization result; an unrelated transport or provider failure does not prove
+   that access was denied correctly.
+
+Record the server-enforced namespace access for each identity. Report cross-client
+recall and denied-access results separately, with the client, operation and expected
+response.
+
 ### Code intelligence
 
 Index a repository that resembles your production repositories. Do not start with only

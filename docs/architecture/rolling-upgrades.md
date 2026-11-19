@@ -6,6 +6,14 @@ a time. For the length of a rollout, and again during a rollback, the previous b
 schema. These rules keep that safe. The operator procedure is in
 [upgrades](../operations/upgrades.md).
 
+Retirement of an N-1 participant also requires its authority-store work to settle.
+Under Postgres, a client without participant session tags is recertified only
+after all generic `loom` authority backends are absent, including idle pools.
+Stop and drain those legacy clients before the final retirement census; tagged
+participants can remain live. ClickHouse-authority recovery uses the verified
+deployment's ClickHouse checks. Neither path treats an unknown authority as empty.
+See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline).
+
 ## The rules
 
 1. **Migrations are additive** and run at boot under the migration lock. N-1 keeps
@@ -1012,3 +1020,27 @@ relation. Builds with the earlier probe order can refuse `insights.query` after 
 cutover because they probe the retired relation before checking the entity version.
 Statements naming a removed relation still fail its grant check; trusting the newer
 catalog does not restore a retired grant.
+
+### Connected-account registrations
+
+The account registry is additive and is read only by builds that understand connected
+sources. Such a source stores an empty legacy `kind` and credential, with its provider
+kind in `source_kind`; an older worker cannot interpret it as a shared credential. Its
+`owner_subject` and `connection_id` bind every credential checkout and publication to
+the canonical person's current account generation. The source id also distinguishes
+its mirror copies from another registration using the same item address.
+
+Keep connected and mirrored creation disabled until the fleet's mirror read and session
+protections are complete. A rollback or restore must settle source writers and perform
+the mirror cleanup described in [document sources](document-sources.md#rolling-upgrades)
+before an older build serves. Account rows restored without their matching Keeper
+fence refuse credential checkout. That refusal does not prove physical erasure: restored
+provider identities, sealed credentials and source history still need canonical-owner
+cleanup and its census. Namespace or end-user erasure cannot substitute for that exact
+owner key. `loom reconcile --apply` ends connection authority before publication for
+either restored store. On a ClickHouse-only deployment, stop all serving processes,
+restore the configured stores, then run `python dev/restore_connected_accounts.py` first
+without flags and then with `--apply`. It refuses recent worker activity and never
+remaps a scratch restore target into the deployment client. Both paths fence all
+historical connection keys and verify physical owner-history deletion. Complete the
+separate mirror-content cleanup before serving; this account procedure does not replace it.

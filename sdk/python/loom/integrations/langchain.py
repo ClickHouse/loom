@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
+from contextlib import AbstractContextManager
 from typing import Any, ClassVar, Literal
 
 try:
@@ -36,11 +37,14 @@ try:
     )
     from langchain_core.documents import Document
     from langchain_core.retrievers import BaseRetriever
+    from pydantic import PrivateAttr
 except ImportError as e:  # the framework is an optional extra
     raise ImportError(
         "loom.integrations.langchain needs langchain-core: pip install 'clickhouse-loom[langchain]'"
     ) from e
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 from loom.sync import SyncAgent
 
 
@@ -54,6 +58,18 @@ class _LoomRetriever(BaseRetriever):
     LangChain's callback tags field.)"""
 
     client_name: ClassVar[str]  # the agent's client the search runs on
+    _protection: _CallbackProtection = PrivateAttr()
+
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        bound = getattr(getattr(self.agent, "transport", None), "session_protection", None)
+        self._protection = _CallbackProtection(bound)
+
+    def _callback_scope(self) -> AbstractContextManager[None]:
+        bound = getattr(getattr(self.agent, "transport", None), "session_protection", None)
+        if automatic_roots():
+            return self._protection.automatic(bound)
+        return self._protection.observing(bound)
 
     @abstractmethod
     def _call_kwargs(self) -> dict[str, Any]: ...
@@ -73,16 +89,18 @@ class _LoomRetriever(BaseRetriever):
                 f"{type(self).__name__}.invoke needs a loom.SyncAgent; "
                 "with a loom.Agent, call ainvoke"
             )
-        return self._sync_search(query)
+        with self._callback_scope():
+            return self._sync_search(query)
 
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun
     ) -> list[Document]:
-        if isinstance(self.agent, SyncAgent):
-            # A SyncAgent blocks; its own loop thread serves the call.
-            return await asyncio.to_thread(self._sync_search, query)
-        client = getattr(self.agent, self.client_name)
-        return self._documents(await client.search(query, **self._call_kwargs()))
+        with self._callback_scope():
+            if isinstance(self.agent, SyncAgent):
+                # A SyncAgent blocks; its own loop thread serves the call.
+                return await asyncio.to_thread(self._sync_search, query)
+            client = getattr(self.agent, self.client_name)
+            return self._documents(await client.search(query, **self._call_kwargs()))
 
 
 class LoomKnowledgeRetriever(_LoomRetriever):

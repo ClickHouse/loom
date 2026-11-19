@@ -135,6 +135,12 @@ LANES: tuple[Lane, ...] = (
         "js/", "javascript", "CommonJS exports, prototype methods, an IIFE and function expressions"
     ),
     Lane(
+        "lua/",
+        "lua",
+        "module functions, methods, a local function, calls across files and `require` "
+        "includes resolved from an ancestor directory",
+    ),
+    Lane(
         "md/",
         "doc",
         "sections, cross-document links, backticked references to the TLA+ spec's names, "
@@ -420,7 +426,7 @@ def _summarize() -> dict[str, Any]:
                         pf.includes.append(hit)
         elif pf.lang == "rust":
             pf.includes = resolve_uses(rel, pf.includes, present)
-        elif pf.lang in ("proto", "gotemplate"):
+        elif pf.lang in ("proto", "gotemplate", "lua"):
             # Import candidates settle against the corpus paths
             lane = _lane_module(pf.lang)
             pf.includes = lane.resolve_imports(rel, list(pf.includes), present)
@@ -547,7 +553,7 @@ def _summarize() -> dict[str, Any]:
                 ]
         if pf.lang == "prisma":
             es = [*es, *prisma_edges(pf)]
-        if pf.lang in ("proto", "gotemplate"):
+        if pf.lang in ("proto", "gotemplate", "lua"):
             # The reference sites over the lane's table
             lane = _lane_module(pf.lang)
             es = [*es, *bind_sites(pf, lane.reference_sites(pf), gated, lane.SITE_RULES)]
@@ -571,7 +577,14 @@ def _summarize() -> dict[str, Any]:
             sql_gated = gate_name_table(name_table, SQL_LANG)
             es = [*es, *sql_edges(rel, module_scope(rel), statements, pf.symbols, sql_gated)]
             es.extend(_column_edges(rel, statements, pf, sql_gated))
-        if pf.lang in ts_langs or pf.lang in ("rust", "proto", "gotemplate", "config", "python"):
+        if pf.lang in ts_langs or pf.lang in (
+            "rust",
+            "proto",
+            "gotemplate",
+            "lua",
+            "config",
+            "python",
+        ):
             files[rel]["includes"] = list(pf.includes)
         for e in es:
             target = kind_of.get(e.to_symbol_id, "file" if e.edge_kind == "includes" else "?")
@@ -583,8 +596,10 @@ def _summarize() -> dict[str, Any]:
 
 def _lane_module(lang: str) -> Any:
     """The tree-less lane modules, as `ingest._lane_module`."""
-    from server.code.domain.extract import lang_gotemplate, lang_proto
+    from server.code.domain.extract import lang_gotemplate, lang_lua, lang_proto
 
+    if lang == "lua":
+        return lang_lua
     return lang_proto if lang == "proto" else lang_gotemplate
 
 

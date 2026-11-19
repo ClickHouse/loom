@@ -50,10 +50,8 @@ MAX_PROJECTS = 20  # not a setting: the add op's wire contract (1 to 20 projects
 # A page store's page and database ids, together, at most.
 MAX_PAGE_STORE_IDS = 20  # not a setting: the add op's wire contract, few enough to probe each
 
-# A meeting store's recordings, by `provider`: a meeting space's id (it goes into a
-# request path and a listing filter) or a numeric meeting id.
+# Zoom recording registrations use numeric meeting ids.
 RECORDING_ID_RE = {
-    "meet": re.compile(r"[A-Za-z0-9_-]{1,128}"),
     "zoom": re.compile(r"[0-9]{9,12}"),
 }
 MAX_RECORDING_IDS = 20  # not a setting: the add op's wire contract (1 to 20 ids)
@@ -128,6 +126,10 @@ class KnowledgeSource:
     # Who the documents are shown to: NAMESPACE_ACCESS or MIRRORED_ACCESS; a later build
     # may write another value, which `served` refuses.
     access: str = NAMESPACE_ACCESS
+    credential_mode: str = "shared"
+    # Connected authority is explicit; created_by remains audit attribution only.
+    owner_subject: str = ""
+    connection_id: str = ""
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -339,11 +341,8 @@ def _recording_config(config: dict[str, Any]) -> dict[str, Any]:
     for raw in raw_ids:
         # A meeting id may come as a JSON number; a bool is no id.
         value = str(raw) if isinstance(raw, int) and not isinstance(raw, bool) else raw
-        if isinstance(value, str) and provider == "meet":
-            value = value.removeprefix("spaces/")
         if not isinstance(value, str) or not id_re.fullmatch(value):
-            what = "a space id" if provider == "meet" else "a meeting id (digits)"
-            raise BadConfigError(f"config.ids: {shown(raw)} is not {what}")
+            raise BadConfigError(f"config.ids: {shown(raw)} is not a meeting id (digits)")
         if value not in ids:
             ids.append(value)
     if len(ids) > MAX_RECORDING_IDS:
@@ -566,13 +565,16 @@ def options_in(kind: str, config: dict[str, Any]) -> dict[str, Any]:
 def served(src: KnowledgeSource) -> bool:
     """Whether this build serves `src`: one shown to every reader of its namespace. A
     mirrored one, or any `access` a later build writes, is that build's."""
-    return src.access == NAMESPACE_ACCESS
+    return src.credential_mode == "shared" and src.access == NAMESPACE_ACCESS
 
 
 def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
-    folder-store source. Its ops still refuse one (`served`)."""
-    return src.access == MIRRORED_ACCESS and src.kind == "gdrive"
+    folder-store source or a person's connected page/project source."""
+    return src.access == MIRRORED_ACCESS and (
+        src.kind == "gdrive"
+        or (src.credential_mode == "connected" and src.kind in {"notion", "linear"})
+    )
 
 
 def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:

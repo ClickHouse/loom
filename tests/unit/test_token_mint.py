@@ -115,6 +115,7 @@ async def test_the_default_token_follows_live_grants_and_drops_org_wide_roles(
         "cline",
         "windsurf",
         "zed",
+        "gemini",
     }
     assert out["token"] in str(out["clients"]["cursor"]["config"])
 

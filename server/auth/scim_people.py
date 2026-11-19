@@ -42,7 +42,7 @@ def _roots(subject: str, verified_email: str, also: tuple[str, ...], org: str) -
         size += len(value.encode())
         if size > MAX_BYTES:
             raise _Refused
-    if not subject.strip() or any(not value.strip() for value in also):
+    if any(not value.strip() for value in also):
         raise _Refused
     if _encoded((subject, verified_email, also, org)) > MAX_BYTES:
         raise _Refused
@@ -135,6 +135,8 @@ class _Decision:
 
     async def refuses(self, roots: tuple[str, ...]) -> bool:
         for root in roots:
+            if not root.strip():
+                return True
             stack = [(root, False)]
             while stack:
                 self.remaining()

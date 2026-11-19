@@ -20,6 +20,7 @@ either:
         "include_contrib": false, "ignore_file": ".loomignore",
         "github_token": "", "org_readable": true,
         "git_extra_branches": "release/*",
+        "git_proxy_identity": "",
         "classification": "standard"}]
 
 Missing per-repo fields fall back to the scalar settings, so a second repo only declares
@@ -42,6 +43,7 @@ from typing import Any
 
 from server.core.errors import BackendUnavailableError, ValidationError
 from server.settings import Settings, settings
+from server.settings.catalog import GIT_PROXY_IDENTITY
 
 logger = logging.getLogger("loom.code_index.repos")
 
@@ -128,6 +130,11 @@ class RepoConfig:
     # A registry entry's `row_kind` (migration 089): "page" a branch added from the
     # page, "access" an operator entry's access row, "" a row from before the column.
     row_kind: str = ""
+    # The user name this entry's network git presents to an operator's forward proxy
+    # (settings.code_git_proxy_url, code/app/index/git_proxy.py), which decides by it
+    # what the fetch may reach and with which credential. '' = the deployment's
+    # settings.code_git_proxy_identity. Not a secret.
+    git_proxy_identity: str = ""
 
     @property
     def label(self) -> str:
@@ -553,6 +560,9 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
                 )
             org_readable = False
         git_dir, git_remote = _entry_clone_fields(e, ns, repo_name, base)
+        proxy_identity = _entry_git_proxy_identity(e, ns, errors)
+        if proxy_identity is None:
+            continue
         repos.append(
             RepoConfig(
                 org=org,
@@ -594,6 +604,7 @@ def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoC
                     str(x).strip() for x in (e.get("depends_on") or []) if str(x).strip()
                 ),
                 ignore_file=(str(e["ignore_file"]) if "ignore_file" in e else base.ignore_file),
+                git_proxy_identity=proxy_identity,
             )
         )
     if not repos:
@@ -626,6 +637,22 @@ def _entry_clone_fields(
         root = (os.path.dirname(base.git_dir.rstrip("/")) or ".") if base.git_dir else CLONE_ROOT
         git_dir = derived_git_dir(repo_name, root, fallback=ns)
     return git_dir, git_remote
+
+
+def _entry_git_proxy_identity(e: dict[str, Any], ns: str, errors: dict[str, str]) -> str | None:
+    """An entry's `git_proxy_identity` ('' when it names none), or None with the
+    reason in `errors` for a value that is not an identity: the entry is skipped, since
+    fetching it under the deployment's default identity would be a guess."""
+    raw = e.get("git_proxy_identity")
+    if raw is None or raw == "":
+        return ""
+    if isinstance(raw, str) and GIT_PROXY_IDENTITY.fullmatch(raw):
+        return raw
+    errors[f"git_proxy_identity:{ns}"] = (
+        f"code repo {ns} skipped: git_proxy_identity takes letters, digits and "
+        ". _ ~ @ - only, at most 128 characters"
+    )
+    return None
 
 
 def _globs(raw: Any) -> tuple[str, ...]:

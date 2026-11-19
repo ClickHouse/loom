@@ -311,12 +311,14 @@ async def _fetch_round(git_dir: str, cfgs: list[Any]) -> None:
     if not cfgs or _mark_age_s(git_dir, pass_fetch.FETCHED_MARK) < interval * 0.8:
         return
     first, repo = cfgs[0], code_store.CodeRepo()
-    remote, token = first.git_remote, first.github_token
+    # One fetch for the whole mirror, as its first entry: that entry's remote, token
+    # and identity at an operator's git proxy.
+    remote, token, identity = first.git_remote, first.github_token, first.git_proxy_identity
     try:
         branches, heads = await _published_refs(repo, cfgs)
         local = await gitrepo.local_branch_shas(git_dir)
         stale = [b for b, sha in branches.items() if local.get(b) != sha]
-        await gitrepo.fetch_many(git_dir, remote, stale, token=token)
+        await gitrepo.fetch_many(git_dir, remote, stale, token=token, proxy_identity=identity)
     except Exception as e:  # noqa: BLE001 — a remote or ClickHouse failure: next round
         logger.info("mirror %s: fetch failed: %s", git_dir, e)
         return
@@ -324,7 +326,7 @@ async def _fetch_round(git_dir: str, cfgs: list[Any]) -> None:
         local_heads = await gitrepo.local_pull_heads(git_dir)
         behind = [n for n, sha in heads.items() if local_heads.get(n) != sha]
         batch = behind[: max(1, int(settings.code_git_pr_head_batch))]
-        await gitrepo.fetch_pull_heads(git_dir, remote, batch, token=token)
+        await gitrepo.fetch_pull_heads(git_dir, remote, batch, token=token, proxy_identity=identity)
     except Exception as e:  # noqa: BLE001 — a PR head the remote dropped: the branches still count
         logger.info("mirror %s: PR head fetch failed: %s", git_dir, e)
     await asyncio.to_thread(pass_fetch.mark_fetched, git_dir)

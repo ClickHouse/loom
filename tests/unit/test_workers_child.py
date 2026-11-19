@@ -369,7 +369,8 @@ async def test_the_child_stops_its_loops_before_its_writes_drain(monkeypatch) ->
     async def _drain() -> None:
         events.append("drain")
 
-    async def _retire() -> None:
+    async def _retire(ch: _Ch, *, end: float) -> None:
+        assert isinstance(ch, _Ch) and end > time.monotonic()
         return None
 
     monkeypatch.setattr(ch_mod, "get_client", lambda: _Ch())

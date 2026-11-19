@@ -22,6 +22,7 @@ from server.core.ch import get_client
 from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.naming import named
+from server.embedding.documents import document_vectors
 from server.memory.api.models_evidence_transfer import (
     EvidenceChunk,
     EvidenceDigest,
@@ -66,18 +67,8 @@ def _text(v: Any) -> str:
 
 
 async def _embed_all(embedder: Any, texts: list[str]) -> list[list[float]]:
-    """One batched call where the provider has it (every shipped embedder does;
-    the Protocol only promises `embed`), else one call per text."""
-    many = getattr(embedder, "embed_many", None)
-    if many is not None:
-        vectors = await many(texts)
-        if len(vectors) != len(texts):
-            raise RuntimeError(
-                "import_evidence: embed_many returned "
-                f"{len(vectors)} vectors for {len(texts)} texts"
-            )
-        return [list(v) for v in vectors]
-    return [list(await embedder.embed(t)) for t in texts]
+    """One validated document vector for each imported text."""
+    return await document_vectors(embedder, texts)
 
 
 def _iso(v: Any) -> str:
