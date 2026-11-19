@@ -15,7 +15,7 @@ function Write-LoomWitnessPhase([string]$phase) {
 }
 [void](Invoke-LoomGuardedCompiler $native {
     param($compilerNative, $compilerJob, $compilerDeadline, $directory)
-    if ($directory.Contains('"') -or $directory.Contains("`r") -or $directory.Contains("`n")) { throw 'Unavailable' }
+    if ($directory.Contains('"') -or $directory -match '[\x00-\x1f]') { throw 'Unavailable' }
     $runtime = [Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
     if ($runtime.Contains('"') -or $runtime.Contains("`r") -or $runtime.Contains("`n")) { throw 'Unavailable' }
     $sourceFile = [IO.Path]::Combine($directory, 'witness.cs')
@@ -38,7 +38,12 @@ function Write-LoomWitnessPhase([string]$phase) {
             $receipt = @{ pid = $compilerPid; started = $compiler.StartTime.ToUniversalTime().Ticks.ToString();
                 directory = $directory; guardian = @{ pid = $guardian.Id; started = $guardian.StartTime.ToUniversalTime().Ticks.ToString() } }
             Write-LoomWitnessPhase 'identity'
-            [Console]::Out.WriteLine((ConvertTo-Json -Compress -Depth 4 $receipt))
+            # Only the validated path needs escaping in this fixed receipt.
+            $json = '{"pid":' + $receipt.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
+                ',"started":"' + $receipt.started + '","directory":"' + $directory.Replace('\', '\\') +
+                '","guardian":{"pid":' + $receipt.guardian.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
+                ',"started":"' + $receipt.guardian.started + '"}}'
+            [Console]::Out.WriteLine($json)
             [Console]::Out.Flush()
             Write-LoomWitnessPhase 'announced'
         } finally { $compiler.Dispose() }
