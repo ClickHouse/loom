@@ -338,19 +338,6 @@ def resume_read(path: Path, state: dict[str, Any]) -> None:
             write_state(path, state)
 
 
-def state_for_command(state: dict[str, Any]) -> Command:
-    from server.cli.cell_each import Command
-
-    _validate(state)
-    command = state["command"]
-    return Command(
-        command["action"],
-        command["mutating"],
-        _json(command["arguments"]).decode(),
-        command["digest"],
-    )
-
-
 @contextmanager
 def private_parent(path: Path) -> Iterator[tuple[int, str]]:
     """Pin every directory without following links; the leaf remains owner-only."""

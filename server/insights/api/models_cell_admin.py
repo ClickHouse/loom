@@ -247,7 +247,3 @@ class CellBlacklistGlobalAddInput(CellActionInput):
 
 class CellBlacklistGlobalListInput(CellActionInput):
     limit: int = Field(default=50, ge=1, le=50)
-
-
-class CellBlacklistGlobalRemoveInput(CellActionInput):
-    pattern_id: PatternID
