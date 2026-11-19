@@ -334,6 +334,9 @@ async def _until_done(
             done, _ = await asyncio.wait({fut}, timeout=timeout)
             if done:
                 return running
+            # A renewal can land while the previous deadline's wait resumes.
+            if lease.fresh():
+                continue
             log.warning(
                 "supervisor lease: no renewal within %.0f s; stopping the workers",
                 float(settings.supervisor_lease_ttl_s) / 2,
