@@ -2020,7 +2020,7 @@
           "description": "code.search HyDE: writes a hypothetical indexed passage whose embedding runs a second vector list (see code_search_hyde_*). \"\" = off."
         },
         "code_search_kind_prior": {
-          "default": "structural",
+          "default": "flat",
           "enum": [
             "off",
             "default",
@@ -2116,7 +2116,7 @@
           "description": "Chunk units a file voted by code.search's PR leg contributes."
         },
         "code_search_prose_penalty": {
-          "default": 1.0,
+          "default": 0.25,
           "type": "number",
           "description": "Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off."
         },

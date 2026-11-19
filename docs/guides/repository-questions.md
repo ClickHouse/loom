@@ -25,12 +25,12 @@ and calibration, and [debugging](debugging.md) for retrieval diagnostics.
 
 ## Configure mixed source and documentation retrieval
 
-The defaults give documentation its retrieval score without a blanket file-type
-penalty, apply the structural prior named by the question, and allow synthesis to
-write up to 4,000 tokens. The output cap permits an answer to finish; it does not
-require an answer to use the whole budget.
+The defaults apply a 0.25 multiplier to prose, use the flat chunk-kind prior,
+and allow synthesis to write up to 900 tokens. The output cap limits cost and
+answer length. A response that reaches the cap discloses incomplete synthesis.
 
-The same values can be set explicitly in the [settings file](../reference/configuration.md):
+For a mixed source and documentation workload, compare the defaults with this
+explicit [settings file](../reference/configuration.md) configuration:
 
 ```yaml
 version: 1

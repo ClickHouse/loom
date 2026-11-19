@@ -44,7 +44,6 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
-| 1.3.1 | `LOOM_CODE_SEARCH_PROSE_PENALTY` | `0.25` | `1.0` | Repository documentation competes with source at its retrieval score, without a blanket penalty for the file type. Set 0.25 to prefer source. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'code.search,code.symbol'` | `''` | Leave tool loading to the host so sessions do not need unused code schemas upfront. Set an explicit operation list to request eager loading. |
 | 1.2.0 | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `2` | `0` | The ingest worker takes the next job as soon as one ends instead of waiting 2 s after every job, so a queue of small documents drains at the speed of its jobs; a pass that finds no job still waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`. |
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
@@ -667,8 +666,8 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_SEARCH_RERANK_TOP` | `int` | `20` |  | How many fused units the default rerank reads. |
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
 | `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
-| `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
-| `LOOM_CODE_SEARCH_KIND_PRIOR` | `'off' \| 'default' \| 'flat' \| 'structural'` | `'structural'` |  | Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it. |
+| `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
+| `LOOM_CODE_SEARCH_KIND_PRIOR` | `'off' \| 'default' \| 'flat' \| 'structural'` | `'flat'` |  | Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it. |
 | `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds `code_search_catalogue_penalty` applies to. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |

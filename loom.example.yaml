@@ -2046,11 +2046,11 @@ settings:
   # Fusion multiplier for prose files (documentation, release notes, changelogs) unless
   # the query asks for documentation or the search is constrained to paths; 1.0 = off.
   # [restart]
-  # code_search_prose_penalty: 1.0
+  # code_search_prose_penalty: 0.25
 
   # Chunk-kind ranking prior when the request names none: structural boosts the kind
   # named by the question; flat/default apply fixed tables; off disables it. [restart]
-  # code_search_kind_prior: "structural"
+  # code_search_kind_prior: "flat"
 
   # The question kinds `code_search_catalogue_penalty` applies to. [restart]
   # code_search_catalogue_kinds: "responsibility"

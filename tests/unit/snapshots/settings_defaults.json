@@ -361,7 +361,7 @@
  "code_search_hyde_kinds": "responsibility",
  "code_search_hyde_max_tokens": 220,
  "code_search_hyde_model": "",
- "code_search_kind_prior": "structural",
+ "code_search_kind_prior": "flat",
  "code_search_llm_leg_grace_ms": 0,
  "code_search_llm_legs_default": "auto",
  "code_search_low_risk_from": 0.55,

@@ -69,14 +69,4 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "upfront. Set an explicit operation list to request eager loading."
         ),
     ),
-    DefaultChange(
-        version="1.3.1",
-        name="code_search_prose_penalty",
-        old=0.25,
-        new=1.0,
-        why=(
-            "Repository documentation competes with source at its retrieval score, "
-            "without a blanket penalty for the file type. Set 0.25 to prefer source."
-        ),
-    ),
 )
