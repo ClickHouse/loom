@@ -39,6 +39,18 @@ from typing import Any
 EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh")
 # Re-sends one call may spend learning what its model takes.
 MAX_NEGOTIATION = 4
+
+_PARTIAL_STOPS = frozenset(
+    {
+        "content_filter",
+        "refusal",
+        "length",
+        "max_tokens",
+        "content_filtered",
+        "guardrail_intervened",
+        "model_context_window_exceeded",
+    }
+)
 # The least reasoning a starved reply is taken to have spent: a tiny cap
 # (a 3-token judge) would otherwise grow by a few tokens per try.
 STARVED_FLOOR = 1024
@@ -62,6 +74,11 @@ class Traits:
 
 
 _TRAITS: dict[str, Traits] = {}
+
+
+def is_complete_stop(stop_reason: str) -> bool:
+    """False when the provider reports a cut or refused reply; empty is unreported."""
+    return stop_reason not in _PARTIAL_STOPS
 
 
 def traits(model: str) -> Traits:
