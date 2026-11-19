@@ -240,9 +240,11 @@ embedder-specific; a threshold measured for one model is not a deployment-wide d
 The Models & keys form can select Bedrock for either role and validates it using the
 server's AWS credentials. Validation makes billable requests only after Test & apply.
 A missing or expired credential is an error, never a fake-provider fallback.
-An explicitly rejected temperature parameter is omitted on one bounded retry and
-later requests for that model. Other validation errors and authorization failures
-propagate unchanged. The elapsed deadline also covers this negotiation.
+Documented sampling restrictions omit temperature before the first request,
+including regional model IDs and inference-profile ARNs that name a known model.
+For other models, an explicitly rejected temperature parameter is omitted on one
+bounded retry and later requests. Other validation errors and authorization
+failures propagate unchanged. The elapsed deadline also covers this negotiation.
 `bedrock:messages` and `bedrock:embeddings` feed the existing provider health report;
 a successful later call clears a recorded failure.
 
@@ -282,10 +284,16 @@ client passes it through. The Anthropic client has no JSON mode: it appends a JS
 directive to the system prompt, strips code fences and marks the system block cacheable.
 The caller parses (`server/llm/json_text.py`).
 
-**Request shape per model, learned.** No model name decides what a request carries.
-Each client builds the request it would like (temperature, the lowest reasoning effort,
-an output cap), and `server/llm/traits.py` learns from the provider's answers, once per
-model per process:
+**Request shape per model.** `server/llm/traits.py` seeds documented sampling
+restrictions for Claude Opus 4.7, 4.8, 5 and 5.5, Sonnet 5 and 5.5, and Haiku 5.5.
+The OpenAI-compatible, Anthropic and Bedrock clients omit temperature for these
+models before the first request, including after a process restart. Models that
+accept temperature keep the caller's value. An opaque gateway alias or application
+inference-profile ARN does not identify its backing model and receives no inferred
+restriction.
+
+Each client builds the rest of its request (the lowest reasoning effort and an
+output cap), and provider responses teach other traits once per model per process:
 
 - a 400 naming a field the model does not take (`temperature`, `reasoning_effort`, an
   `output_config`, the cap field under its other name) drops that field: the call is
@@ -298,8 +306,9 @@ model per process:
   `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX`), added to every caller's cap. A reply that hit
   the cap with no visible text is re-sent once with the ceiling as its reserve.
 
-A new model therefore needs no code change; its first call or two teach the process
-what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
+An unrecognized model learns traits from its responses. Documented sampling
+restrictions avoid a rejected request for known models; learned traits supplement
+them. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
 
 ### Retries, timeouts, fallback
 
