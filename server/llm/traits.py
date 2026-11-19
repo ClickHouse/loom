@@ -49,6 +49,8 @@ _PARTIAL_STOPS = frozenset(
         "content_filtered",
         "guardrail_intervened",
         "model_context_window_exceeded",
+        "malformed_model_output",
+        "malformed_tool_use",
     }
 )
 # The least reasoning a starved reply is taken to have spent: a tiny cap

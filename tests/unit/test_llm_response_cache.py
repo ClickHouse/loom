@@ -193,6 +193,8 @@ async def test_a_reply_the_provider_cut_is_not_memoed() -> None:
         "content_filtered",
         "guardrail_intervened",
         "model_context_window_exceeded",
+        "malformed_model_output",
+        "malformed_tool_use",
     ):
         inner = _Inner(text='{"facts":[{"key":"k","value":"cut mid')
 
