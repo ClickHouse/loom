@@ -50,6 +50,7 @@ from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.core.errors import error_kind
+from server.llm import customer
 from server.llm.traits import is_complete_stop
 from server.observability.genai import staged
 from server.settings import settings
@@ -99,6 +100,8 @@ async def ask(
 
     try:
         qvec = await embedder.embed(question)
+    except customer.HOLDS:
+        raise
     except Exception as exc:  # noqa: BLE001 — lexical evidence remains useful without embeddings
         logger.warning("code.ask question embedding unavailable: %s", error_kind(exc))
         qvec = []
@@ -234,6 +237,8 @@ async def _grounded_answer(
             memories=[f"[{m.label}] {m.text}" if m.label else m.text for m in memory.items],
             history=history,
         )
+    except customer.HOLDS:
+        raise
     except Exception as exc:  # noqa: BLE001 — return cited evidence when synthesis is unavailable
         logger.warning("code.ask synthesis unavailable: %s", error_kind(exc))
         result = AskResult(

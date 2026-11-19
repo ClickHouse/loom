@@ -58,14 +58,14 @@ not select a paid provider. All settings are listed in the
 
 `code.ask` exposes separate signals:
 
-| Field | Meaning |
-| --- | --- |
-| `citations` | Indexed source ranges supplied as evidence for the answer. |
-| `retrieval_confidence` | Confidence in retrieval, not a grade of the answer. |
-| `coverage` | The synthesizer's `full`, `partial`, or `none` self-assessment; empty when not assessed, including cached answers. This is not verified correctness. |
-| `partial` | A retrieval or provider limit prevented a complete response. |
-| `partial_reason`, `note` | The missing retrieval leg, deadline, or synthesis limitation. |
-| `abstain`, `abstain_reason` | No grounded answer is returned and why. |
+| Field                       | Meaning                                                                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `citations`                 | Indexed source ranges supplied as evidence for the answer.                                                                                           |
+| `retrieval_confidence`      | Confidence in retrieval, not a grade of the answer.                                                                                                  |
+| `coverage`                  | The synthesizer's `full`, `partial`, or `none` self-assessment; empty when not assessed, including cached answers. This is not verified correctness. |
+| `partial`                   | A retrieval or provider limit prevented a complete response.                                                                                         |
+| `partial_reason`, `note`    | The missing retrieval leg, deadline, or synthesis limitation.                                                                                        |
+| `abstain`, `abstain_reason` | No grounded answer is returned and why.                                                                                                              |
 
 A failed embedding provider can leave lexical evidence available. Search and answers
 disclose that limitation rather than presenting lexical-only results as healthy hybrid

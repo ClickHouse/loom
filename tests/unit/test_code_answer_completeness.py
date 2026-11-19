@@ -11,6 +11,7 @@ from server.code.app import answers, answers_entry
 from server.code.app.answers_entry import _AskCtx, cache_key_for
 from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
+from server.llm import customer
 
 
 async def _grounded(
@@ -76,6 +77,8 @@ async def test_complete_answer_keeps_text_past_character_limit(
         "refusal",
         "content_filtered",
         "guardrail_intervened",
+        "malformed_model_output",
+        "malformed_tool_use",
     ],
 )
 async def test_cut_answer_discloses_partial_and_is_not_memoized(
@@ -191,8 +194,10 @@ def test_ranking_changes_invalidate_cached_answers(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("factory_missing", [False, True])
 async def test_wire_response_keeps_incomplete_retrieval_warning(
     monkeypatch: pytest.MonkeyPatch,
+    factory_missing: bool,
 ) -> None:
     from server.code.api.models_search import CodeAskInput
     from server.code.app import ask as handler
@@ -220,9 +225,13 @@ async def test_wire_response_keeps_incomplete_retrieval_warning(
     monkeypatch.setattr(handler, "record_code_ask_cache", lambda **k: None)
     monkeypatch.setattr(handler, "schedule_code_trace", lambda **k: None)
     monkeypatch.setattr(handler, "set_code_span_attributes", lambda **k: None)
-    monkeypatch.setattr(
-        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="fake")
-    )
+
+    def embedding_factory() -> Any:
+        if factory_missing:
+            raise RuntimeError("provider configuration unavailable")
+        return SimpleNamespace(model_name="fake")
+
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", embedding_factory)
     monkeypatch.setattr("server.observability.langfuse_scores.record_ask_scores", lambda **k: None)
     monkeypatch.setattr(answers, "ask", answer)
     result = await handler.handle_code_ask(
@@ -233,3 +242,51 @@ async def test_wire_response_keeps_incomplete_retrieval_warning(
     assert payload["partial_reason"] == "vector unavailable"
     assert payload["coverage"] == "partial"
     assert payload["note"] == "Semantic retrieval was unavailable."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["factory", "embedding", "synthesis"])
+@pytest.mark.parametrize("error_type", customer.HOLDS, ids=lambda cls: cls.__name__)
+async def test_policy_holds_never_become_provider_degradation(
+    monkeypatch: pytest.MonkeyPatch, stage: str, error_type: type[Exception]
+) -> None:
+    error = error_type("held by policy")
+
+    def held_factory() -> Any:
+        raise error
+
+    async def held(*args: Any, **kwargs: Any) -> Any:
+        raise error
+
+    async def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("A policy hold cannot continue retrieval or caching")
+
+    monkeypatch.setattr(answers, "_answer_fresh", forbidden)
+    monkeypatch.setattr(answers, "_serve_from_cache", forbidden)
+    monkeypatch.setattr(answers, "_remember", forbidden)
+    with pytest.raises(error_type) as caught:
+        if stage == "factory":
+            from server.code.api.models_search import CodeAskInput
+            from server.code.app import ask as handler
+
+            monkeypatch.setattr(handler, "require_code_intel", lambda: None)
+            monkeypatch.setattr(
+                handler, "resolve_code_identity", lambda *a: ("test-org", "test-code")
+            )
+            monkeypatch.setattr(handler, "CodeRepo", SimpleNamespace)
+            monkeypatch.setattr("server.embedding.embedder.get_embedder", held_factory)
+            await handler.handle_code_ask(CodeAskInput(question="Where?", synthesize=False))
+        elif stage == "embedding":
+            await answers.ask(
+                SimpleNamespace(),
+                "test-org",
+                "test-code",
+                question="Where?",
+                embedder=SimpleNamespace(model_name="fake", embed=held),
+                llm=None,
+                search_kwargs={},
+            )
+        else:
+            monkeypatch.setattr(answers, "_synthesize", held)
+            await _grounded(monkeypatch, "Unused.")
+    assert caught.value is error
