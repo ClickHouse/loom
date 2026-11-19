@@ -800,15 +800,16 @@ a checkout's `git submodule update`, in the workers and in every serving process
 keep mirrors of their own. While the setting is set git never connects directly: a job
 that cannot go through the proxy is refused.
 
-| Setting                          | Meaning                                                                                             |
-| -------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `LOOM_CODE_GIT_PROXY_URL`        | the proxy, `http://host:port` or `https://host:port`: the port named, no credentials, path or query |
-| `LOOM_CODE_GIT_PROXY_TOKEN_FILE` | a file holding the proxy password, read again for every git job, so a rotated token is taken up     |
-| `LOOM_CODE_GIT_PROXY_CA_FILE`    | a PEM bundle git verifies TLS with through the proxy                                                |
-| `LOOM_CODE_GIT_PROXY_IDENTITY`   | the proxy user of an entry that names no `git_proxy_identity`                                       |
+| Setting                           | Meaning                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `LOOM_CODE_GIT_PROXY_URL`         | the proxy, `http://host:port` or `https://host:port`: the port named, no credentials, path or query |
+| `LOOM_CODE_GIT_PROXY_TOKEN_FILE`  | a file holding the proxy password, read again for every git job, so a rotated token is taken up     |
+| `LOOM_CODE_GIT_PROXY_CA_FILE`     | a PEM bundle git verifies the remotes with through the proxy                                        |
+| `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` | a PEM bundle git verifies an `https://` proxy's own certificate with                                |
+| `LOOM_CODE_GIT_PROXY_IDENTITY`    | the proxy user of an entry that names no `git_proxy_identity`                                       |
 
-The last three need the first, and a value that does not fit is refused when the
-settings load.
+The other four need the first, the proxy's own bundle an `https://` one, and a value
+that does not fit is refused when the settings load.
 
 **What the proxy receives.** Git opens `CONNECT <remote host>:443` with
 `Proxy-Authorization: Basic` on its first request: the user is the entry's identity, the
@@ -817,7 +818,8 @@ entry's access token goes to the remote, inside the tunnel, never to the proxy. 
 that terminates TLS for a remote can then decide, by the identity, which repository a
 job reaches and with which credential. An `http://` proxy URL sends the identity and the
 token to the proxy in clear on every job: use one only over a path you trust, or give
-the proxy an `https://` URL.
+the proxy an `https://` URL, which git verifies before it sends them (_The CA bundles_
+below).
 
 **The identity.** An entry presents its own `git_proxy_identity`, else
 `LOOM_CODE_GIT_PROXY_IDENTITY`: letters, digits and `. _ ~ @ -`, at most 128 characters.
@@ -846,11 +848,25 @@ uses the proxy, repository jobs are plain processes, so a compiler tier's build 
 Loom's user and can read the token file. Run compiler tiers there only for repositories
 you trust.
 
-**The CA bundle** is git's `http.sslCAInfo`, which replaces git's default roots for
-these jobs: it must hold every authority the remotes present through the proxy, the
-proxy's own for a remote whose TLS it terminates and the public roots for a remote it
-tunnels untouched. The certificate of an `https://` proxy itself is checked against
-git's default roots.
+**The CA bundles.** There are two, one for each TLS connection, and neither stands in
+for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo`: the
+bundle git verifies an `https://` proxy's own certificate with, before it sends the
+identity and the token. Without it git checks the proxy against its default roots, so a
+proxy whose certificate comes from an authority of your own needs it.
+`LOOM_CODE_GIT_PROXY_CA_FILE` is git's `http.sslCAInfo`, which replaces git's default
+roots for the remotes of these jobs: it must hold every authority the remotes present
+through the proxy, the proxy's own for a remote whose TLS it terminates and the public
+roots for a remote it tunnels untouched. Loom reads neither file: git does, and a path
+that names no file fails the job there.
+
+A certificate git cannot verify fails the job in git's own words, the same for the
+proxy's certificate and a remote's (`SSL certificate problem: unable to get local issuer
+certificate` with one TLS library; the wording is the library's). When it is the
+proxy's, git ends the handshake before its first request, so neither the identity nor
+the token leaves. A fetch records git's words on the `fetch` tier, as an unclassified
+error. A clone shows `git clone failed (exit 128)` with git's words in the server log,
+and the `ls-remote` before an add shows `git ls-remote failed for <repository>`: check
+the two bundles when an entry's first contact fails that way.
 
 **Refused jobs.** Each of these stops the job before any process starts, with a fixed
 reason that the entry's `fetch` tier, its stage and the mirror counts in `/v1/health`
@@ -877,7 +893,7 @@ proxy nor its password and connects as before. Loom's HTTP clients (the GitHub A
 PR history and fork lookups, issuer keys, document sources) do not read these settings.
 
 [Kubernetes](./kubernetes.md#git-through-a-forward-proxy) shows the mounts for the
-token and the CA bundle.
+token and the CA bundles.
 
 ### Mirror housekeeping
 

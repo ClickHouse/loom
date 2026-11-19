@@ -1238,6 +1238,13 @@ settings:
   # [restart]
   # code_git_proxy_ca_file: ""
 
+  # PEM bundle git verifies the proxy's own certificate with, in place of its default
+  # roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one
+  # is for the remote, behind a proxy that terminates TLS under its own authority; this
+  # one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url.
+  # [restart]
+  # code_git_proxy_tls_ca_file: ""
+
   # The proxy user of an entry that names no `git_proxy_identity`: letters, digits and
   # `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs
   # code_git_proxy_url. [restart]

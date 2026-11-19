@@ -1086,6 +1086,11 @@ class CodeSettings(BaseModel):
     # PEM bundle git verifies TLS with through the proxy, in place of its default roots
     # (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url.
     code_git_proxy_ca_file: str = ""
+    # PEM bundle git verifies the proxy's own certificate with, in place of its default
+    # roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one
+    # is for the remote, behind a proxy that terminates TLS under its own authority; this
+    # one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url.
+    code_git_proxy_tls_ca_file: str = ""
     # The proxy user of an entry that names no `git_proxy_identity`: letters, digits and
     # `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs
     # code_git_proxy_url.
@@ -1110,11 +1115,17 @@ class CodeSettings(BaseModel):
         needs_url = {
             "LOOM_CODE_GIT_PROXY_TOKEN_FILE": self.code_git_proxy_token_file,
             "LOOM_CODE_GIT_PROXY_CA_FILE": self.code_git_proxy_ca_file,
+            "LOOM_CODE_GIT_PROXY_TLS_CA_FILE": self.code_git_proxy_tls_ca_file,
             "LOOM_CODE_GIT_PROXY_IDENTITY": identity,
         }
         for variable, value in needs_url.items():
             if value and not url:
                 raise ValueError(f"{variable} needs LOOM_CODE_GIT_PROXY_URL")
+        if self.code_git_proxy_tls_ca_file and urlsplit(url).scheme != "https":
+            raise ValueError(
+                "LOOM_CODE_GIT_PROXY_TLS_CA_FILE needs an https:// LOOM_CODE_GIT_PROXY_URL: "
+                "an http:// proxy has no TLS of its own to verify"
+            )
         if identity and not GIT_PROXY_IDENTITY.fullmatch(identity):
             raise ValueError(
                 "LOOM_CODE_GIT_PROXY_IDENTITY takes letters, digits and . _ ~ @ - only, "

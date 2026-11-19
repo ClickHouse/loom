@@ -136,6 +136,32 @@ async def test_a_network_git_job_gets_the_proxy_and_its_credentials_in_its_own_e
     assert given == before
 
 
+async def test_git_gets_a_bundle_for_the_proxy_s_own_certificate_only_when_one_is_set(
+    proxy: Path, spawned: _Spawned, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An https:// proxy is verified with LOOM_CODE_GIT_PROXY_TLS_CA_FILE, which is not
+    the remote's bundle: without it git keeps its default roots for the proxy."""
+    monkeypatch.setattr(settings, "code_git_proxy_url", "https://proxy.example:8443")
+    monkeypatch.setattr(settings, "code_git_proxy_ca_file", str(tmp_path / "ca.pem"))
+    given = gitrepo.auth_env("repo-token", REMOTE)
+    before = dict(given)
+
+    async def _config() -> dict[str, str]:
+        access = gitrepo.remote_access(REMOTE, IDENTITY)
+        await sandbox.run_job(["git", "ls-remote", REMOTE], env=given, timeout_s=5, **access)
+        return git_config(spawned.env)
+
+    config = await _config()
+    assert config["http.proxy"] == f"https://{IDENTITY}:{ENCODED}@proxy.example:8443"
+    assert config["http.sslCAInfo"] == str(tmp_path / "ca.pem")
+    assert "http.proxySSLCAInfo" not in config
+    monkeypatch.setattr(settings, "code_git_proxy_tls_ca_file", str(tmp_path / "proxy-ca.pem"))
+    config = await _config()
+    assert config["http.proxySSLCAInfo"] == str(tmp_path / "proxy-ca.pem")
+    assert config["http.sslCAInfo"] == str(tmp_path / "ca.pem")
+    assert given == before
+
+
 @pytest.mark.parametrize(
     ("entry", "default", "presented"),
     [

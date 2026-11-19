@@ -665,7 +665,20 @@ other than 443 needs a `networkPolicy.extraEgress` rule.
 
 An `http://` proxy URL, as above, sends the identity and the token to the proxy in clear
 on every job: keep that path inside a network you trust, or give the proxy an `https://`
-URL.
+URL. Git then verifies the proxy's certificate before it sends them, against its default
+roots. For a certificate under an authority of your own, mount that authority's bundle
+and name it:
+
+```yaml
+env:
+  LOOM_CODE_GIT_PROXY_URL: https://git-proxy.example:8443
+  LOOM_CODE_GIT_PROXY_TLS_CA_FILE: /etc/git-proxy/proxy-ca.crt
+```
+
+`proxy-ca.crt` is one more key of the `git-proxy-ca` config map here. It is not
+`LOOM_CODE_GIT_PROXY_CA_FILE`, which verifies the remotes behind a proxy that terminates
+their TLS: a proxy that does both under one authority gets the same file in both
+settings.
 
 The proxy and the [repository-job sandbox](#repository-job-sandbox) are not used
 together. `sandbox.required: false` alone does not keep the sandbox off: a pod whose
