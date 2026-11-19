@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 FILMING_CASE = "tests/integration/_pipecat_video_ci.py"
@@ -57,6 +58,26 @@ EXPECTED_RECEIPT = {
 SUMMARY = re.compile(r"1 passed(?:, [0-9]+ warnings?)? in [0-9]+\.[0-9]+s")
 PROGRESS = re.compile(r"\.[ ]+\[100%\]")
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+DRIVER_ERRORS = frozenset(
+    {
+        "invalid argument",
+        "invalid session id",
+        "javascript error",
+        "no such window",
+        "session not created",
+        "timeout",
+        "unknown command",
+        "unknown error",
+        "unsupported operation",
+    }
+)
+CAPTURE_FAILURE_KINDS = (
+    (HTTPError, "http"),
+    (OSError, "io"),
+    (KeyError, "key"),
+    (TypeError, "type"),
+    (ValueError, "value"),
+)
 
 
 def digest(path: Path) -> str:
@@ -68,18 +89,39 @@ def write_private(path: Path, data: bytes) -> None:
         out.write(data)
 
 
+def driver_error_name(value: object) -> str:
+    name = value.get("error") if isinstance(value, dict) else None
+    return name if isinstance(name, str) and name in DRIVER_ERRORS else "unrecognized"
+
+
 def driver_call(state: dict, method: str, path: str, payload: dict | None = None):
+    state["driver_http_status"] = 0
+    state["driver_error"] = "unavailable"
     if not owned_listener(state["driver"], state["driver_port"]):
         raise ValueError("driver_listener_not_owned")
     body = None if payload is None else json.dumps(payload).encode()
     request = Request(state["url"] + path, data=body, method=method)
     request.add_header("Content-Type", "application/json")
-    with urlopen(request, timeout=3) as response:
-        raw = response.read(24 * 1024 * 1024 + 1)
+    try:
+        with urlopen(request, timeout=3) as response:
+            state["driver_http_status"] = response.status
+            raw = response.read(24 * 1024 * 1024 + 1)
+    except HTTPError as error:
+        state["driver_http_status"] = error.code
+        try:
+            diagnostic = error.read1(4097)
+            if len(diagnostic) <= 4096:
+                reply = json.loads(diagnostic)
+                if isinstance(reply, dict):
+                    state["driver_error"] = driver_error_name(reply.get("value"))
+        except (OSError, ValueError, TypeError):
+            pass
+        raise
     if len(raw) > 24 * 1024 * 1024:
         raise ValueError("driver_response_too_large")
     value = json.loads(raw)["value"]
     if isinstance(value, dict) and "error" in value:
+        state["driver_error"] = driver_error_name(value)
         raise ValueError("driver_command_refused")
     return value
 
@@ -295,11 +337,14 @@ def admit_workload(state: dict) -> Path:
 
 
 def start_capture(state: dict, private: Path) -> None:
+    # Fixed stages identify setup failures without exporting browser logs or paths.
+    state["capture_stage"] = 1  # tools
     driver_binary = shutil.which("chromedriver")
     media_binary = shutil.which("mediainfo")
     if driver_binary is None or media_binary is None:
         raise ValueError("runner_tool_missing")
     state["mediainfo"] = media_binary
+    state["capture_stage"] = 2  # private driver endpoint
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -313,6 +358,7 @@ def start_capture(state: dict, private: Path) -> None:
         os.open(private / "driver.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
     )
     state["driver_log"] = log
+    state["capture_stage"] = 3  # driver launch
     start_owned(
         state,
         "driver",
@@ -322,6 +368,7 @@ def start_capture(state: dict, private: Path) -> None:
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    state["capture_stage"] = 4  # owned driver readiness
     ready_until = time.monotonic() + 5
     while True:
         if owned_listener(state["driver"], port):
@@ -333,6 +380,7 @@ def start_capture(state: dict, private: Path) -> None:
         if time.monotonic() >= ready_until:
             raise ValueError("driver_unavailable")
         time.sleep(0.1)
+    state["capture_stage"] = 5  # browser session
     session = driver_call(
         state,
         "POST",
@@ -355,11 +403,14 @@ def start_capture(state: dict, private: Path) -> None:
     )
     state["session"] = session["sessionId"]
     html = Path(__file__).with_name("terminal.html").resolve()
+    state["capture_stage"] = 6  # local capture page
     driver_call(state, "POST", "/session/" + state["session"] + "/url", {"url": html.as_uri()})
+    state["capture_stage"] = 7  # canvas encoder
     result = javascript(state, "return window.beginCapture();")
     if result != "recording":
         raise ValueError("browser_encoder_unavailable")
     state["started"] = time.monotonic()
+    state["capture_stage"] = 8  # setup complete
 
 
 def display(state: dict, label: str) -> None:
@@ -561,8 +612,17 @@ def main() -> int:
             start_capture(state, Path(temporary.name))
             state["active"] = True
             state["reason"] = "recording"
-        except Exception:  # noqa: BLE001 — recorder setup must not skip the native check
+        except Exception as error:  # noqa: BLE001 — setup must not skip the native check
             state["reason"] = "capture_setup_unqualified"
+            state["capture_failure"] = {
+                "stage": state.get("capture_stage", 0),
+                "kind": next(
+                    (name for kind, name in CAPTURE_FAILURE_KINDS if isinstance(error, kind)),
+                    "other",
+                ),
+                "http_status": state.get("driver_http_status", 0),
+                "driver_error": state.get("driver_error", "unavailable"),
+            }
             # Never write a status into a pre-existing output directory.
             if output is not None and temporary is None:
                 output = None
@@ -642,6 +702,7 @@ def main() -> int:
                     "omitted_stdout_lines",
                     "receipt_sha256",
                     "video",
+                    "capture_failure",
                 )
             }
             summary["intended_public_artifact_synthetic_content_only"] = True

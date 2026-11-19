@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import json
 import os
 import signal
 from pathlib import Path
 from unittest import mock
+from urllib.error import HTTPError
 
 import pytest
 
@@ -176,7 +179,13 @@ def test_changed_group_birth_refuses_signalling(recorder):
 )
 def test_foreign_driver_receives_no_request(recorder, method, path):
     module, _ = recorder
-    state = {"driver": object(), "driver_port": 33333, "url": "http://127.0.0.1:33333"}
+    state = {
+        "driver": object(),
+        "driver_port": 33333,
+        "url": "http://127.0.0.1:33333",
+        "driver_http_status": 200,
+        "driver_error": "unknown error",
+    }
     with (
         mock.patch.object(module, "owned_listener", return_value=False),
         mock.patch.object(module, "urlopen") as foreign,
@@ -184,6 +193,8 @@ def test_foreign_driver_receives_no_request(recorder, method, path):
         with pytest.raises(ValueError, match="driver_listener_not_owned"):
             module.driver_call(state, method, path)
     foreign.assert_not_called()
+    assert state["driver_http_status"] == 0
+    assert state["driver_error"] == "unavailable"
 
 
 def test_foreign_success_cannot_admit_failed_driver_bind(recorder, tmp_path):
@@ -232,3 +243,92 @@ def test_probe_defers_pending_cancellation_until_registration(recorder, signum):
     assert state["probe"] is child
     assert state["registering"] is False
     communicate.assert_not_called()
+
+
+def test_capture_failure_reports_fixed_diagnostics_without_exception_text(recorder):
+    module, _ = recorder
+    secret = "private-capture-marker"
+
+    def fail(state, _private):
+        state["capture_stage"] = 5
+        raise ValueError(secret)
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=fail),
+        mock.patch.object(module, "run_native", return_value=0),
+    ):
+        assert module.main() == 0
+    output = Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public/recording-status.json"
+    raw = output.read_text()
+    status = json.loads(raw)
+    assert status["reason"] == "capture_setup_unqualified"
+    assert status["capture_failure"] == {
+        "stage": 5,
+        "kind": "value",
+        "http_status": 0,
+        "driver_error": "unavailable",
+    }
+    assert secret not in raw
+    assert status["video"] is None
+
+
+@pytest.mark.parametrize(
+    "error_name,expected",
+    [("session not created", "session not created"), ("private-marker", "unrecognized")],
+)
+def test_driver_http_failure_exports_only_allowlisted_reason(recorder, error_name, expected):
+    module, _ = recorder
+    body = json.dumps({"value": {"error": error_name, "message": "private-message"}}).encode()
+    failure = HTTPError("http://private.invalid", 500, "private-reason", {}, io.BytesIO(body))
+    state = {"driver": object(), "driver_port": 33333, "url": "http://127.0.0.1:33333"}
+    with (
+        mock.patch.object(module, "owned_listener", return_value=True),
+        mock.patch.object(module, "urlopen", side_effect=failure),
+    ):
+        with pytest.raises(HTTPError) as raised:
+            module.driver_call(state, "POST", "/session")
+    assert raised.value is failure
+    assert state["driver_http_status"] == 500
+    assert state["driver_error"] == expected
+    diagnostics = {k: v for k, v in state.items() if k.startswith("driver_")}
+    assert "private-message" not in json.dumps(diagnostics)
+
+
+def test_driver_http_diagnostic_body_is_bounded(recorder):
+    module, _ = recorder
+    body = mock.Mock()
+    body.read1.return_value = b"x" * 4097
+    failure = HTTPError("http://private.invalid", 500, "private-reason", {}, body)
+    state = {"driver": object(), "driver_port": 33333, "url": "http://127.0.0.1:33333"}
+    with (
+        mock.patch.object(module, "owned_listener", return_value=True),
+        mock.patch.object(module, "urlopen", side_effect=failure),
+    ):
+        with pytest.raises(HTTPError):
+            module.driver_call(state, "POST", "/session")
+    body.read1.assert_called_once_with(4097)
+    assert state["driver_http_status"] == 500
+    assert state["driver_error"] == "unavailable"
+
+
+def test_capture_stage_identifies_session_creation_failure(recorder, tmp_path):
+    module, _ = recorder
+    state = {}
+
+    def launch(state, key, *_args, **_kwargs):
+        state[key] = object()
+
+    with (
+        mock.patch.object(module.shutil, "which", return_value="/inert/not-executed"),
+        mock.patch.object(module.socket, "socket") as sockets,
+        mock.patch.object(module, "start_owned", side_effect=launch),
+        mock.patch.object(module, "owned_listener", return_value=True),
+        mock.patch.object(module, "driver_call", side_effect=[{}, ValueError("private-message")]),
+    ):
+        sockets.return_value.__enter__.return_value.getsockname.return_value = ("127.0.0.1", 33333)
+        try:
+            with pytest.raises(ValueError, match="private-message"):
+                module.start_capture(state, tmp_path)
+        finally:
+            state["driver_log"].close()
+    assert state["capture_stage"] == 5
