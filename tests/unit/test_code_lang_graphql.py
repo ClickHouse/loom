@@ -138,6 +138,21 @@ def test_field_types_and_implements_are_sites() -> None:
     ], "built-in scalars, argument types, union members and directives name no site"
 
 
+def test_an_interface_may_be_named_like_a_definition_keyword() -> None:
+    src = b"""interface type { id: ID! }
+interface Node { id: ID! }
+type Query implements type { id: ID! }
+type Mutation implements Node & type { id: ID! }
+"""
+    pf = parse_graphql("a.graphql", src)
+    assert reference_sites(pf) == [
+        (3, "type", "implements"),
+        (4, "Node", "implements"),
+        (4, "type", "implements"),
+    ], "the first name, and one after `&`, is an interface whatever it spells"
+    assert {"Query.id", "Mutation.id"} <= set(_symbols(src))
+
+
 def test_sites_bind_in_file_then_across_the_repository() -> None:
     schema = parse_graphql("shop/schema.graphql", SCHEMA)
     billing = parse_graphql("shop/billing.graphql", BILLING)

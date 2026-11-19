@@ -335,14 +335,21 @@ class _Parser:
 
     def _name_list(self, sep: str, *, site_kind: str) -> None:
         """Names joined by `sep` (a leading one allowed, and the legacy
-        comma or space form), stopping at the next definition."""
+        comma or space form). The first name and a name after `sep` may spell
+        any word; one with no `sep` before it stops at the next definition."""
         if self._peek_text() == sep:
             self._next()
-        while _is_name(t := self._peek()) and t is not None and t.text not in _DEFINITION_WORDS:
+        any_word = True
+        while (
+            _is_name(t := self._peek())
+            and t is not None
+            and (any_word or t.text not in _DEFINITION_WORDS)
+        ):
             self._next()
             if site_kind:
                 self._site(t.line, t.text, site_kind)
-            if self._peek_text() == sep:
+            any_word = self._peek_text() == sep
+            if any_word:
                 self._next()
 
     def _fields(self, owner: str) -> None:
