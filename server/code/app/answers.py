@@ -50,6 +50,7 @@ from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.core.errors import error_kind
+from server.embedding.embedder import served_model_label
 from server.llm import customer
 from server.llm.traits import is_complete_stop
 from server.observability.genai import staged
@@ -111,7 +112,9 @@ async def ask(
         ns=ns,
         question=question,
         qvec=qvec,
-        model=str(getattr(embedder, "model_name", "") or settings.embedding_model),
+        model=str(
+            getattr(embedder, "model_name", "") or served_model_label(settings.embedding_model)
+        ),
         key=cache_key_for(search_kwargs, _synth_model_of(llm)),
         index_head=(index_head or "").strip(),
         started=time.monotonic(),

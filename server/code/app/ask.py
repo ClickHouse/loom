@@ -21,6 +21,7 @@ from server.code.app.spans import set_code_span_attributes
 from server.code.store.index import CodeRepo
 from server.core.errors import error_kind
 from server.core.llm_free import refuse_synthesis
+from server.embedding.embedder import served_model_label
 from server.llm import customer
 from server.settings import settings
 
@@ -136,7 +137,9 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
         tokens_returned=res.tokens_returned,
         abstain=res.abstain,
         retrieval_risk=ask_risk,
-        embedding_model=str(getattr(embedder, "model_name", "") or settings.embedding_model),
+        embedding_model=str(
+            getattr(embedder, "model_name", "") or served_model_label(settings.embedding_model)
+        ),
         started_monotonic=started,
         trace_run_id=trace_run_id,
         consumer=input.consumer,
