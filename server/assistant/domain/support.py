@@ -1,6 +1,6 @@
 """How far an assistant answer rests on what Loom holds: its `support`, from the codes its
-citation checks ended with and what its own tool calls found. Pure: the reads are in the
-app layer (server/assistant/app/support.py). The rule and its accepted residuals are in
+citation checks ended with and what its own tool calls found. Pure: native evidence receipts are
+verified in the app layer. The rule and its accepted residuals are in
 docs/architecture/assistant.md#support."""
 
 from __future__ import annotations

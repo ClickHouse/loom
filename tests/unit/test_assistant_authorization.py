@@ -292,8 +292,7 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
     monkeypatch.setattr(routes, "emit_agent_event", emit)
     app = FastAPI()
     register_exception_handler(app)
-    # `attach` hands the app to the citation checks: restored after the test.
-    monkeypatch.setattr(routes.citations, "_app", None)
+    # Restore the answer-owned MCP app after each route fixture.
     monkeypatch.setattr(tools, "_app", None)
     routes.attach(app)
     return TestClient(app), rows
