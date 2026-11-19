@@ -207,6 +207,9 @@ class _FakeEmbedder:
     async def embed(self, text: str) -> list[float]:
         return list(self._vec)
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 class _FakeCH:
     def __init__(self) -> None:
@@ -308,18 +311,19 @@ async def test_write_summary_skips_on_empty_digest(monkeypatch, _patch_clients) 
 
 
 @pytest.mark.asyncio
-async def test_write_summary_skips_on_empty_embedding(monkeypatch, _patch_clients) -> None:
+@pytest.mark.parametrize("vec", [[], [0.1], [float("nan")] * 8, [float("inf")] * 8])
+async def test_write_summary_skips_on_invalid_embedding(monkeypatch, _patch_clients, vec) -> None:
     from server.memory.app import bulk_set as _bulk_set_mod
     from server.memory.app import session_summary as _session_summary_mod
     from server.memory.app.extract.handler import _write_session_summary
 
     llm, _embedder, ch = _patch_clients
-    monkeypatch.setattr(_bulk_set_mod, "get_embedder", lambda: _FakeEmbedder(vec=[]))
-    monkeypatch.setattr(_session_summary_mod, "get_embedder", lambda: _FakeEmbedder(vec=[]))
+    monkeypatch.setattr(_bulk_set_mod, "get_embedder", lambda: _FakeEmbedder(vec=vec))
+    monkeypatch.setattr(_session_summary_mod, "get_embedder", lambda: _FakeEmbedder(vec=vec))
     state = _FakeState(extracted_facts=[{"value": "f"}], observation_date="2024-03-11")
     await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
 
-    assert ch.inserts == []  # dim-0 row is dead weight to the read leg -> skip
+    assert ch.inserts == []  # Invalid vectors never become summary rows.
 
 
 @pytest.mark.asyncio

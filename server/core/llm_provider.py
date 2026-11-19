@@ -16,6 +16,8 @@ KEY_ENV_BY_PROVIDER = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_K
 # The model each provider runs when LOOM_LLM_MODEL is unset: the cheapest current
 # model of each provider that does the extraction job well.
 DEFAULT_MODEL_BY_PROVIDER = {
+    # Bedrock model access and inference profiles belong to the deployment.
+    "bedrock": "",
     "openai": "gpt-6-luna",
     "anthropic": "claude-haiku-4-5",
     # A server the operator runs (`local`): a 3B model Ollama pulls in about 2 GB.
@@ -90,6 +92,8 @@ def provider_for_model(model: str, default: str) -> str:
     `gpt*`/`o1..o4*`/`chatgpt*` -> openai; otherwise keep the default provider.
     """
     m = (model or "").lower()
+    if m.startswith("bedrock:"):
+        return "bedrock"
     if m.startswith("claude"):
         return "anthropic"
     if m.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):

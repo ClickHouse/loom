@@ -51,6 +51,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -66,6 +67,8 @@ except ImportError as e:  # the framework is an optional extra
         "loom.integrations.google_adk needs google-adk: pip install 'clickhouse-loom[google-adk]'"
     ) from e
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 from loom.sync import SyncAgent
 
 if TYPE_CHECKING:
@@ -107,6 +110,9 @@ class LoomMemoryService(BaseMemoryService):
         if not key_prefix:
             raise ValueError("key_prefix must not be empty")
         self._agent = agent
+        self._protection = _CallbackProtection(
+            getattr(getattr(agent, "transport", None), "session_protection", None)
+        )
         self._app_name = app_name
         self._top_k = top_k
         self._honour_abstain = honour_abstain
@@ -114,8 +120,9 @@ class LoomMemoryService(BaseMemoryService):
         self._key_prefix = key_prefix
 
     async def add_session_to_memory(self, session: Session) -> None:
-        self._check_scope(session.app_name, session.user_id)
-        await self._extract(session.user_id, session.id, get_active_events(session.events))
+        with self._callback_scope():
+            self._check_scope(session.app_name, session.user_id)
+            await self._extract(session.user_id, session.id, get_active_events(session.events))
 
     async def add_events_to_memory(
         self,
@@ -126,11 +133,12 @@ class LoomMemoryService(BaseMemoryService):
         session_id: str | None = None,
         custom_metadata: Mapping[str, object] | None = None,
     ) -> None:
-        self._check_scope(app_name, user_id)
-        if not session_id:
-            # Loom files a turn's verbatim chunks by session alone, not by user.
-            raise ValueError("add_events_to_memory needs the ADK session_id")
-        await self._extract(user_id, session_id, get_active_events(list(events)))
+        with self._callback_scope():
+            self._check_scope(app_name, user_id)
+            if not session_id:
+                # Loom files a turn's verbatim chunks by session alone, not by user.
+                raise ValueError("add_events_to_memory needs the ADK session_id")
+            await self._extract(user_id, session_id, get_active_events(list(events)))
 
     async def add_memory(
         self,
@@ -140,90 +148,104 @@ class LoomMemoryService(BaseMemoryService):
         memories: Sequence[MemoryEntry],
         custom_metadata: Mapping[str, object] | None = None,
     ) -> None:
-        self._check_scope(app_name, user_id)
-        for memory in memories:
-            text = _text(memory.content)
-            if not text:
-                continue
-            # The user is in the key: Loom files a long value's passages by key alone.
-            digest = _digest(user_id, text)
-            await self._agent.memory.set(
-                f"{self._key_prefix}/{digest}",
-                text,
-                user_id=user_id,
-                valid_at=_iso_time(memory.timestamp),
-            )
+        with self._callback_scope():
+            self._check_scope(app_name, user_id)
+            for memory in memories:
+                text = _text(memory.content)
+                if not text:
+                    continue
+                # The user is in the key: Loom files a long value's passages by key alone.
+                digest = _digest(user_id, text)
+                await self._agent.memory.set(
+                    f"{self._key_prefix}/{digest}",
+                    text,
+                    user_id=user_id,
+                    valid_at=_iso_time(memory.timestamp),
+                )
 
     async def search_memory(
         self, *, app_name: str, user_id: str, query: str
     ) -> SearchMemoryResponse:
-        self._check_scope(app_name, user_id)
-        if not query.strip():
-            return SearchMemoryResponse()
-        result = await self._agent.memory.search(
-            query,
-            top_k=self._top_k,
-            user_id=user_id,
-            # Read the namespace this service writes to, whatever the deployment's default.
-            namespace_scope="this",
-            # Pinned so every top_k gets full bodies and no per-hit explanation
-            # (the server's defaults switch at 15).
-            bodies="full",
-            explain=False,
-        )
-        hits = [] if self._honour_abstain and result.abstain else list(result)
-        if self._honour_abstain:
-            # A response that does not abstain can still carry rows below the floor.
-            hits = [hit for hit in hits if not hit.below_threshold]
-        memories = [
-            MemoryEntry(
-                # Stored facts support exact deletion; chunks and summaries need erasure.
-                id=_entry_id(hit.memory_key, hit.session_id, hit.agent, hit.version)
-                if hit.source in ("fact", "anchor")
-                and hit.agent
-                and hit.agent != "*"
-                and hit.version > 0
-                else None,
-                content=types.Content(role="user", parts=[types.Part(text=hit.content_excerpt)]),
-                custom_metadata={"similarity": hit.similarity, "source": hit.source},
-                timestamp=hit.valid_at or None,
+        with self._callback_scope():
+            self._check_scope(app_name, user_id)
+            if not query.strip():
+                return SearchMemoryResponse()
+            result = await self._agent.memory.search(
+                query,
+                top_k=self._top_k,
+                user_id=user_id,
+                # Read the namespace this service writes to, whatever the deployment's default.
+                namespace_scope="this",
+                # Pinned so every top_k gets full bodies and no per-hit explanation
+                # (the server's defaults switch at 15).
+                bodies="full",
+                explain=False,
             )
-            # Derived rows may come back above the top_k slice: cut after filtering.
-            for hit in hits[: self._top_k]
-        ]
-        if len(memories) < self._top_k:
-            documents = await self._agent.knowledge.search(
-                query, top_k=min(100, self._top_k - len(memories)), namespace_scope="this"
-            )
-            memories.extend(
+            hits = [] if self._honour_abstain and result.abstain else list(result)
+            if self._honour_abstain:
+                # A response that does not abstain can still carry rows below the floor.
+                hits = [hit for hit in hits if not hit.below_threshold]
+            memories = [
                 MemoryEntry(
-                    content=types.Content(role="user", parts=[types.Part(text=hit.content)]),
-                    custom_metadata={
-                        "source": "knowledge",
-                        "source_uri": hit.source_uri,
-                        "chunk_idx": hit.chunk_idx,
-                    },
+                    # Stored facts support exact deletion; chunks and summaries need erasure.
+                    id=_entry_id(hit.memory_key, hit.session_id, hit.agent, hit.version)
+                    if hit.source in ("fact", "anchor")
+                    and hit.agent
+                    and hit.agent != "*"
+                    and hit.version > 0
+                    else None,
+                    content=types.Content(
+                        role="user", parts=[types.Part(text=hit.content_excerpt)]
+                    ),
+                    custom_metadata={"similarity": hit.similarity, "source": hit.source},
+                    timestamp=hit.valid_at or None,
                 )
-                for hit in documents[: self._top_k - len(memories)]
-            )
-        return SearchMemoryResponse(memories=memories)
+                # Derived rows may come back above the top_k slice: cut after filtering.
+                for hit in hits[: self._top_k]
+            ]
+            if len(memories) < self._top_k:
+                documents = await self._agent.knowledge.search(
+                    query, top_k=min(100, self._top_k - len(memories)), namespace_scope="this"
+                )
+                memories.extend(
+                    MemoryEntry(
+                        content=types.Content(role="user", parts=[types.Part(text=hit.content)]),
+                        custom_metadata={
+                            "source": "knowledge",
+                            "source_uri": hit.source_uri,
+                            "chunk_idx": hit.chunk_idx,
+                        },
+                    )
+                    for hit in documents[: self._top_k - len(memories)]
+                )
+            return SearchMemoryResponse(memories=memories)
 
     async def delete_memory(
         self, *, app_name: str, user_id: str, memory_id: str | None = None
     ) -> None:
-        self._check_scope(app_name, user_id)
-        if not memory_id:  # no id, nothing to delete: ADK's InMemoryMemoryService also returns
-            return
-        key, session, writer, version = _parse_entry_id(memory_id)
-        # Exact identity and version: a removed or rewritten target cannot select another row.
-        await self._agent.call(
-            "memory.delete_version",
-            memory_key=key,
-            version=version,
-            agent_id=writer,
-            user_id=user_id,
-            session_id=session,
+        with self._callback_scope(automatic=False):
+            self._check_scope(app_name, user_id)
+            if not memory_id:  # no id, nothing to delete: ADK's InMemoryMemoryService also returns
+                return
+            key, session, writer, version = _parse_entry_id(memory_id)
+            # Exact identity and version: a removed or rewritten target cannot select another row.
+            await self._agent.call(
+                "memory.delete_version",
+                memory_key=key,
+                version=version,
+                agent_id=writer,
+                user_id=user_id,
+                session_id=session,
+            )
+
+    def _callback_scope(self, *, automatic: bool = True) -> AbstractContextManager[None]:
+        bound = getattr(getattr(self._agent, "transport", None), "session_protection", None)
+        scope = (
+            self._protection.automatic
+            if automatic and automatic_roots()
+            else self._protection.observing
         )
+        return scope(bound)
 
     def _check_scope(self, app_name: str, user_id: str) -> None:
         # Loom merges a write into a matching memory of the namespace whichever agent

@@ -14,7 +14,7 @@ import pytest
 from server.core import provider_process
 from server.insights.app import provider_barrier as barrier
 from server.insights.store import provider_participants as store
-from server.settings import Settings
+from server.settings import Settings, settings
 from server.workers import child
 from tests.unit.clock_fake import ManualClock
 
@@ -29,7 +29,7 @@ async def test_actual_reap_certifies_its_exact_uncertified_child(monkeypatch):
         evidence = record.await_args.args[0]
         assert evidence.participant == UUID(int=17)
         assert evidence.host_proof == proof and evidence.after == 9
-        barrier.running_queries.assert_awaited_once_with(UUID(int=17), ch=None)
+        barrier.running_queries.assert_awaited_once_with(UUID(int=17), ch=barrier._default_client())
         assert proc.signals == [signal.SIGTERM]
     finally:
         workers._close_pipe()
@@ -135,6 +135,16 @@ async def _owned(monkeypatch, *, fault=None):
         rows[0]["host_proof"] = "|".join(parts)
     elif fault == "own_uuid":
         rows[0]["participant_id"] = UUID(int=18)
+
+    async def authority(sql, params=None):
+        from server.core.pg_profile import _CH_RECORD
+
+        assert sql == _CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
+
+    client = SimpleNamespace(query_one=authority)
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    monkeypatch.setattr(barrier, "_default_client", lambda: client)
     participants = AsyncMock(return_value=rows)
     monkeypatch.setattr(store, "participants", participants)
     monkeypatch.setattr(barrier, "participants", participants)
@@ -251,21 +261,29 @@ async def test_child_retirement_setting_caps_only_the_original_remaining_allowan
 ):
     workers, proc, _, record, publish = await _owned(monkeypatch)
     clock = ManualClock(t=100.0)
-    allowances = []
+    deadlines = []
+    callback_ends = []
     original_timeout = asyncio.timeout
+    original_callback = workers._retire_callback
 
-    def observed_timeout(delay):
-        allowances.append(delay)
-        return original_timeout(delay)
+    def observed_timeout_at(end):
+        deadlines.append(end)
+        return original_timeout(max(0.0, end - clock.monotonic()))
+
+    async def observed_callback(proof, end):
+        callback_ends.append(end)
+        await original_callback(proof, end)
 
     monkeypatch.setattr(child.settings, "workers_child_retirement_timeout_s", configured)
     monkeypatch.setattr(child, "time", clock)
-    monkeypatch.setattr(child.asyncio, "timeout", observed_timeout)
+    monkeypatch.setattr(child.asyncio, "timeout_at", observed_timeout_at)
+    monkeypatch.setattr(workers, "_retire_callback", observed_callback)
     try:
         await workers._reap(clock.monotonic() + remaining)
         assert proc.returncode == -signal.SIGTERM and proc.waits >= 1
         assert record.await_count == 1
-        assert allowances == [expected]
+        assert callback_ends == [100.0 + expected]
+        assert deadlines and set(deadlines) == {100.0 + expected}
         assert clock.monotonic() == 100.0
     finally:
         workers._close_pipe()

@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import codecs
 import json
+import os
 import sys
 from datetime import UTC
 from pathlib import Path
@@ -16,6 +18,49 @@ from typing import Any
 from server.cli._ch import OrgFree, reads, revokes, run_connected, writes
 from server.cli._client import token_path
 from server.core.pg import AuthorityMismatch
+
+
+async def _claim_release_answer() -> str:
+    """Wait for one answer without leaving a blocking read behind on cancellation."""
+    print("Continue? [y/N] ", end="", flush=True)
+    fd = sys.stdin.fileno()
+    decoder = codecs.getincrementaldecoder(sys.stdin.encoding or "utf-8")(
+        errors=sys.stdin.errors or "strict"
+    )
+    loop = asyncio.get_running_loop()
+    answer: list[str] = []
+    blocking = os.get_blocking(fd)
+    os.set_blocking(fd, False)
+    try:
+        while True:
+            try:
+                chunk = os.read(fd, 1)
+            except BlockingIOError:
+                readable: asyncio.Future[None] = loop.create_future()
+
+                def ready(pending: asyncio.Future[None] = readable) -> None:
+                    if not pending.done():
+                        pending.set_result(None)
+
+                try:
+                    loop.add_reader(fd, ready)
+                    await readable
+                finally:
+                    loop.remove_reader(fd)
+                continue
+            text = decoder.decode(chunk, final=not chunk)
+            if text in ("\n", "\r"):
+                return "".join(answer)
+            if text:
+                answer.append(text)
+            if not chunk:
+                if not answer:
+                    raise EOFError
+                return "".join(answer)
+            # A ready pipe or regular file must not starve cancellation or the heartbeat.
+            await asyncio.sleep(0)
+    finally:
+        os.set_blocking(fd, blocking)
 
 
 def _cmd_claim_release(args: argparse.Namespace) -> int:
@@ -60,7 +105,7 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
                 "kept, and the name stays reserved: nobody can claim it again."
             )
             try:
-                resp = (await asyncio.to_thread(input, "Continue? [y/N] ")).strip().lower()
+                resp = (await _claim_release_answer()).strip().lower()
             except EOFError:  # no terminal to answer (a pipe, a cron): the answer is no
                 resp = ""
             if resp not in ("y", "yes"):

@@ -21,6 +21,7 @@ from server.core.hashing import sha256_value as _content_sha256
 from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector, document_vectors
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
@@ -62,18 +63,11 @@ if TYPE_CHECKING:
 async def _embed_value_and_key(
     embedder: Any, embed_text: str, key_text: str
 ) -> tuple[list[float], list[float]]:
-    """The value and key vectors of one write in one round trip: `embed_many` when the
-    embedder has it (one API call, as memory.set), else the two calls concurrently. No key
-    text, no key vector."""
+    """Document vectors for the value and optional key in one provider request."""
     if not key_text:
-        return await embedder.embed(embed_text), []
-    embed_many = getattr(embedder, "embed_many", None)
-    if embed_many is not None:
-        vectors = await embed_many([embed_text, key_text])
-        if len(vectors) == 2:
-            return vectors[0], vectors[1]
-    value_vec, key_vec = await asyncio.gather(embedder.embed(embed_text), embedder.embed(key_text))
-    return value_vec, key_vec
+        return await document_vector(embedder, embed_text), []
+    vectors = await document_vectors(embedder, [embed_text, key_text])
+    return vectors[0], vectors[1]
 
 
 def _pinned_conflict(op: str, existing: Any, conflict_result: Any) -> HTTPException:

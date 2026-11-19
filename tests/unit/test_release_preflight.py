@@ -5,7 +5,9 @@ keyless signatures), and how release.yml and release-check.yml call them."""
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -621,3 +623,168 @@ def test_the_python_sdk_takes_the_tags_pep440_version(
         assert result.returncode == 0, result.stderr
     assert f'version = "{python_version}"' in (sdk / "pyproject.toml").read_text()
     assert (sdk / "loom" / "_version.py").read_text() == f'__version__ = "{python_version}"\n'
+
+
+def _sdk_metadata_check(
+    tmp_path: Path,
+    *,
+    extras: tuple[str, ...] = ("first_extra",),
+    published_extras: tuple[str, ...] = ("first-extra",),
+    npm_change: tuple[str, object] | None = None,
+    requires_dist: tuple[str, ...] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release-check.yml").read_text())["jobs"]
+    (step,) = [s for s in jobs["sdks"]["steps"] if s.get("id") == "sdk-metadata"]
+    sdk = tmp_path / "sdk/python"
+    sdk.mkdir(parents=True)
+    adapter = json.dumps(["AG2>=1.3,<1.4; python_version >= '3.11'"])
+    (sdk / "pyproject.toml").write_text(
+        '[project]\nversion = "1.3.0"\ndependencies = ["httpx[http2]>=0.27"]\n'
+        "[project.optional-dependencies]\n" + "".join(f"{extra} = {adapter}\n" for extra in extras)
+    )
+    dist = tmp_path / "clickhouse_loom-1.3.0rc2.dist-info"
+    dist.mkdir()
+    if requires_dist is None:
+        requires_dist = ("httpx[http2]>=0.27",) + tuple(
+            f'ag2<1.4,>=1.3; extra == "{extra.replace("_", "-")}" and python_version >= "3.11"'
+            for extra in extras
+        )
+    (dist / "METADATA").write_text(
+        "Metadata-Version: 2.3\nName: clickhouse-loom\nVersion: 1.3.0rc2\n"
+        + "".join(f"Provides-Extra: {extra}\n" for extra in published_extras)
+        + "".join(f"Requires-Dist: {requirement}\n" for requirement in requires_dist)
+    )
+    source = {
+        "version": "1.3.0",
+        "peerDependencies": {"@example/adapter": ">=1 <2"},
+        "peerDependenciesMeta": {"@example/adapter": {"optional": True}},
+        "exports": {".": "./dist/index.mjs"},
+        "engines": {"node": ">=20"},
+    }
+    source_path = tmp_path / "sdk/typescript/package.json"
+    source_path.parent.mkdir()
+    source_path.write_text(json.dumps(source))
+    package = {**source, "version": "1.3.0-rc.2"}
+    if npm_change is not None:
+        package[npm_change[0]] = npm_change[1]
+    package_path = tmp_path / "runner/npm/node_modules/@clickhouse/loom/package.json"
+    package_path.parent.mkdir(parents=True)
+    package_path.write_text(json.dumps(package))
+    for environment in ("sdk", "metadata-check"):
+        python = tmp_path / f"runner/{environment}/bin/python"
+        python.parent.mkdir(parents=True)
+        python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+        python.chmod(0o755)
+    output = tmp_path / "outputs"
+    env = {
+        **os.environ,
+        "VERSION": "1.3.0-rc.2",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "RUNNER_TEMP": str(tmp_path / "runner"),
+        "GITHUB_OUTPUT": str(output),
+    }
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    outputs = (
+        dict(line.split("=", 1) for line in output.read_text().splitlines())
+        if output.exists()
+        else {}
+    )
+    return result, outputs
+
+
+@pytest.mark.parametrize(
+    ("published_extras", "npm_change"),
+    [
+        ((), None),
+        (("first-extra", "unexpected"), None),
+        (("first-extra",), ("peerDependencies", {})),
+        (("first-extra",), ("peerDependenciesMeta", {"@example/adapter": {"optional": False}})),
+        (("first-extra",), ("exports", {})),
+        (("first-extra",), ("engines", {"node": ">=24"})),
+    ],
+    ids=[
+        "missing extra",
+        "unexpected extra",
+        "missing peer",
+        "peer optionality",
+        "exports",
+        "engines",
+    ],
+)
+def test_release_sdk_inventory_rejects_published_metadata_mismatch(
+    tmp_path: Path,
+    published_extras: tuple[str, ...],
+    npm_change: tuple[str, object] | None,
+) -> None:
+    result, outputs = _sdk_metadata_check(
+        tmp_path, published_extras=published_extras, npm_change=npm_change
+    )
+    assert result.returncode != 0
+    assert "differs from the release tag" in result.stderr or "extras differ" in result.stderr
+    assert outputs == {}
+
+
+def test_release_sdk_inventory_generates_canonical_extra_and_peerless_row(tmp_path: Path) -> None:
+    result, outputs = _sdk_metadata_check(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert outputs["has_python_extras"] == "true"
+    assert json.loads(outputs["python_extras"]) == {"extra": ["first-extra"]}
+    assert json.loads(outputs["node_peers"]) == {
+        "include": [
+            {"peer": "none", "requirement": ""},
+            {"peer": "@example/adapter", "requirement": "@example/adapter@>=1 <2"},
+        ]
+    }
+
+
+def test_release_sdk_inventory_allows_an_older_release_with_no_extras(tmp_path: Path) -> None:
+    result, outputs = _sdk_metadata_check(tmp_path, extras=(), published_extras=())
+    assert result.returncode == 0, result.stderr
+    assert outputs["has_python_extras"] == "false"
+    assert json.loads(outputs["python_extras"]) == {"extra": []}
+
+
+@pytest.mark.parametrize(
+    "requires_dist",
+    [
+        ("httpx[http2]>=0.27",),
+        (
+            "httpx[http2]>=0.27",
+            'ag2>=1.3,<1.5; extra == "first-extra" and python_version >= "3.11"',
+        ),
+        (
+            "httpx[http2]>=0.27",
+            'ag2>=1.3,<1.4; extra == "another-extra" and python_version >= "3.11"',
+        ),
+        (
+            "httpx[http2]>=0.27",
+            'ag2>=1.3,<1.4; extra == "first-extra" and python_version < "3.11"',
+        ),
+        (
+            "httpx>=0.27",
+            'ag2>=1.3,<1.4; extra == "first-extra" and python_version >= "3.11"',
+        ),
+        ('ag2>=1.3,<1.4; extra == "first-extra" and python_version >= "3.11"',),
+    ],
+    ids=[
+        "named extra loses dependency",
+        "wrong range",
+        "wrong extra scope",
+        "wrong environment marker",
+        "base loses dependency extra",
+        "missing base dependency",
+    ],
+)
+def test_release_sdk_inventory_rejects_changed_requirements_with_extra_name_retained(
+    tmp_path: Path, requires_dist: tuple[str, ...]
+) -> None:
+    result, outputs = _sdk_metadata_check(tmp_path, requires_dist=requires_dist)
+    assert result.returncode != 0
+    assert "published Python requirements differ from the release tag" in result.stderr
+    assert outputs == {}

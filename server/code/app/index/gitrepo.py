@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
+from server.code.app.index.git_proxy import GitProxyRefused, NetworkGit
 from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.git")
@@ -150,14 +151,21 @@ class RemoteAccess(TypedDict, total=False):
     readonly: list[Path]
     network: bool
     allow_remote_port: int | None
+    network_git: NetworkGit
 
 
-def remote_access(remote: str) -> RemoteAccess:
-    """`sandbox.run_job` arguments for a job talking to `remote`: a local mirror is
-    mounted read-only, any other remote is reached through the egress proxy."""
+def remote_access(remote: str, proxy_identity: str = "") -> RemoteAccess:
+    """`sandbox.run_job` arguments for a git job talking to `remote`: a local mirror is
+    mounted read-only, any other remote is reached through the egress proxy, or, with
+    LOOM_CODE_GIT_PROXY_URL, through that proxy as `proxy_identity` (the entry's
+    `git_proxy_identity`; '' is the deployment's default)."""
     if is_local_remote(remote):
         return {"readonly": [Path(remote.removeprefix("file://")).absolute()]}
-    return {"network": True, "allow_remote_port": remote_port(remote)}
+    return {
+        "network": True,
+        "allow_remote_port": remote_port(remote),
+        "network_git": NetworkGit(remote, proxy_identity),
+    }
 
 
 # A local fetch, ls-remote or clone starts upload-pack in the source repository with
@@ -237,12 +245,14 @@ async def _git(
     token: str = "",
     stdin: bytes | None = None,
     index_file: str = "",
+    proxy_identity: str = "",
 ) -> str:
     """A git command on the bare clone. With `remote` it talks to that remote, so it
     runs as a repository job (sandbox.run_job): the network only through the egress
     proxy, the clone the one writable path, `token` for the remote's owner
-    (`auth_env`). A local command reads and writes `index_file` as its index when
-    given. `timeout_s` defaults to `code_git_timeout_s`."""
+    (`auth_env`), `proxy_identity` for an operator's git proxy (`remote_access`). A
+    local command reads and writes `index_file` as its index when given. `timeout_s`
+    defaults to `code_git_timeout_s`."""
     if timeout_s is None:
         timeout_s = settings.code_git_timeout_s
     extra = upload_pack_args(remote)
@@ -251,7 +261,7 @@ async def _git(
     returncode: int | None
     if remote:
         returncode, out, err = await _network_git(
-            argv, label, git_dir, remote, token, stdin, timeout_s
+            argv, label, git_dir, remote, token, stdin, timeout_s, proxy_identity
         )
     else:
         env = auth_env()
@@ -285,6 +295,7 @@ async def _network_git(
     token: str,
     stdin: bytes | None,
     timeout_s: float,
+    proxy_identity: str,
 ) -> tuple[int, bytes, bytes]:
     from server.code.app.index.sandbox import run_job
 
@@ -296,10 +307,13 @@ async def _network_git(
             writable=[Path(git_dir)],
             stdin=stdin,
             keep_stdout=True,
-            **remote_access(remote),
+            **remote_access(remote, proxy_identity),
         )
     except TimeoutError:
         raise GitError(f"git {label} timed out after {timeout_s}s") from None
+    except GitProxyRefused as e:
+        # The fixed reason, as any failed fetch: the tier's health records it.
+        raise GitError(e.reason) from None
     return done.returncode, done.stdout, done.stderr
 
 
@@ -501,9 +515,12 @@ async def branches_containing(git_dir: str, sha: str, *, timeout_s: float = 20.0
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
-async def fetch(git_dir: str, remote: str, branch: str, *, token: str = "") -> None:
+async def fetch(
+    git_dir: str, remote: str, branch: str, *, token: str = "", proxy_identity: str = ""
+) -> None:
     """Fetch one branch into the bare clone. `token` (the entry's github_token)
-    authenticates a private remote through the environment, never the URL."""
+    authenticates a private remote through the environment, never the URL;
+    `proxy_identity` (its git_proxy_identity) names it to an operator's git proxy."""
     await _git(
         git_dir,
         "fetch",
@@ -513,10 +530,13 @@ async def fetch(git_dir: str, remote: str, branch: str, *, token: str = "") -> N
         timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
     )
 
 
-async def fetch_many(git_dir: str, remote: str, branches: list[str], *, token: str = "") -> None:
+async def fetch_many(
+    git_dir: str, remote: str, branches: list[str], *, token: str = "", proxy_identity: str = ""
+) -> None:
     """Fetch several configured branches of one mirror in ONE negotiation, rather than
     each configured entry running its own `fetch` of its own branch every pass. Same
     refspecs and `--prune` as `fetch`, one per branch."""
@@ -532,6 +552,7 @@ async def fetch_many(git_dir: str, remote: str, branches: list[str], *, token: s
         timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
     )
 
 
@@ -569,7 +590,9 @@ def parse_ls_remote_heads(text: str) -> dict[str, str]:
     return tips
 
 
-async def remote_branches(git_dir: str, remote: str, *, token: str = "") -> dict[str, str]:
+async def remote_branches(
+    git_dir: str, remote: str, *, token: str = "", proxy_identity: str = ""
+) -> dict[str, str]:
     """Every branch the remote advertises with its tip (one `ls-remote
     --heads`; ~1 MB for a repository with 16k heads, 0.3 s)."""
     out = await _git(
@@ -580,6 +603,7 @@ async def remote_branches(git_dir: str, remote: str, *, token: str = "") -> dict
         timeout_s=settings.code_git_timeout_s,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
     )
     return parse_ls_remote_heads(out)
 
@@ -607,7 +631,9 @@ def branches_to_fetch(
     return [b for b in names if b != skip and local.get(b) != remote[b]]
 
 
-async def fetch_branches(git_dir: str, remote: str, branches: list[str], *, token: str = "") -> int:
+async def fetch_branches(
+    git_dir: str, remote: str, branches: list[str], *, token: str = "", proxy_identity: str = ""
+) -> int:
     """Fetch `branches` into the bare clone under their own names, in one
     `git fetch --stdin` (thousands of refspecs never touch argv), WITHOUT
     `--prune`: a staging branch the bot deletes keeps its merge commit
@@ -624,6 +650,7 @@ async def fetch_branches(git_dir: str, remote: str, branches: list[str], *, toke
         timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
         stdin=refspecs,
     )
     return len(names)
@@ -632,7 +659,9 @@ async def fetch_branches(git_dir: str, remote: str, branches: list[str], *, toke
 MERGE_REF_PREFIX = "refs/loom/merges/"
 
 
-async def fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str = "") -> int:
+async def fetch_shas(
+    git_dir: str, remote: str, shas: list[str], *, token: str = "", proxy_identity: str = ""
+) -> int:
     """Fetch commits by sha and pin each under `refs/loom/merges/<sha>`. The backport
     bot's cherry-pick step merges into a staging branch it then rebases, so the merge
     commit the ledger recorded is reachable from no branch upstream; GitHub still serves
@@ -650,6 +679,7 @@ async def fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str =
         timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
         stdin=refspecs,
     )
     return len(wanted)
@@ -687,7 +717,9 @@ def parse_ls_remote_pull_heads(text: str) -> dict[int, str]:
     return tips
 
 
-async def remote_pull_heads(git_dir: str, remote: str, *, token: str = "") -> dict[int, str]:
+async def remote_pull_heads(
+    git_dir: str, remote: str, *, token: str = "", proxy_identity: str = ""
+) -> dict[int, str]:
     """Every PR head upstream: PR number → tip sha. One `ls-remote` (5.5 MB / 87,904
     refs in ~1 s on ClickHouse/ClickHouse)."""
     out = await _git(
@@ -698,6 +730,7 @@ async def remote_pull_heads(git_dir: str, remote: str, *, token: str = "") -> di
         timeout_s=60.0,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
     )
     return parse_ls_remote_pull_heads(out)
 
@@ -733,7 +766,7 @@ def pull_heads_to_fetch(
 
 
 async def fetch_pull_heads(
-    git_dir: str, remote: str, numbers: list[int], *, token: str = ""
+    git_dir: str, remote: str, numbers: list[int], *, token: str = "", proxy_identity: str = ""
 ) -> int:
     """Fetch `refs/pull/N/head` for each PR number into the clone under the
     same ref, one `git fetch --stdin`, no `--prune`. Returns the number of
@@ -750,6 +783,7 @@ async def fetch_pull_heads(
         timeout_s=settings.code_git_fetch_timeout_s,
         remote=remote,
         token=token,
+        proxy_identity=proxy_identity,
         stdin=refspecs,
     )
     return len(wanted)

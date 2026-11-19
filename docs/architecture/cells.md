@@ -43,6 +43,31 @@ zombie leader with other threads is unproved. Known-zero tagged queries remain a
 separate requirement before retirement; kernel process exit does not settle a
 query still executing in a store.
 
+Permanent completion drains application work and buffered writes before sealing
+Postgres openings. Pool construction, connection initialization, acquisition and
+native control tasks remain owned until they actually finish. Completion closes
+its pool within the remaining shutdown deadline; a later disconnect does not
+start another cleanup wait.
+
+Under the Postgres authority, every authority session carries the participant
+UUID in its startup `application_name`, including dedicated and unmarked sessions.
+Retirement verifies the deployment and epoch against the exact ClickHouse and
+Postgres pair, then requires no other backend with that participant tag. Idle
+backends count too. The metadata verifier excludes only its own backend and must
+finish closing within the same deadline. Local abort, cancellation and an
+unacknowledged close leave the participant unretired; later positive backend
+absence can resolve it. Manual retirement, reaped-child recovery and dead-process
+sweeps use the same store checks. The proof relies on the deployment's existing
+[primary endpoint and fencing requirements](../operations/postgres.md#self-hosted-postgres).
+
+Builds without participant session tags use the generic authority application name
+`loom`. Recertifying their retained identities requires all such Postgres backends
+to be absent, including idle pools; stop and drain the remaining legacy authority
+clients before that census. Unrelated tagged participants can remain live. A
+deployment whose verified, immutable authority is ClickHouse needs only its
+ClickHouse settlement checks, including during recovery of a legacy participant.
+A missing authority record or a mismatched configuration never selects that path.
+
 The capability identifies installed code; it does not prove that every older
 process or unsafe retirement client has disappeared.
 
@@ -59,9 +84,9 @@ the deployment's upgrade record. No CLI flag or stored acknowledgement substitut
 for that evidence, and the runtime census does not verify the external inventory.
 
 Census retained legacy rows while unsafe writers are stopped. Recertify a retained
-identity only after exact verifiable physical death and known-zero cross-replica
-queries. Keep empty or unknown proofs quarantined. If the legacy inventory is
-incomplete, stop all accepting/native-command and retirement/pruning processes,
+identity only after exact verifiable physical death and positive settlement in
+every authority store. Keep empty or unknown proofs quarantined. If the legacy
+inventory is incomplete, stop all accepting/native-command and retirement/pruning processes,
 positively terminate or fence every runtime that could execute an old binary, and
 prevent old restarts. Only after that physical quiescence may the operator request
 an exact audited cleanup of selected unknown legacy participant identities. There
@@ -1272,9 +1297,10 @@ included and never longer than what is left, but for a floor of 100 ms: every tr
 before the wait is judged spent, so `--wait 0` is one try of each wait with no retry;
 `--scan-budget` (default 2 hours) bounds each full scan, which `--wait` does not count.
 `--dry-run` runs the refusals and the scan, prints what would be placed and skipped and the
-scan's time, and writes nothing; the router's checks at `attach/begin` do not run. On a
-`serving` row attach first verifies that the connected authority, configured cell and
-bucket match the directory registration. It then reads the cell's mode: `enforced` is
+scan's time. Cell state, tenancy triggers and placements stay unchanged; normal participant
+enrollment and retirement are still recorded. The router's checks at `attach/begin` do not
+run. On a `serving` row attach first verifies that the connected authority, configured cell
+and bucket match the directory registration. It then reads the cell's mode: `enforced` is
 done (exit 0), and any other mode refuses: the directory and the cell's Postgres disagree,
 as after a restore of one of them, and attach lowers and repairs neither.
 

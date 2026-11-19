@@ -20,6 +20,7 @@ _SEND = frozenset(
         "_post_json",
         "call",
         "_call",
+        "_capture_call",
         "postBounded",
         "postBoundedResult",
         "postFireAndForget",

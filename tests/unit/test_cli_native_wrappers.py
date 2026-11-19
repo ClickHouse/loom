@@ -101,7 +101,12 @@ def test_actual_wrappers_preserve_work_failure(
     with pytest.raises(first_class) as caught:
         _invoke(family, work, monkeypatch)
     assert caught.value is first
-    assert wrappers.events[-2:] == ["pg", "ch"]
+    if second_close:
+        assert wrappers.events[-2:] == ["pg", "ch"]
+        assert "certificate" not in wrappers.events
+    else:
+        assert wrappers.events[-3:] == ["pg", "certificate", "ch"]
+    assert len(wrappers.terminal_ends) == 1 and not wrappers.reversible_closes
     assert not wrappers.client.connected
     assert wrappers.gate.active == wrappers.model_gate.active == 0
 
@@ -124,7 +129,12 @@ def test_successful_actual_wrappers_still_require_cleanup(
         assert caught.value is first
     else:
         assert _invoke(family, work, monkeypatch) == (0 if family in ("export", "reextract") else 7)
-    assert wrappers.events[-3:] == ["certificate", "pg", "ch"]
+    if failed_close:
+        assert wrappers.events[-3:] == ["flush", "pg", "ch"]
+        assert "certificate" not in wrappers.events
+    else:
+        assert wrappers.events[-3:] == ["pg", "certificate", "ch"]
+    assert len(wrappers.terminal_ends) == 1 and not wrappers.reversible_closes
 
 
 @pytest.mark.parametrize("first_class", FIRST)
@@ -148,7 +158,7 @@ def test_code_reconnect_cannot_replace_subcommand_failure(
         asyncio.run(code_run._then_disconnect(work()))
     assert caught.value is first
     assert events == ["reconnect"]
-    assert wrappers.events[-3:] == ["certificate", "pg", "ch"]
+    assert wrappers.events[-3:] == ["pg", "certificate", "ch"]
 
 
 @pytest.mark.parametrize("first_class", FIRST)
@@ -160,15 +170,21 @@ async def test_actual_recall_writer_entry_and_closer_preserve_first(
     first = first_class("first")
     if phase == "entry":
         wrappers.errors["acceptance"] = first
+        wrappers.errors["pg"] = OSError("pg close")
     else:
         wrappers.errors["certificate"] = first
-    wrappers.errors.update(pg=OSError("pg close"), ch=RuntimeError("ch close"))
+    wrappers.errors["ch"] = RuntimeError("ch close")
     args = argparse.Namespace(base_url=None, org="o")
     with pytest.raises(first_class) as caught:
         _, closer = await import_recall._make_writer(args, lambda: {}, timeout_s=1)
         await closer()
     assert caught.value is first
-    assert wrappers.events[-2:] == ["pg", "ch"]
+    if phase == "entry":
+        assert wrappers.events[-2:] == ["pg", "ch"]
+        assert "certificate" not in wrappers.events
+    else:
+        assert wrappers.events[-3:] == ["pg", "certificate", "ch"]
+    assert len(wrappers.terminal_ends) == 1 and not wrappers.reversible_closes
     assert wrappers.gate.active == wrappers.model_gate.active == 0
 
 

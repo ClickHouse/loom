@@ -52,7 +52,7 @@ async def _waiting(observer, task) -> int:
             assert not task.done(), "migration acknowledged before standby flush"
             pid = await observer.fetchval(
                 "SELECT pid FROM pg_stat_activity WHERE application_name = $1 "
-                "AND wait_event = 'SyncRep'",
+                "AND wait_event = 'SyncRep' AND query = 'COMMIT;'",
                 APPLICATION,
             )
             if pid is not None:

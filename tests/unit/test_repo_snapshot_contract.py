@@ -289,11 +289,11 @@ async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unrea
     monkeypatch,
 ) -> None:
     from contextlib import asynccontextmanager
-    from types import SimpleNamespace
 
     from server.knowledge.app import source_sync
+    from server.knowledge.domain.sources import KnowledgeSource
 
-    src = SimpleNamespace(org="o", namespace="code-x", name="docs", access="namespace")
+    src = KnowledgeSource("o", "code-x", "docs", "gdrive", "source-id")
     retired: list[str] = []
 
     async def active() -> list[object]:

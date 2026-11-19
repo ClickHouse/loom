@@ -75,6 +75,9 @@ _CROSS_CHECKED = {
     # Host lists checked by a model validator (test_llm_gateway.py).
     "memory_classify_private_hosts",
     "memory_webhook_private_hosts",
+    # Refused beside the required sandbox, which the sweep also sets
+    # (test_repo_job_sandbox.py).
+    "code_self_service_git_unsandboxed",
 }
 
 
@@ -100,6 +103,8 @@ _VALID = {
     "cell_router_token": "lcr_" + "0" * 128,
     "router_operator_sha256": "0" * 64,
     "router_operator_token": "lco_" + "0" * 128,
+    # The three other code_git_proxy_* settings load only beside it.
+    "code_git_proxy_url": "http://proxy.example:3128",
 }
 
 

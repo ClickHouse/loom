@@ -1,8 +1,9 @@
 import { getJson, post } from "../api";
 
-export type LlmProvider = "openai" | "anthropic";
-export type EmbeddingProvider = "openai" | "gemini" | "compatible";
+export type LlmProvider = "openai" | "anthropic" | "bedrock";
+export type EmbeddingProvider = "openai" | "gemini" | "compatible" | "bedrock";
 export type ModelProvider = LlmProvider | EmbeddingProvider;
+export type ModelKeyProvider = Exclude<ModelProvider, "bedrock">;
 
 export const MODEL_JOBS = {
   llm_fallback_model: "Fallback model (optional)",
@@ -37,7 +38,7 @@ export interface ModelConfiguration {
     base_url?: string;
     send_dimensions?: boolean;
   };
-  keys: Partial<Record<ModelProvider, string>>;
+  keys: Partial<Record<ModelKeyProvider, string>>;
   expected_version: string;
 }
 

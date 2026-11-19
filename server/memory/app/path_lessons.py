@@ -94,6 +94,7 @@ async def lessons_for_paths(
     paths: Sequence[str],
     *,
     token_budget: int,
+    timeout_s: float | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -106,7 +107,8 @@ async def lessons_for_paths(
     what the memory was written against), '' for a row that names the file only;
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
     state, when one is known; and `supersedes_key`, the key of the older row it replaces,
-    when the conflict check linked one."""
+    when the conflict check linked one. `timeout_s` bounds the file reads together;
+    failed or unfinished reads leave the completed files' rows intact."""
     if not namespaces or not paths:
         return Lessons([])
     # memory.for_file takes two extra namespaces and follows code links only into the
@@ -124,7 +126,7 @@ async def lessons_for_paths(
         for p in paths
         for group in groups
     ]
-    per_read = await asyncio.gather(*(listing_rows(inp) for inp in reads))
+    per_read = await _read_paths(reads, timeout_s)
     # every row a row read here replaces, whichever file or read it came from
     superseded = {i for hits, _ in per_read for h in hits for i in h.get("supersedes_ids") or []}
     out: list[dict[str, Any]] = []
@@ -147,3 +149,23 @@ async def lessons_for_paths(
             out.append(lesson)
             spent += cost
     return Lessons(out, len(left - seen))
+
+
+async def _read_paths(
+    reads: Sequence[MemoryForFileInput], timeout_s: float | None
+) -> list[tuple[list[dict[str, Any]], bool]]:
+    """Keep completed file reads when another fails or runs past the shared bound."""
+    tasks = [asyncio.create_task(listing_rows(inp)) for inp in reads]
+    try:
+        done, _ = await asyncio.wait(tasks, timeout=timeout_s)
+        return [
+            task.result()
+            if task in done and not task.cancelled() and task.exception() is None
+            else ([], True)
+            for task in tasks
+        ]
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

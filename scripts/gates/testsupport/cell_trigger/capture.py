@@ -539,6 +539,45 @@ def record_stream(path, *, maximum):
     return dict(path=str(path), sha256=full.hexdigest(), bytes=size, records=count)
 
 
+def api_cost_sample(value, arm):
+    need(type(value) is dict, "typed API cost observation")
+    equal(
+        [value.get("kind"), value.get("arm"), value.get("window_seconds")], ["api_costs", arm, 60]
+    )
+    if "rows" in value:
+        closed(value, "kind arm window_seconds rows")
+        rows = value["rows"]
+        need(type(rows) is list and len(rows) <= 20, "bounded API cost rows")
+        for row in rows:
+            closed(
+                row,
+                "shape calls elapsed_ms max_ms read_rows read_bytes written_rows cpu_us "
+                "kind_mask table_mask",
+            )
+            for key in (
+                "shape",
+                "calls",
+                "elapsed_ms",
+                "max_ms",
+                "read_rows",
+                "read_bytes",
+                "written_rows",
+                "cpu_us",
+            ):
+                integer(row[key], 0, 2**64 - 1)
+            integer(row["kind_mask"], 1, 7)
+            integer(row["table_mask"], 0, 8191)
+    else:
+        closed(value, "kind arm window_seconds error_type error_code")
+        need(
+            type(value["error_type"]) is str
+            and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", value["error_type"]),
+            "bounded API cost error type",
+        )
+        integer(value["error_code"], 0, 65535)
+    return {key: item for key, item in value.items() if key not in {"kind", "arm"}}
+
+
 class Workload:
     def __init__(self, context, codec):
         self.s = context
@@ -891,6 +930,7 @@ class Workload:
                             },
                         )
                     )
+                observation = api_cost_sample(take("api_costs"), arm)
                 for index in range(5):
                     value = take(
                         "worker",
@@ -923,6 +963,8 @@ class Workload:
                 )
                 value = take("settled", "kind arm api_rows delivery_rows physical")
                 equal([value["arm"], value["api_rows"], value["delivery_rows"]], [arm, 2050, 2500])
+                need(type(value["physical"]) is dict, "typed physical observation")
+                equal(value["physical"].get("clickhouse_query_costs"), observation)
                 value = take("arm", "kind arm on p50_ms p99_ms delivery_rps")
                 equal([value["arm"], value["on"]], [arm, ORDER[arm]])
                 yield from self.delivery(arm)

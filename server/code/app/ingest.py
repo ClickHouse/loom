@@ -171,10 +171,28 @@ async def _require_entry_lease(org: str, ns: str, holder: str) -> None:
         raise EntryLeaseNotHeld(f"{holder} no longer holds {name}; the upload is refused")
 
 
+def _require_repo_entry(org: str, ns: str) -> None:
+    """Where MCP serves the upload ops (`mcp_code_upload_tools`), every MCP caller that
+    may write some namespace, a memory namespace of its own included, reaches
+    `code.scip_ingest`. An upload is then accepted only for a namespace that has a
+    repository entry, the operator's or a self-service one, so no other namespace
+    stores upload batches. With the setting off the op takes any namespace its caller
+    may write."""
+    from server.code.domain.index.repos import repo_for_namespace
+
+    if settings.mcp_code_upload_tools and repo_for_namespace(org, ns) is None:
+        raise NotFoundError(
+            f"{org}/{ns} is not a repository index: this deployment accepts a compiler-tier "
+            "upload only for a repository it indexes (LOOM_MCP_CODE_UPLOAD_TOOLS); "
+            "code.repos lists them"
+        )
+
+
 async def handle_code_scip_ingest(input: CodeScipIngestInput) -> CodeScipIngestOutput:
     """Accept one part of a SCIP index upload (compiler-tier symbols and references) for a batch."""
     require_code_intel()
     org, ns = resolve_code_identity(input.org, input.namespace)
+    _require_repo_entry(org, ns)
 
     payload_bytes = len(input.payload.encode("utf-8"))
     if payload_bytes > settings.code_scip_max_part_bytes:

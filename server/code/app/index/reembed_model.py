@@ -22,6 +22,7 @@ from typing import Any
 
 from server.code.app.index.embed_text import clip_for_embedding
 from server.code.store.index import CodeRepo, build_row
+from server.embedding.documents import document_vectors
 
 logger = logging.getLogger(__name__)
 
@@ -159,11 +160,7 @@ async def reembed_namespace(
         if todo:
             t0 = time.perf_counter()
             texts = [clip_for_embedding(str(r["context_text"]) or str(r["content"])) for r in todo]
-            embed_many = getattr(embedder, "embed_many", None)
-            if embed_many is not None:
-                vecs = await embed_many(texts)
-            else:
-                vecs = [await embedder.embed(t) for t in texts]
+            vecs = await document_vectors(embedder, texts)
             stats.embed_seconds += time.perf_counter() - t0
             out = [
                 _target_row(r, vec, org=org, ns=ns, target=target)

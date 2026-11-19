@@ -394,9 +394,11 @@ async def open_storage_authority() -> None:
 
 
 async def close_storage_authority() -> None:
-    from server.core import pg
+    from server.core import pg, retirement
 
-    await pg.close_pool()
+    gate = retirement.get_gate()
+    if not (gate.role in ("server", "worker") and gate.closed):
+        await pg.close_pool()
 
 
 async def run_fenced_boot_migrations(

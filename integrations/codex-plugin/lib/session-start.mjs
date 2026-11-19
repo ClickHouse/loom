@@ -134,9 +134,9 @@ export function codeScopeLine(hit) {
   if (!hit || !hit.org || !hit.namespace) return "";
   const where = hit.repo ? ` (${hit.repo}${hit.branch ? ` @ ${hit.branch}` : ""})` : "";
   return (
-    `Code index scope${where}: pass org: "${hit.org}", namespace: "${hit.namespace}" on EVERY ` +
-    `loom_code_* call from this checkout — without them the server answers from its default ` +
-    `repository, not this one.`
+    `Code index scope${where}: pass namespace: "${hit.namespace}" on EVERY loom_code_* call ` +
+    `from this checkout. MCP infers org "${hit.org}" from the token; HTTP/SDK callers also pass org. ` +
+    `Without the namespace the server answers from its default repository, not this one.`
   );
 }
 
@@ -173,21 +173,16 @@ export function localFirstBlock(asOf, scopeLine = "") {
 // repo is actually indexed so it never confuses sessions on other projects.
 const CODE_ARBITRATION =
   "# Loom code index: this repository is indexed (per-merge fresh).\n" +
-  "- Grep or Read the names you know first. When grep misses or floods, or there is no name " +
-  "to grep: loom_code_search. Every definition or caller of a symbol, exactly (C++ overloads " +
-  "included): loom_code_symbol, loom_code_callers. Independent lookups go in one turn.\n" +
-  "- Exact strings or your uncommitted changes: grep — the index knows merged code. " +
-  "abstain: true means grep.\n" +
-  "- A hit carries the unit's path, lines and code: answer from it; open a file to change it, " +
-  "not to re-read a hit.\n" +
-  "- Already reported? loom_tracker_duplicate_check. What introduced a bug? " +
-  "loom_code_bisect_candidates. Which change made X behave like Y? git log -S / git blame on " +
-  "the code that does it, or loom_code_pr_check with the behaviour as the title — not " +
-  "loom_code_search, which finds code, not changes. Someone already on this PR? " +
-  "loom_code_pr_check. What does my " +
-  "diff break? loom_code_impact.\n" +
-  "- The index is master; this checkout may be behind it. For files you have not modified, " +
-  "report the index's path:line — do not re-read to reconcile line numbers.\n";
+  "- Use Loom first when indexed evidence is needed: loom_code_symbol for definitions, " +
+  "loom_code_callers for callers, loom_code_search for concepts, loom_code_impact for a change's effects.\n" +
+  "- If the needed tool is deferred, discover it with the client's tool search (ToolSearch in Claude Code). " +
+  "A definition does not supply its callers; retrieve the missing evidence for the question.\n" +
+  "- If a hook already supplied the answer, use it; do not repeat the lookup. Read only a returned span " +
+  "to verify it. Skip retrieval for self-contained tasks.\n" +
+  "- Explicit literal-search requests, uncommitted changes and unindexed files: use local grep/Read. " +
+  "A code question quoting an identifier or error is still a code investigation. If Loom is " +
+  "unavailable or abstains, use a targeted local lookup and name the limitation.\n" +
+  "- The index is master; this checkout may be behind it. For unchanged files, report the index's path:line.\n";
 
 /** The arbitration block for this session. When the entry's
  *  mirror has not been fetched for `code_fetch_stale_after_seconds`

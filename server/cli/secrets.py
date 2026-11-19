@@ -27,6 +27,8 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
     ("loom.knowledge_sources", "secret_enc", (), "knowledge_sources.secret", ""),
     ("loom.knowledge_source_push", "secret_enc", (), "knowledge_source_push.secret", ""),
+    ("loom.connected_accounts", "credential_enc", (), "connected_accounts.credential", ""),
+    ("loom.connected_accounts", "account_email_enc", (), "connected_accounts.email", ""),
     ("loom.provider_configuration", "envelope", (), "model-provider-configuration", ""),
     (
         "loom.provider_configuration",
@@ -55,6 +57,7 @@ _KEYS = {
     "loom.qa_sources": ("org", "name"),
     "loom.knowledge_sources": ("org", "namespace", "name"),
     "loom.knowledge_source_push": ("org", "namespace", "source_id"),
+    "loom.connected_accounts": ("org", "subject", "kind"),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
     "loom.analysis_secrets": ("id",),
@@ -146,6 +149,14 @@ async def reseal_all(
     counts: dict[str, int] = {}
     lost: dict[str, list[str]] = {}
     for table, column, path, purpose, where in SEALED:
+        if table == "loom.connected_accounts":
+            from server.knowledge.app.connected_accounts import reseal_registry as reseal_accounts
+
+            n, missing = await reseal_accounts(column, purpose, dry_run=dry_run, ch=ch)
+            counts[f"{table}.{column}"] = n
+            if missing:
+                lost[f"{table}.{column}"] = missing
+            continue
         if table == "loom.knowledge_source_push":
             # This registry is physically erased. Its writer fence and re-read
             # under the source lease prevent a scanned row from reviving it.

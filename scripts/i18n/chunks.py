@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 from collections import defaultdict, deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from itertools import accumulate, pairwise
 from xml.etree.ElementTree import Element
@@ -13,6 +13,7 @@ from xml.etree.ElementTree import Element
 from markdown import Markdown
 from markdown.treeprocessors import Treeprocessor
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 from scripts.i18n.context import Label, SourceContext
 
@@ -371,10 +372,15 @@ class _TableShape(Treeprocessor):
         self.rows = [[labels[cell] for cell in row if cell in labels] for row in root.iter("tr")]
 
 
-def _github_tables(text: str) -> list[object]:
+def _github_parse(text: str) -> tuple[MarkdownIt, list[Token]]:
+    md = MarkdownIt("commonmark").enable("table")
+    return md, md.parse(text)
+
+
+def _github_tables(text: str, *, tokens: list[Token] | None = None) -> list[object]:
     stack, tables = [], []
     inside = False
-    for token in MarkdownIt("commonmark").enable("table").parse(text):
+    for token in _github_parse(text)[1] if tokens is None else tokens:
         attributes = tuple(sorted(token.attrs.items()))
         if token.type == "table_open":
             tables.append(tuple(stack))
@@ -421,11 +427,13 @@ def table_shape(text: str) -> tuple[list[object], list[object]]:
     return shape.tables, _github_tables(text)
 
 
-def _github_rows(text: str) -> list[list[Label]]:
-    md = MarkdownIt("commonmark").enable("table")
+def _github_rows(
+    text: str, *, parsed: tuple[MarkdownIt, list[Token]] | None = None
+) -> list[list[Label]]:
+    md, tokens = _github_parse(text) if parsed is None else parsed
     starts, rows, row = _line_starts(text), [], None
     first = end = 0
-    for token in md.parse(text):
+    for token in tokens:
         if token.type == "tr_open" and token.map is not None:
             row = []
             first, end = (starts[n] for n in token.map)
@@ -443,8 +451,12 @@ def _github_rows(text: str) -> list[list[Label]]:
 
 def table_labels(text: str) -> dict[tuple[str, int, int], Label]:
     """Cell text from both existing dialects; source maps survive inline-code pipes."""
-    github = _github_rows(text)
-    site = _site_tables(text).rows
+    return _table_labels(text, _github_rows(text), _site_tables(text).rows)
+
+
+def _table_labels(
+    text: str, github: list[list[Label]], site: list[list[Label]]
+) -> dict[tuple[str, int, int], Label]:
     by_label: dict[tuple[Label, ...], deque[int]] = defaultdict(deque)
     for index, row in enumerate(github):
         by_label[tuple(replace(c, start=0, end=0) for c in row)].append(index)
@@ -474,3 +486,19 @@ def table_labels(text: str) -> dict[tuple[str, int, int], Label]:
                 family_for=fields if column == 1 and len(row) == 3 else (),
             )
     return labels
+
+
+@dataclass(frozen=True)
+class TableAnalysis:
+    labels: dict[tuple[str, int, int], Label]
+    shape: tuple[list[object], list[object]]
+
+
+def table_analysis(text: str) -> TableAnalysis:
+    """Derive labels and structure from the same parse of each dialect."""
+    parsed = _github_parse(text)
+    site = _site_tables(text)
+    return TableAnalysis(
+        _table_labels(text, _github_rows(text, parsed=parsed), site.rows),
+        (site.tables, _github_tables(text, tokens=parsed[1])),
+    )

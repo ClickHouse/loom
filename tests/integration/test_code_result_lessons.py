@@ -14,13 +14,20 @@ from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.asyncio
 
-ORG = unique_org("code-result-lessons")
 PATH = "server/code/app/search/handler.py"
 DECISION = "Decided: the search memo never stores a caller's memories, " * 6
 
 
-def _set(base: str, token: str, key: str, value: str, files: list[str], **kw: Any) -> None:
-    body = {"org": ORG, "namespace": "dev", "agent": "claude-code", "memory_key": key}
+def _set(
+    org: str,
+    base: str,
+    token: str,
+    key: str,
+    value: str,
+    files: list[str],
+    **kw: Any,
+) -> None:
+    body = {"org": org, "namespace": "dev", "agent": "claude-code", "memory_key": key}
     body |= {"value": value, "files": files, **kw}
     r = httpx.post(
         f"{base}/v1/memory.set", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=10
@@ -34,22 +41,32 @@ async def test_lessons_match_the_result_file_by_path(
     from server.core.ch import get_client
     from server.memory.app import path_lessons
 
+    org = unique_org("code-result-lessons")
     await get_client().connect()
-    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer"])
-    _set(control_plane_url, token, "notes/exact", "Pages are cut by tokens.", [PATH])
-    _set(control_plane_url, token, "notes/bare", "Every handler logs its route.", ["handler.py"])
+    token = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(org, control_plane_url, token, "notes/exact", "Pages are cut by tokens.", [PATH])
     _set(
+        org,
+        control_plane_url,
+        token,
+        "notes/bare",
+        "Every handler logs its route.",
+        ["handler.py"],
+    )
+    _set(
+        org,
         control_plane_url,
         token,
         "notes/other",
         "The memory handler drops weak hits.",
         ["server/memory/app/loom_search/handler.py"],
     )
-    _set(control_plane_url, token, "design/memo", DECISION, [PATH], memory_type="decision")
+    _set(org, control_plane_url, token, "design/memo", DECISION, [PATH], memory_type="decision")
     # More rows about other directories' handler.py than a small read would keep: the
     # exact path's rows still come back.
     for i in range(12):
         _set(
+            org,
             control_plane_url,
             token,
             f"notes/elsewhere-{i}",
@@ -61,7 +78,7 @@ async def test_lessons_match_the_result_file_by_path(
     rows: list[dict[str, Any]] = []
     for _ in range(50):
         rows = (
-            await path_lessons.lessons_for_paths(ORG, ["dev"], "", [PATH], token_budget=2000)
+            await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=2000)
         ).rows
         if len(rows) >= 3:
             break
@@ -78,5 +95,48 @@ async def test_lessons_match_the_result_file_by_path(
     }
     assert by_key["design/memo"]["excerpt"] == " ".join(DECISION.split())
     # a cap below the decision's size leaves it out, never cut
-    small = (await path_lessons.lessons_for_paths(ORG, ["dev"], "", [PATH], token_budget=60)).rows
+    small = (await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=60)).rows
     assert "design/memo" not in {r["memory_key"] for r in small}
+
+
+@pytest.mark.slow
+async def test_a_search_keeps_a_stored_lesson_when_another_file_read_times_out(
+    control_plane_url: str, mint_test_token: Any, ch_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
+    from server.code.app import result_lessons
+    from server.code.domain.units import CodeUnit
+    from server.core.ch import get_client
+    from server.memory.app import path_lessons
+    from server.settings import settings
+
+    org = unique_org("code-result-lessons")
+    await get_client().connect()
+    token = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(org, control_plane_url, token, "notes/ready", "Keep the ready file's lesson.", [PATH])
+    listing_rows = path_lessons.listing_rows
+    stopped = asyncio.Event()
+
+    async def _rows(inp: Any) -> Any:
+        if inp.path == PATH:
+            return await listing_rows(inp)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    async def _search(inp: CodeSearchInput) -> CodeSearchOutput:
+        return CodeSearchOutput(
+            results=[CodeUnit(path=PATH), CodeUnit(path="unavailable.py")], route="hybrid"
+        )
+
+    monkeypatch.setattr(path_lessons, "listing_rows", _rows)
+    monkeypatch.setattr(settings, "code_enrich_timeout_s", 1.0)
+    wrapped = result_lessons.WithLessons(_search, result_lessons.search_paths)
+    out = await wrapped(
+        CodeSearchInput(
+            org=org, namespace="code-repo", query="ready file", lesson_namespaces=["dev"]
+        )
+    )
+    assert any(row["memory_key"] == "notes/ready" for row in out.lessons), out.model_dump()
+    assert stopped.is_set()

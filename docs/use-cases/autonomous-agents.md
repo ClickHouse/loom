@@ -1,8 +1,9 @@
 # Memory, recall, audit and erasure for autonomous agents
 
-Loom gives autonomous agents memory they recall later, an audit record of who wrote what,
-and erasure of a scope everywhere Loom keeps it. These are server operations, stored in
-ClickHouse (or Postgres for live memory and knowledge state).
+Loom is a self-hosted backend for autonomous agents: memory they recall across runs,
+reusable procedures the agent executes, run records, an audit record of who wrote what,
+and scope-wide erasure. These are server operations, stored in ClickHouse (or Postgres
+for live memory and knowledge state).
 
 ## What you get
 

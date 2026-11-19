@@ -97,6 +97,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from server.clients import gdrive
+from server.clients._checked_access import CheckedAccess, Credential
 from server.code.app.index import repo_registry
 from server.code.app.index.pass_budget import PassBudget, rotate_to
 from server.code.domain.index.remote import repo_tag
@@ -114,7 +115,7 @@ from server.knowledge.api.models_knowledge import KnowledgeDeleteInput, Knowledg
 from server.knowledge.app import extractors, private_sync, writes
 from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.app import sources as source_ops
-from server.knowledge.domain import access_list, convert
+from server.knowledge.domain import access_list, convert, transcripts
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
     SYNC_WORKER_ACTOR,
@@ -123,6 +124,7 @@ from server.knowledge.domain.sources import (
     include_in,
     json_object,
     mirror_synced,
+    mirror_uri,
     served,
     source_key,
     source_tag,
@@ -473,7 +475,13 @@ async def _sync_turn(
     try:
         async with _source_turn(src):
             try:
+                if src.credential_mode == "connected":
+                    from server.knowledge.app.source_sync_connected import ensure_current
+
+                    await ensure_current(src)
                 turn = await _turn_of(src)(src, state, run)
+                if src.credential_mode == "connected":
+                    await ensure_current(src)
             except SourceGone:
                 log.info("knowledge_source_sync: %s was removed during its turn", _cursor_of(src))
                 return None
@@ -505,7 +513,11 @@ async def _sync_turn(
     result.unconverted += turn.unconverted
     result.skipped += turn.skipped
     result.cut |= turn.cut
-    if turn.status != "ok":
+    if turn.status != "ok" and not (
+        turn.status == "provider_removed"
+        and src.kind == "recording"
+        and src.config.get("provider") == "meet"
+    ):
         result.failed += 1
         result.errors.append(f"{_cursor_of(src)}: {turn.status} {turn.error}".strip())
         pass_context.note_failure(RuntimeError(turn.error or turn.status), _cursor_of(src))
@@ -522,6 +534,14 @@ def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
     """The turn function of a source; this module's `_turn` reads a folder, and a
     mirrored folder source writes into its namespace's mirror."""
     # Imported here: a kind's module builds on this one's helpers.
+    if (
+        src.credential_mode == "connected"
+        and src.kind in {"notion", "linear"}
+        and mirror_synced(src)
+    ):
+        from server.knowledge.app import source_sync_connected
+
+        return source_sync_connected.turn
     if mirror_synced(src):
         from server.knowledge.app import source_sync_mirror
 
@@ -616,18 +636,24 @@ async def open_listing(
     modified_after: str = "",
     fields: str = gdrive.LISTED,
     check_items: bool = True,
-) -> tuple[str, gdrive_items.Listing, list[dict[str, Any]]] | None:
+) -> tuple[Credential, gdrive_items.Listing, list[dict[str, Any]]] | None:
     """A folder turn's token, listing and listed files with valid ids, after checking
     (with `check_items`) that the account still sees every item; None when the turn
     must write nothing (a credential that does not open, a failed listing, the pass
     running out), with the reason on `turn`."""
-    credential = source_ops.credential_of(src)
-    if not credential:
-        # Fail closed: a credential that no longer opens is never read as "no auth".
-        turn.fail("credential_invalid", "the stored credential no longer opens; rotate it")
-        return None
     try:
-        token = await gdrive.access_token(gdrive.parse_service_account(credential))
+        credential = await source_ops.credential_for(
+            src,
+            deadline=run.budget.stop_after,
+        )
+        if not credential:
+            turn.fail("credential_invalid", "the stored credential no longer opens; rotate it")
+            return None
+        token: Credential = (
+            credential
+            if isinstance(credential, CheckedAccess)
+            else await gdrive.access_token(gdrive.parse_service_account(credential))
+        )
         listing = await gdrive_items.list_items(
             token,
             src.items,
@@ -636,6 +662,9 @@ async def open_listing(
             fields=fields,
             out_of_time=run.budget.exhausted,
         )
+    except (ValidationError, TimeoutError):
+        turn.fail("credential_invalid", "the source connection is unavailable")
+        return None
     except gdrive.VendorError as e:
         vendor_failure(turn, e)
         return None
@@ -746,7 +775,7 @@ def valid_stamp(stamp: str) -> bool:
 
 def _visibility_checks(
     items: list[dict[str, Any]],
-) -> Iterator[tuple[Callable[[str, str], Awaitable[Any]], str]]:
+) -> Iterator[tuple[Callable[[Credential, str], Awaitable[Any]], str]]:
     for item in items:
         if item["type"] == "folder":
             yield gdrive.require_folder, item["id"]
@@ -757,7 +786,10 @@ def _visibility_checks(
 
 
 async def _items_visible(
-    token: str, items: list[dict[str, Any]], turn: TurnResult, out_of_time: Callable[[], bool]
+    token: Credential,
+    items: list[dict[str, Any]],
+    turn: TurnResult,
+    out_of_time: Callable[[], bool],
 ) -> bool:
     """Whether the turn may go on after checking that the account still sees every folder
     and shared drive its items name (a filter's `in` folder too): a lost folder lists
@@ -821,7 +853,7 @@ async def retire_absent(
 
 
 async def file_gone(
-    token: str, file_id: str, listing: gdrive_items.Listing, turn: TurnResult
+    token: Credential, file_id: str, listing: gdrive_items.Listing, turn: TurnResult
 ) -> bool | None:
     """Whether the store says the file is gone: not found, trashed, or reached by none
     of the source's items (`Listing.reaches`; after a cut walk, only a kind `include` no
@@ -857,6 +889,11 @@ def source_uri_of(f: dict[str, Any]) -> str:
     so it reads the same however the link was shared and stays one citation token."""
     link = str(f.get("webViewLink") or "")
     return link.split("#", 1)[0].split("?", 1)[0]
+
+
+def bound_source_uri(src: KnowledgeSource, uri: str) -> str:
+    """Personal copies keep their source identity even when two sources list one URL."""
+    return mirror_uri(uri, src.source_id) if src.credential_mode == "connected" and uri else uri
 
 
 def _spent(entry: Any) -> TypeGuard[list[Any]]:
@@ -948,7 +985,7 @@ async def sync_item(
 
 async def sync_file(
     src: KnowledgeSource,
-    token: str,
+    token: Credential,
     f: dict[str, Any],
     uri: str,
     prior: dict[str, str] | None,
@@ -1027,7 +1064,7 @@ async def _fetchable(f: dict[str, Any], run: Pass, turn: TurnResult) -> bool:
 
 async def _fetch_and_write(
     src: KnowledgeSource,
-    token: str,
+    token: Credential,
     f: dict[str, Any],
     uri: str,
     turn: TurnResult,
@@ -1176,13 +1213,15 @@ async def _servable(f: dict[str, Any], run: Pass) -> bool:
     return supported
 
 
-async def _fetch(token: str, f: dict[str, Any]) -> _Fetched:
+async def _fetch(token: Credential, f: dict[str, Any]) -> _Fetched:
     """The file as Markdown, with its bytes when it is an uploaded file (`_servable`)."""
     file_id, mime = str(f["id"]), str(f.get("mimeType") or "")
     max_bytes = int(settings.knowledge_source_sync_max_file_bytes)
     if mime == GDRIVE_MIME_TYPES["docs"]:
         text = await gdrive.export_markdown(token, file_id, max_bytes=max_bytes)
-        return _Fetched(convert.exported_markdown(text), "markdown")
+        content = convert.exported_markdown(text)
+        fmt = "transcript" if transcripts.is_drive_transcript_markdown(content) else "markdown"
+        return _Fetched(content, fmt)
     if mime == GDRIVE_MIME_TYPES["slides"]:
         deck = await gdrive.presentation(token, file_id, max_bytes=max_bytes)
         return _Fetched(convert.presentation_markdown(deck), "slides")
@@ -1224,8 +1263,27 @@ async def require_current(src: KnowledgeSource) -> None:
     started with: a remove during the turn stops it before its next write."""
     with sequential_reads():
         fresh = await store.get_source(src.org, src.namespace, src.name)
-    if fresh is None or fresh.source_id != src.source_id:
+    if fresh is None or not fresh.active or fresh.source_id != src.source_id:
         raise SourceGone(_cursor_of(src))
+    if src.credential_mode == "connected":
+        from server.knowledge.app import connected_accounts
+        from server.knowledge.store import connected_accounts as accounts_store
+
+        account = await accounts_store.get(src.org, src.owner_subject, src.kind)
+        if account is None:
+            raise connected_accounts.unavailable()
+        await connected_accounts._source_standing(src, account)
+
+
+@contextlib.asynccontextmanager
+async def publication_guard(src: KnowledgeSource) -> AsyncIterator[None]:
+    if src.credential_mode == "connected":
+        from server.knowledge.app import connected_accounts
+
+        async with connected_accounts.publication_guard(src):
+            yield
+    else:
+        yield
 
 
 def _repo_tag(src: KnowledgeSource) -> str:
@@ -1258,6 +1316,8 @@ async def write_document(
     another writer took the address while the item was fetched: the check before the
     fetch is seconds old by now."""
     namespace, tag = home(src)
+    if src.credential_mode == "connected" and src.kind == "notion":
+        permissions = access_list.AccessList(owner=src.owner_subject)
     tags = ["source-kind:design_doc", source_tag(src.name)]
     if not served(src):
         tags.append(tag)  # its `source-id:<id>`, and no repository tag
@@ -1291,7 +1351,15 @@ async def write_document(
         source_class="imported",
     )
     with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
-        await writes.handle_knowledge_upsert(request, permissions=permissions)
+        await writes.handle_knowledge_upsert(
+            request,
+            permissions=permissions,
+            commit_guard=(
+                functools.partial(publication_guard, src)
+                if src.credential_mode == "connected"
+                else None
+            ),
+        )
     return True
 
 

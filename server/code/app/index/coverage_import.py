@@ -170,10 +170,12 @@ def plan_pairs(
         ranges = cr.merge_ranges(r.get("ranges") or [])
         if not ranges:
             continue
-        plan.pairs[(src, test)] = {
-            "confidence": cr.specificity(int(r.get("min_tests") or 1)),
-            "evidence": cr.pair_evidence(commit, ranges, int(r.get("specific_lines") or 0)),
-        }
+        pair = plan.pairs.setdefault((src, test), {"confidence": 0.0, "ranges": []})
+        # Several function contexts can name one test file. Keep the full union
+        # apart from capped evidence, without counting overlap twice.
+        pair["ranges"] = cr.merge_ranges([*pair["ranges"], *ranges])
+        pair["confidence"] = max(pair["confidence"], cr.specificity(int(r.get("min_tests") or 1)))
+        pair["evidence"] = cr.pair_evidence(commit, pair["ranges"], cr.lines_in(pair["ranges"]))
 
 
 def plan_files(plan: cr.ImportPlan, rows: list[dict[str, Any]], live: set[str]) -> None:
