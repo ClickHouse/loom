@@ -6,6 +6,28 @@ const base = { fast_tier_lag: 0, scip_lag: 0, git_head: "abc123", indexed_at: at
 
 // The repository header's tooltip: what the reader sees, in plain words, for each state.
 describe("freshness", () => {
+  it.each(["not_member", "token_scope", "closed", undefined] as const)(
+    "requires access before interpreting redacted metadata (%s)",
+    (reason) => {
+      const redacted = { ...base, readable: false, unreadable_reason: reason, git_head: "", indexed_at: "" };
+      expect(freshness(redacted)).toMatchObject({
+        label: "Access required",
+        tone: "muted",
+        detail:
+          reason === "token_scope"
+            ? "Index status is hidden because this token does not include the repository's namespace."
+            : "Read access is required to view index status.",
+      });
+      expect(freshness({ ...redacted, stage: "error" }, "Clone failed").label).toBe("Access required");
+      expect(freshness({ ...redacted, git_head: "abc123", fast_tier_lag: 42 }).label).toBe("Access required");
+    },
+  );
+
+  it("keeps an explicitly readable empty repository unindexed", () => {
+    const empty = { ...base, readable: true, git_head: "", indexed_at: "" };
+    expect(freshness(empty)).toMatchObject({ label: "Not indexed", tone: "muted" });
+  });
+
   it("says the first index has not finished, and who runs it for a configured repository", () => {
     expect(freshness({ ...base, git_head: "" }).detail).toBe(
       "The first index hasn't finished yet; for an operator-configured repository, an operator runs it",

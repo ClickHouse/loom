@@ -1,3 +1,4 @@
+import type { CodeRepoSummary } from "../api/code";
 import { fmtInt, parseChTime } from "./format";
 export type FreshTone = "ok" | "warn" | "bad" | "muted";
 export type Fresh = { tone: FreshTone; label: string; detail: string };
@@ -14,10 +15,9 @@ export function lagLabel(lag: number, stale: boolean): string {
 }
 
 /**
- * One verdict per code index: not indexed, index failed, up to date, behind N commits, calls
- * catching up, no recent indexing, or unknown. Search's lag is the headline; the compiler
- * tier's is secondary. Shared by the repository detail's header and a branch's Behind line
- * on the repository card.
+ * One verdict per code index, after checking read access. Search's lag is the headline;
+ * the compiler tier's is secondary. Shared by the repository detail's header and a
+ * branch's Behind line on the repository card.
  */
 export function freshness(
   r: {
@@ -26,10 +26,19 @@ export function freshness(
     indexed_at?: string;
     git_head: string;
     stage?: string;
-  },
+  } & Pick<CodeRepoSummary, "readable" | "unreadable_reason">,
   /** Why a failed first index failed, as the branch card words it (`stageLabel`). */
   failure?: string,
 ): Fresh {
+  if (r.readable === false)
+    return {
+      tone: "muted",
+      label: "Access required",
+      detail:
+        r.unreadable_reason === "token_scope"
+          ? "Index status is hidden because this token does not include the repository's namespace."
+          : "Read access is required to view index status.",
+    };
   if (!r.git_head && r.stage === "error")
     return {
       tone: "bad",

@@ -89,7 +89,7 @@ export interface Health {
   state: BadgeState;
   /** What the tooltip says: the detail, the heads and the lag per tier. */
   detail: string;
-  /** Higher is worse: the row shows its worst branch. */
+  /** Higher is worse; unreadable branches rank below readable branches. */
   rank: number;
 }
 
@@ -109,6 +109,10 @@ function heads(b: CodeRepoSummary): string {
 
 /** A branch's index health, worst cause first. */
 export function branchHealth(b: CodeRepoSummary): Health {
+  if (b.readable === false) {
+    const f = freshness(b);
+    return { text: f.label, state: FRESH_STATE[f.tone], rank: -1, detail: f.detail };
+  }
   const stage = b.stage || "";
   const building = stageLabel(b);
   if (stage === "error")
