@@ -201,6 +201,7 @@ class _Accumulator:
     llm_input_tokens: int = 0
     llm_output_tokens: int = 0
     cost_usd: float = 0.0
+    cost_estimated: bool = False
     llm_calls: int = 0
     # Provider prompt-cache counters across the op's LLM calls: prompt tokens served from
     # the provider's cache and tokens written to it. Both are subsets of `llm_input_tokens`.
@@ -236,6 +237,7 @@ class _Accumulator:
             llm_input_tokens=self.llm_input_tokens,
             llm_output_tokens=self.llm_output_tokens,
             cost_usd=self.cost_usd,
+            cost_estimated=self.cost_estimated,
             llm_calls=self.llm_calls,
             llm_cache_read_tokens=self.llm_cache_read_tokens,
             llm_cache_write_tokens=self.llm_cache_write_tokens,
@@ -243,6 +245,7 @@ class _Accumulator:
         )
         self.embed_tokens = self.llm_input_tokens = self.llm_output_tokens = 0
         self.cost_usd, self.llm_calls = 0.0, 0
+        self.cost_estimated = False
         self.llm_cache_read_tokens = self.llm_cache_write_tokens = 0
         self.by_model = {}
         return snap
@@ -314,6 +317,36 @@ _current: contextvars.ContextVar[_Accumulator | None] = contextvars.ContextVar(
 )
 
 
+@dataclass
+class CostWatch:
+    """Spend observed across nested op contexts, without charging it a second time."""
+
+    cost_usd: float = 0.0
+    unknown: bool = False
+
+
+_watch: contextvars.ContextVar[CostWatch | None] = contextvars.ContextVar(
+    "loom_cost_watch", default=None
+)
+
+
+@contextmanager
+def watch_costs() -> Iterator[CostWatch]:
+    watch = CostWatch()
+    token = _watch.set(watch)
+    try:
+        yield watch
+    finally:
+        _watch.reset(token)
+
+
+def _observed(model: str, dollars: float) -> None:
+    watch = _watch.get()
+    if watch is not None:
+        watch.cost_usd += dollars
+        watch.unknown |= not is_priced(model)
+
+
 def begin_op() -> _Accumulator:
     """Bind a fresh accumulator to the current context and return it."""
     acc = _Accumulator()
@@ -326,19 +359,22 @@ def current() -> _Accumulator | None:
 
 
 def report_embed(model: str, tokens: int) -> None:
+    _observed(model, embed_cost_usd(model, tokens))
     acc = _current.get()
     if acc is None:
         return
     acc.add_embed(model, tokens)
 
 
-def report_charge(model: str, cost_usd: float) -> None:
+def report_charge(model: str, cost_usd: float, *, estimated: bool = False) -> None:
     """Charge one model call at a set price, for a call that cannot be priced from its
     tokens (the assistant's answer cut before its usage arrived, or on a model with no
     price): it counts as one call of `model` costing `cost_usd`, with no tokens."""
+    _observed(model, cost_usd)
     acc = _current.get()
     if acc is None:
         return
+    acc.cost_estimated |= estimated
     acc.add_charge(model, cost_usd)
 
 
@@ -355,6 +391,17 @@ def report_llm(
     uncached prompt share; pass the provider's cache counters separately so
     they are priced at the cache rates. A caller with no
     cache breakdown passes the whole prompt as `input_tokens`."""
+    _observed(
+        model,
+        turn_cost_usd(
+            model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_5m_tokens=cache_write_5m,
+            cache_creation_1h_tokens=cache_write_1h,
+        ),
+    )
     acc = _current.get()
     if acc is None:
         return

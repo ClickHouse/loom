@@ -179,7 +179,7 @@ test("a refusal before the stream and an error event inside it are shown in the 
         },
       });
     // The route's one error inside a stream ends it: no [DONE] follows.
-    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat ended the answer with an error" };
+    const error = { code: "ASSISTANT_UPSTREAM_FAILED", message: "The native assistant ended the answer with an error" };
     return r.fulfill({
       status: 200,
       contentType: "text/event-stream",

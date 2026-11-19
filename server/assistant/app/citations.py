@@ -48,7 +48,7 @@ _PARALLEL_READS = 4  # not a setting: a fraction of one answer's request budget
 _NOT_RUN = "the check could not run"
 # The memory reads that record what they return (`loom.memory_exposures`): a key returned
 # by any other call (memory.history, memory.provenance, an insights.query row) is not seen.
-# The agent's instructions name the same reads (integrations/librechat/agent.yaml).
+# The agent's instructions name the same reads (server/assistant/domain/instructions.py).
 RECORDING_READS = ("memory.search", "memory.ask", "memory.get", "memory.list", "memory.inspect")
 _UNREAD = f"no {', '.join(RECORDING_READS)} call in this answer was returned this key"
 

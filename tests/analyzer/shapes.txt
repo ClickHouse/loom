@@ -857,7 +857,6 @@
 64909b47ce31	SELECT memory_id, conflict_with, status FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {mid:UUID} AND tombstoned_at IS NULL LIMIT ?
 649be8789c60	SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?
 649d491e3187	SELECT count() AS n FROM loom.idempotency WHERE org = {org:String} AND ?
-64ab49492570	SELECT email, sealed, agent_id, definition_version, definition_model, version FROM loom.assistant_service FINAL WHERE id = ?
 64b38d15c083	SELECT memory_key, memory_type, content_excerpt, ? - cosineDistance(embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(temporal_anchor, toDateTime(?))) AS temporal_anchor, temporal_confi
 64c1ff845c88	SELECT count() AS n FROM loom.entity_vectors FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL
 64c84281ac98	SELECT count() AS n FROM loom.datasets WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND ?

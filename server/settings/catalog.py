@@ -47,18 +47,26 @@ from server.settings._live import LIVE
 
 
 class AssistantSettings(BaseModel):
-    """The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it."""
+    """Native assistant admission, tool and model budgets."""
 
-    # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
-    # = no assistant: no service setup at boot, and the panel's chat is off; its starters
-    # still read.
-    assistant_librechat_url: str = ""
-    # Email of the LibreChat service user that owns the agent, read once, when the first
-    # boot writes loom.assistant_service; LibreChat sends it no mail.
-    assistant_service_email: str = "loom-assistant@loom.invalid"
-    # Seconds before a failed assistant setup is tried again; each next failure doubles
-    # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
-    assistant_setup_retry_s: float = Field(default=60.0, ge=60, le=3600)
+    # Serve the assistant with its explicitly configured provider; false refuses chat.
+    assistant_enabled: bool = False
+    # Model turns, including the final answer; tool calls share a separate total bound.
+    assistant_max_steps: int = Field(default=8, ge=1, le=32)
+    # Total host-context and model-selected tool calls allowed in one answer.
+    assistant_max_tool_calls: int = Field(default=16, ge=1, le=64)
+    # UTF-8 bytes of the complete context, tools and messages included.
+    assistant_max_context_bytes: int = Field(default=100000, ge=4096, le=1000000)
+    # Characters in a tool response and in answer text; oversize results refuse.
+    assistant_max_tool_result_chars: int = Field(default=20000, ge=1000, le=100000)
+    # Characters of provisional answer text allowed across all model turns.
+    assistant_max_output_chars: int = Field(default=20000, ge=1000, le=100000)
+    # Output tokens per model turn and total input plus output tokens per answer.
+    assistant_max_output_tokens: int = Field(default=2048, ge=64, le=16384)
+    # Total reported input and output tokens allowed across all turns.
+    assistant_max_tokens: int = Field(default=100000, ge=1024, le=1000000)
+    # AWS region for the Bedrock Converse streaming route; no implicit region.
+    assistant_bedrock_region: str = ""
     # Seconds one assistant answer may run, and how long its delegated token lives.
     assistant_answer_ttl_s: int = Field(default=600, ge=60, le=3600)
     # The share of a namespace's daily model cost cap the assistant may spend, so
@@ -68,8 +76,8 @@ class AssistantSettings(BaseModel):
     # workers' count times this); bounds how far answers that each passed the cap check
     # can overshoot it.
     assistant_concurrent_answers: int = Field(default=2, ge=1, le=50)
-    # USD charged for an answer cut before LibreChat reported its usage (a
-    # disconnect, a timeout) or on a model with no price; 0 charges nothing.
+    # USD reservation ceiling per answer. Unknown usage retains the reserved cost
+    # as an estimate; real unpriced models are refused before a send. Zero refuses calls.
     assistant_answer_ceiling_usd: float = Field(default=0.10, ge=0, le=10)
 
 
@@ -4096,12 +4104,14 @@ class ModelSettings(BaseModel):
     # setting (the other *_model settings) is left "". Empty takes the resolved
     # provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1).
     llm_model: str = ""
-    # The assistant agent's model, which Loom writes into the agent definition at boot.
-    # "" = the definition's own (integrations/librechat/agent.yaml), not llm_model.
+    # The assistant's model. Empty selects claude-haiku-4-5 on Anthropic or
+    # fake-echo-1 on the explicit fake route; every other provider requires a model.
     assistant_model: str = ""
-    # The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local"
-    # = LibreChat's local endpoint (a model server the operator runs; needs assistant_model).
-    assistant_provider: Literal["", "anthropic", "local"] = ""
+    # Price-table model used for assistant route aliases (for example a Bedrock
+    # inference profile). Empty uses assistant_model. The operator verifies its rate.
+    assistant_price_model: str = ""
+    # Native streaming provider. Empty selects Anthropic; no fallback is used.
+    assistant_provider: Literal["", "anthropic", "openai", "bedrock", "local", "fake"] = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are

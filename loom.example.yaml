@@ -270,13 +270,15 @@ settings:
   # default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). [restart]
   # llm_model: ""
 
-  # The assistant agent's model, which Loom writes into the agent definition at boot. ""
-  # = the definition's own (integrations/librechat/agent.yaml), not llm_model. [restart]
+  # The assistant's model. Empty selects claude-haiku-4-5 on Anthropic or fake-echo-1 on
+  # the explicit fake route; every other provider requires a model. [restart]
   # assistant_model: ""
 
-  # The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local"
-  # = LibreChat's local endpoint (a model server the operator runs; needs
-  # assistant_model). [restart]
+  # Price-table model used for assistant route aliases (for example a Bedrock inference
+  # profile). Empty uses assistant_model. The operator verifies its rate. [restart]
+  # assistant_price_model: ""
+
+  # Native streaming provider. Empty selects Anthropic; no fallback is used. [restart]
   # assistant_provider: ""
 
   # Model to answer with when a client's provider is still unavailable after its retries
@@ -934,21 +936,37 @@ settings:
   # Seconds the identity provider's OpenID configuration is cached. [live]
   # auth_oidc_discovery_ttl_s: 3600.0
 
-  # ===== The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it =====
+  # ===== Native assistant admission, tool and model budgets =====
 
-  # LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" =
-  # no assistant: no service setup at boot, and the panel's chat is off; its starters
-  # still read. [restart]
-  # assistant_librechat_url: ""
-
-  # Email of the LibreChat service user that owns the agent, read once, when the first
-  # boot writes loom.assistant_service; LibreChat sends it no mail. [restart]
-  # assistant_service_email: "loom-assistant@loom.invalid"
-
-  # Seconds before a failed assistant setup is tried again; each next failure doubles
-  # the wait, up to 16 times as long (docs/architecture/assistant.md#deployment).
+  # Serve the assistant with its explicitly configured provider; false refuses chat.
   # [restart]
-  # assistant_setup_retry_s: 60.0
+  # assistant_enabled: false
+
+  # Model turns, including the final answer; tool calls share a separate total bound.
+  # [restart]
+  # assistant_max_steps: 8
+
+  # Total host-context and model-selected tool calls allowed in one answer. [restart]
+  # assistant_max_tool_calls: 16
+
+  # UTF-8 bytes of the complete context, tools and messages included. [restart]
+  # assistant_max_context_bytes: 100000
+
+  # Characters in a tool response and in answer text; oversize results refuse. [restart]
+  # assistant_max_tool_result_chars: 20000
+
+  # Characters of provisional answer text allowed across all model turns. [restart]
+  # assistant_max_output_chars: 20000
+
+  # Output tokens per model turn and total input plus output tokens per answer.
+  # [restart]
+  # assistant_max_output_tokens: 2048
+
+  # Total reported input and output tokens allowed across all turns. [restart]
+  # assistant_max_tokens: 100000
+
+  # AWS region for the Bedrock Converse streaming route; no implicit region. [restart]
+  # assistant_bedrock_region: ""
 
   # Seconds one assistant answer may run, and how long its delegated token lives.
   # [restart]
@@ -963,8 +981,9 @@ settings:
   # overshoot it. [restart]
   # assistant_concurrent_answers: 2
 
-  # USD charged for an answer cut before LibreChat reported its usage (a disconnect, a
-  # timeout) or on a model with no price; 0 charges nothing. [restart]
+  # USD reservation ceiling per answer. Unknown usage retains the reserved cost as an
+  # estimate; real unpriced models are refused before a send. Zero refuses calls.
+  # [restart]
   # assistant_answer_ceiling_usd: 0.1
 
   # ===== The code plane: ingest, indexes, search, ask, review =====

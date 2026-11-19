@@ -308,10 +308,10 @@ without losing the focus or the question being typed. It reopens on reload only 
 sits beside the page, never expanded. A bookmarked `/assistant` address lands on the
 account's landing page and opens the assistant over it (expanded from 1024 px).
 
-**Chat not set up** (no assistant URL, or readiness says so) is one empty state: its icon,
+**Chat not set up** (the native assistant is disabled, or readiness says so) is one empty state: its icon,
 "Chat isn't set up", "An operator sets up the assistant service for this deployment.", and a
 link, **How to set up the assistant service**, to the [deployed
-assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own reads
+assistant](../operations/assistant.md) in the docs. Loom's own reads
 are listed under it as starters, with no question field and no **Also ask the model**, and
 the starters stay under the last card, so one runs after another; those cards are not saved,
 and **New chat** empties the list. History shows only conversations saved before, opened
@@ -328,7 +328,7 @@ sets up or fails; a read that takes over 10 s counts as failed, and the chat rou
 then decides), and the chat route's refusals by their `detail.reason`: auth off, an org-wide
 or narrowed token (also read from the token's own claims), a token that expires before an
 answer could finish, and model calls switched off for the org (see [the
-bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
+bridge](../architecture/assistant.md#each-callers-own-identity)). **Try again**
 reads readiness again and asks a refused question again once nothing refuses it, with what
 the chip shows then; when the chip's line would make it longer than the route accepts it
 sends nothing, leaving the question in the field, which says why, or, with other text there,

@@ -1,11 +1,36 @@
 # LLM and embedding architecture
 
-Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into
-vectors, and an LLM client (`server/llm/`) that completes prompts. Each is chosen once
-per process from settings. Each falls back to a deterministic fake when its key is
-missing, so a keyless install boots and answers. Operator setup is in
-[deployment](../operations/deployment.md); every setting is in the
+Loom uses pluggable embedders and model clients. The embedder (`server/embedding/`)
+turns text into vectors. The synthesis client (`server/llm/client.py`) completes one
+prompt; its keyless fallback is deterministic and visible. The native assistant uses
+a separate streaming tool contract and refuses missing provider credentials. Operator
+setup is in [deployment](../operations/deployment.md); settings are in the
 [configuration reference](../reference/configuration.md).
+
+## Native assistant models
+
+`server/llm/agent.py` defines model turns, tool requests and results, usage and terminal
+validation. The native [assistant runtime](assistant.md) owns the bounded loop and
+initial context. It never treats the one-shot synthesis protocol as an agent.
+OpenAI-compatible and Anthropic streams use the guarded shared HTTP pool. The Bedrock
+route signs Converse requests and decodes bounded event-stream frames through the
+same pool, using the existing AWS dependency. The fake route is explicit, never a
+missing-key fallback. No model fallback or implicit streaming replay is used.
+
+A logical turn has one physical request attempt. Usage is captured once in the turn's
+cleanup path, including failures. Cache reads and writes remain separate from uncached
+input; reasoning remains unknown unless reported. An interrupted stream with missing
+usage retains its cost reservation as an estimate and records that uncertainty in the
+ledger and generation span. A real unpriced route refuses before sending. A configured
+price reference for a model alias is an operator-verified rate, not an invoice.
+
+The model receives only bounded data and read-only schemas for the current context.
+Tool execution returns through Loom's authenticated assistant MCP endpoint under the
+asker's delegated token. Private marking, authorization and cost delivery remain
+server-owned. Model and tool producers are closed before final accounting. EOF without
+the provider's terminal frame, a refusal or malformed usage cannot complete an answer.
+See [assistant setup](../operations/assistant.md) for verification and retained-state
+cutover limits.
 
 ## Goals and non-goals
 

@@ -681,7 +681,7 @@ keep the accounting-before-publication boundary above. The answer token's distin
 `answer_mirrors` bit fixes mirror admission before model work, so a source activated
 during a negative answer cannot introduce an unmarked tool leg. Missing admission is
 false; ordinary delegation drops it. See the
-[assistant boundary](assistant.md#the-bridge-each-callers-own-identity).
+[assistant boundary](assistant.md#each-callers-own-identity).
 
 A multi-entry MCP batch refuses every response-bearing marked entry with the same
 instruction to send it individually, including denied and empty entries. Notifications

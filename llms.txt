@@ -66,7 +66,6 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Agent frameworks and orchestrators](docs/features/integrations/frameworks.md): The SDKs ship adapters that present Loom through a framework's own memory or retrieval interface.
 - [The grep shim](docs/features/integrations/grep-shim.md): The grep shim is a `grep`/`rg` wrapper that appends each hit's enclosing function, from the code index, to the match line; it needs Node 18 or later, a viewer token and a repository in the code index.
 - [Langfuse](docs/features/integrations/langfuse.md): Needs `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; nothing is sent until both are set.
-- [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
 - [Connecting an MCP client](docs/features/integrations/mcp-clients.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
 - [VS Code](docs/features/integrations/vscode.md): VS Code's agent mode (GitHub Copilot) connects to Loom as a remote MCP server over streamable HTTP.
@@ -106,6 +105,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Operations
 
 - [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
+- [Native assistant setup](docs/operations/assistant.md): The assistant runs inside Loom and uses the same dashboard, HTTP, MCP and SDK interfaces.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
 - [Attaching the first cell](docs/operations/cell-attach.md): `loom cell attach` turns a prepared first cell (`loom cell prepare`, mode `recording`, directory row `attaching`) into a `serving` one: it places every org the cell holds in the router's directory, raises the cell's mode to `enforced` and…
 - [Cell control upgrades and recovery](docs/operations/cell-control.md): Cell control mutations require generation-aware clients and router handlers, and direct access to the cell's Postgres.
@@ -147,7 +147,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 - [Microsoft Agent Framework context provider](docs/architecture/agent-framework-adapter.md): `LoomContextProvider` implements the framework's context-provider interface over the asynchronous Python SDK.
 - [Agno user-memory database](docs/architecture/agno-adapter.md): The Agno adapter implements the user-memory methods of its 3.2 `BaseDb` interface through the synchronous Loom SDK.
-- [Assistant design](docs/architecture/assistant.md): This page is the design of Loom's assistant, which answers questions about what a namespace holds and how it is used, with a citation for every claim.
+- [Assistant design](docs/architecture/assistant.md): Loom's native assistant answers namespace questions through bounded model turns and read-only operations, under the caller's identity.
 - [Cells](docs/architecture/cells.md): A deployment's memory can outgrow one Postgres primary and one ClickHouse service, and an org may want its memory in services of its own.
 - [Claude API memory file tree](docs/architecture/claude-memory-adapter.md): The Claude API memory adapter implements the framework's Python memory-tool bases and TypeScript memory handlers through Loom knowledge documents.
 - [ClickHouse](docs/architecture/clickhouse.md): Durable Loom state lives in ClickHouse, except document bytes in an optional S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live memory, knowledge state and the records beside them.
@@ -164,7 +164,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Haystack document store and retriever](docs/architecture/haystack-adapter.md): The optional Haystack 3.5 adapter implements its document-store protocol and a native retrieval component through the synchronous Loom SDK.
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
 - [Live connected-source search](docs/architecture/live-source-search.md): `search.query(live=true)` adds an ephemeral section from the asker's own connected Drive and Notion registrations.
-- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
+- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom uses pluggable embedders and model clients.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
 - [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.

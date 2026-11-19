@@ -674,7 +674,7 @@ function ReasonBody({
 }
 
 /** Where the docs say how an operator sets up the assistant service. */
-export const SETUP_DOCS = { page: "features/integrations/librechat.md", anchor: "the-deployed-assistant" };
+export const SETUP_DOCS = { page: "operations/assistant.md", anchor: "configuration" };
 
 /** Chat not set up (`failing`: its setup failing): the icon, a title and a line, then the
  *  docs on setting up the assistant service, or Try again while it fails, with Admin ›

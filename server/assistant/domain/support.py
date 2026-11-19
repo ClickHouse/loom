@@ -32,7 +32,7 @@ UNSUPPORTED = "unsupported"
 UNCHECKED = "unchecked"
 NONE = "none"
 
-# The sentence the agent ends an abstention with (integrations/librechat/agent.yaml).
+# The sentence the agent ends an abstention with (server/assistant/domain/instructions.py).
 ABSTENTION = "nothing stored in loom answers this"
 _EMPHASIS = re.compile(r"[*_`~]+")
 _SPACE = re.compile(r"\s+")

@@ -1,0 +1,428 @@
+"""Native provider wire fixtures and completion publication boundaries, without networks."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
+
+from server.assistant.app import routes, tools
+from server.core import request_tail
+from server.core.errors import AssistantUpstreamError
+from server.llm import agent_http
+from server.llm.agent import Turn
+from server.llm.customer import Customer
+from server.operations.base import Role
+from server.settings import settings
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "local"])
+def test_provider_request_uses_explicit_streaming_tools_without_temperature(monkeypatch, provider):
+    seen = []
+    if provider == "anthropic":
+        frames = [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 100}}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "answer"},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 10},
+            },
+            {"type": "message_stop"},
+        ]
+    else:
+        frames = [
+            {"choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 10}},
+        ]
+    wire = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames)
+    if provider != "anthropic":
+        wire += "data: [DONE]\n\n"
+
+    def reply(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=wire)
+
+    async def customer():
+        return Customer()
+
+    async def bearer(key, url):
+        return "fixture-key"
+
+    monkeypatch.setattr(agent_http.customer, "require", customer)
+    monkeypatch.setattr(agent_http.gateway, "bearer", bearer)
+    monkeypatch.setattr(agent_http, "provider_key", lambda _: "fixture-key")
+    for field in ("openai_base_url", "anthropic_base_url", "local_llm_base_url"):
+        monkeypatch.setattr(settings, field, "https://provider.invalid/v1")
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+            monkeypatch.setattr(agent_http, "get_model_client", lambda: client)
+            turn = Turn()
+            text = [
+                part
+                async for part in agent_http.HTTPAgentModel(provider, "explicit-model").stream(
+                    [
+                        {"role": "system", "content": "rules"},
+                        {"role": "user", "content": "question"},
+                    ],
+                    [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "loom_memory_get",
+                                "description": "read",
+                                "parameters": {"type": "object"},
+                            },
+                        }
+                    ],
+                    100,
+                    turn,
+                )
+            ]
+            assert text == ["answer"] and turn.stop == "stop" and turn.usage_complete
+
+    asyncio.run(scenario())
+    assert len(seen) == 1 and seen[0]["model"] == "explicit-model" and seen[0]["stream"]
+    assert seen[0]["tools"] and "temperature" not in seen[0]
+    assert "reasoning_effort" not in seen[0]
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"data: null\n\n", b"data: [broken\n\n", b"data: {}", b'data: {"error": "refused"}\n\n'],
+)
+def test_malformed_sse_frames_refuse(data):
+    from server.llm.agent import sse
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, content=data))
+        ) as client:
+            async with client.stream("GET", "https://provider.invalid") as response:
+                with pytest.raises(AssistantUpstreamError):
+                    [frame async for frame in sse(response)]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_required_cost_delivery_precedes_done(monkeypatch, fail):
+    order = []
+
+    async def source():
+        try:
+            yield b'data: {"choices":[]}\n\n'
+            yield b"data: [DONE]\n\n"
+        finally:
+            order.append("producer_closed")
+
+    async def settle():
+        order.append("delivery")
+        if fail:
+            raise request_tail.RequiredTailError()
+
+    monkeypatch.setattr(request_tail, "settle_current", settle)
+    held = SimpleNamespace(close=lambda error: order.append("ledger"), finished=False)
+
+    async def scenario():
+        received = []
+        try:
+            async for frame in routes._streamed(source(), held):
+                received.append(frame)
+                if frame == b"data: [DONE]\n\n":
+                    assert order == ["producer_closed", "ledger", "delivery"]
+        except request_tail.RequiredTailError:
+            assert fail
+        assert (b"data: [DONE]\n\n" in received) is not fail
+
+    asyncio.run(scenario())
+
+
+def test_native_tool_uses_authenticated_mcp_and_revocation(monkeypatch):
+    from dataclasses import replace
+
+    from fastapi import FastAPI
+
+    from server.auth.jwt import TokenError
+    from server.transport import mcp, mcp_call
+    from tests.unit.mcp_probe import _Out, serve_probe
+
+    probe = serve_probe(monkeypatch)
+    principal = replace(
+        probe["tokens"]["alice"], consumer="loom-assistant", token_id="assistant-answer-native"
+    )
+    seen = []
+
+    async def handler(inp):
+        from server.auth.context import current_auth
+        from server.observability.run_context import current_ledger_run
+
+        assert current_ledger_run() == "answer-owned"
+        assert current_auth().subject == principal.subject
+        seen.append((inp.org, inp.namespace))
+        return _Out()
+
+    op = replace(
+        mcp_call.TOOLS_BY_NAME["loom_test_refusal_probe"],
+        name="memory.get",
+        handler=handler,
+        idempotent=True,
+        required_role=Role.VIEWER,
+    )
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, "loom_memory_get", op)
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    app = FastAPI()
+    mcp.attach(app)
+    monkeypatch.setattr(tools, "_app", app)
+    revoked = False
+
+    def verify(token):
+        assert token == "alice"
+        if revoked:
+            raise TokenError("revoked")
+        return principal
+
+    monkeypatch.setattr("server.auth.jwt.verify_token", verify)
+
+    async def readable(auth, org, ns):
+        assert auth.subject == principal.subject
+        return (org, ns) == ("acme", "n"), False
+
+    monkeypatch.setattr("server.transport.mcp_auth._may_read", readable)
+
+    async def scenario():
+        nonlocal revoked
+        native = tools.Tools("acme", "n", "alice", "answer-owned")
+        result = await native.call("loom_memory_get", {"memory_key": "one"}, origin="host_context")
+        assert result.result == {"ok": True} and seen == [("acme", "n")]
+        revoked = True
+        with pytest.raises(AssistantUpstreamError):
+            await native.call("loom_memory_get", {"memory_key": "two"}, origin="model_tool")
+        assert len(seen) == 1
+
+    asyncio.run(scenario())
+
+
+def test_bedrock_binary_stream_uses_guarded_http_and_closes(monkeypatch):
+    import struct
+    import zlib
+
+    from server.llm import agent_bedrock
+
+    def event(kind, data):
+        def header(name, value):
+            return (
+                bytes([len(name)])
+                + name.encode()
+                + b"\x07"
+                + struct.pack(">H", len(value))
+                + value.encode()
+            )
+
+        headers = header(":message-type", "event") + header(":event-type", kind)
+        payload = json.dumps(data).encode()
+        prelude = struct.pack(">II", len(headers) + len(payload) + 16, len(headers))
+        body = prelude + struct.pack(">I", zlib.crc32(prelude)) + headers + payload
+        return body + struct.pack(">I", zlib.crc32(body))
+
+    wire = b"".join(
+        event(kind, frame)
+        for kind, frame in [
+            ("messageStart", {"role": "assistant"}),
+            ("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "answer"}}),
+            ("contentBlockStop", {"contentBlockIndex": 0}),
+            ("messageStop", {"stopReason": "end_turn"}),
+            ("metadata", {"usage": {"inputTokens": 100, "outputTokens": 10}}),
+        ]
+    )
+    sent = []
+    checked = []
+
+    def reply(request):
+        sent.append(request)
+        return httpx.Response(200, content=wire)
+
+    async def customer():
+        return Customer()
+
+    monkeypatch.setattr(agent_bedrock.customer, "require", customer)
+    monkeypatch.setattr(agent_bedrock, "signed_headers", lambda *_: {"Authorization": "fixture"})
+    monkeypatch.setattr(agent_bedrock, "refuse_off_gateway", lambda url: checked.append(url))
+    monkeypatch.setattr(settings, "assistant_bedrock_region", "us-east-1")
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+            monkeypatch.setattr(agent_bedrock, "get_model_client", lambda: client)
+            turn = Turn()
+            text = [
+                part
+                async for part in agent_bedrock.BedrockAgentModel("explicit.profile").stream(
+                    [{"role": "system", "content": "rules"}, {"role": "user", "content": "q"}],
+                    [],
+                    100,
+                    turn,
+                )
+            ]
+            assert text == ["answer"] and turn.usage_complete
+
+    asyncio.run(scenario())
+    assert len(sent) == 1 and len(checked) == 1
+    assert str(sent[0].url).endswith("/model/explicit.profile/converse-stream")
+    assert json.loads(sent[0].content)["inferenceConfig"] == {"maxTokens": 100}
+
+
+def test_unknown_usage_trace_does_not_invent_zero_tokens():
+    from server.observability import genai
+
+    class Span:
+        def __init__(self):
+            self.attrs = {}
+
+        def set_attribute(self, key, value):
+            self.attrs[key] = value
+
+    span = Span()
+    generation = genai._Generation(span, "claude-haiku-4-5")
+    generation.note_attempt()
+    generation.record_accounting(
+        usage_status="unknown", price_model="claude-haiku-4-5", estimated_cost=0.01
+    )
+    assert span.attrs["loom.llm.usage_status"] == "unknown"
+    assert span.attrs["loom.llm.cost_estimated"]
+    assert "gen_ai.usage.input_tokens" not in span.attrs
+    assert "gen_ai.usage.cost" not in span.attrs
+
+
+def test_provider_response_cleanup_joins_repeated_cancellation():
+    from server.llm.agent import model_stream
+
+    async def scenario():
+        closing, release = asyncio.Event(), asyncio.Event()
+        closed = []
+
+        class Context:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, *args):
+                closing.set()
+                await release.wait()
+                closed.append(True)
+
+        class Client:
+            def stream(self):
+                return Context()
+
+        async def consume():
+            async with model_stream(Client()):
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0)
+        task.cancel()
+        await closing.wait()
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert closed == [True]
+
+    asyncio.run(scenario())
+
+
+def test_native_host_calls_loom_before_the_first_model_turn(monkeypatch):
+    from dataclasses import replace
+
+    from fastapi import FastAPI
+
+    from server.assistant.app import agent, runtime
+    from server.llm import agent as models
+    from server.observability.run_context import current_ledger_run
+    from server.transport import mcp, mcp_call
+    from tests.unit.mcp_probe import _Out, serve_probe
+
+    probe = serve_probe(monkeypatch)
+    principal = replace(
+        probe["tokens"]["alice"],
+        is_service_account=False,
+        consumer="loom-assistant",
+        token_id="assistant-answer-composed",
+    )
+    state = agent.State()
+    invoked = []
+    for name in ("memory.search", "knowledge.search"):
+
+        async def handler(inp, operation=name):
+            assert current_ledger_run() == state.run_id
+            assert (inp.org, inp.namespace) == ("acme", "n")
+            invoked.append(operation)
+            return _Out()
+
+        operation = replace(
+            mcp_call.TOOLS_BY_NAME["loom_test_refusal_probe"],
+            name=name,
+            handler=handler,
+            idempotent=True,
+            required_role=Role.VIEWER,
+        )
+        monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, "loom_" + name.replace(".", "_"), operation)
+
+    async def readable(auth, org, ns):
+        assert auth.subject == principal.subject
+        return (org, ns) == ("acme", "n"), False
+
+    async def affordable(*args):
+        return None
+
+    monkeypatch.setattr(runtime, "_afford", affordable)
+    monkeypatch.setattr("server.auth.jwt.verify_token", lambda token: principal)
+    monkeypatch.setattr("server.transport.mcp_auth._may_read", readable)
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    monkeypatch.setattr(settings, "assistant_provider", "fake")
+    monkeypatch.setattr(settings, "assistant_model", "")
+    monkeypatch.setattr(settings, "assistant_price_model", "")
+    app = FastAPI()
+    mcp.attach(app)
+    monkeypatch.setattr(tools, "_app", app)
+
+    class Replay:
+        async def stream(self, messages, descriptors, maximum, turn):
+            assert invoked == ["memory.search", "knowledge.search"]
+            assert len([m for m in messages if m["role"] == "tool"]) == 2
+            turn.sent = turn.usage_complete = True
+            turn.usage, turn.stop = models.Usage(100, 10), "stop"
+            turn.text = "Nothing stored in Loom answers this."
+            yield turn.text
+
+    monkeypatch.setattr(models, "model_for", lambda *_: Replay())
+
+    async def scenario():
+        return [
+            frame
+            async for frame in agent.run(
+                "acme",
+                "n",
+                "alice",
+                "viewer",
+                [{"role": "user", "content": "our deployment policy"}],
+                state,
+            )
+        ]
+
+    frames = asyncio.run(scenario())
+    assert state.turns == 1 and all(r.origin == "host_context" for r in state.receipts)
+    assert frames[-1]["usage"]["prompt_tokens"] == 100

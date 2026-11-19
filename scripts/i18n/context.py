@@ -29,8 +29,6 @@ _NAMES = {
     "docs/features/integrations/index.md": (
         *_FRAMEWORK_NAMES,
         "Agent Substrate",
-        "LibreChat v0.8.8",
-        "LibreChat",
         "GitHub Copilot CLI",
         "Cline CLI",
     ),

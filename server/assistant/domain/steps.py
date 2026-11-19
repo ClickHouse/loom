@@ -1,6 +1,6 @@
 """What an assistant answer read, as steps a person follows: one line per tool call, from the
 call's ledger row, in fixed words per op. Pure: the reads are in the app layer
-(server/assistant/app/support.py and bridge.py). The steps are display only; the label is
+(server/assistant/app/support.py and runtime.py). The steps are display only; the label is
 support's (docs/architecture/assistant.md#steps)."""
 
 from __future__ import annotations

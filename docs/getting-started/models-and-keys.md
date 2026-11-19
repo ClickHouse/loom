@@ -212,9 +212,6 @@ new install or an existing one, and `LOOM_LOCAL_MODELS=off` never offers it. It 
 LOOM_LLM_PROVIDER=local
 LOOM_LLM_MODEL=qwen2.5:3b
 LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
-LOOM_ASSISTANT_PROVIDER=local
-LOOM_ASSISTANT_MODEL=qwen2.5:3b
-LOOM_ASSISTANT_ANSWER_CEILING_USD=0
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=
 LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false
 LOOM_LLM_REQUEST_TIMEOUT_S=900
@@ -269,34 +266,11 @@ conversation titles and structured profiles, which run once conversation logging
 profile schema is set up.
 
 For llama.cpp, point `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root
-(`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves;
-for a local assistant, also set `LIBRECHAT_LOCAL_LLM_BASE_URL` to that root and
-`LOOM_ASSISTANT_MODEL` to that name. A server run from a checkout reaches the model at
-`localhost`, the setting's default (`http://localhost:11434/v1`).
+(`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves.
+For the assistant, configure its native provider and a verified price reference
+separately; see [assistant setup](../operations/assistant.md). A missing price refuses
+model calls rather than recording an unknown cost as zero.
 
-A per-job model whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes
-to that hosted provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way
-(`gpt-oss`) runs locally as `LOOM_LLM_MODEL`, and in a per-job setting only when that
-setting names the same model.
-
-- **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
-  Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must
-  listen beyond loopback (`OLLAMA_HOST=0.0.0.0`, with port 11434 closed to the network).
-  Under the Helm chart with `networkPolicy.enabled`, add the server's port to
-  `networkPolicy.extraEgress`.
-- **The assistant.** `LOOM_ASSISTANT_PROVIDER=local` moves the assistant's agent to
-  LibreChat's `local` endpoint, which calls `LIBRECHAT_LOCAL_LLM_BASE_URL` (default
-  `http://host.docker.internal:11434/v1`), and needs `LOOM_ASSISTANT_MODEL`. The assistant
-  answers by calling Loom's tools, so pick a model the server runs with tool calls (Ollama
-  marks them). A local model has no price, so each answer counts
-  `LOOM_ASSISTANT_ANSWER_CEILING_USD` ($0.10 by default) against the assistant's share of
-  the namespace's daily model cost cap, as any unpriced model does: at the default cap
-  and share, five answers a day. The preset sets the ceiling to `0`, so local answers
-  cost nothing; it is also what an answer cut before its usage arrived costs, so keep it
-  at its default when a hosted model serves the assistant. Under the Helm chart, add
-  `LOCAL_LLM_BASE_URL` to the assistant's Secret; the chart's policy lets LibreChat reach
-  only DNS, its database, Loom and TCP 443, so the model server needs a NetworkPolicy of
-  your own that selects the LibreChat pod.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
   with no key or to keep everything on the machine, not as an equal: expect extraction,

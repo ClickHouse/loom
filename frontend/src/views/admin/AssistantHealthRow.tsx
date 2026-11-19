@@ -8,9 +8,9 @@ import { readAssistantCheck, type AssistantCheck } from "../assistant/readiness"
 
 const SAID: Record<AssistantCheck, string> = {
   ready: "The assistant is ready.",
-  not_configured: "No LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL).",
+  not_configured: "The native assistant is disabled (LOOM_ASSISTANT_ENABLED).",
   starting: "The assistant is setting up; this usually takes under a minute.",
-  failing: "The assistant's setup failed. Loom retries the setup on its own.",
+  failing: "The native assistant cannot answer. Check its provider configuration in Health.",
 };
 
 /**

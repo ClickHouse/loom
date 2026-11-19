@@ -10,7 +10,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 type Check = "ready" | "not_configured" | "starting" | "failing" | "read_failed";
-const FIX = "Set LOOM_ASSISTANT_LIBRECHAT_URL to a LibreChat Loom can reach.";
+const FIX = "Configure the native assistant provider and credentials.";
 
 let check: Check = "ready";
 let problem = false;

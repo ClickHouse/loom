@@ -586,7 +586,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "names and scopes, no content."
     ),
     "loom.assistant_service": (
-        "One row: the assistant's LibreChat service user (its email and agent id) and its "
+        "Retained assistant provisioning metadata (email and agent id) and its "
         "sealed password and API key; no org, namespace or content."
     ),
     "loom.chunk_supersessions": (

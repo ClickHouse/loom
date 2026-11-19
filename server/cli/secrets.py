@@ -72,9 +72,11 @@ def _analysis_lease(ch: Any) -> Any:
 
 
 def _assistant_lease(ch: Any) -> Any:
-    from server.assistant.app.service import lease
+    from server.core.leases import cluster_lease
 
-    return lease(ch)
+    # Retained provisioning credentials still need root-key rotation. Taking the
+    # same lease protects a mixed fleet without starting a retired runtime.
+    return cluster_lease("assistant.service", ttl_s=60, wait_s=120, ch=ch)
 
 
 # The rows a boot writes under a cluster lease, which the reseal takes too.

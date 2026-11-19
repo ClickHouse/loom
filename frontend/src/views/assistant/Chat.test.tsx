@@ -261,7 +261,7 @@ describe("AssistantChat", () => {
     await act(async () => {
       s.text("Ada ");
       // The route's one error inside a stream, and nothing after it.
-      s.error({ code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat ended the answer with an error" });
+      s.error({ code: "ASSISTANT_UPSTREAM_FAILED", message: "The native assistant ended the answer with an error" });
       s.close();
     });
     // One sentence that says what happened and that the question is kept.
