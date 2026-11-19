@@ -19,6 +19,7 @@ import {
 } from "../lib/session-protection.mjs";
 
 const owned = new Set();
+const processObservations = new WeakMap();
 afterEach(() => {
   for (const directory of owned) fs.rmSync(directory, { recursive: true, force: true });
   owned.clear();
@@ -226,28 +227,107 @@ function directoryComparison(actual, expected) {
   return JSON.stringify(facts);
 }
 
+// Retain only closed facts from the existing observer, never identities or errors.
+function processObservationFrames(stderr) {
+  const text = String(stderr ?? "");
+  const lines = text.slice(-1024).split(/\r?\n/);
+  if (text.length > 1024) lines.shift();
+  const frames = [];
+  for (const line of lines) {
+    if (line.length > 64) continue;
+    const match =
+      /^LWX1:(p:(?:entry|input-read|parsed|observed|done)|s:[01]:(?:lookup|exited|started|kill|wait):(?:argument|invalid|exited|match|mismatch)):([0-9]{1,5})$/.exec(
+        line,
+      );
+    if (match && Number(match[2]) <= 60000) {
+      if (frames.length === 9) frames.shift();
+      frames.push({ boundary: match[1], observerMs: Number(match[2]) });
+    }
+  }
+  return frames;
+}
+
+function recordProcessObservation(observation, result, phase, wallStarted, monotonicStarted) {
+  try {
+    if (!observation) return;
+    const bounded = (value) => (Number.isFinite(value) ? Math.max(-60000, Math.min(60000, Math.round(value))) : null);
+    observation.last = {
+      phase: ["live-identities", "deadline-absence", "final-cleanup"].includes(phase) ? phase : "unknown",
+      receiptRemainingMs: observation.receiptRemainingMs,
+      receiptElapsedMs: observation.receiptElapsedMs,
+      spawnRemainingMs: bounded(observation.deadline - wallStarted),
+      endRemainingMs: bounded(observation.deadline - Date.now()),
+      elapsedMs: bounded(performance.now() - monotonicStarted),
+      boundary: observerPhase(result.stderr),
+      frames: processObservationFrames(result.stderr),
+    };
+  } catch {}
+}
+
+function processObservationFailure(observation) {
+  try {
+    if (observation?.last) observation.context.diagnostic(`LWX1:${JSON.stringify(observation.last)}`);
+  } catch {}
+}
+
 function exactProcesses(identities, kill = false) {
   const source = String.raw`
     $ErrorActionPreference = 'Stop'
+    try { $loomObservationWatch = [Diagnostics.Stopwatch]::StartNew() } catch { $loomObservationWatch = $null }
+    $loomObservationFrames = 0
+    function Write-LoomObserverFrame([string]$frame) {
+      try {
+        if ($null -eq $script:loomObservationWatch -or $script:loomObservationFrames -ge 9 -or $frame.Length -gt 48) { return }
+        if ($frame -cnotmatch '^(?:p:(?:entry|input-read|parsed|observed|done)|s:[01]:(?:lookup|exited|started|kill|wait):(?:argument|invalid|exited|match|mismatch))$') { return }
+        $elapsed = [Math]::Min(60000, $script:loomObservationWatch.ElapsedMilliseconds)
+        [Console]::Error.WriteLine('LWX1:' + $frame + ':' + $elapsed.ToString([Globalization.CultureInfo]::InvariantCulture))
+        [Console]::Error.Flush()
+        $script:loomObservationFrames++
+      } catch { }
+    }
     try { [Console]::Error.WriteLine('LWO1:entry'); [Console]::Error.Flush() } catch { }
+    Write-LoomObserverFrame 'p:entry'
     $loomObserverInput = [Console]::In.ReadToEnd()
     try { [Console]::Error.WriteLine('LWO1:input-read'); [Console]::Error.Flush() } catch { }
+    Write-LoomObserverFrame 'p:input-read'
     $r = $loomObserverInput | ConvertFrom-Json
     try { [Console]::Error.WriteLine('LWO1:parsed'); [Console]::Error.Flush() } catch { }
+    Write-LoomObserverFrame 'p:parsed'
     $live = @()
+    $loomObserverSlot = 0
     foreach ($identity in $r.identities) {
+      $loomObserverStage = 'lookup'
+      $loomObserverOutcome = 'argument'
       try {
         $p = [Diagnostics.Process]::GetProcessById([int]$identity.pid)
-        if (-not $p.HasExited -and $p.StartTime.ToUniversalTime().Ticks.ToString() -eq $identity.started) {
-          $live += [int]$identity.pid
-          if ($r.kill) { $p.Kill(); [void]$p.WaitForExit(500) }
-        }
-      } catch [ArgumentException] {} catch [InvalidOperationException] {}
+        $loomObserverStage = 'exited'
+        if (-not $p.HasExited) {
+          $loomObserverStage = 'started'
+          if ($p.StartTime.ToUniversalTime().Ticks.ToString() -eq $identity.started) {
+            $loomObserverOutcome = 'match'
+            $live += [int]$identity.pid
+            if ($r.kill) {
+              $loomObserverStage = 'kill'
+              $p.Kill()
+              $loomObserverStage = 'wait'
+              [void]$p.WaitForExit(500)
+            }
+          } else { $loomObserverOutcome = 'mismatch' }
+        } else { $loomObserverOutcome = 'exited' }
+      } catch [ArgumentException] { $loomObserverOutcome = 'argument' } catch [InvalidOperationException] { $loomObserverOutcome = 'invalid' }
+      Write-LoomObserverFrame ('s:' + $loomObserverSlot + ':' + $loomObserverStage + ':' + $loomObserverOutcome)
+      $loomObserverSlot++
     }
     try { [Console]::Error.WriteLine('LWO1:observed'); [Console]::Error.Flush() } catch { }
+    Write-LoomObserverFrame 'p:observed'
     ConvertTo-Json -Compress -InputObject @($live)
     try { [Console]::Error.WriteLine('LWO1:done'); [Console]::Error.Flush() } catch { }
+    Write-LoomObserverFrame 'p:done'
   `;
+  const observation = processObservations.get(identities[0]);
+  const phase = observation?.phase();
+  const wallStarted = Date.now();
+  const monotonicStarted = performance.now();
   const result = spawnSync(
     path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", source],
@@ -258,9 +338,15 @@ function exactProcesses(identities, kill = false) {
       maxBuffer: 1024,
     },
   );
-  assert.equal(result.error, undefined, observerPhase(result.stderr));
-  assert.equal(result.status, 0, result.stderr);
-  return JSON.parse(result.stdout);
+  recordProcessObservation(observation, result, phase, wallStarted, monotonicStarted);
+  try {
+    assert.equal(result.error, undefined, observerPhase(result.stderr));
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    if (phase === "final-cleanup") processObservationFailure(observation);
+    throw error;
+  }
 }
 
 // An independent observer uses real Windows access-control objects. This
@@ -419,6 +505,12 @@ if (process.platform === "win32") {
     let receipt;
     let timer;
     let stage = "receipt-wait";
+    const observation = {
+      context,
+      deadline: Number(environment.LOOM_PRIVATE_DEADLINE_UTC),
+      started: performance.now(),
+      phase: () => stage,
+    };
     try {
       receipt = await new Promise((resolve, reject) => {
         let output = "";
@@ -436,6 +528,8 @@ if (process.platform === "win32") {
           }
         });
       });
+      observation.receiptRemainingMs = Math.max(-60000, Math.min(60000, observation.deadline - Date.now()));
+      observation.receiptElapsedMs = Math.min(60000, Math.round(performance.now() - observation.started));
       stage = "receipt-schema";
       clearTimeout(timer);
       for (const identity of [receipt, receipt.guardian]) {
@@ -443,6 +537,7 @@ if (process.platform === "win32") {
         assert.equal(typeof identity.started, "string");
       }
       assert.notEqual(receipt.guardian.pid, receipt.pid, "guardian and real compiler must be distinct processes");
+      processObservations.set(receipt.guardian, observation);
       stage = "directory-identity";
       assert.equal(
         receipt.directory,
@@ -477,12 +572,20 @@ if (process.platform === "win32") {
           );
         } catch {}
       }
+      if (stage === "live-identities" || stage === "deadline-absence") processObservationFailure(observation);
       lifetimeFailure(context, "parent", stage, error);
       throw error;
     } finally {
       clearTimeout(timer);
       if (caller.exitCode === null && caller.signalCode === null) caller.kill("SIGKILL");
-      if (receipt) exactProcesses([receipt.guardian, receipt], true);
+      if (receipt) {
+        stage = "final-cleanup";
+        try {
+          exactProcesses([receipt.guardian, receipt], true);
+        } finally {
+          processObservations.delete(receipt.guardian);
+        }
+      }
     }
   });
 
