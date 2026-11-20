@@ -214,8 +214,10 @@ def test_actual_mint_never_signs_without_verified_enrollment(native, monkeypatch
 
 def _claim_prompt_subprocess(result_path):
     """Run the real command and asyncio.run with only its external work faked."""
+    import faulthandler
     import json
     import os
+    import signal
     import sys
     from pathlib import Path
 
@@ -239,12 +241,19 @@ def _claim_prompt_subprocess(result_path):
         monkeypatch.setattr(namespaces, "fetch_row", lookup)
         monkeypatch.setattr(claim_release, "release_claim", release)
         blocking = os.get_blocking(sys.stdin.fileno())
+        trace_path = Path(result_path).with_suffix(".trace")
+        trace = os.fdopen(os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w")
+        trace.write(f"sigint_ignored={signal.getsignal(signal.SIGINT) == signal.SIG_IGN}\n")
+        trace.flush()
         outcome = None
         try:
+            faulthandler.register(signal.SIGUSR1, file=trace, all_threads=True)
             outcome = access._cmd_claim_release(SimpleNamespace(org="o", namespace="n", yes=False))
         except KeyboardInterrupt:
             outcome = "interrupted"
         finally:
+            faulthandler.unregister(signal.SIGUSR1)
+            trace.close()
             Path(result_path).write_text(
                 json.dumps(
                     {
@@ -271,7 +280,14 @@ def claim_prompt_child(tmp_path):
 
     def start(mode="pipe", contents=b""):
         result = tmp_path / f"claim-{len(owned)}.json"
-        child = SimpleNamespace(process=None, writer=None, reader=None, file=None, result=result)
+        child = SimpleNamespace(
+            process=None,
+            writer=None,
+            reader=None,
+            file=None,
+            result=result,
+            trace=result.with_suffix(".trace"),
+        )
         owned.append(child)
         if mode == "regular":
             child.file = tempfile.TemporaryFile()
@@ -366,7 +382,25 @@ def test_actual_claim_prompt_cancellation_exits_with_stdin_still_open(
     try:
         child.process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        pytest.fail("cancelled claim-release did not exit while stdin remained open")
+        # The exit deadline has already failed; collect only our child's bounded evidence.
+        diagnostic = b"child diagnostic unavailable"
+        try:
+            child.process.send_signal(signal.SIGUSR1)
+            diagnostic_end = time.monotonic() + 0.5
+            while True:
+                with child.trace.open("rb") as trace:
+                    diagnostic = trace.read(65536)
+                if b"Current thread" in diagnostic or b"Thread 0x" in diagnostic:
+                    break
+                if time.monotonic() >= diagnostic_end:
+                    break
+                time.sleep(0.01)
+        except OSError as error:
+            diagnostic = type(error).__name__.encode()
+        pytest.fail(
+            "cancelled claim-release did not exit while stdin remained open\n"
+            + diagnostic.decode(errors="replace")
+        )
     assert not child.writer.closed  # communicate() or EOF must not make the assertion pass.
     assert child.process.returncode == 0
     result = json.loads(child.result.read_text())
