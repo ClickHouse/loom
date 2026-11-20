@@ -29,6 +29,48 @@ For memory read by a model instead of a whole chat history, see
 - **Saved context instead of rediscovery.** Decisions and findings a session saves are
   loaded at the next session's start. [Shared memory](agent-memory.md)
 
+## Decide whether retrieval pays for your workload
+
+Loom is worth evaluating when agents repeatedly need the same repository structure or
+verified project decisions. A smaller tool response alone does not establish a lower
+bill or a correct answer.
+
+| Workload                                              | Check before choosing memory or indexed retrieval                                         |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Repeated questions about a repository                 | Can a definition and its callers replace the file reads needed for a correct answer?      |
+| Repeated project decisions across sessions            | Does scoped recall recover a still-valid decision instead of repeating the investigation? |
+| A short task with all needed context already supplied | Does search add calls or latency without avoiding other work?                             |
+| A changing repository or an unfamiliar task           | Can the agent verify the indexed revision and reject irrelevant or stale context?         |
+
+### Compare completed tasks, including overhead
+
+Use the same repository revision, questions, model settings, permissions and answer
+checks in both arms. Keep failed and incomplete tasks in the report. Balance execution
+order and record whether each arm starts with a warm or cold provider cache.
+
+For each task record:
+
+- **Task quality and completion.** Apply the same acceptance check to both answers;
+  fewer tokens are not a win when the task fails.
+- **The coding model's bill.** Include every turn, tool round trip and retry. Separate
+  uncached input, cache reads, cache writes and output; equal token counts can have
+  different prices.
+- **Loom's costs.** Record its provider charges, including indexing, separately from
+  the coding model. Add the deployment's hosting cost and state how indexing and
+  hosting are allocated across tasks. Count each charge once.
+- **Elapsed time.** Report time to an accepted answer as well as model cost.
+
+The [usage summary](../features/observability/cost-and-usage.md#the-coding-agents-own-spend)
+reports model token classes, cost and unpriced turns. Unpriced usage is unknown, not
+free. Preserve missing prices and missing task outcomes rather than count them as zero.
+The [evaluation guide](../getting-started/evaluate.md) describes the paired setup.
+
+Compare total cost across the full task set, including failures. Choose a configuration
+only if it also meets your quality and latency requirements.
+Report setup cost separately so a one-off task and repeated use are not compared as
+though they amortize indexing equally. This checklist is a measurement procedure, not
+an additional measured result or a guarantee of savings.
+
 ## Request code in smaller steps
 
 For an indexed repository on the `coding` toolset, ask the agent to call

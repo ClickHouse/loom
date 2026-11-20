@@ -189,5 +189,10 @@
     "typescript": "^5.6.0",
     "vitest": "^4.1.12",
     "zod": "4.6.7"
+  },
+  "overrides": {
+    "gaxios@6.7.1": {
+      "uuid": "11.1.1"
+    }
   }
 }

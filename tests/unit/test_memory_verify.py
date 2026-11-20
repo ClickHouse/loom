@@ -116,6 +116,13 @@ def _wire(monkeypatch: pytest.MonkeyPatch, row: MemoryRow | None) -> _CH:
     monkeypatch.setattr(memory_repo, "namespaces_of_id", _holders)
     monkeypatch.setattr(memory_repo, "get_by_key", _by_key)
     ch = _CH()
+
+    async def head_versions(*args: Any, **kw: Any) -> list[dict[str, Any]]:
+        if "PREWHERE" not in args[0]:
+            return []
+        return [] if row is None else [memory_repo.build_memory_version_row(row)]
+
+    monkeypatch.setattr(ch, "query_all", head_versions, raising=False)
     monkeypatch.setattr(mv, "get_client", lambda: ch)
     return ch
 

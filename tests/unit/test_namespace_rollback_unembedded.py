@@ -81,6 +81,8 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
 
     async def _memory(rows: list[dict[str, Any]], **_: Any) -> None:
         seen["memory"].extend(rows)
+        if on_inserted := _.get("on_inserted"):
+            on_inserted()
 
     async def _stubs(rows: list[dict[str, Any]], **_: Any) -> None:
         seen["stubs"].extend(rows)

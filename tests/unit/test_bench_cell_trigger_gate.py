@@ -1860,6 +1860,13 @@ def test_launch_refusal_precedes_any_native_or_store_setup(monkeypatch, tmp_path
 async def test_restore_closes_before_installed_transaction_rollback_can_overrun(monkeypatch):
     from asyncpg.transaction import Transaction
 
+    from server.cli import cell_attach_pg as apg
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    for module in (gate, apg, pg):
+        monkeypatch.setattr(module, "time", clock)
     events = []
     release, rolling_back = asyncio.Event(), asyncio.Event()
 

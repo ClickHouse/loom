@@ -690,6 +690,12 @@ class ClickHouseSettings(BaseModel):
     # HTTP connection pool size: request concurrency plus 3 x the batched-insert bound
     # (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
+    # Keeper holders a fenced writer acquires or releases at once (1–256),
+    # capped by a bounded HTTP connection pool.
+    ch_write_fence_concurrency: int = Field(default=16, ge=1, le=256)
+    # Memory rows per ClickHouse namespace-restore insert (1–1000).
+    # Smaller batches leave more lease budget for slow Keeper calls.
+    ch_restore_batch_rows: int = Field(default=1000, ge=1, le=1000)
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
     # TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`).
