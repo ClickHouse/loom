@@ -52,10 +52,12 @@ it("reads the collection policy and saves only changed budget fields to that col
 });
 
 it("keeps a failed save open and sends no write before its policy read succeeds", async () => {
-  vi.mocked(api.getNamespace).mockRejectedValueOnce(new Error("Read unavailable"));
+  vi.mocked(api.getNamespace).mockRejectedValueOnce(new TypeError("Failed to fetch"));
   const close = vi.fn();
   render(<CollectionBudgetDialog org="o" collection={entry("col-a")} onClose={close} />);
-  await screen.findByRole("alert");
+  const error = await screen.findByRole("alert");
+  expect(error).toHaveTextContent(/connection|reach|network/i);
+  expect(error).not.toHaveTextContent(/saved|committed|re-check|check before/i);
   expect(screen.getByRole("button", { name: "Save budget" })).toBeDisabled();
   expect(api.setCollectionBudget).not.toHaveBeenCalled();
   expect(close).not.toHaveBeenCalled();

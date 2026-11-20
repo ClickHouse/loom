@@ -44,7 +44,7 @@ export function CollectionBudgetDialog({
         setUserCap(String(policy.daily_user_cost_cap_usd));
         setInbox(policy.budget_alert_inbox);
       } catch (e) {
-        if (live()) setError(humanizeError(e));
+        if (live()) setError(humanizeError(e, { read: true }));
       }
     },
     [org, collection.namespace],
