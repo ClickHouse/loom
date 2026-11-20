@@ -68,8 +68,14 @@ The comparison includes the served value and persisted metadata: clock skew can 
 two writers choose the same version. Derived usage fields (`recall_count`,
 `evidence_count`, `last_recalled_at`) and JSON projection formatting are excluded
 because they can differ without a version insert.
-Other copy writers fence only their insert: a write with a lower version whose row lands
-between their source read and the fence is still overtaken, and nothing reports it.
+Expiry post-actions compare the source rows selected for planning inside those fences.
+Before planning, the sweep keeps only selected heads that are still expired, including
+equal-version replacements. Postgres can refresh a candidate to a still-expired rewrite.
+A head changed after selection refuses the batch; the sweep re-reads it, removes moved
+candidates and retries once with the same admission check. A second refusal leaves the remaining batch for the
+next pass. Only accepted rows produce search mirrors and webhook events. Other copy
+writers that do not request exact-head admission fence only their insert: a write with
+a lower version between their source read and the fence is still overtaken.
 Under Postgres the copy commits only
 over the head it read (`heads_unchanged(exact=True)`), and a head written since refuses
 it.
@@ -106,6 +112,7 @@ run a build that takes them and every older writer's admitted send to have settl
 The [memory writer fence cutover](../operations/upgrades.md#memory-writer-fence-cutover)
 stops serving and background writers, waits out bounded sends, and states when the
 guarantee and optional settings apply. Both builds serve the same schema.
+An older writer can still reproduce the unchecked expiry race during that transition.
 
 ## The tables
 

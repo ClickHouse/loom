@@ -181,7 +181,10 @@ class _Embedder:
 
 
 @pytest.fixture
-def handler_env(monkeypatch: pytest.MonkeyPatch):
+def handler_env(monkeypatch: pytest.MonkeyPatch, clock: _Clock):
+    from server.code.app.search import lexical
+
+    monkeypatch.setattr(lexical, "time", clock)
     monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(settings, "code_org", "o")
     monkeypatch.setattr(settings, "code_namespace", "n")

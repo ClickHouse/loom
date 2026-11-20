@@ -1327,6 +1327,22 @@ Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace'
 | `demote`              | Clears expiry and scales confidence down.                                     |
 | `anonymize`           | Replaces the value with a marker, tombstones embeddings, keeps the shell row. |
 
+Each post-action requests exact-head admission. Under the ClickHouse authority,
+the source row is compared while holding the same per-key Keeper fence as every
+memory version writer; under Postgres, transactional admission checks the head.
+The comparison includes authored content and metadata even at the same version;
+derived usage counters are excluded. Before planning, the sweep rechecks expiry on
+every selected authoritative head, including equal-version replacements. Postgres can
+refresh a candidate to a rewritten head that is still expired. Missing, deleted or
+renewed candidates are skipped and counted in `moved_skipped`. A change after source
+selection also refuses admission. The refused batch is re-read and retried once without
+moved candidates, counted in `moved_skipped`; another refusal counts the entire remaining
+batch there, including unchanged candidates.
+Dry runs write nothing and do not acquire the fences
+([storage authority](storage-authority.md#why-two-stores)). An acknowledged expiry still
+announces and mirrors its action if holder cleanup is cancelled, even if cancellation
+repeats during those follow-ups. The cancellation is raised after they finish.
+
 At the memory row's version, the sweep then mirrors the action: tombstone and anonymize
 retire the key's vectors in `memory_embeddings` and `entity_vectors`, and demote copies
 its `memory_embeddings` rows. The next pass never selects a key it wrote, so a failed
