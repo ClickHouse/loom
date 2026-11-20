@@ -41,6 +41,7 @@ async def insert_memory_versions(
     policy: Mapping[tuple[str, str], int] | None = None,
     expected_heads: Mapping[IdentityKey, MemoryRow | None] | None = None,
     on_send: Callable[[], None] | None = None,
+    on_inserted: Callable[[], None] | None = None,
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
@@ -50,6 +51,7 @@ async def insert_memory_versions(
     delivery worker to publish. On ClickHouse all writers take the same per-key Keeper
     fences; `expected_heads` checks source rows inside them before inserting.
     `on_send` marks a direct ClickHouse insert that passed admission and may land.
+    `on_inserted` marks its successful answer before holder cleanup can be cancelled.
     Returns the row count; an empty batch writes nothing."""
     if not rows:
         return 0
@@ -84,6 +86,8 @@ async def insert_memory_versions(
             [dict(r) for r in rows],
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
+        if on_inserted is not None:
+            on_inserted()
     pg_pipeline.record_insert("memory", len(rows))
     return len(rows)
 

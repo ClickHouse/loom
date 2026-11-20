@@ -706,6 +706,8 @@ def _patch_memory_io(mp: pytest.MonkeyPatch, ch: Any, row: Any) -> None:
         return row
 
     async def no_insert(*_a, **_k):
+        if on_inserted := _k.get("on_inserted"):
+            on_inserted()
         return None
 
     mp.setattr("server.memory.store.lifecycle.get_by_id", get_by_id)

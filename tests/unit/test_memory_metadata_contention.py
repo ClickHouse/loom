@@ -165,6 +165,54 @@ async def test_usage_overlay_does_not_refuse_an_unchanged_source(memory_insert_k
     assert not memory_insert_keeper.keys
 
 
+@pytest.mark.asyncio
+async def test_ordinary_writes_wait_for_the_current_holder(monkeypatch, memory_insert_keeper):
+    import asyncio
+
+    from server.memory.store import write_fence
+
+    monkeypatch.setattr(write_fence, "_admission_wait_s", lambda: 2.0)
+    entered, finish, busy = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    take_all = lease_writes._take_all
+
+    async def observe_contention(*args, **kw):
+        try:
+            return await take_all(*args, **kw)
+        except lease_writes.FenceUnavailableError:
+            busy.set()
+            raise
+
+    monkeypatch.setattr(lease_writes, "_take_all", observe_contention)
+    source = _row()
+    table = []
+
+    class PausedInsert(Replica):
+        async def insert(self, *args, **kw):
+            entered.set()
+            await finish.wait()
+            await super().insert(*args, **kw)
+
+    first = asyncio.create_task(
+        insert_memory_versions(
+            [memory_repo.build_memory_version_row(source)], ch=PausedInsert(table)
+        )
+    )
+    await entered.wait()
+    followers = [
+        asyncio.create_task(
+            insert_memory_versions(
+                [memory_repo.build_memory_version_row(source, version=200 + n)], ch=Replica(table)
+            )
+        )
+        for n in range(3)
+    ]
+    await busy.wait()
+    finish.set()
+    await asyncio.gather(first, *followers)
+    assert len(table) == 4
+    assert not memory_insert_keeper.keys
+
+
 @pytest.mark.parametrize("change", [{"value": "rejected"}, {"tags": ["revised"]}])
 def test_postgres_exact_check_distinguishes_equal_version_rows(change):
     from server.memory.store import pg_memory
@@ -266,6 +314,8 @@ async def test_supported_batch_reaches_insert_with_live_holders(
 
     class TimedInsert(Replica):
         async def insert(self, *args, **kw):
+            if restore:
+                assert len(args[1]) <= 777
             assert all(work_left(lease, lease.ttl) > 0 for lease in held if not lease.released), (
                 "batch admission consumed an earlier holder before the insert"
             )
@@ -278,7 +328,7 @@ async def test_supported_batch_reaches_insert_with_live_holders(
     if restore:
         from server.memory.app import snapshot_rows
 
-        monkeypatch.setattr(snapshot_rows.settings, "ch_restore_batch_rows", 1000)
+        monkeypatch.setattr(snapshot_rows.settings, "ch_restore_batch_rows", 777)
         assert not await snapshot_rows.insert_version_rows(batch, ch=TimedInsert(table))
     else:
         await insert_memory_versions(batch, ch=TimedInsert(table))

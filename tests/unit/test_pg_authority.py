@@ -3768,6 +3768,8 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
 
     async def _insert(rows: Any, **_: Any) -> None:
         ran.append("insert")
+        if on_inserted := _.get("on_inserted"):
+            on_inserted()
 
     async def _mirror() -> None:
         raise RuntimeError("clickhouse refused the document")
@@ -6858,7 +6860,9 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
 
     fenced: list[Any] = []
 
-    async def _inserted(*_a: Any) -> None:
+    async def _inserted(*_a: Any, on_send: Any, on_inserted: Any) -> None:
+        on_send()
+        on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> dict[Any, int]:

@@ -155,6 +155,54 @@ async def test_batch_release_does_not_overload_its_own_pool(monkeypatch, pool):
 
 
 @pytest.mark.asyncio
+async def test_waiting_batch_releases_partial_admission_before_retry(monkeypatch):
+    held = set()
+    attempts = iter(["a", None, "a", "b"])
+    elapsed = 0.0
+
+    async def take(name, **kw):
+        result = next(attempts)
+        if result is None:
+            return None
+        held.add(result)
+        return SimpleNamespace(name=result)
+
+    async def release(lease):
+        held.remove(lease.name)
+
+    async def pause(delay):
+        nonlocal elapsed
+        assert held == set()
+        elapsed += delay
+
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 24)
+    monkeypatch.setattr(writes, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    monkeypatch.setattr(writes.asyncio, "sleep", pause)
+    async with writes.fenced_many(["a", "b"], wait_s=1):
+        assert held == {"a", "b"}
+    assert not held
+
+
+@pytest.mark.asyncio
+async def test_admission_wait_stops_at_its_deadline(monkeypatch):
+    elapsed = 0.0
+
+    async def pause(delay):
+        nonlocal elapsed
+        elapsed += delay
+
+    monkeypatch.setattr(writes.leases, "take", AsyncMock(return_value=None))
+    monkeypatch.setattr(writes, "time", SimpleNamespace(monotonic=lambda: elapsed))
+    monkeypatch.setattr(writes.asyncio, "sleep", pause)
+    with pytest.raises(writes.FenceUnavailableError):
+        async with writes.fenced_many(["busy"], wait_s=0.25):
+            pytest.fail("a busy holder was admitted")
+    assert elapsed == pytest.approx(0.25)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sending", [False, True])
 async def test_fence_deadline_is_typed_and_preserves_unknown_outcome(monkeypatch, sending):
     from unittest.mock import Mock

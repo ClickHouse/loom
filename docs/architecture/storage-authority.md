@@ -77,9 +77,13 @@ The ClickHouse fences use `server/core/lease_writes.py`: uncertain inserts retai
 Keeper holders until every admitted send has finished or expired. Batches admit keys in
 bounded waves and keep the earliest send deadline. Memory rows commit before their
 embedding rows are inserted, so a refused value write publishes no searchable text.
+Contending writers wait within the effective write timeout's admission budget. A
+partially admitted batch releases its holders before waiting and trying again.
 A high-sensitivity write refused before admission leaves prior search data live;
 an admitted memory send is still fenced if its outcome is unknown or cancellation
 arrives during holder release.
+Acknowledged copies record their commit before holder cleanup, and still run their
+announcements and follow-ups when that cleanup is cancelled.
 Holder release uses bounded waves too, so a batch does not exhaust its own connection
 pool during cleanup. Large ClickHouse namespace restores insert bounded batches to
 keep admission inside each batch's lease budget.

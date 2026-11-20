@@ -286,6 +286,44 @@ async def current_heads(
     ]
 
 
+async def _insert_clickhouse_copies(
+    rows: list[dict[str, Any]],
+    read: Sequence[MemoryRow | None],
+    *,
+    ch: _CHClient | None,
+    then: Callable[[], Awaitable[int | None]] | None,
+    landed: Callable[[], Awaitable[None]] | None,
+    on_commit: Callable[[], None] | None,
+    exact: bool,
+) -> int:
+    inserted = not rows
+    count = 0
+
+    def mark_inserted() -> None:
+        nonlocal inserted
+        inserted = True
+        if on_commit is not None:
+            on_commit()
+
+    try:
+        if rows:
+            expected = (
+                {identity_key(r): h for r, h in zip(rows, read, strict=True)} if exact else None
+            )
+            await insert_memory_versions(
+                rows, ch=ch, expected_heads=expected, on_inserted=mark_inserted
+            )
+    finally:
+        # A successful memory insert still owes its follow-ups when holder
+        # cleanup is cancelled. Refused and uncertain sends owe none here.
+        if inserted:
+            if rows and landed is not None:
+                await landed()
+            if then is not None:
+                count = await then() or 0
+    return count
+
+
 async def insert_versions_over_heads(
     rows: list[dict[str, Any]],
     read: Sequence[MemoryRow | None],
@@ -319,21 +357,13 @@ async def insert_versions_over_heads(
     (with `settle_held`, only those ClickHouse holds at their row's version, for a `then`
     that copies what it finds), and the delivery worker builds one it did not.
     `sources`: the revisions the rows copy (`Admission.sources`), with `live_sources`
-    each still its key's live head. `on_commit` is called once the rows are in: under
-    Postgres as the commit returns, before anything else can fail. A commit whose
+    each still its key's live head. `on_commit` is called once the rows are in, before
+    holder cleanup or publication can fail. A commit whose
     publication is pending is done."""
     if not pg.enabled() or not rows:
-        if rows:
-            if exact:
-                expected = {identity_key(r): h for r, h in zip(rows, read, strict=True)}
-                await insert_memory_versions(rows, ch=ch, expected_heads=expected)
-            else:
-                await insert_memory_versions(rows, ch=ch)
-            if on_commit is not None:
-                on_commit()
-            if landed is not None:
-                await landed()
-        return 0 if then is None else (await then() or 0)
+        return await _insert_clickhouse_copies(
+            rows, read, ch=ch, then=then, landed=landed, on_commit=on_commit, exact=exact
+        )
     check_memory_rows(rows)
     heads = {identity_key(r): e for r, e in zip(rows, read, strict=True)}
     admission = pg_memory.Admission(

@@ -8,6 +8,7 @@ import asyncio
 import functools
 import logging
 from collections import Counter
+from collections.abc import Callable
 from contextlib import nullcontext
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
@@ -571,8 +572,21 @@ async def _land_batch(
         finally:  # committed: a failed follow-up must not also skip the announcement
             await _fence_and_announce(state, ch=ch)
         return
-    embedding_error = await _insert_batch(state, ch)
+    sent = False
+    inserted = False
+
+    def mark_sent() -> None:
+        nonlocal sent
+        sent = True
+
+    def mark_inserted() -> None:
+        nonlocal inserted
+        inserted = True
+
     try:
+        embedding_error = await _insert_batch(
+            state, ch, on_send=mark_sent, on_inserted=mark_inserted
+        )
         if embedding_error is not None:
             raise embedding_error
         if state.memory_rows:
@@ -588,16 +602,27 @@ async def _land_batch(
         after_write.index_late_rows(state.embedding_rows, ch=ch)
         await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     finally:  # the rows are in: a failed lift or retire must not also skip the fence
-        await _fence_and_announce(state, ch=ch)
+        if inserted:
+            await _fence_and_announce(state, ch=ch)
+        elif sent and (fences := _high_winners(state)):
+            await fence_high(fences, ch=ch)
 
 
-async def _insert_batch(state: _BulkWriteState, ch: Any) -> BaseException | None:
+async def _insert_batch(
+    state: _BulkWriteState,
+    ch: Any,
+    *,
+    on_send: Callable[[], None] | None = None,
+    on_inserted: Callable[[], None] | None = None,
+) -> BaseException | None:
     """On the ClickHouse authority: the batch's memory rows and embedding rows, written
     in that order. Raises what refused the memory rows; returns what refused the
     embedding rows, raised once the batch is announced."""
     import server.memory.store as memory_repo
 
-    await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
+    await memory_repo.insert_memory_versions(
+        state.memory_rows, ch=ch, on_send=on_send, on_inserted=on_inserted
+    )
     try:
         await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
     except BaseException as error:  # noqa: BLE001 — committed memory rows still owe an announcement

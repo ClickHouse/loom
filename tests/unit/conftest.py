@@ -1215,4 +1215,6 @@ def memory_insert_keeper(monkeypatch):
 
     keeper = FakeLockTable()
     monkeypatch.setattr(write_fence, "_lease_client", lambda ch: keeper)
+    # Domain tests fail fast on deliberate contention; waiting has explicit coverage.
+    monkeypatch.setattr(write_fence, "_admission_wait_s", lambda: 0.0)
     return keeper

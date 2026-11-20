@@ -440,6 +440,8 @@ async def test_rows_are_read_at_once_but_written_once_each_in_order(
         return {}
 
     async def insert(rows: list[dict[str, Any]], **kw: Any) -> None:
+        if on_inserted := kw.get("on_inserted"):
+            on_inserted()
         return None
 
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)

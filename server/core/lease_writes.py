@@ -81,10 +81,23 @@ async def _release_all(held: list[leases.Lease]) -> None:
 
 
 @asynccontextmanager
-async def fenced_many(names: list[str], *, ch: Any = None) -> AsyncIterator[Callable[[bool], None]]:
+async def fenced_many(
+    names: list[str], *, ch: Any = None, wait_s: float = 0.0
+) -> AsyncIterator[Callable[[bool], None]]:
     """Admit keys in bounded waves and fence sends before the earliest holder expires."""
     ttl = lease_ttl_s(rmt_carry.send_bound_s())
-    held = await _take_all(names, ttl, ch)
+    until = time.monotonic() + wait_s
+    while True:
+        try:
+            held = await _take_all(names, ttl, ch)
+            break
+        except FenceUnavailableError:
+            left = until - time.monotonic()
+            if left <= 0:
+                raise
+            # Partial admission is released before waiting, so overlapping batches
+            # cannot wait while holding each other's keys.
+            await asyncio.sleep(min(0.1, left))
     uncertain = False
 
     def mark_uncertain(value: bool) -> None:

@@ -24,7 +24,9 @@ def plain(monkeypatch: pytest.MonkeyPatch) -> Any:
     writes: list[dict[str, Any]] = []
     receipts: list[dict[str, Any]] = []
 
-    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+    async def insert(rows: list[dict[str, Any]], **kwargs: Any) -> None:
+        if on_send := kwargs.get("on_send"):
+            on_send()
         writes.extend(rows)
 
     async def emit(**kwargs: Any) -> str:
