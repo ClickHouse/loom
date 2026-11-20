@@ -285,3 +285,93 @@ def test_sample_context_is_collected_outside_the_cost_call(
 
     code_fixtures.assert_linear(cost, 1, 4)
     assert snapshots == 4
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_document_cpu_samples_surround_the_original_timed_call(
+    monkeypatch: pytest.MonkeyPatch, raises: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import test_document_extraction as document
+
+    clocks = iter([3.0, 5.0])
+    monkeypatch.setattr(document, "time", SimpleNamespace(process_time=lambda: next(clocks)))
+    snapshots: list[str] = []
+    inside = False
+    real = code_fixtures.linear_sample_context
+
+    def snapshot() -> dict[str, object]:
+        assert not inside
+        snapshots.append("boundary")
+        return real()
+
+    monkeypatch.setattr(document, "linear_sample_context", snapshot, raising=False)
+    failure = RuntimeError("private cost failure")
+
+    def cost() -> None:
+        nonlocal inside
+        inside = True
+        try:
+            assert sys.gettrace() is None
+            if raises:
+                raise failure
+        finally:
+            inside = False
+
+    samples: list[dict[str, object]] = []
+    if raises:
+        with pytest.raises(RuntimeError) as error:
+            document._cpu(cost, samples=samples)
+        assert error.value is failure
+    else:
+        assert document._cpu(cost, samples=samples) == 2.0
+    assert snapshots == ["boundary", "boundary"]
+    assert len(samples) == 1
+    assert samples[0]["after"]["thread_cpu_ns"] >= samples[0]["before"]["thread_cpu_ns"]
+    assert "private cost failure" not in json.dumps(samples)
+
+
+def test_document_cpu_without_samples_does_not_collect_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import test_document_extraction as document
+
+    clocks = iter([3.0, 5.0])
+    monkeypatch.setattr(document, "time", SimpleNamespace(process_time=lambda: next(clocks)))
+
+    def forbidden() -> dict[str, object]:
+        pytest.fail("A caller without diagnostics must not collect context")
+
+    monkeypatch.setattr(document, "linear_sample_context", forbidden, raising=False)
+    assert document._cpu(lambda: None) == 2.0
+
+
+def test_sql_failure_keeps_the_complete_sample_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit import test_document_extraction as document
+
+    values = iter([1.0, 25.0])
+    recorded: list[dict[str, object]] = []
+
+    def cpu(fn: object, *, samples: list[dict[str, object]]) -> float:
+        context = {
+            "before": {"thread_cpu_ns": len(recorded)},
+            "after": {"thread_cpu_ns": len(recorded) + 1},
+        }
+        samples.append(context)
+        recorded.append(context)
+        return next(values)
+
+    monkeypatch.setattr(document, "_cpu", cpu)
+    with pytest.raises(AssertionError) as error:
+        document.test_one_line_sql_with_a_comment_after_every_semicolon_splits_in_linear_time()
+    assert json.loads(str(error.value.args[0]).splitlines()[0]) == {
+        "small_s": 1.0,
+        "large_s": 25.0,
+        "samples": recorded,
+    }
+    assert len(recorded) == 2
