@@ -38,7 +38,7 @@ def dedup_summary_rows(rows: list[dict[str, Any]], *, n: int) -> list[dict[str, 
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     ordered = sorted(
-        rows, key=lambda r: (float(r.get("distance") or 1.0), str(r.get("session_id") or ""))
+        rows, key=lambda r: (float(r.get("distance", 1.0)), str(r.get("session_id") or ""))
     )
     for r in ordered:
         sid = str(r.get("session_id") or "")
@@ -202,7 +202,7 @@ async def fetch_session_summaries(
     out: list[SearchHit] = []
     for r in rows:
         session_id = str(r.get("session_id") or "")
-        distance = float(r.get("distance") or 1.0)
+        distance = float(r.get("distance", 1.0))
         sim = 1.0 - distance
         out.append(
             SearchHit(

@@ -63,6 +63,30 @@ async def test_returns_summary_source_hits_with_label() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("agent", ["bot", "*"])
+async def test_exact_summary_match_outranks_spare_candidates(agent: str) -> None:
+    ch = StubCH(
+        returns=[
+            {"session_id": "exact", "summary_text": "exact match", "distance": 0.0},
+            {"session_id": "near", "summary_text": "near match", "distance": 0.1},
+        ]
+    )
+    hits = await fetch_session_summaries(
+        ch,
+        org="o",
+        namespace="ns",
+        agent=agent,
+        user_id="u",
+        query_vec=[0.1],
+        embedding_model="m",
+        n=1,
+    )
+    assert [hit.memory_key for hit in hits] == ["summary:exact"]
+    assert hits[0].distance == 0.0
+    assert hits[0].rank_score == 1.0
+
+
+@pytest.mark.asyncio
 async def test_label_sentinel_reads_undated() -> None:
     ch = StubCH(
         returns=[
