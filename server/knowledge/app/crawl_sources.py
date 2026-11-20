@@ -46,7 +46,7 @@ from server.knowledge.domain.sources import KnowledgeSource
 from server.knowledge.store import sources as store
 from server.settings import settings
 
-_CRAWL_MIGRATION = 112
+_CRAWL_MIGRATION = 114
 
 
 def unavailable() -> ValidationError:
