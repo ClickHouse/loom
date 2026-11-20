@@ -500,7 +500,8 @@ Each call writes one `agent_events` row with its row count and latency (identifi
 in `server/observability/event_args.py`) and the statement's digest and length. The
 `sql` argument joins the ledger's text keys, which record a digest, never the text; a
 restricted namespace drops text keys from the ledger, so the op also records the digest
-as `sql_digest`, an identifier key, which the citation check reads. The analyst profile
+as `sql_digest`, an identifier key. Citation verification matches SQL against the
+arguments of a successful request-owned `insights.query` receipt. The analyst profile
 holds `log_queries_cut_to_length = 1` and `log_formatted_queries = 0` as `CONST`, so
 `system.query_log`, the span log and the server log record each statement the analyst
 runs without its text: its user, timing, rows read and settings, the scope and its

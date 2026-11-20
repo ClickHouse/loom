@@ -343,15 +343,6 @@ def test_every_assistant_op_says_how_its_ledger_row_shows_it_found_nothing(op: A
         assert _field_type(op.output_model, "found") is bool, name
 
 
-def _rows_of(calls: rule.RunCalls) -> list[rule.CallRow]:
-    """Rows that derive to `calls` (every op that found data ran)."""
-    rows = [
-        rule.CallRow(op, True, out_hits="" if op in calls.returned else "0")
-        for op in sorted(calls.ran)
-    ]
-    return [*rows, rule.CallRow("memory.search", False)] if calls.failed else rows
-
-
 def test_call_receipts_name_the_ops_that_found_data() -> None:
     calls = rule.derive(
         [
@@ -417,14 +408,3 @@ def test_derive_reads_a_row_as_found_unless_it_says_it_found_nothing() -> None:
         True,
         frozenset({"memory.search", "memory.get", "knowledge.search"}),
     )
-
-
-# The calls a starter's answer makes as the agent's instructions have it make them: the
-# audit starter reads the audit, the mentor brief, the drafts, the guide and Loom's guide.
-_AUDIT_STARTER_RUN = [
-    rule.CallRow("namespace.audit", True, out_hits="3"),
-    rule.CallRow("mentor.brief", True),
-    rule.CallRow("namespace.tune", True, out_hits="2"),
-    rule.CallRow("namespace.guide_get", True, out_found="true"),
-    rule.CallRow("mentor.guide", True),
-]
