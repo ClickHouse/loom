@@ -4,23 +4,51 @@ memory.unsupersede."""
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
+from server.core import leases
 from server.memory import store as memory_repo
-from server.memory.store import MemoryRow
+from server.memory.store import MemoryRow, key_write_lock
 from tests.unit.claims_fake import fake_key_locks
+from tests.unit.clock_fake import ManualClock
 from tests.unit.memory_store import stub_status_before
 
 pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
 
 
-@pytest.fixture(autouse=True)
-def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
+@pytest_asyncio.fixture(autouse=True, loop_scope="function")
+async def _key_locks(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
+    before = set(asyncio.all_tasks())
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    # An uncontended fake lease spends idle time, not CPU scheduling time.
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
+    monkeypatch.setattr(key_write_lock, "time", clock)
+    monkeypatch.setattr(leases, "time", clock)
     fake_key_locks(monkeypatch)
+    monkeypatch.setattr(key_write_lock.key_write_locks.ch, "now", clock.monotonic)
+    yield
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "restoration leaves no task on its private loop"
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +96,7 @@ def _superseded_row() -> MemoryRow:
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_row(
     monkeypatch, earlier_status_reads
 ):
@@ -154,7 +182,7 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     assert subj["version"] == out.version, "the resolver reads the restore's version"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 async def test_a_retried_undo_that_landed_late_answers_restored_when_its_search_document_fails(
     monkeypatch, caplog
 ):
@@ -192,7 +220,7 @@ async def test_a_retried_undo_that_landed_late_answers_restored_when_its_search_
     assert "search document failed for k" in caplog.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 async def test_an_undo_whose_record_fails_restores_nothing(monkeypatch):
     # The resolver honours an Undo only by its record: an Undo it could not see would
     # be judged again, so a failed record fails the Undo before the restore is written.
