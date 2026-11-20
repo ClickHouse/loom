@@ -296,7 +296,7 @@ async def census(
     ):
         raise refused("participant table has an unsupported replacement policy")
     if engine.startswith("Replicated"):
-        rows = await per_host(
+        replica_rows = await per_host(
             ch,
             topology,
             names,
@@ -307,12 +307,12 @@ async def census(
             ),
             {"db": database},
         )
-        if any(len(value) != 1 for value in rows.values()) or cell_catalog.extra_replicas(
-            row for value in rows.values() for row in value
+        if any(len(value) != 1 for value in replica_rows.values()) or cell_catalog.extra_replicas(
+            row for value in replica_rows.values() for row in value
         ):
             raise refused("participant replica set includes an unverified replica")
         if bounded:
-            bounded_replica_paths(rows)
+            bounded_replica_paths(replica_rows)
         budget = cell_sync.Budget(TRANSACTION_S)
         await cell_sync._system(
             ch,

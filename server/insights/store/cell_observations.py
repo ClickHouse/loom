@@ -333,6 +333,7 @@ def _collapse_instances(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
     for row in rows:
         key = domain.identity(row.get("instance_id"), instance=True)
         _projected_field(row, "keys_fp")
+        generation = row.get("generation")
         value = {
             "keys_fp": domain.text(row.get("keys_fp"), empty=True),
             **{name: row.get(name) for name in ("serving", "stopped", "age_ms", "generation")},
@@ -344,7 +345,8 @@ def _collapse_instances(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             )
             or value["serving"] not in (0, 1)
             or value["stopped"] not in (0, 1)
-            or value["generation"] < 0
+            or type(generation) is not int
+            or generation < 0
         ):
             raise refused("unreadable web instance metadata")
         replica = (row["h"], key)

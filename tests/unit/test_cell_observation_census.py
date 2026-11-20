@@ -293,3 +293,42 @@ def test_replica_duplication_does_not_consume_the_logical_identity_allowance():
         rows, Topology("main", 1, (("a", 9000), ("b", 9000))), {"a": "a", "b": "b"}
     )
     assert len(selected) == 2048 and len(latest(selected)) == 1024
+
+
+@pytest.mark.parametrize(
+    ("field", "nondefault"),
+    [("deployment_id", "dep"), ("public_host", "cell.example.test"), ("configured_orgs", ["acme"])],
+)
+@pytest.mark.parametrize("pair", ["own", "directory"])
+def test_omitted_observation_field_cannot_match_a_nondefault_pair(field, nondefault, pair):
+    row, value = participant(), observation(role="worker")
+    value["value"]["fields"] = {}
+    default = cell.as_value(cell.DEFAULTS)
+    accepted = cell.as_value({field: nondefault})
+    context = domain.Context(
+        "later",
+        False,
+        (accepted if pair == "own" else default,),
+        (accepted if pair == "directory" else default,),
+        KEYS,
+    )
+    attempt = domain.Attempt()
+    rows = {row["participant_id"]: row}
+    attempt.capture(rows)
+    attempt.retain_observation(value)
+    with pytest.raises(Refused, match="fingerprint disagrees"):
+        attempt.judge(context, rows, {value["instance_id"]: value}, {})
+
+
+def test_omitted_default_fields_preserve_unknown_observation_fields():
+    row, value = participant(), observation(role="worker")
+    fields = {"future_field": {"enabled": True}}
+    value["value"]["fields"] = copy.deepcopy(fields)
+    accepted = cell.as_value({**cell.DEFAULTS, **fields})
+    context = domain.Context("later", False, (accepted,), (accepted,), KEYS)
+    attempt = domain.Attempt()
+    rows = {row["participant_id"]: row}
+    attempt.capture(rows)
+    attempt.retain_observation(value)
+    assert attempt.judge(context, rows, {value["instance_id"]: value}, {}) == ((), KEYS)
+    assert value["value"]["fields"] == fields

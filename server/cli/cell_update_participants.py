@@ -11,7 +11,7 @@ from uuid import UUID
 
 from server.cli import cell_control
 from server.core import cell, instances
-from server.core.cell_ch import complete
+from server.core.cell_ch import TRANSACTION_S, complete
 from server.core.ch import query_tag
 from server.core.provider_process import (
     certified,
@@ -121,7 +121,7 @@ async def replacement(
 async def settle(run: Any, target: dict[str, Any]) -> None:
     """Fix one complete captured set; expiry never removes an obligation."""
     with query_tag("cell.update.participants"):
-        initial = await run.owner.call(lambda: census(run.ch), total_s=cell_control.TRANSACTION_S)
+        initial = await run.owner.call(lambda: census(run.ch), total_s=TRANSACTION_S)
         captured = capture(list(initial.values()))
         done: set[str] = set()
         deadline = time.monotonic() + run.args.wait
@@ -135,7 +135,7 @@ async def settle(run: Any, target: dict[str, Any]) -> None:
                         done.add(identity)
                 return await replacement(run.ch, run, rows, set(captured), target)
 
-            live = await run.owner.call(poll, total_s=cell_control.TRANSACTION_S)
+            live = await run.owner.call(poll, total_s=TRANSACTION_S)
             remaining = sorted(set(captured) - done)
             if not remaining and live:
                 return

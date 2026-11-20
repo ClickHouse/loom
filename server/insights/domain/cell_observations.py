@@ -34,15 +34,15 @@ def text(value: Any, *, empty: bool = False) -> str:
 
 
 def identity(value: Any, *, instance: bool = False) -> str:
-    value = text(value)
+    canonical = text(value)
     try:
-        parsed = UUID(value)
+        parsed = UUID(canonical)
     except ValueError:
         raise refused("unreadable process identity") from None
     expected = parsed.hex if instance else str(parsed)
-    if value != expected:
+    if canonical != expected:
         raise refused("noncanonical process identity")
-    return value
+    return canonical
 
 
 def _size(value: Any) -> int:
@@ -255,7 +255,7 @@ def _admitted(context: Context, value: dict[str, Any]) -> dict[str, Any]:
     claim = _claim(value)
     if value["cell"] != context.cell_name or value["mode"] != "enforced":
         raise refused("process observation belongs to another or unenforced cell")
-    fields = value["value"]["fields"]
+    fields = {**cell.DEFAULTS, **value["value"]["fields"]}
     for pair in (context.own_pair, context.directory_pair):
         if not any(cell.matches(fields, accepted) for accepted in pair):
             raise refused("process fingerprint disagrees with an accepted pair")

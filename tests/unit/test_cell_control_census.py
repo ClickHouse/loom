@@ -365,7 +365,7 @@ def function(path: str, name: str) -> ast.AST:
             "_prepare_locked",
             [
                 "cell_control.claim(conn, call, snapshot)",
-                "owner.call(lambda: _write_rows(conn, rows, answer, current, nxt), total_s=cell_control.TRANSACTION_S)",
+                "owner.call(lambda: _write_rows(conn, rows, answer, current, nxt), total_s=TRANSACTION_S)",
             ],
         ),
         (
