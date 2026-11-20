@@ -95,9 +95,19 @@ async def fenced_many(names: list[str], *, ch: Any = None) -> AsyncIterator[Call
         left = min(leases.work_left(lease, ttl) for lease in held)
         if left <= 0:
             raise FenceUnavailableError("the write lease expired")
-        async with asyncio.timeout(left):
-            with rmt_carry.under_lease(time.monotonic() + left):
-                yield mark_uncertain
+        deadline = asyncio.timeout(left)
+        try:
+            async with deadline:
+                with rmt_carry.under_lease(time.monotonic() + left):
+                    yield mark_uncertain
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            raise BackendUnavailableError(
+                "the fenced write exceeded its deadline; retry shortly",
+                operation="leased_write",
+                outcome_unknown=uncertain,
+            ) from None
     finally:
         if uncertain:
             for lease in held:

@@ -81,6 +81,8 @@ pool during cleanup. Large ClickHouse namespace restores insert bounded batches 
 keep admission inside each batch's lease budget.
 `LOOM_CH_WRITE_FENCE_CONCURRENCY` bounds each wave, capped by a bounded HTTP pool;
 `LOOM_CH_RESTORE_BATCH_ROWS` bounds each restore insert.
+A fence's own deadline answers 503 `BACKEND_UNAVAILABLE`; `outcome_unknown` is true
+when an admitted send may have landed, and its holders stay until sends expire.
 A busy fence or an unavailable
 Keeper refuses the write with a retryable 503. The check covers version inserts, not
 in-place counter updates or redaction mutations. A serving build without these fences

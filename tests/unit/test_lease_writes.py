@@ -148,3 +148,45 @@ async def test_batch_release_does_not_overload_its_own_pool(monkeypatch, pool):
     async with writes.fenced_many(names):
         pass
     assert not remaining, "cleanup cannot strand keys by exceeding the connection pool"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sending", [False, True])
+async def test_fence_deadline_is_typed_and_preserves_unknown_outcome(monkeypatch, sending):
+    from unittest.mock import Mock
+
+    from server.core.errors import BackendUnavailableError
+
+    lease = SimpleNamespace(let_expire=Mock())
+    release = AsyncMock()
+    monkeypatch.setattr(writes.leases, "take", AsyncMock(return_value=lease))
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 0.001)
+    with pytest.raises(BackendUnavailableError) as failed:
+        async with writes.fenced_many(["key"]) as uncertain:
+            uncertain(sending)
+            await asyncio.Event().wait()
+    assert failed.value.status_code == 503
+    assert failed.value.extra["outcome_unknown"] is sending
+    assert failed.value.extra["retry_after_s"] > 0
+    assert lease.let_expire.call_count == int(sending)
+    release.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_inner_timeout_keeps_its_original_error(monkeypatch):
+    from unittest.mock import Mock
+
+    lease = SimpleNamespace(let_expire=Mock())
+    release = AsyncMock()
+    monkeypatch.setattr(writes.leases, "take", AsyncMock(return_value=lease))
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 24)
+    inner = TimeoutError("client insert outcome unknown")
+    with pytest.raises(TimeoutError) as failed:
+        async with writes.fenced_many(["key"]) as uncertain:
+            uncertain(True)
+            raise inner
+    assert failed.value is inner
+    lease.let_expire.assert_called_once()
+    release.assert_awaited_once_with(lease)
