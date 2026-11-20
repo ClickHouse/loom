@@ -169,6 +169,26 @@ class ControllerContracts(unittest.TestCase):
             with Cohort(root, plan) as cohort:
                 self.assertEqual(cohort.state["attempts"][0]["state"], "pending")
 
+    def test_visible_grader_failure_halts_even_with_settled_usage_and_hidden_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, plan = Path(directory), protocol()
+            result = run(root, plan, "visible-grader-failure")["result"]
+            self.assertEqual(result["status"], "invalid_grader")
+            self.assertFalse(result["resolved"])
+            events = [
+                json.loads(row)
+                for row in (root / "attempt-000/worker/agent/events.jsonl").read_text().splitlines()
+            ]
+            hidden = [row for row in events if row["kind"] == "hidden_verification"]
+            self.assertEqual([row["passed"] for row in hidden], [True])
+            with Cohort(root, plan) as cohort:
+                self.assertTrue(cohort.state["halted"])
+                self.assertFalse(cohort.state["accounting"]["unknown"])
+                self.assertTrue(all(r["settled"] for r in cohort.state["accounting"]["rows"]))
+                self.assertEqual(cohort.state["attempts"][1]["state"], "pending")
+            with self.assertRaisesRegex(PermissionError, "reconciliation"):
+                run(root, plan)
+
     def test_worker_rechecks_eligibility_and_task_before_constructing_clients(self):
         with tempfile.TemporaryDirectory() as directory:
             root, plan, client = Path(directory), protocol(), Mock()

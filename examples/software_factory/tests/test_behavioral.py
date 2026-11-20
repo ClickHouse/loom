@@ -186,6 +186,24 @@ class BehavioralContracts(unittest.TestCase):
                 result = factory.run()
             self.assertEqual(result["status"], "invalid_grader")
 
+    def test_visible_infrastructure_failure_remains_invalid_after_hidden_success(self):
+        for actions in ([], [{"name": "test"}]):
+            for failure in (RuntimeError("transport failed"), ValueError("invalid runtime")):
+                with self.subTest(actions=actions, failure=failure):
+                    with tempfile.TemporaryDirectory() as directory:
+                        factory = self.factory(Path(directory), [{"actions": actions}])
+                        with patch.object(
+                            factory.grader,
+                            "run",
+                            side_effect=[failure, {"passed": True}],
+                        ) as grade:
+                            result = factory.run()
+                        self.assertEqual(grade.call_count, 2)
+                        self.assertTrue(grade.call_args.kwargs["hidden"])
+                        self.assertEqual(result["status"], "invalid_grader")
+                        self.assertFalse(result["resolved"])
+                        self.assertIn(str(failure), result["error"])
+
     def test_attach_output_limit_is_candidate_failure_before_runtime_mismatch(self):
         for stream in ("stdout", "stderr"):
             with self.subTest(stream=stream), tempfile.TemporaryDirectory() as directory:

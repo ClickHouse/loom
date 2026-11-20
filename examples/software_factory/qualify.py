@@ -1,4 +1,4 @@
-"""Requalify one frozen historical case without models or index access."""
+"""Validate frozen inputs; refuse candidate-written qualification reports."""
 
 from __future__ import annotations
 
@@ -6,17 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-
-from .historical import (
-    FrozenSource,
-    HistoricalGrader,
-    controller_hashes,
-    git,
-    junit_statuses,
-    selected_statuses,
-)
-from .model import digest
-from .workspace import Checkout, require_independent_grader
+from typing import NoReturn
 
 
 def public_task(task_id: str) -> dict:
@@ -59,82 +49,8 @@ def load_inputs(task_id: str, config_path: Path) -> tuple:
     return public, config, private, visible, selected
 
 
-def qualify(task_id: str, config_path: Path, output: Path) -> dict:
-    # Do not spend test/container work on controls that cannot qualify an oracle.
-    require_independent_grader(HistoricalGrader)
-    controller = controller_hashes()
-    public, config, private, visible, selected = load_inputs(task_id, config_path)
-    fail, passing = json.loads(private["FAIL_TO_PASS"]), json.loads(private["PASS_TO_PASS"])
-    source = FrozenSource(Path(config["source_git"]), public["base_commit"])
-    task = source.task(public, "unqualified-no-index", "qualification-only")
-    output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    controls = {}
-    for control in ("visible-base", "base", "reference"):
-        candidate = Checkout(output / (control + "-candidate"), task)
-        if control == "reference":
-            git(
-                candidate.root,
-                "apply",
-                "--include=src/flask/*",
-                "-",
-                data=private["patch"].encode(),
-            )
-        grader = HistoricalGrader(
-            source,
-            public["dependency_image"],
-            visible,
-            selected,
-            private["test_patch"],
-            output / control,
-        )
-        result = grader.run(candidate, hidden=control != "visible-base")
-        xml = (
-            grader.output
-            / ("visible-1" if control == "visible-base" else "hidden")
-            / "test/results/junit.xml"
-        )
-        statuses = selected_statuses(
-            junit_statuses(xml), visible if control == "visible-base" else selected
-        )
-        valid = all(
-            statuses[n] == "PASSED" for n in (visible if control == "visible-base" else passing)
-        )
-        if control == "base":
-            valid = (
-                valid and result["exit_code"] == 1 and all(statuses[n] == "FAILED" for n in fail)
-            )
-        if control in {"visible-base", "reference"}:
-            valid = valid and result["passed"]
-        controls[control] = {
-            "valid": valid,
-            "passed": result["passed"],
-            "selected": statuses,
-            "grader_sha256": grader.sha256,
-            "state": candidate.state(),
-        }
-        (output / (control + ".json")).write_text(json.dumps(controls[control], indent=2) + "\n")
-    if controller_hashes() != controller:
-        raise PermissionError("Controller source changed during qualification")
-    receipt = {
-        "kind": "focused-historical-controls",
-        "task_id": task_id,
-        "base_commit": source.commit,
-        "dependency_image": public["dependency_image"],
-        "source_sha256": task.source_sha256,
-        "config_sha256": public["grader_config_sha256"],
-        "private_task_sha256": config["task_sha256"],
-        "controls": controls,
-        "visible_selectors": visible,
-        "hidden_selectors": selected,
-        "qualified": all(row["valid"] for row in controls.values()),
-        "provider_requests": 0,
-        "loom_requests": 0,
-        "paid_benchmark": False,
-        "controller_sha256": controller,
-    }
-    receipt["receipt_sha256"] = digest(receipt)
-    (output / "qualification.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    return receipt
+def qualify(task_id: str, config_path: Path, output: Path) -> NoReturn:
+    raise PermissionError("Historical reports cannot provide candidate-independent grading")
 
 
 def main() -> None:
@@ -143,17 +59,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    result = qualify(args.task, args.config, args.output)
-    print(
-        json.dumps(
-            {
-                "task_id": args.task,
-                "qualified": result["qualified"],
-                "receipt_sha256": result["receipt_sha256"],
-            }
-        )
-    )
-    raise SystemExit(0 if result["qualified"] else 1)
+    qualify(args.task, args.config, args.output)
 
 
 if __name__ == "__main__":

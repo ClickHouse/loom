@@ -14,6 +14,10 @@ from .model import MODES, Budget, Ledger, Provider, Task, digest, tool_schemas
 from .workspace import Checkout, ObjectiveGrader, require_independent_grader
 
 
+class InvalidGrader(RuntimeError):
+    """Grading infrastructure failed rather than reporting a candidate failure."""
+
+
 class Factory:
     def __init__(
         self,
@@ -90,7 +94,10 @@ class Factory:
         if self.checkout.diff() and self.impact_state != state:
             self.hook("diff")
             self.impact_state = state
-        result = self.grader.run(self.checkout)
+        try:
+            result = self.grader.run(self.checkout)
+        except Exception as exc:  # Grader faults must not become agent tool errors.
+            raise InvalidGrader(f"{type(exc).__name__}: {exc}") from exc
         self.verified_state = state
         self.visible_passed = result["passed"]
         self.ledger.emit("verification", **result)
@@ -206,6 +213,9 @@ class Factory:
                     break
             if self.verified_state != self.checkout.state():
                 self.verify()
+        except InvalidGrader as exc:
+            status, error = "invalid_grader", str(exc)
+            self.ledger.emit("stop", error=error)
         except Exception as exc:  # noqa: BLE001 — provider and tool failures must remain in the attempt ledger
             status, error = "stopped", f"{type(exc).__name__}: {exc}"
             self.ledger.emit("stop", error=error)

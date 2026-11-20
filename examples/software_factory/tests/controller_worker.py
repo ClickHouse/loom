@@ -70,13 +70,25 @@ def main():
             raise AssertionError("Baseline must never construct a context client")
         return ScriptedContext(task, output)
 
+    def grader(task_id, output):
+        task, oracle = prepare(task_id, output)
+        if args.behavior == "visible-grader-failure":
+
+            def fail_visible(checkout, *, hidden=False):
+                if not hidden:
+                    raise RuntimeError("scripted visible infrastructure failure")
+                return {"passed": True, "grader_sha256": oracle.sha256}
+
+            oracle.run = fail_visible
+        return task, oracle
+
     run_active(
         args.root,
         protocol,
         args.order,
         args.output,
         verify_eligibility=lambda _: None,  # Authored fixture only; not real approval.
-        prepare=prepare,
+        prepare=grader,
         provider_factory=lambda output, audit: ScriptedProvider(
             output, broken_close=args.behavior == "cleanup-failure"
         ),
