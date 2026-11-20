@@ -138,6 +138,12 @@ See [shared-agent memory](../../../docs/use-cases/multi-agent.md),
 [code-linked memory](../../../docs/use-cases/memory-linked-to-code.md) and
 [run reporting](../../../docs/features/runs.md) for the supported boundaries.
 
+## pipecat_text_memory.py
+
+A text-only native pipeline with Loom recall and finalized-turn capture. The
+[Pipecat integration README](pipecat/README.md) covers installation, trusted
+application prerequisites, run instructions and the Pipecat 1.16.0 checked scope.
+
 ## agent_memory.py
 
 An agent that remembers what a user said, recalls it by meaning, answers with citations (or abstains), and tells loom which memories it used.
