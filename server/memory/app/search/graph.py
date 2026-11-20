@@ -120,6 +120,18 @@ async def _run_graph_stages(ctx: SearchContext) -> None:
     so the stage costs the longer of the two instead of their sum: in measured traces the
     triple call is ~566 ms at p50 and runs on every graph-mode search. Both stages return early
     when the mode is not graph, so the gather is free elsewhere."""
+    input = ctx.input
+    # Namespace aggregates have no row identity; filtering their keys cannot separate
+    # two users' evidence when both wrote the same key.
+    if (
+        any(getattr(input, axis, None) is not None for axis in ("user_id", "session_id", "run_id"))
+        or getattr(input, "session_ids", None)
+        or (
+            getattr(input, "scope", "private") == "private"
+            and getattr(input, "agent", None) not in (None, "", "*", "-")
+        )
+    ):
+        return
     await asyncio.gather(_run_graph_expansion(ctx), _run_triple_matching(ctx))
 
 

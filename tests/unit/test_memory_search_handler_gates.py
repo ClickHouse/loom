@@ -618,7 +618,7 @@ async def test_off_the_llm_free_posture_the_judge_runs_on_the_same_hits(
 async def test_off_the_llm_free_posture_graph_mode_extracts_triples(
     search_env, llm_attempts
 ) -> None:
-    await _run(search_env, recipe="graph")
+    await _run(search_env, recipe="graph", agent="*")
     assert "triples" in llm_attempts
 
 

@@ -333,8 +333,10 @@ async def test_the_real_store_reports_what_its_insert_wrote_before_the_mirror_fa
     async def get_by_id(mid, **kw):
         return rows.get(mid)
 
-    async def insert(batch, *, ch=None):
+    async def insert(batch, *, ch=None, **callbacks):
         inserted.extend(batch)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def mirror(*a, **k):
         raise RuntimeError("mirror down")
@@ -393,8 +395,10 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported_or_mirrored(m
     async def get_by_id(mid, **kw):
         return rows.get(mid)
 
-    async def insert(batch, *, ch=None):
+    async def insert(batch, *, ch=None, **callbacks):
         inserted.extend(batch)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def mirror(batch, *, ch=None, **_):
         mirrored.extend(r["memory_id"] for r in batch)
@@ -423,7 +427,7 @@ async def test_the_real_store_reports_nothing_when_its_insert_fails(monkeypatch)
     async def get_by_id(mid, **kw):
         return SimpleNamespace(memory_id=mid, status="active", pinned=False, version=0)
 
-    async def insert(batch, *, ch=None):
+    async def insert(batch, *, ch=None, **callbacks):
         raise RuntimeError("insert down")
 
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
@@ -897,8 +901,10 @@ async def test_an_unconfirmed_retirement_is_left_for_the_reconcile(monkeypatch) 
     async def get_by_id(mid, **kw):
         return rows.get(mid)
 
-    async def insert(batch, *, ch=None):
+    async def insert(batch, *, ch=None, **callbacks):
         inserted.extend(batch)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def mirror(batch, *, ch=None):
         mirrored.extend(r["memory_id"] for r in batch)
