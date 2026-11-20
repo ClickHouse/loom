@@ -38,12 +38,18 @@ function Write-LoomWitnessPhase([string]$phase) {
             $receipt = @{ pid = $compilerPid; started = $compiler.StartTime.ToUniversalTime().Ticks.ToString();
                 directory = $directory; guardian = @{ pid = $guardian.Id; started = $guardian.StartTime.ToUniversalTime().Ticks.ToString() } }
             Write-LoomWitnessPhase 'identity'
+            # Recheck the created handle after capturing both exact identities.
+            if ($compilerNative::WaitForSingleObject($compilerHandle, 0) -ne 258) { throw 'Unavailable' }
+            $liveObservedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            if ($liveObservedAt -ge $compilerDeadline) { throw 'Unavailable' }
             # Only the validated path needs escaping in this fixed receipt.
             $json = '{"pid":' + $receipt.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
                 ',"started":"' + $receipt.started + '","directory":"' + $directory.Replace('\', '\\') +
                 '","compilerDeadline":' + $compilerDeadline.ToString([Globalization.CultureInfo]::InvariantCulture) +
+                ',"liveObservedAt":' + $liveObservedAt.ToString([Globalization.CultureInfo]::InvariantCulture) +
                 ',"guardian":{"pid":' + $receipt.guardian.pid.ToString([Globalization.CultureInfo]::InvariantCulture) +
                 ',"started":"' + $receipt.guardian.started + '"}}'
+            if ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $compilerDeadline) { throw 'Unavailable' }
             [Console]::Out.WriteLine($json)
             [Console]::Out.Flush()
             Write-LoomWitnessPhase 'announced'

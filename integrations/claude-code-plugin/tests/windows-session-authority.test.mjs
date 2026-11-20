@@ -582,14 +582,18 @@ if (process.platform === "win32") {
       stage = "directory-present";
       assert.equal(fs.existsSync(receipt.directory), true);
       stage = "live-identities";
-      assert.deepEqual(
-        exactProcesses([receipt.guardian, receipt]).sort((a, b) => a - b),
-        [receipt.guardian.pid, receipt.pid].sort((a, b) => a - b),
-      );
+      // The trusted witness rechecks its created handle after both identities.
+      // Starting another interpreter here can consume the remaining native window.
+      assert.ok(Number.isSafeInteger(receipt.compilerDeadline) && receipt.compilerDeadline > 0);
+      assert.ok(Number.isSafeInteger(receipt.liveObservedAt) && receipt.liveObservedAt > 0);
+      assert.ok(receipt.liveObservedAt < receipt.compilerDeadline, "exact live observation missed compiler cutoff");
+      assert.ok(receipt.compilerDeadline <= observation.deadline, "compiler cutoff exceeds operation deadline");
+      assert.ok(Date.now() < receipt.compilerDeadline, "compiler cutoff elapsed before parent termination");
       stage = "parent-kill";
       assert.equal(caller.kill("SIGKILL"), true);
       stage = "parent-exit";
       await exited;
+      assert.ok(Date.now() < receipt.compilerDeadline, "parent exit was not observed before compiler cutoff");
       // This wait observes the existing 1500ms primary deadline; it does not
       // provide a timer to the surviving guardian.
       stage = "deadline-wait";
