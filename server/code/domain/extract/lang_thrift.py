@@ -62,6 +62,8 @@ BASE_TYPES: frozenset[str] = frozenset(
 _CONTAINERS: frozenset[str] = frozenset({"list", "set", "map"})
 _STRUCT_KEYWORDS: frozenset[str] = frozenset({"struct", "union", "exception"})
 _FIELD_REQ: frozenset[str] = frozenset({"required", "optional"})
+_XSD_FIELD_FLAGS: frozenset[str] = frozenset({"xsd_optional", "xsd_nillable"})
+_PAIRS: dict[str, str] = {"(": ")", "[": "]", "{": "}", "<": ">"}
 
 # An unclosed string is one token to the end of its line; an unclosed block comment runs
 # to the end of the file, as Thrift's lexer reads them.
@@ -190,18 +192,59 @@ class _Parser:
             self._site(t.line, t.text)
         return j + 1
 
-    def _fields(self, j: int, stop: int) -> None:
-        """Field lists (`1: required Type name = x,`) between `j` and `stop`: record each
-        field's type."""
+    def _group_end(self, j: int, stop: int) -> int:
+        """At an opening bracket, the index after its match (or `stop`); else `j + 1`."""
+        close = _PAIRS.get(self.toks[j].text)
+        if close is None:
+            return j + 1
+        opener = self.toks[j].text
+        depth = 0
         while j < stop:
             t = self.toks[j].text
-            if t.lstrip("-").isdigit() and j + 1 < stop and self.toks[j + 1].text == ":":
-                j += 2
-                if j < stop and self.toks[j].text in _FIELD_REQ:
-                    j += 1
-                j = self._type(j, stop)
-                continue
+            if t == opener:
+                depth += 1
+            elif t == close:
+                depth -= 1
+                if depth == 0:
+                    return j + 1
             j += 1
+        return stop
+
+    def _field(self, j: int, stop: int) -> int:
+        """One field, `[1:] [required|optional] Type [&] name [= value] [xsd options]
+        [(annotations)]`, as in the IDL grammar, where the numeric ID is optional: record
+        its type and return the index after it."""
+        t = self.toks[j].text
+        if t.lstrip("-").isdigit() and j + 1 < stop and self.toks[j + 1].text == ":":
+            j += 2
+        if j < stop and self.toks[j].text in _FIELD_REQ:
+            j += 1
+        j = self._type(j, stop)
+        for skip in ("(", "&"):  # type annotations, then a C++ reference marker
+            if j < stop and self.toks[j].text == skip:
+                j = self._group_end(j, stop)
+        if j < stop and _is_name(self.toks[j].text):
+            j += 1
+        if j < stop and self.toks[j].text == "=" and j + 1 < stop:
+            j = self._group_end(j + 1, stop)
+        while j < stop and self.toks[j].text in _XSD_FIELD_FLAGS:
+            j += 1
+        if j + 1 < stop and self.toks[j].text == "xsd_attrs" and self.toks[j + 1].text == "{":
+            attrs_end = self._group_end(j + 1, stop)
+            self._fields(j + 2, attrs_end - 1)
+            j = attrs_end
+        if j < stop and self.toks[j].text == "(":
+            j = self._group_end(j, stop)
+        return j
+
+    def _fields(self, j: int, stop: int) -> None:
+        """Field lists between `j` and `stop`, with or without numeric IDs and separators:
+        record each field's type."""
+        while j < stop:
+            if self.toks[j].text in ",;":
+                j += 1
+                continue
+            j = max(self._field(j, stop), j + 1)
 
     def _block_end(self, open_idx: int) -> int:
         j = self._closes.get(open_idx)

@@ -99,6 +99,58 @@ def test_includes_inside_comments_are_not_includes() -> None:
     assert th.thrift_units("m.thrift", 'include "x').includes == []
 
 
+def _uses_type(path: str, src: bytes) -> set[tuple[str, str]]:
+    pf = th.parse_thrift(path, src)
+    edges = bind_sites(pf, th.reference_sites(pf), gate_name_table({}, "thrift"), th.SITE_RULES)
+    return {
+        (e.from_qualified_name.split("::")[1], e.to_qualified_name.split("::")[1])
+        for e in edges
+        if e.edge_kind == "uses_type"
+    }
+
+
+def test_fields_without_a_numeric_id_record_their_types() -> None:
+    # the IDL grammar makes `FieldID ':'` optional
+    src = b"struct User { 1: string id }
+struct Envelope { optional User user }
+"
+    assert (2, "User", "field_type") in th.parse_thrift("idl/e.thrift", src).sites
+    assert ("Envelope", "User") in _uses_type("idl/e.thrift", src)
+    with_id = b"struct User { 1: string id }
+struct Envelope { 1: optional User user }
+"
+    assert ("Envelope", "User") in _uses_type("idl/e.thrift", with_id)
+
+
+def test_id_less_fields_in_arguments_throws_and_mixed_lists() -> None:
+    src = b"""struct Id { 1: i64 v }
+struct Tag { 1: string t }
+exception Missing { 1: string why }
+struct Mixed {
+  required Id id = {"v": 1}
+  list<Tag> (python.immutable = "") tags;
+  3: Tag& primary xsd_optional (doc = "x"),
+  map<string, Id> byName
+}
+service Lookup {
+  Mixed find(Id id, 2: Tag tag) throws (Missing missing)
+}
+"""
+    sites = th.parse_thrift("idl/l.thrift", src).sites
+    assert {
+        (5, "Id", "field_type"),
+        (6, "Tag", "field_type"),
+        (7, "Tag", "field_type"),
+        (8, "Id", "field_type"),
+    } <= set(sites)
+    got = _uses_type("idl/l.thrift", src)
+    assert {("Mixed", "Id"), ("Mixed", "Tag")} <= got
+    assert {("Lookup.find", "Id"), ("Lookup.find", "Tag"), ("Lookup.find", "Missing")} <= got
+    # field names, default values and annotations are not types
+    names = {n for _, n, _ in sites}
+    assert not names & {"id", "tags", "primary", "byName", "v", "python", "doc", "x"}
+
+
 def test_unterminated_input_does_not_raise() -> None:
     for text in ("struct A {", "service S { void f(", "typedef list<", 'include "x', "/* open"):
         th.thrift_units("a.thrift", text)
