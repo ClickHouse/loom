@@ -319,27 +319,62 @@ async def test_clear_pages_heads_and_removes_orphan_vectors(
     assert live == [("locked",)]
 
 
+@pytest.mark.parametrize("retry", [False, True])
 async def test_clear_includes_a_visible_head_from_an_ahead_writer_clock(
-    mint_test_token: Any, ch_client: Any, monkeypatch: Any
+    mint_test_token: Any, ch_client: Any, monkeypatch: Any, retry: bool
 ) -> None:
     me = minted_identity(mint_test_token, "clear-clock")
     _memory(ch_client, me, "ahead", version=200)
+    vector = [1.0] + [0.0] * 3071
+    row = {
+        "org": me["org"],
+        "namespace": me["namespace"],
+        "agent": "writer",
+        "user_id": "reader",
+        "session_id": "session",
+        "memory_key": "ahead",
+        "version": 200,
+        "embedding_model": "fixture-model",
+        "embedding_dim": 3072,
+        "embedding": vector,
+        "memory_key_embedding": vector,
+    }
+    ch_client.insert("loom.memory_embeddings", [list(row.values())], column_names=list(row))
     monkeypatch.setattr(lifecycle, "next_version", lambda: 100)
     ch = CHClient()
     await ch.connect()
     try:
+        if retry:
+
+            async def fail_retire(*args: Any, **kwargs: Any) -> int:
+                raise TimeoutError("vector retirement interrupted")
+
+            with monkeypatch.context() as interrupted:
+                interrupted.setattr(lifecycle, "reemit_embedding_rows_for_keys", fail_retire)
+                with pytest.raises(TimeoutError):
+                    await bulk_tombstone_scope(
+                        org=me["org"], namespace=me["namespace"], user_id="reader", ch=ch
+                    )
         counts = await bulk_tombstone_scope(
             org=me["org"], namespace=me["namespace"], user_id="reader", ch=ch
         )
     finally:
         await ch.disconnect()
-    assert counts["loom.memory"] == 1
+    assert counts["loom.memory"] == (0 if retry else 1)
+    assert counts["loom.memory_embeddings"] == 1
     rows = ch_client.query(
         "SELECT version, tombstoned_at IS NOT NULL FROM loom.memory FINAL "
         "WHERE org = {org:String} AND namespace = {namespace:String}",
         parameters=me,
     ).result_rows
     assert rows == [(202, 1)]
+    live_vectors = ch_client.query(
+        "SELECT count() FROM loom.memory_embeddings FINAL "
+        "WHERE org = {org:String} AND namespace = {namespace:String} "
+        "AND tombstoned_at IS NULL",
+        parameters=me,
+    ).result_rows
+    assert live_vectors == [(0,)]
 
 
 async def test_a_lock_that_overtakes_clear_keeps_its_old_vector(

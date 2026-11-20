@@ -908,12 +908,12 @@ async def _clear_clickhouse_scope(
     # The skipped rows are counted under `locked_skipped`.
     from server.memory.domain.lock import locked_predicate, unlocked_predicate
 
-    # Replica mutations require a bound timestamp. Include observed heads from a faster
-    # writer clock in the version cutoff.
+    # Include tombstones so a retry can finish retiring an ahead-clock head's vectors.
     params["at"] = naive_utc_now_seconds()
     drawn = next_version()
     latest = await ch.query_one(
-        f"SELECT max(version) AS v FROM loom.memory FINAL WHERE {scope_sql}", params=params
+        f"SELECT max(version) AS v FROM loom.memory FINAL WHERE {' AND '.join(scope)}",
+        params=params,
     )
     params["clear_version"] = version_over(int((latest or {}).get("v") or 0), drawn)
     locked = locked_predicate(now="{at:DateTime}")
