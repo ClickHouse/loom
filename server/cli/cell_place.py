@@ -104,18 +104,7 @@ async def place(args: argparse.Namespace, router: httpx.URL) -> dict[str, str]:
     owner = Owner(exit_s=_bound_s())
 
     async def opening() -> None:
-        owner.conn = await pg._connect_dedicated(
-            statement_timeout_ms=settings.pg_statement_timeout_ms
-        )
-        if owner.closed:
-            await owner.close()
-            raise PlacementRefused("connection arrived after the placement attempt ended")
-        try:
-            await pg._check_deployment(owner.conn)
-            await pg.init_connection(owner.conn)
-        except Exception as error:
-            pg._raise_if_unavailable(error)
-            raise
+        await owner.connect(statement_timeout_ms=settings.pg_statement_timeout_ms)
 
     async def initial() -> tuple[str, dict[str, Any]]:
         if refusals := await apg.direct_refusals(owner.conn, "place"):

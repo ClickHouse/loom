@@ -71,14 +71,19 @@ async def test_owned_migrator_cancellation_releases_server_locks(database, tmp_p
         yield conn
 
     task = asyncio.create_task(pg_migrate.migrate(tmp_path, connect=connect, schema="test"))
-    await sleeping(observer, conn.get_server_pid())
-    pid = conn.get_server_pid()
-    started = time.monotonic()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 1.5)
-    assert time.monotonic() - started < 1.5
-    await released(observer, pid)
+    try:
+        await sleeping(observer, conn.get_server_pid())
+        pid = conn.get_server_pid()
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1.5)
+        assert time.monotonic() - started < 1.5
+        await released(observer, pid)
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize("signals", [1, 2])

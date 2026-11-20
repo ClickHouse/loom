@@ -167,9 +167,13 @@ class LocalConnection:
 
 @pytest.fixture
 def local(monkeypatch):
+    import asyncpg
+
     from server.cli import cell_place
     from server.core import pg
 
+    monkeypatch.setattr(settings, "pg_dsn", "postgres://not-connected")
+    monkeypatch.setattr(pg, "_expected", None)
     conn = LocalConnection()
     state = {"first": "eu-1", "state": "enforced", "deployment": "dep-eu-1", "row": None}
 
@@ -185,7 +189,8 @@ def local(monkeypatch):
     conn.fetchval = fetchval
     conn.fetchrow = fetchrow
 
-    async def connect(**kw):
+    async def connect(*args, **driver_kw):
+        kw = {"statement_timeout_ms": int(driver_kw["server_settings"]["statement_timeout"])}
         assert kw == {"statement_timeout_ms": settings.pg_statement_timeout_ms}
         return conn
 
@@ -204,7 +209,7 @@ def local(monkeypatch):
     async def directory_call(*a):
         conn.calls.append("directory")
 
-    monkeypatch.setattr(pg, "_connect_dedicated", connect)
+    monkeypatch.setattr(asyncpg, "connect", connect)
     monkeypatch.setattr(pg, "_check_deployment", initialize)
     monkeypatch.setattr(pg, "init_connection", initialize)
     monkeypatch.setattr(cell, "read_state_if_present", read_state)
@@ -250,9 +255,14 @@ async def test_local_noop_insert_still_commits_durability_message(local):
         {"row": None},
     ],
 )
-async def test_local_invalid_identity_refuses_before_directory(local, change):
-    from server.cli import cell_place
+async def test_local_invalid_identity_refuses_before_directory(local, monkeypatch, change):
+    from server.cli import cell_control, cell_place
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
 
+    phase_clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", phase_clock)
+    monkeypatch.setattr(pg, "time", phase_clock)
     conn, state = local
     state.update(change)
     with pytest.raises(cell_place.PlacementRefused):
@@ -319,19 +329,19 @@ async def test_local_commit_cancellation_closes_the_session(local):
 
 
 async def test_stalled_direct_context_entry_is_bounded(local, monkeypatch):
-    from server.core import pg
+    import asyncpg
 
     conn, state = local
     cleaned = False
 
-    async def stalled(**kw):
+    async def stalled(*args, **kw):
         nonlocal cleaned
         try:
             await asyncio.Event().wait()
         finally:
             cleaned = True
 
-    monkeypatch.setattr(pg, "_connect_dedicated", stalled)
+    monkeypatch.setattr(asyncpg, "connect", stalled)
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(invoke_place(), 0.5)
     assert cleaned and conn.calls == []
@@ -565,7 +575,7 @@ async def test_lost_original_lock_refuses_without_reconnecting(local, monkeypatc
 
 @pytest.mark.parametrize("inside_reserve", [False, True])
 async def test_late_placement_connection_never_reaches_body(local, monkeypatch, inside_reserve):
-    from server.core import pg
+    import asyncpg
 
     conn, _ = local
     released, discarded = asyncio.Event(), asyncio.Event()
@@ -580,7 +590,7 @@ async def test_late_placement_connection_never_reaches_body(local, monkeypatch, 
         await real_close(**kw)
         discarded.set()
 
-    async def late(**kwargs):
+    async def late(*args, **kwargs):
         try:
             await asyncio.Future()
         except asyncio.CancelledError:
@@ -593,7 +603,7 @@ async def test_late_placement_connection_never_reaches_body(local, monkeypatch, 
             return conn
 
     conn.terminate, conn.close = terminate, close
-    monkeypatch.setattr(pg, "_connect_dedicated", late)
+    monkeypatch.setattr(asyncpg, "connect", late)
     with pytest.raises(TimeoutError):
         await invoke_place()
     released.set()

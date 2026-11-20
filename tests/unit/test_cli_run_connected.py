@@ -240,3 +240,19 @@ def test_a_code_subcommand_exits_with_one_line_while_the_registry_is_unread(
     with pytest.raises(SystemExit, match="registry could not be read; retry"):
         asyncio.run(code_run._then_disconnect(_sub()))
     assert not ch.open
+
+
+def test_run_connected_binds_required_account_retirement_before_command(
+    ch: _CH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import account_lifecycle
+    from server.knowledge.app.connected_accounts import stop_subjects
+
+    monkeypatch.setattr(account_lifecycle, "_stopper", None)
+
+    async def command(_: object) -> int:
+        assert account_lifecycle._stopper is stop_subjects
+        return 0
+
+    assert _ch.run_connected(command, org_free=_ch.reads("a lifecycle composition test")) == 0
+    assert ch.events == ["connect", "disconnect"]

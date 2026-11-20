@@ -6,7 +6,6 @@
   "server/cli/import_clickgap.py": 1,
   "server/cli/shell.py": 2,
   "server/code/app/search/handler.py": 1,
-  "server/code/app/symbol/dispatch.py": 1,
   "server/code/app/symbol/impact.py": 1,
   "server/code/app/symbol/neighbours.py": 1,
   "server/code/app/symbol/symbol.py": 1,

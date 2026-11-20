@@ -3,6 +3,7 @@ still running permits rebuilding shared vectors; nothing else does."""
 
 import threading
 from contextlib import asynccontextmanager
+from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -14,6 +15,14 @@ from server.core.model_work_gate import ModelWorkGate
 from server.insights.app import provider_barrier as barrier
 from server.insights.store import provider_participants as pp
 from server.settings import settings
+
+
+class _AuthorityCH:
+    async def query_one(self, sql, params=None):
+        from server.core.pg_profile import _CH_RECORD
+
+        assert sql == _CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
 
 
 def _row(pid, transition=None, state="running", *, version=1, expired=False):
@@ -31,6 +40,9 @@ def _row(pid, transition=None, state="running", *, version=1, expired=False):
 def setup(monkeypatch):
     from server.core import retirement
 
+    client = _AuthorityCH()
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    monkeypatch.setattr(barrier, "_default_client", lambda: client)
     retirement.get_gate().install("test")
     retirement.get_gate().enrolled = True
     retirement.get_gate().producers_stopped = True
@@ -80,10 +92,10 @@ async def test_a_write_that_may_still_land_holds_the_acknowledgement_and_the_ret
         running = AsyncMock(return_value=1 if pending == "insert_running" else None)
         monkeypatch.setattr(barrier, "running_queries", running)
     assert not await barrier.acknowledge_drain(transition)
-    assert not await barrier.retire_process()
+    assert not await barrier.retire_process(barrier._default_client(), end=monotonic() + 1)
     record.assert_not_awaited()
     if pending != "carried":
-        assert running.await_args.kwargs == {"inserts": True}
+        assert running.await_args.kwargs == {"ch": barrier._default_client(), "inserts": True}
 
 
 @pytest.mark.asyncio
@@ -128,7 +140,7 @@ async def test_an_unknown_query_census_never_counts_as_stopped(setup, monkeypatc
     rows = [_row(identity), _row(quiet, expired=True)]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=None))
-    assert await barrier.retire_participant(quiet) == "live"
+    assert await barrier.retire_participant(quiet, end=monotonic() + 1) == "live"
     record.assert_not_awaited()
 
 
@@ -161,7 +173,7 @@ async def test_empty_census_or_missing_coordinator_is_not_a_barrier(setup, monke
 async def test_retirement_refuses_pending_writers(setup, monkeypatch):
     _, _, _, record = setup
     monkeypatch.setattr(barrier, "drain_task_sets", AsyncMock(return_value=False))
-    assert not await barrier.retire_process()
+    assert not await barrier.retire_process(barrier._default_client(), end=monotonic() + 1)
     record.assert_not_awaited()
 
 
@@ -214,7 +226,7 @@ async def test_register_writes_the_first_row_and_retire_stops_the_beats(setup, m
     barrier.record_retirement.side_effect = lambda *_a, **_k: tags.append(current_query_tag())
     beat.signal_stop()
     beat.thread.join(timeout=5)
-    assert await barrier.retire_process()
+    assert await barrier.retire_process(barrier._default_client(), end=monotonic() + 1)
     assert beat.stopping.is_set()  # signalled, not joined: the thread ends after its beat
     beat.thread.join(timeout=5)
     assert not beat.running
@@ -241,8 +253,10 @@ async def test_a_boot_that_fails_does_not_certify_a_pending_heartbeat(setup, mon
         async with barrier.participant_lifespan(lifespan)(None):
             pytest.fail("a failed boot never serves")
     barrier.record_retirement.assert_not_awaited()
+    assert barrier._HEARTBEAT.stopping.is_set()
     barrier._HEARTBEAT.thread.join(timeout=5)
-    assert await barrier.retire_process()
+    assert not barrier._HEARTBEAT.running
+    assert await barrier.retire_process(barrier._default_client(), end=monotonic() + 1)
     assert barrier.record_retirement.call_args.args[0].participant == barrier.process_identity()
 
 
@@ -266,15 +280,15 @@ async def test_retire_participant_refuses_a_live_one(setup, monkeypatch):
     other = uuid4()
     rows = [_row(identity), _row(other, version=5)]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
-    assert await barrier.retire_participant(uuid4()) == "absent"
-    assert await barrier.retire_participant(identity) == "live"
-    assert await barrier.retire_participant(other) == "live"
+    assert await barrier.retire_participant(uuid4(), end=monotonic() + 1) == "absent"
+    assert await barrier.retire_participant(identity, end=monotonic() + 1) == "live"
+    assert await barrier.retire_participant(other, end=monotonic() + 1) == "live"
     rows[1]["expired"] = True
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=2))
-    assert await barrier.retire_participant(other) == "live"
+    assert await barrier.retire_participant(other, end=monotonic() + 1) == "live"
     record.assert_not_awaited()
     monkeypatch.setattr(barrier, "running_queries", AsyncMock(return_value=0))
-    assert await barrier.retire_participant(other) == "live"
+    assert await barrier.retire_participant(other, end=monotonic() + 1) == "live"
     record.assert_not_awaited()
     barrier.record_retirement.assert_not_awaited()
 
@@ -309,24 +323,26 @@ async def test_sweep_retires_nobody_and_lists_what_blocks(setup, monkeypatch):
     ]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
     monkeypatch.setattr(
-        barrier, "running_queries", AsyncMock(side_effect=lambda p: int(str(p) == str(busy)))
+        barrier,
+        "running_queries",
+        AsyncMock(side_effect=lambda p, **_scope: int(str(p) == str(busy))),
     )
     assert barrier.stale_participants() is None
-    await barrier.sweep_stopped(now=1000.0)
+    await barrier.sweep_stopped(end=monotonic() + 1, now=1000.0)
     record.assert_not_awaited()
     assert [(p["participant_id"], p["reason"]) for p in barrier.stale_participants()] == [
         (str(expired), "heartbeat_expired"),
         (str(busy), "queries_running"),
     ]
     barrier.running_queries.reset_mock()
-    await barrier.sweep_stopped(now=1000.0 + barrier.SWEEP_S / 2)
+    await barrier.sweep_stopped(end=monotonic() + 1, now=1000.0 + barrier.SWEEP_S / 2)
     barrier.running_queries.assert_not_awaited()  # throttled
 
 
 @pytest.mark.asyncio
 async def test_the_sweep_deletes_long_retired_participants_hourly(setup):
     for t in (0.0, barrier.SWEEP_S, barrier.PRUNE_S):
-        await barrier.sweep_stopped(now=1000.0 + t)
+        await barrier.sweep_stopped(end=monotonic() + 1, now=1000.0 + t)
     assert barrier.prune_retired.await_count == 2
 
 
@@ -396,7 +412,7 @@ async def test_shutdown_retries_the_retirement_until_a_cut_off_write_settles(set
     monkeypatch.setattr(rmt_carry, "settle", AsyncMock(side_effect=lambda ch: settles.append(1)))
     monkeypatch.setattr(barrier.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(barrier, "_HEARTBEAT", barrier._Heartbeat(lambda: None))
-    assert await barrier.retire_at_shutdown(object(), budget_s=60)
+    assert await barrier.retire_at_shutdown(barrier._default_client(), budget_s=60)
     assert len(settles) == 2
 
 
@@ -409,7 +425,7 @@ async def test_shutdown_gives_up_within_its_budget_and_says_how_to_retire(
     monkeypatch.setattr(rmt_carry, "unsettled", lambda: 1)
     monkeypatch.setattr(rmt_carry, "settle", AsyncMock())
     with caplog.at_level("WARNING"):
-        assert not await barrier.retire_at_shutdown(object(), budget_s=0)
+        assert not await barrier.retire_at_shutdown(barrier._default_client(), budget_s=0)
     assert "loom participant retire --participant" in caplog.text
 
 
@@ -441,7 +457,7 @@ async def test_shutdown_retirement_never_outlives_its_budget(setup, monkeypatch,
         monkeypatch.setattr(barrier, "running_queries", _hang)
     monkeypatch.setattr(rmt_carry, "settle", _hang if slow == "settle" else AsyncMock())
     started = time.monotonic()
-    assert not await barrier.retire_at_shutdown(object(), budget_s=0.05)
+    assert not await barrier.retire_at_shutdown(barrier._default_client(), budget_s=0.05)
     assert time.monotonic() - started < 0.5
 
 

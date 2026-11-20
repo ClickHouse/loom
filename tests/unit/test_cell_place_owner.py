@@ -148,7 +148,7 @@ async def test_public_close_defers_repeated_signals_until_acknowledged_within_or
     owner.conn = Connection()
     task = asyncio.create_task(owner.close())
     try:
-        await closing.wait()
+        await asyncio.wait_for(closing.wait(), timeout=0.5)
         original_end = owner.close_end
         task.cancel("first signal")
         await asyncio.sleep(0)
@@ -158,11 +158,24 @@ async def test_public_close_defers_repeated_signals_until_acknowledged_within_or
         assert owner.close_end == original_end
         finish.set()
         with pytest.raises(asyncio.CancelledError, match="first signal"):
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
             await task
         assert events == ["close", "ack"]
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
     finally:
         finish.set()
-        await asyncio.gather(task, return_exceptions=True)
+        owned_tasks = {task, *owner._tasks}
+        if owner._close_task is not None:
+            owned_tasks.add(owner._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 @pytest.mark.parametrize("stage", ["opening", "initial", "directory", "transaction", "close"])
@@ -175,9 +188,12 @@ async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind
     program = textwrap.dedent(
         """
         import argparse, asyncio, sys
+        import asyncpg
         import httpx
         from server.cli import cell_place
         from server.core import pg
+        from server.settings import settings
+        settings.pg_dsn = "postgres://not-connected"
         stage, kind = sys.argv[1:]
         original = (SystemExit if kind == 'SystemExit' else KeyboardInterrupt)('original')
         events = []
@@ -193,7 +209,7 @@ async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind
                 if stage == 'close': raise original
             def terminate(self): events.append('abort')
         conn = Connection()
-        async def connect(**kw): return conn
+        async def connect(*args, **kw): return conn
         async def initialize(c):
             assert c is conn
             if stage == 'opening': raise original
@@ -207,7 +223,7 @@ async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind
             if stage == 'directory': raise original
         async def held(c): return True
         async def main():
-            pg._connect_dedicated = connect
+            asyncpg.connect = connect
             pg._check_deployment = initialize
             pg.init_connection = noop
             cell_place.apg.direct_refusals = direct
@@ -317,15 +333,28 @@ async def test_closed_transport_cannot_acknowledge_pending_public_cancellation()
     owner.conn = Connection()
     task = asyncio.create_task(owner.close())
     try:
-        await closing.wait()
+        await asyncio.wait_for(closing.wait(), timeout=0.5)
         task.cancel("stop")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert not task.done() and events == []
         acknowledged.set()
         with pytest.raises(asyncio.CancelledError, match="stop"):
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
             await task
         assert events == ["ack"]
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
     finally:
         acknowledged.set()
-        await asyncio.gather(task, return_exceptions=True)
+        owned_tasks = {task, *owner._tasks}
+        if owner._close_task is not None:
+            owned_tasks.add(owner._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)

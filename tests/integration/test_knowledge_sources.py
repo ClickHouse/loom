@@ -19,6 +19,26 @@ import pytest
 from tests.integration._resources import unique_org
 from tests.integration._sources import CONFIG, NAME, seed_source
 
+_SOURCE_CREDENTIAL = "source-registry-secret-canary"
+
+
+def _assert_no_source_secret(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            assert "credential" not in key.lower() or key == "credential_mode"
+            assert key.lower() not in {
+                "access_token",
+                "refresh_token",
+                "client_secret",
+                "authorization",
+            }
+            _assert_no_source_secret(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_no_source_secret(item)
+    elif isinstance(value, str):
+        assert _SOURCE_CREDENTIAL not in value
+
 
 def _post(url: str, op: str, body: dict[str, Any]) -> httpx.Response:
     # The writes share the namespace's per-op rate limit with the other tests of
@@ -40,7 +60,7 @@ def _query(ch: Any, sql: str, **params: Any) -> list[dict[str, Any]]:
 def tenant(ch_client: Any, repository: Any) -> tuple[str, str, str]:
     """A source seeded on the deployment's code namespace: (org, namespace, name)."""
     name = repository.name()
-    seed_source(ch_client, repository.org, repository.ns, name)
+    seed_source(ch_client, repository.org, repository.ns, name, credential=_SOURCE_CREDENTIAL)
     return repository.org, repository.ns, name
 
 
@@ -64,12 +84,26 @@ def test_list_and_inspect_read_the_registry(control_plane_url: str, tenant: Any)
         CONFIG,
         "alice",
     )
-    assert "credential" not in listed.text
+    assert (entry["credential_mode"], entry["access"], entry["owner_subject"]) == (
+        "shared",
+        "namespace",
+        "",
+    )
+    _assert_no_source_secret(body)
+    assert _SOURCE_CREDENTIAL not in listed.text
     seen = _post(
         control_plane_url, "knowledge.source.inspect", {"org": org, "namespace": ns, "name": name}
     )
     assert seen.status_code == 200, seen.text
-    assert seen.json()["documents"] == [] and seen.json()["config"] == CONFIG
+    inspected = seen.json()
+    assert inspected["documents"] == [] and inspected["config"] == CONFIG
+    assert (inspected["credential_mode"], inspected["access"], inspected["owner_subject"]) == (
+        "shared",
+        "namespace",
+        "",
+    )
+    _assert_no_source_secret(inspected)
+    assert _SOURCE_CREDENTIAL not in seen.text
     missing = _post(
         control_plane_url, "knowledge.source.inspect", {"org": org, "namespace": ns, "name": "nope"}
     )

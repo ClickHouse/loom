@@ -6,7 +6,7 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 
 | Suite                                           | Path                                                                 | Needs                                                                         | Run locally                                                    | In CI                                                          |
 | ----------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
-| Unit                                            | `tests/unit/`                                                        | nothing external; no ClickHouse                                               | `make test-unit` (also runs `pytest bench -q`)                 | `unit` in parts, random order; `unit-coverage`, coverage ≥ 40% |
+| Unit                                            | `tests/unit/`                                                        | no external services; optional ClickHouse binary                              | `make test-unit` (also runs `pytest bench -q`)                 | `unit` in parts, random order; `unit-coverage`, coverage ≥ 40% |
 | Bench harnesses                                 | `bench/` (its `test_*` files)                                        | nothing external                                                              | `pytest bench -q`                                              | `unit-coverage`                                                |
 | Integration                                     | `tests/integration/`                                                 | a migrated ClickHouse and a running server                                    | `make test-integration` with `LOOM_BASE_URL`                   | `integration`                                                  |
 | Analyzer corpus                                 | `tests/analyzer/`                                                    | a migrated ClickHouse (no server)                                             | `pytest tests/analyzer -q`                                     | `integration`                                                  |
@@ -16,6 +16,9 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 | Plugin hooks                                    | `integrations/*/tests/*.test.mjs`                                    | Node                                                                          | `node --test integrations/claude-code-plugin/tests/*.test.mjs` | `agent-plugins`                                                |
 | Python SDK adapters whose framework is an extra | `sdk/python/tests/`                                                  | `uv`; installs each adapter extra in its own venv under `.venv-sdk-adapters/` | `make test-sdk-adapters`                                       | `sdk-python-adapters`                                          |
 | TypeScript SDK                                  | `sdk/typescript/`                                                    | Node                                                                          | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                                               |
+| Rust SDK                                        | `sdk/rust/`                                                          | Rust and Cargo                                                                | `cargo test --manifest-path sdk/rust/Cargo.toml`               | `sdk-rust`, Rust 1.84.1 and stable                             |
+| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | none                                                           |
+| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET 8 SDK                                                                    | `cd sdk/dotnet && dotnet test`                                 | none                                                           |
 | Benchmarks and gates                            | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                                              | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)                                |
 
 **Why benchmarks stay out of CI.** CI runs with `LOOM_EMBEDDING_MODEL=fake-ngram-1024`
@@ -28,8 +31,11 @@ or the embedder.
 
 ## Unit tests
 
-- **No ClickHouse.** A unit test stubs the client; anything that needs real SQL
-  semantics belongs in the integration or analyzer suite.
+- **No database server.** Unit tests stub the client. The optional SQL tests use
+  `clickhouse-local` and skip without its binary. Use the release that
+  `dev/clickhouse_release.sh` resolves, as CI does; another release can have different
+  codecs or query behavior. Server, replica and transport behavior belongs in the
+  integration suite.
 - **Random order, in parallel.** CI runs the suite with `-n auto -p randomly` on one
   worker process per core and prints the seed first, so a test must pass after any other
   and beside any other. [`tests/README.md`](../../tests/README.md#rules-every-test-keeps)
@@ -38,6 +44,10 @@ or the embedder.
 - **Wall-clock dates.** A fixture with a fixed date that a staleness check compares to
   `now()` passes until the date ages past the threshold. Pin the clock through the code's
   time seam instead of hard-coding a date the check reads against the wall clock.
+
+Keep CI's system tools beside the locked Python environment. Release-script tests, for
+example, call `jq`. Record missing tools or an unsupported platform separately from a
+failure introduced by the diff.
 
 ## Integration tests
 
@@ -116,6 +126,61 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   table with an `org` column and the residue is counted; residue fails the run.
   `LOOM_IT_KEEP_ROWS=1` keeps the rows for debugging.
 
+## Concurrent write regressions
+
+Pause a writer after its head read and after its final admission check. Complete a
+competing write from a second client before releasing each pause. Read the winning row
+back and compare every field, including its version. Keep an unchanged-head case beside
+each contended case, and run the interleaving against a private migrated database.
+
+Include competing rows with different content at the same numeric version. A matching
+version alone does not prove that the head is unchanged.
+
+Admission tests cover the derived effects too. A definite refusal before a memory send
+leaves its search documents and existing search data unchanged. Test known commits and
+uncertain sends separately: privacy cleanup and lease retention depend on whether a send
+may have committed. Preserve the original backend exception, including cancellation.
+
+Pause fence release after the database acknowledges a write, then cancel the caller or
+fail the release. Verify that every owed audit receipt, announcement and privacy cleanup
+still completes: a release failure cannot undo the committed row.
+
+Exercise the largest supported batch with nonzero control store latency and a small
+connection pool. Check acquisition and release under partial failure and cancellation.
+Every acquired holder must be released or retained for the documented uncertain-send
+bound. Include restore batches, whose supported size can exceed a single request batch.
+Use the clock seam for deadline cases.
+
+Prefer stateless fast paths over retaining private derived strings. If an optimization
+needs a process cache, bound its size and retention. Test erasure across replicas as well
+as warm-cache results, including private text retained in cache keys.
+
+Cover the documented [rolling-upgrade overlap](../architecture/rolling-upgrades.md) as
+well as writers that all use the same protocol. Record which interleavings a protocol
+protects and the operator steps required to reach that guarantee.
+
+## Worker progress regressions
+
+Use consecutive passes in the same process for boundary events and late usage. These
+cases exercise the process watermark. Also test restarts and handovers: begin with fresh
+worker process state and resume through the supervisor and persisted
+`loom.worker_status`. Check the saved cursor after a partial pass and after a completed
+scan to exercise the supervisor's persistence rules.
+
+Include these boundaries:
+
+- More identities sharing one timestamp than fit in a batch, including a pass stopped
+  by its time budget.
+- An event that becomes visible in the boundary second after the totals read, for both
+  short and full batches.
+- A completed scan followed by late usage or a stale winning version behind its former
+  cursor.
+- The longest supported identity through the persisted cursor's size limit.
+- Totals beyond a destination counter's integer range. Reconciliation and writes must
+  compare the same capped target, so a saturated counter cannot starve later work.
+
+Absolute counter targets must remain idempotent when a boundary is folded again.
+
 ## Framework adapters
 
 The SDK adapters whose framework is an SDK extra keep their framework out of `uv.lock`, so
@@ -160,6 +225,18 @@ python -m tests.analyzer.corpus --case erasure --errors
 The [analyzer README](../../tests/analyzer/README.md) covers the case format, the
 migrated-target requirement and importing production shapes captured with
 `LOOM_CH_CAPTURE_STATEMENTS`.
+
+### SQL write assertions
+
+Real-row tests check values as well as statement resolution. Compare the complete
+winning row through the production identity predicate and `FINAL`. An isolated fixture
+can also read a full `FINAL` snapshot and select its row in Python.
+
+If a filtered read disagrees with that snapshot, compare its `PREWHERE` plan on the same
+ClickHouse release before changing the writer. A key-only filter can take a different
+patch part read path from the production full identity predicate. Keep the complete
+field comparison, and verify that the original write bug still fails under the chosen
+readback.
 
 ## CI gates
 
@@ -231,6 +308,7 @@ repository access (`permissions: contents: read`).
 | `integration-postgres` | the memory, knowledge, isolation, idempotency, erasure and restored-id suites and the auth-on gates against a server with `LOOM_STORAGE_AUTHORITY=postgres`, on Postgres 16 and 18 with a synchronous standby ([Postgres](../operations/postgres.md))                                                                                                                                        |
 | `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being `HEAD~1`: on a pull request the first parent of its merge commit, the branch it targets as the merge was made, and on a push the previous commit                                                                                                                                                |
 | `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                                                                                                                                |
+| `sdk-rust`             | dependency resolution with Rust-version fallback, `cargo fmt --check`, `cargo test --locked` (response, HTTP contract and documentation tests), `cargo clippy --locked --all-targets -- -D warnings`, `cargo doc --locked --no-deps` with warnings refused, `cargo package --locked` and packaged license verification; Rust 1.84.1 and stable                                               |
 | `sdk-python-adapters`  | `make test-sdk-adapters`: for each adapter whose framework is an SDK extra, in a venv of its own with that framework, outside `uv.lock`, its tests and `mypy --strict` on its module and on the adapters that need no extra (`__init__.py`, `langgraph.py`, `strands.py`); on Python 3.12, and on 3.11 with every direct requirement (the SDK's own, the extra's, pytest) at its lower bound |
 | `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`, on Python 3.11, 3.12 and 3.14, plus 3.11 and 3.14 with every declared dependency at its lower bound                                                                                                                                                                                 |
 

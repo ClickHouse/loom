@@ -97,6 +97,8 @@ switches an install back to the bundled container.
   a server Loom shares, a self-managed admin can keep both to Loom's own:
   `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
+- **Log retention.** A self-managed server keeps `system.query_log` and
+  `system.text_log` rows until you set a TTL on them ([log retention](#log-retention)).
 - **Switching.** Run the install command again with `--clickhouse` (the table above) to
   move an install to your own server; Loom starts on an empty `loom` database there. The
   bundled container keeps running on its old volume until you stop it (the installer
@@ -149,6 +151,7 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 | `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer for ad-hoc `lemmatize('en', …)` queries. Loom lemmatizes in Python.                              |
 | `nlp_user_settings.xml`                 | The `loom_reader` user and profile (below), the per-tenant quota, and the experimental NLP and AI SQL flags.            |
 | `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` tables work.                                                         |
+| `system_logs.xml`                       | `system.query_log` and `system.text_log` keep 30 days of rows ([log retention](#log-retention)).                        |
 | `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
 
 - **Read-only user.** Loom runs the reads a caller shapes (`code.grep`, a patterned
@@ -607,6 +610,42 @@ directory. When `next` starts `not swapped`, drop the twin with
 inspect both tables by hand.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
+
+### Log retention
+
+ClickHouse records each statement in `system.query_log` and its server log in
+`system.text_log`. A refused statement's error can quote the value it failed on, such as
+a memory key, a title or a user id, and [erasure](../features/memory/retention-and-erasure.md)
+reaches neither log. ClickHouse's default configuration keeps both logs' rows with no TTL.
+
+The bundled ClickHouse and the Helm chart's dev ClickHouse keep 30 days of each, from
+`deploy/clickhouse-config/system_logs.xml`. On a self-managed server, put the same file
+in `/etc/clickhouse-server/config.d/` and restart the server:
+
+```xml
+<clickhouse>
+    <query_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </query_log>
+    <text_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </text_log>
+</clickhouse>
+```
+
+A `<text_log>` element turns `system.text_log` on, at trace level, on a server whose
+configuration had it off; keep only the `<query_log>` block there.
+
+When a log's definition changes, ClickHouse renames the existing table on the next start
+to the first free name of `query_log_0`, `query_log_1` and so on (`text_log_0` for the
+server log), keeps it with its rows and its old TTL, and creates the log again. A server
+that ran with no TTL keeps those rows in `query_log_0` and `text_log_0` until you drop
+them. Read what you need from the old tables, then drop them:
+
+```sql
+DROP TABLE IF EXISTS system.query_log_0;
+DROP TABLE IF EXISTS system.text_log_0;
+```
 
 ## Providers
 
@@ -1217,8 +1256,8 @@ as the balancer for the sign-in limits.
 ## Zero-downtime pair
 
 `redeploy.sh` runs two copies ("colours") of the stack and switches traffic between them
-at a proxy. It deploys the tip of `origin/main`, so an install that pins a release adapts
-step 1.
+at a proxy. It deploys the tip of `origin/main` by default. To deploy a qualified
+source commit, use `--target-commit <full-sha>` from a clean checkout at that commit.
 
 ```mermaid
 flowchart LR
@@ -1257,7 +1296,7 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 
 [`redeploy.sh`](../../redeploy.sh), run from the deploy checkout:
 
-1. fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
+1. in ordinary mode, fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
    asking before it ships changes to migrations, compose files, the proxy, the
    `Dockerfile`, `.env.example`, the dependency manifests or itself;
 2. runs [`dev/apparmor_check.sh`](../../dev/apparmor_check.sh): the colour compose
@@ -1288,6 +1327,33 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 | `./redeploy.sh --status`   | which colour serves, each colour's build, container state and workers lease              |
 | `loom deploy-delta`        | after about 30 minutes: ledger and ClickHouse statement shapes on each side of the swap  |
 
+To deploy a qualified commit independently of later changes on main, prepare a clean
+deployment checkout at its full commit SHA and run:
+
+```sh
+./redeploy.sh --target-commit <full-commit-sha>
+```
+
+This mode fetches main without rebasing or changing HEAD. Tracked edits and untracked
+files refuse deployment. Keep staged configuration files outside that checkout; the
+ignored deployment `.env` and `var` remain its normal configuration and state bindings.
+The build and health identity use the full commit, and a mismatched idle build cannot
+take traffic. Source identity is checked again after building and before booting.
+
+To apply another configuration at the same source commit, update the deployment's
+`.env` through the normal configuration procedure and run:
+
+```sh
+./redeploy.sh --target-commit <same-full-commit-sha> --reapply-config
+```
+
+This is another ordinary blue/green deployment, with all migration, readiness,
+provider, sandbox, proxy, worker and rollback checks. It admits an intentional
+same-build deployment; it does not permit an unhealthy swap. Keep the same full
+commit for every stage and start final observation after the final configuration.
+Each invocation builds an image: equal source commits do not prove equal image digests.
+The selector does not fetch a release image or select an image digest.
+
 `LOOM_PREFLIGHT_STRICT=0` turns ledger-only rows and checksum drift into a report instead
 of a stop. `LOOM_PUBLIC_HEALTH_URL`, when set, is probed last.
 
@@ -1303,19 +1369,19 @@ proxy (`docker compose -p loom-proxy -f dev/docker-compose.proxy.yml up -d`).
 
 ## Production checklist
 
-| Step            | Do                                                                                                                                                                                                                                                                                                   |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ClickHouse      | Cloud or a self-managed server with a Keeper, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`.                                                                                   |
-| Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                                                                                    |
-| Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                                                                                     |
-| Keys and tokens | A generated `LOOM_JWT_SECRET`, stored where a moved deployment can get it; a rotation plan (`loom signing-key rotate`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                                |
-| Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed. `LOOM_TRUSTED_PROXIES` set to the proxy or load balancer.                                                                                                                               |
-| Replicas        | Identical replicas with `LOOM_BACKGROUND_WORKERS=auto`; startup, liveness and readiness probes as in [N identical replicas](#n-identical-replicas); 75 s stop grace. `.env` validated with `docker compose … config`.                                                                                |
-| Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                                                                           |
-| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                                                                               |
-| Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`.                                                        |
-| Monitoring      | Route on `/v1/health/ready`, alert on `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                                                     |
-| Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal. The live `loom.instances` rows count the replicas the rate limits divide by; `LOOM_REPLICA_COUNT` is only their floor ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)). |
+| Step            | Do                                                                                                                                                                                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ClickHouse      | Cloud or a self-managed server with a Keeper, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`. On a self-managed server, `system_logs.xml` in `config.d/` ([log retention](#log-retention)). |
+| Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                                                                                                |
+| Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                                                                                                 |
+| Keys and tokens | A generated `LOOM_JWT_SECRET`, stored where a moved deployment can get it; a rotation plan (`loom signing-key rotate`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                                            |
+| Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed. `LOOM_TRUSTED_PROXIES` set to the proxy or load balancer.                                                                                                                                           |
+| Replicas        | Identical replicas with `LOOM_BACKGROUND_WORKERS=auto`; startup, liveness and readiness probes as in [N identical replicas](#n-identical-replicas); 75 s stop grace. `.env` validated with `docker compose … config`.                                                                                            |
+| Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                                                                                       |
+| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                                                                                           |
+| Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`.                                                                    |
+| Monitoring      | Route on `/v1/health/ready`, alert on `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                                                                 |
+| Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal. The live `loom.instances` rows count the replicas the rate limits divide by; `LOOM_REPLICA_COUNT` is only their floor ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)).             |
 
 ## Related
 

@@ -13296,7 +13296,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Run the refusals and the scan and print what would be placed; write nothing (the router's own begin refusals do not run)",
+           "help": "Run the refusals and the scan and print what would be placed; keep cell state, tenancy triggers and placements unchanged. Command participation is still recorded (the router's own begin refusals do not run)",
            "metavar": null
           },
           {
@@ -13386,7 +13386,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Cut off pre-attach tokens of unprovisioned subjects; dry-run writes nothing",
+           "help": "Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes",
            "metavar": null
           },
           {
@@ -15531,7 +15531,8 @@
         "vscode",
         "cline",
         "windsurf",
-        "zed"
+        "zed",
+        "gemini"
        ],
        "nargs": "+",
        "type": null,
@@ -15596,7 +15597,7 @@
        "nargs": null,
        "type": "server.cli.install:_toolset_arg",
        "required": false,
-       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex, cursor, else the server default (LOOM_MCP_TOOLSET).",
+       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex, cursor, gemini, else the server default (LOOM_MCP_TOOLSET).",
        "metavar": null
       },
       {
@@ -16614,6 +16615,30 @@
      ],
      "mutually_exclusive": [],
      "arguments": []
+    },
+    "connect": {
+     "prog": "loom connect",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
     }
    },
    "aliases_of": {
@@ -16684,7 +16709,8 @@
     "logout": "loom logout",
     "whoami": "loom whoami",
     "call": "loom call",
-    "token": "loom token"
+    "token": "loom token",
+    "connect": "loom connect"
    },
    "choices_help": [
     {
@@ -17026,6 +17052,11 @@
      "dest": "token",
      "help": "Make, list and revoke your own tokens for CI and agents (`loom token --help`).",
      "metavar": "token"
+    },
+    {
+     "dest": "connect",
+     "help": "Print the dashboard link to connect your own Google, Notion or Linear account.",
+     "metavar": "connect"
     }
    ]
   }

@@ -155,7 +155,7 @@ async def cell_stores(
         except BaseException as error:  # noqa: BLE001 — cleanup retains the creation failure.
             first.add_note(f"cell database cleanup also failed: {type(error).__name__}")
         raise
-    deployment = f"dep-{uuid.uuid4().hex[:8]}"
+    deployment = str(uuid.uuid4())
     tag = f"it-{uuid.uuid4().hex[:8]}-"
     for name, value in {
         "cell": "first",

@@ -1,0 +1,21 @@
+/* Keep every muted interactive surface as quiet as the sidebar hover. */
+:root {
+  --blume-muted: rgb(0 0 0 / 0.05);
+}
+
+:root[data-theme="dark"] {
+  --blume-muted: rgb(255 255 255 / 0.05);
+}
+
+:root[data-theme="dark"] .loom-logo-background {
+  fill: #1d1d1d;
+}
+
+:root[data-theme="dark"] .loom-logo-mark {
+  fill: #faff69;
+  stroke: #faff69;
+}
+
+:root[data-theme="dark"] .loom-logo-cutout {
+  fill: #1d1d1d;
+}

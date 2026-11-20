@@ -649,17 +649,32 @@ main() {
   bounded() {
     bound_s=$1
     shift
+    # A signal must not exit between starting a child and recording its PID.
+    interrupted=
+    trap 'interrupted=1' HUP INT TERM
     "$@" &
     cmd_pid=$!
+    trap on_interrupt HUP INT TERM
+    [ -z "$interrupted" ] || on_interrupt
     # The watchdog takes its sleep with it when it is stopped.
+    trap 'interrupted=1' HUP INT TERM
     (
       nap=
-      trap '[ -z "$nap" ] || kill "$nap" 2>/dev/null; exit 0' TERM
+      stop_watchdog() {
+        [ -z "$nap" ] || kill "$nap" 2>/dev/null || true
+        exit 0
+      }
+      stop_pending=
+      trap 'stop_pending=1' TERM
       sleep "$bound_s" &
       nap=$!
+      trap stop_watchdog TERM
+      [ -z "$stop_pending" ] || stop_watchdog
       wait "$nap" && kill "$cmd_pid" 2>/dev/null
     ) >/dev/null 2>&1 &
     dog_pid=$!
+    trap on_interrupt HUP INT TERM
+    [ -z "$interrupted" ] || on_interrupt
     cmd_status=0
     wait "$cmd_pid" || cmd_status=$?
     cmd_pid=

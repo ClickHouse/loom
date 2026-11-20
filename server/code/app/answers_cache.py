@@ -330,6 +330,8 @@ def _exact_cached(llm: Any, org: str, ns: str) -> Any:
 
 async def _remember(ctx: _AskCtx, res: AskResult, llm: Any) -> None:
     """Store a memoizable answer, or a negative entry for an abstain."""
+    if res.partial:
+        return
     try:
         if res.abstain:
             if int(settings.code_ask_negative_cache_ttl_s) and ctx.index_head:

@@ -6,7 +6,7 @@
 // query. Injects the plane-tagged blocks the session has not seen, only when
 // memory is not abstaining and its retrieval_confidence clears the bar.
 //
-//   LOOM_PROMPT_RECALL=first           (default) the first qualifying prompt only
+//   LOOM_PROMPT_RECALL=first           (default) one attempt, on the first qualifying prompt
 //   LOOM_PROMPT_RECALL=on|off          every qualifying prompt | never
 //   LOOM_PROMPT_RECALL_MIN_CONF=0.5    skip below this retrieval_confidence
 //   LOOM_PROMPT_RECALL_TOP_K=3         hits per plane
@@ -24,7 +24,7 @@ import {
   runHookMain,
   scheduleExit,
 } from "../lib/loom-client.mjs";
-import { shouldAsk } from "../lib/prompt-pack.mjs";
+import { codeLookup, memoryRequested, searchQuery, shouldRecall } from "../lib/prompt-pack.mjs";
 import { acceptPack, recallBody, recallPayload, renderRecall } from "../lib/prompt-recall.mjs";
 import { readJsonFile, sessionStatePath, writeCursor, writeJsonFile } from "../lib/tmp-state.mjs";
 
@@ -59,7 +59,14 @@ async function main() {
   }
   const payload = await readStdinJson();
   const prompt = String(payload.prompt || "");
-  if (!shouldAsk(prompt)) {
+  const lookup = MODE === "first" ? codeLookup(prompt, token) : null;
+  const asksMemory =
+    memoryRequested(prompt) ||
+    /\b(?:remember|recall|memory|memories|decisions?|conventions?|lessons?|preferences?|constraints?)\b/i.test(
+      searchQuery(prompt),
+    );
+  const namedCodeOnly = lookup?.name && !asksMemory;
+  if (!shouldRecall(prompt, asksMemory) || namedCodeOnly) {
     scheduleExit(0);
     return;
   }
@@ -67,6 +74,7 @@ async function main() {
     scheduleExit(0);
     return;
   }
+  if (MODE === "first") markFirstPromptDone(payload.session_id);
 
   const scope = resolveScope(payload.cwd || process.cwd());
   const res = await postBounded("context.pack", recallBody(scope, payload, prompt, { budget: BUDGET, topK: TOP_K }), {
@@ -81,11 +89,6 @@ async function main() {
   const sp = sessionStatePath("prompt-recall", payload.session_id);
   const { text, seen: nextSeen } = renderRecall(res, readJsonFile(sp, []), { cap: 3, maxChars: MAX_CHARS });
   writeJsonFile(sp, nextSeen);
-  if (MODE === "first") {
-    // One recall per session: the next prompt finds the marker and exits
-    // before any request (see firstPromptDone / markFirstPromptDone).
-    markFirstPromptDone(payload.session_id);
-  }
   if (text) process.stdout.write(JSON.stringify(recallPayload(text)));
   scheduleExit(0);
 }

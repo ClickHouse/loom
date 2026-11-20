@@ -9,19 +9,48 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractContextManager
 from typing import Any
 
+from server.core.shielded import to_its_end
+
+# not a setting: the read scheduler retains at most four child jobs per window.
+_READ_WINDOW = 4
+
 # A span around one pass, called as span(op=..., namespaces=n).
 Span = Callable[..., AbstractContextManager[Any]]
 # The visibility of each namespace ("private" or "public"), read on demand.
 Visibility = Callable[[list[str]], Awaitable[dict[str, str]]]
 
 
-def each[H](
-    search_one: Callable[[str], Awaitable[tuple[str, list[H]]]],
-) -> Callable[[list[str]], Awaitable[list[tuple[str, list[H]]]]]:
-    """A pass that searches each namespace on its own, concurrently."""
+def each[I, R](
+    search_one: Callable[[I], Awaitable[R]],
+) -> Callable[[list[I]], Awaitable[list[R]]]:
+    """Read ordered inputs in bounded windows, joining every owned child on exit."""
 
-    async def _many(namespaces: list[str]) -> list[tuple[str, list[H]]]:
-        return list(await asyncio.gather(*map(search_one, namespaces)))
+    async def _many(inputs: list[I]) -> list[R]:
+        results: list[R] = []
+        for offset in range(0, len(inputs), _READ_WINDOW):
+            tasks: list[asyncio.Future[R]] = []
+            failure: BaseException | None = None
+            try:
+                for item in inputs[offset : offset + _READ_WINDOW]:
+                    tasks.append(asyncio.ensure_future(search_one(item)))
+                results.extend(await asyncio.gather(*tasks))
+            except BaseException as error:
+                failure = error
+                raise
+            finally:
+                for task in tasks:
+                    task.cancel()
+
+                async def stopped(owned: list[asyncio.Future[R]]) -> None:
+                    await asyncio.gather(*owned, return_exceptions=True)
+
+                try:
+                    await to_its_end(stopped(tasks), name="vector-read-window-cleanup")
+                except asyncio.CancelledError:
+                    # Cleanup cancellation must not replace the first failed read.
+                    if failure is None:
+                        raise
+        return results
 
     return _many
 

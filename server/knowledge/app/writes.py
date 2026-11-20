@@ -14,6 +14,8 @@ import logging
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -326,6 +328,7 @@ async def handle_knowledge_upsert(
     *,
     read_version: int | None = None,
     permissions: access_list.AccessList = access_list.UNREAD,
+    commit_guard: Callable[[], AbstractAsyncContextManager[None]] | None = None,
 ) -> KnowledgeUpsertOutput:
     """Insert new chunks for `source_uri`; soft-supersede prior chunks.
 
@@ -346,6 +349,9 @@ async def handle_knowledge_upsert(
 
     `permissions`: a mirrored document's permission list, for the sync's turn to pass;
     never a field of the op, so no request writes one.
+
+    `commit_guard`: an internal source authority check held through storage writes,
+    reacquired after embedding so a retired connection cannot publish late content.
     """
     from server.knowledge.store import chunks as knowledge_repo
 
@@ -396,9 +402,10 @@ async def handle_knowledge_upsert(
     documents_repo.check_storable(
         [{**author, "org": input.org, "namespace": input.namespace, "source_uri": input.source_uri}]
     )
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author), uploader=uploader
-    )
+    async with commit_guard() if commit_guard is not None else nullcontext():
+        blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
+            input, _original_of(prior, author), uploader=uploader
+        )
 
     # The new version's chunks first, then its document row, and only then the older
     # versions' chunks retired (`retire_older`): a store that fails or is busy leaves the
@@ -448,20 +455,21 @@ async def handle_knowledge_upsert(
         access_json=access_list.to_json(permissions),
     )
     try:
-        # Inside the cleanup: a chunk insert that timed out may land later.
-        await knowledge_repo.insert_chunks(rows)
-        # Written over the version read (the caller's, when it built the input): under
-        # the Postgres authority a write of the source that committed since refuses this
-        # one (`pg_documents.HeadMoved`).
-        await documents_repo.insert_one(
-            doc_row,
-            over=documents_repo.version_of(prior) if read_version is None else read_version,
-            # Always: a count taken before the prior read may miss chunks a write
-            # committed since; retiring none costs one statement.
-            retire_older=True,
-            built_from=_live_id(prior),
-            chunked=True,
-        )
+        async with commit_guard() if commit_guard is not None else nullcontext():
+            # Inside the cleanup: a chunk insert that timed out may land later.
+            await knowledge_repo.insert_chunks(rows)
+            # Written over the version read (the caller's, when it built the input): under
+            # the Postgres authority a write of the source that committed since refuses
+            # this one (`pg_documents.HeadMoved`).
+            await documents_repo.insert_one(
+                doc_row,
+                over=documents_repo.version_of(prior) if read_version is None else read_version,
+                # A count before the prior read may miss a newly committed chunk;
+                # retiring none costs one statement.
+                retire_older=True,
+                built_from=_live_id(prior),
+                chunked=True,
+            )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
         if not published_anyway(e):
             # Shielded: a cancelled request's cleanup still runs.

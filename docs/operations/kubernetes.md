@@ -375,8 +375,13 @@ Loom runs them under bubblewrap, which needs unprivileged user namespaces. The d
 pod security does not allow them, so by default (`sandbox.required: false`) the compiler
 tiers of the repositories the operator lists in `LOOM_CODE_REPOS_JSON` run as plain
 processes in the pod, and a repository added from the dashboard is refused. List only
-repositories you trust. With `sandbox.required: true` a pod is not ready until the sandbox
-works, so set it only once the nodes are prepared:
+repositories you trust. `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` and
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` in `env` let platform admins add repositories
+with `code.repo.add` in such pods: their clone and fetches run as plain processes too,
+and they get no compiler tier
+([without the sandbox](./code-index-operations.md#repository-job-sandbox)). With
+`sandbox.required: true` a pod is not ready until the sandbox works, so set it only once
+the nodes are prepared:
 
 1. Run Loom on nodes whose OS allows unprivileged user namespaces.
 2. Install `dev/seccomp/loom-repo-sandbox.json` under the kubelet's seccomp directory
@@ -619,6 +624,76 @@ env:
   LOOM_INFERENCE_GATEWAY_HOSTS: gateway.example
   LOOM_INFERENCE_IDENTITY_HEADERS_JSON: '{"X-Agent": "{agent}"}'
 ```
+
+## Git through a forward proxy
+
+To send the code index's network git through a forward proxy
+([git through a forward proxy](./code-index-operations.md#git-through-a-forward-proxy)),
+give every Loom pod the proxy's address, a token file for its password and, for a proxy
+that terminates TLS under its own authority, the CA bundle:
+
+```yaml
+env:
+  LOOM_CODE_GIT_PROXY_URL: http://git-proxy.example:3128
+  LOOM_CODE_GIT_PROXY_TOKEN_FILE: /var/run/secrets/git-proxy/token
+  LOOM_CODE_GIT_PROXY_CA_FILE: /etc/git-proxy/ca.crt
+  LOOM_CODE_GIT_PROXY_IDENTITY: loom
+extraVolumes:
+  - name: git-proxy-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: git-proxy.example # what the proxy expects
+            expirationSeconds: 21600 # well above the longest git job
+            path: token
+  - name: git-proxy-ca
+    configMap:
+      name: git-proxy-ca
+extraVolumeMounts:
+  - name: git-proxy-token
+    mountPath: /var/run/secrets/git-proxy
+    readOnly: true
+  - name: git-proxy-ca
+    mountPath: /etc/git-proxy
+    readOnly: true
+```
+
+`env` and the two mounts reach the web pods and the workers alike: both fetch mirrors.
+The kubelet renews the token file and Loom reads it again for every git job, so nothing
+restarts. A job presents the token it read at its start for as long as it runs (a fetch
+up to `LOOM_CODE_GIT_FETCH_TIMEOUT_S`, an hour by default), so the proxy must accept a
+token for that long after Loom read it. With `networkPolicy.enabled`, a proxy on a port
+other than 443 needs a `networkPolicy.extraEgress` rule.
+
+An `http://` proxy URL, as above, sends the identity and the token to the proxy in clear
+on every job: keep that path inside a network you trust, or give the proxy an `https://`
+URL. Git then verifies the proxy's certificate before it sends them, against its default
+roots. For a certificate under an authority of your own, mount that authority's bundle
+and name it:
+
+```yaml
+env:
+  LOOM_CODE_GIT_PROXY_URL: https://git-proxy.example:8443
+  LOOM_CODE_GIT_PROXY_TLS_CA_FILE: /etc/git-proxy/proxy-ca.crt
+```
+
+`proxy-ca.crt` is one more key of the `git-proxy-ca` config map here. It is not
+`LOOM_CODE_GIT_PROXY_CA_FILE`, which verifies the remotes behind a proxy that terminates
+their TLS: a proxy that does both under one authority gets the same file in both
+settings. The proxy's certificate must name `git-proxy.example`, the host the URL
+spells.
+
+The proxy and the [repository-job sandbox](#repository-job-sandbox) are not used
+together. `sandbox.required: false` alone does not keep the sandbox off: a pod whose
+profiles let bubblewrap run uses it whatever that value says, and then every network git
+job is refused. Where the proxy is set, leave `sandbox.securityContext` and
+`sandbox.hostUsers` at their defaults as well. Repository jobs are then plain processes:
+a compiler tier's build runs as Loom's user and can read the token file, so run compiler
+tiers there only for repositories you trust. To add repositories with `code.repo.add` in
+such pods, set `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` and
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` as well
+([repository-job sandbox](#repository-job-sandbox)): their git goes through the proxy
+under the identity the add names, else the default one.
 
 ## Related
 

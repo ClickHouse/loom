@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from server.core import cell
-from server.router import fingerprints
+from server.router import directory, fingerprints
 
 
 def value(issuer: str) -> dict[str, Any]:
@@ -89,3 +89,74 @@ def test_configuration_pair_allows_revert_from_an_existing_scim_candidate() -> N
         value("old"),
         None,
     )
+
+
+@pytest.mark.asyncio
+async def test_configuration_refusals_keep_fixed_reasons_without_relaying_unknown_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private = "private-untrusted-input"
+    cases = [
+        (
+            None,
+            None,
+            value(private),
+            "config",
+            "configuration update needs readable fingerprints",
+        ),
+        (
+            value("old"),
+            None,
+            value(private),
+            private,
+            "configuration action must be config, finish or revert",
+        ),
+        (
+            value("old"),
+            value("new"),
+            value(private),
+            "config",
+            "another configuration is pending; finish or revert it first",
+        ),
+        (
+            value("old"),
+            value("new"),
+            value(private),
+            "finish",
+            "configuration target differs from the selected reserved fingerprint",
+        ),
+    ]
+
+    def no_connection():
+        raise AssertionError("configuration validation must finish before directory I/O")
+
+    monkeypatch.setattr(directory, "_connection", no_connection)
+    for current, pending, target, action, reason in cases:
+        with pytest.raises(directory.OperatorRefused) as outward:
+            await directory.update_configuration(
+                "first",
+                target,
+                action,
+                keys_fp="unused",
+                refusal=lambda _: "",
+                expected=directory.Control({"current_fp": current, "next_fp": pending}, None),
+            )
+        assert outward.value.reason == reason
+        assert private not in outward.value.reason
+
+    failure = ValueError(private)
+
+    def unexpected(*args):
+        raise failure
+
+    monkeypatch.setattr(fingerprints, "configuration_pair", unexpected)
+    with pytest.raises(ValueError) as unhandled:
+        await directory.update_configuration(
+            "first",
+            value("new"),
+            "config",
+            keys_fp="unused",
+            refusal=lambda _: "",
+            expected=directory.Control({"current_fp": value("old"), "next_fp": None}, None),
+        )
+    assert unhandled.value is failure

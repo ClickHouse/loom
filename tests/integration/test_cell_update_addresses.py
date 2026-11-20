@@ -43,7 +43,7 @@ async def test_address_refresh_changes_only_verified_addresses(configured, monke
     before = await directory.attach_read(name)
     router = app.Router(probe_transport=httpx.MockTransport(network))
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app.build_app(router)), base_url="http://router"
+        transport=httpx.ASGITransport(app=app.build_app(router)), base_url="http://test"
     ) as client:
         response = await client.post(
             f"/cells/v1/operator/cells/{name}/addresses",
@@ -117,7 +117,7 @@ async def test_invalid_address_proof_leaves_exact_directory_unchanged(
 
     router = app.Router(probe_transport=httpx.MockTransport(network))
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app.build_app(router)), base_url="http://router"
+        transport=httpx.ASGITransport(app=app.build_app(router)), base_url="http://test"
     ) as client:
         response = await client.post(
             "/cells/v1/operator/cells/first/addresses",
@@ -152,7 +152,7 @@ async def test_old_router_config_can_reverse_addresses_with_fresh_expected_row(
 
     router = app.Router(probe_transport=httpx.MockTransport(network))
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app.build_app(router)), base_url="http://router"
+        transport=httpx.ASGITransport(app=app.build_app(router)), base_url="http://test"
     ) as client:
         for version in ("new", "old"):
             monkeypatch.setattr(settings, "router_upstream_url", f"http://{version}-main")

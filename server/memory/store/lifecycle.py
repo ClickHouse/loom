@@ -297,6 +297,7 @@ async def insert_versions_over_heads(
     settle_held: bool = False,
     sources: Sequence[tuple[str, int]] = (),
     live_sources: bool = False,
+    policy: Mapping[tuple[str, str], int] | None = None,
     on_commit: Callable[[], None] | None = None,
 ) -> int:
     """Write `rows`, each a copy of the authority's head beside it in `read`, drawn above
@@ -329,6 +330,7 @@ async def insert_versions_over_heads(
     check_memory_rows(rows)
     heads = {identity_key(r): e for r, e in zip(rows, read, strict=True)}
     admission = pg_memory.Admission(
+        generations=dict(policy or {}),
         recheck=pg_memory.heads_unchanged(heads, exact=True),
         sources=sources,
         live_sources=live_sources,
@@ -339,6 +341,10 @@ async def insert_versions_over_heads(
         committed = await pg_publish.commit(rows, targets=owed, admission=admission)
     except pg_memory.HeadMoved:
         raise pg_memory.AdmissionContendedError("the memory changed while it was read") from None
+    except pg_memory.AdmissionMoved:
+        raise pg_memory.AdmissionContendedError(
+            "the write policy changed while it was checked"
+        ) from None
     if on_commit is not None:
         on_commit()
     answer, failed = 0, None

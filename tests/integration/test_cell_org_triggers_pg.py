@@ -517,7 +517,8 @@ async def test_doctors_sessions_read_the_marker_as_the_pool_sends_it() -> None:
         saved = (settings.pg_dsn, settings.cell, pg._expected)
         settings.pg_dsn, settings.cell, pg._expected = dsn, "eu-1", None
         try:
-            state, marked, defects = await doctor_cell._marked_session()
+            state, first, marked, defects = await doctor_cell._marked_session()
+            assert first == (True, "eu-1")
             assert (state, marked) == ("enforced", True) and defects == []
             assert await doctor_cell._unmarked_session() is False
             # A database setting marks every session: doctor names it.

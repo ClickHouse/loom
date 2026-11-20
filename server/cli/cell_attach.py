@@ -8,7 +8,7 @@ Steps 1 to 4 are the design's, as cells.md numbers them:
 
 - the directory row: on `serving` it is done (exit 0) once the connected authority and
   configured cell and bucket match the registration and the cell reads `enforced`;
-- the refusals, before any write: the stores are the registered ones, the session is
+- the attach preconditions: the stores are the registered ones, the session is
   direct and marked, the cell's processes (their heartbeats), the roles, settings and
   subscriptions that would let an unchecked writer through, the ClickHouse writers, the
   table list, durability, attach's own grants;
@@ -24,7 +24,8 @@ Steps 1 to 4 are the design's, as cells.md numbers them:
   placements (`attach/place`), the final checks and `attach/serving`.
 
 `--wait` bounds the waits in wall time, `--scan-budget` each full scan. `--dry-run` runs
-the refusals and the scan and prints what would be placed, writing nothing.
+the refusals and the scan and prints what would be placed. Participant enrollment and
+retirement are recorded; cell state, tenancy triggers and placements remain unchanged.
 """
 
 from __future__ import annotations
@@ -212,7 +213,7 @@ class Run:
         await self.scim_precondition()
         return verdict
 
-    async def scim_precondition(self, *, read_only: bool = False) -> None:
+    async def scim_precondition(self) -> None:
         if not cell_scim.required(*self.own_fp):
             return
         report: dict[str, Any] = {}
@@ -223,8 +224,8 @@ class Run:
             self.row,
             self.own_fp,
             seconds=self.args.scan_budget,
-            revoke=getattr(self.args, "revoke_unprovisioned", False) and not read_only,
-            dry_run=self.args.dry_run or read_only,
+            revoke=getattr(self.args, "revoke_unprovisioned", False),
+            dry_run=self.args.dry_run,
             report=report,
             log=self.log,
         )
@@ -775,7 +776,8 @@ def add_attach_parser(csub: Any) -> None:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="Run the refusals and the scan and print what would be placed; write nothing "
+        help="Run the refusals and the scan and print what would be placed; keep cell state, "
+        "tenancy triggers and placements unchanged. Command participation is still recorded "
         "(the router's own begin refusals do not run)",
     )
     for flag, what in (
@@ -789,7 +791,7 @@ def add_attach_parser(csub: Any) -> None:
     p.add_argument(
         "--revoke-unprovisioned",
         action="store_true",
-        help="Cut off pre-attach tokens of unprovisioned subjects; dry-run writes nothing",
+        help="Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes",
     )
     p.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
     p.set_defaults(func=cmd_attach)

@@ -14,15 +14,15 @@ from server.observability import otel
 
 
 def test_default_excludes_the_health_path(settings_override) -> None:
-    assert otel._fastapi_excluded_urls() == "/v1/health,/oauth/"
+    assert otel._fastapi_excluded_urls() == "/v1/health,/oauth/,/v1/connect/"
     settings_override(otel_excluded_urls=" /v1/health,/assets ")
-    assert otel._fastapi_excluded_urls() == "/v1/health,/assets,/oauth/"
+    assert otel._fastapi_excluded_urls() == "/v1/health,/assets,/oauth/,/v1/connect/"
 
 
 def test_sign_in_urls_never_reach_a_trace(settings_override) -> None:
     """Their query strings carry user codes, codes and state."""
     settings_override(otel_excluded_urls="")
-    assert otel._fastapi_excluded_urls() == "/oauth/"
+    assert otel._fastapi_excluded_urls() == "/oauth/,/v1/connect/"
 
 
 def _fake_instrumentor(calls: list[dict]) -> types.ModuleType:
@@ -46,7 +46,7 @@ def test_instrument_app_receives_the_excluded_urls(monkeypatch: pytest.MonkeyPat
     otel._instrument_fastapi(app)
     assert len(calls) == 1
     assert calls[0]["app"] is app
-    assert calls[0]["excluded_urls"] == "/v1/health,/oauth/"
+    assert calls[0]["excluded_urls"] == "/v1/health,/oauth/,/v1/connect/"
     assert set(calls[0]) == {"app", "excluded_urls", "meter_provider"}
     assert callable(calls[0]["meter_provider"].get_meter)
 
@@ -60,7 +60,7 @@ def test_a_blank_setting_instruments_every_path_but_sign_in(
     )
     settings_override(otel_excluded_urls="")
     otel._instrument_fastapi(object())
-    assert calls[0]["excluded_urls"] == "/oauth/"
+    assert calls[0]["excluded_urls"] == "/oauth/,/v1/connect/"
 
 
 def test_an_instrumentor_failure_never_fails_the_boot(

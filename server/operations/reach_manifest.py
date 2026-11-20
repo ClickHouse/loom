@@ -41,6 +41,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.callers": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "code.context_pack": (
@@ -146,6 +147,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "connection.disconnect": ("dashboard",),
+    "connection.list": ("dashboard",),
     "consolidations.list": ("dashboard",),
     "context.fetch": ("sdk_method",),
     "context.offload": ("sdk_method",),

@@ -18,7 +18,6 @@ class State:
     mode: str
     current: dict[str, Any]
     pending: dict[str, Any] | None
-    has_tenancy: bool
 
     def identity(self) -> tuple[Any, ...]:
         return (
@@ -32,8 +31,8 @@ class State:
 
 async def read(conn: Any, name: str) -> State:
     row = await conn.fetchrow(
-        "SELECT a.deployment_id, f.is_first, f.cell, m.mode, s.current_fp, s.next_fp, "
-        "EXISTS(SELECT 1 FROM loom.tenancy) AS has_tenancy FROM loom.authority a "
+        "SELECT a.deployment_id, f.is_first, f.cell, m.mode, s.current_fp, s.next_fp "
+        "FROM loom.authority a "
         "LEFT JOIN loom.cell_first f ON true LEFT JOIN loom.tenancy_mode m ON true "
         "LEFT JOIN loom.cell_self s ON true"
     )
@@ -60,7 +59,6 @@ async def read(conn: Any, name: str) -> State:
         row["mode"],
         current,
         pending,
-        bool(row["has_tenancy"]),
     )
 
 

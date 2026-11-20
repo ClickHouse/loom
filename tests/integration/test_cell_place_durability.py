@@ -20,7 +20,7 @@ import httpx
 import pytest
 
 from server.cli import cell_place
-from server.core import cell, pg
+from server.core import cell, pg, provider_process
 from server.core.schema import pg_migrate
 from server.router import directory
 from server.settings import settings
@@ -88,7 +88,7 @@ class Drill:
                 await asyncio.sleep(0.02)
 
     async def seed(self, dsn: str, sql: str, *, marked: bool = False) -> None:
-        """Cancel COMMIT only after it is primary-visible and waiting for standby flush."""
+        """Cancel a standby-blocked COMMIT and drain its acknowledgement before returning."""
         application = f"placement-seed-{len(self.tasks)}"
         conn = await asyncpg.connect(
             dsn,
@@ -108,6 +108,9 @@ class Drill:
             commit.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(commit, 5)
+            # Client cancellation precedes the server releasing the transaction.
+            # Drain it before termination can cancel the driver's CancelRequest.
+            await conn.close(timeout=5)
         finally:
             conn.terminate()
 
@@ -267,8 +270,9 @@ async def _local_retry(drill: Drill, monkeypatch) -> None:
         == ORG
     )
     args = argparse.Namespace(cell="first", org=ORG)
+    application = provider_process.participant_tag(provider_process.process_identity())
     cancelled = drill.task(cell_place.place(args, httpx.URL("http://router.example.test")))
-    pid = await drill.waiting(cancelled, "loom")
+    pid = await drill.waiting(cancelled, application)
     cancelled.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(cancelled, cell_place._bound_s() + 1)
@@ -283,7 +287,7 @@ async def _local_retry(drill: Drill, monkeypatch) -> None:
         "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1)", pid
     )
     retry = drill.task(cell_place.place(args, httpx.URL("http://router.example.test")))
-    await drill.waiting(retry, "loom")
+    await drill.waiting(retry, application)
     await drill.resume()
     assert await asyncio.wait_for(retry, 5) == {
         "org": ORG,

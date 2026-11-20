@@ -63,20 +63,37 @@ async def test_second_cancellation_preserves_original_failure_and_closes_before_
         finally:
             events.append("work ended")
 
-    task = asyncio.create_task(owner(Conn()).call(work, total_s=0.2))
-    await entered.wait()
-    if not failed:
-        task.cancel("first cancellation")
-    await closing.wait()
-    task.cancel("second cancellation")
-    with pytest.raises(
-        ValueError if failed else asyncio.CancelledError,
-        match="original work failure" if failed else "first cancellation",
-    ):
-        await task
-    assert events.count("abort") >= 1
-    if not failed:
-        assert events.index("close") < events.index("work ended")
+    owned = owner(Conn())
+    task = asyncio.create_task(owned.call(work, total_s=0.2))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=0.5)
+        if not failed:
+            task.cancel("first cancellation")
+        await asyncio.wait_for(closing.wait(), timeout=0.5)
+        task.cancel("second cancellation")
+        with pytest.raises(
+            ValueError if failed else asyncio.CancelledError,
+            match="original work failure" if failed else "first cancellation",
+        ):
+            done, _ = await asyncio.wait({task}, timeout=0.5)
+            if not done:
+                raise TimeoutError("owned test task did not finish")
+            await task
+        assert events.count("abort") >= 1
+        if not failed:
+            assert events.index("close") < events.index("work ended")
+    except TimeoutError:
+        if task.done():
+            task.result()
+        raise
+    finally:
+        owned_tasks = {task, *owned._tasks}
+        if owned._close_task is not None:
+            owned_tasks.add(owned._close_task)
+        for child in owned_tasks:
+            if not child.done():
+                child.cancel()
+        await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio

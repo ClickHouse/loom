@@ -35,7 +35,9 @@ Every step others see is the owner's to start, as AGENTS.md has it: opening or m
 
 ## 2. The release pull request
 
-In a worktree from `origin/main` (`loom-dev-setup` §1), with the tags fetched (`git fetch --tags`) and `gh` signed in:
+Use `prep/release-X.Y.Z` for the release pull request, following the [branch and tag standard](../../../docs/development/release-process.md#branches-and-tags). For a major or minor, create its worktree from `origin/main` (`loom-dev-setup` §1) and target `main`; for a patch, start from and target `release/X.Y` (§7). Reserve `release/` for maintained `release/X.Y` lines. Read the existing branch rules before creating the preparation branch; resolve a refused update under those rules without renaming or retargeting it.
+
+With the tags fetched (`git fetch --tags`) and `gh` signed in:
 
 ```bash
 .venv/bin/python scripts/release/prepare.py bump X.Y.Z

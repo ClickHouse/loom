@@ -5,8 +5,9 @@ memory, memory_embeddings and entity_vectors. The CLIs (`integrity-repair`,
 `erasure-re-verify`, the namespace census) still run one statement per
 invariant. This test seeds copies of the nine tables with multi-version keys,
 tombstones, versions in different partitions, vectors without memories,
-memories without vectors, reordered and diverging entities, graph-only and
-chunk-only namespaces, then runs both shapes against the copies and asserts
+memories without vectors, memories that never get a vector (episodic, profile,
+`high`), reordered and diverging entities, graph-only and chunk-only
+namespaces, then runs both shapes against the copies and asserts
 every count is equal (and non-zero, so no count passes by reading 0 on both
 sides). Merges are stopped on the copies so the versions stay unmerged
 (best-effort: a role without the grant still compares, on merged parts).
@@ -55,7 +56,8 @@ COUNTS = (
 
 def _reference_sql() -> str:
     """One statement per invariant: the shared CLI statements plus the three
-    memory <-> vector joins spelled inline."""
+    memory <-> vector joins spelled inline. `{unembedded:Array(String)}` is the
+    memory types that never get a vector."""
     from server.erasure.store.health import ORPHAN_ENTITY_VECTORS_SQL, ORPHAN_GRAPH_NAMESPACES_SQL
     from server.identity.store.namespace_census import UNREGISTERED_LIVE_SQL
     from server.memory.store.integrity import (
@@ -70,9 +72,14 @@ def _reference_sql() -> str:
     cols = ", ".join(ident)
     return f"""
         SELECT
-            (SELECT count() FROM loom.memory FINAL WHERE tombstoned_at IS NULL)
-              - (SELECT count() FROM loom.memory_embeddings FINAL
-                 WHERE tombstoned_at IS NULL AND embedding_dim > 0) AS embed_pending,
+            (SELECT count() FROM (
+                SELECT m.memory_key
+                FROM (SELECT {cols} FROM loom.memory FINAL
+                      WHERE tombstoned_at IS NULL AND sensitivity != 'high'
+                        AND memory_type NOT IN {{unembedded:Array(String)}}) AS m
+                LEFT ANTI JOIN (SELECT {cols} FROM loom.memory_embeddings FINAL
+                                WHERE tombstoned_at IS NULL AND embedding_dim > 0) AS e
+                ON {on})) AS embed_pending,
             (SELECT count() FROM (
                 SELECT m.ents AS me, e.ents AS ee
                 FROM (SELECT {cols}, arraySort(entities) AS ents
@@ -108,6 +115,8 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
     now = dt.datetime.now().replace(microsecond=0)
     months = [now - dt.timedelta(days=40), now - dt.timedelta(days=5), now]
     ents = ["alpha", "beta", "gamma", "delta"]
+    # Chosen by key index, not drawn, so each seed keeps its other draws.
+    types = ["semantic", "episodic", "semantic", "profile", "decision", "semantic"]
     width = settings.embedding_dim  # a coded column takes this length only
     mem: list[list[Any]] = []
     emb: list[list[Any]] = []
@@ -143,6 +152,7 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
                                             valid_to,
                                             "high" if rnd.random() < 0.1 else "",
                                             last,
+                                            types[k],
                                         ]
                                     )
                             for model in ("m1", "m2")[: rnd.randint(1, 2)]:
@@ -191,6 +201,7 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
     mem_cols = [
         "org", "namespace", "agent", "user_id", "session_id", "memory_key", "value", "version",
         "tombstoned_at", "created_at", "status", "valid_to", "sensitivity", "entities",
+        "memory_type",
     ]  # fmt: skip
     emb_cols = [
         "org", "namespace", "agent", "user_id", "session_id", "memory_key", "scope",
@@ -265,6 +276,7 @@ def _row(ch: Any, sql: str, params: dict[str, Any] | None = None) -> dict[str, i
 
 @pytest.mark.parametrize("seed", [3, 17])
 def test_one_pass_census_equals_the_per_invariant_statements(ch_client, seed: int) -> None:
+    from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
     from server.observability import otel_probes
     from server.observability.otel_probe_client import database_parameters
 
@@ -279,9 +291,15 @@ def test_one_pass_census_equals_the_per_invariant_statements(ch_client, seed: in
             except Exception:  # noqa: BLE001 — no grant: compare on merged parts
                 pass
         _seed(ch_client, prefix, random.Random(seed))
-        expected = _row(ch_client, _retarget(_reference_sql(), prefix))
+        expected = _row(
+            ch_client,
+            _retarget(_reference_sql(), prefix),
+            {"unembedded": sorted(NON_SEARCHABLE_TYPES)},
+        )
         got = _row(
-            ch_client, _retarget(otel_probes._invariants_sql(), prefix), database_parameters()
+            ch_client,
+            _retarget(otel_probes._invariants_sql(), prefix),
+            {**database_parameters(), **otel_probes._invariants_parameters()},
         )
         assert {k: got[k] for k in COUNTS} == expected
         assert all(expected[k] != 0 for k in COUNTS), expected

@@ -191,9 +191,13 @@ async def test_the_session_digest_ends_with_the_policy(monkeypatch) -> None:
 
     class _Embedder:
         model_name = "fake"
+        dim = 1
 
         async def embed(self, text: str) -> list[float]:
             return [1.0]
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(text) for text in texts]
 
     monkeypatch.setattr(session_summary, "get_embedder", lambda: _Embedder())
     draft = await session_summary._draft_session_summary(

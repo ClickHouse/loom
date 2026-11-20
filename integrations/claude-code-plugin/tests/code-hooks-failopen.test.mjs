@@ -214,7 +214,7 @@ test("shunt: a server that never answers holds the call no longer than the looku
 
 test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs keeps the plain redirect", async () => {
   const dir = checkout();
-  await withServer(null, async (url) => {
+  await withServer(null, async (url, seen, arrived) => {
     const tmp = freshTmp();
     seedIndexed(dir, tmp);
     const r = await run(
@@ -230,7 +230,21 @@ test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs 
     assert.equal(r.code, 0);
     const reason = JSON.parse(r.out).hookSpecificOutput.permissionDecisionReason;
     assert.match(reason, /names a symbol — call loom_code_symbol/);
-    assert.ok(r.ms < 5000, `took ${r.ms} ms`);
+    assert.ok(
+      r.ms < 5000,
+      r.ms < 5000
+        ? undefined
+        : (() => {
+            const symbolAt = arrived.get("/v1/code.symbol");
+            const afterSymbol = symbolAt === undefined ? null : r.closedAt - symbolAt;
+            return `took ${r.ms} ms; ${JSON.stringify({
+              server_seen_requests: seen.length,
+              symbol_seen: symbolAt !== undefined,
+              estimated_start_to_last_symbol_ms: afterSymbol === null ? null : r.ms - afterSymbol,
+              last_symbol_to_close_ms: afterSymbol,
+            })}`;
+          })(),
+    );
   });
 });
 
@@ -275,8 +289,7 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
     await withServer(status, async (url, seen, arrived) => {
       for (const hook of ["loom-test-gate.mjs", "loom-validate-gate.mjs"]) {
         const op = hook === "loom-test-gate.mjs" ? "/v1/code.test_gate" : "/v1/namespace.validate";
-        // A run whose own git calls timed out (1.5 s each, on a loaded runner)
-        // ends quietly before it asks, and tests nothing here: run again.
+        // A request can fail before the server observes it; require a witnessed run.
         let r;
         for (let attempt = 0; attempt < 3; attempt++) {
           const { dir, tmp, transcript } = dirtySession();
@@ -288,9 +301,8 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
           );
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
+          assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);
           if (arrived.has(op)) break;
-          // Only git's 1.5 s timeout excuses a silent run; any other is a failure.
-          assert.ok(r.ms >= 1500, `${hook} ${status}: ended in ${r.ms} ms without sending ${op}`);
         }
         // From the gate's request to the hook's exit: the 500 ms request
         // bound and the 500 ms exit grace, not node's start-up or git, which
@@ -298,9 +310,6 @@ test("Stop gates: 401 and a hanging server both let the stop through", async () 
         assert.ok(arrived.has(op), `${hook} ${status}: never sent ${op} in three runs`);
         const after = r.closedAt - arrived.get(op);
         assert.ok(after < 1500, `${hook} ${status}: ${after} ms after its request (${r.ms} ms in all)`);
-        // And the whole run, start-up and git included: twice the slowest
-        // seen on a loaded runner (3.4 s, macOS Intel).
-        assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);
       }
       assert.ok(seen.includes("/v1/code.test_gate") && seen.includes("/v1/namespace.validate"), seen.join(","));
     });
@@ -328,31 +337,34 @@ test("Stop gates: a Stop the gate itself caused never blocks again", async () =>
 test("blast radius and file context: 401 and a hanging server add nothing to the edit", async () => {
   for (const status of [401, null]) {
     await withServer(status, async (url, seen, arrived) => {
-      const { dir, tmp } = dirtySession();
-      const edit = {
-        tool_name: "Edit",
-        tool_input: { file_path: path.join(dir, "src/a.cpp") },
-        cwd: dir,
-        session_id: "s",
-      };
       for (const hook of ["loom-blast-radius.mjs", "loom-file-context.mjs"]) {
         const op = hook === "loom-blast-radius.mjs" ? "/v1/code.impact" : "/v1/memory.for_file";
-        // As for the Stop gates: a run whose git calls timed out never asked.
+        // A request can fail before the server observes it; require a witnessed run.
         let r;
         for (let attempt = 0; attempt < 3; attempt++) {
+          const { dir, tmp } = dirtySession();
+          const edit = {
+            tool_name: "Edit",
+            tool_input: { file_path: path.join(dir, "src/a.cpp") },
+            cwd: dir,
+            session_id: "s",
+          };
           arrived.delete(op);
-          r = await run(hook, edit, { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } });
+          // A failed lookup caches silence; each retry must exercise a fresh session.
+          r = await run(
+            hook,
+            { ...edit, session_id: `s-${hook}-${attempt}` },
+            { tmp, url, env: { LOOM_HOOK_TIMEOUT_MS: "500", LOOM_HOOK_EXIT_MS: "500" } },
+          );
           assert.equal(r.code, 0, `${hook} ${status}`);
           assert.equal(r.out, "", `${hook} ${status}`);
+          assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);
           if (arrived.has(op)) break;
-          // Only git's 1.5 s timeout excuses a silent run; any other is a failure.
-          assert.ok(r.ms >= 1500, `${hook} ${status}: ended in ${r.ms} ms without sending ${op}`);
         }
         // From the hook's request to its exit, as for the Stop gates.
         assert.ok(arrived.has(op), `${hook} ${status}: never sent ${op} in three runs`);
         const after = r.closedAt - arrived.get(op);
         assert.ok(after < 1500, `${hook} ${status}: ${after} ms after its request (${r.ms} ms in all)`);
-        assert.ok(r.ms < 7000, `${hook} ${status} took ${r.ms} ms`);
       }
     });
   }

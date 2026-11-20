@@ -73,7 +73,7 @@ def update_run(provisioned_run, monkeypatch, tmp_path):
     def pair(active, pending):
         attached.own_fp = (active, pending)
         run.row.update(current_fp=active, next_fp=pending)
-        run.state = State("dep-1", True, "first", "enforced", active, pending, True)
+        run.state = State("dep-1", True, "first", "enforced", active, pending)
 
     control.pair = pair
     pair(current, target)
@@ -81,10 +81,7 @@ def update_run(provisioned_run, monkeypatch, tmp_path):
 
     def read(sql, params):
         control.reads.append(sql)
-        result = answer(sql, params)
-        if sql.startswith("SELECT a.deployment_id, f.is_first"):
-            return {**result, "has_tenancy": True}
-        return result
+        return answer(sql, params)
 
     execute = run.owner.conn.execute
 
@@ -233,3 +230,15 @@ async def test_scim_off_precondition_needs_no_store_io(update_run):
 
     assert control.reads == run.owner.conn.executed == events == []
     assert people.census_reads == people.reads == people.writes == []
+
+
+async def test_foreign_target_refuses_before_identity_reads_or_claim(update_run):
+    run, people, events, _control = update_run
+    target = cell.as_value({**run.state.pending["fields"], "deployment_id": "foreign"})
+
+    with pytest.raises(Refused, match="intended configuration names another deployment"):
+        await run.scim_precondition(target)
+
+    assert events == []
+    assert people.census_reads == []
+    assert people.writes == []

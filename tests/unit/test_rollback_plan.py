@@ -10,6 +10,8 @@ import pytest
 from server.core.errors import ValidationError
 from server.memory.domain.rollback import plan_rollback, version_at
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 def _r(key: str, now: int, at: int, tomb: int = 0) -> dict:
     return {

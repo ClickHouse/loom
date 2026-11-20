@@ -55,10 +55,10 @@ instructions.
 
 `LOOM_MCP_AUTH_MODE` decides which methods need a bearer:
 
-| Mode                 | Bearer required on                                            |
-| -------------------- | ------------------------------------------------------------- |
-| `required` (default) | every method except notifications                             |
-| `discovery_only`     | `tools/call` only; every other method is open                 |
+| Mode                 | Bearer required on                                                             |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `required` (default) | every method except notifications                                              |
+| `discovery_only`     | `tools/call` only; every other method is open                                  |
 | `open`               | nothing; a cryptographically invalid bearer is ignored (trusted networks only) |
 
 A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
@@ -132,7 +132,12 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   that namespace as if it had been named. `loom_search` under the header also reads
   the repository's documents and `decision` memories from its trunk code namespace,
   when the caller may read it, and runs the tracker duplicate check for a
-  defect-shaped query.
+  defect-shaped query. A `memory.set` with no `repo:` tag takes the `repo:<id>` of the
+  repository configured for the scope's namespace, when the scope's org is the write's
+  org and the caller may read that repository; with such a scope, a write into another
+  configured code namespace takes that namespace's repository tag instead. A scope that
+  names no configured, readable repository adds no tag, and an explicit `repo:` tag
+  always stays.
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which
@@ -216,6 +221,25 @@ queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_o
 on every toolset except `assistant` (`readonly` included). Its write twin,
 `memory.extraction_retry_mine`, replays the caller's failed batches once more;
 `loom_op` routes it on every toolset but `readonly` and `assistant`.
+
+**Compiler-tier uploads.** `LOOM_MCP_CODE_UPLOAD_TOOLS=true` (default off) takes
+`code.scip_ingest` and `code.scip_status` off the hidden ops, for a deployment whose
+uploader of compiler-tier indexes reaches Loom through MCP only. Both are then callable
+on every toolset but `assistant`, by tool name and through `loom_op` (which routes only
+`code.scip_status` on `readonly`). `all` lists them by its own rules, so only with
+`LOOM_MCP_CODE_TOOLS=true`, and `readonly` then lists `code.scip_status`; no curated
+roster lists either. Each keeps its role: writer for the upload, viewer for the status.
+
+With the setting on, `code.scip_ingest` accepts a part only for a namespace that has a
+repository entry, self-service or operator-configured
+([adding repositories](../features/code-index/repositories.md)), over HTTP as over MCP.
+Without that rule a caller could store upload batches in any namespace it may write,
+its own memory namespace included. A part for another namespace answers
+`RESOURCE_NOT_FOUND` (404 over HTTP). Send the namespace itself: when a code tool's
+`namespace` names a repository and is not a namespace the caller can read, MCP resolves
+it to the index of the repository's default branch, and the upload lands there.
+`ops.capabilities` and the generated [operations reference](./operations.md) describe
+the default: they report both ops as hidden whatever the setting.
 
 ### Toolsets
 

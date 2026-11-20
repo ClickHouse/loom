@@ -33,6 +33,38 @@ SANDBOX_REQUIRED_REFUSAL = (
     "repository job refused: LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox "
     "cannot run here (the 'sandbox probe failed' warning says why)"
 )
+# Why a network git job did not run while LOOM_CODE_GIT_PROXY_URL is set
+# (`server.code.app.index.git_proxy`): git then connects through that proxy or not at
+# all. Fixed sentences that name settings, never their values or a host path.
+GIT_PROXY_REFUSAL = "repository job refused: LOOM_CODE_GIT_PROXY_URL is set and "
+GIT_PROXY_TOKEN_REFUSAL = (
+    GIT_PROXY_REFUSAL + "the file LOOM_CODE_GIT_PROXY_TOKEN_FILE names cannot be read or "
+    "holds no token"
+)
+GIT_PROXY_IDENTITY_REFUSAL = (
+    GIT_PROXY_REFUSAL + "neither the repository entry (git_proxy_identity) nor "
+    "LOOM_CODE_GIT_PROXY_IDENTITY names the identity to present"
+)
+GIT_PROXY_REMOTE_REFUSAL = (
+    GIT_PROXY_REFUSAL + "the remote is not an https URL, the only kind that proxy carries"
+)
+GIT_PROXY_SANDBOX_REFUSAL = (
+    GIT_PROXY_REFUSAL + "this host runs repository jobs in the sandbox, whose network "
+    "does not go through that proxy"
+)
+GIT_PROXY_REFUSALS = (
+    GIT_PROXY_TOKEN_REFUSAL,
+    GIT_PROXY_IDENTITY_REFUSAL,
+    GIT_PROXY_REMOTE_REFUSAL,
+    GIT_PROXY_SANDBOX_REFUSAL,
+)
+# What a clone and the `ls-remote` before an add say when that proxy itself refused
+# git's connection, followed by the status it answered: they show a fixed reason, never
+# git's own words, and a refusal that read `exit 128` would name no cause.
+GIT_PROXY_REFUSED = "the operator's git proxy (LOOM_CODE_GIT_PROXY_URL) refused the connection"
+_CLONE_PROXY_REFUSED_RE = re.compile(
+    rf"git clone failed: {re.escape(GIT_PROXY_REFUSED)} \(\d{{3}}\)"
+)
 _CLONE_EXIT_RE = re.compile(r"git clone failed \(exit -?\d+\)")
 _CLONE_OSERROR = "clone failed: "
 # A tier's detail after its base commit could not be read; anything after it is the
@@ -64,12 +96,13 @@ def shown_detail(key: str, detail: str) -> str:
 
 def shown_clone_reason(reason: str) -> str:
     """A failed clone's reason kept only in a shape the mirror job writes: the exit,
-    the timeout, the sandbox refusal or `clone failed: <kind>`. Anything else (git's
-    stderr, an OSError's path, a sandbox's message) can name this host's paths or
-    another org's remote: it reads as CLONE_FAILED."""
-    if reason in (CLONE_TIMED_OUT, CLONE_FAILED, SANDBOX_REQUIRED_REFUSAL):
+    the timeout, the sandbox refusal, a git proxy refusal (Loom's own, or the proxy's
+    with its status) or `clone failed: <kind>`. Anything else (git's stderr, an
+    OSError's path, a sandbox's message) can name this host's paths or another org's
+    remote: it reads as CLONE_FAILED."""
+    if reason in (CLONE_TIMED_OUT, CLONE_FAILED, SANDBOX_REQUIRED_REFUSAL, *GIT_PROXY_REFUSALS):
         return reason
-    if _CLONE_EXIT_RE.fullmatch(reason):
+    if _CLONE_EXIT_RE.fullmatch(reason) or _CLONE_PROXY_REFUSED_RE.fullmatch(reason):
         return reason
     if reason.startswith(_CLONE_OSERROR):
         kind = reason.removeprefix(_CLONE_OSERROR)

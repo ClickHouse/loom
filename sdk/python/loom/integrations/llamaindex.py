@@ -30,13 +30,14 @@ read only what its token may read. Install with
 from __future__ import annotations
 
 import asyncio
+from contextlib import AbstractContextManager, ExitStack
 from typing import Any, Literal
 
 try:
     from llama_index.core.async_utils import asyncio_run
     from llama_index.core.base.base_retriever import BaseRetriever
     from llama_index.core.base.llms.types import ChatMessage, MessageRole
-    from llama_index.core.bridge.pydantic import Field
+    from llama_index.core.bridge.pydantic import Field, PrivateAttr
     from llama_index.core.memory import Memory
     from llama_index.core.memory.memory import BaseMemoryBlock
     from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
@@ -47,7 +48,16 @@ except ImportError as e:  # the framework is an optional extra
         "pip install 'clickhouse-loom[llamaindex]'"
     ) from e
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 from loom.sync import SyncAgent
+
+
+def _callback_scope(agent: Any, protection: _CallbackProtection) -> AbstractContextManager[None]:
+    bound = getattr(getattr(agent, "transport", None), "session_protection", None)
+    if automatic_roots():
+        return protection.automatic(bound)
+    return protection.observing(bound)
 
 
 class LoomRetriever(BaseRetriever):
@@ -75,6 +85,9 @@ class LoomRetriever(BaseRetriever):
     ) -> None:
         super().__init__(**kwargs)
         self._agent = agent
+        self._protection = _CallbackProtection(
+            getattr(getattr(agent, "transport", None), "session_protection", None)
+        )
         self._search_kwargs: dict[str, Any] = {**(search_kwargs or {}), "top_k": similarity_top_k}
         if tags:
             self._search_kwargs["tags"] = list(tags)
@@ -88,15 +101,17 @@ class LoomRetriever(BaseRetriever):
             raise TypeError(
                 "LoomRetriever.retrieve needs a loom.SyncAgent; with a loom.Agent, call aretrieve"
             )
-        hits = self._agent.knowledge.search(query_bundle.query_str, **self._search_kwargs)
-        return _nodes(hits, self._agent.namespace)
+        with _callback_scope(self._agent, self._protection):
+            hits = self._agent.knowledge.search(query_bundle.query_str, **self._search_kwargs)
+            return _nodes(hits, self._agent.namespace)
 
     async def _aretrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
-        if isinstance(self._agent, SyncAgent):
-            # A SyncAgent blocks; its own loop thread serves the call.
-            return await asyncio.to_thread(self._retrieve, query_bundle)
-        hits = await self._agent.knowledge.search(query_bundle.query_str, **self._search_kwargs)
-        return _nodes(hits, self._agent.namespace)
+        with _callback_scope(self._agent, self._protection):
+            if isinstance(self._agent, SyncAgent):
+                # A SyncAgent blocks; its own loop thread serves the call.
+                return await asyncio.to_thread(self._retrieve, query_bundle)
+            hits = await self._agent.knowledge.search(query_bundle.query_str, **self._search_kwargs)
+            return _nodes(hits, self._agent.namespace)
 
 
 _BOOKKEEPING = ("chunk_idx", "namespace", "tags")
@@ -163,6 +178,13 @@ class LoomMemoryBlock(BaseMemoryBlock[str]):
     defer: bool = Field(
         default=True, description="Queue the extraction on the server; False extracts inline."
     )
+    _protection: _CallbackProtection = PrivateAttr()
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+        self._protection = _CallbackProtection(
+            getattr(getattr(self.agent, "transport", None), "session_protection", None)
+        )
 
     async def _run(self, call: Any, *args: Any, **kwargs: Any) -> Any:
         if isinstance(self.agent, SyncAgent):
@@ -171,66 +193,68 @@ class LoomMemoryBlock(BaseMemoryBlock[str]):
         return await call(*args, **kwargs)
 
     async def _aget(self, messages: list[ChatMessage] | None = None, **block_kwargs: Any) -> str:
-        query = next(
-            (
-                m.content
-                for m in reversed(messages or [])
-                if m.role == MessageRole.USER and m.content
-            ),
-            None,
-        )
-        if not query:
-            return ""
-        # Read the namespace the block writes to, whatever the deployment's default;
-        # with no agent_id the search reads every agent's memories there.
-        kwargs: dict[str, Any] = {
-            "top_k": self.top_k,
-            "namespace_scope": "this",
-            # Unpinned, a large top_k serves excerpts (above 15 by default)
-            # and drops each hit's explanation.
-            "bodies": "full",
-            "explain": False,
-        }
-        if self.tags:
-            kwargs["tags"] = list(self.tags)
-        if self.user_id:
-            kwargs["user_id"] = self.user_id
-        result = await self._run(self.agent.memory.search, query, **kwargs)
-        hits = list(result)
-        if self.honour_abstain:
-            if result.abstain:
+        with _callback_scope(self.agent, self._protection):
+            query = next(
+                (
+                    m.content
+                    for m in reversed(messages or [])
+                    if m.role == MessageRole.USER and m.content
+                ),
+                None,
+            )
+            if not query:
                 return ""
-            # A response that does not abstain can still carry rows below the
-            # floor; honouring abstention drops them.
-            hits = [hit for hit in hits if not hit.below_threshold]
-        # Derived rows may come back above the top_k slice: cut after filtering.
-        hits = hits[: self.top_k]
-        return "\n".join(f"- {hit.content_excerpt}" for hit in hits)
+            # Read the namespace the block writes to, whatever the deployment's default;
+            # with no agent_id the search reads every agent's memories there.
+            kwargs: dict[str, Any] = {
+                "top_k": self.top_k,
+                "namespace_scope": "this",
+                # Unpinned, a large top_k serves excerpts (above 15 by default)
+                # and drops each hit's explanation.
+                "bodies": "full",
+                "explain": False,
+            }
+            if self.tags:
+                kwargs["tags"] = list(self.tags)
+            if self.user_id:
+                kwargs["user_id"] = self.user_id
+            result = await self._run(self.agent.memory.search, query, **kwargs)
+            hits = list(result)
+            if self.honour_abstain:
+                if result.abstain:
+                    return ""
+                # A response that does not abstain can still carry rows below the
+                # floor; honouring abstention drops them.
+                hits = [hit for hit in hits if not hit.below_threshold]
+            # Derived rows may come back above the top_k slice: cut after filtering.
+            hits = hits[: self.top_k]
+            return "\n".join(f"- {hit.content_excerpt}" for hit in hits)
 
     async def _aput(self, messages: list[ChatMessage]) -> None:
-        turns = [
-            {"role": m.role.value, "content": m.content}
-            for m in messages
-            if m.content and m.role in (MessageRole.USER, MessageRole.ASSISTANT)
-        ]
-        if not turns:
-            return
-        session_id = next(
-            (
-                m.additional_kwargs["session_id"]
+        with _callback_scope(self.agent, self._protection):
+            turns = [
+                {"role": m.role.value, "content": m.content}
                 for m in messages
-                if "session_id" in m.additional_kwargs
-            ),
-            None,
-        )
-        await self._run(
-            self.agent.memory.set_from_messages,
-            turns,
-            extra_tags=self.tags,
-            user_id=self.user_id,
-            session_id=session_id,
-            defer=self.defer,
-        )
+                if m.content and m.role in (MessageRole.USER, MessageRole.ASSISTANT)
+            ]
+            if not turns:
+                return
+            session_id = next(
+                (
+                    m.additional_kwargs["session_id"]
+                    for m in messages
+                    if "session_id" in m.additional_kwargs
+                ),
+                None,
+            )
+            await self._run(
+                self.agent.memory.set_from_messages,
+                turns,
+                extra_tags=self.tags,
+                user_id=self.user_id,
+                session_id=session_id,
+                defer=self.defer,
+            )
 
 
 async def aflush(memory: Memory) -> None:
@@ -242,21 +266,26 @@ async def aflush(memory: Memory) -> None:
     starts empty. If a block fails, nothing is archived and the next flush hands
     the same messages over again: at least once, never lost.
     """
-    active = await memory.aget_all(status=MessageStatus.ACTIVE)
-    if not active:
-        return
-    # Every block finishes before a failure reaches the caller.
-    results = await asyncio.gather(
-        *(
-            block.aput(active, from_short_term_memory=True, session_id=memory.session_id)
-            for block in memory.memory_blocks
-        ),
-        return_exceptions=True,
-    )
-    for result in results:
-        if isinstance(result, BaseException):
-            raise result
-    await memory.sql_store.archive_oldest_messages(memory.session_id, n=len(active))
+    with ExitStack() as scopes:
+        # Freeze each block's contributors before the native store can yield or rebind.
+        for block in memory.memory_blocks:
+            if isinstance(block, LoomMemoryBlock):
+                scopes.enter_context(_callback_scope(block.agent, block._protection))
+        active = await memory.aget_all(status=MessageStatus.ACTIVE)
+        if not active:
+            return
+        # Every block finishes before a failure reaches the caller.
+        results = await asyncio.gather(
+            *(
+                block.aput(active, from_short_term_memory=True, session_id=memory.session_id)
+                for block in memory.memory_blocks
+            ),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        await memory.sql_store.archive_oldest_messages(memory.session_id, n=len(active))
 
 
 def flush(memory: Memory) -> None:
