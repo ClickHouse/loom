@@ -144,6 +144,84 @@ def test_a_readable_rss_forest_keeps_the_existing_admission_path(rss_census):
     assert set(owned.sampled_pids) == {100, 200, 300}
 
 
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+@pytest.mark.parametrize("pid", [100, 200])
+def test_rss_root_loss_does_not_retry_or_refresh(rss_census, error, pid):
+    owner, owned, _, gone, failures = rss_census
+
+    def vanish():
+        gone.add(pid)
+        raise error("root disappeared during RSS read")
+
+    failures[pid] = vanish
+    owner.sample()
+    assert owner.first is not None
+    assert owner.sampled == 7.0
+    assert owned.round <= 1
+
+
+@pytest.mark.parametrize("error", [PermissionError, OSError, ValueError])
+def test_other_rss_read_errors_remain_refusals(rss_census, error):
+    owner, owned, _, _, failures = rss_census
+
+    def unreadable():
+        raise error("RSS read failed without verified disappearance")
+
+    failures[300] = unreadable
+    owner.sample()
+    assert isinstance(owner.first, error)
+    assert owner.sampled == 7.0
+    assert owned.round == 1
+
+
+def test_new_forest_still_checks_the_next_child_rss(rss_census):
+    owner, owned, _, gone, failures = rss_census
+
+    def vanish():
+        gone.add(300)
+        raise ProcessLookupError("gone during RSS read")
+
+    failures[300] = vanish
+    failures[400] = lambda: f"VmRSS:\t{fixture.POLICY['stop_process_rss_bytes'] // 1024 + 1} kB\n"
+    owner.sample()
+    assert isinstance(owner.first, fixture.Refused)
+    assert owner.sampled == 7.0
+    assert owned.round == 2
+    assert 400 in owned.sampled_pids
+
+
+def test_rss_disappearance_does_not_reset_the_census_deadline(rss_census):
+    owner, owned, clock, gone, failures = rss_census
+
+    def vanish():
+        gone.add(300)
+        clock.now = 13.0
+        raise ProcessLookupError("gone at the census deadline")
+
+    failures[300] = vanish
+    owner.sample()
+    assert isinstance(owner.first, fixture.Refused)
+    assert owner.sampled == 7.0
+    assert owned.round == 1
+    assert 400 not in owned.sampled_pids
+
+
+def test_repeated_rss_disappearance_keeps_the_three_forest_bound(rss_census):
+    owner, owned, _, gone, failures = rss_census
+    owned.trees = [[300], [400], [500], [600]]
+
+    def vanish(pid):
+        gone.add(pid)
+        raise ProcessLookupError("another descendant vanished")
+
+    failures.update({pid: lambda pid=pid: vanish(pid) for pid in (300, 400, 500)})
+    owner.sample()
+    assert isinstance(owner.first, fixture.Refused)
+    assert owner.sampled == 7.0
+    assert owned.round == 3
+    assert 600 not in owned.sampled_pids
+
+
 @pytest.mark.parametrize("stage", ["before", "after", "children"])
 def test_a_vanished_descendant_restarts_the_whole_forest(census, stage):
     owner, owned, _ = census
