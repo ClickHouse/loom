@@ -9,7 +9,7 @@ import { SourcesList } from "./SourcesList";
 // A failed read of the document sources shows the error, its request id and a Retry that
 // reads them again; a reader who cannot manage the sources gets no section at all.
 
-const sources = vi.hoisted(() => ({ listKnowledgeSources: vi.fn() }));
+const sources = vi.hoisted(() => ({ listKnowledgeSources: vi.fn(), updateKnowledgeSource: vi.fn() }));
 vi.mock("../api/knowledgeSources", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/knowledgeSources")>()),
   ...sources,
@@ -271,5 +271,84 @@ describe("SourcesList", () => {
     expect(screen.queryByText("Incomplete")).not.toBeInTheDocument();
     expect(screen.queryByText(/sync requested/)).not.toBeInTheDocument();
     expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["settled", "pending"])("reloads current items before reopening an unconfirmed %s edit", async (outcome) => {
+    writer();
+    const initial = {
+      ...connectedSource("own-selection", "alice"),
+      items: [
+        { type: "file", id: "removed-file" },
+        { type: "file", id: "remaining-file" },
+      ],
+    };
+    let finish!: (value: KnowledgeSourceList) => void;
+    sources.listKnowledgeSources
+      .mockReset()
+      .mockResolvedValue({ enabled: true, sources: [{ ...initial, items: [] }] })
+      .mockResolvedValueOnce({ enabled: true, sources: [initial] });
+    sources.listKnowledgeSources.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let failSave!: (error: Error) => void;
+    sources.updateKnowledgeSource.mockReset();
+    if (outcome === "pending") {
+      sources.updateKnowledgeSource.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            failSave = reject;
+          }),
+      );
+    } else {
+      sources.updateKnowledgeSource.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    }
+    sources.updateKnowledgeSource.mockResolvedValueOnce({});
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable={false} connectedManageable />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for own-selection" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Edit items" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "File removed-file" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    if (outcome === "pending") {
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(1);
+      expect(sources.updateKnowledgeSource).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        failSave(new TypeError("Failed to fetch"));
+      });
+    }
+    await screen.findByText(/Save could not be confirmed/);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(2));
+    const action = screen.getByRole("button", { name: "Actions for own-selection" });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Document sources" })).toHaveFocus());
+    await userEvent.click(action);
+    const edit = await screen.findByRole("menuitem", { name: "Edit items" });
+    expect(edit).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(edit);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(sources.updateKnowledgeSource).toHaveBeenCalledTimes(1);
+    await userEvent.keyboard("{Escape}");
+    await act(async () => {
+      finish({ enabled: true, sources: [{ ...initial, items: [{ type: "file", id: "remaining-file" }] }] });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for own-selection" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Edit items" }));
+    expect(await screen.findByRole("checkbox", { name: "File remaining-file" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "File removed-file" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "File remaining-file" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(sources.updateKnowledgeSource).toHaveBeenNthCalledWith(
+      2,
+      { org: "acme", namespace: "docs" },
+      "own-selection",
+      { remove_items: [{ type: "file", id: "remaining-file" }] },
+    );
   });
 });

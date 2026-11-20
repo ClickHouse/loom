@@ -1529,8 +1529,15 @@ export function Documents() {
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && !resolving && (
               <Unavailable reason={writeReason}>
-                <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-                  Add document
+                <Button
+                  type="primary"
+                  htmlType="button"
+                  iconLeft="plus"
+                  aria-label="Add document"
+                  onClick={() => setAddOpen(true)}
+                >
+                  <span className="sm:hidden">Add</span>
+                  <span className="hidden sm:inline">Add document</span>
                 </Button>
               </Unavailable>
             )}

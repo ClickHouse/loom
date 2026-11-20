@@ -177,12 +177,14 @@ function ScopedSourcesList({
   const [open, setOpen] = useState(false);
   const phone = useMedia(PHONE_QUERY);
   const heading = useRef<HTMLHeadingElement>(null);
+  const listFocus = useRef<HTMLElement>(null);
   // The panel sits below the header, past the page's other controls: opening it moves
   // the focus to its heading, so the list is next in the tab order.
   useEffect(() => {
     if (open) heading.current?.focus();
   }, [open]);
   const [nonce, setNonce] = useState(0);
+  const [reloadingItems, setReloadingItems] = useState(false);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
   // Details is a read: any reader may open it.
@@ -202,6 +204,8 @@ function ScopedSourcesList({
         if (isOpAbsent(e)) setState({ kind: "absent" });
         else if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
         else setState({ kind: "error", error: e });
+      } finally {
+        if (live()) setReloadingItems(false);
       }
     },
     [org, namespace, nonce],
@@ -231,7 +235,7 @@ function ScopedSourcesList({
     if (!closed && manageable && ["gdrive", "notion", "linear"].includes(s.kind)) {
       items.splice(2, 0, { label: "Push notifications", icon: "refresh", onSelect: act("push") });
     }
-    return items.map((item) => ({ ...item, disabled: busy }));
+    return items.map((item) => ({ ...item, disabled: busy || reloadingItems }));
   };
   const close = (v: boolean) => {
     if (!v) setActing(null);
@@ -246,7 +250,8 @@ function ScopedSourcesList({
   const failedForReader = state.kind !== "ready" && !loading && !canAdd;
   if (section && (closedAndEmpty || nothingForReader || loading || failedForReader)) return null;
   const list = (
-    <div className="space-y-1.5">
+    <section ref={listFocus} aria-label="Document sources" tabIndex={-1} className="space-y-1.5">
+      {reloadingItems && <p role="status">Refreshing source items…</p>}
       {state.kind === "loading" && (
         <LoadingSkeleton label={`Loading the ${place.noun}'s document sources`}>
           <Skeleton className="h-4 w-1/2" />
@@ -284,7 +289,13 @@ function ScopedSourcesList({
         </ul>
       )}
       {canAdd && state.kind === "ready" && state.accepts && (
-        <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
+        <Button
+          type="empty"
+          htmlType="button"
+          iconLeft="plus"
+          disabled={busy || reloadingItems}
+          onClick={() => setAdding(true)}
+        >
           Add a source
         </Button>
       )}
@@ -320,7 +331,7 @@ function ScopedSourcesList({
         </div>
       )}
       {state.kind === "ready" && (
-        <Button type="secondary" htmlType="button" disabled={busy} onClick={reload}>
+        <Button type="secondary" htmlType="button" disabled={busy || reloadingItems} onClick={reload}>
           Refresh sources
         </Button>
       )}
@@ -332,10 +343,17 @@ function ScopedSourcesList({
               namespace={namespace}
               source={acting.source}
               canManage={acting.source.credential_mode === "connected" ? connectedManageable : manageable}
-              onClose={() => setActing(null)}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                listFocus.current?.focus();
+              }}
+              onClose={() => {
+                setActing(null);
+                setReloadingItems(true);
+                reload();
+              }}
               onUpdated={() => {
                 toast(`Updated ${acting.source.name}`, "ok");
-                reload();
               }}
             />
           )}
@@ -395,7 +413,7 @@ function ScopedSourcesList({
           )}
         </Suspense>
       )}
-    </div>
+    </section>
   );
   if (!section) return list;
   const count = state.kind === "ready" ? state.sources.length : 0;

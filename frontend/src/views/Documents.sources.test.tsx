@@ -9,8 +9,8 @@ import { Documents } from "./Documents";
 import { listQueryHistory } from "../api/queryHistory";
 import { axeViolations } from "../test/axe";
 
-// The Library's Sources section: the sources of the place in view, with Add for its
-// admins only.
+// The Library's Sources section: shared-source management for admins and own-account
+// source registration for signed-in writers.
 
 const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(async (..._args: unknown[]) => ({ rows: [], next_cursor: null })),
@@ -34,11 +34,11 @@ const mine = (role: MyNamespaceEntry["role"]): MyNamespaceEntry[] => [
   { namespace: "team", role, status: "active", kind: "memory" } as never,
 ];
 
-function show(role: MyNamespaceEntry["role"] | null) {
+function show(role: MyNamespaceEntry["role"] | null, principal: WhoAmI = whoami) {
   useStore.setState({
     identity: { org: "acme", namespace: "team", agent: "loom-ui" },
     view: "knowledge",
-    whoami,
+    whoami: principal,
     myNamespaces: role ? mine(role) : [],
   });
   render(<Documents />);
@@ -129,12 +129,31 @@ describe("Library sources", () => {
     expect(screen.getByRole("button", { name: "Add a source" })).toBeInTheDocument();
   });
 
-  it.each(["viewer", "writer", null] as const)("offers no Add to a role of %s", async (role) => {
+  it.each(["viewer", null] as const)("offers no Add to a role of %s", async (role) => {
     show(role);
     await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
   });
+
+  it("offers a personal writer Add without actions on the listed shared source", async () => {
+    show("writer");
+    await openSources();
+    expect(await screen.findByText("team-notes")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add a source" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions for team-notes" })).toBeNull();
+  });
+
+  it.each([{ is_service_account: true }, { org: "another-org" }])(
+    "offers no connected-source Add to an ineligible principal (%j)",
+    async (over) => {
+      show("writer", { ...whoami, ...over });
+      await openSources();
+      expect(await screen.findByText("team-notes")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Actions for team-notes" })).toBeNull();
+    },
+  );
 
   it.each([
     ["admin", true],

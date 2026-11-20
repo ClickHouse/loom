@@ -22,6 +22,7 @@ interface Props {
   canManage: boolean;
   onClose: () => void;
   onUpdated: () => void;
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 function actorScope() {
@@ -50,7 +51,7 @@ export function EditSourceItemsDialog(props: Props) {
   );
 }
 
-function EditSourceItems({ org, namespace, source, canManage, onClose, onUpdated }: Props) {
+function EditSourceItems({ org, namespace, source, canManage, onClose, onUpdated, onCloseAutoFocus }: Props) {
   const mounted = useMounted();
   const whoami = useStore((s) => s.whoami);
   const actor = actorScope();
@@ -168,14 +169,15 @@ function EditSourceItems({ org, namespace, source, canManage, onClose, onUpdated
   return (
     <DialogFrame
       open
+      onCloseAutoFocus={onCloseAutoFocus}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open && busy !== "save") onClose();
       }}
       title={`Edit items · ${source.name}`}
       description="Add content links or remove selected items from this source."
       footer={
         <>
-          <CancelButton />
+          <CancelButton disabled={busy === "save"} />
           <Button
             type="secondary"
             htmlType="button"

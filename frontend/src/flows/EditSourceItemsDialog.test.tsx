@@ -240,4 +240,30 @@ describe("EditSourceItemsDialog", () => {
     expect(screen.getByRole("button", { name: "Review changes" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
+
+  it("keeps the dialog open while an incremental save is pending", async () => {
+    let reject!: (error: Error) => void;
+    vi.mocked(updateKnowledgeSource).mockImplementationOnce(
+      () =>
+        new Promise((_, fail) => {
+          reject = fail;
+        }),
+    );
+    const callbacks = open();
+    await userEvent.click(screen.getByRole("checkbox", { name: "File keep-file" }));
+    await review();
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await userEvent.keyboard("{Escape}");
+    const closesWhilePending = callbacks.onClose.mock.calls.length;
+    await act(async () => {
+      reject(new TypeError("Failed to fetch"));
+    });
+    await screen.findByText(/Save could not be confirmed/);
+    expect(closesWhilePending).toBe(0);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(updateKnowledgeSource).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(callbacks.onClose).toHaveBeenCalledOnce();
+  });
 });
