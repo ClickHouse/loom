@@ -71,7 +71,7 @@ def _record(item: pytest.Item, phase: int, event: int, error: BaseException | No
         capture = item.config.pluginmanager.getplugin("capturemanager")
         if reporter is not None and capture is not None:
             with capture.global_and_fixture_disabled():
-                reporter.write_line("RESTORE_PHASE " + json.dumps(record, separators=(",", ":")))
+                reporter.write_line("\nRESTORE_PHASE " + json.dumps(record, separators=(",", ":")))
                 reporter.flush()
     except Exception:  # noqa: BLE001 — diagnostic failure must preserve the test's outcome.
         return
