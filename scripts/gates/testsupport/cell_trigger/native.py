@@ -723,6 +723,108 @@ async def _independent_provenance(context, output, progress):
     write(output, summary)
 
 
+def _observe_request_phase(function, stage, sample_var, origin, emit, tag, *, asynchronous):
+    from contextlib import contextmanager
+    from functools import wraps
+
+    @contextmanager
+    def observation(sample):
+        started = cpu = None
+        try:
+            started, cpu = time.perf_counter_ns(), time.process_time_ns()
+        except Exception:  # noqa: BLE001 — optional clocks cannot prevent the original call.
+            pass
+        try:
+            yield
+        finally:
+            failed = int(sys.exc_info()[0] is not None)
+            if started is not None and cpu is not None:
+                try:
+                    # _begin_request binds its request tag inside the original call.
+                    current = tag()
+                    correlation = (
+                        int.from_bytes(hashlib.sha256(current.encode()).digest()) if current else 0
+                    )
+                    emit(
+                        [
+                            1,
+                            sample["ordinal"],
+                            stage,
+                            started - origin,
+                            time.perf_counter_ns() - started,
+                            time.process_time_ns() - cpu,
+                            correlation,
+                            0,
+                            failed,
+                            sample["done"],
+                            0,
+                        ]
+                    )
+                except Exception:  # noqa: BLE001 — optional diagnostics cannot replace a result or failure.
+                    pass
+
+    if asynchronous:
+
+        @wraps(function)
+        async def async_phase(*args, **kwargs):
+            sample = sample_var.get()
+            if sample is None:
+                return await function(*args, **kwargs)
+            with observation(sample):
+                return await function(*args, **kwargs)
+
+        return async_phase
+
+    @wraps(function)
+    def sync_phase(*args, **kwargs):
+        sample = sample_var.get()
+        if sample is None:
+            return function(*args, **kwargs)
+        with observation(sample):
+            return function(*args, **kwargs)
+
+    return sync_phase
+
+
+def _observe_http_phases(http, sample_var, origin, emit, tag):
+    # These are existing endpoint boundaries, not replacement admission decisions.
+    names = (
+        "_begin_request",
+        "_extract_auth",
+        "_read_body",
+        "_authorize",
+        "_bind_context_and_policy",
+        "_idempotency_gate",
+        "_start_telemetry",
+        "_run_handler",
+        "_finish_success",
+    )
+    saved = []
+
+    def restore():
+        for name, original in reversed(saved):
+            setattr(http, name, original)
+
+    try:
+        for stage, name in enumerate(names, start=10):
+            original = getattr(http, name)
+            observed = _observe_request_phase(
+                original,
+                stage,
+                sample_var,
+                origin,
+                emit,
+                tag,
+                asynchronous=name != "_begin_request",
+            )
+            setattr(http, name, observed)
+            saved.append((name, original))
+    except BaseException:  # Partial instrumentation restores before propagating setup failure.
+        restore()
+        raise
+    return restore
+
+
 def api(context: dict, output: Path) -> None:
     import uvicorn
 
@@ -826,6 +928,7 @@ def api(context: dict, output: Path) -> None:
 
     emit_cost([0, 1, *samples])
     original_traced = otel.traced
+    restore_http_phases = None
 
     def measured_traced(name, **attrs):
         sample = sample_var.get()
@@ -862,8 +965,20 @@ def api(context: dict, output: Path) -> None:
         return measured_span()
 
     def measured_application():
+        nonlocal restore_http_phases
         # Uvicorn still imports the normal app on its running loop, before lifespan.
         from server.main import app
+
+        if restore_http_phases is None:
+            from importlib import import_module
+
+            restore_http_phases = _observe_http_phases(
+                import_module("server.transport.http"),
+                sample_var,
+                origin,
+                emit_cost,
+                current_query_tag,
+            )
 
         async def measured(scope, receive, send):
             nonlocal ordinal
@@ -933,6 +1048,8 @@ def api(context: dict, output: Path) -> None:
             reload=False,
         )
     finally:
+        if restore_http_phases is not None:
+            restore_http_phases()
         otel.traced = original_traced
         emit_cost([3, ordinal, emitted, dropped, int(disabled)])
         if stream is not None:
