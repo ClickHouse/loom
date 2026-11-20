@@ -70,7 +70,7 @@ class _World(_CrawlWorld, _PublicationWorld):
 
     async def read_live(self, ch: Any, *, all_deployments: bool):
         assert ch is self and all_deployments
-        return [{"schema_version": 112}]
+        return [{"schema_version": 114}]
 
     async def cost_event(self, **values: Any) -> None:
         assert values["org"] == "team" and values["namespace"] == _MIRROR

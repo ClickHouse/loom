@@ -45,3 +45,16 @@ async def test_registration_requires_the_crawl_migration_on_every_process(
         assert draft.source is source and draft.permit is permit
         assert validation.await_count == 2
     assert required_versions == [114]
+
+
+@pytest.mark.asyncio
+async def test_composed_fixture_advertises_the_crawl_migration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import instances
+    from tests.unit.test_crawl_composed_flow import _World
+
+    world = _World.__new__(_World)
+    monkeypatch.setattr(instances, "read_live", world.read_live)
+
+    assert await crawl_sources.machines.fleet_at(world, 114)
