@@ -91,10 +91,11 @@ async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, ren
         assert result.moved_skipped == 1 and not result.failures
         assert (result.tombstoned, result.demoted, result.anonymized) == (0, 0, 0)
         history = await first.query_one(
-            "SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String}",
+            "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {org:String}",
             {"org": source.org},
         )
-        assert history["n"] == 2
+        # Equal version stamps share the history sort key and can merge.
+        assert history["n"] == (1 if same_version else 2)
     finally:
         if task is not None and not task.done():
             task.cancel()
