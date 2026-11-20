@@ -1239,8 +1239,8 @@ class MemorySweepExpiredOutput(BaseModel):
     # Rows left as they are because a lock refuses their post-action; reads still
     # hide them.
     locked_skipped: int = 0
-    # Rows left for the next pass because their head moved on since the read (renewed,
-    # rewritten or deleted); 0 under the ClickHouse authority.
+    # Rows deferred because their source changed or a second batch admission refused
+    # them, including unchanged peers in that batch; 0 under the ClickHouse authority.
     moved_skipped: int = 0
     # Echo of the request's `dry_run`.
     dry_run: bool = False

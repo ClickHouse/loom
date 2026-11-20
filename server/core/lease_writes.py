@@ -59,7 +59,10 @@ async def _take_all(names: list[str], ttl: float, ch: Any) -> list[leases.Lease]
         for start in range(0, len(names), size):
             tasks = [asyncio.create_task(take(name)) for name in names[start : start + size]]
             try:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Only this finally cancels acquisition tasks, once each. Repeated
+                # caller cancellation must not interrupt a take's own release.
+                gathered = asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.shield(gathered)
                 for result in results:
                     if isinstance(result, BaseException):
                         raise result

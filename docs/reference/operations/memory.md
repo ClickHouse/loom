@@ -2271,7 +2271,7 @@ Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker
 | `demoted` | `int` | Rows demoted: expiry cleared, confidence scaled down (or would be, under `dry_run`). |
 | `anonymized` | `int` | Rows anonymized: value replaced by a marker, embeddings tombstoned, the shell row kept (or would be, under `dry_run`). |
 | `locked_skipped` | `int` | Rows left as they are because a lock refuses their post-action; reads still hide them. |
-| `moved_skipped` | `int` | Rows left for the next pass because their head moved on since the read (renewed, rewritten or deleted); 0 under the ClickHouse authority. |
+| `moved_skipped` | `int` | Rows deferred because their source changed or a second batch admission refused them, including unchanged peers in that batch; 0 under the ClickHouse authority. |
 | `dry_run` | `bool` | Echo of the request's `dry_run`. |
 | `sample` | `list[dict[str, Any]]` | Up to 20 handled rows: memory_key, namespace, agent, action, expired_at. |
 | `failures` | `list[str]` | Errors of the pass (`scan:`, `insert:`, `mirror:`); empty on a clean run. |

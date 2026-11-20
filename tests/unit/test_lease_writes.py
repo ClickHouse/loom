@@ -441,3 +441,136 @@ async def test_admission_settlement_records_every_holder_before_cancellation(
         finish.set()
         task.cancel()
         await native_gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancellations", [0, 1, 2])
+async def test_acquisition_cancellation_waits_for_real_take_cleanup(monkeypatch, cancellations):
+    from server.core import leases
+    from tests.unit.claims_fake import FakeLockTable
+
+    accepted, finish_take = asyncio.Event(), asyncio.Event()
+    releasing, finish_release = asyncio.Event(), asyncio.Event()
+    insert = AsyncMock()
+
+    class Keeper(FakeLockTable):
+        async def execute(self, sql, params=None, **kw):
+            if sql == leases.LOCK_RELEASE:
+                releasing.set()
+                await finish_release.wait()
+            await super().execute(sql, params=params, **kw)
+            if sql == leases.LOCK_INSERT:
+                accepted.set()
+                await finish_take.wait()
+
+    keeper = Keeper()
+
+    async def write():
+        async with writes.fenced_many(["key"], ch=keeper, wait_s=60):
+            await insert()
+
+    task = asyncio.create_task(write())
+    try:
+        await accepted.wait()
+        assert keeper.holder("key") is not None
+        if cancellations:
+            task.cancel("first")
+        else:
+            finish_take.set()
+        await releasing.wait()
+        if cancellations > 1:
+            task.cancel("second")
+            await asyncio.sleep(0)
+        finish_release.set()
+        if cancellations:
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await task
+            insert.assert_not_awaited()
+        else:
+            await task
+            insert.assert_awaited_once()
+        assert keeper.keys == {}, "accepted acquisition must be released before returning"
+        if cancellations:
+            assert caught.value.args == ("first",)
+    finally:
+        finish_take.set()
+        finish_release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [asyncio.CancelledError, RuntimeError])
+@pytest.mark.parametrize("cancellations", [0, 1, 2])
+async def test_backend_failure_cleanup_finishes_before_caller_cancellation(
+    monkeypatch, failure, cancellations
+):
+    from server.core import leases
+    from tests.unit.claims_fake import FakeLockTable
+
+    releasing, finish_release, settling = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original = failure("backend failed after accepting the holder")
+    insert = AsyncMock()
+    completed, interrupted = 0, False
+    settle = writes._settle_tasks
+
+    class Keeper(FakeLockTable):
+        async def execute(self, sql, params=None, **kw):
+            nonlocal completed, interrupted
+            if sql == leases.LOCK_RELEASE:
+                releasing.set()
+                try:
+                    await finish_release.wait()
+                except BaseException:
+                    interrupted = True
+                    raise
+                completed += 1
+            await super().execute(sql, params=params, **kw)
+            if sql == leases.LOCK_INSERT:
+                raise original
+
+    async def observe_settle(tasks, held):
+        settling.set()
+        await settle(tasks, held)
+
+    keeper = Keeper()
+    monkeypatch.setattr(writes, "_settle_tasks", observe_settle)
+
+    async def write():
+        try:
+            async with writes.fenced_many(["key"], ch=keeper, wait_s=60):
+                await insert()
+        except (asyncio.CancelledError, leases.LeaseUnavailable) as error:
+            return error
+        pytest.fail("failed acquisition cannot enter the writer")
+
+    task = asyncio.create_task(write())
+    try:
+        async with asyncio.timeout(3):
+            await releasing.wait()
+            assert keeper.holder("key") is not None
+            if cancellations:
+                task.cancel("caller-first")
+                await settling.wait()
+                await asyncio.sleep(0)
+            if cancellations > 1:
+                task.cancel("caller-second")
+                await asyncio.sleep(0)
+            finish_release.set()
+            result = await task
+        assert keeper.keys == {}, "backend failure must release its accepted holder"
+        assert not interrupted
+        assert completed == 1
+        insert.assert_not_awaited()
+        if cancellations:
+            assert isinstance(result, asyncio.CancelledError)
+            assert result.args == ("caller-first",)
+        elif failure is asyncio.CancelledError:
+            assert result is original
+        else:
+            assert isinstance(result, leases.LeaseUnavailable)
+            assert result.__cause__ is original
+    finally:
+        finish_release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

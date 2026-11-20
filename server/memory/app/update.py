@@ -971,8 +971,8 @@ async def _write_revision(
         memory_row=memory_row,
         policy=(await cfg_task).policy,
     )
-    # If searchable, refresh the embedding row too — in the same round trip
-    # as the version row (as memory.set's dual write).
+    # If searchable, prepare the embedding row too. The authority commits the
+    # memory row before publishing its embedding, as memory.set does.
     emb_rows = (
         [
             _update_embedding_row(
