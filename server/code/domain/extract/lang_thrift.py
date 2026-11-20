@@ -69,7 +69,7 @@ _PAIRS: dict[str, str] = {"(": ")", "[": "]", "{": "}", "<": ">"}
 # to the end of the file, as Thrift's lexer reads them.
 _TOKEN_RE = re.compile(
     r"//[^\n]*|#[^\n]*|/\*.*?(?:\*/|\Z)|\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?"
-    r"|[A-Za-z_][A-Za-z0-9_.]*|-?\d[\w.+-]*|[{}()<>,;:=\[\]]|\S",
+    r"|[A-Za-z_][A-Za-z0-9_.]*|[+-]?\d[\w.+-]*|[{}()<>,;:=\[\]]|\S",
     re.S,
 )
 
@@ -132,7 +132,9 @@ def _join(toks: list[_Tok]) -> str:
 class _Parser:
     def __init__(self, path: str, toks: list[_Tok]) -> None:
         self.path = path
-        self.mod = module_scope(path)
+        scope = module_scope(path)
+        # A root file needs a dotted scope to pass the script-name gate.
+        self.mod = scope if "." in scope else f"{scope}.thrift"
         self.toks = toks
         self.i = 0
         self.units = ThriftUnits()
@@ -198,6 +200,8 @@ class _Parser:
         if close is None:
             return j + 1
         opener = self.toks[j].text
+        if opener == "{":
+            return min(self._closes.get(j, stop) + 1, stop)
         depth = 0
         while j < stop:
             t = self.toks[j].text
@@ -210,12 +214,12 @@ class _Parser:
             j += 1
         return stop
 
-    def _field(self, j: int, stop: int) -> int:
+    def _field(self, j: int, stop: int) -> tuple[int, tuple[int, int] | None]:
         """One field, `[1:] [required|optional] Type [&] name [= value] [xsd options]
         [(annotations)]`, as in the IDL grammar, where the numeric ID is optional: record
-        its type and return the index after it."""
+        its type and return the index after it plus an optional attributes range."""
         t = self.toks[j].text
-        if t.lstrip("-").isdigit() and j + 1 < stop and self.toks[j + 1].text == ":":
+        if t.lstrip("+-").isdigit() and j + 1 < stop and self.toks[j + 1].text == ":":
             j += 2
         if j < stop and self.toks[j].text in _FIELD_REQ:
             j += 1
@@ -229,22 +233,31 @@ class _Parser:
             j = self._group_end(j + 1, stop)
         while j < stop and self.toks[j].text in _XSD_FIELD_FLAGS:
             j += 1
+        attrs = None
         if j + 1 < stop and self.toks[j].text == "xsd_attrs" and self.toks[j + 1].text == "{":
             attrs_end = self._group_end(j + 1, stop)
-            self._fields(j + 2, attrs_end - 1)
+            attrs = (j + 2, attrs_end - 1)
             j = attrs_end
         if j < stop and self.toks[j].text == "(":
             j = self._group_end(j, stop)
-        return j
+        return j, attrs
 
     def _fields(self, j: int, stop: int) -> None:
         """Field lists between `j` and `stop`, with or without numeric IDs and separators:
         record each field's type."""
-        while j < stop:
-            if self.toks[j].text in ",;":
-                j += 1
-                continue
-            j = max(self._field(j, stop), j + 1)
+        pending = [(j, stop)]
+        while pending:
+            j, stop = pending.pop()
+            while j < stop:
+                if self.toks[j].text in ",;":
+                    j += 1
+                    continue
+                after, attrs = self._field(j, stop)
+                if attrs is not None:
+                    pending.append((after, stop))
+                    j, stop = attrs
+                else:
+                    j = max(after, j + 1)
 
     def _block_end(self, open_idx: int) -> int:
         j = self._closes.get(open_idx)
@@ -270,16 +283,7 @@ class _Parser:
             ):
                 fname = self.toks[ret_end].text
                 args_open = ret_end + 1
-                k = args_open
-                depth = 0
-                while k < close:
-                    if self.toks[k].text == "(":
-                        depth += 1
-                    elif self.toks[k].text == ")":
-                        depth -= 1
-                        if depth == 0:
-                            break
-                    k += 1
+                k = self._group_end(args_open, close) - 1
                 self._fields(args_open + 1, k)
                 end = k
                 if (
@@ -288,18 +292,11 @@ class _Parser:
                     and k + 2 < close
                     and self.toks[k + 2].text == "("
                 ):
-                    m = k + 2
-                    depth = 0
-                    while m < close:
-                        if self.toks[m].text == "(":
-                            depth += 1
-                        elif self.toks[m].text == ")":
-                            depth -= 1
-                            if depth == 0:
-                                break
-                        m += 1
+                    m = self._group_end(k + 2, close) - 1
                     self._fields(k + 3, m)
                     end = m
+                if end + 1 < close and self.toks[end + 1].text == "(":
+                    end = self._group_end(end + 1, close) - 1
                 sig = _join(self.toks[fstart : end + 1])
                 self._add(
                     fname, KIND_FUNCTION, sig, self.toks[fstart].line, self.toks[end].line, name

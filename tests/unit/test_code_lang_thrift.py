@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from server.code.app.index.ingest_parse import LANE_UNIT_LANGS, _lane_module
 from server.code.domain.extract import lang_thrift as th
@@ -206,3 +209,83 @@ def test_unclosed_headers_repeated_cost_linear_time() -> None:
         return time.perf_counter() - t
 
     assert_linear(cost, 2_000, 8_000)
+
+
+async def test_root_file_types_bind_through_the_production_name_gate() -> None:
+    from server.code.app.index.ingest_edges import _lane_site_edges
+
+    shared = th.parse_thrift("shared.thrift", b"struct Payload {}\nservice Base {}\n")
+    caller = th.parse_thrift(
+        "main.thrift",
+        b'include "shared.thrift"\nservice Child extends shared.Base {\n'
+        b"  shared.Payload get()\n}\n",
+    )
+    table = {
+        symbol.name: [(symbol.qualified_name, symbol.qualified_name, symbol.kind)]
+        for symbol in shared.symbols
+    }
+    table["Base"].append(("native-base", "Native::Base", "interface"))
+    table["Payload"].append(("native-payload", "Native::Payload", "struct"))
+    repo = Mock(name_candidates=AsyncMock(return_value=table))
+    edges = await _lane_site_edges(repo, "o", "n", caller)
+    assert {
+        (edge.from_qualified_name, edge.to_qualified_name, edge.edge_kind, edge.confidence)
+        for edge in edges
+    } == {
+        ("main.thrift::Child", "shared.thrift::Base", "inherits", 0.6),
+        ("main.thrift::Child.get", "shared.thrift::Payload", "uses_type", 0.6),
+    }
+    repo.name_candidates.assert_awaited_once_with("o", "n", ["Base", "Payload"])
+
+
+def test_function_annotations_do_not_become_type_sites() -> None:
+    src = b"""struct Audit { 1: string value }
+service S {
+  void ping()
+  (Audit = "metadata")
+  Audit fetch()
+}
+"""
+    assert th.thrift_units("idl/main.thrift", src.decode()).sites == [(5, "Audit", "field_type")]
+    assert _uses_type("idl/main.thrift", src) == {("S.fetch", "Audit")}
+
+
+@pytest.mark.parametrize("default", ["+1", "-1", "+1.5e+2", "-1.5e-2"])
+@pytest.mark.parametrize("field_id", ["", "+1: "])
+def test_signed_defaults_preserve_the_following_id_less_field(default: str, field_id: str) -> None:
+    src = (
+        "struct Item { 1: string value }\n"
+        f"struct Box {{\n  {field_id}double scale = {default}\n  Item item\n}}\n"
+    ).encode()
+    assert _uses_type("idl/main.thrift", src) == {("Box", "Item")}
+
+
+def _nested_attrs(n: int) -> str:
+    return (
+        "struct Leaf {}\nstruct A {\n"
+        + "1: A a xsd_attrs {\n" * n
+        + "1: Leaf leaf\n"
+        + "}\n" * n
+        + "2: Leaf tail\n}\n"
+    )
+
+
+def test_nested_xsd_attrs_preserve_source_order_without_recursion() -> None:
+    depth = 1_500
+    units = th.thrift_units("idl/main.thrift", _nested_attrs(depth))
+    assert [symbol.name for symbol in units.symbols] == ["Leaf", "A"]
+    assert units.sites == [
+        *((line, "A", "field_type") for line in range(3, depth + 3)),
+        (depth + 3, "Leaf", "field_type"),
+        (depth * 2 + 4, "Leaf", "field_type"),
+    ]
+
+
+def test_nested_xsd_attrs_cost_linear_time() -> None:
+    def cost(n: int) -> float:
+        text = _nested_attrs(n)
+        started = time.perf_counter()
+        th.thrift_units("idl/main.thrift", text)
+        return time.perf_counter() - started
+
+    assert_linear(cost, 500, 2_000)
