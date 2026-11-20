@@ -46,7 +46,7 @@ see [agent integration](../../guides/agent-integration.md) and
 `LoomKnowledgeRetriever` searches the namespace's documents (`knowledge.search`) and
 `LoomMemoryRetriever` its memories (`memory.search`). Both are LangChain `BaseRetriever`s,
 so they work with `invoke`, in a chain, and as an agent tool through
-`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]==1.3.0rc1'`
+`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]==1.3.0'`
 (`langchain-core` 1.x).
 
 ```python
@@ -91,7 +91,7 @@ A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` 
 as its `store` for long-term memory.
 
 Install the TypeScript SDK and its framework peer with
-`npm install @clickhouse/loom@1.3.0-rc.1 '@langchain/core@^1.0.0'`.
+`npm install @clickhouse/loom@1.3.0 '@langchain/core@^1.0.0'`.
 The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` and take the same
 options in camelCase, with the memory retriever's user, session, run and agent in one
 `scope`:

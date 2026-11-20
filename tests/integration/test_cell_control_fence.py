@@ -393,7 +393,9 @@ async def test_inflight_finalizer_cannot_release_after_new_owner_rewidens(
         old = await claim(client, await read(client))
         task = asyncio.create_task(client.post("/test-finalize/first", json=expected(old)))
         await asyncio.wait_for(started.wait(), 3)
-        await local_admin.execute("SELECT pg_terminate_backend($1)", a.get_server_pid())
+        assert await local_admin.fetchval(
+            "SELECT pg_terminate_backend($1, 5000)", a.get_server_pid()
+        )
         await apg.take_lock(b, "new controller")
         newer = await claim(client, await read(client))
 

@@ -4,6 +4,8 @@ import ctypes
 import os
 import select
 import signal
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -41,16 +43,18 @@ def _wait_owned(pid: int, start: str) -> int:
 
 def test_an_exact_single_thread_zombie_is_proven_stopped_before_wait() -> None:
     """A captured child has exited, even while its parent retains the wait status."""
-    read_fd, write_fd = os.pipe()
-    pid = os.fork()
-    if pid == 0:
-        os.close(write_fd)
-        os.read(read_fd, 1)
-        os._exit(0)
-    os.close(read_fd)
-    start = None
-    released = False
+    # Fork hooks can start exporter threads; exec gives this witness one thread.
+    child = subprocess.Popen(
+        [sys.executable, "-I", "-c", "import os; os.write(1, b'r'); os.read(0, 1)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env={},
+    )
+    assert child.stdin is not None and child.stdout is not None
+    pid = child.pid
     try:
+        assert select.select([child.stdout], [], [], 2.0)[0] == [child.stdout]
+        assert child.stdout.read(1) == b"r"
         state, parent, start, threads = _stat(pid)
         assert state != "Z" and parent == os.getpid() and threads == 1
         proof = provider_process.host_proof().split("|")
@@ -61,8 +65,8 @@ def test_an_exact_single_thread_zombie_is_proven_stopped_before_wait() -> None:
         wrong_namespace = proof.copy()
         wrong_namespace[3] = str(int(proof[3]) + 1)
         assert not provider_process.proves_stopped("|".join(wrong_namespace))
-        os.write(write_fd, b"x")
-        released = True
+        child.stdin.write(b"x")
+        child.stdin.flush()
         end = time.monotonic() + 2.0
         while time.monotonic() < end:
             state, parent, observed_start, threads = _stat(pid)
@@ -75,14 +79,18 @@ def test_an_exact_single_thread_zombie_is_proven_stopped_before_wait() -> None:
         )
         assert provider_process.proves_stopped(exact)
     finally:
-        if not released:
-            os.write(write_fd, b"x")
-        os.close(write_fd)
-        if start is None:
-            _, parent, start, _ = _stat(pid)
-            assert parent == os.getpid()
-        status = _wait_owned(pid, start)
-        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+        child.stdin.close()
+        try:
+            status = child.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=2.0)
+            raise AssertionError(
+                "Owned witness child did not settle within cleanup allowance"
+            ) from None
+        finally:
+            child.stdout.close()
+        assert status == 0
     assert provider_process.proves_stopped(exact), "After waitpid, absence proves death"
 
 
