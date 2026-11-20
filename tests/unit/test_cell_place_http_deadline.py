@@ -9,6 +9,7 @@ import time
 import httpcore
 import httpx
 import pytest
+import pytest_asyncio
 from httpcore._backends.mock import AsyncMockBackend, AsyncMockStream
 
 from server.cli import cell_control, cell_place
@@ -20,13 +21,27 @@ local = helpers.local
 invoke_place = helpers.invoke_place
 
 _DIRECTORY = cell_place._directory
+pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 
-@pytest.fixture
-def exchange(local, monkeypatch):
+@pytest_asyncio.fixture(loop_scope="function")
+async def exchange(local, monkeypatch):
     conn, _ = local
-    # The work timer stays real; scheduler delay cannot spend the fake close budget.
-    phase_clock = ManualClock()
+    before = set(asyncio.all_tasks())
+    # All exchange timers share simulated time; CPU scheduling spends no HTTP budget.
+    loop = asyncio.get_running_loop()
+    phase_clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            phase_clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    monkeypatch.setattr(loop, "time", phase_clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
     monkeypatch.setattr(cell_control, "time", phase_clock)
     monkeypatch.setattr(cell_control.pg, "time", phase_clock)
     events = []
@@ -111,7 +126,12 @@ def exchange(local, monkeypatch):
     monkeypatch.setattr(cell_place, "REQUEST_S", 0.1, raising=False)
     monkeypatch.setattr(cell_control.Owner, "call", timed)
     monkeypatch.setattr(settings, "router_operator_token", "inert-test-token")
-    return conn, events, entered, state
+    yield conn, events, entered, state
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "the exchange leaves no task on its private loop"
 
 
 @pytest.mark.parametrize("blocking", ["response", "client-exit"])
