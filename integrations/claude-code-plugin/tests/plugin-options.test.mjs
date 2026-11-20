@@ -43,14 +43,18 @@ test("planMaterialize: only when the option is the sole token source", () => {
     "token file exists",
   );
   const p = planMaterialize(
-    { CLAUDE_PLUGIN_OPTION_TOKEN: "t", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://h/" },
+    { CLAUDE_PLUGIN_OPTION_TOKEN: "t", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://h/mcp?toolset=coding" },
     { configExists: false, tokenFileExists: false },
   );
   assert.deepEqual(p, { write: true, url: "https://h", reason: "no config" });
   // the url saved beside the token is the MCP entry's: the option outranks LOOM_BASE_URL
   assert.equal(
     planMaterialize(
-      { CLAUDE_PLUGIN_OPTION_TOKEN: "t", LOOM_BASE_URL: "https://env", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt" },
+      {
+        CLAUDE_PLUGIN_OPTION_TOKEN: "t",
+        LOOM_BASE_URL: "https://env",
+        CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt/mcp?toolset=coding",
+      },
       { configExists: false, tokenFileExists: false },
     ).url,
     "https://opt",
@@ -61,7 +65,10 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
   const dir = tmp();
   const configPath = path.join(dir, ".loom", "config.json");
   const tokenPath = path.join(dir, ".loom", "token");
-  const env = { CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok", CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://loom.test/" };
+  const env = {
+    CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok",
+    CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://loom.test/mcp?toolset=coding",
+  };
   const r1 = applyPluginOptions(env, { configPath, tokenPath });
   assert.equal(r1.write, true);
   const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -96,7 +103,7 @@ test("applyPluginOptions writes token + url once, 0600, merging other keys", () 
 
 test("installTokenNotice: when the helper will send a config token saved for another server", () => {
   const stale = { write: false, reason: "no option", configUrl: "https://old", configHasToken: true };
-  const named = { CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://new/" };
+  const named = { CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://new/mcp?toolset=coding" };
   const line = installTokenNotice(stale, named);
   assert.ok(line.includes("saved for https://old, which the loom MCP tools send to https://new."), line);
   assert.ok(line.includes("put a https://new token in that file"), line);
@@ -107,7 +114,10 @@ test("installTokenNotice: when the helper will send a config token saved for ano
   // nothing names the entry's server: it fell back to localhost, and the fix is to name the config's server
   const fallback = installTokenNotice(stale, {});
   assert.ok(fallback.includes("send to http://localhost:7777, the MCP entry's default"), fallback);
-  assert.ok(fallback.includes("--config server_url=https://old, or export LOOM_BASE_URL=https://old"), fallback);
+  assert.ok(
+    fallback.includes('--config "server_url=https://old/mcp?toolset=coding", or export LOOM_BASE_URL=https://old'),
+    fallback,
+  );
   assert.equal(fallback.includes("localhost:7777 token"), false);
   assert.equal(installTokenNotice({ ...stale, configUrl: "https://new" }, named), "");
   assert.equal(installTokenNotice({ ...stale, configUrl: "" }, named), "");
@@ -119,20 +129,44 @@ test("installTokenNotice: when the helper will send a config token saved for ano
 
 test("mcpServerUrl follows the MCP entry: the option, then LOOM_BASE_URL, then localhost", () => {
   assert.equal(
-    mcpServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt/", LOOM_BASE_URL: "https://env" }),
+    mcpServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://opt/mcp?toolset=coding", LOOM_BASE_URL: "https://env" }),
     "https://opt",
   );
-  assert.equal(mcpServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env");
+  assert.equal(mcpServerUrl({ LOOM_BASE_URL: "https://env/" }), "https://env/");
   assert.equal(mcpServerUrl({}), "http://localhost:7777");
 });
 
-test("sameServer compares origins and folds the loopback spellings", () => {
-  assert.equal(sameServer("http://127.0.0.1:7777", "http://localhost:7777/"), true);
-  assert.equal(sameServer("https://a.example/", "https://A.example"), true);
+test("sameServer preserves literal paths and folds the loopback spellings", () => {
+  assert.equal(sameServer("http://127.0.0.1:7777/proxy/", "http://localhost:7777/proxy/"), true);
+  assert.equal(sameServer("https://a.example/", "https://A.example/"), true);
+  assert.equal(sameServer("https://a.example", "https://a.example/"), false);
+  assert.equal(sameServer("https://a.example/proxy", "https://a.example/proxy/"), false);
   assert.equal(sameServer("https://a.example", "https://a.example:8443"), false);
   assert.equal(sameServer("https://a.example", "http://a.example"), false);
   assert.equal(sameServer("not a url", "not a url/"), true); // unparsable: string compare
   assert.equal(sameServer("", "http://localhost:7777"), false);
+});
+
+test("the token mismatch notice retains both literal proxy bases", () => {
+  const dir = tmp();
+  const configPath = path.join(dir, "config.json");
+  try {
+    for (const [saved, configured] of [
+      ["https://loom.test/proxy/", "https://loom.test/proxy"],
+      ["https://loom.test/proxy", "https://loom.test/proxy/"],
+      ["https://loom.test/", "https://loom.test"],
+    ]) {
+      fs.writeFileSync(configPath, JSON.stringify({ url: saved, token: "cfg.tok" }));
+      const env = { LOOM_CLIENT: "claude-code", CLAUDE_PLUGIN_OPTION_SERVER_URL: `${configured}/mcp` };
+      const plan = applyPluginOptions(env, { configPath, tokenPath: path.join(dir, "absent-token") });
+      assert.equal(plan.configUrl, saved);
+      const notice = installTokenNotice(plan, env);
+      assert.ok(notice.includes(`saved for ${saved},`), notice);
+      assert.ok(notice.includes(`send to ${configured}.`), notice);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the hook saves the install URL for the status script, removes it when the option is gone", () => {
@@ -140,14 +174,14 @@ test("the hook saves the install URL for the status script, removes it when the 
   const baseUrl = process.env.LOOM_BASE_URL;
   try {
     assert.equal(installServerUrl(state), "");
-    saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/" }, state);
+    saveInstallServerUrl({ CLAUDE_PLUGIN_OPTION_SERVER_URL: "https://b/mcp?toolset=coding" }, state);
     assert.equal(installServerUrl(state), "https://b");
     // the MCP entry's order: the saved option first, then LOOM_BASE_URL
     process.env.LOOM_BASE_URL = "https://env/";
     assert.equal(statusServerUrl(state), "https://b");
     saveInstallServerUrl({}, state);
     assert.equal(installServerUrl(state), "");
-    assert.equal(statusServerUrl(state), "https://env");
+    assert.equal(statusServerUrl(state), "https://env/");
     delete process.env.LOOM_BASE_URL;
     // nothing saved or set: the MCP entry's default, never the config's url
     assert.equal(statusServerUrl(state), mcpServerUrl(process.env));
@@ -159,7 +193,7 @@ test("the hook saves the install URL for the status script, removes it when the 
   }
 });
 
-test("resolvers: the option ranks after the env var and before the files", async () => {
+test("the installed endpoint keeps hooks on the MCP server despite a different default base", async () => {
   const dir = tmp();
   fs.mkdirSync(path.join(dir, ".loom"));
   fs.writeFileSync(path.join(dir, ".loom", "config.json"), JSON.stringify({ token: "cfg.tok", url: "https://cfg" }));
@@ -169,7 +203,7 @@ test("resolvers: the option ranks after the env var and before the files", async
     delete process.env.LOOM_API_KEY;
     delete process.env.LOOM_BASE_URL;
     process.env.CLAUDE_PLUGIN_OPTION_TOKEN = "opt.tok";
-    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = "https://opt/";
+    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = "https://opt/mcp?toolset=coding";
     const m = await import(`../lib/loom-client.mjs?t=${Date.now()}`);
     assert.equal(m.resolveToken(), "opt.tok");
     assert.equal(m.tokenLookup().kind, "option");
@@ -181,25 +215,20 @@ test("resolvers: the option ranks after the env var and before the files", async
     process.env.LOOM_BASE_URL = "https://env";
     assert.equal(m.resolveToken(), "env.tok");
     assert.equal(m.tokenLookup().kind, "env");
-    assert.equal(m.resolveServerUrl(), "https://env");
+    assert.equal(m.resolveServerUrl(), "https://opt");
   } finally {
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
     Object.assign(process.env, saved);
   }
 });
 
-test("the manifest declares the options and the MCP url takes the server and toolset ones", () => {
+test("the manifest declares one complete endpoint without a separate toolset", () => {
   const m = JSON.parse(fs.readFileSync(new URL("../.claude-plugin/plugin.json", import.meta.url), "utf8"));
-  assert.equal(m.userConfig.server_url.default, "${LOOM_BASE_URL:-http://localhost:7777}");
+  assert.equal(m.userConfig.server_url.default, "${LOOM_BASE_URL:-http://localhost:7777}/mcp?toolset=coding");
   assert.equal(m.userConfig.token.sensitive, true);
   assert.equal(m.userConfig.token.required, undefined);
-  // The listing is a setting; `coding` unless the user asks for a union
-  assert.equal(m.userConfig.toolset.default, "coding");
-  assert.match(m.userConfig.toolset.description, /coding\+tracker/);
+  assert.equal(m.userConfig.toolset, undefined);
   const mcp = JSON.parse(fs.readFileSync(new URL("../.mcp.json", import.meta.url), "utf8"));
-  assert.equal(
-    mcp.mcpServers.loom.url,
-    "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}",
-  );
+  assert.equal(mcp.mcpServers.loom.url, "${user_config.server_url}");
   assert.match(mcp.mcpServers.loom.headersHelper, /loom-mcp-headers\.mjs/);
 });

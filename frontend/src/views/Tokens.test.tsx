@@ -580,6 +580,9 @@ describe("the token form", () => {
     );
     expect(screen.getByLabelText(/^Connect/)).toHaveTextContent("Claude Code");
     expect(screen.getByTestId("claude-code-recommended")).toBeInTheDocument();
+    expect(screen.getByTestId("claude-code-recommended")).toHaveTextContent(
+      "server_url=http://loom.test/mcp?toolset=coding",
+    );
   });
 
   it("the result of a `*` token whose claim names a collection names it, and no other", async () => {

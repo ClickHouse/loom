@@ -35,8 +35,9 @@ tool list runs through `loom_op {op: "tracker.similar", arguments: {…}}`;
 `loom_op {op: "help", query: "<words>"}` lists matching ops and their
 arguments. Your host can only call tools it was shown, so never call an
 unlisted `loom_*` name directly. The tracker tools are listed when the MCP
-entry mounts `/mcp?toolset=coding+tracker` (the plugin's `toolset` option),
-or a second entry mounts `/mcp?toolset=tracker`.
+entry mounts `/mcp?toolset=coding+tracker` (in Claude Code, include that
+query in the complete `server_url` option), or a second entry mounts
+`/mcp?toolset=tracker`.
 
 ## The planes a hint points at
 

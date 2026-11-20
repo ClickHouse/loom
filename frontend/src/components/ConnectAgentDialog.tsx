@@ -58,7 +58,7 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
 
 /** A single-user server takes no token: the plugin needs only the address. */
 export function AuthOffConnect({ instructionsId }: { instructionsId?: string }) {
-  const lines = `${pluginInstallLines("claude-code")} --config server_url=${window.location.origin}`;
+  const lines = `${pluginInstallLines("claude-code")} --config "server_url=${window.location.origin}/mcp?toolset=coding"`;
   return (
     <div className="mt-2">
       <p id={instructionsId} tabIndex={instructionsId ? -1 : undefined} className="text-xs text-text-muted mb-1">

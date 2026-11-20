@@ -454,7 +454,7 @@ def claude_code_checks(
             out.append(duplicate_registration_check(hit[0], servers[hit[0]]))
     elif plugin:
         # The plugin mounts the server from its own `.mcp.json`
-        # (`${user_config.server_url}/mcp`, token via the headers helper, same
+        # (`${user_config.server_url}`, token via the headers helper, same
         # resolution order as `client:token`). A user-scope entry on top would
         # register the same server twice, so this is the wired state, not a gap.
         out.append(
@@ -474,7 +474,8 @@ def claude_code_checks(
                 WARN,
                 f"no user-scope MCP server in ~/.claude.json points at {base_url} "
                 "and the plugin is not installed. Fix: `claude plugin marketplace add "
-                "ClickHouse/loom && claude plugin install loom@loom`, or "
+                "ClickHouse/loom && claude plugin install loom@loom --config "
+                f'"server_url={base_url.rstrip("/")}/mcp?toolset=coding"`, or '
                 "`loom install --client claude-code`.",
             )
         )
@@ -485,7 +486,9 @@ def claude_code_checks(
             "client:claude-code:plugin",
             WARN,
             "the loom plugin is not installed: no hooks, no primer, no capture. Fix: "
-            "`claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom`.",
+            "`claude plugin marketplace add ClickHouse/loom && "
+            "claude plugin install loom@loom --config "
+            f'"server_url={base_url.rstrip("/")}/mcp?toolset=coding"`.',
         )
     )
     return out

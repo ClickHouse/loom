@@ -36,6 +36,7 @@ import {
   formatMcpConfig,
   isClientId,
   pluginInstallLines,
+  withToolset,
   type ClientId,
 } from "../lib/clients";
 import {
@@ -1213,7 +1214,7 @@ function ClientConnect({ client, token, mcpUrl }: { client: ClientId; token: str
             (chmod 600):
           </div>
           <CodeBlock
-            text={JSON.stringify({ url: mcpUrl.replace(/\/mcp$/, ""), token }, null, 2)}
+            text={JSON.stringify({ url: mcpUrl.replace(/\/mcp(?:\?.*)?$/, ""), token }, null, 2)}
             label="Copy"
             ariaLabel="Copy config.json"
           />
@@ -1221,7 +1222,7 @@ function ClientConnect({ client, token, mcpUrl }: { client: ClientId; token: str
             2. Install the plugin; it mounts the Loom tools itself and reads that file. Leave the token prompt empty.
           </div>
           <pre className="text-xs font-mono bg-surface-2 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
-            {pluginInstallLines("claude-code") || ""}
+            {`${pluginInstallLines("claude-code")} --config "server_url=${withToolset(mcpUrl, "coding")}"`}
           </pre>
           <div className="text-xs text-text-muted leading-relaxed pt-1 border-t border-border">
             <span className="font-medium text-text">Tools only, no hooks:</span> register the server below instead. Pick

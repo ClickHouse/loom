@@ -95,18 +95,23 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (0600), and the primer points the user to the claim page (`claim_url`), where
   the code works once with a password of their own; a single-user server
   returns its one identity, so there is no claim code and the primer just says it connected. The MCP
-  headers helper cannot see install options, so with no LOOM_BASE_URL or saved
-  URL it waits for this hook's credential (`LOOM_MCP_HOOK_WAIT_MS`, 5 s, under
-  Codex's 10 s helper limit) before signing up through the same lock itself.
+  headers helper cannot see the token install option. Outside workload agent
+  mode, with no resolved credential, Claude Code's helper waits for this hook's
+  credential even when the endpoint is known. Codex's helper for its fixed MCP
+  entry waits only when neither `LOOM_BASE_URL` nor `config.json.url` names a server. The
+  wait is bounded by `LOOM_MCP_HOOK_WAIT_MS` (5 s, under Codex's 10 s helper
+  limit), before the helper signs up through the same lock itself.
   `LOOM_AUTO_SIGNUP=off` disables
   it; a server without self-signup (404) or rate-limiting it (429) leaves the
   machine without a credential and the primer says how to get a token by
   hand. A token given as the `token` install option is first copied into
   ~/.loom/config.json, where the headers helper can read it. In Claude Code,
   when that helper will send the config's token and the config names another
-  server than the MCP entry's, the primer says so. The `server_url` option
-  is saved to a tmp state file (`loom-install-<hash>.json`, one per plugin
-  install) for the status script, whose shell carries no option.
+  server than the MCP entry's, the primer says so. When the `server_url` option
+  is supplied, its derived control-plane base (including any proxy prefix,
+  without `/mcp` or the query) is saved to a tmp state file
+  (`loom-install-<hash>.json`, one per plugin install) for the status script,
+  whose shell carries no option.
 - **loom-session-start, primer.** One `context.pack` (mode startup, the
   project's working-memory block first, the recent-runs shortlist only with
   `LOOM_CONTEXT_RUNS=true`), plus: the repository tag line; in an indexed
@@ -269,12 +274,26 @@ landed and the terminal prints `Hook cancelled`.
 ## Settings
 
 Install-time options (`claude plugin install loom@loom --config key=value`)
-reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url` and `token`
-(read by `lib/loom-client.mjs`), `toolset` (the MCP URL only),
-`local_first` and `code_repo` (`CLAUDE_PLUGIN_OPTION_CODE_REPO`). Resolution order: the environment, then the option, then
-~/.loom/config.json (`LOOM_CONFIG_FILE`), then ~/.loom/token
-(`LOOM_API_KEY_FILE`, token only), then the plugin's `plugin-defaults.json`
-(URL only), then http://localhost:7777.
+reach the hooks as `CLAUDE_PLUGIN_OPTION_<KEY>`: `server_url`, `token`,
+`local_first` and `code_repo` (`CLAUDE_PLUGIN_OPTION_CODE_REPO`). Choose the
+listing in the complete `server_url` query, for example `?toolset=coding+tracker`.
+
+Claude Code's hooks and header helper derive their control-plane base from the
+installed MCP endpoint: `CLAUDE_PLUGIN_OPTION_SERVER_URL`, then
+`CLAUDE_CODE_MCP_SERVER_URL`, else `/mcp?toolset=coding` appended to
+`LOOM_BASE_URL` or `http://localhost:7777`. An explicit endpoint wins over the
+default base; `config.json.url` does not select this destination. The base keeps
+any proxy prefix before `/mcp` and excludes the endpoint's query.
+
+Generic clients and Codex use the base-URL lookup: `LOOM_BASE_URL`, then
+`CLAUDE_PLUGIN_OPTION_SERVER_URL`, then `url` in ~/.loom/config.json
+(`LOOM_CONFIG_FILE`), then `server_url` in the plugin's `plugin-defaults.json`,
+then `http://localhost:7777`. Codex's MCP entry is fixed separately; changing a
+hook's URL does not replace that entry.
+
+Credentials resolve from `LOOM_API_KEY`, then the `token` install option
+(hooks only), then `token` in ~/.loom/config.json, then ~/.loom/token
+(`LOOM_API_KEY_FILE`). Workload-agent credentials follow the rule below.
 
 An agent with no Loom token of its own sets `LOOM_CLIENT_ID` (a workload trust,
 `loom bot create --agent-claim`) and `LOOM_WORKLOAD_TOKEN` or

@@ -40,7 +40,7 @@ tools to save and search facts.
 ```bash
 claude plugin marketplace add ClickHouse/loom
 claude plugin install loom@loom \
-  --config server_url=https://loom.example.com \
+  --config "server_url=https://loom.example.com/mcp?toolset=coding" \
   --config token=<writer JWT>
 ```
 

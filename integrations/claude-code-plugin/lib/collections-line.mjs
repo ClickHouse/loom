@@ -118,14 +118,14 @@ export function renderCollectionsLine(result, { writes = true } = {}) {
   );
 }
 
-/** What the toolset (the plugin's `toolset` option) lets the lines say: null for none (the
+/** What the endpoint's toolset lets the lines say: null for none (the
  *  assistant toolset alone, which routes neither loom_search nor loom_op), else whether they
  *  may say how to write, read as the server does (parts split on `+`, a space or a comma,
  *  lower-cased; `readonly` alone routes no write). An unknown value takes the
- *  deployment's default toolset on the server, which this cannot know. The Codex plugin names its toolset
- *  in its own .mcp.json and sets no option, so it reads as writable. */
+ *  deployment's default toolset on the server, which this cannot know. The caller passes the fixed Codex entry's explicit toolset. */
 export function toolsetAllows(toolset) {
-  const raw = String(toolset || "").toLowerCase();
+  if (!toolset) return null;
+  const raw = String(toolset).toLowerCase();
   const parts = [...new Set(raw.split(/[+ ,]+/).filter(Boolean))];
   if (parts.length === 1 && parts[0] === "assistant") return null;
   return { writes: !(parts.length === 1 && parts[0] === "readonly") };

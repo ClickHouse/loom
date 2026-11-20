@@ -29,6 +29,9 @@ import {
   runHookMain,
   scheduleExit,
 } from "../lib/loom-client.mjs";
+import { publishProject } from "../lib/mcp-project.mjs";
+import { claudeEndpoint } from "../lib/mcp-endpoint.mjs";
+import { entryIsFixed } from "../lib/plugin-options.mjs";
 import { createHash } from "node:crypto";
 import { ensureCredential, renderFirstSessionNotice } from "../lib/first-session.mjs";
 import { duplicateNotice } from "../lib/mcp-duplicate.mjs";
@@ -56,6 +59,10 @@ import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 
 async function main() {
+  const payload = await readStdinJson();
+  if (hookClient() === "claude-code" && !entryIsFixed()) publishProject(payload);
+  saveInstallServerUrl();
+  resolveServerUrl();
   // A token given at `claude plugin install --config token=…`
   // reaches the hooks as an environment variable but never the MCP header
   // helper; write it once to ~/.loom/config.json, where the helper (and the
@@ -66,7 +73,6 @@ async function main() {
   // plugin). An agent signs in as itself, so the config token is not what
   // its tools send.
   const optionNotice = hookClient() === "claude-code" && !agentMode() ? installTokenNotice(optionPlan) : "";
-  saveInstallServerUrl();
   sweepStaleStateFiles();
   // Default ON; opt out with LOOM_INJECT_CONTEXT=false (see header).
   if (!envSwitch("LOOM_INJECT_CONTEXT", true)) {
@@ -92,7 +98,6 @@ async function main() {
     }
   }
 
-  const payload = await readStdinJson();
   const scope = resolveScope(payload.cwd);
   const tokenBudget = Math.round(envNumber("LOOM_CONTEXT_TOKEN_BUDGET", 1200, { min: 100 }));
 
@@ -182,7 +187,8 @@ async function taskInboxLine(scope, token) {
  *  minute per (server, org, token, toolset), the failures too; "" when there are none or on any error. */
 async function collectionsLine(scope, token) {
   // A read-only toolset routes no write, and the assistant toolset neither tool the line names.
-  const allows = toolsetAllows(process.env.CLAUDE_PLUGIN_OPTION_TOOLSET);
+  const toolset = hookClient() === "claude-code" && !entryIsFixed() ? claudeEndpoint().toolset : "coding";
+  const allows = toolsetAllows(toolset);
   if (!scope || !scope.org || !allows) return "";
   // The answer is the token's own (its grants in the org): two agents sharing this home with
   // their own tokens never read each other's line. tmpStatePath hashes the key again.
@@ -190,10 +196,7 @@ async function collectionsLine(scope, token) {
     .update(String(token || ""))
     .digest("hex")
     .slice(0, 16);
-  const cp = tmpStatePath(
-    "collections",
-    `${resolveServerUrl()}|${scope.org}|${tokenId}|${process.env.CLAUDE_PLUGIN_OPTION_TOOLSET || ""}`,
-  );
+  const cp = tmpStatePath("collections", `${resolveServerUrl()}|${scope.org}|${tokenId}|${toolset || ""}`);
   const cached = readJsonFile(cp, null);
   if (cacheIsFresh(cached)) return cached.line;
   const result = await postBounded("collection.list", listBody(scope), { token, serverUrl: resolveServerUrl() });

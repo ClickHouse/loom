@@ -4,17 +4,11 @@
 // for an agent (LOOM_CLIENT_ID with a workload token) its exchanged token and
 // nothing else; otherwise ~/.loom/config.json, then ~/.loom/token.
 //
-// It also names the code namespace of the session's checkout. Claude Code
-// starts a plugin's helper in the plugin root, so the plugin's entry carries
-// the project directory as its URL's fragment (`#${CLAUDE_PROJECT_DIR}`),
-// which Claude Code hands the helper in CLAUDE_CODE_MCP_SERVER_URL and never
-// sends to the server; no shell reads the path. A fragment that is not an
-// absolute path names no checkout (LOOM_CODE_REPO / `code_repo` still name a
-// repository). A URL without one (the Codex entry) leaves the directory the
-// helper runs in. The resolved repository (the cache the shunt and the
-// primer share, else one bounded lookup) becomes `X-Loom-Code-Scope:
-// org/namespace`, which the server applies to every loom_code_* call that
-// names no namespace. LOOM_MCP_CODE_SCOPE=off disables.
+// It also names the code namespace of the session's checkout. SessionStart
+// publishes its structured cwd in private state; the helper finds only the
+// state of its own live client ancestor. A bounded lookup miss leaves the
+// connection without an implicit checkout scope, as an unindexed checkout does.
+// Claude Code may continue connecting when a headers helper fails.
 //
 // No token and not an agent → the helper waits for the SessionStart hook,
 // which Claude Code runs while it connects the MCP entry and which knows the
@@ -23,10 +17,12 @@
 // Sign-up off, refused or unreachable → `{}`: the server then answers 401
 // and Claude Code shows the connection as failed, which is the honest state.
 // Stdout is exactly one JSON object; nothing else is written.
+import { sessionProject } from "../lib/mcp-project.mjs";
 import { isAbsolute } from "node:path";
 import { ensureCredential } from "../lib/first-session.mjs";
 import {
   agentMode,
+  pluginDefaults,
   envNumber,
   envSwitch,
   gitToplevel,
@@ -50,14 +46,6 @@ export function headersFor(token, scope = null) {
   return { ...out, ...scopeHeader(scope) };
 }
 
-/** The session's project directory: the fragment of the entry's URL as
- *  Claude Code substituted it, else the directory the helper runs in. */
-export function projectDir(env = process.env) {
-  const url = String(env.CLAUDE_CODE_MCP_SERVER_URL || "");
-  const at = url.indexOf("#");
-  return at >= 0 ? url.slice(at + 1) : process.cwd();
-}
-
 /** The session's indexed repository for the project directory `dir`: the
  *  shared cache, else one bounded lookup (which also fills the cache).
  *  Outside a checkout the repository named by LOOM_CODE_REPO / `code_repo`
@@ -65,8 +53,8 @@ export function projectDir(env = process.env) {
  *  disabled. */
 export async function checkoutScope(dir = process.cwd(), { env = process.env, token = "", post } = {}) {
   if (!envSwitch("LOOM_MCP_CODE_SCOPE", true, env)) return null;
-  // Only an absolute directory: git would read "" or a relative one (an
-  // unsubstituted `${CLAUDE_PROJECT_DIR}`) against the helper's own directory.
+  // Only absolute context directories: never resolve missing state against
+  // the plugin's own checkout.
   const root = isAbsolute(dir) ? gitToplevel(dir) : "";
   const key = scopeKey(root, env);
   if (!key || !token) return null;
@@ -92,10 +80,8 @@ export async function signedUpToken(opts = {}) {
  *  (LOOM_MCP_HOOK_WAIT_MS overrides). */
 export const HOOK_TOKEN_WAIT_MS = 5000;
 
-/** The token the SessionStart hook saves to ~/.loom/config.json. The helper
- *  cannot see install options (the server URL), so on a first session it
- *  waits for the hook instead of signing up against a guessed server, and
- *  adopts the URL the hook saved with the token. */
+/** Wait for SessionStart to materialize an install token before first-session
+ *  sign-up. The helper cannot read token options from its environment. */
 export async function hookToken({
   env = process.env,
   waitMs = envNumber("LOOM_MCP_HOOK_WAIT_MS", HOOK_TOKEN_WAIT_MS, { min: 0 }),
@@ -120,10 +106,12 @@ async function main() {
   let token = "";
   let out = {};
   try {
-    // Without LOOM_BASE_URL or a saved URL the configured server is unknown here.
+    resolveServerUrl();
+    const fixed = Boolean(pluginDefaults().server_url);
     const knowsServer = Boolean(process.env.LOOM_BASE_URL || readConfigFile(loomConfigPath()).url);
-    token = resolveToken() || (knowsServer ? "" : await hookToken()) || (await signedUpToken());
-    out = headersFor(token, await checkoutScope(projectDir(), { token }));
+    token = resolveToken() || (!fixed || !knowsServer ? await hookToken() : "") || (await signedUpToken());
+    const dir = pluginDefaults().server_url ? process.cwd() : await sessionProject();
+    out = headersFor(token, await checkoutScope(dir, { token }));
   } catch {
     out = headersFor(token);
   }

@@ -73,7 +73,7 @@ test("the primer names the mismatch in Claude Code, and not for Codex or an agen
       ),
       fallback,
     );
-    assert.ok(fallback.includes(`--config server_url=${url}`), fallback);
+    assert.ok(fallback.includes(`--config "server_url=${url}/mcp?toolset=coding"`), fallback);
     const codex = await session({}, ["SessionStart", "codex"]);
     assert.ok(codex.length > 0, "the Codex primer still renders");
     assert.equal(codex.includes(NOTICE), false);
@@ -90,7 +90,7 @@ test("the primer names the mismatch in Claude Code, and not for Codex or an agen
 test("an install token written over a config that named another server is saved beside its own", async () => {
   const { srv, url } = await server();
   const dir = home({ url: SAVED_FOR });
-  const env = { CLAUDE_PLUGIN_OPTION_SERVER_URL: url, CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" };
+  const env = { CLAUDE_PLUGIN_OPTION_SERVER_URL: `${url}/mcp?toolset=coding`, CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" };
   try {
     const first = await run(dir, env);
     assert.equal(first.includes(NOTICE), false, "the session that writes the token says nothing");

@@ -83,6 +83,9 @@ jobs:
       - name: Claude Code session
         if: ${{ !cancelled() }}
         run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$CLAUDE_BIN" --expect-tool Bash
+      - name: Claude Code endpoint and concurrent checkout scopes
+        if: ${{ !cancelled() }}
+        run: node integrations/claude-code-plugin/tests/e2e/claude-endpoint.mjs "$CLAUDE_BIN"
       - name: Codex session
         if: ${{ !cancelled() }}
         run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin "$CODEX_BIN"

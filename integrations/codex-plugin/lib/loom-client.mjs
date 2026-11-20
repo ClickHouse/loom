@@ -4,8 +4,9 @@
 // Zero dependencies, Node >= 18 (global fetch, AbortSignal.timeout): this
 // runs inside the user's coding-agent environment and must start at once.
 // A hook runs on the agent's critical path against a remote server, so no
-// request may outlast its bound and nothing here throws.
+// request may outlast its bound; invalid plugin configuration refuses network work.
 
+import { claudeEndpoint, EndpointError } from "./mcp-endpoint.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -93,11 +94,10 @@ export function envNumber(name, fallback, { min = -Infinity, max = Infinity, env
 
 // --- auth + scoping ----------------------------------------------------------
 
-// File-based config for a hosted/remote Loom: ~/.loom/config.json may hold
-// { url, token, namespace, org } so a user points the plugin at their server
-// with ONE file — no shell exports in ~/.zshrc. Env vars still take priority
-// (overrides / CI); this is the file-based default beneath them. Read once
-// (hook processes are short-lived) and never throws.
+// ~/.loom/config.json may hold { url, token, namespace, org }. Claude's
+// configured MCP endpoint selects its destination; the file can supply its
+// token and scope. Other clients use the file's URL beneath environment
+// overrides. Read once per short-lived hook process; missing files do not throw.
 /** ~/.loom/config.json, or LOOM_CONFIG_FILE. */
 export function loomConfigPath(env = process.env) {
   return env.LOOM_CONFIG_FILE || join(homedir(), ".loom", "config.json");
@@ -288,10 +288,23 @@ export function normalizeUrl(url) {
     .replace(/\/+$/, "");
 }
 
-/** Base URL of the Loom control plane: env, then the plugin's install-time
- *  option, then ~/.loom/config.json, then the plugin's shipped
- *  default, then localhost. */
+/** Whether this process belongs to Claude Code's configured plugin entry. */
+function claudeEntryInUse() {
+  return (
+    !pluginDefaults().server_url &&
+    hookClient() === "claude-code" &&
+    Boolean(
+      process.env.CLAUDE_PLUGIN_ROOT ||
+        process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL !== undefined ||
+        process.env.CLAUDE_CODE_MCP_SERVER_URL !== undefined,
+    )
+  );
+}
+
+/** Claude's endpoint selects its control-plane base. Other clients keep the
+ *  environment/config/default base-URL contract. */
 export function resolveServerUrl() {
+  if (claudeEntryInUse()) return claudeEndpoint().base;
   return normalizeUrl(
     process.env.LOOM_BASE_URL ||
       process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL ||
@@ -754,7 +767,9 @@ export async function requestJson(
 }
 
 function opUrl(opName, serverUrl) {
-  return `${serverUrl || resolveServerUrl()}/v1/${opName}`;
+  const configured = resolveServerUrl();
+  if (claudeEntryInUse() && serverUrl && serverUrl !== configured) throw new EndpointError();
+  return `${serverUrl || configured}/v1/${opName}`;
 }
 
 /**
@@ -787,6 +802,7 @@ export async function postBounded(opName, body, opts = {}) {
 
 /** postBounded's answer with its status: 0 for no token, a timeout or a network error. */
 export async function postBoundedResult(opName, body, { token, serverUrl, timeoutMs } = {}) {
+  resolveServerUrl(); // Validate the installed endpoint even when a queued write saved a URL.
   const bearer = token || resolveToken();
   if (!bearer) return { status: 0, body: null };
   const bound = Number(timeoutMs) > 0 ? Number(timeoutMs) : requestTimeoutMs();
@@ -1013,6 +1029,11 @@ export function runHookMain(main) {
   Promise.resolve()
     .then(main)
     .catch((e) => {
+      if (e instanceof EndpointError) {
+        if (basename(process.argv[1] || "") === "loom-session-start.mjs") process.stdout.write(`${e.message}\n`);
+        scheduleExit(0, DEFAULT_BOUND_MS);
+        return;
+      }
       if (envSwitch("LOOM_HOOK_DEBUG", false)) {
         const line = String((e && (e.stack || e.message)) || e).split("\n")[0];
         process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactHead(line, 300).slice(0, 300)}\n`);

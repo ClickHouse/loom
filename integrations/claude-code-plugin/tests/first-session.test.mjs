@@ -1,16 +1,25 @@
 // The first session signs itself up.
 import "./temp-home.mjs";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ensureCredential, planSignup, renderFirstSessionNotice, signupName } from "../lib/first-session.mjs";
-import { writeConfigMerged } from "../lib/loom-client.mjs";
+import { resolveServerUrl, writeConfigMerged } from "../lib/loom-client.mjs";
+import { ensureCredential as ensureCodexCredential } from "../../codex-plugin/lib/first-session.mjs";
+import { resolveServerUrl as resolveCodexServerUrl } from "../../codex-plugin/lib/loom-client.mjs";
 import { assertMode } from "./host-env.mjs";
 
+const temporaryDirs = new Set();
+after(() => {
+  for (const dir of temporaryDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "loom-first-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-first-"));
+  temporaryDirs.add(dir);
+  return dir;
 }
 const ok = (body) => async () => ({ ok: true, status: 200, json: async () => body });
 const status = (code) => async () => ({ ok: false, status: code, json: async () => ({}) });
@@ -22,6 +31,83 @@ const SIGNED = {
   claim_code: "SECRET-CODE",
   claim_url: "https://loom.example/",
 };
+
+test("first signup preserves the resolved endpoint base in its request and saved config", async (t) => {
+  const dir = tmp();
+  const previous = Object.fromEntries(
+    ["LOOM_CLIENT", "CLAUDE_PLUGIN_OPTION_SERVER_URL", "LOOM_BASE_URL", "LOOM_CONFIG_FILE"].map((name) => [
+      name,
+      process.env[name],
+    ]),
+  );
+  t.after(() => {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  process.env.LOOM_CONFIG_FILE = path.join(dir, "absent-config.json");
+  for (const [index, [client, configured, base, expectedUrl]] of [
+    [
+      "claude-code",
+      "https://loom.example/proxy/mcp?toolset=coding",
+      "https://loom.example/proxy",
+      "https://loom.example/proxy/v1/auth/agent-signup",
+    ],
+    [
+      "claude-code",
+      "https://loom.example/proxy//mcp?toolset=coding",
+      "https://loom.example/proxy/",
+      "https://loom.example/proxy//v1/auth/agent-signup",
+    ],
+    [
+      "claude-code",
+      "https://loom.example/proxy///mcp?toolset=coding",
+      "https://loom.example/proxy//",
+      "https://loom.example/proxy///v1/auth/agent-signup",
+    ],
+    [
+      "codex",
+      "https://loom.example/proxy///",
+      "https://loom.example/proxy",
+      "https://loom.example/proxy/v1/auth/agent-signup",
+    ],
+    ["codex", "", "http://localhost:7777", "http://localhost:7777/v1/auth/agent-signup"],
+  ].entries()) {
+    await t.test(`${client}: ${configured || "fixed default"}`, async (t) => {
+      process.env.LOOM_CLIENT = client;
+      delete process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL;
+      delete process.env.LOOM_BASE_URL;
+      if (configured)
+        process.env[client === "claude-code" ? "CLAUDE_PLUGIN_OPTION_SERVER_URL" : "LOOM_BASE_URL"] = configured;
+      const serverUrl = client === "claude-code" ? resolveServerUrl() : resolveCodexServerUrl();
+      assert.equal(serverUrl, base);
+      const configPath = path.join(dir, String(index), "config.json");
+      const fetchImpl = t.mock.fn(ok(SIGNED));
+      const signup = client === "claude-code" ? ensureCredential : ensureCodexCredential;
+      const result = await signup({
+        env: {},
+        paths: { configPath },
+        fetchImpl,
+        serverUrl,
+        client,
+        host: "box",
+        user: "alice",
+      });
+      assert.equal(result.status, "created");
+      assert.equal(fetchImpl.mock.callCount(), 1);
+      const [url, options] = fetchImpl.mock.calls[0].arguments;
+      assert.equal(url, expectedUrl);
+      assert.equal(options.headers.authorization, undefined);
+      assert.equal(JSON.parse(options.body).name, `alice-box-${client}`);
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      assert.equal(config.url, base);
+      assert.equal(config.token, SIGNED.token);
+      assert.equal(config.signed_up_by, client);
+    });
+  }
+});
 
 test("planSignup: token present or LOOM_AUTO_SIGNUP=off never signs up; otherwise it runs", () => {
   assert.equal(planSignup({}, { hasToken: true }).run, false);
@@ -47,7 +133,7 @@ test("created: token to config.json (0600, merged), claim code to claim file (06
     env: {},
     paths: { configPath },
     fetchImpl: ok(SIGNED),
-    serverUrl: "https://loom.example/",
+    serverUrl: "https://loom.example",
     client: "claude-code",
     host: "box",
     user: "alice",

@@ -410,9 +410,15 @@ test("the accounting adds under 50 ms to a hook run (1,000 decisions + a flush f
   const started = process.cpuUsage();
   const agg = foldThousand(variants);
   const { user, system } = process.cpuUsage(started);
-  const ms = Math.min(performance.now() - wallStart, (user + system) / 1000);
+  const wallMs = performance.now() - wallStart;
+  const ms = Math.min(wallMs, (user + system) / 1000);
   assert.equal(agg.lines, 1000);
-  assert.ok(ms < 50, `accounting took ${ms.toFixed(1)} ms for 1,000 decisions`);
+  assert.ok(
+    ms < 50,
+    `accounting took ${ms.toFixed(1)} ms for 1,000 decisions; ` +
+      `wall=${wallMs.toFixed(1)} ms, user=${(user / 1000).toFixed(1)} ms, system=${(system / 1000).toFixed(1)} ms; ` +
+      `node=${process.version}, platform=${process.platform}, arch=${process.arch}`,
+  );
   console.log(`# shunt accounting: 1,000 decisions classified, logged and folded in ${ms.toFixed(2)} ms`);
 });
 
