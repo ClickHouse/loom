@@ -331,6 +331,20 @@ def test_every_op_refuses_a_wrong_typed_field_by_name_on_both_transports(env: _E
     assert env.ran == []
 
 
+@pytest.mark.parametrize("name", ["ops.projection_failures.list", "ops.projection_failures.retry"])
+@pytest.mark.parametrize("limit", [-1, 0, 1001, 50_000_000, 4_294_967_295])
+def test_projection_failure_limits_refuse_before_handler(env: _Env, name: str, limit: int) -> None:
+    op = next(op for op in ALL_OPERATIONS if op.name == name)
+    body = {**_body(op), "limit": limit}
+    r = _post(env, op, body, f"Bearer {_token(Role.ORG_ADMIN)}")
+    assert (r.status_code, _code(r)) == (422, "VALIDATION_FAILED"), r.text
+    assert ["limit"] in [error["loc"] for error in r.json()["detail"]["errors"]]
+    out = _mcp(op, body, Role.ORG_ADMIN)["result"]
+    assert out["isError"]
+    assert ["limit"] in [error["loc"] for error in out["structuredContent"]["errors"]]
+    assert env.ran == []
+
+
 _GATED = [op for op in ALL_OPERATIONS if op.required_role > Role.VIEWER]
 # An op whose MCP tool name is a hand-written tool (`search` is `loom_search`)
 # is answered on MCP by that tool's own path, which its own tests cover.

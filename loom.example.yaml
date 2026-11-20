@@ -81,6 +81,14 @@ settings:
   # [restart]
   # ch_pool_maxsize: 64
 
+  # Keeper holders a fenced writer acquires or releases at once (1–256), capped by a
+  # bounded HTTP connection pool. [restart]
+  # ch_write_fence_concurrency: 16
+
+  # Memory rows per ClickHouse namespace-restore insert (1–1000). Smaller batches leave
+  # more lease budget for slow Keeper calls. [restart]
+  # ch_restore_batch_rows: 1000
+
   # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's
   # idle cutoff (8 s) so loom closes first: a peer-closed pooled TLS connection is never
   # reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`). [restart]
