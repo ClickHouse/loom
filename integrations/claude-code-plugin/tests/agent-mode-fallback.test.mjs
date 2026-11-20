@@ -3,6 +3,7 @@
 // person saved on this machine, nor sign a new identity up. Both run as the
 // host runs them, against a server whose token endpoint is away.
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -36,8 +37,10 @@ function run(rel, url, stdin = "") {
   fs.writeFileSync(path.join(home, ".loom", "config.json"), JSON.stringify({ token: PERSONAL, url }), {
     mode: 0o600,
   });
+  const args = rel.startsWith("hooks/") ? ["SessionStart"] : [];
+  if (rel.startsWith("hooks/")) establishFixtureSession(home, "agent-fallback-session");
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [entry(rel)], {
+    const child = spawn(process.execPath, [entry(rel), ...args], {
       cwd: home,
       env: hostEnv({
         PATH: process.env.PATH,
@@ -58,7 +61,7 @@ function run(rel, url, stdin = "") {
 }
 
 for (const [name, rel, stdin] of [
-  ["the SessionStart hook", "hooks/loom-session-start.mjs", "{}"],
+  ["the SessionStart hook", "hooks/loom-session-start.mjs", JSON.stringify({ session_id: "agent-fallback-session" })],
   ["the MCP headers helper", "bin/loom-mcp-headers.mjs", ""],
 ]) {
   test(`${name} sends neither the person's saved token nor a sign-up when the exchange fails`, async () => {

@@ -45,9 +45,9 @@
       "category": "bootstrap",
       "reason": "Registers the plugin identity through the signup endpoint; no session text is selected."
     },
-    "integrations/claude-code-plugin/lib/flush-job.mjs:<dynamic>:eb4672c8cca64bce379b:1": {
+    "integrations/claude-code-plugin/lib/flush-job.mjs:<dynamic>:581d60a49735c8e47b32:1": {
       "category": "delivery",
-      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+      "reason": "Forwards producer-scanned operations under captured roots; protected delivery suppresses sends and acknowledgement."
     },
     "integrations/claude-code-plugin/lib/loom-client.mjs:<dynamic>:1381032bcfdb58b92b4d:1": {
       "category": "delivery",
@@ -76,6 +76,10 @@
     "integrations/claude-code-plugin/lib/repo-scope.mjs:code.repos:e8c8b771830adc687f13:1": {
       "category": "scope",
       "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/cline/loom-cline.mjs:<dynamic>:bbbf0875994af204d9c7:1": {
+      "category": "delivery",
+      "reason": "Guarded Cline repository forwarding retains the enclosing family before and after code.repos/code.index_status requests."
     },
     "integrations/codex-plugin/hooks/loom-code-shunt.mjs:code.repos:983653c27b6d99198a73:1": {
       "category": "scope",
@@ -121,9 +125,9 @@
       "category": "bootstrap",
       "reason": "Registers the plugin identity through the signup endpoint; no session text is selected."
     },
-    "integrations/codex-plugin/lib/flush-job.mjs:<dynamic>:eb4672c8cca64bce379b:1": {
+    "integrations/codex-plugin/lib/flush-job.mjs:<dynamic>:581d60a49735c8e47b32:1": {
       "category": "delivery",
-      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+      "reason": "Forwards producer-scanned operations under captured roots; protected delivery suppresses sends and acknowledgement."
     },
     "integrations/codex-plugin/lib/loom-client.mjs:<dynamic>:1381032bcfdb58b92b4d:1": {
       "category": "delivery",
@@ -363,30 +367,31 @@
     }
   },
   "reviewed_source_sha256": {
-    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "e19668f1157efba96442e10b17d2e21a9e7303273b8a674c604db5d9f42c1b93",
-    "integrations/claude-code-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
+    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "1b6dd2d53caee4ec20635211c2394f4bd7e0b1a7189f4970f13b4c2c5280e6a2",
+    "integrations/claude-code-plugin/hooks/loom-flush.mjs": "7260f0fc257a03398230f8c09105445d0a941a54d22a03c11ede5cd8a14ff11b",
     "integrations/claude-code-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
     "integrations/claude-code-plugin/hooks/loom-prompt-pack.mjs": "904270b1e5f45614a71c5c92efe4d1e5cfb656888e9b54d269c1228b0ef4e9c1",
-    "integrations/claude-code-plugin/hooks/loom-session-start.mjs": "c660471b15ba60d7aac80f78254bac98e9527793bc7a9fecb4986c660c4e277d",
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs": "ae2933d1979c5fe7d76dc4a1bf09485761ddc6e3391a037b36b6d28ad3c74787",
     "integrations/claude-code-plugin/lib/collections-line.mjs": "d50ec2cbae9ef0058fcf8e26ea024a79c67e57014c39447f58b54a6837654183",
     "integrations/claude-code-plugin/lib/first-session.mjs": "e9183d950899f3ef78bdd17ba677d25e9ff5baffddc97ca282fecc5a80a92651",
-    "integrations/claude-code-plugin/lib/flush-job.mjs": "943dbf075ad27a9e8ac9c491dc1e523d0a690ec8fc9acc71e597a6b1cadf5a01",
-    "integrations/claude-code-plugin/lib/loom-client.mjs": "d1cc7c8bb6674dfb6d2c76045e6e8c6cbce2fb806996fce8aafba5f917002cb6",
+    "integrations/claude-code-plugin/lib/flush-job.mjs": "1eb2e690b461338943a7a7d4b648d996e4305fc6575d242798853459f8082724",
+    "integrations/claude-code-plugin/lib/loom-client.mjs": "46152d9473e56b9aa76d8be95b30c85152ecf49a45bd24e94c1aca0d53b9b962",
     "integrations/claude-code-plugin/lib/namespace-health.mjs": "02db4a35195b32675c3d929350ddeca8a8b991c08e46b206fb38586efbd5cc7e",
     "integrations/claude-code-plugin/lib/prompt-pack.mjs": "8730ea72d40e6022a6e314f1f6703dd4f38f10c4e719886f319d88f7c3d15abf",
     "integrations/claude-code-plugin/lib/repo-scope.mjs": "127a7daefbe4cdaf014a58351f1b3cec068220985ac940a2952f161a8c881108",
     "integrations/claude-code-plugin/lib/session-brief.mjs": "0db8037ad3fd15de3dd525d3763674549186495dbe0c66dc7ae7b2bef3cab898",
     "integrations/claude-code-plugin/lib/session-start.mjs": "505cb938886796f7fb688eaef3fc99c0c4eef2042adba8e66321d6d80e7d214a",
     "integrations/claude-code-plugin/lib/task-inbox.mjs": "33fbb1040e9b6db936928a66e4b90555a556220415f4e6394f6d2cd67821dcfc",
-    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "e19668f1157efba96442e10b17d2e21a9e7303273b8a674c604db5d9f42c1b93",
-    "integrations/codex-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
+    "integrations/cline/loom-cline.mjs": "80d3a62c2c64ca9571b98c714e3879d7c4808c1acc13220d3aa0608dbdb3b304",
+    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "1b6dd2d53caee4ec20635211c2394f4bd7e0b1a7189f4970f13b4c2c5280e6a2",
+    "integrations/codex-plugin/hooks/loom-flush.mjs": "7260f0fc257a03398230f8c09105445d0a941a54d22a03c11ede5cd8a14ff11b",
     "integrations/codex-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
     "integrations/codex-plugin/hooks/loom-prompt-pack.mjs": "904270b1e5f45614a71c5c92efe4d1e5cfb656888e9b54d269c1228b0ef4e9c1",
-    "integrations/codex-plugin/hooks/loom-session-start.mjs": "c660471b15ba60d7aac80f78254bac98e9527793bc7a9fecb4986c660c4e277d",
+    "integrations/codex-plugin/hooks/loom-session-start.mjs": "ae2933d1979c5fe7d76dc4a1bf09485761ddc6e3391a037b36b6d28ad3c74787",
     "integrations/codex-plugin/lib/collections-line.mjs": "d50ec2cbae9ef0058fcf8e26ea024a79c67e57014c39447f58b54a6837654183",
     "integrations/codex-plugin/lib/first-session.mjs": "e9183d950899f3ef78bdd17ba677d25e9ff5baffddc97ca282fecc5a80a92651",
-    "integrations/codex-plugin/lib/flush-job.mjs": "943dbf075ad27a9e8ac9c491dc1e523d0a690ec8fc9acc71e597a6b1cadf5a01",
-    "integrations/codex-plugin/lib/loom-client.mjs": "d1cc7c8bb6674dfb6d2c76045e6e8c6cbce2fb806996fce8aafba5f917002cb6",
+    "integrations/codex-plugin/lib/flush-job.mjs": "1eb2e690b461338943a7a7d4b648d996e4305fc6575d242798853459f8082724",
+    "integrations/codex-plugin/lib/loom-client.mjs": "46152d9473e56b9aa76d8be95b30c85152ecf49a45bd24e94c1aca0d53b9b962",
     "integrations/codex-plugin/lib/namespace-health.mjs": "02db4a35195b32675c3d929350ddeca8a8b991c08e46b206fb38586efbd5cc7e",
     "integrations/codex-plugin/lib/prompt-pack.mjs": "8730ea72d40e6022a6e314f1f6703dd4f38f10c4e719886f319d88f7c3d15abf",
     "integrations/codex-plugin/lib/repo-scope.mjs": "127a7daefbe4cdaf014a58351f1b3cec068220985ac940a2952f161a8c881108",

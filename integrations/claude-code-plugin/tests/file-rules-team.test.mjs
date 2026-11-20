@@ -1,6 +1,7 @@
 // The file-context hook reads the repository's primary code
 // namespace (team file rules) beside the person's own, in one request.
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
@@ -138,6 +139,7 @@ async function runFileContextHook(rendered) {
   const hook = fileURLToPath(new URL("../hooks/loom-file-context.mjs", import.meta.url));
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-fc-hook-")));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "loom-fc-tmp-")));
+  establishFixtureSession(tmp, "s");
   fs.mkdirSync(path.join(dir, "src"));
   fs.writeFileSync(path.join(dir, "src/a.cpp"), "int x;\n");
   const g = (...a) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd: dir });
@@ -161,7 +163,7 @@ async function runFileContextHook(rendered) {
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
   try {
     const out = await new Promise((resolve) => {
-      const child = spawn(process.execPath, [hook], {
+      const child = spawn(process.execPath, [hook, "PreToolUse"], {
         cwd: dir,
         env: hostEnv({
           PATH: process.env.PATH,

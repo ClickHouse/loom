@@ -16,16 +16,28 @@ import { fileURLToPath } from "node:url";
 import {
   envSwitch,
   gitToplevel,
+  postBounded,
   readStdinJson,
   redactHead,
   resolveToken,
 } from "../claude-code-plugin/lib/loom-client.mjs";
 import { resolveIndexedRepo } from "../claude-code-plugin/lib/repo-scope.mjs";
-import { readSessionState, writeSessionState } from "../claude-code-plugin/lib/tmp-state.mjs";
+import { bindHookProtection } from "../claude-code-plugin/lib/hook-protection.mjs";
+import { SessionProtectionUnavailable } from "../claude-code-plugin/lib/session-protection.mjs";
+import {
+  automaticSessionIsProtected,
+  refuseSessionResponse,
+  sessionProtectionContext,
+  withAutomaticSessionProtection,
+  withCapturedSessionProtection,
+} from "../claude-code-plugin/lib/session-response.mjs";
+import { readPrivateFile, sessionStatePath, writeSessionState } from "../claude-code-plugin/lib/tmp-state.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN = path.join(HERE, "..", "claude-code-plugin");
 const CLIENT = "cline";
+// Unattributed legacy prompts are not assigned a family or consumed.
+const STATE_KIND = "cline-protected";
 // Cline's file-editing tools, folded onto the plugin's names.
 const EDIT_TOOLS = { editor: "Edit", write_to_file: "Write", replace_in_file: "Edit", apply_patch: "apply_patch" };
 // A read's file blocks are looked up for its first files only.
@@ -141,9 +153,20 @@ export function readPaths(cline) {
  *  bounded by the plugin's own lookup bound; a lookup that does not answer leaves an
  *  unresolved entry, retried after its short TTL. */
 async function refreshRepoCache(cwd) {
-  if (!resolveToken()) return; // no lookup to make, and no "not indexed" entry to leave
+  if (automaticSessionIsProtected() || !resolveToken()) return;
   const root = gitToplevel(cwd);
-  if (root) await resolveIndexedRepo(root, { consumer: "cline-file-context" });
+  if (root && !automaticSessionIsProtected()) {
+    await resolveIndexedRepo(root, {
+      consumer: "cline-file-context",
+      post: async (...args) => {
+        if (automaticSessionIsProtected()) throw new SessionProtectionUnavailable();
+        const reply = await postBounded(...args);
+        // Stop before the resolver consumes the reply or writes its shared cache.
+        if (automaticSessionIsProtected()) throw new SessionProtectionUnavailable();
+        return reply;
+      },
+    });
+  }
 }
 
 /** Whether the plugin's prompt recall runs: its own reading of LOOM_PROMPT_RECALL. */
@@ -155,28 +178,95 @@ function recallOn() {
 /** What a hook answers with no context, and nothing to mark. */
 const NOTHING = Object.freeze({ context: "", prime: null });
 
+function readProtectedState(event, base, tmp, roots) {
+  let state;
+  try {
+    state = JSON.parse(readPrivateFile(sessionStatePath(STATE_KIND, base.session_id, { tmp })));
+  } catch (error) {
+    if (error.code === "ENOENT") return { version: 1, prompt: "", primed: false, protectionRoots: roots };
+    return refuseSessionResponse(roots);
+  }
+  if (
+    !state ||
+    typeof state !== "object" ||
+    Array.isArray(state) ||
+    !Array.isArray(state.protectionRoots) ||
+    !state.protectionRoots.length
+  )
+    return refuseSessionResponse(roots);
+  // Reconcile saved producers against the current immutable alias before using text.
+  bindHookProtection(base, { host: CLIENT, event, knownRoots: [...roots, ...state.protectionRoots] });
+  if (
+    Object.keys(state).sort().join(",") !== "primed,prompt,protectionRoots,version" ||
+    state.version !== 1 ||
+    typeof state.prompt !== "string" ||
+    state.prompt.length > PROMPT_CHARS ||
+    typeof state.primed !== "boolean"
+  )
+    return refuseSessionResponse(roots);
+  return Object.freeze({ ...state, protectionRoots: roots });
+}
+
+function writeProtectedState(sessionId, state, tmp, roots) {
+  return (
+    withCapturedSessionProtection(roots, () => {
+      if (automaticSessionIsProtected()) return false;
+      return writeSessionState(
+        STATE_KIND,
+        sessionId,
+        {
+          ...state,
+          protectionRoots: roots.map(({ base, id }) => ({ base, id })),
+        },
+        { tmp },
+      );
+    }) ?? false
+  );
+}
+
 /** The context for the model (`context`) and, on the task's first tool call, `prime`:
  *  the call that marks the task primed, for main to make once the answer is written. */
-export async function handle(
+export async function handle(event, cline, options = {}) {
+  if (!["UserPromptSubmit", "PreToolUse"].includes(event)) return NOTHING;
+  try {
+    // Cline's existing taskId mapping is canonical only before string coercion.
+    const root = bindHookProtection(
+      { session_id: cline?.taskId },
+      {
+        host: CLIENT,
+        event,
+        knownRoots: sessionProtectionContext()?.roots,
+      },
+    );
+    return (await withAutomaticSessionProtection(root, () => handleBound(event, cline, options))) ?? NOTHING;
+  } catch (error) {
+    if (error instanceof SessionProtectionUnavailable) return NOTHING;
+    throw error;
+  }
+}
+
+async function handleBound(
   event,
   cline,
   { tmp = os.tmpdir(), run = runPluginHook, repo = refreshRepoCache, filesMs = FILES_MS, now = Date.now } = {},
 ) {
   const base = basePayload(cline);
-  if (!base.session_id) return NOTHING;
+  const roots = sessionProtectionContext().roots;
+  if (automaticSessionIsProtected()) return NOTHING;
+  const invoke = (...args) => (automaticSessionIsProtected() ? Promise.resolve("") : run(...args));
   if (event === "UserPromptSubmit") {
     if (!recallOn()) return NOTHING; // nothing would read the prompt
     const prompt = personPrompt(cline);
-    const state = readSessionState("cline", base.session_id, { tmp });
+    const state = readProtectedState(event, base, tmp, roots);
     if (prompt && !state.prompt) {
       // redacted before the cut, so a secret across it is still matched whole
       const kept = redactHead(prompt, PROMPT_CHARS).slice(0, PROMPT_CHARS);
-      writeSessionState("cline", base.session_id, { ...state, prompt: kept }, { tmp });
+      writeProtectedState(base.session_id, { ...state, prompt: kept }, tmp, roots);
     }
     return NOTHING;
   }
   if (event !== "PreToolUse") return NOTHING;
-  const state = readSessionState("cline", base.session_id, { tmp });
+  const state = readProtectedState(event, base, tmp, roots);
   const parts = [];
   let prime = null;
   const started = now();
@@ -184,9 +274,9 @@ export async function handle(
     // The primer fills the checkout's repository cache the file lookups read for the
     // team's file rules, so they wait for it; the recall runs beside it.
     const [primer, recall] = await Promise.all([
-      run("loom-session-start.mjs", "SessionStart", { ...base, source: "startup", hook_event_name: "SessionStart" }),
+      invoke("loom-session-start.mjs", "SessionStart", { ...base, source: "startup", hook_event_name: "SessionStart" }),
       state.prompt
-        ? run("loom-prompt-recall.mjs", "UserPromptSubmit", {
+        ? invoke("loom-prompt-recall.mjs", "UserPromptSubmit", {
             ...base,
             prompt: state.prompt,
             hook_event_name: "UserPromptSubmit",
@@ -196,7 +286,7 @@ export async function handle(
     // `prime` marks the task once main has written the answer: if Cline cuts the hook
     // short, the primer is tried again on the next tool call. The recall and file blocks
     // are not: their scripts mark themselves done before they print.
-    prime = () => writeSessionState("cline", base.session_id, { ...state, primed: true }, { tmp });
+    prime = () => writeProtectedState(base.session_id, { ...state, primed: true }, tmp, roots);
     parts.push(withoutRecordingLine(contextOf(primer)), contextOf(recall));
   }
   let files = []; // with the file block's own switch off: no lookup and no cache refresh
@@ -204,15 +294,30 @@ export async function handle(
     const edit = editCall(cline);
     files = edit ? [edit] : readPaths(cline).map((p) => ({ tool_name: "Edit", tool_input: { file_path: p } }));
   }
-  if (files.length) await repo(base.cwd);
+  if (files.length && !automaticSessionIsProtected()) await repo(base.cwd);
   // one at a time: the plugin's script keeps one shown-file state per task
   for (const call of files) {
-    if (now() - started >= filesMs) break;
+    if (automaticSessionIsProtected() || now() - started >= filesMs) break;
     parts.push(
-      contextOf(await run("loom-file-context.mjs", "PreToolUse", { ...base, ...call, hook_event_name: "PreToolUse" })),
+      contextOf(
+        await invoke("loom-file-context.mjs", "PreToolUse", { ...base, ...call, hook_event_name: "PreToolUse" }),
+      ),
     );
   }
-  return { context: parts.filter(Boolean).join("\n\n"), prime };
+  if (automaticSessionIsProtected()) return NOTHING;
+  const text = parts.filter(Boolean).join("\n\n");
+  return {
+    // A consumer may publish after this async call has left its producer's context.
+    get context() {
+      return withCapturedSessionProtection(roots, () => text) ?? "";
+    },
+    prime,
+  };
+}
+
+/** Read retained producer control at the synchronous stdout publication boundary. */
+export function hookAnswer({ context }) {
+  return context ? { cancel: false, contextModification: context } : { cancel: false };
 }
 
 async function main() {
@@ -223,11 +328,10 @@ async function main() {
   } catch {
     found = NOTHING;
   }
-  const { context, prime } = found;
-  const answer = context ? { cancel: false, contextModification: context } : { cancel: false };
+  const answer = hookAnswer(found);
   // once the answer is written (a pipe's write can be asynchronous), mark the task and exit
   process.stdout.write(`${JSON.stringify(answer)}\n`, (err) => {
-    if (!err && prime) prime(); // a failed write did not reach Cline
+    if (!err && found.prime) found.prime(); // a failed write did not reach Cline
     process.exit(0);
   });
 }

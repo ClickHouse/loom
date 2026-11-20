@@ -6,6 +6,7 @@
 // per pass reason), so tokens kept out and let in are a production series.
 
 import { createHash } from "node:crypto";
+import path from "node:path";
 
 import { PASS_REASONS, readSpan } from "./code-shunt.mjs";
 
@@ -19,7 +20,75 @@ export const SHUNT_CLIENT_SOURCE = "claude-code-shunt";
 export function batchKind({ serverUrl = "", token = "", org = "", namespace = "" } = {}) {
   const tokenId = createHash("sha256").update(String(token)).digest("hex").slice(0, 16);
   const scope = createHash("sha256").update(`${serverUrl}|${tokenId}|${org}/${namespace}`).digest("hex").slice(0, 12);
-  return `shunt-pending-${scope}`;
+  // Older consumers select shunt-pending; they must not consume root-aware rows.
+  return `shunt-protected-${scope}`;
+}
+
+const ROOT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MAX_BATCH_BYTES = 4 * 1024 * 1024;
+
+function batchRoots(roots) {
+  if (!Array.isArray(roots) || !roots.length) return null;
+  const known = new Map();
+  for (const root of roots) {
+    if (
+      !root ||
+      typeof root !== "object" ||
+      Array.isArray(root) ||
+      Object.keys(root).sort().join(",") !== "base,id" ||
+      typeof root.base !== "string" ||
+      !path.isAbsolute(root.base) ||
+      typeof root.id !== "string" ||
+      !ROOT_ID.test(root.id)
+    )
+      return null;
+    const copy = Object.freeze({ base: root.base, id: root.id });
+    known.set(JSON.stringify([copy.base, copy.id]), copy);
+  }
+  return Object.freeze([...known.values()]);
+}
+
+function validDecisionLine(line) {
+  if (typeof line !== "string" || !line.endsWith("\n") || line.slice(0, -1).includes("\n")) return false;
+  const cells = line.slice(0, -1).split("\t");
+  return cells.length === 9 && ["hit", "pass"].includes(cells[1]);
+}
+
+/** Only the producer's captured context supplies roots; log fields carry no authority. */
+export function formatShuntBatchLine(line, roots) {
+  const retained = batchRoots(roots);
+  if (!retained || !validDecisionLine(line)) return null;
+  return JSON.stringify({ version: 1, protectionRoots: retained, line }) + "\n";
+}
+
+/** Any unattributed or damaged row withholds the entire batch, preserving its bytes. */
+export function parseShuntBatch(text) {
+  if (typeof text !== "string" || !text || !text.endsWith("\n") || Buffer.byteLength(text, "utf8") > MAX_BATCH_BYTES)
+    return null;
+  const roots = [];
+  const lines = [];
+  for (const raw of text.slice(0, -1).split("\n")) {
+    let row;
+    try {
+      row = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (
+      !row ||
+      typeof row !== "object" ||
+      Array.isArray(row) ||
+      Object.keys(row).sort().join(",") !== "line,protectionRoots,version" ||
+      row.version !== 1 ||
+      !validDecisionLine(row.line)
+    )
+      return null;
+    const retained = batchRoots(row.protectionRoots);
+    if (!retained) return null;
+    roots.push(...retained);
+    lines.push(row.line);
+  }
+  return Object.freeze({ roots: batchRoots(roots), text: lines.join(""), lines: lines.length });
 }
 
 /** Tokens the model did not ingest because a hit denied the read: bytes/4

@@ -41,6 +41,7 @@ import {
 } from "../lib/run-hook.mjs";
 import { sessionStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
 import { appendTurn, lastAssistant, readJournal } from "../lib/turn-journal.mjs";
+import { automaticSessionIsProtected } from "../lib/session-response.mjs";
 
 const ENABLED = envSwitch("LOOM_RUN_LEDGER", true);
 
@@ -69,6 +70,7 @@ async function main() {
     const prompt = String(payload.prompt || "");
     // Every prompt goes to the turn journal: the consumers
     // read it when the client hands them no parseable transcript.
+    if (automaticSessionIsProtected()) return scheduleExit(0);
     appendTurn(sessionId, "user", prompt);
     const prior = readRunState(sessionId);
     if (prior.begun || prior.refused) {
@@ -80,6 +82,7 @@ async function main() {
     // the first redacted body (the README's hooks table has the retry rules).
     const body = prior.attempted && prior.body ? prior.body : beginBody(scope, payload, prompt);
     const res = await postBoundedResult("run.begin", body, opts);
+    if (automaticSessionIsProtected()) return scheduleExit(0);
     const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
     // 408, 429 and a 2xx with no usable id may still have opened the run.
     const transient = res.status === 408 || res.status === 429 || res.status >= 500 || res.status < 300;
@@ -102,6 +105,7 @@ async function main() {
       deadline = Date.now() + 900;
       const beginOpts = { ...opts, timeoutMs: Math.min(opts.timeoutMs, 400) };
       const res = await postBoundedResult("run.begin", state.body || beginBody(scope, payload, ""), beginOpts);
+      if (automaticSessionIsProtected()) return scheduleExit(0);
       const runId = res.status >= 200 && res.status < 300 && res.body ? res.body.run_id : "";
       if (typeof runId === "string" && runId) writeRunBegun(sessionId, runId);
       state = readRunState(sessionId);
@@ -122,6 +126,7 @@ async function main() {
     // No longer begun, so a resumed session's next prompt opens a new run. The
     // id stays for the other SessionEnd hooks, which run beside this one; the
     // stale-file sweep removes it later.
+    if (automaticSessionIsProtected()) return scheduleExit(0);
     writeJsonFile(sp, { run_id: state.run_id });
     if (deadline !== undefined) {
       // Body and state preparation spend the same budget as both requests.

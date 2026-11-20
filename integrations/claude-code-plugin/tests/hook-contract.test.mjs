@@ -4,6 +4,7 @@
 // output shape its event allows. Each case runs the real script as the host
 // does (`node <script> <Event>`, payload on stdin) against a fake Loom.
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
@@ -88,7 +89,7 @@ async function fakeLoom(mode) {
   return { url, ops, close };
 }
 
-function sandbox() {
+function sandbox({ existingSession } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-hook-contract-"));
   const home = path.join(dir, "home");
   const tmp = path.join(dir, "tmp");
@@ -124,6 +125,7 @@ function sandbox() {
     },
   ];
   fs.writeFileSync(transcript, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  if (existingSession) establishFixtureSession(home, existingSession);
   return { dir, home, tmp, cwd, transcript };
 }
 
@@ -290,7 +292,7 @@ test("malformed, empty and non-object payloads: every hook exits 0 silently", as
 });
 
 test("no token anywhere: every hook exits 0 silently and sends no request", async () => {
-  const box = sandbox();
+  const box = sandbox({ existingSession: "contract-session-1" });
   const loom = await fakeLoom("ok");
   try {
     const cases = ALL_HOOKS.map((h) => ({
@@ -310,7 +312,7 @@ test("no token anywhere: every hook exits 0 silently and sends no request", asyn
 });
 
 test("server unreachable, answering 401, or hanging: every hook stays within its bound", async () => {
-  const box = sandbox();
+  const box = sandbox({ existingSession: "contract-session-1" });
   const unauthorized = await fakeLoom("unauthorized");
   const hang = await fakeLoom("hang");
   try {
@@ -335,7 +337,7 @@ test("server unreachable, answering 401, or hanging: every hook stays within its
 });
 
 test("a host that never closes stdin does not hold a hook open", async () => {
-  const box = sandbox();
+  const box = sandbox({ existingSession: "contract-session-1" });
   const loom = await fakeLoom("ok");
   try {
     const cases = ALL_HOOKS.map((h) => ({
@@ -353,7 +355,7 @@ test("a host that never closes stdin does not hold a hook open", async () => {
 });
 
 test("a well-formed session against a healthy server: every hook exits 0 silently", async () => {
-  const box = sandbox();
+  const box = sandbox({ existingSession: "contract-session-1" });
   const loom = await fakeLoom("ok");
   try {
     const cases = ALL_HOOKS.map((h) => ({

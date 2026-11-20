@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { noIds } from "./recalled-block.mjs";
 // The session brief hook: transcript → typed events, the
 // save bar, the body, the primer line, the CLI helpers, and the hook end to
@@ -426,6 +427,7 @@ for (const [label, status] of [
         HOME: tmp,
       });
       const sessionId = `s-${status}`;
+      establishFixtureSession(tmp, sessionId);
       await runHook(env, { session_id: sessionId, transcript_path: transcript, cwd: tmp });
       assert.ok(await until(() => posts.some((p) => p.url === "/v1/session.brief_save")), "the flusher posted");
       const save = posts.find((p) => p.url === "/v1/session.brief_save").body;
@@ -474,6 +476,7 @@ test("with recording off the hook sends nothing and moves past the window", asyn
       LOOM_PROJECT_NAME: "x",
       HOME: tmp,
     });
+    establishFixtureSession(tmp, "s-rec");
     writeRecording(url, "o", "coding", false, { tmp });
     await runHook(env, { session_id: "s-rec", transcript_path: transcript, cwd: tmp });
     await new Promise((r) => setTimeout(r, 400));

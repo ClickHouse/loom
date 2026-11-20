@@ -1,6 +1,7 @@
 // run.begin can answer another run id than the derived one; the run hook
 // keeps it in the session's run state and every later hook uses it.
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -75,6 +76,7 @@ async function withServer(
 
 test("the id run.begin answers is used by run.complete, prompt recall and session memory", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s1");
   await withServer({ beginRunId: "0123abcd" }, async (url, seen) => {
     const payload = { session_id: "s1", cwd: tmp, prompt: "fix the bug" };
     await runHook("UserPromptSubmit", payload, { tmp, url });
@@ -98,6 +100,7 @@ test("the id run.begin answers is used by run.complete, prompt recall and sessio
 
 test("a run.begin that times out is asked again, and the run it opens is completed", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s2");
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s2", cwd: tmp, prompt: "p" }, { tmp, url });
   });
@@ -120,6 +123,7 @@ test("a run.begin that times out is asked again, and the run it opens is complet
 
 test("a run.begin refused with a 4xx is not asked again", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s3");
   await withServer({ beginRunId: "x", beginStatus: 403 }, async (url, seen) => {
     const payload = { session_id: "s3", cwd: tmp, prompt: "p" };
     await runHook("UserPromptSubmit", payload, { tmp, url });
@@ -132,6 +136,7 @@ test("a run.begin refused with a 4xx is not asked again", async () => {
 
 test("a run.begin that never answered is asked again at SessionEnd, and the run it answers is closed", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s4");
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s4", cwd: tmp, prompt: "p" }, { tmp, url });
   });
@@ -148,6 +153,7 @@ test("a begin whose answer was lost is recovered, not duplicated, on the next pr
   // One server: the first begin commits but its answer arrives after the hook's
   // timeout; the retry gets the same id (the server's begin is idempotent).
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s7");
   await withServer({ beginRunId: "r5ame1d0", firstBeginDelayMs: 2500 }, async (url, seen) => {
     const payload = { session_id: "s7", cwd: tmp, prompt: "p" };
     await runHook("UserPromptSubmit", payload, { tmp, url });
@@ -166,6 +172,7 @@ test("a begin whose answer was lost is recovered, not duplicated, on the next pr
 
 test("every retry re-sends the first begin's goal and request", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s9");
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s9", cwd: tmp, prompt: "first ask" }, { tmp, url });
   });
@@ -184,6 +191,7 @@ test("every retry re-sends the first begin's goal and request", async () => {
 
 test("the retry state holds the redacted body, never the raw prompt", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s10");
   const secret = "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789";
   // One credential well inside the body, one straddling the request's cut.
   const prompt = `use ${secret} here ` + "x".repeat(8000 - 30) + ` ${secret} tail`;
@@ -201,6 +209,7 @@ test("the retry state holds the redacted body, never the raw prompt", async () =
 
 test("a re-sent begin and the close fit Codex's one-second SessionEnd budget", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s11");
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s11", cwd: tmp, prompt: "p" }, { tmp, url });
   });
@@ -298,6 +307,7 @@ test("close admission deducts preparation from the shared deadline", async (t) =
 
 test("a 429 is a busy moment: the next prompt asks again", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s5");
   await withServer({ beginRunId: "x", beginStatus: 429 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s5", cwd: tmp, prompt: "p" }, { tmp, url });
   });
@@ -312,6 +322,7 @@ test("a 429 is a busy moment: the next prompt asks again", async () => {
 
 test("a refusal after an unanswered begin is asked once more at SessionEnd", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s6");
   await withServer({ beginRunId: "late", delayMs: 2500 }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s6", cwd: tmp, prompt: "p" }, { tmp, url });
   });
@@ -328,6 +339,7 @@ test("a refusal after an unanswered begin is asked once more at SessionEnd", asy
 
 test("a 2xx without a usable run id leaves the begin attempted", async () => {
   const tmp = freshTmp();
+  establishFixtureSession(tmp, "s8");
   await withServer({ beginRunId: "" }, async (url) => {
     await runHook("UserPromptSubmit", { session_id: "s8", cwd: tmp, prompt: "p" }, { tmp, url });
   });

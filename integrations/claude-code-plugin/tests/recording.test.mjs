@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -82,6 +83,7 @@ import { hostEnv } from "./host-env.mjs";
 test("the Stop hook sends no turns while recording is cached off, and moves past them", () => {
   const dir = tmp();
   const home = tmp();
+  establishFixtureSession(home, "s-recording");
   const hook = fileURLToPath(new URL("../hooks/loom-conversation.mjs", import.meta.url));
   const transcript = path.join(dir, "t.jsonl");
   fs.writeFileSync(

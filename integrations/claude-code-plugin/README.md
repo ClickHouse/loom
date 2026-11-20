@@ -32,6 +32,21 @@ tokens per `tools/list`; every other op runs through `loom_op {op, arguments}`. 
 
 > **Bare mode skips hooks.** `claude --bare` (chosen by some agent harnesses for prompt-cache and cost reasons) does not run PreToolUse hooks, so the token shunt and the outcome capture in this plugin do not fire there. A harness that wants the shunt under bare mode needs the SDK backend's hook path instead.
 
+A `SessionStart` event with `source: startup` establishes one durable session
+family before automatic hook work. Concurrent startup hooks use that same
+family; existing privacy marks never reset. Other lifecycle events resolve an
+existing family. Unknown, damaged or protected families stay silent, including
+automatic signup and the session primer. Binding uses the hook's raw
+`session_id`; a payload containing only `sessionId` stays silent. The hooks do
+not declare protection for direct MCP responses. Native startup, response
+observation and private-content publication remain unqualified.
+
+On Windows, the local authority uses the process token owner and protected
+owner-only access controls on NTFS. A bounded helper checks record handles and
+contains its compiler children. Unsupported storage or unverifiable authority
+stays silent. Native execution, startup timing and failure cleanup remain
+unqualified.
+
 ## Data handling
 
 The hooks and scripts send data only to the Loom server the plugin is configured
@@ -104,8 +119,12 @@ Its files in the system temp directory, which can hold prompt and reply text,
 are also mode 0600. A queued write whose delivery process stopped before sending
 it stays until you replay or delete it; `loom-status` counts these and names the
 directory. A write the server refuses, or that cannot reach the server, is
-discarded. A batch of the per-file read and grep records above that fails to
-send is discarded too. Chat turns that fail are sent again at the end of the
+discarded. Per-file read and grep reports retain their original producer's
+privacy roots. A report with unknown or protected producer state is not sent.
+Those reports and failed delivery claims stay on disk without acknowledgement;
+failed claims are not replayed automatically. Pending and claimed shunt reports
+are excluded from the current plugin's cleanup. Older plugin versions can still
+expire older-format files. Chat turns that fail are sent again at the end of the
 next reply, and a brief's events at the next brief save. At session start the
 plugin tries to remove other state files untouched for a day. They can remain
 longer, especially when no new session starts. The log of which tool calls the plugin redirected

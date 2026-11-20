@@ -21,7 +21,7 @@
 // user's decision log (tmpStatePath "shunt-log") and its unflushed copy, one
 // batch per reporting scope and session (repo.pending, named by batchKind in
 // lib/shunt-ledger.mjs), all through lib/tmp-state.mjs's private-file helpers,
-// flushed as code.outcome rows (fire-and-forget, 300 ms) on a deny or every
+// flushed as code.outcome rows (300 ms per request) on a deny or every
 // SHUNT_FLUSH_EVERY lines (lib/shunt-ledger.mjs).
 import fs from "node:fs";
 import path from "node:path";
@@ -31,8 +31,8 @@ import {
   gitToplevel,
   pathUnder,
   postBounded,
-  postFireAndForget,
   readStdinJson,
+  runHookMain,
   resolveServerUrl,
   resolveToken,
   redactSecrets,
@@ -69,6 +69,8 @@ import {
   estimateTokensRead,
   estimateTokensSaved,
   formatShuntLine,
+  formatShuntBatchLine,
+  parseShuntBatch,
   shouldFlushShunt,
 } from "../lib/shunt-ledger.mjs";
 import { repoLookupOutcome, resolveIndexedRepo, resolveTimeoutMs } from "../lib/repo-scope.mjs";
@@ -81,6 +83,13 @@ import {
   writePrivateFile,
   writeSessionState,
 } from "../lib/tmp-state.mjs";
+
+import { sessionIsProtected } from "../lib/session-protection.mjs";
+import {
+  automaticSessionIsProtected,
+  sessionProtectionContext,
+  withCapturedSessionProtection,
+} from "../lib/session-response.mjs";
 
 const ENABLED = envSwitch("LOOM_CODE_SHUNT", true);
 const MAX_LINES = Number(process.env.LOOM_SHUNT_MAX_LINES || DEFAULT_MAX_LINES);
@@ -101,8 +110,7 @@ const LOG_PATH = tmpStatePath("shunt-log", UID, { ext: ".log" });
 
 /** The unflushed batch, set on `repo` in main: `kind` names the reporting scope
  *  (server, token, repository) every batch of it shares, `path` this session's
- *  batch, a name nobody can create ahead of the session. Batches and claimed
- *  batches are swept with the other state files. A flush also claims the
+ *  batch. Unacknowledged batches and claims do not expire. A flush also claims the
  *  scope's other batches: those ended or crashed sessions left, and those of
  *  sessions still running. */
 function pendingFor(repo, sessionId) {
@@ -112,7 +120,7 @@ function pendingFor(repo, sessionId) {
     org: repo.org || "",
     namespace: repo.namespace || "",
   });
-  return { kind, path: sessionStatePath(kind, sessionId, { ext: ".log" }) };
+  return { kind, path: sessionStatePath(kind, sessionId, { ext: ".log.control" }) };
 }
 
 function countLines(abs) {
@@ -183,32 +191,59 @@ function fileBytes(abs) {
   }
 }
 
-/** Append one decision locally; returns the number of unflushed lines. Sync
- *  appends of one short line — microseconds, and never on the network. */
-function logDecision(pending, { decision, tool, tokensSaved, reason, passReason, path, startLine, endLine }) {
-  if (!LOG_ON) return 0;
-  const line = formatShuntLine({
-    decision,
-    tool,
-    tokensSaved,
-    reason,
-    passReason,
-    path,
-    startLine,
-    endLine,
-  });
+/** Only a newly created lock may be released. A crashed producer leaves evidence. */
+function withBatchLock(file, callback) {
+  const lock = `${file}.lock`;
   try {
+    fs.mkdirSync(lock, { mode: 0o700 });
+  } catch {
+    return undefined;
+  }
+  try {
+    return callback();
+  } finally {
+    try {
+      fs.rmdirSync(lock);
+    } catch {
+      /* Leave a lock we cannot release; never force another writer's state. */
+    }
+  }
+}
+
+function rootsAreClean(roots) {
+  try {
+    return Boolean(roots?.length) && roots.every((root) => !sessionIsProtected(root));
+  } catch {
+    return false;
+  }
+}
+
+/** The diagnostic TSV stays readable; only the separate queue carries control. */
+function logDecision(pending, { decision, tool, tokensSaved, reason, passReason, path, startLine, endLine }) {
+  if (!LOG_ON || automaticSessionIsProtected()) return 0;
+  const roots = sessionProtectionContext()?.roots;
+  const line = formatShuntLine({ decision, tool, tokensSaved, reason, passReason, path, startLine, endLine });
+  const row = formatShuntBatchLine(line, roots);
+  if (!row || !rootsAreClean(roots)) return 0;
+  try {
+    if (automaticSessionIsProtected()) return 0;
     writePrivateFile(LOG_PATH, line, { append: true });
   } catch {
     /* tmp not writable, or a file we do not own: fine */
   }
-  try {
-    writePrivateFile(pending.path, line, { append: true });
-    const text = readPrivateFile(pending.path);
-    return text.split("\n").length - 1;
-  } catch {
-    return 0;
-  }
+  return (
+    withBatchLock(pending.path, () => {
+      try {
+        // Do not append over damaged or unattributed evidence.
+        if (fs.existsSync(pending.path) && !parseShuntBatch(readPrivateFile(pending.path))) return 0;
+        if (automaticSessionIsProtected()) return 0;
+        writePrivateFile(pending.path, row, { append: true });
+        return parseShuntBatch(readPrivateFile(pending.path))?.lines || 0;
+      } catch {
+        return 0;
+      }
+    }) || 0
+  );
 }
 
 /** The batch files of this reporting scope that this user owns: this
@@ -224,7 +259,7 @@ function scopeBatches(pending) {
     return [];
   }
   return names
-    .filter((n) => n.startsWith(prefix) && n.endsWith(".log"))
+    .filter((n) => n.startsWith(prefix) && n.endsWith(".log.control"))
     .map((n) => path.join(dir, n))
     .filter((file) => {
       try {
@@ -236,46 +271,67 @@ function scopeBatches(pending) {
     });
 }
 
-/** Claim one batch by renaming it to a name of this process, read it with the
- *  private-file checks, and remove it: of two hooks flushing at once only one
- *  gets each batch. "" when another hook claimed it first, or it is not ours. */
+/** Locking serializes appends and rename, so a claimed file has no producer writer. */
 function claimBatch(file) {
-  const claimed = tmpStatePath("shunt-claim", `${file}:${process.pid}:${crypto.randomBytes(8).toString("hex")}`, {
-    ext: ".log",
+  return withBatchLock(file, () => {
+    let claimed;
+    try {
+      const before = parseShuntBatch(readPrivateFile(file));
+      if (!before || !rootsAreClean(before.roots)) return null;
+      claimed = tmpStatePath(
+        "shunt-protected-claim",
+        `${file}:${process.pid}:${crypto.randomBytes(8).toString("hex")}`,
+        {
+          ext: ".log.control",
+        },
+      );
+      fs.renameSync(file, claimed);
+      // Re-read after claim: a changed control record is never sent as the old one.
+      const batch = parseShuntBatch(readPrivateFile(claimed));
+      return { claimed, batch };
+    } catch {
+      return claimed ? { claimed, batch: null } : null;
+    }
   });
-  try {
-    fs.renameSync(file, claimed);
-  } catch {
-    return "";
-  }
-  let text = "";
-  try {
-    text = readPrivateFile(claimed);
-  } catch {
-    /* replaced between the check and the rename: not ours to post */
-  }
-  removeFile(claimed);
-  return text;
 }
 
-/** Ship the scope's pending batches as code.outcome rows. Fire-and-forget with
- *  a 300 ms ceiling; a lost batch costs a few counter ticks. Each batch is
- *  claimed before it is read, so it is posted at most once. */
-function flushPending(repo) {
-  if (!REPORT_ON) return;
-  const text = scopeBatches(repo.pending).map(claimBatch).join("");
-  if (!text) return;
-  const agg = aggregateShuntLog(text);
-  const opts = { timeoutMs: FLUSH_TIMEOUT_MS };
-  const scope = { org: repo.org || "", namespace: repo.namespace || "", consumer: "claude-code-shunt" };
-  if (agg.hit) postFireAndForget("code.outcome", { ...scope, ...agg.hit }, opts);
-  for (const body of agg.passes) postFireAndForget("code.outcome", { ...scope, ...body }, opts);
+/** Acknowledge only after every bounded post and the final producer-root check. */
+async function flushPending(repo) {
+  if (!REPORT_ON || automaticSessionIsProtected()) return;
+  const claims = scopeBatches(repo.pending).map(claimBatch).filter(Boolean);
+  if (!claims.length) return;
+  const ready = claims.filter(({ batch }) => batch && rootsAreClean(batch.roots));
+  const roots = ready.flatMap(({ batch }) => batch.roots);
+  let acknowledged = false;
+  try {
+    await withCapturedSessionProtection(roots, async () => {
+      const agg = aggregateShuntLog(ready.map(({ batch }) => batch.text).join(""));
+      const bodies = [agg.hit, ...agg.passes].filter(Boolean);
+      if (!bodies.length) return;
+      const scope = { org: repo.org || "", namespace: repo.namespace || "", consumer: "claude-code-shunt" };
+      for (const body of bodies) {
+        if (automaticSessionIsProtected()) return;
+        const answer = await postBounded("code.outcome", { ...scope, ...body }, { timeoutMs: FLUSH_TIMEOUT_MS });
+        if (!answer || automaticSessionIsProtected()) return;
+      }
+      acknowledged = !automaticSessionIsProtected();
+    });
+  } catch {
+    // Observer or control failure withholds acknowledgment; claims retain their evidence.
+  } finally {
+    for (const claim of claims) {
+      if (acknowledged && ready.includes(claim) && rootsAreClean(roots)) removeFile(claim.claimed);
+      // Refusals and ambiguous outcomes stay outside the automatic queue.
+      // Keeping the claim avoids replaying an unchanged protected operation.
+    }
+  }
 }
 
 /** Every decision funnels through here: deny + log + maybe flush.
  *  `verdict` is classifyRead/classifyGrep's {deny, reason}; `tokens` is the
  *  estimate kept out (hit) or let in (pass); `span` the lines covered. */
 function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end: 0 } }) {
+  if (automaticSessionIsProtected()) return;
   const denied = Boolean(verdict.deny);
   if (denied) deny(verdict.deny);
   const unflushed = logDecision(repo.pending, {
@@ -288,7 +344,7 @@ function settle(repo, { tool, verdict, tokens, path = "", span = { start: 0, end
     startLine: span.start,
     endLine: span.end,
   });
-  if (shouldFlushShunt({ denied, pending: unflushed })) flushPending(repo);
+  if (shouldFlushShunt({ denied, pending: unflushed })) void flushPending(repo);
   return denied;
 }
 
@@ -575,6 +631,4 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
   return settle(repo, { tool: "Bash:grep", verdict, tokens: 0, path: rel || "" });
 }
 
-main()
-  .catch(() => {})
-  .finally(() => scheduleExit(0));
+runHookMain(main).finally(() => scheduleExit(0));

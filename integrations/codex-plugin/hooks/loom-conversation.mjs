@@ -30,6 +30,7 @@ import {
 } from "../lib/loom-client.mjs";
 import { dispatchFlush } from "../lib/flush-job.mjs";
 import { readRecording } from "../lib/recording.mjs";
+import { automaticSessionIsProtected } from "../lib/session-response.mjs";
 import { readCursor, writeCursor } from "../lib/tmp-state.mjs";
 import { fileSize, readLinesFrom } from "../lib/transcript.mjs";
 import { appendTurn, journalCursorPath, readJournal, readJournalCursor, rowsSince } from "../lib/turn-journal.mjs";
@@ -82,6 +83,7 @@ function turnFrom(obj) {
  *  only when all land. Falls back to inline fire-and-forget without
  *  advancing the cursor, so the next Stop retries. */
 function dispatch(appends, cursorFile, advanceTo) {
+  if (automaticSessionIsProtected()) return;
   // The owner switched recording off for this namespace (the
   // server said so on a recent append): nothing would be kept, so send
   // nothing and move the cursor past these turns. Re-asked after the cache's
@@ -91,7 +93,7 @@ function dispatch(appends, cursorFile, advanceTo) {
     writeCursor(cursorFile, advanceTo);
     return;
   }
-  if (!dispatchFlush({ appends, cursorPath: cursorFile, advanceTo })) {
+  if (!dispatchFlush({ appends, cursorPath: cursorFile, advanceTo }) && !automaticSessionIsProtected()) {
     for (const a of appends) postFireAndForget("conversation.append", a);
   }
 }
@@ -103,6 +105,7 @@ function dispatch(appends, cursorFile, advanceTo) {
  *  on, so a Stop carries the prompt(s) since the last Stop plus the reply.
  *  Returns true when it handled the event. */
 function fromEvents(payload, sessionId, scope) {
+  if (automaticSessionIsProtected()) return true;
   const reply = typeof payload.last_assistant_message === "string" ? payload.last_assistant_message.trim() : "";
   if (!reply) return false;
   appendTurn(sessionId, "assistant", reply);
@@ -130,6 +133,7 @@ async function main() {
     return scheduleExit(0);
   }
   const payload = await readStdinJson();
+  if (automaticSessionIsProtected()) return scheduleExit(0);
   const sessionId = String(payload.session_id || "");
   const transcript = String(payload.transcript_path || "");
   if (!sessionId) return scheduleExit(0);
@@ -141,6 +145,7 @@ async function main() {
 
   // Let a just-finished assistant message flush before we read (see SETTLE_MS).
   if (SETTLE_MS > 0) await new Promise((r) => setTimeout(r, SETTLE_MS));
+  if (automaticSessionIsProtected()) return scheduleExit(0);
 
   if (!fileSize(transcript)) {
     fromEvents(payload, sessionId, scope); // transcript named but unreadable
@@ -179,6 +184,7 @@ async function main() {
     });
   }
 
+  if (automaticSessionIsProtected()) return scheduleExit(0);
   if (appends.length === 0) {
     // Nothing new — advance past scanned lines and exit. A transcript in a
     // shape this script does not parse yields nothing every time; the

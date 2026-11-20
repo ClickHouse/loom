@@ -54,6 +54,8 @@ import { cacheIsFresh, countsBody, renderTaskLine, summarizeCounts } from "../li
 import { listBody, renderCollectionsLine, toolsetAllows } from "../lib/collections-line.mjs";
 import { briefPrimerEnabled, primerLine } from "../lib/session-brief.mjs";
 import { readJsonFile, sweepStaleStateFiles, tmpStatePath, writeJsonFile } from "../lib/tmp-state.mjs";
+import { automaticSessionIsProtected } from "../lib/session-response.mjs";
+import { SessionProtectionUnavailable } from "../lib/session-protection.mjs";
 
 async function main() {
   // A token given at `claude plugin install --config token=…`
@@ -81,6 +83,7 @@ async function main() {
     // silent. The token lands in ~/.loom/config.json for every later hook;
     // this process keeps using it through LOOM_API_KEY.
     const signup = await ensureCredential({ hasToken: false, client: hookClient(), serverUrl: resolveServerUrl() });
+    if (automaticSessionIsProtected()) return;
     firstSessionNotice = renderFirstSessionNotice(signup, resolveServerUrl());
     if (signup.status === "created") {
       process.env.LOOM_API_KEY = signup.token;
@@ -101,6 +104,7 @@ async function main() {
   const serverUrl = resolveServerUrl();
   const health = probeHealth(serverUrl)
     .then(({ ms, body }) => {
+      if (automaticSessionIsProtected()) return "";
       if (ms) recordRoundTrip(serverUrl, ms);
       return serverVersionLine(body, { serverUrl });
     })
@@ -123,6 +127,7 @@ async function main() {
     recordingState(scope, token),
     envSwitch("LOOM_COLLECTIONS_LINE", true) ? collectionsLine(scope, token) : "",
   ]);
+  if (automaticSessionIsProtected()) return;
 
   // A user-scope MCP entry duplicating this plugin's mount.
   const dup = hookClient() === "claude-code" ? duplicateNotice({ serverUrl }) : "";
@@ -151,6 +156,7 @@ async function recordingState(scope, token) {
   const cached = readRecording(serverUrl, scope.org, scope.namespace);
   if (cached !== null) return cached;
   const body = await postBounded("namespace.get", { org: scope.org, namespace: scope.namespace }, { token, serverUrl });
+  if (automaticSessionIsProtected()) return null;
   const on = recordingFromNamespace(body);
   writeRecording(serverUrl, scope.org, scope.namespace, on);
   return on;
@@ -172,6 +178,7 @@ async function taskInboxLine(scope, token) {
   const cached = readJsonFile(cp, null);
   if (cacheIsFresh(cached)) return cached.line;
   const result = await postBounded("task.counts", countsBody(scope), { token, serverUrl: resolveServerUrl() });
+  if (automaticSessionIsProtected()) return "";
   const line = renderTaskLine(summarizeCounts(result));
   writeJsonFile(cp, { ts: Date.now(), line });
   return line;
@@ -197,6 +204,7 @@ async function collectionsLine(scope, token) {
   const cached = readJsonFile(cp, null);
   if (cacheIsFresh(cached)) return cached.line;
   const result = await postBounded("collection.list", listBody(scope), { token, serverUrl: resolveServerUrl() });
+  if (automaticSessionIsProtected()) return "";
   let line = "";
   try {
     line = renderCollectionsLine(result, allows);
@@ -244,7 +252,12 @@ async function buildCodeBlock(scope, token, cwd) {
       : "# Loom code index: not inside a git checkout; set LOOM_CODE_REPO=<owner>/<name> " +
           "(or the plugin's code_repo option, or code_repo in ~/.loom/config.json) to use a repository's index.\n\n";
   }
-  const post = (op, body, o) => postBounded(op, body, { ...o, serverUrl });
+  const post = async (op, body, o) => {
+    if (automaticSessionIsProtected()) throw new SessionProtectionUnavailable();
+    const result = await postBounded(op, body, { ...o, serverUrl });
+    if (automaticSessionIsProtected()) throw new SessionProtectionUnavailable();
+    return result;
+  };
   const { entry, status } = await lookupIndexedRepo(root, {
     token,
     post,

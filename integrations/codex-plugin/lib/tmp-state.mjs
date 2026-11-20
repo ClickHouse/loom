@@ -159,10 +159,10 @@ export function writeCursor(file, n) {
 }
 
 export const STALE_STATE_MS = 24 * 60 * 60 * 1000;
-// tmpStatePath's names but the code shunt's decision log (a log the user reads, not
-// session state), and the recalled-key and code-trace stashes named by session id.
+// Decision logs and unacknowledged shunt queues/claims retain their evidence.
+// Other tmpStatePath names and recalled-key/code-trace stashes expire.
 const STATE_FILE_RE =
-  /^loom-(?!shunt-log-)(?:[a-z0-9-]+-[0-9a-f]{12}(?:\.[a-z]+)?|(?:recalled|code-trace)-[\w-]+\.json)$/;
+  /^loom-(?!shunt-(?:log|pending|protected|claim)-)(?:[a-z0-9-]+-[0-9a-f]{12}(?:\.[a-z]+)?|(?:recalled|code-trace)-[\w-]+\.json)$/;
 
 /** Remove this user's state files in `tmp` untouched for `maxAgeMs`: a session's
  *  journal and cursors outlive it, since SessionEnd hooks run in parallel and none

@@ -4,6 +4,10 @@ Two Cline hooks give a Cline agent Loom's memory without a tool call. The agent 
 
 Experimental: tested with the Cline CLI 3.0.74 on Linux (`cline --json -y`), with project hooks in `.clinerules/hooks/`. On that version the hooks did not run from the directory the CLI's `--hooks-dir` option names, so install them in the project.
 
+Automatic delivery requires an existing application-owned `cline` binding for the exact string `taskId`. The adapter does not create that binding or infer a parent from the task identifier. Unknown, damaged or protected families stay silent, including the static primer. Installing the hooks alone does not establish a native session family.
+
+Queued prompts retain their producer roots. The adapter checks those roots before capture, repository requests, context publication and acknowledgement. Unattributed prompt files stay unused and are preserved by the adapter; generic temporary-file retention still applies. The CLI observation above describes hook placement. Native session establishment, direct MCP publication and Windows authority remain unqualified.
+
 ## What Cline shows the model
 
 On Cline CLI 3.0.74, a hook's `contextModification` reaches the model's next request only when PreToolUse returns it. What TaskStart and UserPromptSubmit return does not reach the model: asked to quote every hook note in its context, a model saw only PreToolUse's. So the hooks work like this:
@@ -14,7 +18,7 @@ On Cline CLI 3.0.74, a hook's `contextModification` reaches the model's next req
 | `PreToolUse`, the task's first tool call                                                                                                | Adds the session primer (`loom-session-start.mjs`) and the memories recalled for that prompt (`loom-prompt-recall.mjs`). The primer's conversation-recording line is left out, because it speaks of the plugin's Stop hook, which Cline does not run.                                                                                                            |
 | `PreToolUse` on a file read (`read_files`, its first three files) or edit (`editor`, `write_to_file`, `replace_in_file`, `apply_patch`) | Adds the memories about that file (`loom-file-context.mjs`, `memory.for_file`), once per file per task within 30 minutes (`LOOM_FILE_CONTEXT_TTL_MIN`). Since the model sees them on its next request, the read that comes before an edit is what brings them in time. On a read the block's heading still speaks of an edit: it is the plugin's pre-edit block. |
 
-Every hook answers `{"cancel": false}`, with `contextModification` when there is something to add, and exits 0. If the Loom directory is missing or Node 18+ is not found, it adds nothing. If the server is unreachable, it adds only the primer's static notes. The task goes on in each case.
+Every hook answers `{"cancel": false}`, with `contextModification` when there is something to add, and exits 0. If the Loom directory is missing or Node 18+ is not found, it adds nothing. For an existing unprotected family, if the server is unreachable, it adds only the primer's static notes. The task goes on in each case.
 
 Keep the [agent instructions](../../docs/features/integrations/agent-instructions.md) block in `.clinerules/` beside the hooks: it covers what the hooks do not, such as saving stated facts and searching memory mid-task, and replace its paragraph that starts "Every task:" with "Every task: make these two calls." as that page says, so both calls stay required.
 

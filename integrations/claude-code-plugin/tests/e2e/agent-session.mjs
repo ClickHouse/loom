@@ -26,6 +26,9 @@
 // nothing on stderr; with --no-node, when every hook failed on the missing
 // node, none with exit 2, and the turn's command ran. Otherwise exit 1
 // naming what is missing.
+// With node available, a second session receives a marked startup pack. The
+// ordinary pack must reach model input; the marked pack must not reach model
+// input, CLI output or automatic Loom writes. This does not inspect host storage.
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -36,6 +39,12 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const TOKEN = "loom-e2e-token";
 const MODEL_KEY = "e2e-model-key";
+const STARTUP_MARKER = "LOOM_E2E_STARTUP_PUBLICATION_7ca8d9e4";
+
+function reportFailure(value) {
+  const text = value instanceof Error ? value.stack || value.message : String(value);
+  console.error(text.replaceAll(STARTUP_MARKER, "[startup marker]"));
+}
 
 function parseArgs(argv) {
   const out = { agent: argv[0], bin: "", port: 7777, nodeOffPath: false, noNode: false, expectTool: "" };
@@ -133,10 +142,12 @@ function responsesTurn(body, res) {
 }
 
 /** The fake: the model API under /v1/messages and /v1/responses, Loom for
- *  everything else (any op answers an empty success, MCP answers 401).
- *  `seen` records each request's path and Authorization header. */
-async function startFake(port) {
+ *  everything else (a startup marker, otherwise empty success; MCP answers 401).
+ *  `seen` retains request bodies and their order around the startup response. */
+async function startFake(port, { marked }) {
   const seen = [];
+  let order = 0;
+  let startupResponseOrder = 0;
   const handler = (req, res) => {
     let raw = "";
     req.on("data", (d) => (raw += d));
@@ -148,7 +159,15 @@ async function startFake(port) {
         /* a non-JSON body is recorded like any other */
       }
       const url = req.url || "";
-      seen.push({ path: url.split("?")[0], auth: req.headers.authorization || "", mode: body.mode, repos: body.repos });
+      const request = {
+        path: url.split("?")[0],
+        auth: req.headers.authorization || "",
+        mode: body.mode,
+        repos: body.repos,
+        body,
+        order: ++order,
+      };
+      seen.push(request);
       if (url.startsWith("/v1/messages/count_tokens")) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end('{"input_tokens":1}');
@@ -160,7 +179,13 @@ async function startFake(port) {
         res.end("{}");
       } else {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ rendered: "", results: [], repos: [] }));
+        const startup = request.path === "/v1/context.pack" && body.mode === "startup";
+        const reply = { rendered: startup ? STARTUP_MARKER : "", results: [], repos: [] };
+        if (startup) {
+          if (marked) reply.mirrored = true;
+          startupResponseOrder = ++order;
+        }
+        res.end(JSON.stringify(reply));
       }
     });
   };
@@ -180,7 +205,7 @@ async function startFake(port) {
     }
   }
   const close = () => Promise.all(servers.map((s) => new Promise((r) => s.close(r))));
-  return { seen, close };
+  return { seen, close, startupResponseOrder: () => startupResponseOrder };
 }
 
 function run(cmd, args, { env, cwd, timeoutMs = 180000, input = "" }) {
@@ -299,7 +324,7 @@ function baseEnv(home) {
   return env;
 }
 
-async function claudeSession(opts, box, url) {
+async function claudeSession(opts, box, url, { marked }) {
   const env = baseEnv(box.home);
   env.ANTHROPIC_API_KEY = MODEL_KEY;
   env.ANTHROPIC_BASE_URL = url;
@@ -369,7 +394,7 @@ async function claudeSession(opts, box, url) {
     return { problems, transcript: r.stdout + r.stderr };
   }
   // A hook's stdout reaches the agent: the primer is SessionStart's.
-  if (!hooks.some((h) => h.hook_event === "SessionStart" && String(h.output || "").includes("# Loom"))) {
+  if (!marked && !hooks.some((h) => h.hook_event === "SessionStart" && String(h.output || "").includes("# Loom"))) {
     problems.push("SessionStart's primer never reached Claude Code");
   }
   for (const h of hooks) {
@@ -452,18 +477,61 @@ function expectedCalls(agent) {
   };
 }
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
-  const fake = await startFake(opts.port);
+function startupPublicationProblems(fake, result, { marked }) {
+  const problems = [];
+  const responseOrder = fake.startupResponseOrder();
+  const modelRequests = fake.seen.filter((s) => ["/v1/messages", "/v1/responses"].includes(s.path));
+  const modelInput = (s) =>
+    JSON.stringify(
+      s.path === "/v1/messages"
+        ? { system: s.body.system, messages: s.body.messages }
+        : { instructions: s.body.instructions, input: s.body.input },
+    );
+  if (!responseOrder) problems.push("no startup marker response was served");
+  if (!modelRequests.length || modelRequests[0].order <= responseOrder)
+    problems.push("no model request followed the startup marker response");
+  if (!marked) {
+    if (!modelRequests.some((s) => modelInput(s).includes(STARTUP_MARKER)))
+      problems.push("the ordinary startup marker never reached native model input");
+    return problems;
+  }
+  if (modelRequests.some((s) => modelInput(s).includes(STARTUP_MARKER)))
+    problems.push("the marked startup marker reached native model input");
+  if ((result.transcript || "").includes(STARTUP_MARKER))
+    problems.push("the marked startup marker reached a native CLI output stream");
+  const loomRequests = fake.seen.filter(
+    (s) => s.path.startsWith("/v1/") && !s.path.startsWith("/v1/messages") && s.path !== "/v1/responses",
+  );
+  if (loomRequests.some((s) => JSON.stringify(s.body).includes(STARTUP_MARKER)))
+    problems.push("the marked startup marker reached an automatic Loom request body");
+  // These writes are each required by the ordinary event witnesses below.
+  const eventWrites = new Set([
+    "/v1/run.begin",
+    "/v1/observe.record",
+    "/v1/cost.record_turns",
+    "/v1/conversation.append",
+  ]);
+  for (const request of loomRequests) {
+    if (request.order > responseOrder && eventWrites.has(request.path))
+      problems.push(`an automatic event write followed the marked startup response: ${request.path}`);
+    // Startup reads may already be in flight when the marked response is sent.
+    if (modelRequests.length && request.order > modelRequests[0].order)
+      problems.push(`an automatic Loom request followed model startup: ${request.path}`);
+  }
+  return problems;
+}
+
+async function sessionScenario(opts, scenario) {
+  const fake = await startFake(opts.port, scenario);
   const url = `http://localhost:${opts.port}`;
   const box = scratch();
   const EXPECTED_CALLS = expectedCalls(opts.agent);
   let result;
   try {
-    result = await (opts.agent === "claude" ? claudeSession : codexSession)(opts, box, url);
+    result = await (opts.agent === "claude" ? claudeSession : codexSession)(opts, box, url, scenario);
     // Stop hands its posts to a detached flusher: give it time to land.
     const deadline = opts.noNode ? 0 : Date.now() + 20000;
-    while (Date.now() < deadline && !fake.seen.some(EXPECTED_CALLS.Stop)) {
+    while (Date.now() < deadline && (scenario.marked || !fake.seen.some(EXPECTED_CALLS.Stop))) {
       await new Promise((r) => setTimeout(r, 250));
     }
     const used = path.join(box.home, "nvm-node-used");
@@ -472,7 +540,7 @@ async function main() {
       result.problems.push("no hook ran the version manager's node");
     }
     const lookedUp = (s) => s.path === "/v1/code.repos" && JSON.stringify(s.repos || []).includes("example/e2e");
-    if (box.checkout && !opts.noNode && !fake.seen.some(lookedUp)) {
+    if (!scenario.marked && box.checkout && !opts.noNode && !fake.seen.some(lookedUp)) {
       result.problems.push("no hook looked the checkout's repository up");
     }
   } finally {
@@ -485,29 +553,36 @@ async function main() {
     }
   }
   const { problems } = result;
+  if (!opts.noNode) problems.push(...startupPublicationProblems(fake, result, scenario));
   const bearer = `Bearer ${TOKEN}`;
   if (!opts.noNode && !fake.seen.some((s) => s.path === "/mcp" && s.auth === bearer)) {
     problems.push("the MCP header helper never sent the token");
   }
   for (const [event, call] of Object.entries(EXPECTED_CALLS)) {
-    if (!opts.noNode && !fake.seen.some((s) => call(s) && s.auth === bearer))
+    if (!scenario.marked && !opts.noNode && !fake.seen.some((s) => call(s) && s.auth === bearer))
       problems.push(`${event}: its Loom call never came with the token`);
   }
   const mode = opts.nodeOffPath ? " (node off PATH)" : opts.noNode ? " (no node)" : "";
-  const label = `${opts.agent} on ${process.platform}-${process.arch}${mode}`;
+  const label = `${opts.agent} on ${process.platform}-${process.arch}${mode}${scenario.marked ? " (marked startup)" : ""}`;
   if (problems.length) {
-    console.error(`FAIL ${label}`);
-    for (const p of problems) console.error(`  - ${p}`);
+    reportFailure(`FAIL ${label}`);
+    for (const p of problems) reportFailure(`  - ${p}`);
     const shown = fake.seen.map((s) => `${s.path}${s.mode ? `(${s.mode})` : ""}${s.auth ? " +auth" : ""}`);
-    console.error("Loom requests:", shown.join(", "));
-    console.error(result.transcript || "");
+    reportFailure(`Loom requests: ${shown.join(", ")}`);
+    reportFailure(result.transcript || "");
     process.exitCode = 1;
   } else {
     console.log(`PASS ${label}: ${fake.seen.length} requests`);
   }
 }
 
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  await sessionScenario(opts, { marked: false });
+  if (!opts.noNode) await sessionScenario(opts, { marked: true });
+}
+
 main().catch((e) => {
-  console.error(e);
+  reportFailure(e);
   process.exitCode = 1;
 });

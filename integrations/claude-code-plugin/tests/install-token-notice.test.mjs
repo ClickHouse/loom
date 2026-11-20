@@ -2,6 +2,7 @@
 // config token saved for another server than Claude Code's MCP entry calls:
 // in Claude Code only, and never for an agent, whose tools send its own token.
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -36,7 +37,7 @@ function home(config) {
   return dir;
 }
 
-function run(dir, env, args = []) {
+function run(dir, env, args = ["SessionStart"]) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [HOOK, ...args], {
       cwd: dir,
@@ -45,7 +46,7 @@ function run(dir, env, args = []) {
     let stdout = "";
     child.stdout.on("data", (c) => (stdout += c));
     child.on("close", () => resolve(stdout));
-    child.stdin.end("{}");
+    child.stdin.end(JSON.stringify({ session_id: "notice-session" }));
   });
 }
 
@@ -54,9 +55,10 @@ const NOTICE = "holds a token saved for";
 test("the primer names the mismatch in Claude Code, and not for Codex or an agent", async () => {
   const { srv, url } = await server();
   const dirs = [];
-  const session = (env, args) => {
+  const session = (env, args = ["SessionStart"]) => {
     const dir = home({ token: "cfg.tok", url: SAVED_FOR });
     dirs.push(dir);
+    establishFixtureSession(dir, "notice-session", args[1] ?? "claude-code");
     return run(dir, { LOOM_BASE_URL: url, ...env }, args);
   };
   try {
@@ -66,6 +68,7 @@ test("the primer names the mismatch in Claude Code, and not for Codex or an agen
     // the one-file setup: nothing names the entry's server, so the fix is to name it, not to swap the token
     const oneFile = home({ token: "cfg.tok", url: url });
     dirs.push(oneFile);
+    establishFixtureSession(oneFile, "notice-session");
     const fallback = await run(oneFile, {});
     assert.ok(
       fallback.includes(
@@ -92,6 +95,7 @@ test("an install token written over a config that named another server is saved 
   const dir = home({ url: SAVED_FOR });
   const env = { CLAUDE_PLUGIN_OPTION_SERVER_URL: url, CLAUDE_PLUGIN_OPTION_TOKEN: "opt.tok" };
   try {
+    establishFixtureSession(dir, "notice-session");
     const first = await run(dir, env);
     assert.equal(first.includes(NOTICE), false, "the session that writes the token says nothing");
     const written = JSON.parse(fs.readFileSync(path.join(dir, ".loom", "config.json"), "utf8"));

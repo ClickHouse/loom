@@ -24,6 +24,7 @@ import {
   pathUnder,
   postBounded,
   readStdinJson,
+  runHookMain,
   DIFF_ARGS,
   diffHeaders,
   resolveServerUrl,
@@ -140,4 +141,4 @@ async function main() {
   scheduleExit(0);
 }
 
-main().catch(() => scheduleExit(0));
+runHookMain(main);

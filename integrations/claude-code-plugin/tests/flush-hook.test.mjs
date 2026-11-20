@@ -1,6 +1,7 @@
 // The detached flusher keeps its cursor in a shared tmp dir: a symlink planted
 // at the cursor path is refused, and the file it points to stays as it was.
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -43,11 +44,17 @@ const posix = process.platform !== "win32";
 test("the flusher advances a cursor it owns and never follows a symlink at the cursor path", {
   skip: !posix,
 }, async () => {
-  const { srv, url } = await server();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushhook-"));
+  const root = establishFixtureSession(dir, "append-producer");
+  const { srv, url } = await server();
   try {
     const own = path.join(dir, "loom-conv-a.offset");
-    const jobPath = await flush(dir, url, { appends: [append], cursorPath: own, advanceTo: 42 });
+    const jobPath = await flush(dir, url, {
+      protectionRoots: [root],
+      appends: [append],
+      cursorPath: own,
+      advanceTo: 42,
+    });
     assert.equal(fs.readFileSync(own, "utf8"), "42");
     assert.equal(fs.existsSync(jobPath), false);
 
@@ -55,7 +62,12 @@ test("the flusher advances a cursor it owns and never follows a symlink at the c
     fs.writeFileSync(victim, "keep");
     const planted = path.join(dir, "loom-conv-b.offset");
     fs.symlinkSync(victim, planted);
-    const plantedJob = await flush(dir, url, { appends: [append], cursorPath: planted, advanceTo: 42 });
+    const plantedJob = await flush(dir, url, {
+      protectionRoots: [root],
+      appends: [append],
+      cursorPath: planted,
+      advanceTo: 42,
+    });
     assert.equal(fs.readFileSync(victim, "utf8"), "keep");
     assert.equal(fs.existsSync(plantedJob), false);
     assert.ok(fs.lstatSync(planted).isSymbolicLink());
@@ -66,9 +78,11 @@ test("the flusher advances a cursor it owns and never follows a symlink at the c
 });
 
 test("a failed post rolls back a cursor it owns and never a symlink at the cursor path", { skip: !posix }, async () => {
-  const { srv, url } = await server(500);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushhook-"));
+  const root = establishFixtureSession(dir, "post-producer");
+  const { srv, url } = await server(500);
   const job = (cursorPath) => ({
+    protectionRoots: [root],
     posts: [{ op: "memory.set", body: { k: 1 } }],
     cursorPath,
     advanceTo: 42,

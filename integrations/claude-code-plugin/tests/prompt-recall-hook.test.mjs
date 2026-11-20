@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -19,6 +20,7 @@ const PACK = {
 
 async function fixture(t, response, mode = "first") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loom-recall-hook-"));
+  establishFixtureSession(tmp, "session");
   const requests = [];
   const server = http.createServer((req, res) => {
     let body = "";

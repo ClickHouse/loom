@@ -1,4 +1,5 @@
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -6,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { dispatchFlush, flushJobPath, runFlushJob } from "../lib/flush-job.mjs";
+import { withAutomaticSessionProtection } from "../lib/session-response.mjs";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "loom-flushjob-"));
 
@@ -20,6 +22,7 @@ test("job files carry the name the client status check counts", () => {
 
 test("dispatchFlush writes the job and spawns the flusher detached with the request bound", () => {
   const dir = tmp();
+  const root = establishFixtureSession(os.homedir(), "dispatch");
   const calls = [];
   const spawnImpl = (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
@@ -27,31 +30,45 @@ test("dispatchFlush writes the job and spawns the flusher detached with the requ
     child.unref = () => {};
     return child;
   };
-  assert.equal(dispatchFlush({ posts: [{ op: "x", body: {} }] }, { timeoutMs: 1234, spawnImpl, tmp: dir }), true);
+  assert.equal(
+    withAutomaticSessionProtection(root, () =>
+      dispatchFlush({ posts: [{ op: "x", body: {} }] }, { timeoutMs: 1234, spawnImpl, tmp: dir }),
+    ),
+    true,
+  );
   assert.equal(calls.length, 1);
   assert.match(calls[0].args[0], /hooks[\\/]loom-flush\.mjs$/);
   assert.equal(calls[0].opts.detached, true);
   assert.equal(calls[0].opts.windowsHide, true);
   assert.equal(calls[0].opts.env.LOOM_HOOK_TIMEOUT_MS, "1234");
-  const job = JSON.parse(fs.readFileSync(calls[0].args[1], "utf8"));
+  const { protectionRoots, ...job } = JSON.parse(fs.readFileSync(calls[0].args[1], "utf8"));
+  assert.deepEqual(protectionRoots, [root]);
   assert.deepEqual(job, { posts: [{ op: "x", body: {} }] });
 });
 
 test("a spawn that throws leaves no job behind; a later spawn error does not crash the hook", () => {
   const dir = tmp();
+  const root = establishFixtureSession(os.homedir(), "spawn-errors");
   const throwing = () => {
     throw new Error("EAGAIN");
   };
-  assert.equal(dispatchFlush({ posts: [] }, { spawnImpl: throwing, tmp: dir }), false);
+  assert.equal(
+    withAutomaticSessionProtection(root, () => dispatchFlush({ posts: [] }, { spawnImpl: throwing, tmp: dir })),
+    false,
+  );
   assert.deepEqual(fs.readdirSync(dir), []);
   const child = new EventEmitter();
   child.unref = () => {};
-  assert.equal(dispatchFlush({ posts: [] }, { spawnImpl: () => child, tmp: dir }), true);
+  assert.equal(
+    withAutomaticSessionProtection(root, () => dispatchFlush({ posts: [] }, { spawnImpl: () => child, tmp: dir })),
+    true,
+  );
   assert.doesNotThrow(() => child.emit("error", new Error("spawn failed")));
 });
 
 test("appends advance the cursor only when every one landed", async () => {
-  const job = { appends: [{ msg_id: "a" }, { msg_id: "b" }], cursorPath: "/c", advanceTo: 99 };
+  const root = establishFixtureSession(os.homedir(), "append-job");
+  const job = { protectionRoots: [root], appends: [{ msg_id: "a" }, { msg_id: "b" }], cursorPath: "/c", advanceTo: 99 };
   const ok = memCursor({ "/c": "10" });
   assert.deepEqual(await runFlushJob(job, { post: async () => ({ stored: true }), cursor: ok }), {
     postsOk: false,
@@ -69,8 +86,9 @@ test("appends advance the cursor only when every one landed", async () => {
 
 test("the replies reach the recording note", async () => {
   const seen = [];
+  const root = establishFixtureSession(os.homedir(), "recording-job");
   await runFlushJob(
-    { appends: [{ org: "o", namespace: "n" }] },
+    { protectionRoots: [root], appends: [{ org: "o", namespace: "n" }] },
     {
       post: async () => ({ stored: false, reason: "logging_disabled" }),
       cursor: memCursor(),
@@ -82,6 +100,7 @@ test("the replies reach the recording note", async () => {
 
 test("a failed optimistic post rolls its cursor back unless a later job moved it", async () => {
   const job = {
+    protectionRoots: [establishFixtureSession(os.homedir(), "optimistic-job")],
     posts: [{ op: "session.brief_save", body: { a: 1 } }],
     cursorPath: "/b",
     advanceTo: 50,
@@ -101,7 +120,11 @@ test("a failed optimistic post rolls its cursor back unless a later job moved it
 test("malformed jobs deliver nothing", async () => {
   const calls = [];
   const post = async (op) => (calls.push(op), {});
-  await runFlushJob({ posts: [null, { op: 1, body: {} }, { op: "x" }], appends: "no" }, { post, cursor: memCursor() });
+  const root = establishFixtureSession(os.homedir(), "malformed-job");
+  await runFlushJob(
+    { protectionRoots: [root], posts: [null, { op: 1, body: {} }, { op: "x" }], appends: "no" },
+    { post, cursor: memCursor() },
+  );
   await runFlushJob(null, { post, cursor: memCursor() });
   assert.deepEqual(calls, []);
 });

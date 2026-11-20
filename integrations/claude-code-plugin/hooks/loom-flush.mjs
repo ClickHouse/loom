@@ -62,4 +62,4 @@ async function main() {
   removeFile(jobPath);
 }
 
-runHookMain(main);
+runHookMain(main, { detachedJob: true });

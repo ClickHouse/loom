@@ -31,6 +31,16 @@ import { fileURLToPath } from "node:url";
 // than that, and a shorter grace would kill a fire-and-forget post before it
 // left a slow link.
 import { DEFAULT_BOUND_MS, boundMs, rttCachePath } from "./hook-bounds.mjs";
+import { bindHookProtection } from "./hook-protection.mjs";
+import { SessionProtectionUnavailable } from "./session-protection.mjs";
+import {
+  automaticSessionIsProtected,
+  observeSessionResponse,
+  observeSessionResponses,
+  refuseSessionResponse,
+  sessionProtectionContext,
+  withAutomaticSessionProtection,
+} from "./session-response.mjs";
 import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
 let _rttCache;
@@ -731,6 +741,10 @@ export async function requestJson(
   { method = "POST", body, token = "", timeoutMs = requestTimeoutMs(), headers = {}, fetchImpl = fetch } = {},
 ) {
   try {
+    const protection = sessionProtectionContext();
+    if (protection?.automatic && automaticSessionIsProtected()) {
+      return { status: 0, body: null, suppressed: true };
+    }
     const res = await fetchImpl(url, {
       method,
       headers: {
@@ -741,11 +755,18 @@ export async function requestJson(
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (res.status === 204 || res.status === 304) return { status: res.status, body: null };
     let parsed = null;
     try {
       parsed = await res.json();
     } catch {
-      /* an error body may not be JSON */
+      if (protection) refuseSessionResponse(protection.roots);
+      /* an unbound error body may not be JSON */
+    }
+    if (protection) {
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) refuseSessionResponse(protection.roots);
+      observeSessionResponses(protection.roots, parsed);
+      if (protection.automatic && automaticSessionIsProtected()) throw new SessionProtectionUnavailable();
     }
     return { status: res.status, body: parsed };
   } catch (e) {
@@ -1009,11 +1030,23 @@ export function diffHeaders(diff, max) {
  * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,
  * redacted, goes to stderr, which is how a broken hook shows itself.
  */
-export function runHookMain(main) {
-  Promise.resolve()
-    .then(main)
+export function runHookMain(main, { detachedJob = false } = {}) {
+  return Promise.resolve()
+    .then(async () => {
+      // A detached flusher restores only the producer roots in its private job.
+      if (detachedJob) return main();
+      const raw = await rawHookPayload();
+      const root = bindHookProtection(raw, {
+        host: process.argv[3] || "claude-code",
+        event: process.argv[2],
+        knownRoots: sessionProtectionContext()?.roots,
+      });
+      const reply = normalizePayload(raw).tool_response;
+      observeSessionResponse(root, typeof reply === "string" ? { content: [{ type: "text", text: reply }] } : reply);
+      return withAutomaticSessionProtection(root, main);
+    })
     .catch((e) => {
-      if (envSwitch("LOOM_HOOK_DEBUG", false)) {
+      if (!(e instanceof SessionProtectionUnavailable) && envSwitch("LOOM_HOOK_DEBUG", false)) {
         const line = String((e && (e.stack || e.message)) || e).split("\n")[0];
         process.stderr.write(`loom hook ${basename(process.argv[1] || "")}: ${redactHead(line, 300).slice(0, 300)}\n`);
       }
@@ -1079,16 +1112,18 @@ export function normalizePayload(raw) {
  *  gives up waiting after a second, so a host that never closes stdin
  *  cannot hold a hook open. */
 const MAX_STDIN_CHARS = 32 * 1024 * 1024;
+let hookPayload;
 
-export function readStdinJson() {
-  return new Promise((resolve) => {
+function rawHookPayload() {
+  hookPayload ??= new Promise((resolve) => {
     let raw = "";
     let settled = false;
     const done = () => {
       if (settled) return;
       settled = true;
       try {
-        resolve(normalizePayload(raw.trim() ? JSON.parse(raw) : {}));
+        const payload = raw.trim() ? JSON.parse(raw) : {};
+        resolve(payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {});
       } catch {
         resolve({});
       }
@@ -1110,4 +1145,9 @@ export function readStdinJson() {
     }
     setTimeout(done, 1000).unref();
   });
+  return hookPayload;
+}
+
+export function readStdinJson() {
+  return rawHookPayload().then(normalizePayload);
 }

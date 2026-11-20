@@ -3,6 +3,7 @@
 // stale state.
 
 import "./temp-home.mjs";
+import { establishFixtureSession } from "./established-session.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -126,6 +127,7 @@ test("SessionStart sweeps this user's state files untouched for a day", { skip: 
 test("SessionEnd keeps the turn journal and removes the stashes", { skip: !posix }, () => {
   const dir = tmp();
   const sid = "s-end";
+  establishFixtureSession(dir, sid);
   assert.ok(appendTurn(sid, "user", "hello", { dir }));
   const stash = path.join(dir, `loom-code-trace-${sid}.json`);
   const recalled = path.join(dir, `loom-recalled-${sid}.json`);
