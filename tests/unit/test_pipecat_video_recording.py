@@ -1,4 +1,4 @@
-"""Recorder control flow uses mocks; these tests start no product or browser."""
+"""Recorder control flow uses mocks; these tests start no product or encoder."""
 
 from __future__ import annotations
 
@@ -7,142 +7,15 @@ import importlib.util
 import io
 import json
 import os
+import runpy
 import signal
 from pathlib import Path
 from unittest import mock
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 
 import pytest
 
 RECORDER = Path(__file__).resolve().parents[2] / "dev/pipecat_demo/record_pipecat_video.py"
-
-
-def test_driver_log_exports_only_fixed_markers(recorder, tmp_path):
-    module, _ = recorder
-    with (tmp_path / "private-driver.log").open("w+b") as log:
-        log.write(
-            b"private-token private-host /private/path\n"
-            b"chrome_crashpad_handler: --database is required\n"
-            b"DevToolsActivePort file doesn't exist\n"
-        )
-        log.flush()
-        before = log.tell()
-        result = module.driver_log_diagnostic({"driver_log": log})
-        assert result == {
-            "state": "observed",
-            "prefix_omitted": False,
-            "markers": ["crashpad_database_required", "devtools_port_missing"],
-        }
-        assert log.tell() == before
-    assert "private" not in json.dumps(result)
-
-
-def test_driver_log_observes_only_bounded_tail(recorder, tmp_path):
-    module, _ = recorder
-    with (tmp_path / "private-driver.log").open("w+b") as log:
-        log.write(b"No usable sandbox!\n" + b"x" * 16384)
-        log.flush()
-        with mock.patch.object(module.os, "pread", wraps=os.pread) as read:
-            result = module.driver_log_diagnostic({"driver_log": log})
-        assert result == {"state": "no_known_marker", "prefix_omitted": True, "markers": []}
-        read.assert_called_once_with(log.fileno(), 16384, 19)
-
-
-@pytest.mark.parametrize("failure", ["missing", "closed", "read", "mode", "uid"])
-def test_driver_log_unverifiable_handle_is_unavailable(recorder, tmp_path, failure):
-    module, _ = recorder
-    with (tmp_path / "private-driver.log").open("w+b") as log:
-        state = {} if failure == "missing" else {"driver_log": log}
-        if failure == "closed":
-            log.close()
-        info = mock.Mock(st_mode=0o100600, st_uid=os.getuid(), st_size=0, st_nlink=1)
-        if failure == "mode":
-            info.st_mode = 0o040600
-        if failure == "uid":
-            info.st_uid += 1
-        with (
-            mock.patch.object(module.os, "fstat", return_value=info),
-            mock.patch.object(module.os, "pread", side_effect=OSError("private details")),
-        ):
-            assert module.driver_log_diagnostic(state) == {
-                "state": "unavailable",
-                "prefix_omitted": False,
-                "markers": [],
-            }
-
-
-@pytest.mark.parametrize(
-    ("message", "marker"),
-    [
-        (b"No usable sandbox!", "sandbox_refusal"),
-        (b"cannot create default profile directory", "profile_write_failure"),
-        (b"failed to write prefs file", "profile_write_failure"),
-        (b"failed to write first run file", "profile_write_failure"),
-        (b"Failed to create Chrome process.", "chrome_launch_failure"),
-        (b"Timed out while waiting for Chrome process.", "chrome_startup_wait"),
-        (b"Could not read in devtools port number", "devtools_port_missing"),
-    ],
-)
-def test_driver_log_recognizes_fixed_primary_source_markers(recorder, tmp_path, message, marker):
-    module, _ = recorder
-    with (tmp_path / "private-driver.log").open("w+b") as log:
-        log.write(message + b" private-token arbitrary-path")
-        log.flush()
-        assert module.driver_log_diagnostic({"driver_log": log}) == {
-            "state": "observed",
-            "prefix_omitted": False,
-            "markers": [marker],
-        }
-
-
-def test_driver_log_changing_size_refuses_observation(recorder, tmp_path):
-    module, _ = recorder
-    with (tmp_path / "private-driver.log").open("w+b") as log:
-        initial = os.fstat(log.fileno())
-        changed = mock.Mock(st_size=initial.st_size + 1)
-        with mock.patch.object(module.os, "fstat", side_effect=[initial, changed]):
-            assert module.driver_log_diagnostic({"driver_log": log}) == {
-                "state": "unavailable",
-                "prefix_omitted": False,
-                "markers": [],
-            }
-
-
-def test_driver_log_observation_follows_cleanup_and_preserves_failure(recorder):
-    module, _ = recorder
-    events = []
-    log = mock.Mock()
-    log.close.side_effect = lambda: events.append("close")
-
-    def capture(state, _private):
-        state["driver_log"] = log
-        raise TimeoutError("private setup details")
-
-    def native(_state):
-        events.append("native")
-        return 0
-
-    def observe(state):
-        assert events == ["native", "stop", "stop", "stop", "stop"]
-        assert state["capture_failure"]["io"]["kind"] == "timeout"
-        events.append("observe")
-        return {"state": "no_known_marker", "prefix_omitted": False, "markers": []}
-
-    with (
-        mock.patch.object(module, "start_capture", side_effect=capture),
-        mock.patch.object(module, "run_native", side_effect=native),
-        mock.patch.object(module, "stop_owned", side_effect=lambda _: events.append("stop")),
-        mock.patch.object(module, "post_cleanup_children", return_value="empty"),
-        mock.patch.object(module, "driver_log_diagnostic", side_effect=observe),
-    ):
-        assert module.main() == 0
-    assert events[-2:] == ["observe", "close"]
-    summary = json.loads(
-        (Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public/recording-status.json").read_text()
-    )
-    assert summary["reason"] == "capture_setup_unqualified"
-    assert summary["capture_failure"]["io"]["kind"] == "timeout"
-    assert summary["driver_log_observation"]["state"] == "no_known_marker"
 
 
 @pytest.fixture
@@ -308,54 +181,6 @@ def test_changed_group_birth_refuses_signalling(recorder):
     process.wait.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "method,path", [("GET", "/status"), ("POST", "/session"), ("DELETE", "/session/test")]
-)
-def test_foreign_driver_receives_no_request(recorder, method, path):
-    module, _ = recorder
-    state = {
-        "driver": object(),
-        "driver_port": 33333,
-        "url": "http://127.0.0.1:33333",
-        "driver_http_status": 200,
-        "driver_error": "unknown error",
-    }
-    with (
-        mock.patch.object(module, "owned_listener", return_value=False),
-        mock.patch.object(module, "urlopen") as foreign,
-    ):
-        with pytest.raises(ValueError, match="driver_listener_not_owned"):
-            module.driver_call(state, method, path)
-    foreign.assert_not_called()
-    assert state["driver_http_status"] == 0
-    assert state["driver_error"] == "unavailable"
-
-
-def test_foreign_success_cannot_admit_failed_driver_bind(recorder, tmp_path):
-    module, _ = recorder
-    state = {}
-
-    def launch(state, key, *_args, **_kwargs):
-        state[key] = object()
-
-    with (
-        mock.patch.object(module.shutil, "which", return_value="/inert/not-executed"),
-        mock.patch.object(module.socket, "socket") as sockets,
-        mock.patch.object(module, "start_owned", side_effect=launch),
-        mock.patch.object(module, "owned_listener", return_value=False),
-        mock.patch.object(module.time, "monotonic", side_effect=[0, 6]),
-        mock.patch.object(module, "urlopen") as foreign,
-    ):
-        sockets.return_value.__enter__.return_value.getsockname.return_value = ("127.0.0.1", 33333)
-        foreign.return_value.__enter__.return_value.read.return_value = b'{"value":{"ready":true}}'
-        try:
-            with pytest.raises(ValueError, match="driver_unavailable"):
-                module.start_capture(state, tmp_path)
-        finally:
-            state["driver_log"].close()
-    foreign.assert_not_called()
-
-
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT])
 def test_probe_defers_pending_cancellation_until_registration(recorder, signum):
     module, _ = recorder
@@ -383,7 +208,7 @@ def test_capture_failure_reports_fixed_diagnostics_without_exception_text(record
     module, _ = recorder
     secret = "private-capture-marker"
 
-    def fail(state, _private):
+    def fail(state):
         state["capture_stage"] = 5
         raise ValueError(secret)
 
@@ -400,146 +225,16 @@ def test_capture_failure_reports_fixed_diagnostics_without_exception_text(record
         "stage": 5,
         "kind": "value",
         "code": "unavailable",
-        "http_status": 0,
-        "driver_error": "unavailable",
         "io": {"kind": "unavailable", "errno": 0},
-        "driver_exit": {"kind": "unavailable", "code": 0},
     }
     assert secret not in raw
     assert status["video"] is None
 
 
-@pytest.mark.parametrize(
-    "error_name,expected",
-    [("session not created", "session not created"), ("private-marker", "unrecognized")],
-)
-def test_driver_http_failure_exports_only_allowlisted_reason(recorder, error_name, expected):
-    module, _ = recorder
-    body = json.dumps({"value": {"error": error_name, "message": "private-message"}}).encode()
-    failure = HTTPError("http://private.invalid", 500, "private-reason", {}, io.BytesIO(body))
-    state = {"driver": object(), "driver_port": 33333, "url": "http://127.0.0.1:33333"}
-    with (
-        mock.patch.object(module, "owned_listener", return_value=True),
-        mock.patch.object(module, "urlopen", side_effect=failure),
-    ):
-        with pytest.raises(HTTPError) as raised:
-            module.driver_call(state, "POST", "/session")
-    assert raised.value is failure
-    assert state["driver_http_status"] == 500
-    assert state["driver_error"] == expected
-    diagnostics = {k: v for k, v in state.items() if k.startswith("driver_")}
-    assert "private-message" not in json.dumps(diagnostics)
-
-
-def test_driver_http_diagnostic_body_is_bounded(recorder):
-    module, _ = recorder
-    body = mock.Mock()
-    body.read1.return_value = b"x" * 4097
-    failure = HTTPError("http://private.invalid", 500, "private-reason", {}, body)
-    state = {"driver": object(), "driver_port": 33333, "url": "http://127.0.0.1:33333"}
-    with (
-        mock.patch.object(module, "owned_listener", return_value=True),
-        mock.patch.object(module, "urlopen", side_effect=failure),
-    ):
-        with pytest.raises(HTTPError):
-            module.driver_call(state, "POST", "/session")
-    body.read1.assert_called_once_with(4097)
-    assert state["driver_http_status"] == 500
-    assert state["driver_error"] == "unavailable"
-
-
-def test_capture_stage_identifies_session_creation_failure(recorder, tmp_path):
-    module, _ = recorder
-    state = {}
-
-    def launch(state, key, *_args, **_kwargs):
-        state[key] = object()
-
-    with (
-        mock.patch.object(module.shutil, "which", return_value="/inert/not-executed"),
-        mock.patch.object(module.socket, "socket") as sockets,
-        mock.patch.object(module, "start_owned", side_effect=launch),
-        mock.patch.object(module, "owned_listener", return_value=True),
-        mock.patch.object(module, "driver_call", side_effect=[{}, ValueError("private-message")]),
-    ):
-        sockets.return_value.__enter__.return_value.getsockname.return_value = ("127.0.0.1", 33333)
-        try:
-            with pytest.raises(ValueError, match="private-message"):
-                module.start_capture(state, tmp_path)
-        finally:
-            state["driver_log"].close()
-    assert state["capture_stage"] == 5
-
-
-@pytest.mark.parametrize(
-    "failure,stage,kind,code",
-    [
-        ("receipt", 11, "value", "unavailable"),
-        ("stop", 14, "value", "unavailable"),
-        ("export", 16, "value", "browser_export_invalid"),
-        ("probe", 19, "io", "unavailable"),
-        ("metadata", 20, "key", "unavailable"),
-        ("duration", 21, "value", "encoded_video_duration_or_audio_invalid"),
-    ],
-)
-def test_finalization_failure_keeps_fixed_stage_and_kind(
-    recorder, tmp_path, failure, stage, kind, code
-):
-    module, _ = recorder
-    receipt = tmp_path / "synthetic.json"
-    receipt.write_text(json.dumps(module.EXPECTED_RECEIPT))
-    if failure == "receipt":
-        receipt.write_text("not-json private-value")
-    state = {"receipt": receipt, "active": True, "started": 0.0}
-
-    def javascript(_state, script, *_args):
-        if script == "window.finishCapture();" and failure == "stop":
-            raise ValueError("private-browser-error")
-        if "captureReady" in script:
-            return True
-        if "captureBase64" in script:
-            return None if failure == "export" else "YQ=="
-
-    tracks = (
-        [{"@type": "General"}]
-        if failure == "metadata"
-        else [{"@type": "General", "Duration": "10" if failure == "duration" else "35"}]
-    )
-    probe = (
-        OSError("private-probe-error")
-        if failure == "probe"
-        else json.dumps({"media": {"track": tracks}}).encode()
-    )
-    with (
-        mock.patch.object(module, "display"),
-        mock.patch.object(module, "javascript", side_effect=javascript),
-        mock.patch.object(
-            module,
-            "probe_metadata",
-            side_effect=probe if isinstance(probe, Exception) else None,
-            return_value=probe,
-        ),
-        mock.patch.object(module.time, "monotonic", side_effect=[0.0, 40.0, 40.0]),
-    ):
-        with pytest.raises(Exception) as raised:
-            module.finish_capture(state, tmp_path, 0)
-    diagnostic = module.capture_failure(state, raised.value)
-    assert diagnostic == {
-        "stage": stage,
-        "kind": kind,
-        "code": code,
-        "http_status": 0,
-        "driver_error": "unavailable",
-        "io": {"kind": "io" if failure == "probe" else "unavailable", "errno": 0},
-        "driver_exit": {"kind": "unavailable", "code": 0},
-    }
-    assert "private" not in json.dumps(diagnostic)
-
-
 def test_finalization_exception_is_in_the_public_status(recorder):
     module, _ = recorder
 
-    def start(state, _private):
+    def start(state):
         state["capture_stage"] = 8
 
     def finish(state, *_args):
@@ -559,10 +254,7 @@ def test_finalization_exception_is_in_the_public_status(recorder):
         "stage": 19,
         "kind": "value",
         "code": "media_probe_timeout",
-        "http_status": 0,
-        "driver_error": "unavailable",
         "io": {"kind": "unavailable", "errno": 0},
-        "driver_exit": {"kind": "unavailable", "code": 0},
     }
     assert status["video"] is None
 
@@ -599,45 +291,6 @@ def test_child_census_requires_subreaper_and_never_exports_ids(recorder):
     with mock.patch.object(module.Path, "open") as read:
         assert module.post_cleanup_children(False) == "unavailable"
     read.assert_not_called()
-
-
-def test_event_failure_survives_later_diagnostics_and_cleanup(recorder):
-    module, _ = recorder
-
-    def start(state, _private):
-        state["capture_stage"] = 8
-
-    def javascript(state, *_args):
-        state["driver_http_status"] = 500
-        state["driver_error"] = "unknown error"
-        raise HTTPError("http://private.invalid", 500, "private-message", {}, None)
-
-    def finish(state, *_args):
-        module.capture_phase(state, 12)
-        module.display(state, "synthetic event")
-        module.capture_phase(state, 13)
-        raise ValueError("capture_event_stream_incomplete")
-
-    with (
-        mock.patch.object(module, "start_capture", side_effect=start),
-        mock.patch.object(module, "run_native", return_value=0),
-        mock.patch.object(module, "javascript", side_effect=javascript),
-        mock.patch.object(module, "finish_capture", side_effect=finish),
-    ):
-        assert module.main() == 0
-    raw = (
-        Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public/recording-status.json"
-    ).read_text()
-    assert json.loads(raw)["capture_failure"] == {
-        "stage": 12,
-        "kind": "http",
-        "code": "unavailable",
-        "http_status": 500,
-        "driver_error": "unknown error",
-        "io": {"kind": "unavailable", "errno": 0},
-        "driver_exit": {"kind": "unavailable", "code": 0},
-    }
-    assert "private" not in raw
 
 
 @pytest.mark.parametrize(
@@ -686,7 +339,7 @@ def test_cleanup_reaps_adopted_child_outside_launcher_group(recorder):
         return (child, 0)
 
     with (
-        mock.patch.object(module, "start_capture", side_effect=OSError("private-driver-failure")),
+        mock.patch.object(module, "start_capture", side_effect=OSError("private-renderer-failure")),
         mock.patch.object(module, "run_native", return_value=0),
         mock.patch.object(
             module, "subreaper", side_effect=lambda value=None: 1 if value is None else 0
@@ -842,42 +495,6 @@ def test_io_diagnostic_exports_only_fixed_category_and_errno(recorder, error, ki
     module, _ = recorder
     assert module.io_diagnostic(error) == {"kind": kind, "errno": number}
     assert "private" not in json.dumps(module.capture_failure({}, error))
-
-
-@pytest.mark.parametrize(
-    "outcome,expected",
-    [
-        (None, {"kind": "running", "code": 0}),
-        (mock.Mock(si_code=os.CLD_EXITED, si_status=7), {"kind": "exited", "code": 7}),
-        (mock.Mock(si_code=os.CLD_KILLED, si_status=9), {"kind": "signalled", "code": 9}),
-        (mock.Mock(si_code=os.CLD_EXITED, si_status=999), {"kind": "unavailable", "code": 0}),
-    ],
-)
-def test_driver_diagnostic_retains_unreaped_owned_launcher(recorder, outcome, expected):
-    module, _ = recorder
-    process = mock.Mock(pid=2222)
-    with (
-        mock.patch.object(module, "anchor_identity") as identity,
-        mock.patch.object(module.os, "waitid", return_value=outcome) as wait,
-    ):
-        assert module.driver_exit_diagnostic({"driver": process}) == expected
-    identity.assert_called_once_with(process)
-    wait.assert_called_once_with(os.P_PID, 2222, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-    process.poll.assert_not_called()
-    process.wait.assert_not_called()
-
-
-def test_driver_diagnostic_unknown_identity_does_not_read_exit(recorder):
-    module, _ = recorder
-    with (
-        mock.patch.object(module, "anchor_identity", side_effect=ValueError("private")),
-        mock.patch.object(module.os, "waitid") as wait,
-    ):
-        assert module.driver_exit_diagnostic({"driver": object()}) == {
-            "kind": "unavailable",
-            "code": 0,
-        }
-    wait.assert_not_called()
 
 
 def test_adopted_group_change_does_not_remove_ownership(adopted_child):
@@ -1080,3 +697,281 @@ def test_ordinary_main_fixture_cannot_sweep_other_test_children(recorder):
     pin.assert_not_called()
     send.assert_not_called()
     reap.assert_not_called()
+
+
+def test_visualization_records_actual_elapsed_events(recorder):
+    module, _ = recorder
+    state = {"active": True, "started": 10.0, "events": []}
+    with mock.patch.object(module.time, "monotonic", return_value=12.75):
+        module.display(state, "ACTUAL PROCESS EXIT: 0")
+    assert state["events"] == [(2.75, "ACTUAL PROCESS EXIT: 0")]
+
+
+def test_visualization_rejects_event_overflow(recorder):
+    module, _ = recorder
+    state = {"active": True, "started": 0.0, "events": [(0.0, "event")] * 32}
+    module.display(state, "extra")
+    assert state["active"] is False
+    assert state["capture_failure"]["code"] == "capture_event_bound"
+    assert len(state["events"]) == 32
+
+
+def test_visualization_frame_uses_only_past_actual_events(recorder):
+    module, _ = recorder
+    events = [(0.0, "TEST RUNNING"), (3.5, "ACTUAL PROCESS EXIT: 0")]
+    assert module.visible_events(events, 3.0) == ["[  0.0s] TEST RUNNING"]
+    assert module.visible_events(events, 4.0)[-1] == "[  3.5s] ACTUAL PROCESS EXIT: 0"
+
+
+def test_encoder_command_is_one_thread_no_audio_fixed_budget(recorder):
+    module, _ = recorder
+    args = module.encoder_command(Path("/verified/encoder"), Path("/private/out.webm"), 35.0)
+    assert args[0] == "/verified/encoder"
+    assert args[args.index("-threads") + 1] == "1"
+    assert args[args.index("-frames:v") + 1] == "175"
+    assert args[args.index("-fs") + 1] == "8388608"
+    assert "-an" in args and "-nostdin" in args
+    assert args[args.index("-t") + 1] == "35.0"
+    assert "rawvideo" in args and "libvpx" in args
+
+
+@pytest.mark.parametrize("duration", [0, 29.9, 55.1, float("nan"), float("inf")])
+def test_encoder_command_refuses_outside_measured_window(recorder, duration):
+    module, _ = recorder
+    with pytest.raises(ValueError, match="native_completion_outside_video_window"):
+        module.encoder_command(Path("/encoder"), Path("/out.webm"), duration)
+
+
+@pytest.mark.parametrize("mutation", ["native", "extra", "numeric_bool", "observation"])
+def test_receipt_validation_precedes_observed_values(recorder, tmp_path, mutation):
+    module, _ = recorder
+    receipt = json.loads(json.dumps(module.EXPECTED_RECEIPT))
+    code = 1 if mutation == "native" else 0
+    if mutation == "extra":
+        receipt["private"] = "never display"
+    elif mutation == "numeric_bool":
+        receipt["stored_native_messages"] = True
+    elif mutation == "observation":
+        receipt["observations"]["recalled_seed"] = "not observed"
+    path = tmp_path / "observed.json"
+    path.write_text(json.dumps(receipt))
+    state = {"receipt": path, "active": True, "events": [], "started": 0.0}
+    with mock.patch.object(module, "display") as display:
+        with pytest.raises(ValueError):
+            module.finish_capture(state, tmp_path, code)
+    display.assert_not_called()
+
+
+def test_pinned_encoder_hash_refuses_before_launch(recorder, tmp_path):
+    module, _ = recorder
+    binary = tmp_path / module.ENCODER_FILE
+    binary.write_bytes(b"not the verified binary")
+    binary.chmod(0o700)
+    with (
+        mock.patch.object(module.platform, "system", return_value="Linux"),
+        mock.patch.object(module.platform, "machine", return_value="x86_64"),
+        mock.patch.object(module.importlib.metadata, "version", side_effect=["0.6.0", "13.0.0"]),
+        mock.patch.object(module.importlib.resources, "files", return_value=tmp_path.parent),
+        mock.patch.object(
+            module.Path,
+            "lstat",
+            return_value=mock.Mock(st_mode=0o100700, st_uid=os.getuid(), st_size=79826272),
+        ),
+        mock.patch.object(module.os, "access", return_value=True),
+        mock.patch.object(module, "digest", return_value="wrong"),
+        mock.patch.object(module.subprocess, "Popen") as launch,
+    ):
+        with pytest.raises(ValueError, match="encoder_binary_unqualified"):
+            module.packaged_encoder()
+    launch.assert_not_called()
+
+
+def test_rendering_window_refuses_late_native_completion(recorder, tmp_path):
+    module, _ = recorder
+    receipt = tmp_path / "receipt-valid.json"
+    receipt.write_text(json.dumps(module.EXPECTED_RECEIPT))
+    state = {"receipt": receipt, "active": True, "events": [], "started": 0.0}
+    with (
+        mock.patch.object(module.time, "monotonic", return_value=48.0),
+        mock.patch.object(module, "encode_video") as encode,
+    ):
+        with pytest.raises(ValueError, match="native_completion_outside_video_window"):
+            module.finish_capture(state, tmp_path, 0)
+    encode.assert_not_called()
+
+
+def test_renderer_uses_measured_hold_and_exact_receipt(recorder, tmp_path):
+    module, _ = recorder
+    receipt = tmp_path / "receipt-valid.json"
+    receipt.write_text(json.dumps(module.EXPECTED_RECEIPT))
+    state = {"receipt": receipt, "active": True, "events": [], "started": 0.0}
+    clock = [4.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+
+    def encode(_state, path, duration):
+        assert clock[0] >= 35.0 and duration == 35.0
+        path.write_bytes(b"qualified only by mocked probe")
+
+    metadata = {"media": {"track": [{"@type": "General", "Duration": "35"}, {"@type": "Video"}]}}
+    with (
+        mock.patch.object(module.time, "monotonic", side_effect=lambda: clock[0]),
+        mock.patch.object(module.time, "sleep", side_effect=sleep),
+        mock.patch.object(module, "encode_video", side_effect=encode),
+        mock.patch.object(module, "probe_metadata", return_value=json.dumps(metadata).encode()),
+    ):
+        module.finish_capture(state, tmp_path, 0)
+    assert state["video"]["kind"] == "timestamped_execution_visualization"
+    assert all(stamp == 4.0 for stamp, _ in state["events"])
+    assert "not live API telemetry" in state["events"][0][1]
+
+
+@pytest.mark.parametrize("failure", ["timeout", "video_bound", "stderr_bound", "broken_pipe"])
+def test_owned_encoder_pipe_failures_are_bounded(recorder, tmp_path, failure):
+    module, _ = recorder
+    process = mock.Mock(pid=12345)
+    for index, stream in enumerate((process.stdin, process.stdout, process.stderr), 10):
+        stream.fileno.return_value = index
+    state = {"encoder_binary": Path("/verified/encoder"), "events": []}
+    clock = iter([0.0, 31.0] if failure == "timeout" else [0.0, 1.0])
+    selector = mock.MagicMock()
+    selector.get_map.return_value = {10: object()}
+    key = mock.Mock(fd=10, data="input")
+    if failure == "video_bound":
+        key.data = "output"
+    elif failure == "stderr_bound":
+        key.data = "diagnostic"
+    selector.select.return_value = [(key, 0)]
+    code = "encoder_timeout" if failure == "timeout" else "encoder_output_bound"
+    expected = BrokenPipeError if failure == "broken_pipe" else ValueError
+    with (
+        mock.patch.object(module, "start_owned", return_value=process),
+        mock.patch.object(module, "owned_exited", return_value=False),
+        mock.patch.object(module.os, "set_blocking"),
+        mock.patch.object(module.os, "read", return_value=b"x" * 65537),
+        mock.patch.object(module.os, "write", side_effect=BrokenPipeError("private")),
+        mock.patch.object(module, "frame_bytes", return_value=b"x" * (1280 * 720 * 3)),
+        mock.patch.object(module, "MAX_VIDEO_BYTES", 4),
+        mock.patch.object(module.time, "monotonic", side_effect=lambda: next(clock)),
+        mock.patch.object(module.selectors, "DefaultSelector") as selectors,
+    ):
+        selectors.return_value.__enter__.return_value = selector
+        with pytest.raises(expected, match="private" if failure == "broken_pipe" else code):
+            module.encode_video(state, tmp_path / "private.webm", 35.0)
+    assert process.wait.call_count == 0  # The owning finally retains the anchor until cleanup.
+
+
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT])
+def test_encoder_registration_defers_cancellation(recorder, tmp_path, signum):
+    module, _ = recorder
+    state = {"encoder_binary": Path("/verified/encoder")}
+    child = mock.Mock(pid=12345)
+
+    def launch(*_args, **kwargs):
+        assert state["registering"] and "encoder" not in state
+        assert "LOOM_API_KEY" not in kwargs["env"]
+        assert "PATH" not in kwargs["env"]
+        state["cancelled_signal"] = signum
+        return child
+
+    with (
+        mock.patch.object(module.subprocess, "Popen", side_effect=launch),
+        mock.patch.object(module, "process_identity", return_value=(1, 12345, 12345, "birth", "S")),
+        mock.patch.object(module.selectors, "DefaultSelector") as select,
+    ):
+        with pytest.raises(module.RecordingCancelled):
+            module.encode_video(state, tmp_path / "out.webm", 35.0)
+    assert state["encoder"] is child and not state["registering"]
+    select.assert_not_called()
+
+
+def test_unqualified_child_census_removes_completed_video(recorder):
+    module, _ = recorder
+    output = Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public"
+
+    def finish(state, path, _code):
+        (path / "pipecat-ordinary-text.webm").write_bytes(b"unqualified")
+        state["video"] = {"file": "pipecat-ordinary-text.webm"}
+
+    with (
+        mock.patch.object(module, "start_capture"),
+        mock.patch.object(module, "run_native", return_value=0),
+        mock.patch.object(module, "finish_capture", side_effect=finish),
+        mock.patch.object(module, "post_cleanup_children", return_value="remaining"),
+    ):
+        assert module.main() == 0
+    assert not (output / "pipecat-ordinary-text.webm").exists()
+    status = json.loads((output / "recording-status.json").read_text())
+    assert status["reason"] == "capture_cleanup_unqualified"
+    assert status["video"] is None and status["native_code"] == 0
+
+
+def test_script_entrypoint_runs_hosted_admission_before_work(recorder, monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS")
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_path(str(RECORDER), run_name="__main__")
+    assert stopped.value.code == 2
+
+
+@pytest.mark.parametrize("native_code", [0, 7])
+@pytest.mark.parametrize("capture_fault", ["overflow", "invalid_time"])
+def test_capture_fault_preserves_actual_native_exit_and_stdout(
+    recorder, native_code, capture_fault
+):
+    module, _ = recorder
+    state = {
+        "active": True,
+        "started": 0.0,
+        "events": [(0.0, "event")] * (32 if capture_fault == "overflow" else 0),
+    }
+    process = mock.Mock(pid=12345)
+    selector = mock.MagicMock()
+    entries = {1: object()}
+    selector.get_map.side_effect = lambda: entries
+    selector.unregister.side_effect = lambda _: entries.clear()
+    selector.select.return_value = [(mock.Mock(fileobj=process.stdout), 0)]
+    outcome = mock.Mock(si_code=module.os.CLD_EXITED, si_status=native_code)
+    raw = b"private native diagnostic\n"
+    with (
+        mock.patch.object(module, "start_owned", return_value=process),
+        mock.patch.object(module.os, "read", side_effect=[raw, b""]),
+        mock.patch.object(module.os, "waitid", return_value=outcome),
+        mock.patch.object(
+            module.time, "monotonic", return_value=-1.0 if capture_fault == "invalid_time" else 0.0
+        ),
+        mock.patch.object(module.sys, "stdout"),
+        mock.patch.object(module.selectors, "DefaultSelector") as selectors,
+    ):
+        selectors.return_value.__enter__.return_value = selector
+        assert module.run_native(state) == native_code
+    assert state["native_code"] == native_code and state["active"] is False
+    assert state["stdout_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert state["omitted_stdout_lines"] == 1
+    assert "private" not in json.dumps(state)
+
+
+@pytest.mark.parametrize("capture_fault", ["near_event_limit", "backwards_clock"])
+def test_receipt_display_fault_cannot_encode_a_truncated_video(recorder, tmp_path, capture_fault):
+    module, _ = recorder
+    receipt = tmp_path / "valid-native-receipt.json"
+    receipt.write_text(json.dumps(module.EXPECTED_RECEIPT))
+    events = (
+        [(0.0, "measured event")] * 30
+        if capture_fault == "near_event_limit"
+        else [(5.0, "measured event")]
+    )
+    state = {"receipt": receipt, "active": True, "events": events, "started": 0.0, "native_code": 0}
+    with (
+        mock.patch.object(module.time, "monotonic", return_value=4.0),
+        mock.patch.object(module, "encode_video") as encode,
+        mock.patch.object(module, "probe_metadata") as probe,
+        mock.patch.object(module.time, "sleep") as sleep,
+    ):
+        with pytest.raises(ValueError, match="capture_event_stream_incomplete"):
+            module.finish_capture(state, tmp_path, 0)
+    encode.assert_not_called()
+    probe.assert_not_called()
+    sleep.assert_not_called()
+    assert state["native_code"] == 0 and state.get("video") is None
+    assert state["active"] is False

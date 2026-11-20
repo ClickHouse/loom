@@ -1,17 +1,19 @@
-"""Record one hosted text turn using synthetic content and fake server providers.
+"""Render measured native Pipecat events and validated synthetic observations.
 
-The optional filming workload is separate from mandatory qualification CI.
-Original process diagnostics reach the job log; the browser receives only
-allowlisted status and validated synthetic observations after all assertions.
+This is a timestamped execution visualization, not a screen recording. The
+optional renderer is separate from mandatory native qualification CI.
 """
 
 from __future__ import annotations
 
-import base64
 import ctypes
 import hashlib
+import importlib.metadata
+import importlib.resources
 import json
+import math
 import os
+import platform
 import re
 import selectors
 import shutil
@@ -20,11 +22,11 @@ import socket
 import stat
 import subprocess
 import sys
-import tempfile
+import textwrap
 import time
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.error import URLError
+from urllib.request import urlopen
 
 FILMING_CASE = "tests/integration/_pipecat_video_ci.py"
 NATIVE_CASE = "tests/integration/_pipecat_demo_ci.py"
@@ -58,51 +60,303 @@ EXPECTED_RECEIPT = {
 SUMMARY = re.compile(r"1 passed(?:, [0-9]+ warnings?)? in [0-9]+\.[0-9]+s")
 PROGRESS = re.compile(r"\.[ ]+\[100%\]")
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-DRIVER_ERRORS = frozenset(
-    {
-        "invalid argument",
-        "invalid session id",
-        "javascript error",
-        "no such window",
-        "session not created",
-        "timeout",
-        "unknown command",
-        "unknown error",
-        "unsupported operation",
-    }
-)
-CAPTURE_FAILURE_KINDS = (
-    (HTTPError, "http"),
-    (OSError, "io"),
-    (KeyError, "key"),
-    (TypeError, "type"),
-    (ValueError, "value"),
-)
+ENCODER_SHA256 = "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99"
+ENCODER_FILE = "ffmpeg-linux-x86_64-v7.0.2"
+WIDTH, HEIGHT, FPS = 1280, 720, 5
+MAX_VIDEO_BYTES = 8 * 1024 * 1024
 CAPTURE_FAILURE_CODES = frozenset(
     {
         "native_failed_no_qualified_video",
         "receipt_not_regular_small_file",
         "receipt_contract_not_met",
         "native_completion_outside_video_window",
+        "capture_event_bound",
         "capture_event_stream_incomplete",
-        "browser_export_timeout",
-        "browser_export_invalid",
+        "capture_event_invalid",
+        "encoder_dependency_unqualified",
+        "encoder_binary_unqualified",
+        "encoder_timeout",
+        "encoder_output_bound",
+        "encoder_failed",
+        "encoder_frame_incomplete",
         "video_size_invalid",
         "media_probe_timeout",
         "media_probe_output_too_large",
         "media_probe_failed",
         "encoded_video_duration_or_audio_invalid",
-        "driver_listener_not_owned",
-        "driver_response_too_large",
-        "driver_command_refused",
     }
 )
 
 
 def capture_phase(state: dict, stage: int) -> None:
     state["capture_stage"] = stage
-    state["driver_http_status"] = 0
-    state["driver_error"] = "unavailable"
+
+
+def capture_failure(state: dict, error: Exception) -> dict:
+    code = error.args[0] if isinstance(error, ValueError) and error.args else None
+    return {
+        "stage": state.get("capture_stage", 0),
+        "kind": "io"
+        if isinstance(error, OSError)
+        else "value"
+        if isinstance(error, ValueError)
+        else "other",
+        "code": code if isinstance(code, str) and code in CAPTURE_FAILURE_CODES else "unavailable",
+        "io": io_diagnostic(error),
+    }
+
+
+def packaged_encoder() -> Path:
+    if (
+        platform.system() != "Linux"
+        or platform.machine() != "x86_64"
+        or importlib.metadata.version("imageio-ffmpeg") != "0.6.0"
+        or importlib.metadata.version("Pillow") != "13.0.0"
+    ):
+        raise ValueError("encoder_dependency_unqualified")
+    path = Path(str(importlib.resources.files("imageio_ffmpeg").joinpath("binaries", ENCODER_FILE)))
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o022
+        or not os.access(path, os.X_OK)
+        or info.st_size != 79826272
+        or digest(path) != ENCODER_SHA256
+    ):
+        raise ValueError("encoder_binary_unqualified")
+    return path
+
+
+def start_capture(state: dict) -> None:
+    capture_phase(state, 1)
+    state["encoder_binary"] = packaged_encoder()
+    media_binary = shutil.which("mediainfo")
+    if media_binary is None:
+        raise ValueError("runner_tool_missing")
+    state["mediainfo"] = media_binary
+    state["started"] = time.monotonic()
+    state["events"] = []
+
+
+def display(state: dict, label: str) -> None:
+    if not state.get("active"):
+        return
+    try:
+        elapsed = time.monotonic() - state["started"]
+        events = state["events"]
+        if len(events) >= 32:
+            raise ValueError("capture_event_bound")
+        if (
+            not isinstance(label, str)
+            or len(label) > 160
+            or "\n" in label
+            or not math.isfinite(elapsed)
+            or elapsed < 0
+            or (events and elapsed < events[-1][0])
+        ):
+            raise ValueError("capture_event_invalid")
+        events.append((elapsed, label))
+    except Exception as error:  # noqa: BLE001 — visualization failure cannot replace the native result
+        state.setdefault("capture_failure", capture_failure(state, error))
+        state["active"] = False
+        state["reason"] = "capture_event_stream_unqualified"
+
+
+def visible_events(events: list, elapsed: float) -> list[str]:
+    return [f"[{stamp:5.1f}s] {label}" for stamp, label in events if stamp <= elapsed]
+
+
+def frame_bytes(events: list, elapsed: float) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("RGB", (WIDTH, HEIGHT), "#101820")
+    draw = ImageDraw.Draw(image)
+    heading = ImageFont.load_default(size=28)
+    font = ImageFont.load_default(size=21)
+    draw.text(
+        (32, 28),
+        "Loom + Pipecat | timestamped execution visualization",
+        font=heading,
+        fill="#75e3c0",
+    )
+    labels = [
+        "Measured process events, rendered after execution; not a screen recording.",
+        "Real Agent + Pipecat 1.16.0 | fake LLM/embeddings | text only, no audio",
+        f"Measured elapsed time: {elapsed:.1f} s | observations are a post-run assertion receipt",
+    ]
+    for index, label in enumerate(labels):
+        draw.text((32, 78 + index * 30), label, font=font, fill="#c9d5df")
+    wrapped = [part for line in visible_events(events, elapsed) for part in textwrap.wrap(line, 96)]
+    for index, line in enumerate(wrapped[-16:]):
+        draw.text((32, 190 + index * 30), line, font=font, fill="white")
+    return image.tobytes()
+
+
+def encoder_command(binary: Path, destination: Path, duration: float) -> list[str]:
+    if not math.isfinite(duration) or not 30 <= duration <= 55:
+        raise ValueError("native_completion_outside_video_window")
+    return [
+        str(binary),
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s:v",
+        f"{WIDTH}x{HEIGHT}",
+        "-r",
+        str(FPS),
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "libvpx",
+        "-threads",
+        "1",
+        "-b:v",
+        "300k",
+        "-deadline",
+        "realtime",
+        "-frames:v",
+        str(math.ceil(duration * FPS)),
+        "-t",
+        str(math.ceil(duration * FPS) / FPS),
+        "-fs",
+        str(MAX_VIDEO_BYTES),
+        "-f",
+        "webm",
+        str(destination),
+    ]
+
+
+def encode_video(state: dict, path: Path, duration: float) -> None:
+    # The new renderer has one 30-second encoding budget, separate from playback time.
+    deadline = time.monotonic() + 30
+    environment = {name: os.environ[name] for name in ("LANG", "LC_ALL") if name in os.environ}
+    command = encoder_command(state["encoder_binary"], Path("pipe:1"), duration)
+    process = start_owned(
+        state,
+        "encoder",
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        start_new_session=True,
+    )
+    total = diagnostics = frame_index = offset = 0
+    frame = b""
+    frames = math.ceil(duration * FPS)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
+        with selectors.DefaultSelector() as selector:
+            for stream, mode, label in (
+                (process.stdin, selectors.EVENT_WRITE, "input"),
+                (process.stdout, selectors.EVENT_READ, "output"),
+                (process.stderr, selectors.EVENT_READ, "diagnostic"),
+            ):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, mode, label)
+            while selector.get_map() or not owned_exited(process):
+                if time.monotonic() >= deadline:
+                    raise ValueError("encoder_timeout")
+                for key, _ in selector.select(timeout=0.1):
+                    if key.data == "input":
+                        if not frame:
+                            frame = frame_bytes(state["events"], frame_index / FPS)
+                            if len(frame) != WIDTH * HEIGHT * 3:
+                                raise ValueError("encoder_frame_incomplete")
+                        offset += os.write(key.fd, memoryview(frame)[offset : offset + 65536])
+                        if offset == len(frame):
+                            frame_index += 1
+                            frame, offset = b"", 0
+                            if frame_index == frames:
+                                selector.unregister(key.fileobj)
+                                process.stdin.close()
+                    else:
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                        elif key.data == "output":
+                            total += len(chunk)
+                            if total > MAX_VIDEO_BYTES:
+                                raise ValueError("encoder_output_bound")
+                            out.write(chunk)
+                        else:
+                            diagnostics += len(chunk)
+                            if diagnostics > 65536:
+                                raise ValueError("encoder_output_bound")
+    outcome = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+    if outcome.si_code != os.CLD_EXITED or outcome.si_status != 0 or frame_index != frames:
+        raise ValueError("encoder_failed")
+    if not 0 < total <= MAX_VIDEO_BYTES:
+        raise ValueError("video_size_invalid")
+
+
+def validated_receipt(state: dict, native_code: int) -> dict:
+    if native_code != 0:
+        raise ValueError("native_failed_no_qualified_video")
+    receipt = state["receipt"]
+    metadata = receipt.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+        raise ValueError("receipt_not_regular_small_file")
+    payload = json.loads(receipt.read_text())
+    if set(payload) != set(EXPECTED_RECEIPT) or any(
+        type(payload[key]) is not type(value) or payload[key] != value
+        for key, value in EXPECTED_RECEIPT.items()
+    ):
+        raise ValueError("receipt_contract_not_met")
+    state["receipt_sha256"] = digest(receipt)
+    return payload
+
+
+def finish_capture(state: dict, output: Path, native_code: int) -> None:
+    capture_phase(state, 11)
+    payload = validated_receipt(state, native_code)
+    display(state, "POST-RUN ASSERTION RECEIPT (not live API telemetry):")
+    display(state, "Auth-on real Agent; fake server LLM and embedding providers.")
+    observations = payload["observations"]
+    display(state, "OBSERVED native developer context: " + observations["recalled_seed"])
+    for row in observations["persisted"]:
+        display(state, "OBSERVED persisted " + row["role"] + ": " + row["content"])
+    display(state, "Python main() opened the fresh application pointer (executed).")
+    display(state, "NOT qualified: separate CLI, resumed/protected restore, audio.")
+    capture_phase(state, 13)
+    target_end = max(state["started"] + 35, time.monotonic() + 8)
+    duration = target_end - state["started"]
+    if duration > 55:
+        raise ValueError("native_completion_outside_video_window")
+    display(state, "READING HOLD: test finished; the recorder makes no new memory calls.")
+    if not state.get("active"):
+        raise ValueError("capture_event_stream_incomplete")
+    while time.monotonic() < target_end:
+        time.sleep(0.1)
+    capture_phase(state, 14)
+    path = output / "pipecat-ordinary-text.webm"
+    encode_video(state, path, duration)
+    capture_phase(state, 19)
+    metadata = probe_metadata(state, path)
+    tracks = json.loads(metadata)["media"]["track"]
+    general = next(x for x in tracks if x.get("@type") == "General")
+    duration = float(general["Duration"])
+    videos = [x for x in tracks if x.get("@type") == "Video"]
+    if (
+        not 30 <= duration <= 60
+        or len(videos) != 1
+        or any(x.get("@type") == "Audio" for x in tracks)
+    ):
+        raise ValueError("encoded_video_duration_or_audio_invalid")
+    state["video"] = {
+        "file": path.name,
+        "sha256": digest(path),
+        "bytes": path.stat().st_size,
+        "duration_seconds": duration,
+        "kind": "timestamped_execution_visualization",
+    }
+    capture_phase(state, 22)
 
 
 def io_diagnostic(error: Exception) -> dict:
@@ -121,141 +375,17 @@ def io_diagnostic(error: Exception) -> dict:
     return {"kind": kind, "errno": number if type(number) is int and 0 < number < 4096 else 0}
 
 
-def driver_exit_diagnostic(state: dict) -> dict:
-    result = {"kind": "unavailable", "code": 0}
-    process = state.get("driver")
-    if process is None:
-        return result
-    try:
-        anchor_identity(process)
-        outcome = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
-        if outcome is None:
-            return {"kind": "running", "code": 0}
-        if outcome.si_code == os.CLD_EXITED and 0 <= outcome.si_status <= 255:
-            return {"kind": "exited", "code": outcome.si_status}
-        if outcome.si_code in (os.CLD_KILLED, os.CLD_DUMPED) and 0 < outcome.si_status <= 64:
-            return {"kind": "signalled", "code": outcome.si_status}
-    except Exception:  # noqa: BLE001 — optional launcher diagnostics cannot replace capture failure
-        pass
-    return result
-
-
-def capture_failure(state: dict, error: Exception) -> dict:
-    code = error.args[0] if isinstance(error, ValueError) and error.args else None
-    return {
-        "stage": state.get("capture_stage", 0),
-        "kind": next(
-            (name for kind, name in CAPTURE_FAILURE_KINDS if isinstance(error, kind)), "other"
-        ),
-        "code": code
-        if isinstance(code, str) and len(code) <= 64 and code in CAPTURE_FAILURE_CODES
-        else "unavailable",
-        "http_status": state.get("driver_http_status", 0),
-        "driver_error": state.get("driver_error", "unavailable"),
-        "io": io_diagnostic(error),
-        "driver_exit": driver_exit_diagnostic(state),
-    }
-
-
-def driver_log_diagnostic(state: dict) -> dict:
-    # Only fixed markers escape the private log; no match does not mean healthy.
-    unavailable = {"state": "unavailable", "prefix_omitted": False, "markers": []}
-    log = state.get("driver_log")
-    if log is None:
-        return unavailable
-    try:
-        fd = log.fileno()
-        info = os.fstat(fd)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_mode & 0o077
-            or info.st_nlink != 1
-        ):
-            return unavailable
-        raw = os.pread(fd, 16384, max(0, info.st_size - 16384))
-        if os.fstat(fd).st_size != info.st_size or len(raw) != min(info.st_size, 16384):
-            return unavailable
-    except (OSError, ValueError):
-        return unavailable
-    markers = {
-        "crashpad_database_required": (b"crashpad_handler: --database is required",),
-        "sandbox_refusal": (b"No usable sandbox!",),
-        "devtools_port_missing": (
-            b"DevToolsActivePort file doesn't exist",
-            b"Could not read in devtools port number",
-        ),
-        "profile_write_failure": (
-            b"cannot create default profile directory",
-            b"failed to write prefs file",
-            b"failed to write first run file",
-        ),
-        "chrome_launch_failure": (b"Failed to create Chrome process.",),
-        "chrome_startup_wait": (b"Timed out while waiting for Chrome process.",),
-    }
-    seen = [
-        name for name, messages in markers.items() if any(message in raw for message in messages)
-    ]
-    return {
-        "state": "observed" if seen else "no_known_marker",
-        "prefix_omitted": info.st_size > 16384,
-        "markers": seen,
-    }
-
-
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
 
 
 def write_private(path: Path, data: bytes) -> None:
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
         out.write(data)
-
-
-def driver_error_name(value: object) -> str:
-    name = value.get("error") if isinstance(value, dict) else None
-    return name if isinstance(name, str) and name in DRIVER_ERRORS else "unrecognized"
-
-
-def driver_call(state: dict, method: str, path: str, payload: dict | None = None):
-    state["driver_http_status"] = 0
-    state["driver_error"] = "unavailable"
-    if not owned_listener(state["driver"], state["driver_port"]):
-        raise ValueError("driver_listener_not_owned")
-    body = None if payload is None else json.dumps(payload).encode()
-    request = Request(state["url"] + path, data=body, method=method)
-    request.add_header("Content-Type", "application/json")
-    try:
-        with urlopen(request, timeout=3) as response:
-            state["driver_http_status"] = response.status
-            raw = response.read(24 * 1024 * 1024 + 1)
-    except HTTPError as error:
-        state["driver_http_status"] = error.code
-        try:
-            diagnostic = error.read1(4097)
-            if len(diagnostic) <= 4096:
-                reply = json.loads(diagnostic)
-                if isinstance(reply, dict):
-                    state["driver_error"] = driver_error_name(reply.get("value"))
-        except (OSError, ValueError, TypeError):
-            pass
-        raise
-    if len(raw) > 24 * 1024 * 1024:
-        raise ValueError("driver_response_too_large")
-    value = json.loads(raw)["value"]
-    if isinstance(value, dict) and "error" in value:
-        state["driver_error"] = driver_error_name(value)
-        raise ValueError("driver_command_refused")
-    return value
-
-
-def javascript(state: dict, script: str, args: list | None = None):
-    return driver_call(
-        state,
-        "POST",
-        "/session/" + state["session"] + "/execute/sync",
-        {"script": script, "args": args or []},
-    )
 
 
 def process_identity(pid: int) -> tuple[int, int, int, str, str]:
@@ -580,93 +710,6 @@ def admit_workload(state: dict) -> Path:
     return Path(runner_temp)
 
 
-def start_capture(state: dict, private: Path) -> None:
-    # Fixed stages identify setup failures without exporting browser logs or paths.
-    state["capture_stage"] = 1  # tools
-    driver_binary = shutil.which("chromedriver")
-    media_binary = shutil.which("mediainfo")
-    if driver_binary is None or media_binary is None:
-        raise ValueError("runner_tool_missing")
-    state["mediainfo"] = media_binary
-    state["capture_stage"] = 2  # private driver endpoint
-    with socket.socket() as reservation:
-        reservation.bind(("127.0.0.1", 0))
-        port = reservation.getsockname()[1]
-    state["url"] = "http://127.0.0.1:" + str(port)
-    state["driver_port"] = port
-    # The browser and its driver receive no Loom or provider environment values.
-    browser_env = {
-        name: os.environ[name] for name in ("PATH", "LANG", "LC_ALL") if name in os.environ
-    }
-    log = os.fdopen(
-        os.open(private / "driver.log", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600), "w+b"
-    )
-    state["driver_log"] = log
-    state["capture_stage"] = 3  # driver launch
-    start_owned(
-        state,
-        "driver",
-        [driver_binary, "--port=" + str(port), "--enable-chrome-logs"],
-        env=browser_env,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    state["capture_stage"] = 4  # owned driver readiness
-    ready_until = time.monotonic() + 5
-    while True:
-        if owned_listener(state["driver"], port):
-            try:
-                driver_call(state, "GET", "/status")
-                break
-            except OSError:
-                pass
-        if time.monotonic() >= ready_until:
-            raise ValueError("driver_unavailable")
-        time.sleep(0.1)
-    state["capture_stage"] = 5  # browser session
-    session = driver_call(
-        state,
-        "POST",
-        "/session",
-        {
-            "capabilities": {
-                "alwaysMatch": {
-                    "browserName": "chrome",
-                    "goog:chromeOptions": {
-                        "args": [
-                            "--headless=new",
-                            "--no-first-run",
-                            "--disable-background-networking",
-                            "--user-data-dir=" + str(private / "chrome-profile"),
-                        ]
-                    },
-                }
-            }
-        },
-    )
-    state["session"] = session["sessionId"]
-    html = Path(__file__).with_name("terminal.html").resolve()
-    state["capture_stage"] = 6  # local capture page
-    driver_call(state, "POST", "/session/" + state["session"] + "/url", {"url": html.as_uri()})
-    state["capture_stage"] = 7  # canvas encoder
-    result = javascript(state, "return window.beginCapture();")
-    if result != "recording":
-        raise ValueError("browser_encoder_unavailable")
-    state["started"] = time.monotonic()
-    state["capture_stage"] = 8  # setup complete
-
-
-def display(state: dict, label: str) -> None:
-    if state.get("active"):
-        try:
-            javascript(state, "window.appendActualEvent(arguments[0]);", [label])
-        except Exception as error:  # noqa: BLE001 — capture failure must not skip the native check
-            state.setdefault("capture_failure", capture_failure(state, error))
-            state["active"] = False
-            state["reason"] = "browser_event_failed"
-
-
 def allowed_stdout(line: bytes) -> str | None:
     text = ANSI.sub("", line.decode("utf-8", errors="replace")).strip()
     if SUMMARY.fullmatch(text) or PROGRESS.fullmatch(text):
@@ -761,85 +804,10 @@ def probe_metadata(state: dict, path: Path) -> bytes:
     return bytes(output)
 
 
-def finish_capture(state: dict, output: Path, native_code: int) -> None:
-    capture_phase(state, 11)  # exact native receipt qualification
-    if native_code != 0:
-        raise ValueError("native_failed_no_qualified_video")
-    receipt = state["receipt"]
-    metadata = receipt.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
-        raise ValueError("receipt_not_regular_small_file")
-    payload = json.loads(receipt.read_text())
-    # Exact types prevent True from masquerading as a numeric row count.
-    if set(payload) != set(EXPECTED_RECEIPT) or any(
-        type(payload[key]) is not type(value) or payload[key] != value
-        for key, value in EXPECTED_RECEIPT.items()
-    ):
-        raise ValueError("receipt_contract_not_met")
-    state["receipt_sha256"] = digest(receipt)
-    capture_phase(state, 12)  # synthetic post-run receipt display
-    display(state, "POST-RUN ASSERTION RECEIPT (not live API telemetry):")
-    display(state, "Auth-on real Agent; fake server LLM and embedding providers.")
-    observations = payload["observations"]
-    display(state, "OBSERVED native developer context: " + observations["recalled_seed"])
-    for row in observations["persisted"]:
-        display(state, "OBSERVED persisted " + row["role"] + ": " + row["content"])
-    display(state, "Python main() opened the fresh application pointer (executed).")
-    display(state, "NOT qualified: separate CLI, resumed/protected restore, audio.")
-    capture_phase(state, 13)  # duration window and reading hold
-    target_end = max(state["started"] + 35, time.monotonic() + 8)
-    if target_end > state["started"] + 55:
-        raise ValueError("native_completion_outside_video_window")
-    if not state.get("active"):
-        raise ValueError("capture_event_stream_incomplete")
-    display(state, "READING HOLD: test finished; the recorder makes no new memory calls.")
-    if not state.get("active"):
-        raise ValueError("capture_event_stream_incomplete")
-    while time.monotonic() < target_end:
-        time.sleep(0.1)
-    capture_phase(state, 14)  # stop the browser encoder
-    javascript(state, "window.finishCapture();")
-    capture_phase(state, 15)  # bounded browser export readiness
-    ready_until = time.monotonic() + 5
-    while not javascript(state, "return window.captureReady;"):
-        if time.monotonic() >= ready_until:
-            raise ValueError("browser_export_timeout")
-        time.sleep(0.1)
-    capture_phase(state, 16)  # browser export value
-    encoded = javascript(state, "return window.captureBase64;")
-    if not isinstance(encoded, str) or len(encoded) > 12 * 1024 * 1024:
-        raise ValueError("browser_export_invalid")
-    capture_phase(state, 17)  # encoded bytes and size
-    video = base64.b64decode(encoded, validate=True)
-    if not 0 < len(video) <= 8 * 1024 * 1024:
-        raise ValueError("video_size_invalid")
-    path = output / "pipecat-ordinary-text.webm"
-    capture_phase(state, 18)  # private video file
-    write_private(path, video)
-    capture_phase(state, 19)  # owned bounded media probe
-    metadata = probe_metadata(state, path)
-    capture_phase(state, 20)  # media metadata contract
-    tracks = json.loads(metadata)["media"]["track"]
-    general = next(x for x in tracks if x.get("@type") == "General")
-    duration = float(general["Duration"])
-    capture_phase(state, 21)  # encoded duration and audio qualification
-    if not 30 <= duration <= 60 or any(x.get("@type") == "Audio" for x in tracks):
-        path.unlink()
-        raise ValueError("encoded_video_duration_or_audio_invalid")
-    state["video"] = {
-        "file": path.name,
-        "sha256": digest(path),
-        "bytes": len(video),
-        "duration_seconds": duration,
-    }
-    capture_phase(state, 22)  # media ready for independent inspection
-
-
 def main() -> int:
     os.umask(0o077)
     state: dict = {"active": False, "reason": "not_started", "native_code": None}
     output = None
-    temporary = None
     prior_subreaper = None
 
     def cancel(signum, _frame):
@@ -866,18 +834,15 @@ def main() -> int:
             state["native_code"] = 2
             return 2
         try:
-            output = runner_temp / "pipecat-video-public"
-            output.mkdir(mode=0o700, exist_ok=False)
-            temporary = tempfile.TemporaryDirectory(prefix="pipecat-video-", dir=runner_temp)
-            start_capture(state, Path(temporary.name))
+            candidate = runner_temp / "pipecat-video-public"
+            candidate.mkdir(mode=0o700, exist_ok=False)
+            output = candidate
+            start_capture(state)
             state["active"] = True
             state["reason"] = "recording"
         except Exception as error:  # noqa: BLE001 — setup must not skip the native check
             state["reason"] = "capture_setup_unqualified"
             state["capture_failure"] = capture_failure(state, error)
-            # Never write a status into a pre-existing output directory.
-            if output is not None and temporary is None:
-                output = None
         try:
             if state.get("server") and not owned_listener(state["server"]):
                 raise ValueError("owned_server_listener_lost")
@@ -907,20 +872,11 @@ def main() -> int:
         state["cleaning_up"] = True
         # Every cleanup target was started here. Failure of one does not skip the others.
         cleanup_failed = False
-        for process in (state.get("probe"), state.get("native")):
+        for process in (state.get("probe"), state.get("encoder"), state.get("native")):
             try:
                 stop_owned(process)
-            except Exception:  # noqa: BLE001 — owned driver cleanup still has to run
+            except Exception:  # noqa: BLE001 — owned encoder cleanup still has to run
                 cleanup_failed = True
-        if state.get("session"):
-            try:
-                driver_call(state, "DELETE", "/session/" + state["session"])
-            except Exception:  # noqa: BLE001 — terminate the owned driver if quit fails
-                cleanup_failed = True
-        try:
-            stop_owned(state.get("driver"))
-        except Exception:  # noqa: BLE001 — close private logs and files even if the driver is gone
-            cleanup_failed = True
         try:
             stop_owned(state.get("server"))
         except Exception:  # noqa: BLE001 — restore handlers even if server cleanup refuses
@@ -937,19 +893,22 @@ def main() -> int:
             if not cleanup_failed
             else "unavailable"
         )
-        state["driver_log_observation"] = driver_log_diagnostic(state)
         try:
             if state.get("probe"):
                 state["probe"].stdout.close()
                 state["probe"].stderr.close()
+            if state.get("encoder"):
+                for stream in (
+                    state["encoder"].stdin,
+                    state["encoder"].stdout,
+                    state["encoder"].stderr,
+                ):
+                    if stream is not None:
+                        stream.close()
             if state.get("server_log"):
                 state["server_log"].close()
             if prior_subreaper is not None:
                 subreaper(prior_subreaper)
-            if state.get("driver_log"):
-                state["driver_log"].close()
-            if temporary is not None:
-                temporary.cleanup()
         except Exception:  # noqa: BLE001 — cleanup status cannot replace the native result
             cleanup_failed = True
         if cleanup_failed:
@@ -957,6 +916,17 @@ def main() -> int:
         if state.get("cancelled_signal") is not None:
             state["native_code"] = 128 + state["cancelled_signal"]
             state["reason"] = "cancelled"
+        if state.get("video") and (
+            state["reason"] != "recorded_requires_media_review"
+            or state["post_cleanup_children"] != "empty"
+        ):
+            if state["reason"] == "recorded_requires_media_review":
+                state["reason"] = "capture_cleanup_unqualified"
+            state["video"] = None
+            try:
+                (output / "pipecat-ordinary-text.webm").unlink(missing_ok=True)
+            except OSError:
+                state["reason"] = "unqualified_video_removal_failed"
         if output is not None:
             # The status artifact exports no raw exception text, credentials or stdout.
             summary = {
@@ -970,7 +940,7 @@ def main() -> int:
                     "video",
                     "capture_failure",
                     "post_cleanup_children",
-                    "driver_log_observation",
+                    "events",
                 )
             }
             summary["intended_public_artifact_synthetic_content_only"] = True

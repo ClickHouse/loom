@@ -58,7 +58,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           test "$EXPECTED_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          command -v google-chrome chromedriver mediainfo
+          command -v mediainfo
           test "$(id -u)" != 0
           echo "This optional job exports PUBLIC artifacts containing synthetic text only."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,10 +99,16 @@ jobs:
         run: >-
           uv pip install --python "$PWD/.venv/bin/python"
           --target "$RUNNER_TEMP/loom-pipecat-filming" './sdk/python[pipecat]' 'pipecat-ai==1.16.0'
+      - name: Install the pinned visualization renderer
+        run: >-
+          uv pip install --python "$PWD/.venv/bin/python"
+          --target "$RUNNER_TEMP/loom-pipecat-renderer"
+          --require-hashes --only-binary=:all:
+          -r "$GITHUB_WORKSPACE/dev/pipecat_demo/renderer-requirements.txt"
       - name: Record one real text turn
         timeout-minutes: 6
         env:
-          PYTHONPATH: ${{ runner.temp }}/loom-pipecat-filming
+          PYTHONPATH: ${{ runner.temp }}/loom-pipecat-renderer:${{ runner.temp }}/loom-pipecat-filming
           LOOM_PIPECAT_EVIDENCE: ${{ runner.temp }}/pipecat-filming-receipt.json
         run: |
           set -euo pipefail
