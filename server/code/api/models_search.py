@@ -306,18 +306,14 @@ class CodeSearchOutput(_LessonsOut):
 class CodeAskInput(_CodeIdentity):
     # The question to answer about the indexed code (grounded on a code.search of it).
     question: str = Field(min_length=1, max_length=2000)
-    # False = retrieval-only (agent synthesizes); True = grounded server-side
-    # answer with citations, memoized across agents and invalidated when any
-    # cited file changes at merge.
+    # False disables fresh synthesis; use no_cache=True to exclude cached answers.
     synthesize: bool = True
     # Reranker for the retrieval: "" = the deployment default
     # (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, "builtin:openai" /
     # "builtin:cohere", or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (not a URL).
     rerank: RerankName = ""
-    # Skip the cache lookup and synthesize fresh (the fresh answer still
-    # refreshes the cache entry). For eval and for agents that suspect a
-    # stale answer. Also skips the exact-prompt cache of the pre-synthesis
-    # LLM calls.
+    # Skip answer and pre-synthesis prompt-cache lookups; fresh synthesis, when
+    # enabled, still refreshes the answer cache.
     no_cache: bool = False
     # Retrieval context handed to synthesis, in tokens. None = the
     # deployment default (settings.code_ask_token_budget).

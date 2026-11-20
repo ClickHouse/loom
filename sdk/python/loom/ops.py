@@ -7337,7 +7337,7 @@ class CodeRepoSetSourceOutput(TypedDict, total=False):
 
 
 class CodeReposInput(TypedDict, total=False):
-    "Lists the code namespaces (repo@branch entries) configured on this"
+    "List readable repositories and permitted access-request metadata."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -7350,7 +7350,7 @@ class CodeReposInput(TypedDict, total=False):
 
 
 class CodeReposBody(TypedDict, total=False):
-    "Lists the code namespaces (repo@branch entries) configured on this"
+    "List readable repositories and permitted access-request metadata."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

@@ -22,9 +22,9 @@ Ask a QUESTION about this codebase and get a grounded answer with [file:line] ci
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `question` | `str` | required | The question to answer about the indexed code (grounded on a code.search of it). |
-| `synthesize` | `bool` | `True` | False = retrieval-only (agent synthesizes); True = grounded server-side answer with citations, memoized across agents and invalidated when any cited file changes at merge. |
+| `synthesize` | `bool` | `True` | False disables fresh synthesis; use no_cache=True to exclude cached answers. |
 | `rerank` | `str` | `''` | Reranker for the retrieval: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (not a URL). |
-| `no_cache` | `bool` | `False` | Skip the cache lookup and synthesize fresh (the fresh answer still refreshes the cache entry). |
+| `no_cache` | `bool` | `False` | Skip answer and pre-synthesis prompt-cache lookups; fresh synthesis, when enabled, still refreshes the answer cache. |
 | `token_budget` | `int \| None` | `None` | Retrieval context handed to synthesis, in tokens. |
 
 | Output field | Type | Meaning |
@@ -1308,7 +1308,7 @@ A maintainer sets the trackers this repository reads (records of issues, PRs, te
 
 ## `code.repos`
 
-Lists the code namespaces (repo@branch entries) configured on this deployment that the caller is authorized to read, across orgs — each row carries its org.
+List readable repositories and permitted access-request metadata.
 
 `POST /v1/code.repos` · MCP `loom_code_repos` · role `viewer` · read
 

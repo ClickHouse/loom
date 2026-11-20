@@ -779,7 +779,7 @@ The setting also resumes the git jobs of entries that members added before
 `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` was set. They keep the remotes their adders
 named and are cloned and fetched the same way. Before turning it on, list the branches in
 the registry (the active rows of `loom.code_repos` whose `row_kind` is not `access`;
-`code.repos` lists only what its caller may read) and have those a platform admin would
+`code.repos` is caller-filtered and can include request-only metadata) and have those a platform admin would
 not add removed with `code.repo.remove`.
 
 `/v1/health` and `loom doctor` keep reporting `repo_jobs_unsandboxed` as a warning, with

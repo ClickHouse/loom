@@ -30,8 +30,10 @@ curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
 
 A grounded answer returns `answer` and `citations`; an unanswerable question can return
 `abstain` and `abstain_reason`. Inspect the completeness signals below before displaying
-an answer. To retrieve evidence without server-side synthesis, pass `synthesize: false`;
-`answer` is empty and `citations` holds the retrieved units. This does not disable any
+an answer. For an uncached retrieval-only response, pass both `synthesize: false` and
+`no_cache: true`; `answer` is empty and `citations` holds the retrieved units. With cache
+lookup enabled, a matching cached synthesized answer can still be returned. These flags
+do not disable any
 embedding or reranking provider used by retrieval. The
 [code operation reference](../reference/operations/code.md#codeask) gives the full contract.
 
