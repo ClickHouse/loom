@@ -402,7 +402,16 @@ def test_citation_evidence_is_from_results_not_untrusted_text() -> None:
         (
             "[code:app.py:9]",
             "code.symbol",
-            {"definitions": [{"path": "app.py", "start_line": 8, "end_line": 10}]},
+            {
+                "definitions": [
+                    {
+                        "path": "app.py",
+                        "start_line": 8,
+                        "end_line": 10,
+                        "body": "a = 1\nb = 2\nc = 3\n",
+                    }
+                ]
+            },
             {},
         ),
         ("```sql\nSELECT 1\n```", "insights.query", {"rows": [[1]]}, {"sql": "SELECT 1"}),
@@ -703,3 +712,51 @@ def test_tool_result_above_the_character_cap_refuses(monkeypatch):
             await tools.Tools("org", "ns", "t", "run")._request("loom_memory_get", {})
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["code.symbol", "code.search"])
+@pytest.mark.parametrize(
+    ("change", "line", "verified"),
+    [
+        ({}, 9, True),
+        ({"granularity": "file"}, 9, True),
+        ({"body": ""}, 9, False),
+        ({"body": None}, 9, False),
+        ({"body": ["a = 1", "b = 2", "c = 3"]}, 9, False),
+        ({"body": "a = 1\n"}, 9, False),
+        ({"body": "a = 1\nb = 2\nc = 3\nextra = 4\n"}, 9, False),
+        ({"elided": True, "body": ""}, 9, False),
+        ({"elided": True}, 9, False),
+        ({"granularity": "card"}, 9, False),
+        ({"granularity": "skeleton", "body": "class A:\n    # body elided\n    pass\n"}, 9, False),
+        ({"kind": "class_skeleton"}, 9, False),
+        ({"granularity": "unknown"}, 9, False),
+        ({"start_line": True}, 9, False),
+        ({"start_line": 0}, 9, False),
+        ({"end_line": "10"}, 9, False),
+        ({"end_line": 100}, 50, False),
+        ({}, 7, False),
+        ({}, 11, False),
+    ],
+)
+def test_code_citations_require_the_complete_delivered_source_span(
+    operation, change, line, verified
+):
+    unit = {"path": "app.py", "start_line": 8, "end_line": 10, "body": "a = 1\nb = 2\nc = 3\n"}
+    unit.update(change)
+    container = "definitions" if operation == "code.symbol" else "results"
+    receipt = Receipt(operation, {}, {container: [unit]}, "model_tool", 1)
+    (citation,) = evidence.verify(f"[code:app.py:{line}]", [receipt])
+    assert citation.verified is verified
+
+
+@pytest.mark.parametrize("operation", ["code.symbol", "code.search"])
+def test_code_citation_metadata_without_a_body_does_not_count_as_a_source_read(operation):
+    from server.code.domain.units import CodeUnit
+
+    unit = CodeUnit(path="app.py", start_line=8, end_line=10, elided=True, granularity="card")
+    delivered = unit.model_dump()
+    assert delivered["body"] == "" and delivered["elided"] is True
+    container = "definitions" if operation == "code.symbol" else "results"
+    receipt = Receipt(operation, {}, {container: [delivered]}, "model_tool", 1)
+    assert not evidence.verify("[code:app.py:9]", [receipt])[0].verified

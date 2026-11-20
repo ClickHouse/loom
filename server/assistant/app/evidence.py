@@ -92,9 +92,22 @@ def _matches(citation: Citation, receipt: Receipt) -> bool:
         if citation.kind == "code" and op in ("code.symbol", "code.search"):
             if node.get("path") == citation.path:
                 line = int(citation.text.rsplit(":", 1)[-1][:-1])
-                start = node.get("start_line", node.get("line"))
-                end = node.get("end_line", start)
-                if type(start) is int and type(end) is int and start <= line <= end:
+                start, end, body = node.get("start_line"), node.get("end_line"), node.get("body")
+                # Cards and skeletons retain source bounds for code the answer did not read.
+                if (
+                    node.get("elided", False) is not False
+                    or node.get("granularity", "unit") not in ("unit", "file")
+                    or node.get("kind") == "class_skeleton"
+                    or not isinstance(body, str)
+                    or not body.strip()
+                ):
+                    continue
+                if (
+                    type(start) is int
+                    and type(end) is int
+                    and 0 < start <= line <= end
+                    and len(body.splitlines()) == end - start + 1
+                ):
                     return True
     return False
 
