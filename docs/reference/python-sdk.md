@@ -294,6 +294,12 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 - `loom.integrations.haystack.LoomDocumentStore(org, namespace, ...)` stores native
   Haystack documents in Loom knowledge; `LoomRetriever(store)` is a retrieval
   component. Install the `[haystack]` extra.
+- `loom.integrations.dspy.LoomKnowledgeRetriever(agent)` and
+  `LoomMemoryRetriever(agent, user_id=...)` are DSPy retrievers over
+  `knowledge.search` and `memory.search`: calling one returns a `dspy.Prediction`
+  with `passages`, `sources`, `scores` and `metadata`, and `as_tool()` hands the
+  search to `dspy.ReAct`; install the `[dspy]` extra. A call needs a `SyncAgent`,
+  `acall` takes either agent.
 - `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
   `AgentTools` as OpenAI Agents SDK `FunctionTool`s, and
   `LoomSession(agent, session_id, user_id=...)` is its `Session`, the history kept as

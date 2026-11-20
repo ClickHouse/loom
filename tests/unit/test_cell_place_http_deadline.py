@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 
 import httpcore
 import httpx
@@ -46,7 +45,7 @@ async def exchange(local, monkeypatch):
     monkeypatch.setattr(cell_control.pg, "time", phase_clock)
     events = []
     entered = asyncio.Event()
-    state = {"mode": "response", "reads": [], "owners": []}
+    state = {"mode": "response", "reads": [], "owners": [], "clock": phase_clock}
     real_close = conn.close
     real_call = cell_control.Owner.call
     actual_client = httpx.AsyncClient
@@ -139,7 +138,7 @@ async def exchange(local, monkeypatch):
 async def test_whole_exchange_closes_pg_before_http_cancellation(exchange, blocking, stop):
     conn, events, entered, state = exchange
     state["mode"] = blocking
-    started = time.monotonic()
+    started = state["clock"].monotonic()
     task = asyncio.create_task(invoke_place())
     try:
         await asyncio.wait_for(entered.wait(), 0.2)
@@ -153,7 +152,7 @@ async def test_whole_exchange_closes_pg_before_http_cancellation(exchange, block
             await task
         if stop == "cancel":
             assert str(caught.value) == "operator stop"
-        assert time.monotonic() - started < 0.3
+        assert state["clock"].monotonic() - started < 0.3
         assert conn.closed and not conn.committed and not conn.terminated
         assert not any("INSERT" in call for call in conn.calls)
         assert events.index("pg-ack") < events.index("http-cancel")

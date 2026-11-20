@@ -37,6 +37,7 @@ or needs another database, vector store or cache.
 | Haystack                       | `LoomDocumentStore`, `LoomRetriever`            | Python, `loom.integrations.haystack`                      | `DocumentStore` protocol, retrieval component                            |
 | Agno                           | `LoomMemoryDb`                                  | Python, `loom.integrations.agno`                          | `BaseDb` user-memory methods                                             |
 | Langflow                       | Loom                                            | `integrations/langflow` custom component                  | Langflow `Component`                                                     |
+| DSPy                           | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.dspy`                          | a retriever callable returning `dspy.Prediction`, `dspy.Tool`            |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -240,6 +241,66 @@ pipeline containing this adapter requires the application to trust the installed
 `loom.integrations.haystack` module according to Haystack's configuration. The adapter
 does not change that policy or register trust automatically. A pipeline constructed
 directly from the imported component works as in the example.
+
+## DSPy
+
+`LoomKnowledgeRetriever` searches the namespace's documents (`knowledge.search`) and
+`LoomMemoryRetriever` its memories (`memory.search`). Each is a retriever callable, the
+shape of DSPy's own `dspy.retrievers.Embeddings`: a program calls it in `forward` and gets
+a `dspy.Prediction` whose `passages` are the texts, with `sources`, `scores` and
+`metadata` in the same order, so the program can cite what it used. `as_tool()` hands the
+same search to `dspy.ReAct`. Install with `pip install 'clickhouse-loom[dspy]'` (`dspy`
+3.5.x).
+
+```python
+import dspy
+from loom import SyncAgent
+from loom.integrations.dspy import LoomKnowledgeRetriever, LoomMemoryRetriever
+
+
+class Answer(dspy.Module):
+    def __init__(self, search: LoomKnowledgeRetriever) -> None:
+        super().__init__()
+        self.search = search
+        self.respond = dspy.ChainOfThought("context, question -> answer")
+
+    def forward(self, question: str) -> dspy.Prediction:
+        found = self.search(question)
+        return self.respond(context=found.passages, question=question)
+
+
+with SyncAgent(org="acme", namespace="support") as agent:
+    answer = Answer(LoomKnowledgeRetriever(agent, k=3))(question="Do annual plans refund?")
+    react = dspy.ReAct(
+        "question -> answer",
+        tools=[LoomMemoryRetriever(agent, user_id="alice").as_tool()],
+    )
+```
+
+A call needs a `SyncAgent`; `await retriever.acall(query)` takes an `Agent` or a
+`SyncAgent`. Pass `k=` to a call to override the retriever's own for that search.
+
+The adapter does not use `dspy.configure(rm=...)` and `dspy.Retrieve`: DSPy 3.5's
+`Retrieve` keeps only each passage's `long_text`, so the sources would be lost, and its
+own retrievers (`dspy.retrievers.Embeddings`) are plain callables that a program calls or
+hands to `dspy.ReAct` as a tool.
+
+| Retriever                | passage         | source                                 | `metadata`                                                                                        |
+| ------------------------ | --------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>` | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`                           |
+| `LoomMemoryRetriever`    | the memory text | `<namespace>/<memory_key>`             | `namespace`, `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
+
+`scores` is each hit's similarity, rounded to four places. The retrievers take the same
+search fields as the LangChain retrievers above (`k`, default 3, `search_tags`,
+`uri_prefix`, `namespace_scope`, `search_kwargs`; `memory_type`, `user_id`, `session_id`,
+`run_id`, `agent_id`, `honour_abstain`). When Loom abstains, `LoomMemoryRetriever`
+returns no passages unless `honour_abstain=False`. A search error is raised, not turned
+into an empty result. Session protection works as for the LangChain retrievers.
+
+`as_tool()` returns a `dspy.Tool` named `loom_search_documents` or
+`loom_search_memories` (pass `name=` to rename it) that returns one `[source] passage`
+line per hit. With a `SyncAgent` the tool is sync; with an `Agent` it is async, for
+`dspy.ReAct`'s `acall`.
 
 ## OpenAI Agents SDK
 

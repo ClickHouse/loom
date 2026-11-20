@@ -241,8 +241,8 @@ def _iter_scan_files():
         base = ROOT / d
         if not base.exists():
             continue
-        # `.claude/` also holds worktrees and ignored skills a contributor installed.
-        files = (ROOT / p for p in tracked(d)) if d == ".claude" else base.rglob("*")
+        # `.claude/` holds worktrees and installed skills; `docs/` holds generated site output.
+        files = (ROOT / p for p in tracked(d)) if d in {".claude", "docs"} else base.rglob("*")
         for path in sorted(files):
             if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
                 continue
