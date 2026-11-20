@@ -67,7 +67,7 @@ async def ch(stores, monkeypatch):
     tag = uuid.uuid4().hex
     aliases = {
         f"loom.{name}": f"loom.restore_reconcile_{tag}_{name}"
-        for name in ("storage_authority", "erasure_requests", "audit_log")
+        for name in ("storage_authority", "erasure_requests", "audit_log", "instances")
     }
     stack = contextlib.AsyncExitStack()
     stack.push_async_callback(real.disconnect)

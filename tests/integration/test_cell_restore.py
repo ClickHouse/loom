@@ -455,31 +455,32 @@ async def test_late_raw_connection_stays_with_closed_budget_owner(cell_db, monke
         await close(conn, end=end)
 
     observer = await connect(settings.pg_dsn)
-    monkeypatch.setattr(asyncpg, "connect", late)
-    monkeypatch.setattr(pg, "_check_deployment", initialize)
-    monkeypatch.setattr(pg, "close_owned", public_close)
-    budget = cell_restore.Budget(0.4)
-    try:
-        with pytest.raises(TimeoutError, match="--wait"):
-            await cell_restore.Restore(
-                argparse.Namespace(cell="first", wait=0.4),
-                httpx.URL("http://127.0.0.1:7901"),
-                budget,
-            ).run(object())
-        assert time.monotonic() <= budget.end + 0.1
-        assert closed == [owned["pid"]] and initialized == []
-        assert not await observer.fetchval(
-            "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1)", owned["pid"]
-        )
-        assert not await observer.fetchval(
-            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)", owned["pid"]
-        )
-    finally:
-        if "pid" in owned:
-            await observer.execute(
-                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=$1", owned["pid"]
+    with monkeypatch.context() as scoped:
+        scoped.setattr(asyncpg, "connect", late)
+        scoped.setattr(pg, "_check_deployment", initialize)
+        scoped.setattr(pg, "close_owned", public_close)
+        budget = cell_restore.Budget(0.4)
+        try:
+            with pytest.raises(TimeoutError, match="--wait"):
+                await cell_restore.Restore(
+                    argparse.Namespace(cell="first", wait=0.4),
+                    httpx.URL("http://127.0.0.1:7901"),
+                    budget,
+                ).run(object())
+            assert time.monotonic() <= budget.end + 0.1
+            assert closed == [owned["pid"]] and initialized == []
+            assert not await observer.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1)", owned["pid"]
             )
-        await observer.close(timeout=1)
+            assert not await observer.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)", owned["pid"]
+            )
+        finally:
+            if "pid" in owned:
+                await observer.execute(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=$1", owned["pid"]
+                )
+            await observer.close(timeout=1)
 
 
 @pytest.mark.parametrize("opening", ["_check_deployment", "init_connection"])
