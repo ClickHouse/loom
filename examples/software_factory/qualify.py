@@ -16,13 +16,17 @@ from .historical import (
     selected_statuses,
 )
 from .model import digest
-from .workspace import Checkout
+from .workspace import Checkout, require_independent_grader
 
 
-def qualify(task_id: str, config_path: Path, output: Path) -> dict:
-    controller = controller_hashes()
+def public_task(task_id: str) -> dict:
     candidates = json.loads(Path(__file__).with_name("historical-candidates.json").read_text())
-    public = next(t for t in candidates["tasks"] if t["task_id"] == task_id)
+    return next(t for t in candidates["tasks"] if t["task_id"] == task_id)
+
+
+def load_inputs(task_id: str, config_path: Path) -> tuple:
+    """Validate the same frozen private inputs for controls and cold workers."""
+    public = public_task(task_id)
     config_bytes = config_path.read_bytes()
     if hashlib.sha256(config_bytes).hexdigest() != public["grader_config_sha256"]:
         raise PermissionError("Independent grader config differs from the audited receipt")
@@ -52,6 +56,15 @@ def qualify(task_id: str, config_path: Path, output: Path) -> dict:
     ]
     if not visible:
         raise PermissionError("Visible selectors must be public-base pass-to-pass tests")
+    return public, config, private, visible, selected
+
+
+def qualify(task_id: str, config_path: Path, output: Path) -> dict:
+    # Do not spend test/container work on controls that cannot qualify an oracle.
+    require_independent_grader(HistoricalGrader)
+    controller = controller_hashes()
+    public, config, private, visible, selected = load_inputs(task_id, config_path)
+    fail, passing = json.loads(private["FAIL_TO_PASS"]), json.loads(private["PASS_TO_PASS"])
     source = FrozenSource(Path(config["source_git"]), public["base_commit"])
     task = source.task(public, "unqualified-no-index", "qualification-only")
     output.mkdir(parents=True, exist_ok=False, mode=0o700)

@@ -23,6 +23,13 @@ are incomplete. Do not infer qualification from an image tag or a prior summary.
 
 ## Qualification and freeze before approval
 
+Historical admission is blocked by candidate-controlled pytest result authority.
+`HistoricalGrader` is diagnostic; the factory and worker refuse it before client
+construction, and the qualification CLI refuses it before container execution.
+Replace it with an oracle whose assertions and result authority remain outside
+candidate control, then independently qualify that boundary. Imported controls
+and filesystem probes cannot satisfy this requirement.
+
 1. Freeze the implementation commit, all agent-visible inputs, tool schemas,
    prompts, output limits, exact provider model id, API version and complete
    dependency locks. Select a direct Bedrock Converse model supported by the

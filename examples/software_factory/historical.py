@@ -1,4 +1,4 @@
-"""Trusted historical source preparation and fixed, isolated objective grading.
+"""Pinned historical source preparation and isolated test diagnostics.
 
 No provider, network, index ingestion or reference patch is exposed by this module.
 The controller supplies independently frozen private grading inputs.
@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from .cleanup import remove_owned
 from .model import Task, digest
-from .workspace import Checkout
+from .workspace import Checkout, require_independent_grader
 
 
 def controller_hashes() -> dict[str, str]:
@@ -190,7 +190,7 @@ def selected_statuses(statuses: dict[str, str], selectors: list[str]) -> dict[st
 
 
 class DockerTests:
-    """One fixed focused pytest invocation, no host credentials or writable source."""
+    """Focused test diagnostics; candidate-written reports have no grade authority."""
 
     def __init__(self, image: str, selectors: list[str], output: Path, *, timeout_s: int = 30):
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
@@ -328,6 +328,7 @@ class DockerTests:
             exit_code = state["ExitCode"]
             return {
                 "passed": exit_code == 0 and all(v == "PASSED" for v in statuses.values()),
+                "result_authority": "candidate",
                 "selected": statuses,
                 "exit_code": exit_code,
                 "transport_exit_code": run.returncode,
@@ -339,11 +340,14 @@ class DockerTests:
 
 
 class HistoricalGrader:
-    """Hold tests outside the agent checkout and overlay only allowlisted source.
+    """Prepare isolated diagnostic tests; refuse objective hidden grading.
 
-    Hidden inputs are supplied by a trusted controller and never returned to the
-    agent. Qualification runs base/reference controls before any model cohort.
+    Candidate Python shares the test process and can forge its report and exit.
+    Read-only tests protect files, not assertion execution or result authority.
+    A separate host behavioral oracle is required before historical admission.
     """
+
+    result_authority = "candidate"
 
     def __init__(
         self,
@@ -373,6 +377,8 @@ class HistoricalGrader:
         )
 
     def run(self, checkout: Checkout, *, hidden: bool = False) -> dict:
+        if hidden:
+            require_independent_grader(self)
         if checkout.original != {k: v for k, v in self.base.items() if k.startswith("src/flask/")}:
             raise PermissionError("Candidate base differs from the frozen implementation")
         if not hidden and self.calls >= self.max_visible_calls:

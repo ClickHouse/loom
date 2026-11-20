@@ -70,11 +70,13 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.history": ("sdk_method",),
     "code.impact": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
     ),
     "code.index_errors": ("dashboard",),
     "code.index_status": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -113,6 +115,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.symbol": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),

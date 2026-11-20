@@ -94,6 +94,9 @@ class BedrockProvider:
         self.client, self.model_id = client, model_id
         self.physical_counter = physical_counter
 
+    def close(self) -> None:
+        self.client.close()
+
     def step(self, messages: list[dict], tools: list[dict], max_tokens: int) -> dict:
         specs = [
             {

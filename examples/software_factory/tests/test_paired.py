@@ -50,6 +50,18 @@ def inputs():
 
 
 class PairedAnalysisContracts(unittest.TestCase):
+    def test_physical_only_and_unknown_baseline_traffic_refuse(self):
+        for physical in (1, None, "missing"):
+            with self.subTest(physical=physical):
+                order, entries = inputs()
+                baseline = next(e["result"] for e in entries if e["result"]["mode"] == "baseline")
+                if physical == "missing":
+                    baseline.pop("loom_physical_requests")
+                else:
+                    baseline["loom_physical_requests"] = physical
+                with self.assertRaisesRegex(ValueError, "Baseline"):
+                    analyze(order, entries, resamples=100)
+
     def test_failed_attempt_costs_stay_in_arm_and_whole_cohort(self):
         order, entries = inputs()
         failed = next(e for e in entries if order["attempts"][e["order"]]["arm"] == "orchestrated")

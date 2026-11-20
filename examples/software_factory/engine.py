@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .context import Context
 from .model import MODES, Budget, Ledger, Provider, Task, digest, tool_schemas
-from .workspace import Checkout, ObjectiveGrader
+from .workspace import Checkout, ObjectiveGrader, require_independent_grader
 
 
 class Factory:
@@ -31,6 +31,7 @@ class Factory:
             raise ValueError("Mode requires an explicit context backend")
         if mode == "baseline" and backend is not None:
             raise ValueError("Baseline cannot receive a context backend")
+        require_independent_grader(grader)
         self.task, self.provider, self.grader = task, provider, grader
         self.output, self.mode, self.budget = output, mode, budget or Budget()
         output.mkdir(parents=True, exist_ok=False)

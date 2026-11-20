@@ -1,0 +1,31 @@
+{
+  "kind": "client-runtime-lock-proposal",
+  "integration_commit": "b1898d6f96a993a3f86152cf5dec4e630ba5965e",
+  "source_lock_sha256": "ce7d5a1d2c89f15441649466f760c3c51e19db6bd9771302acce70b0010ee06d",
+  "requirements_sha256": "c53109de8598a1e1bd13f1504ce349d2b80015d96cd72af2a69e4f765a4829d1",
+  "packages": {
+    "anyio": "4.15.1",
+    "boto3": "1.43.102",
+    "botocore": "1.43.102",
+    "certifi": "2026.10.19",
+    "h11": "0.16.0",
+    "h2": "4.4.1",
+    "hpack": "4.2.0",
+    "httpcore": "1.0.9",
+    "httpx": "0.28.1",
+    "hyperframe": "6.1.0",
+    "idna": "3.20",
+    "jmespath": "1.1.0",
+    "python-dateutil": "2.9.0.post0",
+    "s3transfer": "0.19.2",
+    "six": "1.17.0",
+    "typing-extensions": "4.16.0",
+    "urllib3": "2.8.0"
+  },
+  "sdk_tree_sha256": "efd0ee50dd8d111c2fb985cd4ab3886253578d6ecfa5ac1a30064fc1ac8e9d48",
+  "sdk_source_files": 70,
+  "installed_qualified": false,
+  "python_qualified": false,
+  "provider_qualified": false,
+  "live_calls_authorized": false
+}

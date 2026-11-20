@@ -160,35 +160,42 @@ The adapter's `expected_scope` must name the frozen org, namespace, repository
 and full commit. The preflight compares all four before issuing the code request;
 postflight compares them again before releasing evidence.
 
-## Historical qualification without inference
+## Historical diagnostics and grading admission
 
-`historical.py` supplies a trusted exact-base blob exporter and a focused
-container grader. The agent receives only ordinary implementation source, with
+`historical.py` supplies an exact-base blob exporter and focused
+container diagnostics. The agent receives only ordinary implementation source, with
 no object database. Edits, hashes and grounding use complete files; agent reads
 are limited to 16,000 characters and accept an optional 1-based `start_line`.
 Files are limited to 1 MiB. Display limits never truncate source authority.
 
-The historical grader builds an independent checkout for each invocation,
+The historical test adapter builds a separate checkout for each invocation,
 overlays only allowlisted implementation files, and preserves tests and runner
 configuration. Hidden tests are applied only after the agent finishes. Test
 containers use an existing image digest, no network, a read-only root and source
 mount, a separate results mount, one CPU, 512 MiB and 64 processes. Tests cannot
-change their source or evaluator configuration. Only fixed focused pytest nodes
-are accepted. Missing tests, collection errors, skips and duplicate JUnit ids
-fail qualification. Candidate code executes inside that container, never in the
-controller process. Container isolation is a prerequisite to verify on the host;
-it is not established by a mocked command-construction test.
+change their files. Only fixed focused pytest nodes are accepted. Missing tests,
+collection errors, skips and duplicate JUnit ids refuse diagnostic success.
+Candidate code executes inside that container, never in the controller process.
 
-The qualification CLI consumes independently frozen controller inputs. It checks
-their hashes against the historical manifest and runs public-base, hidden-base
-and private-reference controls. Reference patches stay outside agent access.
-Visible selectors come from tests present at the public base; the complete
-frozen hidden selector list remains mandatory.
+These diagnostics cannot provide objective grade authority. Candidate Python
+shares the pytest process, can alter assertion execution, write a passing JUnit
+report and exit successfully. A read-only test file or separate checkout does
+not prevent that forgery. `HistoricalGrader` declares candidate result authority;
+`Factory`, the worker and the qualification CLI reject it before client or
+container construction. Direct hidden historical grading also refuses. Imported
+base/reference controls and filesystem-isolation probes do not qualify an
+independent historical oracle.
+
+Historical live runs require a replacement oracle whose assertions and result
+authority execute outside candidate control, followed by fresh independent
+controls and an exact protocol freeze. A declaration on a trusted adapter alone
+does not prove that boundary. The authored expression grader keeps its assertions
+in the host and interprets only bounded source expressions as data; it remains
+available for offline replay. It is not a general Python grading sandbox.
+
+The isolated filesystem probes remain available without inference:
 
 ```bash
-python -m examples.software_factory.qualify \
-  --task pallets__flask-4045 --config /private/grade-pallets__flask-4045.json \
-  --output /private/factory-controls
 python -m examples.software_factory.qualify_sandbox \
   --image sha256:REPLACE_WITH_FROZEN_LOCAL_IMAGE --output /private/factory-isolation
 ```
@@ -202,9 +209,9 @@ supervisor interruption, reconcile those receipts before resuming:
 python -m examples.software_factory.cleanup --root /private/factory-controls
 ```
 
-Cleanup refuses another owner's label. Preserve failed qualification directories
-and choose a fresh output path for a diagnosed rerun. These controls qualify an
-environment; they are not agent resolutions or benchmark results.
+Cleanup refuses another owner's label. Preserve failed diagnostic directories
+and choose a fresh output path for a diagnosed rerun. Filesystem probes establish
+neither independent grade authority nor agent resolutions or benchmark results.
 
 `live_support.py` provides the exact scope/build verifier, dispatch event hooks,
 a reproducible paired schedule and global token/request/cost reservations.
@@ -214,8 +221,9 @@ requires an external immutable-index/authorization certificate and compares the
 full repository, namespace, commit and server build before releasing evidence.
 Matching watermarks do not establish immutability by themselves.
 
-These pieces can be injected into `Factory` with `HistoricalGrader`, but do not
-constitute an approved live cohort command. The controller still needs qualified
+These pieces do not constitute an approved historical cohort command.
+`HistoricalGrader` is refused until its result-authority boundary is replaced.
+The controller also needs qualified
 provider/dependency locks, verified token bounds, integrated hard supervision,
 server billing joins and actual protocol approval.
 The offline CLI never constructs live clients. Provider failures and invalid
@@ -244,9 +252,92 @@ reconciliation. No automatic retry or journal repair is provided.
 The caller supplies an eligibility verifier before each attempt. That verifier
 must check the actual owner approval, merged integration and frozen dependencies;
 this accounting primitive cannot establish permission by itself. It constructs
-no provider or Loom client and grants no spending permission. Connecting this
-journal, the process supervisor, live transports and complete billing into one
-qualified cohort entrypoint remains required before live execution.
+no provider or Loom client and grants no spending permission.
+
+`controller.run_next` transfers the journal lock to a supervised cold worker and
+retains the scheduled result after success, crash, deadline or cleanup failure.
+The host supplies a frozen trusted worker command. Inside that worker,
+`controller.run_active` rechecks eligibility and task/grader hashes before
+constructing dedicated adapters, runs `Factory` with durable reservations, then
+closes adapters before exporting completion. Baseline never calls the context
+factory. Source tools expose only the candidate checkout; the journal, worker
+command, grader and completion export remain private. A killed worker retains
+its unresolved reservation and blocks automatic continuation. The controller
+also halts after invalid grading, worker failure or incomplete cleanup, even if
+generation usage settled; reconciliation is required before another attempt.
+Its export adds elapsed time covering setup, grading and supervised cleanup; the
+factory duration remains a separate field.
+The provider and context factories receive transport audits backed by the
+cohort journal. Bind them to their clients before dispatch. Each physical request
+consumes its persisted global ceiling before I/O, including failures; a baseline
+Loom dispatch is refused. Counts survive cold workers and controller restarts.
+
+`preparation.prepare_historical` supplies the historical task/grader pair for a
+worker. It reuses the qualifier's private-input validation, verifies the pinned
+independent control receipt, checks actual base/reference outcomes and requires
+the same grading implementation. It exports implementation files from the exact
+base, checks source/grader hashes, and keeps the hidden test patch in the host's
+test adapter. Reference candidates and future Git objects stay outside source
+tools. Preparation does not confer objective result authority; the factory
+refuses this candidate-controlled adapter. Changed grading code also invalidates
+older control hashes rather than silently reusing their qualification.
+The host must still provide a qualified namespace, intake symbol and eligibility
+check; preparing source grants no index access or inference permission.
+
+`bindings.bind_bedrock` attaches public botocore hooks to a dedicated client.
+`bindings.bind_context` preserves the SDK transport's existing request hooks and
+adds HTTP dispatch/response accounting. Its access to the internal HTTP client
+requires the pinned SDK source. Login/refresh and session side traffic are
+refused until separately instrumented. These bindings do not construct clients,
+select credentials or supply real index, token-bound or billing evidence.
+
+The client-only dependencies are pinned with wheel hashes in
+`live-requirements.lock`; `live-runtime.json` records their source lock and SDK
+tree digest. The offline CLI and standard-library contracts do not need them.
+Optional transport contracts use the actual SDK/botocore serialization with
+stubbed network I/O and nonfunctional fixture credentials:
+
+```bash
+uv pip install --python .venv/bin/python --require-hashes \
+  -r examples/software_factory/live-requirements.lock
+PYTHONPATH="$PWD/sdk/python:$PWD" .venv/bin/python -m unittest discover \
+  -s examples/software_factory/client_contracts -v
+```
+
+CI collects both the standard-library factory contracts and the client transport
+contracts against its locked dependencies and this checkout's SDK source.
+
+Apply the required host admission supervisor to finite checks. These optional
+contracts and the scripted worker fixtures are preparation evidence, not live
+model results. Complete immutable-index/tier authorization, verified input-token
+bounds, server billing joins, frozen worker/runtime and actual exact protocol
+approval remain required before a paid cohort. No live cohort command is enabled
+by the offline CLI or by a successful subprocess fixture.
+
+The separate host runner connects the controller to a private application driver:
+
+```bash
+PYTHONPATH="$PWD/sdk/python:$PWD" .venv/bin/python -m examples.software_factory.runner \
+  --protocol /private/approved-protocol.json \
+  --driver /private/frozen-host-driver.py --output /private/cold-cohort
+```
+
+The protocol pins `driver_sha256`. The driver defines `verify_eligibility(protocol)`,
+`prepare(task_id, output)` and `provider_factory(output, audit)`, plus
+`context_factory(task, output, audit)` for context arms. It composes
+`preparation.prepare_historical`, dedicated client bindings and the actual external
+eligibility evidence. Driver module code must have no client construction or
+network side effects: eligibility runs before the client factories. The driver
+and protocol stay evaluator-private, outside the agent's source tools. They are
+trusted host code; a driver digest alone proves no permission or billing bound.
+
+The runner consumes the frozen schedule serially and resumes only pending slots.
+The controller rechecks eligibility in each worker, supervises its lifetime and
+retains failed attempts. An interrupted or unsettled attempt requires explicit
+reconciliation. Driver bytes are checked before module execution in both parent
+and worker. No live driver, index certificate or spending approval is supplied by
+this example. Runner contracts use authored replay clients and measure no model
+quality or live savings.
 
 Transport events retain bounded request IDs for joining client dispatches and
 responses to usage receipts. HTTP records use only `x-request-id`; Bedrock

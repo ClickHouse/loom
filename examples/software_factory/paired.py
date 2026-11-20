@@ -116,6 +116,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
                 "host_loom_requests",
                 "model_selected_loom_requests",
                 "loom_logical_requests",
+                "loom_physical_requests",
             )
         ):
             raise ValueError("Baseline Loom exposure is nonzero or unverified")

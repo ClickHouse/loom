@@ -122,8 +122,10 @@ class Cohort:
 
     def begin(self, verify_eligibility) -> dict | None:
         """Recheck external authorization/dependencies before each cold attempt."""
-        if self.state["accounting"]["unknown"] or any(
-            a["state"] == "running" for a in self.state["attempts"]
+        if (
+            self.state.get("halted")
+            or self.state["accounting"]["unknown"]
+            or any(a["state"] == "running" for a in self.state["attempts"])
         ):
             raise PermissionError(
                 "Interrupted attempt or unsettled billing requires reconciliation"
@@ -192,11 +194,31 @@ class Cohort:
         self._commit("request_settled", state, request=request)
         return cost
 
-    def finish(self, result: dict) -> None:
+    def finish(self, result: dict, *, halted: bool = False) -> None:
         order = self._active()
         state = copy.deepcopy(self.state)
         state["attempts"][order] = {"state": "finished", "result": copy.deepcopy(result)}
+        if halted:
+            state["halted"] = True
         self._commit("attempt_finished", state, order=order)
+
+    def transport(self, service: str, row: dict) -> None:
+        """Persist every observed transport event; cap dispatches before I/O."""
+        order = self._active()
+        if service not in {"provider", "loom"} or row.get("phase") not in {"dispatch", "response"}:
+            raise ValueError("Unknown physical transport event")
+        if service == "loom" and self.protocol["schedule"][order]["mode"] == "baseline":
+            raise PermissionError("Baseline cannot dispatch Loom traffic")
+        limit = self.protocol["transport_limits"][service]
+        if type(limit) is not int or limit <= 0:
+            raise ValueError("Freeze a positive physical request ceiling")
+        state = copy.deepcopy(self.state)
+        counts = state.setdefault("transport_counts", {"provider": 0, "loom": 0})
+        if row["phase"] == "dispatch":
+            if counts[service] >= limit:
+                raise TimeoutError("Global physical request cap exhausted")
+            counts[service] += 1
+        self._commit("transport_observed", state, order=order, service=service, transport=row)
 
 
 class ReservedProvider:

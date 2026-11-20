@@ -128,7 +128,20 @@ def evaluate(source: str, symbol: str, args: list):
     )
 
 
+def require_independent_grader(grader) -> None:
+    """Refuse graders whose candidate can write their result or alter assertions.
+
+    The adapter is trusted host code, frozen with the protocol. This declaration
+    is an admission check, not a certificate for an arbitrary external adapter.
+    """
+    if getattr(grader, "result_authority", None) != "host":
+        raise PermissionError("A candidate-independent objective grader is required")
+
+
 class ObjectiveGrader:
+    # Candidate expressions are interpreted as data and cannot execute host code.
+    result_authority = "host"
+
     def __init__(self, path: Path, expected_hash: str):
         self.data = json.loads(path.read_text())
         if digest(self.data) != expected_hash:
@@ -150,6 +163,7 @@ class ObjectiveGrader:
             checks.append({"passed": passed, **({} if hidden else detail)})
         return {
             "passed": all(c["passed"] for c in checks),
+            "result_authority": self.result_authority,
             "checks": checks,
             "state": checkout.state(),
             "grader_sha256": self.sha256,

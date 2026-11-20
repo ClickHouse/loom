@@ -260,6 +260,10 @@ jobs:
       # The published benchmark harnesses' scoring and dataset readers.
       - name: pytest bench harnesses
         run: pytest bench -q -p randomly --randomly-seed="${{ github.run_id }}${{ github.run_attempt }}"
+      - name: Offline software factory contracts
+        run: |
+          python -m unittest discover -s examples/software_factory/tests -v
+          PYTHONPATH="$PWD/sdk/python:$PWD" python -m unittest discover -s examples/software_factory/client_contracts -v
       # The generic ingest script's dry run goes through this checkout's CLI.
       - name: generic integration sample
         run: PYTHON=python bash integrations/generic/test.sh
