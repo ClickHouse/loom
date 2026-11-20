@@ -12,6 +12,7 @@ byte for byte the single-namespace ones.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -377,14 +378,38 @@ def test_a_namespace_past_the_deadline_is_unknown_never_absent(
 ) -> None:
     monkeypatch.setattr(cp.settings, "code_search_fanout_timeout_ms", 50)
     outs = {ns: _sym_out(ns, 0) for ns in BRANCHES[:3]}
-    single = _Single(outs, delays={"code-clickhouse-26-2": 5.0})
+    cancelled: list[str] = []
+
+    async def single(inp: CodeSymbolInput) -> CodeSymbolOutput:
+        if inp.namespace == "code-clickhouse-26-2":
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.append(inp.namespace)
+        return outs[inp.namespace]
+
+    async def at_deadline(tasks: Any, **options: Any) -> tuple[set[Any], set[Any]]:
+        assert options == {"timeout": 0.05}
+        done: set[Any] = set()
+        pending = set(tasks)
+        # Cut off only after both answered namespaces finish, regardless of scheduling.
+        while len(done) < 2:
+            completed, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            done.update(completed)
+        return done, pending
+
+    local_asyncio = SimpleNamespace(**vars(asyncio))
+    local_asyncio.wait = at_deadline
+    monkeypatch.setattr(cp, "asyncio", local_asyncio)
     out = _run(cp.symbol_presence(_sym(presence=True, namespaces=BRANCHES[:3]), single))
     by = {r["namespace"]: r for r in out.presence}
     assert by["code-clickhouse-26-2"]["verdict"] == "unknown"
     assert by["code-clickhouse-26-2"]["reason"] == "deadline"
     assert by["code-clickhouse-26-2"]["ms"] == 50
     assert by["code-clickhouse-26-1"]["verdict"] == "absent"
+    assert by["code-clickhouse-26-3"]["verdict"] == "absent"
     assert out.summary["unknown"] == ["code-clickhouse-26-2"]
+    assert cancelled == ["code-clickhouse-26-2"]
 
 
 def test_unset_namespaces_mean_the_addressed_namespace_alone(
