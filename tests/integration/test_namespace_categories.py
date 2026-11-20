@@ -14,7 +14,7 @@ ORG = unique_org("category-search")
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("incompatible", ["model", "dimension"])
+@pytest.mark.parametrize("incompatible", ["model", "declared-dimension"])
 async def test_category_search_excludes_incompatible_embeddings(
     control_plane_url: str, mint_test_token: Any, ch_client: Any, incompatible: str
 ) -> None:
@@ -42,8 +42,8 @@ async def test_category_search_excludes_incompatible_embeddings(
         if incompatible == "model":
             other["embedding_model"] = f"other-{row['embedding_model']}"
         else:
-            other["embedding"] = [*row["embedding"], 0.5]
-            other["embedding_dim"] = len(other["embedding"])
+            # The codec fixes the physical width; reads must also honor dimension metadata.
+            other["embedding_dim"] = int(row["embedding_dim"]) + 1
         ch_client.insert("loom.categories", [list(other.values())], column_names=list(other))
 
         response = await client.post(
