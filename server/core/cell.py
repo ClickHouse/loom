@@ -46,7 +46,7 @@ from urllib.parse import urlsplit
 
 from server.core import pg, readiness, scim_tokens
 from server.core.errors import caller_text
-from server.settings import settings
+from server.settings import Settings, settings
 from server.settings.catalog import is_http_url
 
 log = logging.getLogger(__name__)
@@ -180,33 +180,38 @@ def _code_repo_orgs() -> set[str]:
 def fingerprint(deployment_id: str) -> dict[str, Any]:
     """This process's fingerprint: what the cell accepts, which the directory checks
     against every other cell, and the stores it serves from."""
-    public = settings.public_base_url
-    end_users = settings.end_user_issuers()
-    bucket = settings.document_s3_bucket
+    return fingerprint_for(settings, deployment_id, _code_repo_orgs())
+
+
+def fingerprint_for(config: Settings, deployment_id: str, code_orgs: set[str]) -> dict[str, Any]:
+    """The same fingerprint for an explicit, validated configuration."""
+    public = config.public_base_url
+    end_users = config.end_user_issuers()
+    bucket = config.document_s3_bucket
     configured = {
         o
         for o in (
-            settings.oidc_jit_org,
-            settings.self_signup_org if settings.self_signup == "open" else "",
-            settings.code_org,
-            settings.tracker_org,
-            *_code_repo_orgs(),
+            config.oidc_jit_org,
+            config.self_signup_org if config.self_signup == "open" else "",
+            config.code_org,
+            config.tracker_org,
+            *code_orgs,
         )
         if o
     }
     return {
         "public_host": normalise_host(public),
-        "oauth_issuer_host": normalise_host(settings.oauth_issuer or public),
-        "oidc_issuer": settings.oidc_issuer.rstrip("/"),
-        "oidc_client_id": settings.oidc_client_id,
-        "scim": bool(settings.scim_token.strip()),
-        "bearer_issuers": sorted(settings.trusted_issuers() | set(end_users)),
+        "oauth_issuer_host": normalise_host(config.oauth_issuer or public),
+        "oidc_issuer": config.oidc_issuer.rstrip("/"),
+        "oidc_client_id": config.oidc_client_id,
+        "scim": bool(config.scim_token.strip()),
+        "bearer_issuers": sorted(config.trusted_issuers() | set(end_users)),
         "configured_orgs": sorted(configured),
         "end_user_orgs": sorted({o for spec in end_users.values() for o in spec.orgs}),
         "deployment_id": deployment_id,
         "bucket": bucket,
         # Without a bucket the prefix stores nothing and takes part in no check.
-        "bucket_prefix": settings.document_s3_prefix if bucket else "",
+        "bucket_prefix": config.document_s3_prefix if bucket else "",
     }
 
 
@@ -428,10 +433,9 @@ def _unset_reason(view: _View) -> str:
     )
 
 
-# The fingerprint fields a CLI's gate judges: the stores it would write. A CLI verifies
-# no token and its fingerprint never reaches the router, so the rest of the servers'
-# fingerprint is not its to match (docs/architecture/cells.md, "The CLI declares its
-# orgs").
+# An org-declaring CLI's gate checks the stores it would write: it verifies no token
+# and sends no fingerprint to the router. Operator placement checks the full fingerprint
+# separately (docs/architecture/cells.md, "The CLI declares its orgs").
 _STORE_FIELDS = ("deployment_id", "bucket", "bucket_prefix")
 
 
