@@ -49,6 +49,8 @@ from tests.unit.ch_fake import RecordingCH
 from tests.unit.clock_fake import ManualClock
 from tests.unit.schema_ddl import column_names
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 NOW = datetime(2026, 9, 20, 12, 0)
 REF = "LOOM_WEBHOOK_SECRET_ACME__CHAT"
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()

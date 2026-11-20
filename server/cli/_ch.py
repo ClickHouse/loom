@@ -23,6 +23,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -193,7 +194,9 @@ async def check_setup_stores() -> None:
     gated connect (`loom ch-setup`), the gate a gated connect would run, before it writes:
     its ClickHouse, where it already records a deployment, must record its Postgres's, and
     the Postgres `first` row must not name another cell. A ClickHouse with no Loom
-    database or record yet (a service set up before the first boot) passes."""
+    database or record yet (a service set up before the first boot) passes. This
+    diagnostic discards the mode result and never installs an accepting view;
+    subsequent Loom row work must verify, enroll and check acceptance afresh."""
     from server.core import pg, pg_profile
     from server.core.ch import get_client
     from server.core.ch_errors import error_code, error_line
@@ -225,7 +228,12 @@ async def check_setup_stores() -> None:
             pg.expect_deployment((str(recorded["deployment_id"]), int(recorded["epoch"])))
         await check_org_free(writes("ClickHouse users and grants, no tenant rows"))
     finally:
-        await disconnect(ch)
+        first = sys.exception()
+        try:
+            await disconnect(ch)
+        except BaseException:  # a close failure must not replace the store-check refusal
+            if first is None:
+                raise
 
 
 async def check_orgs(orgs: Iterable[str]) -> None:
@@ -295,12 +303,10 @@ async def connect_declared(
             from server.core.pg_profile import check_configured
 
             await check_configured(ch)
-        if org_free is not None and not named:
-            await check_org_free(org_free)
-        else:
-            await check_orgs(named)
+        await check_acceptance(orgs=named, org_free=org_free)
     except BaseException:
-        await disconnect(ch)
+        with suppress(BaseException):
+            await disconnect(ch)
         raise
 
 
@@ -313,6 +319,39 @@ async def connect_code_plane(ch: CHClient, args: argparse.Namespace) -> None:
 
     org, _ns = _identity(args)
     await connect_declared(ch, orgs=() if getattr(args, "dry_run", False) else (org,))
+
+
+async def check_acceptance(
+    *, orgs: Iterable[str | None] | None = None, org_free: OrgFree | None = None
+) -> None:
+    """Fresh post-enrollment gate check on already verified, open paired stores."""
+    named = _declared(orgs, org_free)
+    if org_free is not None and not named:
+        await check_org_free(org_free)
+    else:
+        await check_orgs(named)
+
+
+async def connect_verified(ch: CHClient) -> None:
+    """Verify paired stores without obtaining an acceptance view or admitting work.
+
+    Native commands enroll next, then repeat their accepting org/cell checks.
+    Operator-only commands may keep using the org-free checked composition.
+    """
+    from server.core.pg_profile import check_configured
+
+    if not ch.connected:
+        await ch.connect()
+    try:
+        await check_configured(ch)
+    except BaseException:  # Keep the pairing failure while closing its clients.
+        with suppress(BaseException):
+            await disconnect(ch)
+        raise
+    from server import boot
+    from server.core.background import register_buffer_drainer
+
+    register_buffer_drainer("boot-writes", boot.drain_writes)
 
 
 async def connect_checked(
@@ -337,12 +376,18 @@ async def connect_external(
 
 async def disconnect(ch: CHClient) -> None:
     """Close the Postgres pool a command opened, then `ch`."""
-    from server.core import pg
+    from server.core import pg, retirement
 
     pg.expect_deployment(None)
     try:
-        await pg.close_pool()
-    finally:
+        gate = retirement.get_gate()
+        if not (gate.role == "command" and gate.closed):
+            await pg.close_pool()
+    except BaseException:  # Keep the pool close failure while closing ClickHouse.
+        with suppress(BaseException):
+            await ch.disconnect()
+        raise
+    else:
         await ch.disconnect()
 
 
@@ -356,20 +401,56 @@ def run_connected[T](
     command writes), disconnected on every path — an open client at loop close leaks its
     HTTP session."""
     from server import boot
+    from server.auth.account_lifecycle import bind
     from server.core.background import register_buffer_drainer
     from server.core.ch import get_client
     from server.insights.app.provider_command import model_command
+    from server.knowledge.app.connected_accounts import stop_subjects
 
+    bind(stop_subjects)
     named = _declared(orgs, org_free)
     register_buffer_drainer("boot-writes", boot.drain_writes)
 
     async def _go() -> T:
         ch = get_client()
-        await connect_checked(ch, orgs=named, org_free=org_free)
+        await connect_verified(ch)
         try:
             async with model_command():
-                return await run(ch)
-        finally:
+                await check_acceptance(orgs=named, org_free=org_free)
+                result = await run(ch)
+        except BaseException:  # Keep the command failure while disconnecting its clients.
+            with suppress(BaseException):
+                await disconnect(ch)
+            raise
+        else:
             await disconnect(ch)
+            return result
 
     return asyncio.run(_go())
+
+
+def run_control_connected[T](run: Callable[[CHClient], Awaitable[T]], *, org_free: OrgFree) -> T:
+    """Connect an operator-only coordinator without admitting model or org work.
+
+    Such a coordinator cannot join the participant set whose retirement it waits
+    for. It still verifies paired stores and the explicit org-free write gate.
+    """
+    from server.core.ch import get_client
+
+    _declared(None, org_free)
+
+    async def go() -> T:
+        ch = get_client()
+        await connect_verified(ch)
+        try:
+            await check_acceptance(org_free=org_free)
+            result = await run(ch)
+        except BaseException:  # Keep the coordinator failure while closing its clients.
+            with suppress(BaseException):
+                await disconnect(ch)
+            raise
+        else:
+            await disconnect(ch)
+            return result
+
+    return asyncio.run(go())

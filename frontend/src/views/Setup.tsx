@@ -92,7 +92,15 @@ export function Setup() {
 
   return (
     <PageContainer>
-      <PageHeader title="Settings" tab={TAB_LABELS[tab]}>
+      <PageHeader
+        title="Settings"
+        tab={TAB_LABELS[tab]}
+        actions={
+          <Button type="secondary" htmlType="button" onClick={() => setView("connected-accounts")}>
+            Connected accounts
+          </Button>
+        }
+      >
         {tab === "models" ? (
           <span className="text-sm text-text-muted">Deployment-wide</span>
         ) : (

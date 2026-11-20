@@ -27,11 +27,23 @@ same name replaces the plugin's, and one under another name lists every tool twi
 
 ### Approve the hooks
 
-Codex runs a plugin's hooks only after the user approves them, and again after an update
-that changes their commands. Run `codex` interactively once after installing and approve
-the Loom hooks; Codex records each approval as a `trusted_hash` under `[hooks.state]` in
-`~/.codex/config.toml`. Until then the MCP tools work but sessions are not captured,
-including under `codex exec`.
+Codex runs a plugin's hooks only after the user reviews and trusts them. A change to
+the plugin's contents can require another review even when the hook commands stay the
+same ([Codex hook trust](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks)).
+The message `plugin contents changed; hook approval required` means the installed
+plugin needs that review.
+
+1. Run `codex` interactively and open `/hooks` (or choose **Review hooks** at startup).
+2. Review the hooks whose source is `Plugin - loom@loom`, then trust each pending Loom
+   hook. The event overview also offers `t` to trust all pending hooks; use it after
+   reviewing every pending source. Approving one hook leaves the others pending.
+3. Check that the reviewed Loom hooks are trusted, with no Loom hooks awaiting review.
+   Start Codex again and check `/hooks` to verify that the approvals persist.
+
+Codex records each approval as a `trusted_hash` under `[hooks.state]` in
+`~/.codex/config.toml`. Until approved, the MCP tools work but the pending hooks do
+not run, including under `codex exec`. Approval permits execution; use
+[Checking it works](#checking-it-works) to verify that capture reaches the server.
 
 ### The token
 

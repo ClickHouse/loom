@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -711,7 +712,7 @@ def test_an_erasure_or_export_of_no_user_is_refused(value: str) -> None:
         ErasureRequestInput(**scope)
 
 
-def test_an_end_user_token_is_served_only_where_end_users_are(
+async def test_an_end_user_token_is_served_only_where_end_users_are(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The op endpoint and downloads serve it; `/v1/me/*`, the admin routes and
@@ -720,14 +721,16 @@ def test_an_end_user_token_is_served_only_where_end_users_are(
 
     from server.auth import bearer
 
-    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _user("alice"))
+    monkeypatch.setattr(
+        bearer, "verify_bearer", AsyncMock(side_effect=lambda _token: _user("alice"))
+    )
     with pytest.raises(HTTPException) as refused:
-        bearer.verify_bearer_header("Bearer eu")
+        (await bearer.verify_bearer_header("Bearer eu"))
     assert refused.value.status_code == 403
-    assert bearer.verify_bearer_header("Bearer eu", acts_for_end_users=True) is not None
+    assert (await bearer.verify_bearer_header("Bearer eu", acts_for_end_users=True)) is not None
 
 
-def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
+async def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -735,8 +738,10 @@ def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
     from server.auth import bearer
     from server.transport import http
 
-    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _user("alice", "helper"))
-    auth = http._extract_auth(SimpleNamespace(headers={"Authorization": "Bearer eu"}))  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        bearer, "verify_bearer", AsyncMock(side_effect=lambda _token: _user("alice", "helper"))
+    )
+    auth = await http._extract_auth(SimpleNamespace(headers={"Authorization": "Bearer eu"}))  # type: ignore[arg-type]
     assert auth is not None and (auth.subject, auth.agent_principal) == (
         "user:alice",
         "agent:helper",
@@ -850,7 +855,7 @@ def test_a_grant_to_a_group_is_written_under_the_groups_claim(
         asyncio.run(_run("group:gone"))
 
 
-def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
+async def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -860,10 +865,10 @@ def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
     from server.auth import jwt
     from server.transport import mcp_auth
 
-    monkeypatch.setattr(jwt, "verify_token", lambda _token: _user("alice"))
+    monkeypatch.setattr(jwt, "verify_token", lambda _token, *, secret=None: _user("alice"))
     request = SimpleNamespace(headers={"authorization": "Bearer eu"})
     with pytest.raises(PermissionError) as refused:
-        mcp_auth._verify_bearer(request)  # type: ignore[arg-type]
+        (await mcp_auth._verify_bearer(request))  # type: ignore[arg-type]
     response = Response()
     answer = mcp_auth._not_on_mcp(response, {"id": 7}, refused.value)
     assert response.status_code == 403 and answer["id"] == 7

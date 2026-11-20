@@ -47,7 +47,7 @@ async def knowledge_download(
     """
     # The HTTP transport's rule: a present bearer is verified whether or not
     # the deployment requires one; a missing one is a 401 only when auth is on.
-    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
+    auth = await verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
     try:

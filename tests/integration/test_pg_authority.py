@@ -4320,6 +4320,15 @@ async def test_a_redacted_head_is_not_served_until_a_new_value_is_written(
     search leaves it out and counts it. A new value written over it is served."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the office is in Berlin"))).json()
+    # A first write answers at its commit; the old search document must exist before
+    # the head is scrubbed, or there is no stale hit for validation to count.
+    before = (
+        await call(
+            "memory.search", {"namespace": ns, "query": "office Berlin", "auto_touch": False}
+        )
+    ).json()
+    assert "k" in [h["memory_key"] for h in before["results"]], before
+    assert before["stale_dropped"] == 0, before
     # The head as a profile redaction leaves it: scrubbed in Postgres, its ClickHouse
     # document not yet.
     await pg_conn.execute(
@@ -5741,3 +5750,112 @@ async def test_a_revision_past_the_horizon_that_clickhouse_holds_loses_its_paylo
         }
         assert a["value"] == "[REDACTED]" and a["redaction_reason"].startswith("leak")
         assert a["redacted_at"] and a["content_sha256"] != b["content_sha256"]
+
+
+async def test_exact_head_locks_bound_a_large_absent_batch(pg_conn: Any, org: str) -> None:
+    """Absent keys sharing an identity do not exhaust the commit's statement budget."""
+    from server.core.hashing import sha256_value
+    from server.memory.store import pg_memory
+    from server.memory.store.rows import (
+        IDENTITY_COLUMNS,
+        MemoryRow,
+        build_first_version_row,
+        build_memory_version_row,
+        written_now,
+    )
+
+    namespace = "head-locks"
+    prefix = "gate-delivery-" + "1" * 32
+    first_key = prefix + "-0"
+    template = pg_memory.encode_row(
+        build_memory_version_row(
+            MemoryRow.from_snapshot(
+                build_first_version_row(
+                    {
+                        "org": org,
+                        "namespace": namespace,
+                        "agent": "bench",
+                        "memory_key": first_key,
+                        "memory_type": "semantic",
+                        "value": json.dumps(""),
+                        "version": 1,
+                        "content_sha256": sha256_value(""),
+                        "actor": "process:head-lock-test",
+                        "source_class": "asserted",
+                    },
+                    now=written_now(),
+                )
+            )
+        )
+    )
+    assert pg_memory._LOCK_HEADS.count("loom.memory_current") == 1
+    query = pg_memory._LOCK_HEADS.replace("loom.memory_current", "pg_temp.head_lock_candidates")
+    async with pg_conn.transaction():
+        await pg_conn.execute(
+            "CREATE TEMP TABLE head_lock_candidates "
+            "(LIKE loom.memory_current INCLUDING ALL) WITH (fillfactor = 90) ON COMMIT DROP"
+        )
+        # One statement builds full persisted rows without per-row network calls.
+        inserted = await pg_conn.execute(
+            "WITH keys AS ("
+            " SELECT i, $2::text || '-' || i::text AS key, "
+            "lpad(to_hex(i + 1), 32, '0')::uuid AS id FROM generate_series(0, 15699) AS i"
+            "), prefixes AS ("
+            " SELECT *, 'Cell trigger measurement ' || key || ': ' AS prefix FROM keys"
+            "), payloads AS ("
+            " SELECT *, prefix || left(repeat('abcdefghijklmnopqrstuvwxyz ', 4096), "
+            "4096 - length(prefix)) AS payload FROM prefixes"
+            "), stored AS ("
+            " SELECT *, to_json(payload)::text AS value, "
+            "encode(sha256(convert_to(to_json(payload)::text, 'UTF8')), 'hex') AS hash "
+            "FROM payloads) "
+            "INSERT INTO pg_temp.head_lock_candidates "
+            "(org, namespace, agent, user_id, session_id, memory_key, memory_id, "
+            "version, seq, content_sha256, row) "
+            "SELECT $1::jsonb->>'org', $1::jsonb->>'namespace', $1::jsonb->>'agent', "
+            "$1::jsonb->>'user_id', $1::jsonb->>'session_id', key, id, 1, i + 1, hash, "
+            "$1::jsonb || jsonb_build_object('memory_key', key, 'memory_id', id::text, "
+            "'value', value, 'content_sha256', hash) FROM stored",
+            template,
+            prefix,
+        )
+        assert inserted == "INSERT 0 15700"
+        await pg_conn.execute("ANALYZE pg_temp.head_lock_candidates")
+        await pg_conn.execute("SET LOCAL statement_timeout = 5000")
+        await pg_conn.execute("SET LOCAL lock_timeout = 2000")
+        expected = {}
+        for index in (2, 10, 1):
+            key = f"{prefix}-{index}"
+            start = f"Cell trigger measurement {key}: "
+            payload = start + ("abcdefghijklmnopqrstuvwxyz " * 4096)[: 4096 - len(start)]
+            row = {
+                **template,
+                "memory_key": key,
+                "memory_id": str(uuid.UUID(int=index + 1)),
+                "value": json.dumps(payload),
+                "content_sha256": sha256_value(payload),
+            }
+            identity = pg_memory.identity_key(row)
+            expected[identity] = {**dict(zip(IDENTITY_COLUMNS, identity, strict=True)), "row": row}
+        matched = await pg_conn.fetch(query, *pg_memory._key_arrays(list(expected)))
+        assert [dict(row) for row in matched] == [expected[key] for key in sorted(expected)]
+        identity = next(iter(expected))
+        changed = [
+            tuple(
+                "different-" + value if position == axis else value
+                for position, value in enumerate(identity)
+            )
+            for axis in range(6)
+        ]
+        assert await pg_conn.fetch(query, *pg_memory._key_arrays(sorted(changed))) == []
+        absent_prefix = "gate-delivery-" + "2" * 32
+        absent = sorted(
+            (org, namespace, "bench", "-", "-", f"{absent_prefix}-{index}") for index in range(2500)
+        )
+        arguments = pg_memory._key_arrays(absent)
+        plan = await pg_conn.fetchval("EXPLAIN (FORMAT JSON) " + query, *arguments)
+        try:
+            assert await pg_conn.fetch(query, *arguments) == []
+        except Exception as error:  # The synthetic plan must not replace the native failure.
+            error.add_note("Synthetic head-lock plan before query: " + json.dumps(plan))
+            raise

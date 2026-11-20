@@ -685,14 +685,11 @@ initContainers:
 
 {{/* Pod spec fields the Deployments, the hook Jobs and the analytics export
 share; `serviceAccount` names another account than the release's. */}}
-{{/* `leads`: the pod may hold the workers lease, which alone reads the
-Kubernetes API (retireLostPods). */}}
 {{- define "loom.podCommon" -}}
-{{- $leads := .leads -}}
 {{- $sa := .serviceAccount -}}
 {{- with .root -}}
 serviceAccountName: {{ default (include "loom.serviceAccountName" .) $sa }}
-automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken (and .Values.retireLostPods $leads) }}
+automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
 # Service links would inject LOOM_SERVICE_HOST and the like into Loom's env namespace.
 enableServiceLinks: false
 {{- if not .Values.sandbox.hostUsers }}

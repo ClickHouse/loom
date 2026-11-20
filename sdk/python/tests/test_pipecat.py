@@ -7,9 +7,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import importlib
+import json
 import sys
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from loom import Agent as LoomAgent
 from loom import SyncAgent
@@ -20,6 +24,7 @@ from loom.integrations.pipecat import (
     _loom_session,
 )
 from loom.memory import MemorySearchHit, MemorySearchResult
+from loom.session_protection import SessionProtection
 from pipecat.frames.frames import (
     Frame,
     InputAudioRawFrame,
@@ -46,9 +51,15 @@ class _FakeMemory:
         self.calls.append(("set_from_messages", (messages,), kw))
 
 
+@dataclasses.dataclass
+class _TransportState:
+    session_protection: SessionProtection | None = None
+
+
 class _Loom:
     def __init__(self, memory: _FakeMemory) -> None:
         self.memory = memory
+        self.transport = _TransportState()
 
 
 def _hit(key: str, text: str, **kw: Any) -> MemorySearchHit:
@@ -555,3 +566,255 @@ def test_a_real_agent_posts_the_service_calls() -> None:
         _loom_session("alice", "call-1"),
     )
     assert [m["content"] for m in extract["messages"]] == ["seat", "Noted."]
+
+
+def _protected_agent(
+    family: SessionProtection | None,
+    respond: Callable[[httpx.Request], httpx.Response],
+) -> LoomAgent:
+    agent = LoomAgent(
+        org="acme",
+        namespace="travel",
+        agent="bot",
+        base_url="http://inert.invalid",
+        api_key="test-token",
+        session_protection=family,
+        pacing=False,
+        coalesce_sets=False,
+        auto_run=False,
+        mentor_brief=False,
+        retry={"max_attempts": 1},
+    )
+    agent.transport._client._transport = httpx.MockTransport(respond)
+    return agent
+
+
+def test_constructor_family_suppresses_recall_and_preserves_native_frame(tmp_path: Path) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(original, respond)
+        service = LoomMemoryService(loom, session_id="call")
+        loom.transport.session_protection = replacement
+        original.mark()
+        context = _context(("user", "Keep this turn private"))
+        frame = LLMContextFrame(context=context)
+        try:
+            assert await _feed(service.recall_processor(), frame) == [
+                (frame, FrameDirection.DOWNSTREAM)
+            ]
+            assert posts == []
+            assert context.get_messages() == [{"role": "user", "content": "Keep this turn private"}]
+            assert service._context is None and service._last_user_message is None
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_marked_recall_reaches_native_context_but_turn_capture_is_skipped(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "mirrored": True,
+                "results": [
+                    {
+                        "memory_key": "example",
+                        "memory_type": "semantic",
+                        "content_excerpt": "private recalled content",
+                        "distance": 0.1,
+                        "similarity": 0.9,
+                    }
+                ],
+            },
+        )
+
+    async def go() -> None:
+        loom = _protected_agent(family, respond)
+        service = LoomMemoryService(loom, session_id="call")
+        context = _context(("user", "Recall a preference"))
+        try:
+            await _feed(service.recall_processor(), LLMContextFrame(context=context))
+            assert family.protected and "private recalled content" in _memory_text(context)
+            context.add_message({"role": "assistant", "content": "Private reply"})
+            before = list(context.get_messages())
+            turn = LLMContextAssistantTurnFrame(
+                text="Private reply", timestamp="2026-01-01T00:00:00Z"
+            )
+            assert await _feed(service.capture_processor(), turn) == [
+                (turn, FrameDirection.DOWNSTREAM)
+            ]
+            assert posts == ["/v1/memory.search"]
+            assert context.get_messages() == before
+            assert service._context is None and service._written_messages == {}
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_committed_capture_context_retains_ambient_contributor_after_scope_exit(
+    tmp_path: Path,
+) -> None:
+    contributor = SessionProtection.create(base=tmp_path / "contributor")
+    bound = SessionProtection.create(base=tmp_path / "bound")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    async def go() -> None:
+        loom = _protected_agent(bound, respond)
+        service = LoomMemoryService(loom, session_id="call")
+        context = _context(("user", "Committed turn"), ("assistant", "Committed reply"))
+        capture = service.capture_processor()
+        try:
+            with contributor.automatic():
+                await _feed(capture, LLMContextFrame(context=context))
+            contributor.mark()
+            before = list(context.get_messages())
+            turn = LLMContextAssistantTurnFrame(
+                text="Committed reply", timestamp="2026-01-01T00:00:00Z"
+            )
+            await _feed(capture, turn)
+            assert posts == [] and context.get_messages() == before
+            assert service._context is None and service._written_messages == {}
+            assert not bound.protected
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_callback_binding_marked_during_authentication_still_forwards_native_frame(
+    tmp_path: Path,
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    callback = SessionProtection.create(base=tmp_path / "callback")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(original, respond)
+        service = LoomMemoryService(loom, session_id="call")
+        loom.transport.session_protection = callback
+
+        class RebindingAuth(httpx.Auth):
+            async def async_auth_flow(self, request: httpx.Request):
+                await asyncio.sleep(0)
+                callback.mark()
+                loom.transport.session_protection = replacement
+                yield request
+
+        loom.transport._client.auth = RebindingAuth()
+        context = _context(("user", "Guard the callback binding"))
+        frame = LLMContextFrame(context=context)
+        try:
+            assert await _feed(service.recall_processor(), frame) == [
+                (frame, FrameDirection.DOWNSTREAM)
+            ]
+            assert posts == [] and service._context is None
+            assert callback.protected and not original.protected and not replacement.protected
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+def test_marked_capture_batch_discards_only_owned_retry_references(tmp_path: Path) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    batches: list[list[dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("set_from_messages"):
+            batches.append(json.loads(request.content)["messages"])
+            return httpx.Response(200, json={"mirrored": True})
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(family, respond)
+        service = LoomMemoryService(loom, session_id="call")
+        context = LLMContext([{"role": "user", "content": f"fact {index}"} for index in range(402)])
+        capture = service.capture_processor()
+        try:
+            await _feed(capture, LLMContextFrame(context=context))
+            before = list(context.get_messages())
+            turn = LLMContextAssistantTurnFrame(text="Noted.", timestamp="2026-01-01T00:00:00Z")
+            await _feed(capture, turn)
+            await _feed(capture, turn)
+            assert [len(batch) for batch in batches] == [400]
+            assert family.protected and context.get_messages() == before
+            assert service._context is None and service._written_messages == {}
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("route", ["recall", "capture"])
+def test_processor_retains_callback_binding_before_native_await(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    original = SessionProtection.create(base=tmp_path / "original")
+    callback = SessionProtection.create(base=tmp_path / "callback")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={"results": []})
+
+    async def go() -> None:
+        loom = _protected_agent(original, respond)
+        service = LoomMemoryService(loom, session_id="call")
+        processor = service.recall_processor() if route == "recall" else service.capture_processor()
+        context = _context(("user", "Keep the callback family"), ("assistant", "Native reply"))
+        before = list(context.get_messages())
+        frame = LLMContextFrame(context=context)
+        loom.transport.session_protection = callback
+        entered = False
+
+        async def native_await(
+            self: FrameProcessor, frame: Frame, direction: FrameDirection
+        ) -> None:
+            nonlocal entered
+            if not entered:
+                entered = True
+                await asyncio.sleep(0)
+                callback.mark()
+                loom.transport.session_protection = replacement
+
+        # The native processor awaits before the adapter can inspect the context.
+        monkeypatch.setattr(FrameProcessor, "process_frame", native_await)
+        try:
+            assert await _feed(processor, frame) == [(frame, FrameDirection.DOWNSTREAM)]
+            if route == "capture":
+                turn = LLMContextAssistantTurnFrame(
+                    text="Native reply", timestamp="2026-01-01T00:00:00Z"
+                )
+                assert await _feed(processor, turn) == [(turn, FrameDirection.DOWNSTREAM)]
+            assert entered and callback.protected
+            assert not original.protected and not replacement.protected
+            assert posts == [] and context.get_messages() == before
+            assert service._context is None and service._last_user_message is None
+            assert service._written_messages == {}
+        finally:
+            await loom.transport.close()
+
+    asyncio.run(go())

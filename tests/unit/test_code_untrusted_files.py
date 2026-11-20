@@ -27,6 +27,7 @@ from server.code.domain.index.tier_health import STATE_PREFIX
 from server.code.workers import scip_delta, scip_go_delta, scip_py_delta, scip_ts_delta
 from server.settings import settings
 from tests.unit.code_fixtures import repo_config
+from tests.unit.git_repo import git
 
 _DELTA = {"delta_version": 1, "commit": "b" * 40, "files": []}
 
@@ -320,6 +321,7 @@ async def _run(worker: Any, cfg: Any, state: dict[str, str]) -> tuple[Any, Async
 
 def _host(monkeypatch, tmp_path: Path, worker: Any) -> None:
     (tmp_path / "checkout" / "node_modules").mkdir(parents=True)
+    git(tmp_path / "checkout", "init", "-q")
     (tmp_path / "repo.git").mkdir()
     monkeypatch.setattr(worker.settings, "code_scip_checkout_dir", str(tmp_path / "checkout"))
     monkeypatch.setattr(worker.settings, "code_git_dir", str(tmp_path / "repo.git"))

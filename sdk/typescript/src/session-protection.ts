@@ -85,8 +85,12 @@ export class SessionCapture {
   }
 }
 
-export function responseRoots(root?: SessionProtection, capture?: SessionCapture): readonly SessionProtection[] {
-  return Object.freeze([...new Set([...(capture?.roots ?? []), ...(root ? [root] : [])])]);
+export function responseRoots(
+  root?: SessionProtection,
+  capture?: SessionCapture,
+  observe?: SessionCapture,
+): readonly SessionProtection[] {
+  return Object.freeze([...new Set([...(capture?.roots ?? []), ...(observe?.roots ?? []), ...(root ? [root] : [])])]);
 }
 
 export async function requireAutomaticAllowed(roots: readonly SessionProtection[], automatic: boolean): Promise<void> {

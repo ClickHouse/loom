@@ -27,9 +27,20 @@ runs it, on a host with the AppArmor profile loaded. On the others, the released
 included, index a repository through `LOOM_CODE_REPOS_JSON`
 ([quickstart](../../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)).
 
+A deployment that cannot run the sandbox can instead index the repositories its
+platform admins add. `LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED=true` lifts the refusal and
+runs the clone and the fetches of a repository added here as plain processes, which
+connect to its remote with nothing vetting the address. It loads only together with
+`LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true`, and only where every request carries
+a principal: with auth on and MCP not in `open` mode. Such a repository gets the fast
+tier and no compiler tier
+([without the sandbox](../../operations/code-index-operations.md#repository-job-sandbox)).
+
 Each org holds at most `LOOM_CODE_SELF_SERVICE_MAX_REPOS` (20) entries.
 
 Any signed-in member of an org can add a repository and becomes its first maintainer.
+With `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` only a platform admin can (see
+the rules below).
 The remote can be `owner/name` (GitHub shorthand), an HTTPS URL, or an SSH/scp-style
 Git URL. GitHub, GitLab and Bitbucket are labelled explicitly; other servers use the
 generic adapter. Local paths and `file://` URLs are refused. The remote must answer
@@ -73,6 +84,13 @@ Rules:
   with `REPO_EXISTS`; join an index instead. A branch of an operator-configured entry
   with no first index yet is refused with `REPO_NOT_INDEXED` until `loom code backfill`
   has run for it.
+- Where the deployment's git goes through a forward proxy, `code.repo.add` and
+  `code.repo.remote_branches` take a `git_proxy_identity`, the user name the
+  repository's git presents to that proxy, from a platform admin only: the caller
+  `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` asks for below, with or without that
+  setting. A branch inherits it, so `code.repo.add_branch` on such an index takes a
+  platform admin too
+  ([git through a forward proxy](../../operations/code-index-operations.md#git-through-a-forward-proxy)).
 - Admin grants flow between a repository's branches in one direction. The operator's
   entries pass their admins to every branch of the repository, and a branch added here
   passes its admins only to other standard branches added here. A restricted branch
@@ -122,6 +140,16 @@ Rules:
   namespace through a resumable erasure saga. The mirror is deleted when no other branch
   uses it. An operator-configured entry is refused with `REPO_FROM_CONFIG`.
 - `LOOM_CODE_SELF_SERVICE_ENABLED=false` removes the feature (`SELF_SERVICE_OFF`).
+- `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` leaves `code.repo.remote_branches`,
+  `code.repo.add` and `code.repo.add_branch` to platform admins, beyond the role each op
+  asks for: any other caller is refused with `AUTH_INSUFFICIENT` before a remote is asked.
+  The role counts on a token of the caller's own that is not scoped to namespaces: a
+  scoped token (`ns_roles`) and a trusted caller acting for another subject
+  (`X-Loom-On-Behalf-Of`) are refused too. A call that carries no principal passes only
+  with auth off, when no transport asks for a token. With auth on it is refused like any
+  caller that is not a platform admin: an MCP endpoint with `LOOM_MCP_AUTH_MODE=open`
+  takes such a call. The other `code.repo.*` ops keep their namespace admin gate, and the
+  platform admin who added a repository is its first maintainer.
 - `LOOM_CODE_INTEL_ENABLED=false` refuses every `code.repo.*` op but `code.repo.remove`,
   with `PRECONDITION_FAILED`, as it does every other `code.*` op. A retirement with the
   switch off purges the index and this replica's mirror; the other replicas sweep their
@@ -195,6 +223,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A configured entry never indexes                  | no `git_head` watermark: run `loom code init` and `loom code backfill`; or the namespace was added from the page (removed since or not), and the log says the entry is skipped: list it under another namespace                                                        |
 | Adding a repository answers `SANDBOX_UNAVAILABLE` | this deployment cannot run the sandbox: list the repository in `LOOM_CODE_REPOS_JSON` instead (unless `LOOM_CODE_SANDBOX_REQUIRED` is set, which skips those too), or see the [sandbox requirements](../../operations/code-index-operations.md#repository-job-sandbox) |
+| Adding a repository answers `AUTH_INSUFFICIENT`   | the message names `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY`: only platform admins add repositories and branches on this deployment, with a token of their own that is not scoped to namespaces                                                                      |
 | A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                                                                                                  |
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |
 | An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                                                                                                                                                           |

@@ -58,6 +58,7 @@ import {
   withLevel,
 } from "./logging.js";
 import type { TokenProvider } from "./machine.js";
+import { protectEventStream } from "./protected-stream.js";
 import {
   backoffDelayMs,
   DEFAULT_RETRY_POLICY,
@@ -117,6 +118,8 @@ export interface TransportOptions {
 export interface CallOptions {
   /** Explicit SDK control for automatic work, outside the operation body. */
   capture?: SessionCapture;
+  /** Retained response observers for an explicit invocation; does not make it automatic. */
+  observe?: SessionCapture;
   timeoutMs?: number;
   idempotencyKey?: string;
   /** Sent as `X-Request-Id` when it is 1 to 64 letters, digits, `.`, `_` or `-` (the form the
@@ -188,7 +191,8 @@ export class Transport {
   #provider: TokenProvider | undefined;
   /** Every non-credential header sent with each request. */
   private readonly headers: Record<string, string>;
-  private readonly timeoutMs: number;
+  /** Configured attempt timeout, also bounding durable Session state barriers. */
+  readonly timeoutMs: number;
   /** The resolved retry policy. */
   readonly retry: RetryPolicy;
   readonly log: Logger;
@@ -317,9 +321,14 @@ export class Transport {
   async stream(
     path: string,
     body: unknown,
-    opts: { headers?: Record<string, string>; signal?: AbortSignal; capture?: SessionCapture } = {},
+    opts: {
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+      capture?: SessionCapture;
+      observe?: SessionCapture;
+    } = {},
   ): Promise<Response> {
-    const roots = responseRoots(this.sessionProtection, opts.capture);
+    const roots = responseRoots(this.sessionProtection, opts.capture, opts.observe);
     const automatic = opts.capture !== undefined;
     const payload = JSON.stringify(body);
     if (!path.startsWith("/") || path.startsWith("//"))
@@ -368,16 +377,7 @@ export class Transport {
       }
       if (res.ok) {
         if (!roots.length) return res;
-        // Bound raw streams remain closed until their body observer is qualified.
-        try {
-          return await boundProtection(refuseResponse(roots), roots, this.timeoutMs, opts.signal);
-        } finally {
-          try {
-            await boundProtection(Promise.resolve(res.body?.cancel()), roots, this.timeoutMs, opts.signal);
-          } catch {
-            /* Keep the protection refusal primary. */
-          }
-        }
+        return protectEventStream(res, roots, this.timeoutMs, opts.signal);
       }
       let text = "";
       try {
@@ -438,7 +438,7 @@ export class Transport {
       headers,
       opts,
       policy,
-      roots: responseRoots(this.sessionProtection, opts.capture),
+      roots: responseRoots(this.sessionProtection, opts.capture, opts.observe),
       automatic: opts.capture !== undefined,
       idempotent: isGet || spec?.idempotent === true,
       deduplicated: spec?.idempotent === true && !spec.readOnly,

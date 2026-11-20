@@ -18,14 +18,23 @@ command -v npm >/dev/null 2>&1 || {
 toolchain_prefix=${LOOM_CODE_TOOLCHAIN_PREFIX:-"$PWD/var/code-toolchains"}
 mkdir -p "$toolchain_prefix"
 toolchain_prefix=$(cd "$toolchain_prefix" && pwd)
-npm install --global --prefix "$toolchain_prefix" --no-fund --no-audit \
-  '@sourcegraph/scip-typescript@0.4.0' '@sourcegraph/scip-python@0.6.6' \
-  'pnpm@12.15.0' 'yarn@1.22.22' 'bun@1.4.2'
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+packages="$toolchain_prefix/lib/loom-node-tools"
+mkdir -p "$packages" "$toolchain_prefix/bin"
+cp "$script_dir/code-toolchains/package.json" "$script_dir/code-toolchains/package-lock.json" "$packages/"
+npm ci --prefix "$packages" --ignore-scripts --no-fund --no-audit
+node "$script_dir/code-toolchains/bind-native.cjs" "$packages" bun pnpm
+npm rebuild --prefix "$packages" --ignore-scripts --offline --no-fund --no-audit
+for tool in scip-typescript scip-python pnpm pnpx yarn yarnpkg bun bunx; do
+  ln -sf "../lib/loom-node-tools/node_modules/.bin/$tool" "$toolchain_prefix/bin/$tool"
+done
 # Keep both Yarn lockfile formats supported without downloading a tool at
 # indexing time or following a repository's executable yarnPath/plugins.
-npm install --global --prefix "$toolchain_prefix/yarn-modern" --no-fund --no-audit \
-  '@yarnpkg/cli-dist@4.18.1'
-ln -sf ../yarn-modern/bin/yarn "$toolchain_prefix/bin/yarn-modern"
+modern="$toolchain_prefix/lib/loom-yarn-modern"
+mkdir -p "$modern"
+cp "$script_dir/code-toolchains/yarn-modern/package.json" "$script_dir/code-toolchains/yarn-modern/package-lock.json" "$modern/"
+npm ci --prefix "$modern" --ignore-scripts --no-fund --no-audit
+ln -sf ../lib/loom-yarn-modern/node_modules/.bin/yarn "$toolchain_prefix/bin/yarn-modern"
 
 # The TypeScript tier installs with this pnpm and never fetches the one a repository
 # pins: it must load a workspace that sets lockfile options.

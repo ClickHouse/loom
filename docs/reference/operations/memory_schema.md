@@ -59,14 +59,14 @@ Register a record schema as `proposed`, for an admin to approve or reject.
 | `description` | `str` | `''` | Free text stored with the schema and returned by memory_schema.list. |
 | `fields` | `list[SchemaFieldInput]` | required | The field contracts (1–64); a bad type, constraint or pattern is rejected at register. |
 | `created_by` | `str` | `''` | Author fallback, stored only when the request has no principal to stamp. |
-| `status` | `Literal['active', 'proposed']` | `'active'` | `active` is writable at once; `proposed` waits for memory_schema.approve. |
+| `status` | `Literal['active', 'proposed']` | `'active'` | For `memory_schema.register`, `active` is writable at once and `proposed` waits for approval; `memory_schema.propose` always stores `proposed`, regardless of this field. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `schema_id` | `str` | The new schema's id; every register call mints a fresh one. |
 | `name` | `str` | The schema name, echoed. |
 | `field_count` | `int` | How many fields the schema declares. |
-| `status` | `str` | The status it was stored with: `active` or `proposed`. |
+| `status` | `str` | The stored status: `active` or `proposed` for `memory_schema.register`, always `proposed` for `memory_schema.propose`. |
 
 ## `memory_schema.register`
 
@@ -82,13 +82,13 @@ Register a typed-record schema (named fields) for a namespace; typed records are
 | `description` | `str` | `''` | Free text stored with the schema and returned by memory_schema.list. |
 | `fields` | `list[SchemaFieldInput]` | required | The field contracts (1–64); a bad type, constraint or pattern is rejected at register. |
 | `created_by` | `str` | `''` | Author fallback, stored only when the request has no principal to stamp. |
-| `status` | `Literal['active', 'proposed']` | `'active'` | `active` is writable at once; `proposed` waits for memory_schema.approve. |
+| `status` | `Literal['active', 'proposed']` | `'active'` | For `memory_schema.register`, `active` is writable at once and `proposed` waits for approval; `memory_schema.propose` always stores `proposed`, regardless of this field. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `schema_id` | `str` | The new schema's id; every register call mints a fresh one. |
 | `name` | `str` | The schema name, echoed. |
 | `field_count` | `int` | How many fields the schema declares. |
-| `status` | `str` | The status it was stored with: `active` or `proposed`. |
+| `status` | `str` | The stored status: `active` or `proposed` for `memory_schema.register`, always `proposed` for `memory_schema.propose`. |
 
 <!-- prettier-ignore-end -->

@@ -1,5 +1,4 @@
-"""Chunk-kind rank prior: multiplicative, bounded, gated on
-query shape; default off; the request override picks an arm."""
+"""Chunk-kind ranking follows the deployment setting or a request override."""
 
 from __future__ import annotations
 
@@ -34,13 +33,20 @@ def test_tables_are_bounded_and_ordered() -> None:
     assert 1.0 + _STRUCTURAL_KIND_BOOST <= 1.15 + 1e-9
 
 
-def test_unset_is_the_flat_table_and_unknown_names_are_off() -> None:
-    # The flat table cleared the paired gate on the issue lane
+def test_unset_follows_the_deployment_and_request_override_wins(monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_search_kind_prior", "flat")
     assert _kind_prior_table(None) is _KIND_PRIOR_TABLES["flat"]
     assert _kind_prior_table("off") is None  # request override wins
     assert _kind_prior_table("deafult") is None  # a typo is not an arm
     assert _kind_prior_table("default") is _KIND_PRIOR_TABLES["default"]
     assert _kind_prior_table("STRUCTURAL") == {}
+    monkeypatch.setattr(settings, "code_search_kind_prior", "structural")
+    assert _kind_prior_table(None) is _KIND_PRIOR_TABLES["structural"]
+    assert _kind_prior_table("flat") is _KIND_PRIOR_TABLES["flat"]
+    monkeypatch.setattr(settings, "code_search_kind_prior", "off")
+    assert _kind_prior_table(None) is None
 
 
 def test_header_demoted_below_the_function_that_implements() -> None:

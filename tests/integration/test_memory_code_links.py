@@ -3902,8 +3902,17 @@ async def test_a_user_erasure_waits_out_a_pass_about_to_publish_its_cursor(
     assert not [v for (v,) in cursors if user in v]
 
 
-@pytest.mark.parametrize("tagged", [True, False])
-async def test_a_manual_mcp_lesson_links_only_with_its_explicit_repo_tag(env, tagged) -> None:
+@pytest.mark.parametrize(
+    ("scoped", "tag_kind"),
+    [
+        pytest.param(True, "none", id="readable-scope"),
+        pytest.param(True, "matching", id="explicit-matching-tag"),
+        pytest.param(False, "none", id="no-scope"),
+        pytest.param(False, "matching", id="explicit-tag-no-scope"),
+        pytest.param(True, "other", id="explicit-tag-precedence"),
+    ],
+)
+async def test_a_manual_mcp_lesson_links_with_a_repo_tag(env, scoped, tag_kind) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
     from server.code.domain.index.remote import repo_tag
@@ -3914,7 +3923,12 @@ async def test_a_manual_mcp_lesson_links_only_with_its_explicit_repo_tag(env, ta
 
     sha = env.commit({"src/widgets/reader.py": _READER})
     await _index(TRUNK, env, sha, ["src/widgets/reader.py"])
-    tags = ["lesson", repo_tag(REMOTE)] if tagged else ["lesson"]
+    tags = ["lesson"]
+    if tag_kind == "matching":
+        tags.append(repo_tag(REMOTE))
+    elif tag_kind == "other":
+        tags.append("repo:other")
+    expected_tags = [*tags, repo_tag(REMOTE)] if scoped and tag_kind == "none" else tags
     auth = AuthInfo(
         subject="manual-lesson-agent",
         org=ORG,
@@ -3922,7 +3936,7 @@ async def test_a_manual_mcp_lesson_links_only_with_its_explicit_repo_tag(env, ta
         roles=(Role.WRITER,),
         is_service_account=True,
     )
-    scope = set_code_scope(f"{ORG}/{TRUNK}")
+    scope = set_code_scope(f"{ORG}/{TRUNK}" if scoped else None)
     try:
         response = await _call_tool(
             1,
@@ -3956,11 +3970,11 @@ async def test_a_manual_mcp_lesson_links_only_with_its_explicit_repo_tag(env, ta
         "-",
         "coding-session",
     )
-    assert row.tags == tags
+    assert row.tags == expected_tags
     assert (row.actor, row.source_class) == ("process:manual-lesson-agent", "asserted")
     await _pass()
     links = await store.for_memories(ORG, [mid])
-    if tagged:
+    if repo_tag(REMOTE) in expected_tags:
         assert len(links) == 1
         assert (links[0]["code_namespace"], links[0]["path"], links[0]["state"]) == (
             TRUNK,

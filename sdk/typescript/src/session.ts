@@ -31,10 +31,23 @@ import type {
   ConversationEntry,
   MemorySetFromMessagesOutput,
   Message,
+  OpName,
 } from "./generated/ops.js";
+import {
+  AutomaticCaptureSuppressed,
+  boundProtection,
+  requireAutomaticAllowed,
+  requireAutomaticLocallyAllowed,
+  responseRoots,
+  SessionCapture,
+  type SessionProtection,
+  SessionProtectionUnavailable,
+} from "./session-protection.js";
 import { randomId } from "./transport.js";
 
 export interface SessionOptions {
+  /** Immutable contributing conversation handles retained for this session. */
+  capture?: SessionCapture;
   userId?: string;
   runId?: string;
   /** Turns buffered before `memory.set_from_messages` runs. Default 8; 0 = only on `flush()` / `close()`. */
@@ -90,6 +103,7 @@ export class Session {
   private pending: Turn[] = [];
   private lastFlushed: Turn[] = [];
   private threadCreated = false;
+  private producers: readonly SessionProtection[];
   /**
    * Whether the transcript is being stored: undefined until the first turn
    * is appended, false when the namespace has conversation logging off (an
@@ -104,6 +118,7 @@ export class Session {
     readonly sessionId: string,
     private readonly opts: SessionOptions = {},
   ) {
+    this.producers = responseRoots(agent.client.transport.sessionProtection, opts.capture);
     this.flushEvery = Math.max(0, opts.flushEvery ?? 8);
     this.transcript = opts.transcript ?? true;
     this.carryOver = Math.max(0, opts.carryOver ?? 4);
@@ -115,9 +130,55 @@ export class Session {
     return { sessionId: this.sessionId, userId: this.opts.userId, runId: this.opts.runId };
   }
 
-  /** Turns appended since the last flush. */
+  private rememberProducers(): void {
+    this.producers = Object.freeze([
+      ...new Set([...this.producers, ...responseRoots(this.agent.client.transport.sessionProtection)]),
+    ]);
+  }
+
+  private discardProtected(): boolean {
+    this.rememberProducers();
+    if (!this.producers.some((root) => root.locallyProtected)) return false;
+    this.pending = [];
+    this.lastFlushed = [];
+    return true;
+  }
+
+  private async requireAllowed(): Promise<void> {
+    this.rememberProducers();
+    try {
+      await boundProtection(
+        requireAutomaticAllowed(this.producers, true),
+        this.producers,
+        this.agent.client.transport.timeoutMs,
+      );
+      requireAutomaticLocallyAllowed(this.producers, true);
+    } finally {
+      this.discardProtected();
+    }
+  }
+
+  private async call<K extends OpName>(name: K, body: Body<K>, automatic = false, write = false): Promise<OpOutput<K>> {
+    this.rememberProducers();
+    const control = this.producers.length ? new SessionCapture(this.producers) : undefined;
+    try {
+      const out = await this.agent.call(
+        name,
+        body,
+        this.scope(),
+        control ? (automatic ? { capture: control } : { observe: control }) : undefined,
+      );
+      if (write) await this.requireAllowed();
+      return out;
+    } finally {
+      this.discardProtected();
+    }
+  }
+
+  /** Buffered turns; known local protection discards them before returning a copy. */
   get buffered(): readonly Turn[] {
-    return this.pending;
+    this.discardProtected();
+    return [...this.pending];
   }
 
   /**
@@ -133,20 +194,25 @@ export class Session {
       token_budget: opts.tokenBudget ?? 2000,
     } as Body<"context.pack">;
     const wantHistory = (opts.history ?? 20) > 0 && this.transcript;
-    const [pack, messages] = await Promise.all([
-      this.agent.contextPack(body, this.scope()),
-      wantHistory ? this.history(opts.history ?? 20) : Promise.resolve([] as ConversationEntry[]),
-    ]);
+    const pack = await this.call("context.pack", body, true);
+    let messages: ConversationEntry[] = [];
+    if (wantHistory && !this.discardProtected()) {
+      try {
+        messages = await this.history(opts.history ?? 20);
+      } catch (error) {
+        if (!(error instanceof AutomaticCaptureSuppressed)) throw error;
+      }
+    }
     return { system: pack.rendered, pack, messages };
   }
 
   /** The most recent transcript turns, oldest first; `[]` when the thread does not exist yet. */
   async history(limit = 20): Promise<ConversationEntry[]> {
     try {
-      const got = await this.agent.call(
+      const got = await this.call(
         "conversation.get",
         { thread_id: this.sessionId, include_messages: true, limit } as Body<"conversation.get">,
-        this.scope(),
+        true,
       );
       return got.found ? (got.messages ?? []) : [];
     } catch (e) {
@@ -162,83 +228,104 @@ export class Session {
    */
   async append(...turns: Turn[]): Promise<MemorySetFromMessagesOutput | undefined> {
     if (turns.length === 0) return undefined;
-    if (this.transcript && this.transcriptStored !== false) {
-      await this.ensureThread();
-      for (const t of turns) {
-        const res = await this.agent.call(
-          "conversation.append",
-          {
-            thread_id: this.sessionId,
-            msg_id: randomId(),
-            role: t.role,
-            content: t.content,
-            ...(t.name ? { metadata: { name: t.name } } : {}),
-          } as Body<"conversation.append">,
-          this.scope(),
-        );
-        if (res.stored === false && res.reason === "logging_disabled") {
-          this.transcriptStored = false;
-          this.agent.client.transport.log.warn(
-            `session ${this.sessionId}: conversation logging is off for namespace ${this.agent.namespace}; turns are not stored in the transcript (an admin enables it with conversation.set_logging). Extraction still runs.`,
+    try {
+      await this.requireAllowed();
+      if (this.transcript && this.transcriptStored !== false) {
+        await this.ensureThread();
+        for (const t of turns) {
+          const res = await this.call(
+            "conversation.append",
+            {
+              thread_id: this.sessionId,
+              msg_id: randomId(),
+              role: t.role,
+              content: t.content,
+              ...(t.name ? { metadata: { name: t.name } } : {}),
+            } as Body<"conversation.append">,
+            true,
+            true,
           );
-          break;
+          if (res.stored === false && res.reason === "logging_disabled") {
+            this.transcriptStored = false;
+            this.agent.client.transport.log.warn(
+              `session ${this.sessionId}: conversation logging is off for namespace ${this.agent.namespace}; turns are not stored in the transcript (an admin enables it with conversation.set_logging). Extraction still runs.`,
+            );
+            break;
+          }
+          this.transcriptStored = true;
         }
-        this.transcriptStored = true;
       }
+      await this.requireAllowed();
+      requireAutomaticLocallyAllowed(this.producers, true);
+      this.pending.push(...turns);
+      if (this.flushEvery > 0 && this.pending.length >= this.flushEvery) return await this.flush();
+      return undefined;
+    } finally {
+      this.discardProtected();
     }
-    this.pending.push(...turns);
-    if (this.flushEvery > 0 && this.pending.length >= this.flushEvery) return this.flush();
-    return undefined;
   }
 
   /** Send the buffered turns to `memory.set_from_messages` now; a no-op with nothing buffered. */
   async flush(): Promise<MemorySetFromMessagesOutput | undefined> {
+    if (this.pending.length === 0) {
+      this.discardProtected();
+      return undefined;
+    }
+    await this.requireAllowed();
     if (this.pending.length === 0) return undefined;
     const batch = this.pending;
     this.pending = [];
     const body = {
       ...(this.extraction ?? {}),
       messages: batch,
-      ...(this.lastFlushed.length ? { last_messages: this.lastFlushed.slice(-this.carryOver) } : {}),
+      ...(this.lastFlushed.length && this.carryOver ? { last_messages: this.lastFlushed.slice(-this.carryOver) } : {}),
     } as Body<"memory.set_from_messages">;
     try {
-      const out = await this.agent.call("memory.set_from_messages", body, this.scope());
+      const out = await this.call("memory.set_from_messages", body, true, true);
+      requireAutomaticLocallyAllowed(this.producers, true);
       this.lastFlushed = batch;
       return out;
-    } catch (e) {
-      this.pending = [...batch, ...this.pending]; // the turns are not lost; retry with the next flush
-      throw e;
+    } catch (error) {
+      if (error instanceof AutomaticCaptureSuppressed || error instanceof SessionProtectionUnavailable) {
+        this.pending = [];
+        this.lastFlushed = [];
+      } else if (!this.discardProtected()) {
+        try {
+          // Requeue only after a fresh durable check, preserving the request's primary error.
+          await this.requireAllowed();
+          requireAutomaticLocallyAllowed(this.producers, true);
+          this.pending = [...batch, ...this.pending];
+        } catch {
+          this.pending = [];
+          this.lastFlushed = [];
+        }
+      }
+      throw error;
+    } finally {
+      this.discardProtected();
     }
   }
 
   /** Park a large tool result once; keep `.pointer` in the transcript instead of the content. */
   offload(content: string, opts: OffloadOptions = {}): Promise<ContextOffloadOutput> {
-    return this.agent.call(
-      "context.offload",
-      {
-        content,
-        ...(opts.summary !== undefined ? { summary: opts.summary } : {}),
-        ...(opts.blobKey !== undefined ? { blob_key: opts.blobKey } : {}),
-        ...(opts.ttlSeconds !== undefined ? { ttl_seconds: opts.ttlSeconds } : {}),
-        ...(opts.contentType !== undefined ? { content_type: opts.contentType } : {}),
-      } as Body<"context.offload">,
-      this.scope(),
-    );
+    return this.call("context.offload", {
+      content,
+      ...(opts.summary !== undefined ? { summary: opts.summary } : {}),
+      ...(opts.blobKey !== undefined ? { blob_key: opts.blobKey } : {}),
+      ...(opts.ttlSeconds !== undefined ? { ttl_seconds: opts.ttlSeconds } : {}),
+      ...(opts.contentType !== undefined ? { content_type: opts.contentType } : {}),
+    } as Body<"context.offload">);
   }
 
   /** Read a parked result back: a character slice, or the lines matching `pattern`. */
   fetch(blobKey: string, opts: FetchOptions = {}): Promise<ContextFetchOutput> {
-    return this.agent.call(
-      "context.fetch",
-      {
-        blob_key: blobKey,
-        ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
-        ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
-        ...(opts.pattern !== undefined ? { pattern: opts.pattern } : {}),
-        ...(opts.contextLines !== undefined ? { context_lines: opts.contextLines } : {}),
-      } as Body<"context.fetch">,
-      this.scope(),
-    );
+    return this.call("context.fetch", {
+      blob_key: blobKey,
+      ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+      ...(opts.pattern !== undefined ? { pattern: opts.pattern } : {}),
+      ...(opts.contextLines !== undefined ? { context_lines: opts.contextLines } : {}),
+    } as Body<"context.fetch">);
   }
 
   /** Append to the always-resident working-memory block the next turn's pack carries. */
@@ -246,15 +333,11 @@ export class Session {
     addition: string,
     opts: { blockKey?: string; separator?: string } = {},
   ): Promise<OpOutput<"working_memory.append">> {
-    return this.agent.call(
-      "working_memory.append",
-      {
-        addition,
-        ...(opts.blockKey !== undefined ? { block_key: opts.blockKey } : {}),
-        ...(opts.separator !== undefined ? { separator: opts.separator } : {}),
-      } as Body<"working_memory.append">,
-      this.scope(),
-    );
+    return this.call("working_memory.append", {
+      addition,
+      ...(opts.blockKey !== undefined ? { block_key: opts.blockKey } : {}),
+      ...(opts.separator !== undefined ? { separator: opts.separator } : {}),
+    } as Body<"working_memory.append">);
   }
 
   /** Flush what is buffered. Call it when the conversation ends or the process is about to. */
@@ -265,11 +348,7 @@ export class Session {
   private async ensureThread(): Promise<void> {
     if (this.threadCreated) return;
     // conversation.create is idempotent on thread_id; a second process resuming the thread is fine.
-    await this.agent.call(
-      "conversation.create",
-      { thread_id: this.sessionId } as Body<"conversation.create">,
-      this.scope(),
-    );
+    await this.call("conversation.create", { thread_id: this.sessionId } as Body<"conversation.create">, true, true);
     this.threadCreated = true;
   }
 }

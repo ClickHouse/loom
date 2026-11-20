@@ -79,11 +79,20 @@ class NamespaceDirectory(Protocol):
         visibility is not."""
         ...
 
-    async def in_use(self, org: str, namespace: str, *, ch: _CHClient | None = None) -> bool:
+    async def in_use(
+        self,
+        org: str,
+        namespace: str,
+        *,
+        ch: _CHClient | None = None,
+        skip_request_traces: bool = False,
+    ) -> bool:
         """Whether (org, namespace) holds state a later owner would inherit, registered or
         not: data (a memory only Postgres holds included), a live row of
         `namespace_census.STATE_TABLES`, or a configured code-plane repository or tracker
-        namespace. Raises when it cannot be read."""
+        namespace. With `skip_request_traces`, the rows a request writes about itself under
+        the name it names (`namespace_census.REQUEST_TRACES`) do not count. Raises when
+        it cannot be read."""
         ...
 
 

@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 import type { MastraDBMessage, StorageThreadType } from "@mastra/core/memory";
 import { MastraCompositeStore, MemoryStorage } from "@mastra/core/storage";
 import { Memory } from "@mastra/memory";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../agent.js";
+import {
+  AutomaticCaptureSuppressed,
+  SessionCapture,
+  SessionProtection,
+  SessionProtectionUnavailable,
+} from "../session-protection.js";
 import { LoomMemoryStorage } from "./mastra.js";
 
 process.env.MASTRA_TELEMETRY_DISABLED = "1";
@@ -25,7 +31,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function harness() {
+function harness(options: { root?: SessionProtection; token?: () => Promise<string> } = {}) {
   const rows = new Map<string, Row>();
   const calls: Call[] = [];
   let version = 1792436295126090000n;
@@ -42,6 +48,7 @@ function harness() {
     beforeWrite: undefined as ((body: Call["body"]) => Promise<void>) | undefined,
     afterWrite: undefined as ((row: Row) => void) | undefined,
     beforeDelete: undefined as ((body: Call["body"]) => void) | undefined,
+    mirrored: undefined as ((op: string, body: Call["body"]) => boolean) | undefined,
     failMessage: "",
     failDelete: "",
   };
@@ -130,9 +137,16 @@ function harness() {
         reply = { found: true, tombstoned: false, reason: "version_changed" };
       else reply = { tombstoned: rows.delete(id(row.body)) };
     } else throw new Error(`Unexpected operation ${op}`);
-    return new Response(JSON.stringify(reply));
+    const observed = controls.mirrored?.(op, body) ? { ...(reply as object), mirrored: true } : reply;
+    return new Response(JSON.stringify(observed));
   };
-  const agent = new Agent("o", "n", "bot", { baseUrl: "http://x", fetch, logLevel: "off" });
+  const agent = new Agent("o", "n", "bot", {
+    baseUrl: "http://x",
+    fetch,
+    logLevel: "off",
+    sessionProtection: options.root,
+    ...(options.token ? { tokenProvider: { origin: "http://x", token: options.token } } : {}),
+  });
   const storage = (resourceId = "alice", storeId = "app", name = "bot") =>
     new LoomMemoryStorage(
       name === "bot" ? agent : new Agent("o", "n", name, { baseUrl: "http://x", fetch, logLevel: "off" }),
@@ -694,5 +708,360 @@ describe("LoomMemoryStorage native memory domain", () => {
       "m2",
     ]);
     expect(await h.storage().getThreadById({ threadId: "t1" })).not.toBeNull();
+  });
+});
+
+function captureFamily(beforeCommit: () => Promise<void> = async () => {}) {
+  const state = { value: "clean" as "clean" | "protected", marks: 0 };
+  const root = new SessionProtection({
+    async read() {
+      return state.value;
+    },
+    async mark() {
+      state.marks++;
+      await beforeCommit();
+      state.value = "protected";
+    },
+  });
+  return { root, state };
+}
+
+function captureStorage(agent: Agent, capture: SessionCapture) {
+  const options = { resourceId: "alice", storeId: "app", capture };
+  return new LoomMemoryStorage(agent, options);
+}
+
+function bindStorageClient(agent: Agent, root: SessionProtection) {
+  Object.defineProperty(agent.client.transport, "sessionProtection", { value: root, configurable: true });
+}
+
+describe("LoomMemoryStorage conversation capture ownership", () => {
+  it.each(["thread", "messages", "thread update", "message update", "resource", "history"])(
+    "suppresses protected automatic %s before the captured client sends HTTP",
+    async (path) => {
+      const family = captureFamily();
+      const h = harness({ root: family.root });
+      await h.storage().saveThread({ thread: thread("t1") });
+      await h.storage().saveMessages({ messages: [message("m1")] });
+      const storage = captureStorage(h.agent, new SessionCapture([family.root]));
+      const before = JSON.stringify([...h.rows]);
+      h.calls.length = 0;
+      family.state.value = "protected";
+      const operation = () => {
+        if (path === "thread") return storage.saveThread({ thread: thread("new") });
+        if (path === "messages") return storage.saveMessages({ messages: [message("new")] });
+        if (path === "thread update") return storage.updateThread({ id: "t1", title: "private" });
+        if (path === "message update") return storage.updateMessages({ messages: [{ id: "m1", role: "assistant" }] });
+        if (path === "resource") return storage.updateResource({ resourceId: "alice", workingMemory: "private" });
+        return storage.listMessagesById({ messageIds: ["m1"] });
+      };
+      await expect(operation()).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+      expect(h.calls).toEqual([]);
+      expect(JSON.stringify([...h.rows])).toBe(before);
+    },
+  );
+
+  it("snapshots the supplied capture instead of accepting a later clean replacement", async () => {
+    const producer = captureFamily();
+    const replacement = captureFamily();
+    const h = harness();
+    const options = { resourceId: "alice", storeId: "app", capture: new SessionCapture([producer.root]) };
+    const storage = new LoomMemoryStorage(h.agent, options);
+    options.capture = new SessionCapture([replacement.root]);
+    producer.state.value = "protected";
+    await expect(storage.saveThread({ thread: thread("t1") })).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls).toEqual([]);
+    expect(replacement.state.value).toBe("clean");
+  });
+
+  it("propagates automatic capture refusal through native Memory without acknowledging messages", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    await h.storage().saveThread({ thread: thread("t1") });
+    const native = new Memory({
+      storage: new MastraCompositeStore({
+        id: "capture",
+        domains: { memory: captureStorage(h.agent, new SessionCapture([family.root])) },
+      }),
+      options: { semanticRecall: false, observationalMemory: false },
+    });
+    family.state.value = "protected";
+    h.calls.length = 0;
+    await expect(native.saveMessages({ messages: [message("private")] })).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(h.calls).toEqual([]);
+    expect([...h.rows.values()].map((row) => row.value.data.id)).toEqual(["t1"]);
+  });
+
+  it("retains the constructor client family after its bound family changes", async () => {
+    const constructorFamily = captureFamily();
+    const producer = captureFamily();
+    const replacement = captureFamily();
+    const h = harness({ root: constructorFamily.root });
+    const storage = captureStorage(h.agent, new SessionCapture([producer.root]));
+    bindStorageClient(h.agent, replacement.root);
+    constructorFamily.state.value = "protected";
+    await expect(storage.saveThread({ thread: thread("t1") })).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls).toEqual([]);
+    expect(producer.state.value).toBe("clean");
+    expect(replacement.state.value).toBe("clean");
+  });
+
+  it("retains a completed callback family when it is marked before the next client rebind", async () => {
+    const constructorFamily = captureFamily();
+    const producer = captureFamily();
+    const earlier = captureFamily();
+    const replacement = captureFamily();
+    const h = harness({ root: constructorFamily.root });
+    const storage = captureStorage(h.agent, new SessionCapture([producer.root]));
+    bindStorageClient(h.agent, earlier.root);
+    await storage.saveThread({ thread: thread("prior") });
+    expect(earlier.state.value).toBe("clean");
+    await earlier.root.mark();
+    bindStorageClient(h.agent, replacement.root);
+    const before = JSON.stringify([...h.rows]);
+    h.calls.length = 0;
+    await expect(storage.saveMessages({ messages: [message("unsent", "prior")] })).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(h.calls).toEqual([]);
+    expect(JSON.stringify([...h.rows])).toBe(before);
+    expect([constructorFamily.state.value, producer.state.value, replacement.state.value]).toEqual([
+      "clean",
+      "clean",
+      "clean",
+    ]);
+  });
+
+  it("durably marks a completed callback family before returning a later marked recall after rebind", async () => {
+    const release = deferred();
+    const observed = deferred();
+    const earlier = captureFamily(async () => {
+      observed.resolve();
+      await release.promise;
+    });
+    const constructorFamily = captureFamily();
+    const producer = captureFamily();
+    const replacement = captureFamily();
+    const h = harness({ root: constructorFamily.root });
+    await h.storage().updateResource({ resourceId: "alice", workingMemory: "retained notes" });
+    const storage = captureStorage(h.agent, new SessionCapture([producer.root]));
+    bindStorageClient(h.agent, earlier.root);
+    expect((await storage.getResourceById({ resourceId: "alice" }))?.workingMemory).toBe("retained notes");
+    expect(earlier.state.value).toBe("clean");
+    bindStorageClient(h.agent, replacement.root);
+    h.controls.mirrored = (op) => op === "memory.get";
+    h.calls.length = 0;
+    let returned = false;
+    const read = storage.getResourceById({ resourceId: "alice" }).then((resource) => {
+      returned = true;
+      return resource;
+    });
+    try {
+      const first = await Promise.race([read.then(() => "returned"), observed.promise.then(() => "marking")]);
+      expect(first).toBe("marking");
+      expect(returned).toBe(false);
+      expect(earlier.state.value).toBe("clean");
+    } finally {
+      release.resolve();
+      await read;
+    }
+    expect((await read)?.workingMemory).toBe("retained notes");
+    expect(earlier.state.marks).toBe(1);
+    expect([earlier.state.value, constructorFamily.state.value, producer.state.value, replacement.state.value]).toEqual(
+      ["protected", "protected", "protected", "protected"],
+    );
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.get"]);
+  });
+
+  it("retains a callback family before hashing when that client is rebound during the hash", async () => {
+    const constructorFamily = captureFamily();
+    const producer = captureFamily();
+    const callback = captureFamily();
+    const replacement = captureFamily();
+    const h = harness({ root: constructorFamily.root });
+    const storage = captureStorage(h.agent, new SessionCapture([producer.root]));
+    const entered = deferred();
+    const release = deferred();
+    const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    const hashing = vi.spyOn(globalThis.crypto.subtle, "digest").mockImplementation(async (algorithm, data) => {
+      if (new TextDecoder().decode(data) === "paused-message") {
+        entered.resolve();
+        await release.promise;
+      }
+      return digest(algorithm, data);
+    });
+    bindStorageClient(h.agent, callback.root);
+    const saved = storage.saveMessages({ messages: [message("paused-message")] });
+    try {
+      await entered.promise;
+      await callback.root.mark();
+      bindStorageClient(h.agent, replacement.root);
+    } finally {
+      release.resolve();
+      hashing.mockRestore();
+    }
+    await expect(saved).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls).toEqual([]);
+    expect(producer.state.value).toBe("clean");
+    expect(replacement.state.value).toBe("clean");
+  });
+
+  it("rechecks retained capture families after credentials mark and rebind the actual client", async () => {
+    const constructorFamily = captureFamily();
+    const producer = captureFamily();
+    const replacement = captureFamily();
+    const h = harness({
+      root: constructorFamily.root,
+      token: async () => {
+        await constructorFamily.root.mark();
+        bindStorageClient(h.agent, replacement.root);
+        return "token";
+      },
+    });
+    const storage = captureStorage(h.agent, new SessionCapture([producer.root]));
+    await expect(storage.saveThread({ thread: thread("t1") })).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls).toEqual([]);
+    expect(producer.state.value).toBe("clean");
+    expect(replacement.state.value).toBe("clean");
+  });
+
+  it("waits for every contributing family before returning marked native working memory", async () => {
+    const release = deferred();
+    const first = captureFamily(() => release.promise);
+    const callbackObserved = deferred();
+    const callback = captureFamily(async () => callbackObserved.resolve());
+    const producer = captureFamily();
+    const h = harness({ root: first.root });
+    await h.storage().updateResource({ resourceId: "alice", workingMemory: "retained notes" });
+    const storage = captureStorage(h.agent, new SessionCapture([producer.root]));
+    bindStorageClient(h.agent, callback.root);
+    h.controls.mirrored = (op) => op === "memory.get";
+    h.calls.length = 0;
+    let returned = false;
+    const read = storage.getResourceById({ resourceId: "alice" }).then((resource) => {
+      returned = true;
+      return resource;
+    });
+    try {
+      await callbackObserved.promise;
+      expect(first.state.marks).toBe(1);
+      expect(returned).toBe(false);
+    } finally {
+      release.resolve();
+      await read;
+    }
+    expect((await read)?.workingMemory).toBe("retained notes");
+    expect([first.state.value, callback.state.value, producer.state.value]).toEqual([
+      "protected",
+      "protected",
+      "protected",
+    ]);
+    await expect(storage.saveMessages({ messages: [message("derived")] })).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.get"]);
+  });
+
+  it("withholds marked native history if one contributing family cannot commit protection", async () => {
+    const failed = captureFamily(async () => {
+      throw new Error("Durable state unavailable");
+    });
+    const bound = captureFamily();
+    const h = harness({ root: bound.root });
+    await h.storage().updateResource({ resourceId: "alice", workingMemory: "retained notes" });
+    const storage = captureStorage(h.agent, new SessionCapture([failed.root]));
+    h.controls.mirrored = (op) => op === "memory.get";
+    h.calls.length = 0;
+    await expect(storage.getResourceById({ resourceId: "alice" })).rejects.toBeInstanceOf(SessionProtectionUnavailable);
+    expect(failed.state.marks).toBe(1);
+    expect(bound.state.value).toBe("protected");
+    await expect(storage.saveThread({ thread: thread("derived") })).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.get"]);
+  });
+
+  it("does not acknowledge a marked automatic thread write as a completed callback", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    const storage = captureStorage(h.agent, new SessionCapture([family.root]));
+    h.controls.mirrored = (op) => op === "memory.set";
+    await expect(storage.saveThread({ thread: thread("t1") })).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.set"]);
+    expect([...h.rows.values()].map((row) => row.value.data.id)).toEqual(["t1"]);
+  });
+
+  it("stops a marked message batch before later messages and the thread timestamp rewrite", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    await h.storage().saveThread({ thread: thread("t1") });
+    const storage = captureStorage(h.agent, new SessionCapture([family.root]));
+    h.controls.mirrored = (op) => op === "memory.set";
+    h.calls.length = 0;
+    await expect(storage.saveMessages({ messages: [message("first"), message("unsent")] })).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.set"]);
+    expect([...h.rows.values()].map((row) => row.value.data.id)).toEqual(["t1", "first"]);
+    expect([...h.rows.values()][0].value.data.updatedAt).toBe(date(0).toISOString());
+  });
+
+  it("stops automatic hydration after a marked native listing page", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    await h.storage().saveThread({ thread: thread("t1") });
+    const storage = captureStorage(h.agent, new SessionCapture([family.root]));
+    h.controls.mirrored = (op) => op === "memory.list";
+    h.calls.length = 0;
+    await expect(storage.listThreads({})).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.list"]);
+  });
+
+  it("rechecks retained protection before retrying a conditional update conflict", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    await h.storage().saveThread({ thread: thread("t1") });
+    const storage = captureStorage(h.agent, new SessionCapture([family.root]));
+    h.controls.beforeSet = (row) => {
+      row.value.data.title = "Concurrent title";
+      family.state.value = "protected";
+    };
+    h.calls.length = 0;
+    await expect(storage.updateThread({ id: "t1", metadata: { private: true } })).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.get", "memory.set"]);
+    expect([...h.rows.values()][0].value.data).toMatchObject({
+      title: "Concurrent title",
+      metadata: { group: "work" },
+    });
+  });
+
+  it("does not acknowledge a message when its pending thread touch becomes protected", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    await h.storage().saveThread({ thread: thread("t1") });
+    const storage = captureStorage(h.agent, new SessionCapture([family.root]));
+    h.controls.mirrored = (op) => op === "memory.get";
+    h.calls.length = 0;
+    await expect(storage.saveMessages({ messages: [message("first")] })).rejects.toBeInstanceOf(
+      AutomaticCaptureSuppressed,
+    );
+    expect(h.calls.map((call) => call.op)).toEqual(["memory.set", "memory.get"]);
+    expect([...h.rows.values()].map((row) => row.value.data.id)).toEqual(["t1", "first"]);
+    expect([...h.rows.values()][0].value.data.updatedAt).toBe(date(0).toISOString());
+  });
+
+  it("keeps explicitly owned native CRUD available under a protected bound family", async () => {
+    const family = captureFamily();
+    const h = harness({ root: family.root });
+    const storage = h.storage();
+    family.state.value = "protected";
+    await storage.saveThread({ thread: thread("t1") });
+    await storage.saveMessages({ messages: [message("m1")] });
+    expect((await storage.getThreadById({ threadId: "t1" }))?.title).toBe("Thread t1");
+    expect((await storage.listMessagesById({ messageIds: ["m1"] })).messages.map((row) => row.id)).toEqual(["m1"]);
+    await storage.deleteThread({ threadId: "t1" });
+    expect(h.rows.size).toBe(0);
   });
 });

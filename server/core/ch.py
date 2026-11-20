@@ -184,6 +184,7 @@ class _CoordinationSession:
     driver: AsyncClient
     generation: int
     identifier: str
+    channel: AsyncClient | None = None
     checked: bool = False
     closed: bool = False
 
@@ -828,6 +829,42 @@ async def acquire_slot(slots: asyncio.Semaphore, what: str) -> None:
         ) from None
 
 
+async def _make_driver(
+    configuration: dict[str, Any], *, connector_limit: int, coordination: bool = False
+) -> AsyncClient:
+    configuration = dict(configuration)
+    if coordination:
+        configuration["query_retries"] = 0
+    driver = await clickhouse_connect.get_async_client(
+        **configuration,
+        compress=True,
+        # Each statement retains its class deadline; this is the driver backstop.
+        send_receive_timeout=_driver_read_timeout_s(),
+        tz_source="server",
+        connector_limit=connector_limit,
+        connector_limit_per_host=connector_limit,
+        # Retire idle sockets before the load balancer closes them.
+        keepalive_timeout=float(settings.ch_keepalive_timeout),
+        settings={
+            "async_insert": 0,
+            "wait_for_async_insert": 1,
+            "insert_deduplicate": 0,
+            # Vector scans can otherwise bypass the filesystem cache in Cloud.
+            "enable_filesystem_cache": 1,
+            "session_timezone": "UTC",
+            **({"use_query_cache": 0, "use_query_condition_cache": 0} if coordination else {}),
+        },
+    )
+    try:
+        client = cast(AsyncClient, NamedClient(driver))
+        # The configured database aliases and bare DateTimes retain their normal meaning.
+        client.server_tz = UTC
+        return client
+    except BaseException:
+        driver._force_close()
+        raise
+
+
 class CHClient:
     """Singleton-ish wrapper. Use `get_client()` to fetch."""
 
@@ -865,22 +902,47 @@ class CHClient:
 
     @asynccontextmanager
     async def coordination_session(self) -> AsyncIterator[None]:
-        """Keep a checked named session, service principal and local client identity.
+        """Own one transport while keeping the checked session and original client pin.
 
-        Creation can retry, so callers also attest the backend at each proof step.
-        Later queries require the named session; errors and client changes invalidate it.
+        Every step still attests the backend; a checked session is never recreated.
         """
         if _coordination_session.get() is not None or _analyst_var.get() is not None:
             raise CoordinationSessionLost()
         session = _CoordinationSession(self, self.client, self.generation, uuid.uuid4().hex)
+        configuration = dict(self._connection_config)
+        # Lifetime capacity shares the caller's proof deadline, not a statement's wait.
+        await self._stream_slots.acquire()
         token = _coordination_session.set(session)
+        failed = True
         try:
+
+            async def open_channel() -> None:
+                # Own it before the guarded call's final generation/identity check.
+                session.channel = await _make_driver(
+                    configuration, connector_limit=1, coordination=True
+                )
+
+            await self._with_retry("coordination_session", open_channel, cls="read")
             await self.query_one("SELECT 1 AS coordination_ready")
             session.checked = True
             yield
+            failed = False
         finally:
             session.closed = True
             _coordination_session.reset(token)
+            try:
+                if session.channel is not None:
+                    if failed:
+                        # A delivered proof timeout cannot bound a fresh cleanup await.
+                        session.channel._force_close()
+                    else:
+                        try:
+                            await session.channel.close()
+                        except BaseException:
+                            session.channel._force_close()
+                            raise
+            finally:
+                self._stream_slots.release()
 
     @property
     def connected(self) -> bool:
@@ -891,45 +953,7 @@ class CHClient:
         # Streaming reads have connections of their own beside the pool; 0 is unbounded.
         connector_limit = limit + STREAM_SLOTS if limit > 0 else 0
         configuration = connection_kwargs()
-        driver = await clickhouse_connect.get_async_client(
-            **configuration,
-            compress=True,
-            # The driver's read timeout is the outer backstop
-            # at the largest class bound (the driver's own 300 s when that
-            # bound is disabled); each statement's own deadline is applied
-            # per call in `_with_retry`.
-            send_receive_timeout=_driver_read_timeout_s(),
-            tz_source="server",
-            connector_limit=connector_limit,
-            connector_limit_per_host=connector_limit,
-            # Close idle pooled connections before the Cloud load balancer
-            # does, so the pool never holds a peer-closed TLS transport.
-            keepalive_timeout=float(settings.ch_keepalive_timeout),
-            # Committed by default; a call site passes ch_writes' async settings to batch.
-            # insert_deduplicate is 0 here: each insert turns dedup on with its token.
-            settings={
-                "async_insert": 0,
-                "wait_for_async_insert": 1,
-                "insert_deduplicate": 0,
-                # Vector search scans the embedding column; on ClickHouse
-                # Cloud that reads object storage unless the local filesystem
-                # cache serves it, and a service profile can ship with the
-                # cache off. Session-level, so every query benefits; a no-op
-                # on a server without a cache.
-                "enable_filesystem_cache": 1,
-                # Loom's DateTime columns carry no zone of their own, so a
-                # server whose <timezone> is not UTC would shift naive params
-                # and reads by its offset; every session reads and writes UTC.
-                "session_timezone": "UTC",
-            },
-        )
-        # Statements name the `loom` alias; the wrapper names the configured database.
-        client = cast(AsyncClient, NamedClient(driver))
-        # The driver learns the zone it binds aware params in from the server
-        # default before the session setting applies; bind them in UTC too.
-        # tz_source="server" reads a bare DateTime in that zone, so reads come
-        # back naive UTC, never in the host's zone.
-        client.server_tz = UTC
+        client = await _make_driver(configuration, connector_limit=connector_limit)
         # Settled before any task can use it: a reconnect publishes it only now.
         await _turn_off_unsafe_condition_cache(client)
         self._client = client
@@ -954,6 +978,15 @@ class CHClient:
         if self._client is None:
             raise RuntimeError("ClickHouse client not connected; call connect() first")
         return self._client
+
+    def _statement_client(self) -> AsyncClient:
+        if session := _coordination_session.get():
+            session.check(self)
+            if session.channel is None:
+                session.closed = True
+                raise CoordinationSessionLost()
+            return session.channel
+        return self.client
 
     @property
     def generation(self) -> int:
@@ -1280,7 +1313,7 @@ class CHClient:
         fails for want of it is the wrong trade."""
 
         async def _q(text: str) -> Any:
-            res = await self.client.query(
+            res = await self._statement_client().query(
                 text,
                 parameters=params or {},
                 settings=statement_settings(text, cls="read"),
@@ -1340,7 +1373,7 @@ class CHClient:
         like any query. `settings` are this statement's own ClickHouse settings."""
 
         async def _q() -> bytes:
-            return await self.client.raw_query(
+            return await self._statement_client().raw_query(
                 sql,
                 parameters=params or {},
                 settings=statement_settings(sql, settings, cls="read"),
@@ -1423,7 +1456,7 @@ class CHClient:
             payload: dict[str, Any] = (
                 {"external_data": external_data} if external_data is not None else {}
             )
-            res = await self.client.command(
+            res = await self._statement_client().command(
                 sql,
                 parameters=params or {},
                 settings=statement_settings(sql, extra, cls=cls),

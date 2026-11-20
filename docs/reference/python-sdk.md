@@ -243,6 +243,20 @@ What an agent framework holds between turns:
   `await execute(name, arguments)` that returns the string the model reads:
   `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`,
   `loom_note`. The schemas match the TypeScript SDK's.
+  An explicit `code_namespace` offers `loom_code_lookup` first; `only=["loom_code_lookup"]`
+  selects just that read-only tool. The application fixes the code scope separately
+  from memory. See [code tools](../guides/code-tools.md) for arguments, evidence limits
+  and valid JSON result budgeting.
+  `loom_remember` also accepts `files`, `tags` and `source_resource_id`. These
+  preserve a finding's supporting references; inspect the server receipt before
+  claiming a code link was resolved. `only=["loom_recall", "loom_update"]`
+  opts into correction of an existing key. This optional tool requires an explicit
+  named `user_id`; `None`, an empty name and `"-"` refuse before a request because
+  they mean all users to the key-update operation. Names with surrounding whitespace
+  also refuse rather than resolve under a different identity. A correction keeps
+  the configured namespace and user scope, resolves the key across writing agents
+  and sessions, and preserves ambiguity and hash-precondition refusals. The default six tools
+  do not include `loom_update`.
 - `bot.run_scope(goal=...)` is an `async with` block that begins a run, stamps
   its `run_id` on the writes inside and labels the reads with it (the
   `X-Loom-Run-Id` header, not a filter), and on exit credits the keys a
@@ -280,6 +294,12 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 - `loom.integrations.haystack.LoomDocumentStore(org, namespace, ...)` stores native
   Haystack documents in Loom knowledge; `LoomRetriever(store)` is a retrieval
   component. Install the `[haystack]` extra.
+- `loom.integrations.dspy.LoomKnowledgeRetriever(agent)` and
+  `LoomMemoryRetriever(agent, user_id=...)` are DSPy retrievers over
+  `knowledge.search` and `memory.search`: calling one returns a `dspy.Prediction`
+  with `passages`, `sources`, `scores` and `metadata`, and `as_tool()` hands the
+  search to `dspy.ReAct`; install the `[dspy]` extra. A call needs a `SyncAgent`,
+  `acall` takes either agent.
 - `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
   `AgentTools` as OpenAI Agents SDK `FunctionTool`s, and
   `LoomSession(agent, session_id, user_id=...)` is its `Session`, the history kept as
@@ -477,6 +497,10 @@ its [GitHub Release](https://github.com/ClickHouse/loom/releases) notes.
 
 - [`sdk/python/examples/agent_memory.py`](../../sdk/python/examples/agent_memory.py):
   probe → remember → recall → ask with citations → outcome → typed errors.
+- [`sdk/python/examples/document_search.py`](../../sdk/python/examples/document_search.py):
+  add two documents → search with citations → abstain on an off-topic question → delete.
+- [`sdk/python/examples/support_agent_memory.py`](../../sdk/python/examples/support_agent_memory.py):
+  two customers kept apart → revise a fact → erase one customer and check it is gone.
 - [`examples/`](../../examples/): `claude_agent_loop.py` (needs an Anthropic
   key), `ledger_run.py`, `log_conversation.py`, `onboarding_walkthrough.py`.
 

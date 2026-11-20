@@ -246,12 +246,23 @@ def test_public_api_matches_the_snapshot() -> None:
 # ---- typing fixtures -----------------------------------------------------
 
 
-def _mypy(path: Path) -> list[tuple[int, str]]:
+def _mypy(path: Path, cache_dir: Path) -> list[tuple[int, str]]:
     """(line, error-code) for every mypy --strict error in `path`, run from the
-    repo root with the SDK on MYPYPATH (the way a consumer sees it)."""
+    repo root with the SDK on MYPYPATH (the way a consumer sees it). A private
+    cache avoids concurrent initialization of the same SQLite database."""
     rel = path.relative_to(ROOT).as_posix()
     proc = subprocess.run(
-        [sys.executable, "-m", "mypy", "--strict", "--no-error-summary", "--show-error-codes", rel],
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--strict",
+            "--no-error-summary",
+            "--show-error-codes",
+            "--cache-dir",
+            str(cache_dir),
+            rel,
+        ],
         capture_output=True,
         text=True,
         cwd=ROOT,
@@ -269,13 +280,13 @@ def _mypy(path: Path) -> list[tuple[int, str]]:
     return out
 
 
-def test_typing_fixture_valid_passes_strict_mypy() -> None:
-    errors = _mypy(HERE / "sdk_typing" / "valid.py")
+def test_typing_fixture_valid_passes_strict_mypy(tmp_path: Path) -> None:
+    errors = _mypy(HERE / "sdk_typing" / "valid.py", tmp_path / "mypy")
     assert errors == [], errors
 
 
-def test_typing_fixture_sync_clients_passes_strict_mypy() -> None:
-    errors = _mypy(HERE / "sdk_typing" / "sync_clients.py")
+def test_typing_fixture_sync_clients_passes_strict_mypy(tmp_path: Path) -> None:
+    errors = _mypy(HERE / "sdk_typing" / "sync_clients.py", tmp_path / "mypy")
     assert errors == [], errors
 
 
@@ -288,7 +299,7 @@ def test_sync_agent_declares_exactly_the_clients_it_attaches() -> None:
     assert declared == set(sync._CLIENT_ATTRS)
 
 
-def test_typing_fixture_negative_is_rejected_where_marked() -> None:
+def test_typing_fixture_negative_is_rejected_where_marked(tmp_path: Path) -> None:
     path = HERE / "sdk_typing" / "negative.py"
     expected = {
         i: m.group(1)
@@ -296,7 +307,7 @@ def test_typing_fixture_negative_is_rejected_where_marked() -> None:
         if (m := re.search(r"# expect: ([a-z-]+)$", line))
     }
     assert expected, "negative.py has no `# expect:` marks"
-    got = _mypy(path)
+    got = _mypy(path, tmp_path / "mypy")
     by_line: dict[int, set[str]] = {}
     for ln, code in got:
         by_line.setdefault(ln, set()).add(code)

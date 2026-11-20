@@ -44,6 +44,8 @@ except ImportError as e:  # the framework is an optional extra
         "loom.integrations.autogen needs autogen-core: pip install 'clickhouse-loom[autogen]'"
     ) from e
 
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 from loom.sync import SyncAgent
 
 if TYPE_CHECKING:
@@ -61,6 +63,12 @@ class LoomMemory(Memory):
     Loom deletes a memory only when its key is named (``memory.delete``) or
     through erasure. ``add`` keeps the text, not ``metadata`` or ``mime_type``.
     AutoGen awaits its memory, so the adapter takes a ``loom.Agent``.
+
+    Use one memory instance per conversation's application-owned session family.
+    Constructor and callback contributors remain bound across client rebinding.
+    Context assembly is automatic; direct ``query`` and ``add`` stay explicit
+    unless their caller owns automatic work. Native user and session ids do not
+    select protection.
     """
 
     def __init__(
@@ -78,6 +86,7 @@ class LoomMemory(Memory):
         if top_k < 1:
             raise ValueError("top_k must be at least 1")
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._user_id = user_id
         self._tags = list(tags or [])
         self._top_k = top_k
@@ -87,16 +96,18 @@ class LoomMemory(Memory):
     async def add(
         self, content: MemoryContent, cancellation_token: CancellationToken | None = None
     ) -> None:
-        text = _text(content).strip()
-        if not text:
-            return
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
-        await self._agent.memory.set(
-            f"{self._key_prefix}/{digest}",
-            text,
-            tags=self._tags or None,
-            user_id=self._user_id,
-        )
+        scope = self._protection.automatic if automatic_roots() else self._protection.observing
+        with scope(self._agent.transport.session_protection):
+            text = _text(content).strip()
+            if not text:
+                return
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+            await self._agent.memory.set(
+                f"{self._key_prefix}/{digest}",
+                text,
+                tags=self._tags or None,
+                user_id=self._user_id,
+            )
 
     async def query(
         self,
@@ -104,57 +115,64 @@ class LoomMemory(Memory):
         cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> MemoryQueryResult:
-        text = query if isinstance(query, str) else _text(query)
-        if not text.strip():
-            return MemoryQueryResult(results=[])
-        top_k = min(max(int(kwargs.get("top_k", self._top_k)), 1), 500)  # memory.search's bounds
-        result = await self._agent.memory.search(
-            text,
-            top_k=top_k,
-            tags=self._tags or None,
-            user_id=self._user_id,
-            # Read the namespace this memory writes to, whatever the deployment's default.
-            namespace_scope="this",
-            # Unpinned, a large top_k serves excerpts (above 15 by default)
-            # and drops each hit's explanation.
-            bodies="full",
-            explain=False,
-        )
-        hits = list(result)
-        if self._honour_abstain:
-            if result.abstain:
+        scope = self._protection.automatic if automatic_roots() else self._protection.observing
+        with scope(self._agent.transport.session_protection):
+            text = query if isinstance(query, str) else _text(query)
+            if not text.strip():
                 return MemoryQueryResult(results=[])
-            # A response that does not abstain can still carry rows below the floor.
-            hits = [hit for hit in hits if not hit.below_threshold]
-        return MemoryQueryResult(
-            results=[
-                MemoryContent(
-                    content=hit.content_excerpt,
-                    mime_type=MemoryMimeType.TEXT,
-                    metadata={
-                        "memory_key": hit.memory_key,
-                        "memory_type": hit.memory_type,
-                        "similarity": hit.similarity,
-                        "source": hit.source,
-                        **({"valid_at": hit.valid_at} if hit.valid_at else {}),
-                    },
-                )
-                # Derived rows may come back above the top_k slice: cut after filtering.
-                for hit in hits[:top_k]
-            ]
-        )
+            top_k = min(
+                max(int(kwargs.get("top_k", self._top_k)), 1), 500
+            )  # memory.search's bounds
+            result = await self._agent.memory.search(
+                text,
+                top_k=top_k,
+                tags=self._tags or None,
+                user_id=self._user_id,
+                # Read the namespace this memory writes to, whatever the deployment's default.
+                namespace_scope="this",
+                # Unpinned, a large top_k serves excerpts (above 15 by default)
+                # and drops each hit's explanation.
+                bodies="full",
+                explain=False,
+            )
+            hits = list(result)
+            if self._honour_abstain:
+                if result.abstain:
+                    return MemoryQueryResult(results=[])
+                # A response that does not abstain can still carry rows below the floor.
+                hits = [hit for hit in hits if not hit.below_threshold]
+            return MemoryQueryResult(
+                results=[
+                    MemoryContent(
+                        content=hit.content_excerpt,
+                        mime_type=MemoryMimeType.TEXT,
+                        metadata={
+                            "memory_key": hit.memory_key,
+                            "memory_type": hit.memory_type,
+                            "similarity": hit.similarity,
+                            "source": hit.source,
+                            **({"valid_at": hit.valid_at} if hit.valid_at else {}),
+                        },
+                    )
+                    # Derived rows may come back above the top_k slice: cut after filtering.
+                    for hit in hits[:top_k]
+                ]
+            )
 
     async def update_context(self, model_context: ChatCompletionContext) -> UpdateContextResult:
-        messages = await model_context.get_messages()
-        latest = next((m for m in reversed(messages) if isinstance(m, UserMessage)), None)
-        memories = await self.query(_user_text(latest) if latest else "")
-        if memories.results:
-            # query returns text; MemoryContent.content is typed to allow bytes too.
-            lines = "\n".join(f"{i}. {str(m.content)}" for i, m in enumerate(memories.results, 1))
-            await model_context.add_message(
-                SystemMessage(content=f"\nRelevant memory content from Loom:\n{lines}\n")
-            )
-        return UpdateContextResult(memories=memories)
+        with self._protection.automatic(self._agent.transport.session_protection):
+            messages = await model_context.get_messages()
+            latest = next((m for m in reversed(messages) if isinstance(m, UserMessage)), None)
+            memories = await self.query(_user_text(latest) if latest else "")
+            if memories.results:
+                # query returns text; MemoryContent.content is typed to allow bytes too.
+                lines = "\n".join(
+                    f"{i}. {str(m.content)}" for i, m in enumerate(memories.results, 1)
+                )
+                await model_context.add_message(
+                    SystemMessage(content=f"\nRelevant memory content from Loom:\n{lines}\n")
+                )
+            return UpdateContextResult(memories=memories)
 
     async def clear(self) -> None:
         raise NotImplementedError(

@@ -20,6 +20,7 @@ import asyncio
 import dataclasses
 import logging
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -154,7 +155,7 @@ def probe(monkeypatch: pytest.MonkeyPatch, plane: None) -> dict[str, Any]:
     # HTTP
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setitem(OP_BUDGETS_P99_MS, op.name, 10_000)  # a probe op's budget
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     monkeypatch.setattr(
         http_mod, "_emit_event", lambda *a, **k: seen["ledger"].append(("http", k["error_code"]))
     )

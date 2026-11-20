@@ -43,7 +43,7 @@ test("the Codex hooks.json carries only the fields Codex's strict parser accepts
         assert.deepEqual(
           // commandWindows: what Codex 0.131+ runs on Windows, through cmd.exe;
           // earlier builds ignore an unknown handler key (only top-level keys are strict)
-          Object.keys(h).filter((k) => !["type", "command", "commandWindows", "timeout"].includes(k)),
+          Object.keys(h).filter((k) => !["type", "command", "commandWindows", "timeout", "statusMessage"].includes(k)),
           [],
           `${event}: ${h.command}`,
         );

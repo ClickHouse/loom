@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.clients import gdrive
+from server.clients._checked_access import Credential
 from server.knowledge.domain.sources import (
     MAX_DEPTH,
     MAX_WALK_FOLDERS,
@@ -79,7 +80,7 @@ def _matches(item: dict[str, Any], mime_types: list[str], state: dict[str, Any])
 
 
 async def walk(
-    token: str,
+    token: Credential,
     roots: list[str],
     out: Listing,
     *,
@@ -125,7 +126,7 @@ async def walk(
 
 
 async def list_items(
-    token: str,
+    token: Credential,
     items: list[dict[str, Any]],
     include: list[str],
     *,
@@ -216,7 +217,7 @@ async def list_items(
 
 
 async def _file_item(
-    token: str, n: int, file_id: str, out: Listing, fields: str
+    token: Credential, n: int, file_id: str, out: Listing, fields: str
 ) -> dict[str, Any] | None:
     """The metadata of the `file` item `n`, or None with a note on `out` when it lists
     nothing (gone, trashed, or of a kind the source does not read)."""

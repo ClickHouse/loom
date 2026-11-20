@@ -34,6 +34,8 @@ from server.memory import store as mr
 from server.memory.app import snapshot_rows
 from server.memory.store import MEMORY_PERSISTED_COLS, MemoryRow
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 _NOW = datetime(2026, 9, 19, 8, 40, 0)
 
 # The three value shapes: `stored` is the `value`

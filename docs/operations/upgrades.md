@@ -306,9 +306,10 @@ checkout.
     refused as a permission error (SQLSTATE 42501) rather than `LT001`.
 
 16. Before a first cell's attach, every CLI and CI image runs a build with that state read,
-    and every CLI that writes for an org has `LOOM_CELL` set. No CLI sends a heartbeat, so
-    attach cannot check either, and a CLI of an older build is not refused on an `enforced`
-    cell ([cells](../architecture/cells.md#failure-modes)).
+    and every CLI that writes for an org has `LOOM_CELL` set. A CLI publishes no instance
+    or cell heartbeat for attach to read, so attach cannot check either, and a CLI of an
+    older build is not refused on an `enforced` cell
+    ([cells](../architecture/cells.md#failure-modes)).
 
 17. Moving to a build whose first-cell processes read their cell's state from the router on
     a timer: every router replica (`loom router serve`) runs this build before any cell's
@@ -319,6 +320,15 @@ checkout.
     second for a thousand pods of eight workers at the defaults; a router of this build
     answers them from one read per replica per `LOOM_ROUTER_DIRECTORY_CACHE_S`
     ([cells](../architecture/cells.md#the-heartbeats-keys)).
+
+18. Before a first cell's attach, once `LOOM_CELL` is set on every process and every CLI and
+    CI configuration of the cell (step 16), rotate the ClickHouse credential they write
+    with: a new user or password for the cell's servers and CLIs, the old one dropped. A
+    CLI publishes no instance or cell heartbeat for attach to read, so attach cannot see a
+    job still configured with `LOOM_CELL` unset; the rotation cuts off any the rollout
+    missed before it can write an org's rows
+    past attach's last scan. Name the new user with `--ch-allow-user`
+    ([attaching the first cell](./cell-attach.md)).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

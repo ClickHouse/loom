@@ -21,6 +21,7 @@ export const PAGE_NAMES: Record<View, string> = {
   code: "Repositories",
   tasks: "Tasks",
   setup: "Settings",
+  "connected-accounts": "Connected accounts",
   "admin:review_queue": "Review queue",
   "admin:health": "Health",
   "admin:guardrails": "Guardrails",

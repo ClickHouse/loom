@@ -20,6 +20,8 @@ except ImportError:
 
 from loom import Agent, SyncAgent
 from loom.errors import LoomError
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 
 
 def _digest(value: str) -> str:
@@ -38,6 +40,12 @@ class LoomMemoryDb(BaseDb):
     Give a MemoryManager this database, rather than making it the Agent's session
     database. UserMemory values are episodic Loom rows so native identifiers and
     metadata survive without fact extraction or semantic duplicate merging.
+
+    Use one database per conversation's application-owned logical session
+    family. Constructor and callback contributors remain bound after client
+    rebinding. Native user and store ids partition data; they do not select
+    session protection. Explicit database calls remain explicit after an
+    automatic callback ends.
     """
 
     def __init__(self, agent: SyncAgent, *, user_id: str, store: str = "default") -> None:
@@ -50,6 +58,7 @@ class LoomMemoryDb(BaseDb):
         super().__init__(memory_table=store)
         self._store = store
         self._agent = agent
+        self._protection = _CallbackProtection(agent.transport.session_protection)
         self._user_id = user_id
         scope = _digest(json.dumps([store, user_id], ensure_ascii=False, separators=(",", ":")))
         self._session = "agno-" + scope
@@ -65,7 +74,9 @@ class LoomMemoryDb(BaseDb):
         return self._prefix + _digest(memory_id)
 
     def _call(self, op: str, **body: Any) -> dict[str, Any]:
-        return self._agent.call(op, body, user_id=self._user_id, session_id=self._session)
+        scope = self._protection.automatic if automatic_roots() else self._protection.observing
+        with scope(self._agent.transport.session_protection):
+            return self._agent.call(op, body, user_id=self._user_id, session_id=self._session)
 
     def _decode(self, value: Any) -> dict[str, Any]:
         if isinstance(value, str):

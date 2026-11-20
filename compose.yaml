@@ -39,6 +39,8 @@ services:
       - ./deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
       # A user with no row policy on a table reads none of it.
       - ./deploy/clickhouse-config/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml:ro
+      # query_log and text_log keep 30 days.
+      - ./deploy/clickhouse-config/system_logs.xml:/etc/clickhouse-server/config.d/system_logs.xml:ro
       # Named collections for the SQL ai* functions; defines none as shipped.
       # Git-ignored, so `make bootstrap` makes it: a missing file is an error,
       # not a root-owned directory Docker creates in its place.

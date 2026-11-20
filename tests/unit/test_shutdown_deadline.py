@@ -54,7 +54,9 @@ def _cut_off_write(monkeypatch: pytest.MonkeyPatch):
     rmt_carry.reset_for_tests()
 
 
-async def _not_settled() -> bool:
+async def _not_settled(ch: Any, *, end: float) -> bool:
+    assert isinstance(ch, _StalledCH)
+    assert 0 < end - time.monotonic() <= 0.3
     return False
 
 
@@ -103,6 +105,16 @@ _EXIT = """
 import asyncio, sys, time
 from unittest.mock import AsyncMock
 from server.insights.app import provider_barrier as barrier
+from server.core import pg_profile, retirement
+from server.settings import settings
+from uuid import UUID
+
+class _AuthorityCH:
+    reads = 0
+    async def query_one(self, sql):
+        assert sql == pg_profile._CH_RECORD
+        self.reads += 1
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
 
 class _Hangs:
     calls = 0
@@ -121,11 +133,20 @@ beat.start()
 time.sleep(0.3)  # the second beat is now stuck
 barrier.drain_task_sets = AsyncMock(return_value=True)
 barrier._server_side_settled = AsyncMock(return_value=True)
-barrier.record_participant = AsyncMock()
+barrier.record_retirement = AsyncMock()
+barrier.flush_registered_buffers = AsyncMock(return_value=True)
+settings.storage_authority = "clickhouse"
+gate = retirement.get_gate()
+gate.install("server")
+gate.enrolled = True
+gate.stopped()
+ch = _AuthorityCH()
 # The parent measures from here to the process's exit, imports left out
 # (CLOCK_MONOTONIC is one clock for every process on the host).
 print("retiring", time.monotonic(), flush=True)
-assert asyncio.run(barrier.retire_process())
+assert not asyncio.run(barrier.retire_process(ch, end=time.monotonic() + 1))
+assert ch.reads == 1 and gate.pg_sealed
+barrier.record_retirement.assert_not_awaited()
 """
 
 
