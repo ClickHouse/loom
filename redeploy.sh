@@ -295,7 +295,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$reapply_config" -eq 0 || -n "$target_commit" ]] || usage
-[[ "$force" -eq 0 || ( -z "$target_commit" && "$reapply_config" -eq 0 ) ]] || usage
+[[ "$force" -eq 0 || (-z "$target_commit" && "$reapply_config" -eq 0) ]] || usage
 
 assert_target_source() {
   [[ -n "$target_commit" ]] || return 0
