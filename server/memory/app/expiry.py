@@ -107,8 +107,7 @@ class ExpiryResult:
 
 
 def _still_expired(head: MemoryRow, now: datetime) -> bool:
-    """Whether a head newer than the candidate read is still a live row past its expiry
-    (only its copy in ClickHouse lags), so the pass expires it now."""
+    """Whether the selected head is a live row past its expiry."""
     if head.tombstoned_at is not None or head.expires_at is None:
         return False
     return to_naive_utc(head.expires_at) <= now
@@ -205,10 +204,11 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
         )
-        # Postgres keeps equal-version heads or substitutes a still-expired head before
-        # planning. Admission checks changes after that selection.
         now = naive_utc_now()
         current = await memory_repo.current_heads(rows, lambda _, h: _still_expired(h, now))
+        # Equal-version replacements can renew expiry too; every selected source must
+        # still qualify before planning. Admission checks changes after that selection.
+        current = [head for head in current if _still_expired(head, now)]
         res.moved_skipped = len(rows) - len(current)
         res.scanned += res.moved_skipped
         rows = current

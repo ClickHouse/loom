@@ -559,6 +559,92 @@ async def test_a_candidate_is_expired_from_the_authoritys_head(
     assert events[0].args["moved_skipped"] == "2"
 
 
+@pytest.mark.parametrize("action", X.ACTIONS)
+@pytest.mark.parametrize(
+    "changes,outcome",
+    [
+        pytest.param({"expires_at": None}, "moved", id="same-version-cleared"),
+        pytest.param({"expires_at": _NOW + timedelta(days=1)}, "moved", id="same-version-future"),
+        pytest.param({"version": 101, "expires_at": None}, "moved", id="newer-cleared"),
+        pytest.param(
+            {"version": 101, "expires_at": _NOW + timedelta(days=1)}, "moved", id="newer-future"
+        ),
+        pytest.param({}, "applied", id="same-version-rewrite"),
+        pytest.param({"version": 101}, "applied", id="newer-rewrite"),
+        pytest.param({"lock_mode": "read_only"}, "locked", id="read-only"),
+        pytest.param({"lock_mode": "no_delete"}, "no-delete", id="no-delete"),
+        pytest.param(
+            {"lock_mode": "read_only", "lock_until": _NOW - timedelta(seconds=1)},
+            "applied",
+            id="lapsed-lock",
+        ),
+        pytest.param({"pinned": True}, "applied", id="pinned"),
+    ],
+)
+async def test_expiry_rechecks_every_authoritative_head_before_planning(
+    monkeypatch: pytest.MonkeyPatch, action: str, changes: dict[str, Any], outcome: str
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.core import pg
+    from server.memory import store as memory_repo
+    from server.memory.store import pg_memory
+    from server.memory.store.rows import _hydrate
+
+    source = _row(on_expire=action, expires_at=_NOW - timedelta(minutes=1))
+    ch, _ = _stub(monkeypatch, [source])
+    refreshed = source.model_copy(
+        update={"value": '"authoritative"', "tags": ["refreshed"], **changes}
+    )
+    stored = pg_memory.decode_row(pg_memory.encode_row(build_memory_version_row(refreshed)))
+    authoritative = _hydrate(stored)
+    admitted: list[MemoryRow] = []
+    announce = AsyncMock()
+
+    async def heads(keys: Any, **_: Any) -> dict[Any, Any]:
+        return {identity_key(source): stored}
+
+    async def insert(
+        rows: Any, reads: list[MemoryRow], *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
+        check = pg_memory.heads_unchanged({identity_key(r): r for r in reads}, exact=exact)
+        for row in rows:
+            check(identity_key(row), stored)
+        admitted.extend(reads)
+        await ch.insert("loom.memory", rows)
+        on_commit()
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    monkeypatch.setattr(memory_repo, "insert_versions_over_heads", insert)
+    monkeypatch.setattr(X, "naive_utc_now", lambda: _NOW)
+    monkeypatch.setattr(X.webhooks, "announce", announce)
+    res = await X.run_pass()
+    moved = outcome == "moved"
+    locked = outcome == "locked" or (outcome == "no-delete" and action == "tombstone")
+    assert not res.failures and res.scanned == 1
+    assert res.moved_skipped == int(moved) and res.locked_skipped == int(locked)
+    assert sum((res.tombstoned, res.demoted, res.anonymized)) == int(not (moved or locked))
+    if moved or locked:
+        assert not res.sample and not admitted and not ch.inserts
+        assert not retired and not _DEMOTE_REEMITS
+        announce.assert_not_awaited()
+    else:
+        assert admitted == [authoritative]
+        written = ch.inserts[0][1][0]
+        assert written == build_memory_version_row(
+            authoritative,
+            version=written["version"],
+            **X.plan(authoritative, now=_NOW, cfg=X.ExpiryConfig()),
+        )
+        assert ch.heads[identity_key(source)] == written
+        announce.assert_awaited_once_with(
+            [("memory.tombstoned" if action == "tombstone" else "memory.revised", written)]
+        )
+        assert len(_DEMOTE_REEMITS if action == "demote" else retired) == 1
+
+
 async def test_a_failed_scan_records_the_error_class_for_the_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

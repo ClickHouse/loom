@@ -1239,8 +1239,8 @@ class MemorySweepExpiredOutput(BaseModel):
     # Rows left as they are because a lock refuses their post-action; reads still
     # hide them.
     locked_skipped: int = 0
-    # Candidates omitted during authoritative head selection, or whose selected source
-    # head changes before admission.
+    # Candidates renewed or deleted before planning, or whose selected source head
+    # changes before admission.
     moved_skipped: int = 0
     # Echo of the request's `dry_run`.
     dry_run: bool = False

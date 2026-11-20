@@ -1331,12 +1331,13 @@ Each post-action requests exact-head admission. Under the ClickHouse authority,
 the source row is compared while holding the same per-key Keeper fence as every
 memory version writer; under Postgres, transactional admission checks the head.
 The comparison includes authored content and metadata even at the same version;
-derived usage counters are excluded. Before planning, Postgres selects the authoritative
-head: an equal-version head is kept, while a different-version head is kept only if it
-is still expired. Missing heads and different-version heads that are no longer expired
-are skipped. A change after selecting the source head for planning is
-refused and counted in `moved_skipped`. The refused batch is re-read and retried once without moved candidates; another
-refusal leaves that batch whole. Dry runs write nothing and do not acquire the fences
+derived usage counters are excluded. Before planning, the sweep rechecks expiry on
+every selected authoritative head, including equal-version replacements. Postgres can
+refresh a candidate to a rewritten head that is still expired. Missing, deleted or
+renewed candidates are skipped and counted in `moved_skipped`. A change after source
+selection also refuses admission. The refused batch is re-read and retried once without
+moved candidates, counted in `moved_skipped`; another refusal leaves that batch whole.
+Dry runs write nothing and do not acquire the fences
 ([storage authority](storage-authority.md#why-two-stores)). An acknowledged expiry still
 announces and mirrors its action if holder cleanup is cancelled, even if cancellation
 repeats during those follow-ups. The cancellation is raised after they finish.
