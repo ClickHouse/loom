@@ -622,7 +622,7 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 
 In TypeScript, `loomMemoryTool(agent, { store }, extras)` returns the SDK's `betaMemoryTool`
 (with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an
-optional peer dependency, 1.8.x):
+optional peer dependency, 1.8.x or 1.11.x):
 
 ```ts
 import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
