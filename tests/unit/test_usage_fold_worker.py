@@ -1,7 +1,7 @@
 """Usage fold-back worker — runs against a stub CH client.
 
 The stub answers queries in order: probe (query_one) → cold-start
-watermark derivation (query_one, first pass only) → per batch: the
+watermark reconciliation (query_one, every pass) → per batch: the
 pending-mutations probe (query_one, unseeded reads as 0), totals (query_all),
 then one identity read (query_all) per size chunk of its keys.
 A batch below the cap ends the pass; a full batch is followed by another
@@ -196,19 +196,19 @@ async def test_noop_when_no_usage_at_all() -> None:
     assert ch.execute_calls == []
 
 
-async def test_noop_when_watermark_already_at_high_water() -> None:
-    """Second pass with no new events stops at the probe (no re-derivation)."""
+async def test_unchanged_high_water_still_checks_for_regressed_counters() -> None:
+    """An unchanged timestamp cannot rule out a stale full-version insert."""
     ch = StubCH()
     _seed_active_pass(ch, totals=[_totals_row()], idents=[_ident_row()])
     await run_pass(ch=ch)
-    assert usage_fold.current_watermark() == T0.replace(tzinfo=UTC)
+    assert usage_fold.current_watermark() == (T0 - timedelta(seconds=1)).replace(tzinfo=UTC)
 
     ch2 = StubCH()
-    ch2.query_one_returns.append({"hwm": T0})
+    ch2.query_one_returns += [{"hwm": T0}, {"first_unfolded": None}]
     result = await run_pass(ch=ch2)
     assert result.folded == 0
-    assert len(ch2.query_one_calls) == 1
-    assert ch2.query_all_calls == []
+    assert len(ch2.query_one_calls) == 3
+    assert len(ch2.query_all_calls) == 1
     assert ch2.execute_calls == []
 
 
@@ -536,7 +536,7 @@ async def test_totals_for_erased_memory_are_skipped() -> None:
     assert result.folded == 0
     assert result.skipped_no_memory == 1
     assert ch.execute_calls == []
-    assert usage_fold.current_watermark() == T0.replace(tzinfo=UTC)
+    assert usage_fold.current_watermark() == (T0 - timedelta(seconds=1)).replace(tzinfo=UTC)
 
 
 async def test_cold_start_watermark_is_derived_not_epoch() -> None:
@@ -554,21 +554,21 @@ async def test_cold_start_watermark_is_derived_not_epoch() -> None:
     await run_pass(ch=ch)
     derive_sql, _ = ch.query_one_calls[1]
     assert "min(t.bumped) AS first_unfolded" in derive_sql
-    assert "t.recall_total > m.recall_count" in derive_sql
-    assert "(1 + t.evidence_total) > m.evidence_count" in derive_sql
+    assert "least(t.recall_total, 4294967295) > m.recall_count" in derive_sql
+    assert "(1 + least(t.evidence_total, 4294967294)) > m.evidence_count" in derive_sql
     # The totals query was bounded by the derived watermark (first_unfolded − 1 s).
     _, params = ch.query_all_calls[0]
     assert params["wm"] == (first_unfolded - timedelta(seconds=1)).replace(tzinfo=UTC)
 
 
-async def test_cold_start_with_nothing_unfolded_jumps_to_high_water() -> None:
+async def test_cold_start_with_nothing_unfolded_retains_high_water_second() -> None:
     ch = StubCH()
     ch.query_one_returns.append({"hwm": T0})
     ch.query_one_returns.append({"first_unfolded": None})
     result = await run_pass(ch=ch)
     assert result.candidates == 0
-    assert ch.query_all_calls == []
-    assert usage_fold.current_watermark() == T0.replace(tzinfo=UTC)
+    assert len(ch.query_all_calls) == 1
+    assert usage_fold.current_watermark() == (T0 - timedelta(seconds=1)).replace(tzinfo=UTC)
 
 
 async def test_watermark_advances_to_max_bumped_of_batch() -> None:
@@ -585,16 +585,15 @@ async def test_watermark_advances_to_max_bumped_of_batch() -> None:
     )
     result = await run_pass(ch=ch)
     assert result.folded == 2
-    assert usage_fold.current_watermark() == later.replace(tzinfo=UTC)
+    assert usage_fold.current_watermark() == (later - timedelta(seconds=1)).replace(tzinfo=UTC)
     # Filter AFTER aggregation: a row-level predicate undercounts unmerged parts.
     totals_sql = ch.query_all_calls[0][0]
     assert "HAVING bumped > {wm:DateTime}" in totals_sql
     assert "GROUP BY org, namespace, memory_id" in totals_sql
 
 
-async def test_full_batch_steps_watermark_back_and_keeps_going() -> None:
-    """At the batch cap the pass takes another batch (stepping the watermark
-    back 1 s to re-fold tied boundary rows) until a short batch drains it."""
+async def test_full_batch_keeps_the_boundary_and_pages_after_its_last_identity() -> None:
+    """A full batch resumes past its last identity while retaining the boundary."""
     later = T0 + timedelta(minutes=5)
     ch = StubCH()
     _seed_active_pass(
@@ -606,16 +605,18 @@ async def test_full_batch_steps_watermark_back_and_keeps_going() -> None:
         idents=[_ident_row(), _ident_row(memory_id=MID2, memory_key="k2")],
         hwm=later,
     )
-    # Second batch: the boundary row again (tie re-fold), short, so the pass ends.
-    ch.query_all_returns.append([_totals_row(memory_id=MID2, bumped=later)])
-    ch.query_all_returns.append([_ident_row(memory_id=MID2, memory_key="k2")])
+    # The next batch has no rows past the cursor.
+    ch.query_all_returns.append([])
     result = await run_pass(cfg=UsageFoldConfig(max_memories_per_pass=2), ch=ch)
-    assert result.batches == 2
-    assert result.candidates == 3
-    assert len(ch.query_all_calls) == 4
-    # Batch 2 started from later − 1 s, then the short batch pinned the watermark.
+    assert result.batches == 1
+    assert result.candidates == 2
+    assert len(ch.query_all_calls) == 3
+    assert ch.query_all_calls[2][1]["after"] == (
+        later.replace(tzinfo=UTC),
+        *usage_fold._cursor_identity(*_key(MID2)),
+    )
     assert ch.query_all_calls[2][1]["wm"] == (later - timedelta(seconds=1)).replace(tzinfo=UTC)
-    assert usage_fold.current_watermark() == later.replace(tzinfo=UTC)
+    assert usage_fold.current_watermark() == (later - timedelta(seconds=1)).replace(tzinfo=UTC)
 
 
 async def test_time_budget_ends_a_pass_between_batches() -> None:
@@ -862,3 +863,150 @@ async def test_the_identity_read_is_cut_by_size_too() -> None:
     for p in reads:
         for value in p.values():
             assert len(format_bind_value(value, top_level=False).encode()) <= ch_params.FIELD_BYTES
+
+
+@pytest.mark.parametrize("recall,evidence", [(2, 0), (0, 2)])
+async def test_late_usage_in_the_boundary_second_is_folded(recall: int, evidence: int) -> None:
+    """A second totals part becomes visible after a short batch, without a new bump."""
+    ch = StubCH()
+    _seed_active_pass(ch, totals=[_totals_row(recall=1)], idents=[_ident_row()])
+    await run_pass(ch=ch)
+
+    late = StubCH()
+    _seed_active_pass(
+        late,
+        totals=[_totals_row(recall=recall, evidence=evidence)],
+        idents=[_ident_row()],
+    )
+    result = await run_pass(ch=late)
+    assert result.folded == 1
+    [(_, params)] = _updates(late, "loom.memory")
+    assert params["rcls"] == [recall]
+    assert params["evs"] == [1 + evidence]
+    assert late.query_all_calls[0][1]["wm"] < T0.replace(tzinfo=UTC)
+    assert usage_fold.current_watermark() == (T0 - timedelta(seconds=1)).replace(tzinfo=UTC)
+
+
+async def test_a_later_stale_version_is_repaired_without_another_usage_event() -> None:
+    """Another replica inserts counters it read before the fold, behind the cursor."""
+    later = T0 + timedelta(hours=1)
+    ch = StubCH()
+    _seed_active_pass(
+        ch,
+        totals=[_totals_row(), _totals_row(memory_id=MID2, bumped=later)],
+        idents=[_ident_row(), _ident_row(memory_id=MID2, memory_key="k2")],
+        hwm=later,
+    )
+    await run_pass(ch=ch)
+
+    # The earlier memory's winning version lost its folded counts. The totals
+    # and their high water mark are unchanged; destination comparison finds it.
+    repair = StubCH()
+    _seed_active_pass(repair, totals=[_totals_row()], idents=[_ident_row()], hwm=later)
+    result = await run_pass(ch=repair)
+    assert result.folded == 1
+    assert repair.query_all_calls[0][1]["wm"] == (T0 - timedelta(seconds=1)).replace(tzinfo=UTC)
+    assert _updates(repair, "loom.memory")[0][1]["rcls"] == [3]
+
+
+async def test_more_than_a_batch_of_tied_totals_all_fold() -> None:
+    """Ties paginate by identity, so the boundary overlap cannot starve a memory."""
+    from tests.unit.ch_fake import RecordingCH
+
+    mids = [f"6b47c9b7-0000-0000-0000-{i:012d}" for i in range(1, 6)]
+
+    def _page(_sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        candidates = [
+            _totals_row(memory_id=mid)
+            for mid in mids
+            if T0.replace(tzinfo=UTC) > params["wm"]
+            and (T0.replace(tzinfo=UTC), *usage_fold._cursor_identity("clickhouse", "ns", mid))
+            > params.get("after", (datetime.min.replace(tzinfo=UTC), "", "", ""))
+        ]
+        return candidates[: params["lim"]]
+
+    ch = (
+        RecordingCH()
+        .on("max(bumped_at) AS hwm", [{"hwm": T0}])
+        .on("min(t.bumped) AS first_unfolded", [{"first_unfolded": T0}])
+        .on("system.mutations", [{"n": 0}])
+        .on("HAVING bumped >", _page)
+        .on(
+            "toString(m.memory_id) AS mid",
+            lambda _sql, p: [_ident_row(memory_id=mid, memory_key=mid) for mid in p["ids"]],
+        )
+    )
+    result = await run_pass(cfg=UsageFoldConfig(max_memories_per_pass=2), ch=ch)
+    assert result.folded == len(mids)
+    assert result.batches == 3
+    assert {str(row["memory_key"]) for row in ch.inserted(REINF)} == set(mids)
+
+
+async def test_a_time_limited_tie_scan_resumes_after_handover() -> None:
+    from server.core.datetimes import UNIX_EPOCH
+    from server.workers import pass_context
+
+    cfg = UsageFoldConfig(max_memories_per_pass=1, pass_time_budget_seconds=0)
+    ch = StubCH()
+    _seed_active_pass(ch, totals=[_totals_row()], idents=[_ident_row()])
+    ctx = pass_context.begin("usage_fold")
+    try:
+        await run_pass(cfg=cfg, ch=ch)
+        cursor = ctx.cursor
+        assert cursor
+    finally:
+        pass_context.clear()
+
+    usage_fold.reset_watermark()  # Another replica resumes the stored cursor.
+    next_ch = StubCH()
+    _seed_active_pass(
+        next_ch,
+        totals=[_totals_row(memory_id=MID2)],
+        idents=[_ident_row(memory_id=MID2)],
+    )
+    ctx = pass_context.begin("usage_fold", resume_cursor=cursor)
+    try:
+        await run_pass(ch=next_ch)
+        assert next_ch.query_all_calls[0][1]["after"] == (
+            T0.replace(tzinfo=UTC),
+            *usage_fold._cursor_identity(*_key(MID)),
+        )
+        assert ctx.cursor  # The supervisor persists a nonempty reset for a drained scan.
+        ctx.resume_cursor = ctx.cursor
+        assert usage_fold._resume_after(T0.replace(tzinfo=UTC)) == (UNIX_EPOCH, "", "", "")
+    finally:
+        pass_context.clear()
+
+
+@pytest.mark.parametrize(
+    "saved", ["broken", "null", "{}", "[1, 2, 3, 4]", '["bad", "o", "n", "m"]']
+)
+def test_invalid_resume_cursor_restarts_from_reconciliation(saved: str) -> None:
+    from server.core.datetimes import UNIX_EPOCH
+    from server.workers import pass_context
+
+    pass_context.begin("usage_fold", resume_cursor=saved)
+    try:
+        assert usage_fold._resume_after(T0.replace(tzinfo=UTC)) == (UNIX_EPOCH, "", "", "")
+    finally:
+        pass_context.clear()
+
+
+async def test_reconciliation_rewinds_a_saved_cursor_for_an_older_stale_head() -> None:
+    import json
+
+    from server.core.datetimes import UNIX_EPOCH
+    from server.workers import pass_context
+
+    later = T0 + timedelta(hours=1)
+    cursor = json.dumps((later.isoformat(), *usage_fold._cursor_identity(*_key(MID2))))
+    ch = StubCH()
+    _seed_active_pass(ch, totals=[_totals_row()], idents=[_ident_row()], hwm=later)
+    ctx = pass_context.begin("usage_fold", resume_cursor=cursor)
+    try:
+        result = await run_pass(ch=ch)
+        assert result.folded == 1
+        assert ch.query_all_calls[0][1]["after"] == (UNIX_EPOCH, "", "", "")
+        assert ctx.cursor
+    finally:
+        pass_context.clear()

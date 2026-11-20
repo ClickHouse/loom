@@ -10,8 +10,8 @@ from uuid import UUID
 import pytest
 
 from server.cli import cell_attach, cell_control
-from server.cli.cell_ch import Refused
 from server.core import pg
+from server.core.cell_ch import Refused
 from server.settings import settings
 from tests.unit.test_cell_attach import FakeConn, _args
 

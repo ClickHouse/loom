@@ -300,7 +300,7 @@ def stamp_intra_batch_supersessions(
 ) -> list[tuple[str, str]]:
     """Apply `intra_batch_supersessions` pairs to the rows about to be
     inserted: the earlier row of each pair takes status `superseded`, `superseded_by` =
-    the later row's id and `invalid_at` = the later row's `valid_at` (else `now`),
+    the later row's id and `invalid_at` = `now` on the record-time axis,
     mirrored on its own version's embedding row. A pair under one key is two versions
     of one row, which FINAL already settles: it is skipped (a guard; the bulk passes only
     the versions it keeps). Every memory row ends with
@@ -322,16 +322,14 @@ def stamp_intra_batch_supersessions(
             continue
         if str(older.get("status") or "active") == "superseded":
             continue
-        inv = newer.get("valid_at")
-        inv = inv if isinstance(inv, datetime) else now
         older["status"] = "superseded"
         older["superseded_by"] = str(newer.get("memory_id") or "")
-        older["invalid_at"] = inv
+        older["invalid_at"] = now
         e = emb_of.get((str(older.get("memory_key") or ""), older.get("version")))
         if e is not None:
             e["status"] = "superseded"
             if "invalid_at" in e:
-                e["invalid_at"] = inv
+                e["invalid_at"] = now
             if "superseded_by" in e:
                 e["superseded_by"] = str(newer.get("memory_id") or "")
         out.append((str(older.get("memory_id") or ""), str(newer.get("memory_id") or "")))

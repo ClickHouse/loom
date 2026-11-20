@@ -455,6 +455,13 @@
           "type": "integer",
           "description": "Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough."
         },
+        "ch_restore_batch_rows": {
+          "default": 1000,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Memory rows per ClickHouse namespace-restore insert (1–1000). Smaller batches leave more lease budget for slow Keeper calls."
+        },
         "ch_secure": {
           "anyOf": [
             {
@@ -497,6 +504,13 @@
           "default": "loom",
           "type": "string",
           "description": "User name the server connects to ClickHouse as."
+        },
+        "ch_write_fence_concurrency": {
+          "default": 16,
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Keeper holders a fenced writer acquires or releases at once (1–256), capped by a bounded HTTP connection pool."
         },
         "clickstack_database": {
           "default": "",

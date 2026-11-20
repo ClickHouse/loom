@@ -47,6 +47,7 @@ from server.memory.store.rows import (
     MemoryRow,
     _hydrate,
     identity_key,
+    memory_head_state,
     parse_memory_value,
 )
 from server.observability import pg_pipeline
@@ -190,7 +191,7 @@ def heads_unchanged(
     (`read[key]`, or None). By default the head may carry a value committed since (the
     newer version wins, as in ClickHouse) but not another protection (a delete, a pin, a
     lock, a status or a redaction since). `exact` (compare-and-set, a copy) also requires
-    the same version, in the same redaction state, as the row read; a write that read no
+    the same value and metadata as the row read, even when versions tie; a write that read no
     row is checked by protection alone. Raises HeadMoved."""
 
     def recheck(key: IdentityKey, head: dict[str, Any] | None) -> None:
@@ -206,15 +207,9 @@ def heads_unchanged(
 
 def unchanged(read: Any, head: Any) -> bool:
     """Whether `head` is still the very row `read` (`heads_unchanged(exact=True)`)."""
-    return protection(head) == protection(read) and _version_seen(head) == _version_seen(read)
-
-
-def _version_seen(row: Any) -> tuple[int, bool] | None:
-    """A row's version and whether it is redacted: a redaction scrubs in place, a
-    deleted head included."""
-    if row is None:
-        return None
-    return int(_field(row, "version")), _field(row, "redacted_at") is not None
+    read_row = _hydrate(read) if isinstance(read, dict) else read
+    head_row = _hydrate(head) if isinstance(head, dict) else head
+    return memory_head_state(read_row) == memory_head_state(head_row)
 
 
 class AdmissionContendedError(LoomServerError):

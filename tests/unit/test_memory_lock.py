@@ -149,6 +149,15 @@ def _stub_repo(monkeypatch: pytest.MonkeyPatch, row: MemoryRow | None) -> _CH:
 
     fake_key_locks(monkeypatch)  # an unpin and a pin hold the key's write lock
     ch = _CH()
+
+    async def head_versions(*args: Any, **kw: Any) -> list[dict[str, Any]]:
+        from server.memory.store import build_memory_version_row
+
+        if "PREWHERE" not in args[0] or "keys" not in (args[1] if len(args) > 1 else {}):
+            return []
+        return [] if row is None else [build_memory_version_row(row)]
+
+    monkeypatch.setattr(ch, "query_all", head_versions)
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)

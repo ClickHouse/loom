@@ -14,9 +14,9 @@ import httpx
 from server.cli import cell as cell_cli
 from server.cli import cell_attach_pg as apg
 from server.cli._ch import run_connected, writes
-from server.cli.cell_ch import Refused
 from server.cli.cell_control import Owner
 from server.core import cell, pg
+from server.core.cell_ch import Refused
 from server.router.directory import PLACE_MAX_S
 from server.settings import settings
 

@@ -62,7 +62,9 @@ def test_graded_counts_statement_counts_graded_runs_by_relied_on_key() -> None:
 class _Row:
     def __init__(self, key: str, status: str, conflict_with: list[str] | None = None) -> None:
         self.memory_key, self.status = key, status
+        self.org = "o"
         self.namespace = "n"
+        self.agent, self.user_id, self.session_id = "a", "-", "-"
         self.memory_id = f"id-{key}"
         self.conflict_with = conflict_with or []
         self.content_sha256 = "sha"
@@ -123,7 +125,15 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(
         memory_repo,
         "build_memory_version_row",
-        lambda row, **ov: {"memory_key": row.memory_key, **ov},
+        lambda row, **ov: {
+            "org": row.org,
+            "namespace": row.namespace,
+            "agent": row.agent,
+            "user_id": row.user_id,
+            "session_id": row.session_id,
+            "memory_key": row.memory_key,
+            **ov,
+        },
     )
     # The stub builder returns partial rows; the funnel's full-row check is
     # pinned in test_rmt_write_is_typed.

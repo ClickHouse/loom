@@ -14,6 +14,74 @@ from server.memory.domain.graph_quality import (
 )
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("the databases", "database"),
+        ("api responses", "api response"),
+        ("my self", "user"),
+        ("node.js", "node.js"),
+        ("foo.rs", "foo.rs"),
+        ("commit:abc123s", "commit:abc123s"),
+        ("error:econnresets", "error:econnresets"),
+        ("a/b/arrays", "a/b/array"),
+        ("the .the .net", "net"),
+        ("the-user", "the-user"),
+        ("server_apis", "server_apis"),
+        ("gate-00000000000000000000000000000000-0-0", "gate-00000000000000000000000000000000-0-0"),
+        ("001", "001"),
+        ("analysis", "analysis"),
+        ("a user", "user"),
+        ("the customer", "user"),
+        ("api:status", "api:status"),
+        ("the data breaches", "data breach"),
+    ],
+)
+def test_plain_ascii_entities_keep_rules_without_unicode_work(monkeypatch, raw, expected):
+    from server.memory.domain import graph_quality as owner
+
+    original = owner.unicodedata.normalize
+    calls = []
+
+    def counted(form, text):
+        calls.append((form, text))
+        return original(form, text)
+
+    monkeypatch.setattr(owner.unicodedata, "normalize", counted)
+    assert owner.canonical_entity_text(raw) == expected
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("İstanbul", "istanbul"),
+        ("cafe\u0301 clusters", "café cluster"),
+        ("ＴＯＫＹＯ", "tokyo"),
+        ("ﬁ API’s", "fi api"),
+        ("दिल्ली", "दिल्ली"),
+        ("api,\tservers", "api server"),
+        ("the  databases", "database"),
+        ("the\nnodes", "node"),
+        ("a\u00a0customer", "user"),
+        ("@@services!!!", "service"),
+    ],
+)
+def test_other_entity_surfaces_keep_full_normalization(monkeypatch, raw, expected):
+    from server.memory.domain import graph_quality as owner
+
+    original = owner.unicodedata.normalize
+    calls = []
+
+    def counted(form, text):
+        calls.append((form, text))
+        return original(form, text)
+
+    monkeypatch.setattr(owner.unicodedata, "normalize", counted)
+    assert owner.canonical_entity_text(raw) == expected
+    assert calls
+
+
 def test_canonical_entity_strips_articles_possessives_and_punctuation() -> None:
     entity = canonical_entity("The Vatican's Deli!")
 
