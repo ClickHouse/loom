@@ -84,7 +84,7 @@ def test_fixture_lease_paths_are_separate_from_source_and_each_other(monkeypatch
             try:
                 ddl = schema.tables[f"{name}._migration_lock"]
                 assert "AS source_schema._migration_lock" in ddl
-                assert f"KeeperMap('/{name}/_migration_lock')" in ddl
+                assert f"KeeperMap('/loom/tests/{name}/migration_lock')" in ddl
                 assert "PRIMARY KEY name" in ddl
                 assert all(
                     "ENGINE = Replicated" in schema.tables[f"{name}.{table}"]
