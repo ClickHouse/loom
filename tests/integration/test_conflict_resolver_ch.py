@@ -3725,14 +3725,15 @@ async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monk
     await asyncio.sleep(1.0)
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home2"))
     await asyncio.sleep(1.0)
-    real = lifecycle.insert_memory_versions
+    real = ch.insert
 
-    async def lands_then_fails(rows: Any, **kw: Any) -> None:
-        await real(rows, **kw)
-        raise RuntimeError("answer lost")
+    async def lands_then_fails(table: str, rows: Any, **kw: Any) -> None:
+        await real(table, rows, **kw)
+        if table == "loom.memory":
+            raise RuntimeError("answer lost")
 
     with monkeypatch.context() as m:
-        m.setattr(lifecycle, "insert_memory_versions", lands_then_fails)
+        m.setattr(ch, "insert", lands_then_fails)
         out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home2"))
     assert out.restored and out.from_status == "tombstoned"
     search = await ch.query_all(
@@ -3846,17 +3847,18 @@ async def test_an_undelete_whose_answer_and_reread_were_lost_finishes_on_retry(
     await asyncio.sleep(1.0)
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home3"))
     await asyncio.sleep(1.0)
-    real = lifecycle.insert_memory_versions
+    real = ch.insert
 
-    async def lands_then_fails(rows: Any, **kw: Any) -> None:
-        await real(rows, **kw)
-        raise RuntimeError("answer lost")
+    async def lands_then_fails(table: str, rows: Any, **kw: Any) -> None:
+        await real(table, rows, **kw)
+        if table == "loom.memory":
+            raise RuntimeError("answer lost")
 
     async def unread(*a: Any, **kw: Any) -> None:
         return None  # the re-read fails too: ClickHouse never settles a miss
 
     with monkeypatch.context() as m:
-        m.setattr(lifecycle, "insert_memory_versions", lands_then_fails)
+        m.setattr(ch, "insert", lands_then_fails)
         m.setattr(restore, "_restore_landed", unread)
         with pytest.raises(BackendUnavailableError) as lost:
             await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
@@ -3926,17 +3928,18 @@ async def test_a_high_row_restored_after_a_lost_undelete_answers_not_restored(
     await asyncio.sleep(1.0)
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="vault4"))
     await asyncio.sleep(1.0)
-    real = lifecycle.insert_memory_versions
+    real = ch.insert
 
-    async def lands_then_fails(rows: Any, **kw: Any) -> None:
-        await real(rows, **kw)
-        raise RuntimeError("answer lost")
+    async def lands_then_fails(table: str, rows: Any, **kw: Any) -> None:
+        await real(table, rows, **kw)
+        if table == "loom.memory":
+            raise RuntimeError("answer lost")
 
     async def unread(*a: Any, **kw: Any) -> None:
         return None  # the re-read fails too: ClickHouse never settles a miss
 
     with monkeypatch.context() as m:
-        m.setattr(lifecycle, "insert_memory_versions", lands_then_fails)
+        m.setattr(ch, "insert", lands_then_fails)
         m.setattr(restore, "_restore_landed", unread)
         with pytest.raises(BackendUnavailableError) as lost:
             await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="vault4"))

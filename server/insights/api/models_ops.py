@@ -41,8 +41,8 @@ class ProjectionFailureListInput(BaseModel):
     # `active` lists open failures, `resolved` repaired ones, `abandoned` those the
     # repair gave up on (the reason is in `error_message`), empty all of them.
     status: Literal["active", "resolved", "abandoned", ""] = "active"
-    # At most this many failures, newest first.
-    limit: int = 100
+    # At most this many failures, newest first; 1 to 1000.
+    limit: int = Field(default=100, ge=1, le=1000)
 
 
 class ProjectionFailureRow(BaseModel):
@@ -88,8 +88,8 @@ class ProjectionFailureRetryInput(BaseModel):
     namespace: str | None = None
     # Only retry failures of this projection; empty retries every projection.
     projection: str = ""
-    # At most this many active failures are retried, newest first.
-    limit: int = 50
+    # At most this many active failures are retried, newest first; 1 to 1000.
+    limit: int = Field(default=50, ge=1, le=1000)
 
 
 class ProjectionFailureRetryRow(BaseModel):

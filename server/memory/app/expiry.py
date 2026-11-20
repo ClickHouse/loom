@@ -29,16 +29,21 @@ counted under `locked_skipped`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.core import pg
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import caller_text
 from server.core.hashing import sha256_value as _sha
+from server.core.shielded import to_its_end
 from server.memory.app import webhooks
 from server.memory.domain import lock as _lock
 from server.memory.store.rows import IdentityKey, MemoryRow, identity_key
@@ -77,7 +82,8 @@ class ExpiryResult:
     demoted: int = 0
     anonymized: int = 0
     locked_skipped: int = 0
-    moved_skipped: int = 0  # candidates whose head moved on since ClickHouse's copy
+    # Candidates skipped by head checks or whole-batch admission refusal.
+    moved_skipped: int = 0
     dry_run: bool = False
     # Up to 20 handled rows: (identity key, the entry as_dict reports).
     sampled: list[tuple[IdentityKey, dict[str, Any]]] = field(default_factory=list)
@@ -102,8 +108,7 @@ class ExpiryResult:
 
 
 def _still_expired(head: MemoryRow, now: datetime) -> bool:
-    """Whether a head newer than the candidate read is still a live row past its expiry
-    (only its copy in ClickHouse lags), so the pass expires it now."""
+    """Whether the selected head is a live row past its expiry."""
     if head.tombstoned_at is not None or head.expires_at is None:
         return False
     return to_naive_utc(head.expires_at) <= now
@@ -200,10 +205,11 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
         )
-        # The candidates are ClickHouse's: each is expired from the head the authority
-        # holds, never from a stale copy; a head renewed or deleted since is left alone.
         now = naive_utc_now()
         current = await memory_repo.current_heads(rows, lambda _, h: _still_expired(h, now))
+        # Equal-version replacements can renew expiry too; every selected source must
+        # still qualify before planning. Admission checks changes after that selection.
+        current = [head for head in current if _still_expired(head, now)]
         res.moved_skipped = len(rows) - len(current)
         res.scanned += res.moved_skipped
         rows = current
@@ -257,8 +263,22 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
     if version_rows:
         ch = get_client()
+        committed_rows: list[dict[str, Any]] = []
+        committed_mirrors: list[tuple[str, Any, int]] = []
+
+        def committed(rows: list[dict[str, Any]], copied: list[tuple[str, Any, int]]) -> None:
+            committed_rows[:] = rows
+            committed_mirrors[:] = copied
+
+        cancelled = False
         try:
-            version_rows, mirrors = await _over_unmoved_heads(version_rows, mirrors, res, ch=ch)
+            version_rows, mirrors = await _over_unmoved_heads(
+                version_rows, mirrors, res, ch=ch, on_commit=committed
+            )
+            committed(version_rows, mirrors)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
             res.failures.append(f"insert: {caller_text(e)}")
@@ -268,23 +288,19 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 exc=e,
             )
             return res
-        # A demoted or anonymized row is a new version of a live key.
-        await webhooks.announce(
-            [
-                ("memory.tombstoned" if action == "tombstone" else "memory.revised", row)
-                for row, (action, _r, _v) in zip(version_rows, mirrors, strict=True)
-            ]
-        )
-        items, demoted = _mirror_items(mirrors, cfg=cfg)
-        try:
-            await apply_mirror(items, demoted, ch=ch)
-        except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
-            # The next pass never selects these keys: the repair replays the record.
-            log.warning(
-                "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e
-            )
-            res.failures.append(f"mirror:{len(items)} keys: {type(e).__name__}")
-            await _record_mirror_failures(items, e)
+        finally:
+            # Acknowledged rows still owe their projections when holder cleanup
+            # is cancelled. Refused or uncertain inserts leave these lists empty.
+            if committed_rows:
+                try:
+                    await to_its_end(
+                        _after_expiry(committed_rows, committed_mirrors, res, cfg=cfg, ch=ch),
+                        name="memory.expiry.followups",
+                    )
+                except asyncio.CancelledError:
+                    # Keep the original cancellation after all acknowledged work ends.
+                    if not cancelled:
+                        raise
     outcome = res.as_dict()
     outcome.pop("sample", None)
     get_registry().record_success(
@@ -293,6 +309,30 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         outcome=outcome,
     )
     return res
+
+
+async def _after_expiry(
+    rows: list[dict[str, Any]],
+    mirrors: list[tuple[str, Any, int]],
+    res: ExpiryResult,
+    *,
+    cfg: ExpiryConfig,
+    ch: Any,
+) -> None:
+    await webhooks.announce(
+        [
+            ("memory.tombstoned" if action == "tombstone" else "memory.revised", row)
+            for row, (action, _r, _v) in zip(rows, mirrors, strict=True)
+        ]
+    )
+    items, demoted = _mirror_items(mirrors, cfg=cfg)
+    try:
+        await apply_mirror(items, demoted, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
+        # The next pass never selects these keys: the repair replays the record.
+        log.warning("memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e)
+        res.failures.append(f"mirror:{len(items)} keys: {type(e).__name__}")
+        await _record_mirror_failures(items, e)
 
 
 def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
@@ -308,9 +348,10 @@ async def _over_unmoved_heads(
     res: ExpiryResult,
     *,
     ch: Any,
+    on_commit: Callable[[list[dict[str, Any]], list[tuple[str, Any, int]]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, Any, int]]]:
-    """The rows written over the heads the pass read, and those that landed. Under the
-    Postgres authority a head that moved since refuses the batch: the heads are read
+    """The rows written over the heads the pass read, and those that landed. A
+    head that moved since refuses the batch: the heads are read
     again and the batch goes once more without the moved ones; refused again (a head
     moved meanwhile, or redacted in place), it is left whole. What is left the next pass
     sees (`moved_skipped`)."""
@@ -318,11 +359,18 @@ async def _over_unmoved_heads(
     from server.memory.store import pg_memory
 
     reads = [row for _, row, _ in mirrors]
+
+    def committed() -> None:
+        if on_commit is not None:
+            on_commit(version_rows, mirrors)
+
     try:
-        await memory_repo.insert_versions_over_heads(version_rows, reads, ch=ch)
+        await memory_repo.insert_versions_over_heads(
+            version_rows, reads, ch=ch, exact=True, on_commit=committed
+        )
         return version_rows, mirrors
     except pg_memory.AdmissionContendedError:
-        heads = await memory_repo.authority_heads(reads)
+        heads = await _retry_heads(reads, ch=ch)
     kept = {
         i
         for i, (read, head) in enumerate(zip(reads, heads, strict=True))
@@ -335,12 +383,26 @@ async def _over_unmoved_heads(
         return [], []
     try:
         await memory_repo.insert_versions_over_heads(
-            version_rows, [row for _, row, _ in mirrors], ch=ch
+            version_rows, [row for _, row, _ in mirrors], ch=ch, exact=True, on_commit=committed
         )
     except pg_memory.AdmissionContendedError:
         _leave(res, mirrors)
         return [], []
     return version_rows, mirrors
+
+
+async def _retry_heads(reads: list[MemoryRow], *, ch: Any) -> list[MemoryRow | None]:
+    import server.memory.store as memory_repo
+
+    if pg.enabled():
+        return await memory_repo.authority_heads(reads)
+    # This read filters a refused batch. Admission under the common writer fence
+    # still checks every retained head at the next insert.
+    with sequential_reads():
+        heads = await memory_repo.memory_rows_by_identity_keys(
+            [identity_key(row) for row in reads], ch=ch
+        )
+    return [heads.get(identity_key(row)) for row in reads]
 
 
 def _leave(res: ExpiryResult, mirrors: list[tuple[str, Any, int]]) -> None:

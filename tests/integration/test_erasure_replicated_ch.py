@@ -18,6 +18,7 @@ USER = "u1"
 # The tables the steps below read and mutate: a step that reads one outside this list
 # fails here with an unknown table.
 _TABLES = (
+    "carry_acks",
     "memory",
     "memory_embeddings",
     "memory_chunks",
@@ -73,6 +74,11 @@ def db(raw: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
             parameters={"db": name},
         ).result_rows
         assert engines == [(True,)]
+        # Memory clears fence writes through the same database's lease table.
+        raw.command(
+            f"CREATE TABLE {name}._migration_lock AS {source}._migration_lock "
+            f"ENGINE = KeeperMap('/loom/tests/{name}/migration_lock') PRIMARY KEY name"
+        )
         monkeypatch.setattr(settings, "ch_database", name)
         yield name
     finally:

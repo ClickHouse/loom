@@ -8,6 +8,7 @@ import asyncio
 import functools
 import logging
 from collections import Counter
+from collections.abc import Callable
 from contextlib import nullcontext
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
@@ -72,6 +73,7 @@ from server.memory.domain.memory_types import is_definition, is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import identity_key, pg_memory, pg_publish
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import (
     Admission,
     AdmissionContendedError,
@@ -513,7 +515,7 @@ def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes, the memory rows and their embedding rows. Under
     Postgres the batch is committed and published through the publication batch, then
-    announced. On ClickHouse the two are gathered, each a committed insert, and once the
+    announced. On ClickHouse the memory rows precede the embeddings, and once the
     memory rows are in the batch is announced even when the embedding insert or the tail
     after it fails: a retry of the same values writes nothing and would announce
     nothing."""
@@ -571,10 +573,19 @@ async def _land_batch(
         finally:  # committed: a failed follow-up must not also skip the announcement
             await _fence_and_announce(state, ch=ch)
         return
-    embedding_error = await _insert_batch(state, ch)
+    sent = False
+    inserted = False
+
+    def mark_sent() -> None:
+        nonlocal sent
+        sent = True
+
+    def mark_inserted() -> None:
+        nonlocal inserted
+        inserted = True
+
     try:
-        if embedding_error is not None:
-            raise embedding_error
+        await _insert_batch(state, ch, on_send=mark_sent, on_inserted=mark_inserted)
         if state.memory_rows:
             # A memory.delete_version that landed after the fence read: the rows go above it.
             first = state.memory_rows[0]
@@ -588,26 +599,29 @@ async def _land_batch(
         after_write.index_late_rows(state.embedding_rows, ch=ch)
         await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     finally:  # the rows are in: a failed lift or retire must not also skip the fence
-        await _fence_and_announce(state, ch=ch)
+        if inserted:
+            await finish_followups(
+                _fence_and_announce(state, ch=ch), name="memory.bulk_set.followups"
+            )
+        elif sent and (fences := _high_winners(state)):
+            await fence_high(fences, ch=ch)
 
 
-async def _insert_batch(state: _BulkWriteState, ch: Any) -> BaseException | None:
+async def _insert_batch(
+    state: _BulkWriteState,
+    ch: Any,
+    *,
+    on_send: Callable[[], None] | None = None,
+    on_inserted: Callable[[], None] | None = None,
+) -> None:
     """On the ClickHouse authority: the batch's memory rows and embedding rows, written
-    beside each other. Raises what refused the memory rows; returns what refused the
-    embedding rows, raised once the batch is announced."""
+    in that order. The caller announces acknowledged rows even if an insert raises."""
     import server.memory.store as memory_repo
 
-    # The two core writes are independent rows of two tables and each is a ~260 ms committed
-    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
-    memory_done, embedding_done = await asyncio.gather(
-        # Full version rows (revision or first version), so the typed insert checks them.
-        memory_repo.insert_memory_versions(state.memory_rows, ch=ch),
-        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
-        return_exceptions=True,
+    await memory_repo.insert_memory_versions(
+        state.memory_rows, ch=ch, on_send=on_send, on_inserted=on_inserted
     )
-    if isinstance(memory_done, BaseException):
-        raise memory_done
-    return embedding_done if isinstance(embedding_done, BaseException) else None
+    await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
 
 
 async def _fence_and_announce(state: _BulkWriteState, *, ch: Any) -> None:
