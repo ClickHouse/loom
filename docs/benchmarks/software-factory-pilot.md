@@ -12,21 +12,33 @@ calls, index ingestion or paid benchmark. No live result is reported here.
 ## Implementation and tasks
 
 The [factory implementation](https://github.com/ClickHouse/loom/pull/1050) supplies
-offline replay, historical qualification, attempt accounting and paired analysis.
-A qualified live runner and deployment-specific evidence remain prerequisites.
+offline replay, a bounded controller, injected provider/SDK bindings, authored
+host behavioral checks, attempt accounting and paired analysis. A qualified
+live driver and deployment-specific evidence remain prerequisites.
 The example's offline replay fixtures are separate from the historical pilot.
 
 Use the three historical cases in the implementation's
 [`historical-candidates.json`](https://github.com/ClickHouse/loom/blob/feat/flask-software-factory/examples/software_factory/historical-candidates.json):
 `pallets__flask-4045`, `pallets__flask-4575` and `pallets__flask-4935`.
-Each task pins its exact public source base, dependency image digest, visible
-selectors and evaluator-private hidden selectors. Retain all failures. Do not
-replace tasks or choose the best attempt after observing results.
+Each task pins its exact public source base and dependency image digest. The
+imported official test selectors are diagnostic inputs: candidate Python controls
+its own test process, exit status and reports, so those reports cannot authorize
+a passing final grade. Retain all failures. Do not replace tasks or choose the
+best attempt after observing results.
 
-Before running, independently verify visible-base pass, hidden-base fail and
-reference pass controls on every exact dependency image. Missing selectors,
-collection errors and skipped tests invalidate qualification. Imported controls
-and image identity alone do not qualify a different runner or grading path.
+The proposed objective grader uses narrow authored public-behavior probes:
+dotted blueprint names, redirect method/delegation/override, and nested
+subdomains. The sandbox returns bounded primitive observations; evaluator-owned
+assertions and the final verdict stay outside candidate mounts. This coverage is
+not equivalent to the imported official selectors. The final protocol must
+explicitly choose this coverage and freeze its probe seed, bridge and assertions.
+
+Before running, independently verify passing visible neighbors on the base, a
+failing target check on the base, and passing target/neighbors with the reference
+on every exact image. Candidate syntax/import crashes or malformed output remain
+failed checks so revision can continue; infrastructure, state or cleanup faults
+invalidate grading. Recheck forgery, source-write and output-limit controls.
+Imported receipts and image identity alone do not qualify another grading path.
 
 ## Arms and schedule
 
@@ -116,10 +128,10 @@ benchmark intent or of a PR does not replace that approval.
 
 1. Pin the merged server/SDK integration and factory controller commits. Check the
    actual integration and its required CI evidence separately.
-2. Freeze all public task inputs, hidden grader selectors and patches, source
-   allowlists, tool schemas, prompts, runtime locks, controller and trusted worker
-   hashes. Keep hidden tests, reference fixes and evaluator credentials outside
-   agent access.
+2. Freeze public task inputs, the host probe seed and assertions, observation
+   bridge, source allowlists, tool schemas, prompts, runtime locks, controller and
+   trusted worker hashes. Keep evaluator assertions, reference fixes and
+   credentials outside agent access. Official test reports remain diagnostic.
 3. Qualify a source-only checkout per attempt, with no Git history, future
    objects, sibling mounts, network or credential access. Candidate code runs in
    an isolated focused grader. Verify traversal, symlink, import, subprocess and
