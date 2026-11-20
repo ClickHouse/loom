@@ -176,13 +176,13 @@ async def test_a_retirement_a_later_write_overtook_is_not_reported(ch, org, monk
     await M.insert_memory_versions([row], ch=ch)
     insert = lifecycle.insert_memory_versions
 
-    async def revision_first(rows: list[dict[str, Any]], *, ch: Any) -> None:
+    async def revision_first(rows: list[dict[str, Any]], *, ch: Any, **insert_options: Any) -> None:
         head = await M.get_by_id(
             row["memory_id"], org=org, ch=ch, scope=WHOLE_NAMESPACE, namespace=NS
         )
         revision = M.build_memory_version_row(head, version=M.next_version(), lock_mode="no_delete")
         await insert([revision], ch=ch)
-        await insert(rows, ch=ch)
+        await insert(rows, ch=ch, **insert_options)
 
     monkeypatch.setattr(lifecycle, "insert_memory_versions", revision_first)
     tracker = RetirementTracker()
@@ -213,9 +213,9 @@ async def test_a_key_set_again_under_a_new_id_overtakes_the_retirement(
     await M.insert_memory_versions([row], ch=ch)
     insert = lifecycle.insert_memory_versions
 
-    async def reset_first(rows: list[dict[str, Any]], *, ch: Any) -> None:
+    async def reset_first(rows: list[dict[str, Any]], *, ch: Any, **insert_options: Any) -> None:
         await insert([_row(org, "s2", "User lives in Lisbon", datetime(2023, 6, 1))], ch=ch)
-        await insert(rows, ch=ch)
+        await insert(rows, ch=ch, **insert_options)
 
     monkeypatch.setattr(lifecycle, "insert_memory_versions", reset_first)
     tracker = RetirementTracker()

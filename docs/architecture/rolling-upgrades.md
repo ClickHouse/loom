@@ -6,6 +6,11 @@ a time. For the length of a rollout, and again during a rollback, the previous b
 schema. These rules keep that safe. The operator procedure is in
 [upgrades](../operations/upgrades.md).
 
+An insertion fence cannot coordinate a writer that does not take it. The
+[memory writer fence cutover](../operations/upgrades.md#memory-writer-fence-cutover)
+drains older serving and background writers and settles their bounded sends before
+the source-head guarantee applies.
+
 Retirement of an N-1 participant also requires its authority-store work to settle.
 Under Postgres, a client without participant session tags is recertified only
 after all generic `loom` authority backends are absent, including idle pools.

@@ -717,6 +717,8 @@ async def test_a_rollback_announces_revisions_revivals_and_tombstones(
         return historical
 
     async def noop(*a: Any, **k: Any) -> int:
+        if on_inserted := k.get("on_inserted"):
+            on_inserted()
         return 0
 
     async def heads_now(keys: list[Any], **k: Any) -> dict[Any, MemoryRow]:
@@ -766,6 +768,8 @@ async def test_a_rollback_names_its_caller_not_the_historical_writer(
         return historical
 
     async def noop(*a: Any, **k: Any) -> int:
+        if on_inserted := k.get("on_inserted"):
+            on_inserted()
         return 0
 
     async def live_heads(keys: list[Any], **k: Any) -> dict[Any, MemoryRow]:
@@ -810,6 +814,8 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
 
     async def insert(built: list[dict[str, Any]], **k: Any) -> None:
         written.extend(built)
+        if on_inserted := k.get("on_inserted"):
+            on_inserted()
 
     async def mirror(*a: Any, **k: Any) -> int:
         return 0
