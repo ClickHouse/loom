@@ -264,7 +264,7 @@ def transports(repository, monkeypatch):
 
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
-    monkeypatch.setattr(bearer, "verify_token", verify)
+    monkeypatch.setattr(bearer, "authenticate_token", AsyncMock(side_effect=verify))
     monkeypatch.setattr(
         "server.auth.personal_namespace.ensure_personal_namespace_cached", AsyncMock()
     )
@@ -421,3 +421,22 @@ async def test_repository_read_authority_does_not_widen_member_writes(
         with pytest.raises(PermissionError):
             await authorize_op(auth, OPERATIONS_BY_NAME[op_name], org=ORG, namespace=NS)
         assert not admitted_as_code_member()
+
+
+@pytest.mark.parametrize("level", ["standard", "restricted"])
+@pytest.mark.parametrize("unavailable", [False, True])
+async def test_provisioning_precedes_repository_authority(
+    repository, monkeypatch, level, unavailable
+):
+    from server.auth import login, scim
+    from server.core.errors import BackendUnavailableError
+
+    repository[(ORG, NS)] = replace(repository[(ORG, NS)], classification=level)
+    check = AsyncMock(return_value=True)
+    if unavailable:
+        check.side_effect = login.SignInUnavailable("provisioning is unavailable")
+    monkeypatch.setattr(scim, "refuses_auth", check)
+    refusal = BackendUnavailableError if unavailable else authz.ActedForRefused
+    with pytest.raises(refusal):
+        await authz.check_authorized(_admin(), Role.VIEWER, ORG, NS)
+    check.assert_awaited_once()
