@@ -21,8 +21,11 @@ history in Loom as the SDK's ``Session``::
 
 The tools are ``loom.tools.AgentTools`` (the same names, schemas and results
 as ``agent.tools()``), bound to one user, session or run. Identity and
-isolation come from the Loom agent. Install with
-``pip install 'clickhouse-loom[openai-agents]'``.
+isolation come from the Loom agent. From the root of the matching Loom
+checkout, install with ``pip install './sdk/python[openai-agents]'``.
+Native sessions require a server from the same checkout, using the Postgres
+memory authority and advertising ``memory.append_batch``. See the native
+session guide in ``docs/features/integrations/frameworks.md``.
 """
 
 from __future__ import annotations
