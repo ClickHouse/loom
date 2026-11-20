@@ -1,20 +1,21 @@
 # LLM and embedding architecture
 
 Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into
-vectors, and an LLM client (`server/llm/`) that completes prompts. Each is chosen once
-per process from settings. Each falls back to a deterministic fake when its key is
-missing, so a keyless install boots and answers. Operator setup is in
+vectors, and an LLM client (`server/llm/`) that completes prompts. Their active
+configuration comes from server settings. API-key providers can fall back to a
+deterministic fake when their key is missing; native Bedrock uses deployment AWS
+credentials and propagates credential failures. Operator setup is in
 [deployment](../operations/deployment.md); every setting is in the
 [configuration reference](../reference/configuration.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                   | Non-goals                                                                           |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Every correctness gate on the write path works without an LLM.                          | A general LLM gateway. Loom calls models for its own features only.                 |
-| A keyless install boots and says clearly that it runs on fakes.                         | Provider-agnostic prompts. Prompts are tuned to a model and re-benched on a change. |
-| Swapping the embedder does not silently miscalibrate recall.                            | Mixing vector spaces. Vectors from different models are never compared.             |
-| Every provider call is attributed to the op or worker pass that made it, with its cost. | Runtime prompt management. Prompts are code.                                        |
+| Goals                                                                                       | Non-goals                                                                           |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Every correctness gate on the write path works without an LLM.                              | A general LLM gateway. Loom calls models for its own features only.                 |
+| A keyless install boots and says clearly that it runs on fakes.                             | Provider-agnostic prompts. Prompts are tuned to a model and re-benched on a change. |
+| Swapping the embedder does not silently miscalibrate recall.                                | Mixing vector spaces. Vectors from different models are never compared.             |
+| Every provider call is attributed to its op or worker pass, with usage and cost when known. | Runtime prompt management. Prompts are code.                                        |
 
 ## Embedders
 
@@ -25,21 +26,25 @@ once per process:
 
 1. A label resolves first. `prefix:<dim>:<model>` and `ctx[<variant>]:<model>` are views
    over the served embedder and cannot be the served model.
-2. `LOOM_EMBEDDING_PROVIDER` (`fake`, `local`, `openai`, `gemini`) when set; any other
-   value raises.
+2. `LOOM_EMBEDDING_PROVIDER` (`fake`, `local`, `openai`, `gemini`, `compatible`,
+   `bedrock`) when set; any other value raises.
 3. Otherwise inferred from `LOOM_EMBEDDING_MODEL`: `fake-ngram*` is fake, `local` or
-   `local:*` is local, `text-embedding-*` is OpenAI, `gemini*` is Gemini. Any other name
-   raises `unknown embedding model`.
+   `local:*` is local, `text-embedding-*` is OpenAI, `gemini*` is Gemini and `bedrock:*`
+   is Bedrock. Any other name raises `unknown embedding model`; a compatible endpoint
+   needs an explicit provider.
 
-| Provider | Module                       | Model names                                                                | Needs                                    | Notes                                                                     |
-| -------- | ---------------------------- | -------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------- |
-| `fake`   | `server/embedding/fake.py`   | `fake-ngram-<dim>`                                                         | nothing                                  | Hashed character trigrams, L2-normalised. Deterministic; the dev default. |
-| `local`  | `server/embedding/local.py`  | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`) | CPU ONNX; 384, 768 and 384 dimensions. No network.                        |
-| `openai` | `server/embedding/openai.py` | `text-embedding-3-small`, `text-embedding-3-large`                         | `OPENAI_API_KEY`                         | Requests `dimensions=LOOM_EMBEDDING_DIM`.                                 |
-| `gemini` | `server/embedding/gemini.py` | `gemini-embedding-001`                                                     | `GEMINI_API_KEY` or `GOOGLE_API_KEY`     | Requests `outputDimensionality=LOOM_EMBEDDING_DIM` (up to 3072).          |
+| Provider     | Module                           | Model names                                                                | Needs                                                                                           | Notes                                                                                                                    |
+| ------------ | -------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `fake`       | `server/embedding/fake.py`       | `fake-ngram-<dim>`                                                         | nothing                                                                                         | Hashed character trigrams, L2-normalised. Deterministic; the dev default.                                                |
+| `local`      | `server/embedding/local.py`      | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`)                                                        | CPU ONNX; 384, 768 and 384 dimensions. No network.                                                                       |
+| `openai`     | `server/embedding/openai.py`     | `text-embedding-3-small`, `text-embedding-3-large`                         | `OPENAI_API_KEY`                                                                                | Requests `dimensions=LOOM_EMBEDDING_DIM`.                                                                                |
+| `gemini`     | `server/embedding/gemini.py`     | `gemini-embedding-001`                                                     | `GEMINI_API_KEY` or `GOOGLE_API_KEY`                                                            | Requests `outputDimensionality=LOOM_EMBEDDING_DIM` (up to 3072).                                                         |
+| `compatible` | `server/embedding/compatible.py` | the endpoint's embedding model ID                                          | `LOOM_EMBEDDING_BASE_URL`, `LOOM_EMBEDDING_API_KEY` or configured workload-token authentication | [OpenAI-compatible embeddings](../getting-started/models-and-keys.md#claude-for-the-llm); optional dimensions parameter. |
+| `bedrock`    | `server/embedding/bedrock.py`    | Cohere Embed v4 model or inference-profile ID                              | deployment AWS credentials                                                                      | [Native Bedrock](#native-bedrock); no API-key fallback.                                                                  |
 
-**Width.** The served width is `LOOM_EMBEDDING_DIM` (default 3072). OpenAI and Gemini are
-asked for that width; choose a model that supports it. Local models emit their native width. Boot probes the real
+**Width.** The served width is `LOOM_EMBEDDING_DIM` (default 3072, or 1536 for native
+Bedrock when unset). OpenAI and Gemini are asked for that width; choose a model that
+supports it. Local models emit their native width. Boot probes the real
 width (`probe_embedding_dim`); a mismatch shows as `embedding_dim_mismatch` on
 `/v1/health`.
 
@@ -324,7 +329,9 @@ them. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
   (transport error, retryable status, timeout) or a rejected request (400, 413, 422);
   401, 403 and 404 propagate. Each hand-over is logged and counted (`loom.llm.fallback`),
   and the result names the model that answered. Fallbacks do not chain.
-- **Missing key.** The client is the fake (`_build_llm_client`), logged at WARNING.
+- **Missing API key.** An OpenAI or Anthropic client without its key uses the fake
+  (`_build_llm_client`), logged at WARNING, unless configured workload-token
+  authentication supplies credentials. Native Bedrock credential failures propagate instead.
 - **One identity refused.** With identity headers set, an answer from a gateway host that
   `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing the call's identity or
   asking it to wait ([identity headers](#identity-headers)): never retried, never handed to the

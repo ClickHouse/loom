@@ -43,26 +43,31 @@ keyless providers a degraded-health condition.
 
 ## Choose a setup
 
-| What your organization has                     | Loom LLM                  | Embeddings                                             |
-| ---------------------------------------------- | ------------------------- | ------------------------------------------------------ |
-| OpenAI API access                              | An available OpenAI model | OpenAI; one API key can serve both roles.              |
-| Anthropic plus an approved embedding provider  | An available Claude model | OpenAI, Gemini or a compatible endpoint, with its key. |
-| Anthropic API access only                      | An available Claude model | Add an embedding provider and its API key.             |
-| No provider key; a model server on the machine | A local model (`local`)   | The `local` embedder the image carries.                |
+| What your organization has                     | Loom LLM                                       | Embeddings                                                       |
+| ---------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
+| OpenAI API access                              | An available OpenAI model                      | OpenAI; one API key can serve both roles.                        |
+| Anthropic plus an approved embedding provider  | An available Claude model                      | OpenAI, Gemini or a compatible endpoint, with its key.           |
+| Anthropic API access only                      | An available Claude model                      | Add an embedding provider and its API key.                       |
+| AWS role with Bedrock model access             | A permitted Bedrock model or inference profile | Cohere Embed v4 through Bedrock, or another configured embedder. |
+| No provider key; a model server on the machine | A local model (`local`)                        | The `local` embedder the image carries.                          |
 
 **One OpenAI API key is enough for both roles; an Anthropic key is not required.**
-In Models & keys, choose one main LLM and leave per-job overrides blank. All enabled
-LLM jobs use that model, including verification and judging. Advanced overrides are
-optional and require another provider's key only when you explicitly select one.
+In Models & keys, choose one main LLM and leave the displayed per-job overrides blank
+to use it for those jobs, including capture verification and retrieval judging.
+Background settings such as the conflict resolver are configured separately; use the
+[per-job recipe](#keep-every-llm-job-on-your-chosen-provider) to route them explicitly.
 
-Choose OpenAI, Google Gemini or an **OpenAI-compatible embedding endpoint**. OpenAI embeddings use
+Choose OpenAI, Google Gemini, [Bedrock](#amazon-bedrock) or an
+**OpenAI-compatible embedding endpoint**. OpenAI embeddings use
 an embedding model such as `text-embedding-3-large`, not a GPT chat model.
 Claude can handle Loom's LLM jobs, but requires a separate embedding provider and key.
 Anthropic does not provide its own embedding model; Voyage is not a built-in Loom provider.
 [Anthropic's embedding guidance](https://platform.claude.com/docs/en/build-with-claude/embeddings)
 
-Loom's internal model jobs use provider API keys, not coding-agent CLI logins or
-subscription credentials. Your external agent's choice of provider is independent.
+Loom's internal model jobs can authenticate with provider API keys, gateway workload
+tokens or deployment AWS credentials. Local models can run without provider credentials.
+Coding-agent CLI logins and subscriptions do not configure Loom's internal providers;
+your external agent's choice of provider is independent.
 
 ## Set the server configuration
 
@@ -70,7 +75,8 @@ subscription credentials. Your external agent's choice of provider is independen
 
 As a platform administrator, open **Settings → Models & keys** (also available during Setup).
 Choose your LLM and embedding provider, enter their model IDs and API keys, then click
-**Test & apply**. Leave per-job overrides blank to use one LLM for every enabled job.
+**Test & apply**. Blank per-job overrides apply the main LLM to the displayed jobs;
+the [conflict resolver](#keep-every-llm-job-on-your-chosen-provider) keeps its separate setting.
 Saved dashboard settings override the environment and are encrypted in ClickHouse.
 **No Docker restart or Compose command is needed.** Key and LLM updates apply live;
 embedding changes start the rebuild described below. **Use environment
@@ -172,6 +178,37 @@ Changing the endpoint, model or width requires rebuilding existing embeddings.
 If your organization currently has only Anthropic API access, obtain access to an
 embedding provider before enabling semantic search.
 
+### Amazon Bedrock
+
+Native Amazon Bedrock uses the server's AWS SDK credential chain, including deployment
+roles, and needs permission to invoke the selected models or inference profiles. The
+server image includes the AWS SDK; a source install needs its `aws` extra. Activate the
+provider only after every server and worker supports it. AWS credentials stay in the
+deployment; they are not entered as model-provider API keys in Models & keys.
+
+```dotenv
+LOOM_LLM_PROVIDER=bedrock
+LOOM_LLM_MODEL=<model-or-inference-profile-id>
+LOOM_BEDROCK_REGION=us-east-1
+LOOM_REQUIRE_REAL_PROVIDERS=true
+```
+
+Replace the model ID and region with ones your deployment can invoke; there is no
+implicit Bedrock model. Keep the current embedder, or configure Cohere Embed v4
+separately, using an available model or inference profile, for example:
+
+```dotenv
+LOOM_EMBEDDING_PROVIDER=bedrock
+LOOM_EMBEDDING_MODEL=us.cohere.embed-v4:0
+LOOM_EMBEDDING_DIM=1536
+```
+
+Changing the embedding provider requires rebuilding existing vectors. Missing or expired
+AWS credentials fail rather than selecting a fake provider. Native Bedrock cannot be
+used when an inference gateway is required. See [native Bedrock](../architecture/llm-architecture.md#native-bedrock)
+for IAM resources, regional availability, supported dimensions and request limits, and
+[per-job settings](#keep-every-llm-job-on-your-chosen-provider) for model overrides.
+
 ### Keep every LLM job on your chosen provider
 
 Loom supports different models for different jobs, but you do not need accounts with
@@ -180,6 +217,7 @@ normally provider-specific jobs use your selected model:
 
 ```dotenv
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=${LOOM_LLM_MODEL}
+LOOM_CONFLICT_RESOLVER_MODEL=${LOOM_LLM_MODEL}
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -190,6 +228,10 @@ Compose and Loom's dotenv loader expand the verifier's model from the earlier en
 The empty values above inherit the main LLM. This keeps the capture verifier enabled;
 an empty verifier list would disable it. Remove any other cross-provider model overrides
 you added previously, including fallback, synthesis and reranking models.
+
+The conflict resolver can retire superseded memories. Validate a replacement judge
+against your own conflicts before automatic resolution; set
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false` while evaluating it.
 
 These settings matter: some shipped advanced defaults name Claude or OpenAI models
 explicitly, and an override with no provider key can fall back to the fake client.
@@ -307,16 +349,23 @@ setting names the same model.
 
 ### Through an inference gateway
 
-A gateway that speaks the OpenAI or Anthropic API in front of the providers
-(for budgets, cost attribution or one key for many services) takes Loom's
-calls once its API roots point there; the model names stay what the gateway
-serves:
+An OpenAI-compatible proxy or inference gateway can serve Loom's chat-completions
+requests. Select the provider and a model the gateway serves, as well as its API root
+and key; a key alone does not change an explicitly configured fake provider:
 
-```bash
-LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # chat and embeddings
+```dotenv
+LOOM_LLM_PROVIDER=openai
+LOOM_LLM_MODEL=<gateway-model-id>
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1   # chat and OpenAI embeddings
 LOOM_ANTHROPIC_BASE_URL=https://gateway.example   # Messages: <root>/v1/messages
 OPENAI_API_KEY=<the key the gateway issued for Loom>
 ```
+
+For an Anthropic-format gateway, select `LOOM_LLM_PROVIDER=anthropic`, its model ID
+and `ANTHROPIC_API_KEY` instead. Configure embeddings separately using a supported
+provider and its model; a chat endpoint does not imply embedding support. Check
+[per-job overrides](#keep-every-llm-job-on-your-chosen-provider) too. Both API roots
+above must use an allowed host when the gateway is required, even for an unused provider.
 
 Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
 scheme gateways take. With a gateway key, require the gateway, so a wrong root can
@@ -651,3 +700,25 @@ If dimensions change, check the existing schema's vector constraints before appl
 the new configuration. Preserve your data and follow
 [maintenance](../operations/maintenance.md#re-embed-and-re-extract) and
 [code-index operations](../operations/code-index-operations.md).
+
+### Diagnose silent model or provider failures
+
+Read the response body, not just the HTTP status:
+
+```bash
+curl -sS "$LOOM_BASE_URL/v1/health" | jq '{status, fake_llm, fake_embedding, providers_degraded, providers, problems}'
+```
+
+The HTTP status checks ClickHouse availability; it does not prove model access.
+`fake_llm` and `fake_embedding` expose configured fakes or missing-key fallbacks.
+They can both be false while a real provider fails: inspect `providers_degraded`, each
+provider's `failing` and `last_error`, and the fixes in `problems`.
+
+Provider outcomes are passive, process-local observations of actual calls; polling
+health makes no model request. No recorded outcome is not proof of working inference.
+A later recorded success clears that provider's failure. The `compatible` embedding
+provider does not populate `providers`, so `providers_degraded: false` does not validate
+that endpoint. Check its request errors and exercise retrieval. After checking configuration,
+use the [end-to-end smoke](../operations/monitoring.md#smoke-test) and try a generated
+answer to exercise both providers. The smoke makes model calls and can incur charges.
+For a stored memory missing from search, also check the embedding backlog described there.
