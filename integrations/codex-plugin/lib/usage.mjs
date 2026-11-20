@@ -29,6 +29,14 @@ export function extractTurns(objs, seen = new Set(), { cap = 200 } = {}) {
     const u = msg.usage;
     const id = String(msg.id || "");
     if (!u || !id || next.has(id)) continue;
+    // Missing counters are unknown; a later transcript row may complete them.
+    if (
+      !Number.isSafeInteger(u.input_tokens) ||
+      u.input_tokens < 0 ||
+      !Number.isSafeInteger(u.output_tokens) ||
+      u.output_tokens < 0
+    )
+      continue;
     const model = String(msg.model || "");
     if (!model) continue;
     const cc = u.cache_creation || {};

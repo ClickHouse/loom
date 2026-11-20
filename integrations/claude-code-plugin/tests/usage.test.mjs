@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseLines } from "../lib/transcript.mjs";
 import { extractTurns, recordBody } from "../lib/usage.mjs";
+import { extractTurns as extractCodexTurns } from "../../codex-plugin/lib/usage.mjs";
 
 const LINE = (id, extra = {}) =>
   JSON.stringify({
@@ -72,4 +73,64 @@ test("recordBody carries the identity tuple and the consumer", () => {
   assert.equal(b.user_id, "-");
   assert.equal(b.consumer, "claude-code");
   assert.equal(b.turns.length, 1);
+});
+
+for (const usage of [
+  {},
+  { input_tokens: 9 },
+  { output_tokens: 2 },
+  { input_tokens: -1, output_tokens: 2 },
+  { input_tokens: 1.5, output_tokens: 2 },
+  { input_tokens: "9", output_tokens: 2 },
+]) {
+  test(`unmeasured token counters do not create a billing row: ${JSON.stringify(usage)}`, () => {
+    const { turns, next } = extractTurns([{ type: "assistant", message: { id: "unknown", model: "model", usage } }]);
+    assert.deepEqual(turns, []);
+    assert.equal(next.has("unknown"), false);
+  });
+}
+
+test("measured zero token counters remain a recorded row", () => {
+  const { turns, next } = extractTurns([
+    {
+      type: "assistant",
+      message: { id: "zero", model: "model", usage: { input_tokens: 0, output_tokens: 0 } },
+    },
+  ]);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].input_tokens, 0);
+  assert.equal(turns[0].output_tokens, 0);
+  assert.equal(next.has("zero"), true);
+});
+
+test("an incomplete usage record does not hide a later measured record", () => {
+  const message = { id: "eventual", model: "model" };
+  const { turns } = extractTurns([
+    { type: "assistant", message: { ...message, usage: {} } },
+    { type: "assistant", message: { ...message, usage: { input_tokens: 9, output_tokens: 2 } } },
+  ]);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].input_tokens, 9);
+  assert.equal(turns[0].output_tokens, 2);
+});
+
+test("Codex usage extraction preserves unknown counts, measured zero and message deduplication", () => {
+  const row = (id, usage) => ({ type: "assistant", message: { id, model: "model", usage } });
+  const { turns, next } = extractCodexTurns([
+    row("unknown", { input_tokens: 9 }),
+    row("eventual", {}),
+    row("zero", { input_tokens: 0, output_tokens: 0 }),
+    row("eventual", { input_tokens: 9, output_tokens: 2 }),
+    row("eventual", { input_tokens: 9, output_tokens: 2 }),
+  ]);
+  assert.deepEqual(
+    turns.map(({ message_id, input_tokens, output_tokens }) => [message_id, input_tokens, output_tokens]),
+    [
+      ["zero", 0, 0],
+      ["eventual", 9, 2],
+    ],
+  );
+  assert.equal(next.has("unknown"), false);
+  assert.equal(next.size, 2);
+  assert.deepEqual(extractCodexTurns([row("eventual", { input_tokens: 9, output_tokens: 2 })], next).turns, []);
 });

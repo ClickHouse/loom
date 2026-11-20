@@ -811,7 +811,17 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
                 op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
             )
 
-    return endpoint
+    async def with_prompt(request: Request, response: Response) -> Any:
+        from server.observability import prompt_context
+
+        with prompt_context.http_call(request.headers, getattr(op, "name", "http")) as span:
+            result = await endpoint(request, response)
+            prompt_context.http_outcome(
+                span, response.status_code, response.headers.get("X-Request-Id", "")
+            )
+            return result
+
+    return with_prompt
 
 
 def _success_headers(
