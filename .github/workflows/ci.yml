@@ -1284,6 +1284,15 @@ jobs:
       - name: build + dist tests + publint + attw
         working-directory: sdk/typescript
         run: npm run check:dist
+      # Keep the locked 1.8 baseline above and qualify the other supported band
+      # against the same source, native tool runner and package exports.
+      - name: Claude memory tool with Anthropic 1.11
+        working-directory: sdk/typescript
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm run type-check
+          npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
+          npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts
 
   sdk-python-adapters:
     needs: validate-ref
