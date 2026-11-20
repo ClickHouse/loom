@@ -36,10 +36,21 @@ class EntityResolutionDecision:
     strategy: str
 
 
+_ASCII_COMPACT_DELETE = str.maketrans(
+    "", "", "".join(chr(i) for i in range(128) if not chr(i).isalnum())
+)
+
+
+def _compact_canonical(text: str) -> str:
+    if text.isascii():
+        return text.translate(_ASCII_COMPACT_DELETE)
+    return "".join(char for char in text if char.isalnum())
+
+
 def compact_entity_text(text: str) -> str:
     """Normalize away separators for near-exact product/org spellings."""
 
-    return "".join(ch for ch in canonical_entity_text(text) if ch.isalnum())
+    return _compact_canonical(canonical_entity_text(text))
 
 
 def entity_similarity(a: str, b: str) -> float:
@@ -51,8 +62,8 @@ def entity_similarity(a: str, b: str) -> float:
         return 0.0
     if a_canon == b_canon:
         return 1.0
-    compact_a = "".join(char for char in a_canon if char.isalnum())
-    compact_b = "".join(char for char in b_canon if char.isalnum())
+    compact_a = _compact_canonical(a_canon)
+    compact_b = _compact_canonical(b_canon)
     return _prepared_similarity(a_canon, b_canon, compact_a, compact_b)
 
 
@@ -206,7 +217,7 @@ def _prepare_canonical_candidates(candidates: Iterable[str]) -> PreparedCandidat
     for canon in candidates:
         if not canon or canon in prepared:
             continue
-        compact = "".join(char for char in canon if char.isalnum())
+        compact = _compact_canonical(canon)
         prepared[canon] = (canon, compact, len(canon), len(compact))
     return PreparedCandidates(prepared[k] for k in sorted(prepared))
 
@@ -275,7 +286,11 @@ def _overlap_upper_bound(chars_a: Counter[str], la: int, chars_b: Counter[str], 
     2 * |a ∩ b| / (la + lb) bounds 2 * M / T from above."""
     if la <= 0 or lb <= 0:
         return 0.0
-    shared = sum(min(n, chars_b[c]) for c, n in chars_a.items() if c in chars_b)
+    shared = 0
+    for char, count in chars_a.items():
+        if char in chars_b:
+            other = chars_b[char]
+            shared += count if count <= other else other
     return 2.0 * shared / (la + lb)
 
 

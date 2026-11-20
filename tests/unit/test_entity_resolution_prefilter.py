@@ -448,3 +448,28 @@ def test_entropy_rounding_boundaries_keep_the_full_scoring_decision():
                 assert choose_canonical_candidate(
                     "abcdefghij", candidates + ["abcdefghij"], **kwargs
                 ) == EntityResolutionDecision("abcdefghij", "abcdefghij", 1.0, "exact")
+
+
+def test_compact_ascii_alphabet_and_unicode_letters():
+    from server.memory.app.entity_resolution import _compact_canonical
+
+    assert _compact_canonical("".join(map(chr, range(128)))) == (
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    )
+    assert _compact_canonical("東京/café—Straße") == "東京caféStraße"
+    assert compact_entity_text("  Foo_Bar/Baz:123-.  ") == "foobarbaz123"
+    assert compact_entity_text("cafe\u0301 cloud") == "cafécloud"
+    assert compact_entity_text("İstanbul-TOKYO") == "istanbultokyo"
+
+
+def test_overlap_matches_character_multiset_intersection():
+    from collections import Counter
+
+    rng = random.Random(7201)
+    for _ in range(500):
+        left = "".join(rng.choices("aaabbc01_/.é京", k=rng.randrange(1, 60)))
+        right = "".join(rng.choices("aabbbcd02_/.é都", k=rng.randrange(1, 60)))
+        shared = sum((Counter(left) & Counter(right)).values())
+        assert _overlap_upper_bound(Counter(left), len(left), Counter(right), len(right)) == (
+            2.0 * shared / (len(left) + len(right))
+        )
