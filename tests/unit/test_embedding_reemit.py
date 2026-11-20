@@ -481,6 +481,10 @@ async def test_an_older_high_set_paused_after_its_insert_does_not_retire_a_newer
 
     async def insert_then_writer_b_lands(rows, **_kw):
         assert rows[0]["version"] == v_a
+        if on_send := _kw.get("on_send"):
+            on_send()
+        if on_inserted := _kw.get("on_inserted"):
+            on_inserted()
         await asyncio.sleep(0)  # A pauses here; B's whole write lands
         ch.emb.append({**_LIVE, "content_excerpt": "B", "version": M.next_version()})
         ch.ent.append({**ent, "entity_text": "new", "created_at": a_second + timedelta(seconds=1)})
