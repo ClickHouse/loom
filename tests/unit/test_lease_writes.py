@@ -379,3 +379,65 @@ async def test_writer_can_finish_after_its_admission_budget(monkeypatch):
             handle.cancel()
     release.assert_awaited_once_with(lease)
     assert len(deadlines) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancellations", [0, 1, 2])
+@pytest.mark.parametrize("backend_cancelled", [False, True])
+async def test_admission_settlement_records_every_holder_before_cancellation(
+    monkeypatch, cancellations, backend_cancelled
+):
+    settling, finish = asyncio.Event(), asyncio.Event()
+    leases = {name: SimpleNamespace(name=name) for name in ("a", "b")}
+    release = AsyncMock()
+    insert = AsyncMock()
+    original = asyncio.CancelledError("backend admission cancelled")
+    native_gather = asyncio.gather
+    gathers = 0
+
+    async def take(name, **kw):
+        if backend_cancelled and name == "b":
+            raise original
+        return leases[name]
+
+    async def gather(*tasks, **kw):
+        nonlocal gathers
+        gathers += 1
+        if gathers == 2:
+            settling.set()
+            await finish.wait()
+        return await native_gather(*tasks, **kw)
+
+    async def write():
+        async with writes.fenced_many(["a", "b"], wait_s=60):
+            await insert()
+
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 24)
+    monkeypatch.setattr(writes.asyncio, "gather", gather)
+    task = asyncio.create_task(write())
+    try:
+        await settling.wait()
+        for index in range(cancellations):
+            task.cancel("admission-cancel" if index == 0 else "again")
+            await asyncio.sleep(0)
+        finish.set()
+        if cancellations or backend_cancelled:
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await task
+            if backend_cancelled:
+                assert caught.value is original
+            else:
+                assert caught.value.args == ("admission-cancel",)
+            insert.assert_not_awaited()
+        else:
+            await task
+            insert.assert_awaited_once()
+        assert sorted(call.args[0].name for call in release.await_args_list) == (
+            ["a"] if backend_cancelled else ["a", "b"]
+        )
+    finally:
+        finish.set()
+        task.cancel()
+        await native_gather(task, return_exceptions=True)

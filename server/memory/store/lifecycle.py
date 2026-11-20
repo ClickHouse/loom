@@ -11,7 +11,6 @@ import functools
 import json
 import logging
 import math
-import sys
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -21,7 +20,7 @@ from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
-from server.core.shielded import to_its_end
+from server.core.shielded import finish_cleanup
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.lock import assert_unlocked
 from server.memory.domain.redaction_lineage import is_content_hash
@@ -291,7 +290,6 @@ async def current_heads(
 
 async def finish_followups[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
     """Finish owed row follow-ups, keeping the request's budget tag and cancellation."""
-    original = sys.exception()
     shape: str | None = None
 
     async def run() -> T:
@@ -302,13 +300,7 @@ async def finish_followups[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
             shape = current_budget_shape()
 
     try:
-        return await to_its_end(run(), name=name)
-    except (
-        BaseException
-    ) as error:  # retain the first cancellation with a cleanup failure as its cause
-        if isinstance(original, asyncio.CancelledError) and error is not original:
-            raise original from error
-        raise
+        return await finish_cleanup(run(), name=name)
     finally:
         if shape is not None:
             note_budget_shape(shape)

@@ -10,7 +10,7 @@ from typing import Any
 
 from server.core import leases, rmt_carry
 from server.core.errors import BackendUnavailableError
-from server.core.shielded import to_its_end
+from server.core.shielded import finish_cleanup
 from server.settings import settings
 
 
@@ -39,6 +39,13 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
         yield mark
 
 
+async def _settle_tasks(
+    tasks: list[asyncio.Task[leases.Lease | BaseException | None]], held: list[leases.Lease]
+) -> None:
+    settled = await asyncio.gather(*tasks, return_exceptions=True)
+    held.extend(r for r in settled if r is not None and not isinstance(r, BaseException))
+
+
 async def _take_all(names: list[str], ttl: float, ch: Any) -> list[leases.Lease]:
     async def take(name: str) -> leases.Lease | BaseException | None:
         try:
@@ -53,22 +60,19 @@ async def _take_all(names: list[str], ttl: float, ch: Any) -> list[leases.Lease]
             tasks = [asyncio.create_task(take(name)) for name in names[start : start + size]]
             try:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, BaseException):
+                        raise result
+                    if result is None:
+                        raise FenceUnavailableError("a previous leased write is still settling")
             finally:
                 for task in tasks:
                     if not task.done():
                         task.cancel()
-                settled = await asyncio.gather(*tasks, return_exceptions=True)
-                held.extend(
-                    r for r in settled if r is not None and not isinstance(r, BaseException)
-                )
-            for result in results:
-                if isinstance(result, BaseException):
-                    raise result
-                if result is None:
-                    raise FenceUnavailableError("a previous leased write is still settling")
+                await finish_cleanup(_settle_tasks(tasks, held), name="lease_writes.settle")
         return held
     except BaseException:
-        await to_its_end(_release_all(held), name="lease_writes.release")
+        await finish_cleanup(_release_all(held), name="lease_writes.release")
         raise
 
 
@@ -130,7 +134,7 @@ async def _admit(names: list[str], ttl: float, ch: Any, wait_s: float) -> list[l
         raise FenceUnavailableError("write fence admission exceeded its deadline") from None
     finally:
         if held and not admitted:
-            await to_its_end(_release_all(held), name="lease_writes.release")
+            await finish_cleanup(_release_all(held), name="lease_writes.release")
 
 
 @asynccontextmanager
@@ -165,4 +169,4 @@ async def fenced_many(
         if uncertain:
             for lease in held:
                 lease.let_expire()
-        await to_its_end(_release_all(held), name="lease_writes.release")
+        await finish_cleanup(_release_all(held), name="lease_writes.release")
