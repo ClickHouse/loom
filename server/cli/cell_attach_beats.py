@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from server.cli.cell_attach_pg import Wait
-from server.cli.cell_ch import Refusal, Refused
 from server.core import cell, instances
+from server.core.cell_ch import Refusal, Refused
 
 StoppedUnset = Literal["refuse", "wait"]
 

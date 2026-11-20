@@ -18,9 +18,9 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from server.cli.cell_ch import Refusal, Refused
 from server.core import cell, cell_triggers, pg
 from server.core.cell import ATTACH_LOCK_KEY
+from server.core.cell_ch import Refusal, Refused
 
 if TYPE_CHECKING:
     from server.cli.cell_control import Owner

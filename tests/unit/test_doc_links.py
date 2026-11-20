@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCS = sorted(
     {
         *ROOT.glob("*.md"),
-        *(ROOT / "docs").rglob("*.md"),
+        *(ROOT / p for p in tracked("docs") if p.endswith(".md")),
         *(ROOT / "integrations").glob("*/README.md"),
         ROOT / "integrations" / "README.md",
         *(ROOT / "sdk").glob("*/README.md"),
