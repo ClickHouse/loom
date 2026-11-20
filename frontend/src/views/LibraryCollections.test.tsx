@@ -1193,6 +1193,16 @@ describe("the Library on a collection", () => {
   });
 
   describe("a create's answer, and the reads it starts", () => {
+    const readDetails = (from: number) =>
+      JSON.stringify(
+        api.listCollections.mock.calls.slice(from).map(([org, options]) => ({
+          org,
+          cursor: options?.cursor,
+          includeDocumentCounts: options?.includeDocumentCounts,
+          aborted: options?.signal?.aborted,
+        })),
+      );
+
     it("still opens it when a resize took the tree away", async () => {
       const narrow = resizable();
       const answer = await createInTree();
@@ -1408,7 +1418,7 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await answer(q4);
       await settle();
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(api.listCollections.mock.calls.length - reads, readDetails(reads)).toBe(1);
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
     });
 
@@ -1429,7 +1439,7 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       await act(async () => answer(q4));
       await settle();
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(api.listCollections.mock.calls.length - reads, readDetails(reads)).toBe(1);
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
     });
 
@@ -1487,7 +1497,7 @@ describe("the Library on a collection", () => {
       fireEvent.click(screen.getByRole("button", { name: "Create" }));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q5");
-      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(api.listCollections.mock.calls.length - reads, readDetails(reads)).toBe(1);
     });
 
     it("moves nothing once the page shows another org", async () => {
