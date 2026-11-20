@@ -240,6 +240,78 @@ def test_stream_terminal_renews_nested_proofs_after_accounting(
     assert state.events.index("accounting") < len(state.events) - 1
 
 
+@pytest.mark.parametrize("mirrored", [False, True])
+@pytest.mark.parametrize("loss", ["", "model", "send"])
+def test_stream_never_sends_private_content_after_source_proof_loss(publication, mirrored, loss):
+    state = publication
+    state.ticket.mirrored = mirrored
+    sent, closed, accounted, released = [], [], [], []
+
+    async def chunks():
+        try:
+            await asyncio.create_task(
+                tools.Tools("acme", "n", "alice", "answer")._request(
+                    "loom_knowledge_get", {"org": "acme", "namespace": "n"}
+                )
+            )
+            yield b"data: notice\n\n"
+            if loss == "model":
+                state.current = False
+            await asyncio.sleep(0)
+            yield b'data: {"choices":[{"delta":{"content":"private-canary"}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+        finally:
+            closed.append(True)
+
+    async def accounting():
+        accounted.append(True)
+
+    def close(error):
+        if not released:
+            released.append(error)
+            assert request_tail.defer_required(accounting)
+
+    held = SimpleNamespace(
+        ticket=state.ticket,
+        close=close,
+        finished=False,
+        row=SimpleNamespace(request_id="stream-source-proof"),
+    )
+
+    async def app(scope, receive, send):
+        await routes._AnswerStream(routes._streamed(chunks(), held), held)(scope, receive, send)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+        if loss == "send" and message.get("body") == b"data: notice\n\n":
+            state.current = False
+
+    async def scenario():
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/answer",
+            "headers": [],
+            "asgi": {"spec_version": "2.4"},
+        }
+        call = request_tail.RequestTailMiddleware(app)
+        if loss:
+            with pytest.raises(request_tail.RequiredTailError):
+                await call(scope, receive, send)
+        else:
+            await call(scope, receive, send)
+
+    asyncio.run(scenario())
+    body = b"".join(message.get("body", b"") for message in sent)
+    assert (b"private-canary" in body) is (not loss)
+    assert (b"[DONE]" in body) is (not loss)
+    assert closed == accounted == [True]
+    assert len(released) == 1
+
+
 def test_stream_can_close_from_a_different_task_after_a_provisional_frame():
     closed = []
 
