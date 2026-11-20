@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import secrets
 from typing import Any
@@ -118,7 +119,11 @@ async def nonces(ch: Any, conn: Any) -> None:
                 await object_store.put(location, data, hashlib.sha256(data).hexdigest(), lease)
             if await object_store.read(location) != data:
                 raise ValueError("the bucket did not return the fresh restore nonce")
-    finally:
+    except BaseException:  # Nonce cleanup preserves the first failure or cancellation.
+        with contextlib.suppress(BaseException):
+            await _cleanup(ch, location, nonce)
+        raise
+    else:
         await _cleanup(ch, location, nonce)
 
 
