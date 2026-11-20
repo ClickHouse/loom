@@ -6,10 +6,43 @@ import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import pytest_asyncio
 
 from server.router import directory
 
-pytestmark = pytest.mark.asyncio
+pytestmark = pytest.mark.asyncio(loop_scope="function")
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="function")
+async def _control_clock(monkeypatch):
+    import sys
+
+    from tests.unit.clock_fake import ManualClock
+
+    before = set(asyncio.all_tasks())
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    # Cleanup and its watchdog spend the same original idle-time budget.
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
+    monkeypatch.setattr(directory, "time", clock)
+    monkeypatch.setattr(directory.pg, "time", clock)
+    monkeypatch.setattr(sys.modules[__name__], "time", clock)
+    yield clock
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "directory cleanup leaves no task on its private loop"
 
 
 @pytest.fixture
@@ -359,3 +392,23 @@ async def test_integration_fatal_child_reaps_its_process_after_interruption(monk
         process.kill.assert_called_once_with()
         process.wait.assert_awaited_once_with()
         assert process.returncode == -9
+
+
+async def test_blocked_exit_keeps_the_remaining_original_budget(owned, _control_clock):
+    _, context = owned
+    owner = directory._ControlOwner(directory.CONTROL_MAX_S)
+    owner.entered = True
+    end = owner.end
+
+    async def stalled(*_):
+        await asyncio.Future()
+
+    context.__aexit__.side_effect = stalled
+    _control_clock.advance(directory.CONTROL_MAX_S / 2)
+    with pytest.raises(TimeoutError):
+        await owner.release()
+    await asyncio.gather(owner.exit_task, return_exceptions=True)
+    assert owner.end == end
+    assert _control_clock.monotonic() == pytest.approx(end)
+    assert asyncio.get_running_loop().time == _control_clock.monotonic
+    context.__aexit__.assert_awaited_once()

@@ -60,11 +60,52 @@ supersession draws before its read and is not lifted: any head above that versio
 the key, a write drawn later or one from a replica whose clock is ahead. A judged
 supersession goes one above the version it read; its vector rows take a version the
 status mirror draws (`mirror_status_to_embeddings(judged=True)`). Under the ClickHouse
-authority a copy is a plain insert: a write with a lower version whose row lands between
-the read and the insert (a value, a delete, a relabel to `high`) is overtaken by it, and
-nothing reports it. Under Postgres the copy commits only
+authority every memory insert takes per-key Keeper fences. `memory.lock`,
+`memory.unlock` and `memory.verify` compare the source rows inside those fences and
+answer 503 `ADMISSION_CONTENDED` without inserting when a head has moved. Value writers
+take the same fences, so another replica cannot insert between that check and the copy.
+The comparison includes the served value and persisted metadata: clock skew can make
+two writers choose the same version. Derived usage fields (`recall_count`,
+`evidence_count`, `last_recalled_at`) and JSON projection formatting are excluded
+because they can differ without a version insert.
+Other copy writers fence only their insert: a write with a lower version whose row lands
+between their source read and the fence is still overtaken, and nothing reports it.
+Under Postgres the copy commits only
 over the head it read (`heads_unchanged(exact=True)`), and a head written since refuses
 it.
+
+The ClickHouse fences use `server/core/lease_writes.py`: uncertain inserts retain their
+Keeper holders until every admitted send has finished or expired. Batches admit keys in
+bounded waves and keep the earliest send deadline. Memory rows commit before their
+embedding rows are inserted, so a refused value write publishes no searchable text.
+The timeout and send guard use absolute deadlines sampled before the remaining
+holder budget is read, so a process suspension cannot extend its ownership window.
+Contending writers wait within the effective write timeout's admission budget. A
+partially admitted batch releases its holders before waiting and trying again.
+A high-sensitivity write refused before admission leaves prior search data live;
+an admitted memory send is still fenced if its outcome is unknown or cancellation
+arrives during holder release.
+Acknowledged copies record their commit before holder cleanup, and still run their
+announcements and follow-ups when that cleanup is cancelled.
+Point writes retain their hash-only receipt and announcement after an acknowledged
+insert, including cancellation during holder release.
+These follow-up sequences and the high-sensitivity fence finish despite repeated
+request cancellation, and propagate the original cancellation once they finish.
+Holder release uses bounded waves too, so a batch does not exhaust its own connection
+pool during cleanup. Large ClickHouse namespace restores insert bounded batches to
+keep admission inside each batch's lease budget.
+`LOOM_CH_WRITE_FENCE_CONCURRENCY` bounds each wave, capped by a bounded HTTP pool;
+`LOOM_CH_RESTORE_BATCH_ROWS` bounds each restore insert.
+A fence's own deadline answers 503 `BACKEND_UNAVAILABLE`; `outcome_unknown` is true
+when an admitted send may have landed, and its holders stay until sends expire.
+A busy fence or an unavailable
+Keeper refuses the write with a retryable 503. The check covers version inserts, not
+in-place counter updates or redaction mutations. A serving build without these fences
+does not participate; during a rolling upgrade, the guarantee requires every writer to
+run a build that takes them and every older writer's admitted send to have settled.
+The [memory writer fence cutover](../operations/upgrades.md#memory-writer-fence-cutover)
+stops serving and background writers, waits out bounded sends, and states when the
+guarantee and optional settings apply. Both builds serve the same schema.
 
 ## The tables
 

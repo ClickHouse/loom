@@ -224,8 +224,11 @@ class StoreClient:
             return {"n": len(v), "s": sum(v)}
         return None
 
-    async def query_all(self, sql: str, *_: Any, **__: Any) -> list[dict[str, Any]]:
+    async def query_all(self, sql: str, params: Any = None, **__: Any) -> list[dict[str, Any]]:
         self.queries.append(sql)
+        if "FROM loom.memory FINAL" in sql and "keys" in (params or {}):
+            keys = {tuple(k) for k in params["keys"]}
+            return [r for k, r in self.store.final().items() if k in keys]
         if "FROM loom.blacklist FINAL" in sql:
             return [r for r in self.store.blacklist if r["tombstoned_at"] is None]
         return []

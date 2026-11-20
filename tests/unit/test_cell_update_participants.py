@@ -196,15 +196,15 @@ async def test_census_syncs_before_complete_replica_union(monkeypatch, engine):
     from unittest.mock import AsyncMock
 
     from server.cli import cell_update_participants as module
-    from server.cli.cell_ch import Topology
+    from server.core.cell_ch import Topology
 
     events = []
     topology = Topology("replicas", 1, (("a", 9000), ("b", 9000)))
     monkeypatch.setattr(module, "read_topology", AsyncMock(return_value=topology))
     monkeypatch.setattr(
-        module.cell_writers, "host_names", AsyncMock(return_value={"a": "a", "b": "b"})
+        module.cell_catalog, "host_names", AsyncMock(return_value={"a": "a", "b": "b"})
     )
-    monkeypatch.setattr(module.cell_writers, "own_refusals", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(module.cell_catalog, "own_refusals", AsyncMock(return_value=([], [])))
 
     async def per_host(ch, top, names, sql, params):
         if "source:tables" in sql:
@@ -235,7 +235,7 @@ async def test_census_syncs_before_complete_replica_union(monkeypatch, engine):
         return [participant(1), participant(2), participant(1, "drained", version=2)]
 
     monkeypatch.setattr(module, "per_host", per_host)
-    monkeypatch.setattr(module.cell_scan, "_system", sync)
+    monkeypatch.setattr(module.cell_sync, "_system", sync)
     result = await module.census(SimpleNamespace(query_all=query))
     assert len(result) == 2 and result[str(UUID(int=1))]["state"] == "drained"
     assert events == (["sync", "read"] if engine.startswith("Replicated") else ["read"])
@@ -251,7 +251,7 @@ async def test_incomplete_topology_or_sync_never_returns_a_partial_census(monkey
     from unittest.mock import AsyncMock
 
     from server.cli import cell_update_participants as module
-    from server.cli.cell_ch import Topology
+    from server.core.cell_ch import Topology
 
     topology = Topology(
         "replicas",
@@ -260,9 +260,9 @@ async def test_incomplete_topology_or_sync_never_returns_a_partial_census(monkey
     )
     monkeypatch.setattr(module, "read_topology", AsyncMock(return_value=topology))
     monkeypatch.setattr(
-        module.cell_writers, "host_names", AsyncMock(return_value={"a": "a", "b": "b"})
+        module.cell_catalog, "host_names", AsyncMock(return_value={"a": "a", "b": "b"})
     )
-    monkeypatch.setattr(module.cell_writers, "own_refusals", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(module.cell_catalog, "own_refusals", AsyncMock(return_value=([], [])))
 
     async def per_host(*args):
         if problem == "unreachable":
@@ -293,7 +293,7 @@ async def test_incomplete_topology_or_sync_never_returns_a_partial_census(monkey
 
     monkeypatch.setattr(module, "per_host", per_host)
     monkeypatch.setattr(
-        module.cell_scan, "_system", AsyncMock(side_effect=OSError("cannot synchronize"))
+        module.cell_sync, "_system", AsyncMock(side_effect=OSError("cannot synchronize"))
     )
     query = AsyncMock(side_effect=AssertionError("must not read partial census"))
     with pytest.raises((module.cell_control.Refused, OSError)):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
 from types import SimpleNamespace
@@ -270,6 +271,65 @@ async def test_delivered_live_answer_prevents_an_otherwise_recorded_gap(
     assert output.live is not None and output.live.results[0].id == "private-id"
     assert output.memory == _indexed()["memory"]
     assert len(misses) == 1
+
+
+async def test_live_mcp_output_protects_the_sdk_before_automatic_capture(
+    native, indexed, tmp_path, monkeypatch
+):
+    import httpx
+    from loom.session_protection import AutomaticCaptureSuppressed, SessionProtection
+    from loom.transport import Transport
+
+    from server.memory.app.served_reads import search_query_keys
+    from server.transport.mcp_outcome import _search_answer
+
+    request = SearchInput(org="org", namespace="allowed", query="question", top_k=2, live=True)
+    call = SimpleNamespace(
+        arguments={"query": "question", "top_k": 2}, rl_ns="allowed", mcp_session_id=""
+    )
+    family = SessionProtection.create(base=tmp_path / "protection")
+    assert not family.protected
+    async with _request(native.auth):
+        output = await indexed.handle_search(request)
+        answer = _search_answer(call, output)
+    assert output.live is not None
+    assert search_query_keys(request, output) == []
+    assert json.loads(answer["content"][0]["text"]) == {"mirrored": True}
+    assert answer["mirrored"] is answer["structuredContent"]["mirrored"] is True
+    assert answer["structuredContent"]["live"] == output.model_dump()["live"]
+    rendered = answer["content"][1]["text"]
+    for field in ("title", "url", "content"):
+        assert getattr(output.live.results[0], field) in rendered
+
+    envelope = {"jsonrpc": "2.0", "id": 1, "result": answer}
+    dispatched = []
+
+    def respond(actual):
+        dispatched.append(actual.url.path)
+        return httpx.Response(200, json=envelope if actual.url.path == "/mcp" else {"ok": True})
+
+    # Environment proxy mounts must not bypass the mock transport.
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "*")
+    transport = Transport("http://inert.invalid", session_protection=family)
+    transport._client._transport = httpx.MockTransport(respond)
+    try:
+        with family.automatic():
+            observed = await transport.post("/mcp", {"method": "tools/call"})
+            assert observed == envelope
+            assert family.protected
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await transport.post("/v1/memory.set", {"value": "automatic"})
+        assert dispatched == ["/mcp"]
+        assert await transport.post("/v1/memory.set", {"value": "explicit"}) == {"ok": True}
+        assert dispatched == ["/mcp", "/v1/memory.set"]
+        assert SessionProtection.open(family.pointer()).protected
+        directory = family.base / family.id
+        assert sorted(path.name for path in directory.iterdir()) == ["root.json", "state"]
+        assert json.loads((directory / "root.json").read_bytes()) == {"id": family.id, "version": 1}
+        assert (directory / "state").read_bytes() == b"0\n1\n"
+    finally:
+        await transport.close()
 
 
 @pytest.mark.parametrize("outcome", ["indexed_failure", "caller_cancel"])

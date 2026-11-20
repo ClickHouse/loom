@@ -193,7 +193,7 @@ jobs:
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -vv -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+          pytest tests/unit -vv -n auto -p randomly -p tests._worker_status --randomly-seed="$SEED" --durations=15 \
             -o faulthandler_timeout=300 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
@@ -206,6 +206,7 @@ jobs:
           path: |
             .coverage.unit-${{ matrix.part }}
             junit-unit-${{ matrix.part }}.xml
+            .pytest_cache/worker-status/
           include-hidden-files: true
           if-no-files-found: warn
           # A re-run of one failed part replaces the data its first attempt uploaded.
@@ -1074,9 +1075,8 @@ jobs:
         env:
           LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
           LOOM_PG_CONTAINER: loom-scale-place-drill-pg
-          LOOM_PG_HOST_PORT: "55432"
+          LOOM_PG_HOST_PORT: "0"
           LOOM_CELL_PLACE_DRILL: "1"
-          LOOM_CELL_PLACE_DRILL_DSN: postgres://loom:loomdev@localhost:55432/loom
         run: |
           set -euo pipefail
           for name in loom-scale-place-drill-pg loom-scale-place-drill-pg-standby; do
@@ -1095,6 +1095,18 @@ jobs:
           }
           trap cleanup EXIT
           bash dev/ci_start_postgres.sh
+          # Docker reserves the host port; use only this primary's loopback mapping.
+          mapping=$(docker port "$LOOM_PG_CONTAINER" 5432/tcp)
+          if [[ ! "$mapping" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          port=${BASH_REMATCH[1]}
+          if (( port > 65535 )); then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          export LOOM_CELL_PLACE_DRILL_DSN="postgres://loom:loomdev@127.0.0.1:$port/loom"
           docker update --memory 1g --memory-swap 1g loom-scale-place-drill-pg loom-scale-place-drill-pg-standby
           pytest -q tests/integration/test_cell_place_durability.py
       # The tenant-isolation gates again, against a second server that enforces auth:
@@ -1284,6 +1296,15 @@ jobs:
       - name: build + dist tests + publint + attw
         working-directory: sdk/typescript
         run: npm run check:dist
+      # Keep the locked 1.8 baseline above and qualify the other supported band
+      # against the same source, native tool runner and package exports.
+      - name: Claude memory tool with Anthropic 1.11
+        working-directory: sdk/typescript
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm run type-check
+          npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
+          npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts
 
   sdk-python-adapters:
     needs: validate-ref

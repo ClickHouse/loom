@@ -95,13 +95,18 @@ async def test_a_clear_mutates_by_bound_parameters_only(locked: int) -> None:
     from server.memory.store.lifecycle import bulk_tombstone_scope
 
     class _ClearCH(_CH):
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            if "SELECT * FROM loom.memory FINAL" in sql:
+                return []
+            return await super().query_all(sql, params)
+
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
             return {"n": locked if "lock_mode != ''" in sql else 1}
 
     ch = _ClearCH([{"h": 1}])  # the locked identities, read as hashes
     counts = await bulk_tombstone_scope(org="o", namespace="ns", user_id="u", ch=ch)
-    assert counts["loom.memory"] == 1 and counts["loom.memory_embeddings"] == 1
-    assert len(ch.executed) == 2 and _refused(ch.executed) == []
+    assert counts["loom.memory"] == 0 and counts["loom.memory_embeddings"] == 1
+    assert len(ch.executed) == 1 and _refused(ch.executed) == []
 
 
 class _CH:

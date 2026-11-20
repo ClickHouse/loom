@@ -1239,8 +1239,8 @@ class MemorySweepExpiredOutput(BaseModel):
     # Rows left as they are because a lock refuses their post-action; reads still
     # hide them.
     locked_skipped: int = 0
-    # Rows left for the next pass because their head moved on since the read (renewed,
-    # rewritten or deleted); 0 under the ClickHouse authority.
+    # Rows deferred because their source changed or a second batch admission refused
+    # them, including unchanged peers in that batch; 0 under the ClickHouse authority.
     moved_skipped: int = 0
     # Echo of the request's `dry_run`.
     dry_run: bool = False
@@ -1264,7 +1264,9 @@ class MemorySweepExpiredOutput(BaseModel):
 
 
 class MemoryVerifyInput(BaseModel):
-    """Attest to (or revoke the attestation on) one memory.
+    """Attest or revoke, refusing a changed source with retryable 503
+    `ADMISSION_CONTENDED` without writing a memory version; review the current row
+    before retrying.
 
     Address the row by `memory_id`, or by `namespace` + `memory_key` with the
     writer identity (`agent`, `user_id`, `session_id`; default '-').
@@ -1273,6 +1275,7 @@ class MemoryVerifyInput(BaseModel):
     `process:` (service account). `actor` is read only when no auth context
     exists (dev mode) and must then be well-formed. `revoke=True` clears the
     attestation.
+
     """
 
     org: str
