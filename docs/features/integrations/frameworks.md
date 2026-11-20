@@ -1,10 +1,9 @@
 # Agent frameworks and orchestrators
 
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
-interface. An adapter needs its framework: in Python, the SDK extra its section names
-(`pip install 'clickhouse-loom[langchain]'` and so on); in TypeScript, the framework
-package, an optional peer dependency. The LangGraph and Strands adapters import without
-their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
+interface. An adapter needs its framework: in Python, the SDK extra its section names;
+in TypeScript, the framework package, an optional peer dependency. The LangGraph and
+Strands adapters import without their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
 Loom's namespace authorization. Every adapter calls your Loom server through the SDK: the
 data is stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
@@ -47,7 +46,7 @@ see [agent integration](../../guides/agent-integration.md) and
 `LoomKnowledgeRetriever` searches the namespace's documents (`knowledge.search`) and
 `LoomMemoryRetriever` its memories (`memory.search`). Both are LangChain `BaseRetriever`s,
 so they work with `invoke`, in a chain, and as an agent tool through
-`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]'`
+`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]==1.3.0rc1'`
 (`langchain-core` 1.x).
 
 ```python
@@ -91,9 +90,11 @@ families.
 A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` (below)
 as its `store` for long-term memory.
 
-The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` (an optional peer
-dependency, 1.x) and take the same options in camelCase, with the memory retriever's
-user, session, run and agent in one `scope`:
+Install the TypeScript SDK and its framework peer with
+`npm install @clickhouse/loom@1.3.0-rc.1 '@langchain/core@^1.0.0'`.
+The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` and take the same
+options in camelCase, with the memory retriever's user, session, run and agent in one
+`scope`:
 
 ```ts
 import {
