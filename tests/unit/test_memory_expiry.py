@@ -22,7 +22,7 @@ from server.memory.app import handlers as mem_handlers
 from server.memory.app import restore as _restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.app import update as update_mod
-from server.memory.store import MemoryRow
+from server.memory.store import MemoryRow, build_memory_version_row, identity_key
 from tests.unit.memory_store import one_holder
 
 _NOW = datetime(2026, 9, 12, 12, 0, 0)
@@ -79,9 +79,19 @@ class _CH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.executes: list[str] = []
+        self.heads: dict[Any, dict[str, Any]] = {}
+
+    async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        assert sequential_reads_active() or "select_sequential_consistency = 1" in sql
+        return [self.heads[tuple(k)] for k in params["keys"] if tuple(k) in self.heads]
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
+        if table == "loom.memory":
+            for row in rows:
+                key = identity_key(row)
+                if row["version"] >= self.heads.get(key, {}).get("version", 0):
+                    self.heads[key] = row
 
     async def execute(self, sql: str, **_: Any) -> None:
         self.executes.append(sql)
@@ -95,6 +105,7 @@ retired_bare: dict[str, bool] = {}
 
 def _stub(monkeypatch: pytest.MonkeyPatch, rows: list[MemoryRow]) -> tuple[_CH, list[str]]:
     ch = _CH()
+    ch.heads = {identity_key(r): build_memory_version_row(r) for r in rows}
     tombstoned_keys: list[str] = []
     _DEMOTE_REEMITS.clear()
 
@@ -920,3 +931,146 @@ async def test_a_replay_retires_bare_and_copies_the_head_unpinned(
     assert got["shell"]["version"] == 352 and not got["shell"]["content_excerpt"]
     assert got["demoted"]["version"] == 251 and got["demoted"]["expires_at"] == later
     assert got["demoted"]["content_excerpt"] == "the original text"
+
+
+@pytest.mark.parametrize("action", X.ACTIONS)
+@pytest.mark.parametrize("renewed", [False, True])
+async def test_clickhouse_sweep_cannot_replace_a_concurrent_update(
+    monkeypatch: pytest.MonkeyPatch, action: str, renewed: bool
+) -> None:
+    from server.memory.store import rows as memory_rows
+    from server.settings import settings
+
+    scanned = _row(on_expire=action)
+    updated = memory_rows.build_memory_version_row(
+        scanned,
+        version=200,
+        value='"rejected"',
+        expires_at=None if renewed else scanned.expires_at,
+    )
+    ch, _ = _stub(monkeypatch, [scanned])
+    ch.heads[identity_key(scanned)] = updated
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    monkeypatch.setattr(memory_rows, "next_version", lambda: 300)
+    # The update completed on another replica after the scan. Model FINAL's version
+    # ordering independently of the sweep, including ties (the last insert wins).
+    versions = [updated]
+    insert = ch.insert
+
+    async def record(table: str, batch: list[dict[str, Any]], **kwargs: Any) -> None:
+        await insert(table, batch, **kwargs)
+        if table == "loom.memory":
+            versions.extend(batch)
+
+    monkeypatch.setattr(ch, "insert", record)
+    res = await X.run_pass()
+    head = sorted(versions, key=lambda r: r["version"])[-1]
+    assert head == updated
+    assert not res.failures
+    assert res.moved_skipped == 1
+    assert (res.tombstoned, res.demoted, res.anonymized) == (0, 0, 0)
+    assert not ch.inserts and not retired and not _DEMOTE_REEMITS
+
+
+async def test_clickhouse_expiry_dry_run_still_plans_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    ch, _ = _stub(monkeypatch, [_row(on_expire=a, memory_key=a) for a in X.ACTIONS])
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    res = await X.run_pass(X.ExpiryConfig(dry_run=True))
+    assert (res.tombstoned, res.demoted, res.anonymized) == (1, 1, 1)
+    assert not res.failures and not ch.inserts
+
+
+async def test_clickhouse_expiry_with_no_candidates_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch, _ = _stub(monkeypatch, [])
+    res = await X.run_pass()
+    assert res.scanned == 0 and not res.failures and not ch.inserts
+
+
+@pytest.mark.parametrize("action", X.ACTIONS)
+async def test_expiry_holds_the_common_fence_between_head_check_and_insert(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    import asyncio
+
+    from server.core.lease_writes import FenceUnavailableError
+    from server.memory.store.inserts import insert_memory_versions
+    from server.memory.store.rows import next_version
+
+    source = _row(on_expire=action)
+    reader, _ = _stub(monkeypatch, [source])
+    writer = _CH()
+    writer.heads = reader.heads
+    checked, resume = asyncio.Event(), asyncio.Event()
+    query = reader.query_all
+
+    async def pause(sql: str, params: Any = None) -> list[dict[str, Any]]:
+        heads = await query(sql, params)
+        checked.set()
+        await resume.wait()
+        return heads
+
+    monkeypatch.setattr(reader, "query_all", pause)
+    update = build_memory_version_row(source, version=next_version(), value='"rejected"')
+    task = asyncio.create_task(X.run_pass())
+    try:
+        async with asyncio.timeout(5):
+            await checked.wait()
+            with pytest.raises(FenceUnavailableError):
+                await insert_memory_versions([update], ch=writer)
+            assert not writer.inserts
+            resume.set()
+            res = await task
+        assert not res.failures and res.moved_skipped == 0
+        assert sum((res.tombstoned, res.demoted, res.anonymized)) == 1
+        update["version"] = next_version()
+        await insert_memory_versions([update], ch=writer)
+        assert writer.heads[identity_key(source)] == update
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_clickhouse_expiry_retries_only_the_unmoved_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [_row(memory_key=a, on_expire=a) for a in X.ACTIONS]
+    ch, _ = _stub(monkeypatch, rows)
+    moved = rows[1]
+    updated = build_memory_version_row(moved, version=200, value='"rewritten"')
+    ch.heads[identity_key(moved)] = updated
+    res = await X.run_pass()
+    assert not res.failures and res.moved_skipped == 1 and res.scanned == 3
+    assert (res.tombstoned, res.demoted, res.anonymized) == (1, 0, 1)
+    assert [r["memory_key"] for _, batch in ch.inserts for r in batch] == ["tombstone", "anonymize"]
+    assert {r["memory_key"] for r in res.sample} == {"tombstone", "anonymize"}
+    assert ch.heads[identity_key(moved)] == updated
+    assert not _DEMOTE_REEMITS
+
+
+async def test_clickhouse_expiry_refuses_a_head_that_moves_during_the_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [_row(memory_key=a, on_expire=a) for a in ("demote", "anonymize")]
+    ch, _ = _stub(monkeypatch, rows)
+    updated = [build_memory_version_row(row, version=200, value='"rewritten"') for row in rows]
+    ch.heads[identity_key(rows[0])] = updated[0]
+    retry = X._retry_heads
+
+    async def moved_again(reads: list[MemoryRow], *, ch: Any) -> list[MemoryRow | None]:
+        heads = await retry(reads, ch=ch)
+        ch.heads[identity_key(rows[1])] = updated[1]
+        return heads
+
+    monkeypatch.setattr(X, "_retry_heads", moved_again)
+    res = await X.run_pass()
+    assert not res.failures and res.moved_skipped == 2
+    assert (res.tombstoned, res.demoted, res.anonymized) == (0, 0, 0)
+    assert not res.sample and not ch.inserts and not retired and not _DEMOTE_REEMITS
+    assert [ch.heads[identity_key(row)] for row in rows] == updated

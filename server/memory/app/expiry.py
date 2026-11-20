@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.core import pg
+from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import caller_text
 from server.core.hashing import sha256_value as _sha
@@ -309,8 +311,8 @@ async def _over_unmoved_heads(
     *,
     ch: Any,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, Any, int]]]:
-    """The rows written over the heads the pass read, and those that landed. Under the
-    Postgres authority a head that moved since refuses the batch: the heads are read
+    """The rows written over the heads the pass read, and those that landed. A
+    head that moved since refuses the batch: the heads are read
     again and the batch goes once more without the moved ones; refused again (a head
     moved meanwhile, or redacted in place), it is left whole. What is left the next pass
     sees (`moved_skipped`)."""
@@ -319,10 +321,10 @@ async def _over_unmoved_heads(
 
     reads = [row for _, row, _ in mirrors]
     try:
-        await memory_repo.insert_versions_over_heads(version_rows, reads, ch=ch)
+        await memory_repo.insert_versions_over_heads(version_rows, reads, ch=ch, exact=True)
         return version_rows, mirrors
     except pg_memory.AdmissionContendedError:
-        heads = await memory_repo.authority_heads(reads)
+        heads = await _retry_heads(reads, ch=ch)
     kept = {
         i
         for i, (read, head) in enumerate(zip(reads, heads, strict=True))
@@ -335,12 +337,26 @@ async def _over_unmoved_heads(
         return [], []
     try:
         await memory_repo.insert_versions_over_heads(
-            version_rows, [row for _, row, _ in mirrors], ch=ch
+            version_rows, [row for _, row, _ in mirrors], ch=ch, exact=True
         )
     except pg_memory.AdmissionContendedError:
         _leave(res, mirrors)
         return [], []
     return version_rows, mirrors
+
+
+async def _retry_heads(reads: list[MemoryRow], *, ch: Any) -> list[MemoryRow | None]:
+    import server.memory.store as memory_repo
+
+    if pg.enabled():
+        return await memory_repo.authority_heads(reads)
+    # This read filters a refused batch. Admission under the common writer fence
+    # still checks every retained head at the next insert.
+    with sequential_reads():
+        heads = await memory_repo.memory_rows_by_identity_keys(
+            [identity_key(row) for row in reads], ch=ch
+        )
+    return [heads.get(identity_key(row)) for row in reads]
 
 
 def _leave(res: ExpiryResult, mirrors: list[tuple[str, Any, int]]) -> None:
