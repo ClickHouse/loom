@@ -7,6 +7,7 @@ from typing import Any
 
 from server.core import pg
 from server.core.datetimes import to_naive_utc
+from server.core.hashing import hash_text
 from server.core.repo_base import _CHClient, query_all_sliced
 from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.temporal_sql import (
@@ -28,7 +29,11 @@ def _sources(row: dict[str, Any]) -> list[SourceKey]:
 
 def _source_state(row: dict[str, Any]) -> tuple[Any, ...]:
     return tuple(
-        to_naive_utc(value) if isinstance(value, datetime) else value
+        hash_text(value)
+        if col == "content_sha256"
+        else to_naive_utc(value)
+        if isinstance(value, datetime)
+        else value
         for col in pg_memory.SUMMARY_SOURCE_STATE_COLUMNS
         for value in [row.get(col)]
     )

@@ -39,6 +39,7 @@ class SourceProjection:
         self.authority = authority
         self.replacement = replacement
         self.lineage = ["source"]
+        self.projected_hash: object = "a" * 64
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "FROM loom.session_summaries FINAL" in sql:
@@ -60,7 +61,12 @@ class SourceProjection:
             self.authority[identity_key(self.replacement)] = self.replacement
         return [
             _source()
-            | {"source_user": "reader", "source_session": "session", "source_served": True}
+            | {
+                "source_user": "reader",
+                "source_session": "session",
+                "source_served": True,
+                "content_sha256": self.projected_hash,
+            }
         ]
 
 
@@ -80,10 +86,17 @@ def source_read(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_memory, "_read", read)
 
-    async def retrieve(replacement: dict[str, Any] | None, *, lineage: bool = True, fail=False):
+    async def retrieve(
+        replacement: dict[str, Any] | None,
+        *,
+        lineage: bool = True,
+        fail=False,
+        projected_hash: object = "a" * 64,
+    ):
         nonlocal unavailable
         unavailable = fail
         ch = SourceProjection(authority, replacement)
+        ch.projected_hash = projected_hash
         if not lineage:
             ch.lineage = []
         return await fetch_session_summaries(
@@ -202,3 +215,36 @@ async def test_an_unstorable_source_key_never_reaches_the_authority(monkeypatch)
     monkeypatch.setattr(pg_memory, "_read", unreadable)
     assert await pg_memory.summary_source_heads([]) == {}
     assert await pg_memory.summary_source_heads([(*KEY[:5], "bad\x00key")]) == {}
+
+
+@pytest.mark.parametrize("projected_hash", [b"a" * 64, bytearray(b"a" * 64)])
+async def test_native_hash_bytes_keep_a_matching_authoritative_digest(source_read, projected_hash):
+    retrieve, requested = source_read
+    [hit] = await retrieve(_source(), projected_hash=projected_hash)
+    assert hit.content_excerpt == "a source fact"
+    assert hit.derived_from == ["source"]
+    assert requested == [KEY]
+
+
+@pytest.mark.parametrize(
+    ("projected_hash", "authoritative_hash"),
+    [
+        (b"b" * 64, "a" * 64),
+        (b"", ""),
+        (b"\x00" * 64, ""),
+        (b"g" * 64, "g" * 64),
+        (b"\xff" * 64, "\ufffd" * 64),
+    ],
+    ids=["changed", "empty", "null-padding", "nonhex", "invalid-utf8"],
+)
+async def test_native_hash_bytes_cannot_validate_changed_or_invalid_sources(
+    source_read, projected_hash, authoritative_hash
+):
+    retrieve, requested = source_read
+    assert (
+        await retrieve(
+            _source() | {"content_sha256": authoritative_hash}, projected_hash=projected_hash
+        )
+        == []
+    )
+    assert requested == [KEY]
