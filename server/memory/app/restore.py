@@ -739,18 +739,20 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
         # The key is high again: a plain write still embedding lands below the fence.
         fence = [(identity_key(existing), new_version)] if existing.sensitivity == "high" else []
         async with fenced_once_committed(lambda: fence, op="memory.restore", ch=ch) as answer:
-            await _insert_restore(
-                input,
-                restore_row,
-                existing,
-                ch=ch,
-                what="the restore",
-                mirror=mirror,
-                landed=_announce,
-                on_commit=answer.mark_committed,
-            )
-        if fence and not pg.enabled():
-            await fence_high(fence, ch=ch)
+            try:
+                await _insert_restore(
+                    input,
+                    restore_row,
+                    existing,
+                    ch=ch,
+                    what="the restore",
+                    mirror=mirror,
+                    landed=_announce,
+                    on_commit=answer.mark_committed,
+                )
+            finally:
+                if fence and not pg.enabled() and answer.committed:
+                    await fence_high(fence, ch=ch)
 
     # A fact the row states may have closed while it was deleted.
     await _reopen_facts(input, existing, new_version, ch=ch)
