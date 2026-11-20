@@ -31,6 +31,33 @@ def _ask(**kw: Any) -> Any:
     return SimpleNamespace(org="o", namespace="n", agent="a", user_id="u", session_id=None, **kw)
 
 
+@pytest.mark.parametrize(
+    ("bridge", "slug", "near_match"),
+    [
+        ("Carlos Gómez", "carlos_g_mez", "carlosagamez"),
+        ("Bernard Arnault", "bernard_arnault", "bernardxarnault"),
+        (r"The Acme%_\Lab", "acme_lab", "acmexlab"),
+        ("Nolan", "nolan", "n0lan"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_bridge_slug_matches_literal_text_only(monkeypatch, bridge, slug, near_match) -> None:
+    literal = f"{slug}_citizen_of"
+    embedded = f"person_{slug}_born_in"
+    ch = _local_ch(
+        _row("s1", literal, "wanted citizenship"),
+        _row("s1", embedded, "wanted birthplace"),
+        _row("s1", f"{near_match}_citizen_of", "another subject"),
+        _row("s1", "unrelated_citizen_of", "unrelated subject"),
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    hits = await bridge_rows_by_key(_ask(), bridge)
+    assert {h.memory_key: h.content_excerpt for h in hits} == {
+        literal: "wanted citizenship",
+        embedded: "wanted birthplace",
+    }
+
+
 @pytest.mark.asyncio
 async def test_the_read_keeps_tagged_rows_and_caps_rows_per_key(monkeypatch) -> None:
     from server.settings import settings

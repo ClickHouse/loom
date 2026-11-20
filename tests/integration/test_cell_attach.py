@@ -29,9 +29,9 @@ import pytest
 
 from server.cli import cell as cell_cli
 from server.cli import cell_attach, cell_attach_pg, cell_prepare
-from server.cli.cell_ch import Refused
-from server.core import cell, cell_probe, cell_triggers, instances, pg
+from server.core import cell, cell_probe, cell_sync, cell_triggers, instances, pg
 from server.core import ch as ch_core
+from server.core.cell_ch import Refused
 from server.core.schema import pg_migrate
 from server.router import app as router_app
 from server.router import directory
@@ -895,9 +895,9 @@ async def test_doctor_reads_smallest_first_and_leaves_the_largest_unchecked(
 
     monkeypatch.setattr(cell_scan, "list_clickhouse", clickhouse_inventory)
     clock = [0.0]
-    real_budget = cell_scan.Budget
+    real_budget = cell_sync.Budget
     monkeypatch.setattr(
-        cell_scan, "Budget", lambda seconds: real_budget(seconds, clock=lambda: clock[0])
+        cell_sync, "Budget", lambda seconds: real_budget(seconds, clock=lambda: clock[0])
     )
     # The budget runs out on the largest table, as it does on a real cell when that table's
     # read is what is too slow: every smaller one was read first.

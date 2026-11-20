@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 
 import httpcore
 import httpx
 import pytest
+import pytest_asyncio
 from httpcore._backends.mock import AsyncMockBackend, AsyncMockStream
 
 from server.cli import cell_control, cell_place
@@ -20,18 +20,32 @@ local = helpers.local
 invoke_place = helpers.invoke_place
 
 _DIRECTORY = cell_place._directory
+pytestmark = pytest.mark.asyncio(loop_scope="function")
 
 
-@pytest.fixture
-def exchange(local, monkeypatch):
+@pytest_asyncio.fixture(loop_scope="function")
+async def exchange(local, monkeypatch):
     conn, _ = local
-    # The work timer stays real; scheduler delay cannot spend the fake close budget.
-    phase_clock = ManualClock()
+    before = set(asyncio.all_tasks())
+    # All exchange timers share simulated time; CPU scheduling spends no HTTP budget.
+    loop = asyncio.get_running_loop()
+    phase_clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            phase_clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    monkeypatch.setattr(loop, "time", phase_clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
     monkeypatch.setattr(cell_control, "time", phase_clock)
     monkeypatch.setattr(cell_control.pg, "time", phase_clock)
     events = []
     entered = asyncio.Event()
-    state = {"mode": "response", "reads": [], "owners": []}
+    state = {"mode": "response", "reads": [], "owners": [], "clock": phase_clock}
     real_close = conn.close
     real_call = cell_control.Owner.call
     actual_client = httpx.AsyncClient
@@ -111,7 +125,12 @@ def exchange(local, monkeypatch):
     monkeypatch.setattr(cell_place, "REQUEST_S", 0.1, raising=False)
     monkeypatch.setattr(cell_control.Owner, "call", timed)
     monkeypatch.setattr(settings, "router_operator_token", "inert-test-token")
-    return conn, events, entered, state
+    yield conn, events, entered, state
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "the exchange leaves no task on its private loop"
 
 
 @pytest.mark.parametrize("blocking", ["response", "client-exit"])
@@ -119,7 +138,7 @@ def exchange(local, monkeypatch):
 async def test_whole_exchange_closes_pg_before_http_cancellation(exchange, blocking, stop):
     conn, events, entered, state = exchange
     state["mode"] = blocking
-    started = time.monotonic()
+    started = state["clock"].monotonic()
     task = asyncio.create_task(invoke_place())
     try:
         await asyncio.wait_for(entered.wait(), 0.2)
@@ -133,7 +152,7 @@ async def test_whole_exchange_closes_pg_before_http_cancellation(exchange, block
             await task
         if stop == "cancel":
             assert str(caught.value) == "operator stop"
-        assert time.monotonic() - started < 0.3
+        assert state["clock"].monotonic() - started < 0.3
         assert conn.closed and not conn.committed and not conn.terminated
         assert not any("INSERT" in call for call in conn.calls)
         assert events.index("pg-ack") < events.index("http-cancel")

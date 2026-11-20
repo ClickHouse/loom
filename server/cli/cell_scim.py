@@ -14,8 +14,8 @@ from typing import Any
 from server.auth import claims, revocation, scim, scim_people, subject_revocation
 from server.auth.scim_routes import scim_settings_problem
 from server.cli import cell_control
-from server.cli.cell_ch import WHOLE_SQL, Refusal, Refused
 from server.core import cell, ch
+from server.core.cell_ch import WHOLE_SQL, Refusal, Refused
 from server.core.datetimes import as_aware_utc
 from server.settings import settings
 
