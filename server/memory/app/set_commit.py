@@ -49,6 +49,7 @@ from server.memory.domain.memory_types import is_definition
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import pg_publish
 from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import (
     AUDIT_ROW,
     MEMORY_ROW,
@@ -525,6 +526,15 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
         nonlocal inserted
         inserted = True
 
+    async def follow() -> None:
+        nonlocal version
+        try:
+            await _receipt_for_set(w)
+            version = await _lift_after_insert(w, ch)
+        finally:
+            await _announce_set(w)
+        await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
+
     try:
         try:
             with traced("ch.insert.memory", table="loom.memory"):
@@ -533,14 +543,7 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
                 )
         finally:
             if inserted:
-                try:
-                    await _receipt_for_set(w)
-                    version = await _lift_after_insert(w, ch)
-                finally:
-                    await _announce_set(w)
-                await memory_repo.tombstone_vectors_of(
-                    w.existing, version=memory_row["version"], ch=ch
-                )
+                await finish_followups(follow(), name="memory.set.followups")
         return version
     finally:
         if high and sent:
@@ -986,7 +989,7 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
         await _lift_after_insert(w, ch, [embedding_row])
     finally:
         if w.inserted:
-            await _announce_set(w)  # the row is in, whatever failed after it
+            await finish_followups(_announce_set(w), name="memory.set.announce")
 
 
 async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> Any:
@@ -1039,7 +1042,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     except BaseException:  # acknowledged rows still owe their receipt when publication is cancelled
         if w.inserted:
             verdict = "duplicate" if w.memory_row.get("duplicate_of") else conflict_result.verdict
-            await _receipt_for_set(w, verdict)
+            await finish_followups(_receipt_for_set(w, verdict), name="memory.set.receipt")
         raise
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)

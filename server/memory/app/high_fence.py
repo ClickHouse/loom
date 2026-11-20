@@ -24,6 +24,7 @@ from server.embedding import get_embedder
 from server.memory.app.drops import record_drop
 from server.memory.app.set_chunks import tombstone_set_chunks
 from server.memory.store import pg_memory
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.rows import IdentityKey
 
 log = logging.getLogger(__name__)
@@ -137,9 +138,13 @@ async def fence_high(items: list[tuple[IdentityKey, int]], *, ch: Any = None) ->
 
     if not items:
         return
-    await memory_repo.fence_vectors(items, model=get_embedder().model_name, ch=ch)
-    await tombstone_chunks_of([key for key, _version in items], ch=ch)
-    await recheck_live_vectors([key for key, _version in items], ch=ch)
+
+    async def finish() -> None:
+        await memory_repo.fence_vectors(items, model=get_embedder().model_name, ch=ch)
+        await tombstone_chunks_of([key for key, _version in items], ch=ch)
+        await recheck_live_vectors([key for key, _version in items], ch=ch)
+
+    await finish_followups(finish(), name="memory.fence_high")
 
 
 async def recheck_live_vectors(keys: list[IdentityKey], *, ch: Any = None) -> None:

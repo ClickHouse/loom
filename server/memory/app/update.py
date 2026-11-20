@@ -50,6 +50,7 @@ from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
 from server.memory.store import key_write_lock, pg_memory
 from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import AdmissionContendedError
 from server.memory.store.rows import identity_key, version_over
 from server.observability.budget_shape import note_budget_shape
@@ -730,6 +731,9 @@ async def _land_inserted(
         nonlocal inserted
         inserted = True
 
+    async def follow() -> None:
+        await record()
+
     try:
         # Every insert runs to its end, so the fence below comes after the retire.
         try:
@@ -747,7 +751,7 @@ async def _land_inserted(
                     raise d
         finally:
             if inserted:
-                await record()
+                await finish_followups(follow(), name="memory.update.followups")
     finally:
         if high and sent:
             # After the request's own retire, at the same version: the later insert wins the

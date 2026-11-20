@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, AsyncMock
@@ -265,7 +267,10 @@ async def test_copy_commit_mark_and_followups_survive_holder_release_cancellatio
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["plain_set", "searchable_set", "update"])
-async def test_acknowledged_point_write_records_after_release_cancellation(monkeypatch, operation):
+@pytest.mark.parametrize("cancel_again", [False, True])
+async def test_acknowledged_point_write_records_after_release_cancellation(
+    monkeypatch, operation, cancel_again
+):
     import asyncio
 
     from server.core import leases
@@ -289,7 +294,19 @@ async def test_acknowledged_point_write_records_after_release_cancellation(monke
         memory_id=source.memory_id,
         embedder=SimpleNamespace(model_name="m", dim=4),
     )
-    receipt, announce, revision = AsyncMock(), AsyncMock(), AsyncMock()
+    following, finish_following = asyncio.Event(), asyncio.Event()
+    completed = []
+    pause_at = {"plain_set": "receipt", "searchable_set": "announce", "update": "revision"}
+
+    async def follow(name, *args, **kw):
+        if name == pause_at[operation]:
+            following.set()
+            await finish_following.wait()
+        completed.append(name)
+
+    receipt = AsyncMock(side_effect=functools.partial(follow, "receipt"))
+    announce = AsyncMock(side_effect=functools.partial(follow, "announce"))
+    revision = AsyncMock(side_effect=functools.partial(follow, "revision"))
     monkeypatch.setattr(set_commit, "_audit_set_receipt", receipt)
     monkeypatch.setattr(set_commit, "_announce_set", announce)
     monkeypatch.setattr(set_commit, "_lift_above_deletes", AsyncMock())
@@ -325,14 +342,20 @@ async def test_acknowledged_point_write_records_after_release_cancellation(monke
     await releasing.wait()
     task.cancel("release-stage")
     finish.set()
+    await following.wait()
+    if cancel_again:
+        task.cancel("follow-up-stage")
+    finish_following.set()
     with pytest.raises(asyncio.CancelledError) as cancelled:
         await task
     assert cancelled.value.args == ("release-stage",)
     if operation == "update":
         revision.assert_awaited_once()
+        assert completed == ["revision"]
     else:
         receipt.assert_awaited_once()
         announce.assert_awaited_once_with(w)
+        assert set(completed) == {"receipt", "announce"}
 
 
 @pytest.mark.asyncio
@@ -398,3 +421,179 @@ async def test_unacknowledged_restore_leaves_its_mirror_for_retry(monkeypatch):
     assert retry.restored and retry.from_status == "tombstoned"
     assert mirror_calls == [True]
     assert not (await restore._restore_live(request, restored, ch=ch)).restored
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["landed", "then"])
+@pytest.mark.parametrize("cancel_again", [False, True])
+async def test_acknowledged_copy_finishes_followups_under_repeated_cancellation(
+    monkeypatch, stage, cancel_again
+):
+    import asyncio
+
+    from server.memory.store import lifecycle
+
+    entered, finish = asyncio.Event(), asyncio.Event()
+    calls = []
+    original = asyncio.CancelledError("acknowledged holder cleanup cancelled")
+    insert = lifecycle.insert_memory_versions
+
+    class CH:
+        async def insert(self, *args, **kw):
+            return None
+
+    async def inserted_then_cancelled(*args, **kw):
+        await insert(*args, **kw)
+        # The funnel has acknowledged the row before cleanup cancellation surfaces.
+        raise original
+
+    async def landed():
+        calls.append("landed")
+        if stage == "landed":
+            entered.set()
+            await finish.wait()
+        calls.append("landed_done")
+
+    async def then():
+        calls.append("then")
+        if stage == "then":
+            entered.set()
+            await finish.wait()
+        calls.append("then_done")
+        return 1
+
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", inserted_then_cancelled)
+    task = asyncio.create_task(
+        store.insert_versions_over_heads(
+            [store.build_memory_version_row(_row())], [_row()], ch=CH(), landed=landed, then=then
+        )
+    )
+    try:
+        await entered.wait()
+        if cancel_again:
+            task.cancel("cancel again during follow-up")
+        finish.set()
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await task
+        assert caught.value is original
+        assert calls == ["landed", "landed_done", "then", "then_done"]
+    finally:
+        finish.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_bulk_embedding_failure_still_announces_acknowledged_memory(monkeypatch, failure):
+    original = failure("embedding write interrupted")
+    announced = AsyncMock()
+    memory = store.build_memory_version_row(_row())
+    inserted = []
+
+    class CH:
+        async def insert(self, table, rows, **kw):
+            assert table == "loom.memory"
+            inserted.extend(rows)
+
+    monkeypatch.setattr(store, "insert_embedding_rows", AsyncMock(side_effect=original))
+    monkeypatch.setattr(bulk_set, "_bulk_announce", announced)
+    with pytest.raises(failure) as caught:
+        await bulk_set._land_batch(
+            CH(), SimpleNamespace(memory_rows=[memory], embedding_rows=[]), None, {}
+        )
+    assert caught.value is original
+    assert inserted == [memory]
+    announced.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_again", [False, True])
+async def test_bulk_followup_finishes_under_repeated_cancellation(monkeypatch, cancel_again):
+    from server.core import leases
+
+    releasing, finish_release = asyncio.Event(), asyncio.Event()
+    announcing, finish_announce = asyncio.Event(), asyncio.Event()
+    release = leases.release_shielded
+    completed = []
+
+    class CH:
+        async def insert(self, *args, **kw):
+            return None
+
+    async def held_release(lease):
+        releasing.set()
+        await finish_release.wait()
+        await release(lease)
+
+    async def announce(state):
+        announcing.set()
+        await finish_announce.wait()
+        completed.append("announced")
+
+    monkeypatch.setattr(leases, "release_shielded", held_release)
+    monkeypatch.setattr(bulk_set, "_bulk_announce", announce)
+    task = asyncio.create_task(
+        bulk_set._land_batch(
+            CH(),
+            SimpleNamespace(
+                memory_rows=[store.build_memory_version_row(_row())], embedding_rows=[]
+            ),
+            None,
+            {},
+        )
+    )
+    await releasing.wait()
+    task.cancel("release-stage")
+    finish_release.set()
+    await announcing.wait()
+    if cancel_again:
+        task.cancel("follow-up-stage")
+    finish_announce.set()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+    assert caught.value.args == ("release-stage",)
+    assert completed == ["announced"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_again", [False, True])
+async def test_high_fence_finishes_all_stores_under_repeated_cancellation(
+    monkeypatch, cancel_again
+):
+    from server.memory.app import high_fence
+
+    entered, finish = asyncio.Event(), asyncio.Event()
+    original = asyncio.CancelledError("memory send interrupted")
+    completed = []
+
+    async def vectors(*args, **kw):
+        entered.set()
+        await finish.wait()
+        completed.append("vectors")
+
+    async def chunks(*args, **kw):
+        completed.append("chunks")
+
+    async def recheck(*args, **kw):
+        completed.append("recheck")
+
+    async def write():
+        try:
+            raise original
+        finally:
+            await high_fence.fence_high([(identity_key(_row()), _row().version)])
+
+    monkeypatch.setattr(high_fence, "get_embedder", lambda: SimpleNamespace(model_name="m"))
+    monkeypatch.setattr(store, "fence_vectors", vectors)
+    monkeypatch.setattr(high_fence, "tombstone_chunks_of", chunks)
+    monkeypatch.setattr(high_fence, "recheck_live_vectors", recheck)
+    task = asyncio.create_task(write())
+    await entered.wait()
+    if cancel_again:
+        task.cancel("fence-stage")
+    finish.set()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+    assert caught.value is original
+    assert completed == ["vectors", "chunks", "recheck"]

@@ -183,18 +183,25 @@ async def test_cancelled_audit_still_announces_the_committed_row(plain, monkeypa
     writes, _ = plain
     entered = asyncio.Event()
     blocked = asyncio.Event()
+    finished = False
 
     async def emit(**kwargs):
+        nonlocal finished
         entered.set()
         await blocked.wait()
+        finished = True
 
     monkeypatch.setattr(audit, "emit", emit)
     w = _write(high=high)
     task = asyncio.create_task(set_commit._set_plain_insert(w, object()))
     await entered.wait()
     task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done(), "the committed receipt must finish before cancellation returns"
+    blocked.set()
     with pytest.raises(asyncio.CancelledError):
         await task
+    assert finished
     assert writes == [w.memory_row]
     set_commit._announce_set.assert_awaited_once_with(w)
     assert set_commit.fence_high.await_count == int(high)

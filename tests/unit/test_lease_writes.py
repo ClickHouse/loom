@@ -349,3 +349,33 @@ async def test_zero_wait_refuses_after_one_attempt(monkeypatch):
             pytest.fail("busy admission cannot enter the writer")
     take.assert_awaited_once()
     sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_writer_can_finish_after_its_admission_budget(monkeypatch):
+    loop = asyncio.get_running_loop()
+    deadlines = []
+    native_timeout = asyncio.timeout_at
+    complete = asyncio.Event()
+    lease = SimpleNamespace()
+    release = AsyncMock()
+
+    def timeout_at(when):
+        result = native_timeout(when)
+        deadlines.append(result)
+        return result
+
+    monkeypatch.setattr(writes.asyncio, "timeout_at", timeout_at)
+    monkeypatch.setattr(writes.leases, "take", AsyncMock(return_value=lease))
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 24)
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    async with writes.fenced_many(["key"], wait_s=0.05):
+        admission_end = deadlines[0].when()
+        handle = loop.call_at(admission_end + 0.001, complete.set)
+        try:
+            await complete.wait()
+            assert loop.time() > admission_end
+        finally:
+            handle.cancel()
+    release.assert_awaited_once_with(lease)
+    assert len(deadlines) == 2

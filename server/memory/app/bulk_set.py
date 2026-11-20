@@ -73,6 +73,7 @@ from server.memory.domain.memory_types import is_definition, is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import identity_key, pg_memory, pg_publish
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import (
     Admission,
     AdmissionContendedError,
@@ -584,11 +585,7 @@ async def _land_batch(
         inserted = True
 
     try:
-        embedding_error = await _insert_batch(
-            state, ch, on_send=mark_sent, on_inserted=mark_inserted
-        )
-        if embedding_error is not None:
-            raise embedding_error
+        await _insert_batch(state, ch, on_send=mark_sent, on_inserted=mark_inserted)
         if state.memory_rows:
             # A memory.delete_version that landed after the fence read: the rows go above it.
             first = state.memory_rows[0]
@@ -603,7 +600,9 @@ async def _land_batch(
         await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     finally:  # the rows are in: a failed lift or retire must not also skip the fence
         if inserted:
-            await _fence_and_announce(state, ch=ch)
+            await finish_followups(
+                _fence_and_announce(state, ch=ch), name="memory.bulk_set.followups"
+            )
         elif sent and (fences := _high_winners(state)):
             await fence_high(fences, ch=ch)
 
@@ -614,20 +613,15 @@ async def _insert_batch(
     *,
     on_send: Callable[[], None] | None = None,
     on_inserted: Callable[[], None] | None = None,
-) -> BaseException | None:
+) -> None:
     """On the ClickHouse authority: the batch's memory rows and embedding rows, written
-    in that order. Raises what refused the memory rows; returns what refused the
-    embedding rows, raised once the batch is announced."""
+    in that order. The caller announces acknowledged rows even if an insert raises."""
     import server.memory.store as memory_repo
 
     await memory_repo.insert_memory_versions(
         state.memory_rows, ch=ch, on_send=on_send, on_inserted=on_inserted
     )
-    try:
-        await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
-    except BaseException as error:  # noqa: BLE001 — committed memory rows still owe an announcement
-        return error
-    return None
+    await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
 
 
 async def _fence_and_announce(state: _BulkWriteState, *, ch: Any) -> None:

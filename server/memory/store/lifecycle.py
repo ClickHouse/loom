@@ -11,7 +11,8 @@ import functools
 import json
 import logging
 import math
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+import sys
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,7 @@ from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
+from server.core.shielded import to_its_end
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.domain.lock import assert_unlocked
 from server.memory.domain.redaction_lineage import is_content_hash
@@ -52,6 +54,7 @@ from server.memory.store.rows import (
 )
 from server.memory.store.sql import _SEQUENTIAL
 from server.observability import degradations
+from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from server.settings import settings
 
 _log = logging.getLogger(__name__)
@@ -286,6 +289,31 @@ async def current_heads(
     ]
 
 
+async def finish_followups[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
+    """Finish owed row follow-ups, keeping the request's budget tag and cancellation."""
+    original = sys.exception()
+    shape: str | None = None
+
+    async def run() -> T:
+        nonlocal shape
+        try:
+            return await write
+        finally:
+            shape = current_budget_shape()
+
+    try:
+        return await to_its_end(run(), name=name)
+    except (
+        BaseException
+    ) as error:  # retain the first cancellation with a cleanup failure as its cause
+        if isinstance(original, asyncio.CancelledError) and error is not original:
+            raise original from error
+        raise
+    finally:
+        if shape is not None:
+            note_budget_shape(shape)
+
+
 async def _insert_clickhouse_copies(
     rows: list[dict[str, Any]],
     read: Sequence[MemoryRow | None],
@@ -305,6 +333,11 @@ async def _insert_clickhouse_copies(
         if on_commit is not None:
             on_commit()
 
+    async def follow() -> int:
+        if rows and landed is not None:
+            await landed()
+        return (await then() or 0) if then is not None else 0
+
     try:
         if rows:
             expected = (
@@ -316,11 +349,8 @@ async def _insert_clickhouse_copies(
     finally:
         # A successful memory insert still owes its follow-ups when holder
         # cleanup is cancelled. Refused and uncertain sends owe none here.
-        if inserted:
-            if rows and landed is not None:
-                await landed()
-            if then is not None:
-                count = await then() or 0
+        if inserted and (then is not None or (rows and landed is not None)):
+            count = await finish_followups(follow(), name="memory.copy_followups")
     return count
 
 

@@ -89,6 +89,8 @@ Acknowledged copies record their commit before holder cleanup, and still run the
 announcements and follow-ups when that cleanup is cancelled.
 Point writes retain their hash-only receipt and announcement after an acknowledged
 insert, including cancellation during holder release.
+These follow-up sequences and the high-sensitivity fence finish despite repeated
+request cancellation, and propagate the original cancellation once they finish.
 Holder release uses bounded waves too, so a batch does not exhaust its own connection
 pool during cleanup. Large ClickHouse namespace restores insert bounded batches to
 keep admission inside each batch's lease budget.
@@ -100,7 +102,10 @@ A busy fence or an unavailable
 Keeper refuses the write with a retryable 503. The check covers version inserts, not
 in-place counter updates or redaction mutations. A serving build without these fences
 does not participate; during a rolling upgrade, the guarantee requires every writer to
-run a build that takes them. Both builds serve the same schema.
+run a build that takes them and every older writer's admitted send to have settled.
+The [memory writer fence cutover](../operations/upgrades.md#memory-writer-fence-cutover)
+stops serving and background writers, waits out bounded sends, and states when the
+guarantee and optional settings apply. Both builds serve the same schema.
 
 ## The tables
 
