@@ -215,6 +215,7 @@ normally provider-specific jobs use your selected model:
 
 ```dotenv
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=${LOOM_LLM_MODEL}
+LOOM_CONFLICT_RESOLVER_MODEL=${LOOM_LLM_MODEL}
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -225,6 +226,10 @@ Compose and Loom's dotenv loader expand the verifier's model from the earlier en
 The empty values above inherit the main LLM. This keeps the capture verifier enabled;
 an empty verifier list would disable it. Remove any other cross-provider model overrides
 you added previously, including fallback, synthesis and reranking models.
+
+The conflict resolver can retire superseded memories. Validate a replacement judge
+against your own conflicts before automatic resolution; set
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false` while evaluating it.
 
 These settings matter: some shipped advanced defaults name Claude or OpenAI models
 explicitly, and an override with no provider key can fall back to the fake client.
