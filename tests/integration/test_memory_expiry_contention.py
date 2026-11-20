@@ -21,7 +21,8 @@ pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 @pytest.mark.parametrize("action", expiry.ACTIONS)
 @pytest.mark.parametrize("renewed", [False, True])
-async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, renewed):
+@pytest.mark.parametrize("same_version", [False, True])
+async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, renewed, same_version):
     if pg.enabled():
         pytest.skip("exercises the ClickHouse authority")
     now = naive_utc_now_seconds()
@@ -74,7 +75,7 @@ async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, ren
                 source,
                 value="rejected",
                 expires_at=None if renewed else source.expires_at,
-                version=version_over(source),
+                version=source.version if same_version else version_over(source),
             )
             await memory_repo.insert_memory_versions([update], ch=second)
             committed = (

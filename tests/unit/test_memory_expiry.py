@@ -935,8 +935,9 @@ async def test_a_replay_retires_bare_and_copies_the_head_unpinned(
 
 @pytest.mark.parametrize("action", X.ACTIONS)
 @pytest.mark.parametrize("renewed", [False, True])
+@pytest.mark.parametrize("updated_version", [100, 200])
 async def test_clickhouse_sweep_cannot_replace_a_concurrent_update(
-    monkeypatch: pytest.MonkeyPatch, action: str, renewed: bool
+    monkeypatch: pytest.MonkeyPatch, action: str, renewed: bool, updated_version: int
 ) -> None:
     from server.memory.store import rows as memory_rows
     from server.settings import settings
@@ -944,7 +945,7 @@ async def test_clickhouse_sweep_cannot_replace_a_concurrent_update(
     scanned = _row(on_expire=action)
     updated = memory_rows.build_memory_version_row(
         scanned,
-        version=200,
+        version=updated_version,
         value='"rejected"',
         expires_at=None if renewed else scanned.expires_at,
     )
@@ -1074,3 +1075,96 @@ async def test_clickhouse_expiry_refuses_a_head_that_moves_during_the_retry(
     assert (res.tombstoned, res.demoted, res.anonymized) == (0, 0, 0)
     assert not res.sample and not ch.inserts and not retired and not _DEMOTE_REEMITS
     assert [ch.heads[identity_key(row)] for row in rows] == updated
+
+
+@pytest.mark.parametrize("action", X.ACTIONS)
+async def test_committed_expiry_keeps_followups_when_holder_cleanup_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from server.core import leases
+
+    ch, _ = _stub(monkeypatch, [_row(on_expire=action)])
+    releasing, finish = asyncio.Event(), asyncio.Event()
+    release = leases.release_shielded
+    announce = AsyncMock()
+    monkeypatch.setattr(X.webhooks, "announce", announce)
+
+    async def held_release(lease: Any) -> None:
+        releasing.set()
+        await finish.wait()
+        await release(lease)
+
+    monkeypatch.setattr(leases, "release_shielded", held_release)
+    task = asyncio.create_task(X.run_pass())
+    try:
+        async with asyncio.timeout(5):
+            await releasing.wait()
+            task.cancel()
+            finish.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert len(ch.inserts) == 1
+        announce.assert_awaited_once()
+        if action == "demote":
+            assert len(_DEMOTE_REEMITS) == 1
+        else:
+            assert len(retired) == 1
+    finally:
+        finish.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("action", X.ACTIONS)
+@pytest.mark.parametrize(
+    "metadata", [{"lock_mode": "read_only"}, {"pinned": True}, {"tags": ["held"]}]
+)
+async def test_expiry_leaves_authored_metadata_changed_at_the_same_version(
+    monkeypatch: pytest.MonkeyPatch, action: str, metadata: dict[str, Any]
+) -> None:
+    source = _row(on_expire=action)
+    ch, _ = _stub(monkeypatch, [source])
+    updated = build_memory_version_row(source, **metadata)
+    ch.heads[identity_key(source)] = updated
+    res = await X.run_pass()
+    assert not res.failures and res.moved_skipped == 1
+    assert (res.tombstoned, res.demoted, res.anonymized) == (0, 0, 0)
+    assert ch.heads[identity_key(source)] == updated
+    assert not ch.inserts and not retired and not _DEMOTE_REEMITS
+
+
+@pytest.mark.parametrize("action", X.ACTIONS)
+async def test_cancelled_expiry_admission_leaves_no_followups(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    ch, _ = _stub(monkeypatch, [_row(on_expire=action)])
+    checking = asyncio.Event()
+    announce = AsyncMock()
+    monkeypatch.setattr(X.webhooks, "announce", announce)
+
+    async def held_read(sql: str, params: Any = None) -> list[dict[str, Any]]:
+        checking.set()
+        await asyncio.Event().wait()
+        return []
+
+    monkeypatch.setattr(ch, "query_all", held_read)
+    task = asyncio.create_task(X.run_pass())
+    try:
+        async with asyncio.timeout(5):
+            await checking.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert not ch.inserts and not retired and not _DEMOTE_REEMITS
+        announce.assert_not_awaited()
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

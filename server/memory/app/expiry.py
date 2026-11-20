@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -259,8 +260,18 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
 
     if version_rows:
         ch = get_client()
+        committed_rows: list[dict[str, Any]] = []
+        committed_mirrors: list[tuple[str, Any, int]] = []
+
+        def committed(rows: list[dict[str, Any]], copied: list[tuple[str, Any, int]]) -> None:
+            committed_rows[:] = rows
+            committed_mirrors[:] = copied
+
         try:
-            version_rows, mirrors = await _over_unmoved_heads(version_rows, mirrors, res, ch=ch)
+            version_rows, mirrors = await _over_unmoved_heads(
+                version_rows, mirrors, res, ch=ch, on_commit=committed
+            )
+            committed(version_rows, mirrors)
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
             res.failures.append(f"insert: {caller_text(e)}")
@@ -270,23 +281,11 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
                 exc=e,
             )
             return res
-        # A demoted or anonymized row is a new version of a live key.
-        await webhooks.announce(
-            [
-                ("memory.tombstoned" if action == "tombstone" else "memory.revised", row)
-                for row, (action, _r, _v) in zip(version_rows, mirrors, strict=True)
-            ]
-        )
-        items, demoted = _mirror_items(mirrors, cfg=cfg)
-        try:
-            await apply_mirror(items, demoted, ch=ch)
-        except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
-            # The next pass never selects these keys: the repair replays the record.
-            log.warning(
-                "memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e
-            )
-            res.failures.append(f"mirror:{len(items)} keys: {type(e).__name__}")
-            await _record_mirror_failures(items, e)
+        finally:
+            # Acknowledged rows still owe their projections when holder cleanup
+            # is cancelled. Refused or uncertain inserts leave these lists empty.
+            if committed_rows:
+                await _after_expiry(committed_rows, committed_mirrors, res, cfg=cfg, ch=ch)
     outcome = res.as_dict()
     outcome.pop("sample", None)
     get_registry().record_success(
@@ -295,6 +294,30 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
         outcome=outcome,
     )
     return res
+
+
+async def _after_expiry(
+    rows: list[dict[str, Any]],
+    mirrors: list[tuple[str, Any, int]],
+    res: ExpiryResult,
+    *,
+    cfg: ExpiryConfig,
+    ch: Any,
+) -> None:
+    await webhooks.announce(
+        [
+            ("memory.tombstoned" if action == "tombstone" else "memory.revised", row)
+            for row, (action, _r, _v) in zip(rows, mirrors, strict=True)
+        ]
+    )
+    items, demoted = _mirror_items(mirrors, cfg=cfg)
+    try:
+        await apply_mirror(items, demoted, ch=ch)
+    except Exception as e:  # noqa: BLE001 — the memory rows are authoritative
+        # The next pass never selects these keys: the repair replays the record.
+        log.warning("memory_expiry_sweep: embeddings mirror failed for %d keys: %s", len(items), e)
+        res.failures.append(f"mirror:{len(items)} keys: {type(e).__name__}")
+        await _record_mirror_failures(items, e)
 
 
 def _demote_overrides(row: Any, cfg: ExpiryConfig) -> dict[str, Any]:
@@ -310,6 +333,7 @@ async def _over_unmoved_heads(
     res: ExpiryResult,
     *,
     ch: Any,
+    on_commit: Callable[[list[dict[str, Any]], list[tuple[str, Any, int]]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, Any, int]]]:
     """The rows written over the heads the pass read, and those that landed. A
     head that moved since refuses the batch: the heads are read
@@ -320,8 +344,15 @@ async def _over_unmoved_heads(
     from server.memory.store import pg_memory
 
     reads = [row for _, row, _ in mirrors]
+
+    def committed() -> None:
+        if on_commit is not None:
+            on_commit(version_rows, mirrors)
+
     try:
-        await memory_repo.insert_versions_over_heads(version_rows, reads, ch=ch, exact=True)
+        await memory_repo.insert_versions_over_heads(
+            version_rows, reads, ch=ch, exact=True, on_commit=committed
+        )
         return version_rows, mirrors
     except pg_memory.AdmissionContendedError:
         heads = await _retry_heads(reads, ch=ch)
@@ -337,7 +368,7 @@ async def _over_unmoved_heads(
         return [], []
     try:
         await memory_repo.insert_versions_over_heads(
-            version_rows, [row for _, row, _ in mirrors], ch=ch, exact=True
+            version_rows, [row for _, row, _ in mirrors], ch=ch, exact=True, on_commit=committed
         )
     except pg_memory.AdmissionContendedError:
         _leave(res, mirrors)

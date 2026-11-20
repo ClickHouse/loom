@@ -4964,7 +4964,9 @@ async def test_an_expiry_pass_leaves_a_moved_head_for_the_next_one(
     monkeypatch.setattr(settings, "storage_authority", "postgres")
     batches: list[list[str]] = []
 
-    async def _over_heads(rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool) -> None:
+    async def _over_heads(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
         assert exact
         batches.append([r["memory_key"] for r in rows])
         if any(r["memory_key"] == "moved" for r in rows):
@@ -5004,7 +5006,9 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
 
     monkeypatch.setattr(settings, "storage_authority", "postgres")
 
-    async def _always_moved(rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool) -> None:
+    async def _always_moved(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
         assert exact
         raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 

@@ -1328,12 +1328,15 @@ Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace'
 | `anonymize`           | Replaces the value with a marker, tombstones embeddings, keeps the shell row. |
 
 Each post-action requests exact-head admission. Under the ClickHouse authority,
-the source version is checked while holding the same per-key Keeper fence as every
-memory version writer; under Postgres, transactional admission checks the head. A
+the source row is compared while holding the same per-key Keeper fence as every
+memory version writer; under Postgres, transactional admission checks the head.
+The comparison includes authored content and metadata even at the same version;
+derived usage counters are excluded. A
 renewal or rewrite since the scan is counted in `moved_skipped` and left for another
 pass. The refused batch is re-read and retried once without moved candidates; another
 refusal leaves that batch whole. Dry runs write nothing and do not acquire the fences
-([storage authority](storage-authority.md#why-two-stores)).
+([storage authority](storage-authority.md#why-two-stores)). An acknowledged expiry still
+announces and mirrors its action if holder cleanup is cancelled.
 
 At the memory row's version, the sweep then mirrors the action: tombstone and anonymize
 retire the key's vectors in `memory_embeddings` and `entity_vectors`, and demote copies
