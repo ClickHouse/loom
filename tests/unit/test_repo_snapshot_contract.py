@@ -158,7 +158,7 @@ def test_the_accessors_refuse_until_the_registry_is_read(monkeypatch) -> None:
         org_readable=True,
     )
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    monkeypatch.setattr(repos, "_configured_from_env", lambda: [entry])
+    monkeypatch.setattr(repos, "_configured_from_env", lambda _config, _errors: [entry])
     monkeypatch.setattr(repos, "registry_repos", lambda: [])
     monkeypatch.setattr(repos, "_registry_loaded", False)
     with pytest.raises(repos.RegistryUnread):

@@ -659,6 +659,13 @@ async def _require_free(org: str, namespace: str, name: str, *, owner_subject: s
         )
 
 
+def _require_supported_recording_provider(src: KnowledgeSource) -> None:
+    if src.kind == "recording" and src.config.get("provider") == "meet":
+        raise ValidationError(
+            "Meet transcripts and notes use a gdrive shared-folder source", code="BAD_CONFIG"
+        )
+
+
 async def handle_knowledge_source_check(
     input: KnowledgeSourceCheckInput,
 ) -> KnowledgeSourceCheckOutput:
@@ -670,6 +677,7 @@ async def handle_knowledge_source_check(
     if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
         raise AuthInsufficientError("a namespace administrator is required for a shared source")
     _require_served(src)
+    _require_supported_recording_provider(src)
     checked_at = _now_iso()
     credential = credential_of(src)
     if not credential:
@@ -713,6 +721,7 @@ async def handle_knowledge_source_rotate(
 ) -> KnowledgeSourceRotateOutput:
     src = await _source_or_404(input.org, input.namespace, input.name)
     _require_served(src)
+    _require_supported_recording_provider(src)
     if not input.credential.strip():
         raise ValidationError("a credential is required", code="CREDENTIAL_REFUSED")
     # A deployment that cannot store the credential says so before the probe.
@@ -757,6 +766,7 @@ async def handle_knowledge_source_update(
     if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
         raise AuthInsufficientError("a namespace administrator is required for a shared source")
     _require_served(src)
+    _require_supported_recording_provider(src)
     if src.kind not in domain.ITEM_FIELDS:
         raise ValidationError(f"a {src.kind} source has no items", code="BAD_KIND")
     plan = await _update_plan(src, input)
@@ -1057,6 +1067,7 @@ async def handle_knowledge_source_sync_now(
         if not await authz.row_in_scope(input.org, input.namespace, Role.ADMIN):
             raise AuthInsufficientError("a namespace administrator is required for a shared source")
         _require_served(src)
+    _require_supported_recording_provider(src)
     await _require_source_namespace(input.org, input.namespace)
     async with sources_lease(input.org, input.namespace):
         # A request meant for the source this call read must not be recorded on another

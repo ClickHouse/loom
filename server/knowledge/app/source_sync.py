@@ -115,7 +115,7 @@ from server.knowledge.api.models_knowledge import KnowledgeDeleteInput, Knowledg
 from server.knowledge.app import extractors, private_sync, writes
 from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.app import sources as source_ops
-from server.knowledge.domain import access_list, convert
+from server.knowledge.domain import access_list, convert, transcripts
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
     SYNC_WORKER_ACTOR,
@@ -513,7 +513,11 @@ async def _sync_turn(
     result.unconverted += turn.unconverted
     result.skipped += turn.skipped
     result.cut |= turn.cut
-    if turn.status != "ok":
+    if turn.status != "ok" and not (
+        turn.status == "provider_removed"
+        and src.kind == "recording"
+        and src.config.get("provider") == "meet"
+    ):
         result.failed += 1
         result.errors.append(f"{_cursor_of(src)}: {turn.status} {turn.error}".strip())
         pass_context.note_failure(RuntimeError(turn.error or turn.status), _cursor_of(src))
@@ -1215,7 +1219,9 @@ async def _fetch(token: Credential, f: dict[str, Any]) -> _Fetched:
     max_bytes = int(settings.knowledge_source_sync_max_file_bytes)
     if mime == GDRIVE_MIME_TYPES["docs"]:
         text = await gdrive.export_markdown(token, file_id, max_bytes=max_bytes)
-        return _Fetched(convert.exported_markdown(text), "markdown")
+        content = convert.exported_markdown(text)
+        fmt = "transcript" if transcripts.is_drive_transcript_markdown(content) else "markdown"
+        return _Fetched(content, fmt)
     if mime == GDRIVE_MIME_TYPES["slides"]:
         deck = await gdrive.presentation(token, file_id, max_bytes=max_bytes)
         return _Fetched(convert.presentation_markdown(deck), "slides")

@@ -970,8 +970,9 @@ def _participant_problems(state: HealthState) -> list[Problem]:
             f"A provider reconfiguration would wait on these participants: {ids}. "
             "`heartbeat_expired` ones stopped heartbeating (they may be paused), "
             "and `queries_running` ones did so with a query still running.",
-            "Once a participant's process is confirmed stopped, retire it with "
-            "`loom participant retire --participant <id> --yes`.",
+            "On its trusted host, verify exact physical death and settled queries with "
+            "`loom participant retire --participant <id>`. Expiry or a deleted pod "
+            "object does not prove death.",
             source="runtime",
         )
     ]

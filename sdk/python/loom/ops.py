@@ -5614,6 +5614,10 @@ class CodeAskBody(TypedDict, total=False):
 
 class CodeAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
+    partial: NotRequired[bool]
+    partial_reason: NotRequired[str]
+    note: NotRequired[str]
+    coverage: NotRequired[Literal["", "full", "partial", "none"]]
     citations: NotRequired[list[dict[str, Any]]]
     source: Required[Literal["cached", "synthesized", "abstained"]]
     cache_similarity: NotRequired[float]
@@ -14627,7 +14631,7 @@ class MemoryListEntry(TypedDict, total=False):
 
 
 class MemoryLockInput(TypedDict, total=False):
-    "Lock one row against a class of writes."
+    "Lock one row, refusing a changed source with retryable 503"
 
     org: Required[str]
     namespace: Required[str]
@@ -14644,7 +14648,7 @@ class MemoryLockInput(TypedDict, total=False):
 
 
 class MemoryLockBody(TypedDict, total=False):
-    "Lock one row against a class of writes."
+    "Lock one row, refusing a changed source with retryable 503"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -16362,6 +16366,8 @@ class MemoryTouchResult(TypedDict, total=False):
 
 
 class MemoryUnlockInput(TypedDict, total=False):
+    "Unlock one row, refusing a changed source with retryable 503"
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -16373,6 +16379,8 @@ class MemoryUnlockInput(TypedDict, total=False):
 
 
 class MemoryUnlockBody(TypedDict, total=False):
+    "Unlock one row, refusing a changed source with retryable 503"
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -16521,7 +16529,7 @@ class MemoryUpdateByIdOutput(TypedDict, total=False):
 
 
 class MemoryVerifyInput(TypedDict, total=False):
-    "Attest to (or revoke the attestation on) one memory."
+    "Attest or revoke, refusing a changed source with retryable 503"
 
     org: Required[str]
     memory_id: NotRequired[str]
@@ -16535,7 +16543,7 @@ class MemoryVerifyInput(TypedDict, total=False):
 
 
 class MemoryVerifyBody(TypedDict, total=False):
-    "Attest to (or revoke the attestation on) one memory."
+    "Attest or revoke, refusing a changed source with retryable 503"
 
     org: NotRequired[str]
     memory_id: NotRequired[str]

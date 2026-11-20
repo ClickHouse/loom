@@ -71,31 +71,34 @@ async def provision_account(
     can't drift. password_hash="" = no password sign-in. `ch` defaults to
     the server's client.
     """
+    from server.auth.authz import identity_write
+
     ch = ch or get_client()
     now = naive_utc_now_seconds()
-    await ch.insert(
-        "loom.namespaces",
-        [
-            {
-                "org": org,
-                "namespace": namespace,
-                "owner_email": subject,
-                "contact_email": contact_email,
-                "password_hash": password_hash,
-                "description": description,
-                "tags": list(tags or []),
-                "active": True,
-                "conflict_threshold": None,
-                "retention_days": 0,
-                "warm_days": 0,
-                "visibility": "private",
-                "classification": "standard",
-                "join_policy": "inherit",
-                "created_at": now,
-                "updated_at": now,
-            }
-        ],
-    )
+    with identity_write():
+        await ch.insert(
+            "loom.namespaces",
+            [
+                {
+                    "org": org,
+                    "namespace": namespace,
+                    "owner_email": subject,
+                    "contact_email": contact_email,
+                    "password_hash": password_hash,
+                    "description": description,
+                    "tags": list(tags or []),
+                    "active": True,
+                    "conflict_threshold": None,
+                    "retention_days": 0,
+                    "warm_days": 0,
+                    "visibility": "private",
+                    "classification": "standard",
+                    "join_policy": "inherit",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
+        )
     await insert_owner_grant(org, namespace, subject, ch=ch)
 
 
@@ -597,6 +600,8 @@ async def _single_user_agent(input: AgentSignupInput, request: Request) -> Agent
 async def _provision_agent(
     input: AgentSignupInput, request: Request, org: str, namespace: str
 ) -> AgentSignupOutput:
+    from server.auth.authz import identity_write
+
     ch = get_client()
     existing = await ch.query_one(
         """
@@ -653,29 +658,30 @@ async def _provision_agent(
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
     await grant_cache.changed(org, [sa_subject])
-    await ch.insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": f"{AGENT_NAME_PREFIX}{input.name.strip()}",
-                "sa_subject": sa_subject,
-                "namespaces": [namespace],
-                "roles": ["writer"],
-                "ttl_days": int(input.ttl_days or 0),
-                "created_by": namespace,
-                "created_at": now,
-                "expires_at": expires_at,
-                "revoked_at": None,
-                "revoked_by": "",
-                "version": time.time_ns(),
-                "kind": "agent",
-                "client": AGENT_CLIENT,
-                "inherit_creator_grants": False,
-                "ns_roles": json.dumps({namespace: "writer"}),
-            }
-        ],
-    )
+    with identity_write():
+        await ch.insert(
+            "loom.service_accounts",
+            [
+                {
+                    "org": org,
+                    "name": f"{AGENT_NAME_PREFIX}{input.name.strip()}",
+                    "sa_subject": sa_subject,
+                    "namespaces": [namespace],
+                    "roles": ["writer"],
+                    "ttl_days": int(input.ttl_days or 0),
+                    "created_by": namespace,
+                    "created_at": now,
+                    "expires_at": expires_at,
+                    "revoked_at": None,
+                    "revoked_by": "",
+                    "version": time.time_ns(),
+                    "kind": "agent",
+                    "client": AGENT_CLIENT,
+                    "inherit_creator_grants": False,
+                    "ns_roles": json.dumps({namespace: "writer"}),
+                }
+            ],
+        )
     return AgentSignupOutput(
         token=token,
         namespace=namespace,

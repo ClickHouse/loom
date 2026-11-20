@@ -116,6 +116,98 @@ block to a coding client's rule file, so the agent knows when to call the tools;
 client other than Cursor, add `?toolset=coding` to the entry's URL (`--toolset coding`
 with `loom install`) so the tools the block names are listed.
 
+## Share a team namespace with separate credentials
+
+Use an [authenticated multi-user deployment](quickstart.md#2-open-the-dashboard)
+with TLS for remote clients. Single-user mode does not enforce team access boundaries.
+The server must support create-if-absent memory writes through
+`if_match_sha256: "absent"`, and its session-protection policy must admit the write.
+Token minting and namespace roles alone do not establish these prerequisites.
+A precondition or protection refusal stops this walkthrough; it does not qualify
+the access check. Keep the precondition when diagnosing a refusal.
+
+The operator chooses an ordinary, disposable memory namespace used only for this check,
+shown as `acme/team-alpha`, with no existing `example/team-access-check` key. The other
+team's example namespace, `team-beta`, is also a memory namespace, not an org-readable
+code namespace. Restricted namespaces
+also require their [explicit grants](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
+
+As the operator, run these commands in the server's signing-key environment, following
+[Mint a token](../guides/tokens-and-grants.md#mint-a-token). The CLI ships with the server,
+not the SDK. Do not give clients the signing key or use a wildcard namespace:
+
+```bash
+ALPHA_WRITER=$(loom mint-token --subject sa:team-author --org acme \
+  --namespace-role team-alpha=writer --ttl-days 1)
+ALPHA_READER=$(loom mint-token --subject sa:team-reader --org acme \
+  --namespace-role team-alpha=viewer --ttl-days 1)
+```
+
+These are distinct authenticated principals because the token subjects differ. The
+writer may save and read memory; the viewer may only read. Both tokens are scoped to
+`team-alpha`. For ordinary plugin use, give each teammate their own scoped **writer**
+token and follow the client setup above; the viewer here tests read-only access. Deliver
+each token privately to its intended client, never in a shared repository or transcript.
+
+With `curl` and `jq` installed, set the server URL and select the test row. Run the write
+with the author's token and the read with the reader's token, on their respective clients.
+The tokens below are shell variables containing the issued credentials, not placeholder
+credentials to send literally:
+
+```bash
+LOOM_BASE_URL=https://loom.example.com
+DEMO_ROW='{"org":"acme","namespace":"team-alpha","agent":"team-author","user_id":"sample-user","session_id":"team-check","memory_key":"example/team-access-check"}'
+
+curl --fail-with-body --silent --show-error "$LOOM_BASE_URL/v1/memory.set" \
+  -H "Authorization: Bearer $ALPHA_WRITER" -H 'Content-Type: application/json' \
+  --data "$(jq '. + {value:"Review deployment changes before release.",if_match_sha256:"absent"}' <<<"$DEMO_ROW")"
+
+curl --fail-with-body --silent --show-error "$LOOM_BASE_URL/v1/memory.get" \
+  -H "Authorization: Bearer $ALPHA_READER" -H 'Content-Type: application/json' \
+  --data "$DEMO_ROW"
+```
+
+The write's `absent` precondition refuses an existing live row; do not remove it to retry.
+Require a successful write receipt, then `found: true`, the saved `value` and the selected
+`agent`, `user_id` and `session_id` in the read. The server records the writer's token
+principal as `actor`. The request's `agent` is a memory identity label, not an access grant
+or a way to become that principal. The requested tuple is tried first; if absent,
+`memory.get` can fall back to another agent's row for the same user. A returned tuple
+that differs from the one selected does not pass this check.
+
+Keep the reader token unchanged and request another team's namespace:
+
+```bash
+curl --silent --show-error --write-out '\nHTTP %{http_code}\n' \
+  "$LOOM_BASE_URL/v1/memory.get" \
+  -H "Authorization: Bearer $ALPHA_READER" -H 'Content-Type: application/json' \
+  --data "$(jq '.namespace = "team-beta"' <<<"$DEMO_ROW")"
+```
+
+For this namespace-addressed read, expect HTTP 403 with `AUTH_INSUFFICIENT`, and no fact.
+It is a scope check, not a test that a particular row exists in `team-beta`. A 401,
+transport error, provider failure or session-protection refusal does not establish that
+this check passed. Stop on unexpected responses and diagnose them; do not disable auth
+or weaken a token's scope to make a check succeed. By-ID reads have a different
+[missing-row contract](../concepts/identities-and-namespaces.md#who-may-call-what).
+
+After confirming the positive read, the author can tombstone the example while the
+disposable namespace remains otherwise unused:
+
+```bash
+curl --fail-with-body --silent --show-error "$LOOM_BASE_URL/v1/memory.delete" \
+  -H "Authorization: Bearer $ALPHA_WRITER" -H 'Content-Type: application/json' \
+  --data "$DEMO_ROW"
+unset ALPHA_WRITER ALPHA_READER DEMO_ROW
+```
+
+Unsetting a shell variable does not revoke its token; follow
+[token revocation](../guides/tokens-and-grants.md#revoke-and-rotate) when the test credentials
+are no longer needed. These commands describe the expected contract, not a captured
+deployment result. Record actual responses separately, then run the remaining
+[shared-memory evaluation checks](evaluate.md#shared-memory-across-clients), including
+revoked credentials and by-ID reads, before relying on a team deployment.
+
 ## Check that it works
 
 1. In Claude Code, run `/loom:loom-status`. It reports the server the plugin calls, whether

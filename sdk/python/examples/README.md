@@ -2,6 +2,61 @@
 
 Runnable, self-contained scripts for `clickhouse-loom`. The memory example's output below was recorded against a live Loom; the handoff output illustrates its checked result. The memory example reads `LOOM_BASE_URL`, `LOOM_API_KEY` and `LOOM_ORG` from the environment and registers a throwaway namespace. The handoff example uses an existing namespace and two separate tokens. The TypeScript SDK ships the twin of `agent_memory.py` (and a session-resume example) under `sdk/typescript/examples/`.
 
+## fact_document_evidence.py
+
+Read an existing saved fact and an explicitly selected document section for operator
+review. Install `clickhouse-loom` and configure `LOOM_BASE_URL` and `LOOM_API_KEY` for
+a deployment where your credential can read both records. Supply the fact's owning
+agent, user and session identity; omitted user/session values are `-`. Both records
+must be in the selected namespace. No source connector is configured by this example.
+The command rejects anonymous agent names and stops before reading the document if
+the returned fact's agent, user or session is missing or differs from the selection.
+
+```bash
+python sdk/python/examples/fact_document_evidence.py \
+  --org "$LOOM_ORG" --namespace "$LOOM_NAMESPACE" --agent "$FACT_AGENT" \
+  --memory-key "$FACT_KEY" --source-uri "$DOCUMENT_URI" \
+  --section "Deployments" "Rollback"
+```
+
+Use the exact heading path recorded by
+[`knowledge.outline`](../../../docs/features/knowledge.md#reading-a-document).
+The script calls `memory.get` and `knowledge.outline` with `include_children=False`.
+`knowledge.outline` is experimental and must be served by the deployment.
+It makes no search, embedding or model call, writes no application data, and disables
+automatic run recording, startup briefs, retries and rate-limit pacing.
+
+For inspection in an authorized Python application, import `read_pair` from the
+example and await it with your configured `Agent` and the same selection arguments.
+
+```python
+pair = await read_pair(
+    bot,
+    memory_key=fact_key,
+    source_uri=document_uri,
+    section_path=["Deployments", "Rollback"],
+)
+fact, document_section = pair["fact"], pair["document_section"]
+```
+
+The returned `fact["value"]` is the saved claim; `fact` also retains returned
+`agent`, `user_id`, `session_id`, `version`, `status`, `actor`, `source_class`,
+`source_trace` and `source_resource_id`
+fields. `document_section["section_content"]` is the selected section's assembled
+chunk text, with `source_uri` and `section_chunk_idxs` identifying its source. Compare
+the claim with that passage privately; CLI output contains only presence and field
+names, never the claim, passage or provenance values. Optional fields remain absent
+when the server does not return them. Check `fact["found"]`, document `found` and
+non-null `section_content` before inspecting bodies.
+
+The pairing is caller-selected. A stored source pointer does not establish support,
+and this example neither resolves that pointer nor verifies entailment or truth.
+`support` remains `not_evaluated`, including when both reads succeed. The reads are
+separate observations, not an atomic snapshot or a revision-pinned citation. A missing
+or inaccessible fact, document or section supplies no support. Offline HTTP doubles
+check the SDK contracts; no captured live output is supplied. See the
+[memory and document boundary](../../../docs/features/knowledge.md#how-do-agents-connect-a-memory-to-a-source-document).
+
 ## software_factory_memory.py
 
 A software-factory memory reference for an implementation agent handing source evidence
@@ -83,6 +138,12 @@ See [shared-agent memory](../../../docs/use-cases/multi-agent.md),
 [code-linked memory](../../../docs/use-cases/memory-linked-to-code.md) and
 [run reporting](../../../docs/features/runs.md) for the supported boundaries.
 
+## pipecat_text_memory.py
+
+A text-only native pipeline with Loom recall and finalized-turn capture. The
+[Pipecat integration README](pipecat/README.md) covers installation, trusted
+application prerequisites, run instructions and the Pipecat 1.16.0 checked scope.
+
 ## agent_memory.py
 
 An agent that remembers what a user said, recalls it by meaning, answers with citations (or abstains), and tells loom which memories it used.
@@ -116,6 +177,89 @@ Also note the user holds gold status with Lufthansa (as of 2026-08), which may h
 memory.search is idempotent: True; role viewer
 memory.get of a missing key → found=False
 unknown op → NotFound (RESOURCE_NOT_FOUND)
+```
+
+## document_search.py
+
+Search two Markdown documents, cite the passages, and abstain on a question they do not answer.
+
+```bash
+LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… LOOM_ORG=acme python document_search.py
+```
+
+Run it with a real embedder: the released stack's `local` one, or a provider's. A checkout's `.env` pins `fake-ngram-3072`, which ranks by character n-grams, so the checks would pass or fail by chance. The off-topic check also needs a knowledge floor that suits the embedder. With the `local` embedder (bge-small), the off-topic question below scored 0.34 to 0.43 against these passages, above the default floor of 0.30, so the run below sets `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY=0.5` on the server. The on-topic passages scored 0.88 and 0.89.
+
+1. `namespace.register` — the throwaway namespace; a refusal because it already exists is ignored.
+2. `knowledge.add` ×2 — two short Markdown documents, each with its own `source_uri` and `title`.
+3. `knowledge.search` per subject — each hit printed as a citation: `source_uri#chunk_idx`, the section and the passage's first line. The top hit has to be the document the question is about.
+4. `search.query` with an off-topic question — `knowledge.search` alone still returns its nearest chunks, so this goes through `search.query`, which drops knowledge hits below the similarity floor (`LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`, 0.30). No passage has to come back.
+5. `knowledge.delete` ×2 — in a `finally`, so both documents are gone even when a step fails.
+
+Every search passes `namespace_scope: "this"`, so documents in your other namespaces cannot satisfy or break a check. The script exits 1 when a check fails. [Lab 2](../../../docs/guides/teaching.md#lab-2-document-search-with-citations) of the teaching guide is the exercise version.
+
+A run against a local Loom server from source (ClickHouse 26.10, auth on, the `local` bge-small embedder, `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY=0.5`). The similarities depend on the embedder:
+
+```text
+added docs://example/refunds.md (Refund policy)
+added docs://example/shipping.md (Shipping times)
+
+Q: How many days do customers have to return an item for a refund?
+  [docs://example/refunds.md#0] Refund policy > Eligibility: Customers can return an unopened item within 30 days of delivery for a full refund.  (0.88)
+  [docs://example/refunds.md#1] Refund policy > How refunds are paid: Refunds go back to the original payment method within 5 business days.  (0.80)
+  [docs://example/shipping.md#0] Shipping times > Domestic: Standard domestic orders arrive in 3 to 5 business days.  (0.61)
+
+Q: How long does international shipping take?
+  [docs://example/shipping.md#1] Shipping times > International: International orders ship by air and arrive in 7 to 14 business days.  (0.89)
+  [docs://example/shipping.md#0] Shipping times > Domestic: Standard domestic orders arrive in 3 to 5 business days.  (0.80)
+  [docs://example/refunds.md#1] Refund policy > How refunds are paid: Refunds go back to the original payment method within 5 business days.  (0.57)
+
+Q: What is the boiling point of water at the top of Mount Everest?
+  no knowledge passage came back: the documents do not answer it
+all checks passed
+```
+
+## support_agent_memory.py
+
+Per-user memory for a support agent: two customers kept apart, a fact revised, and one customer erased on request and checked gone.
+
+```bash
+LOOM_BASE_URL=https://loom.example LOOM_API_KEY=… LOOM_ORG=acme python support_agent_memory.py
+```
+
+Erasing a `user_id` takes an org admin. `loom mint-token --roles` takes `viewer`, `writer` or `admin` only, so on a local server with auth on, mint a short-lived platform-admin service token for the run:
+
+```bash
+loom mint-token --platform-admin --subject sa:support-example --org acme --ttl-days 1
+```
+
+1. `namespace.register` — the throwaway namespace; a refusal because it already exists is ignored.
+2. `memory.set` ×4 — two facts for each of two customers, under the same keys: `user_id` is the scope. Both customer ids are new on every run.
+3. `memory.search` narrowed to each customer — only that customer's facts come back.
+4. `memory.update_by_id` — the first customer's plan is revised in place, then read back with `memory.get`.
+5. `erasure.request` with `scope_type: "user_id"` for the second customer, then `erasure.status` until the saga is `completed` with `residue_count` 0. A `user_id` scope covers every namespace in the org, which is why the id must exist only in this run.
+6. `memory.search` again — the erased customer gets nothing back; the other customer's facts are still there.
+7. `memory.delete` — in a `finally`, every key of both customers, so nothing stays behind when a step fails.
+
+The script exits 1 when a check fails.
+
+A run against a local Loom server from source (ClickHouse 26.10, auth on, the `local` embedder), with a one-day platform-admin service token. The customer ids and the erasure id change from run to run:
+
+```text
+wrote 4 facts for customer-keep-22e75585 and customer-erase-22e75585
+
+search as customer-keep-22e75585:
+  "The customer is on the Pro plan, renewed in March 2026." (#plan)
+  "The customer uses the Android app on a Pixel 8." (#device)
+
+search as customer-erase-22e75585:
+  "The customer is on the Free plan." (#plan)
+  "The customer uses Safari on macOS and sees a login loop." (#device)
+
+revised plan for customer-keep-22e75585: The customer upgraded to the Business plan in November 2026.
+
+erasure 74d6bd9d-fd01-478e-a102-e569313775d3: status=completed residue_count=0
+after erasure: customer-erase-22e75585 → 0 hit(s), customer-keep-22e75585 → 2
+all checks passed
 ```
 
 ## multi_agent_handoff.py

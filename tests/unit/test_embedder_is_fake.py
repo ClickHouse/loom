@@ -3,6 +3,8 @@ model or provider and for a keyed model without its key, a real one otherwise.""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from server.embedding import embedder
@@ -30,6 +32,8 @@ def test_the_answer_matches_the_embedder_served(
     assert embedder.embedder_is_fake() is fake
     served = embedder._served(model)
     assert (type(served).__name__ == "FakeNGramEmbedder") is fake
+    if key or provider == "fake" or model.startswith("fake-ngram"):
+        assert served.model_name == embedder.served_model_label(model)
 
 
 def test_a_model_no_provider_serves_is_not_reported_fake(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -38,3 +42,19 @@ def test_a_model_no_provider_serves_is_not_reported_fake(monkeypatch: pytest.Mon
     with pytest.raises(ValueError):
         embedder._served("bge-small")
     assert embedder.embedder_is_fake() is False
+
+
+def test_local_override_shares_the_source_label_without_loading_a_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built = []
+
+    def build(name: str, provider: str):
+        built.append((name, provider))
+        return SimpleNamespace(model_name=name)
+
+    monkeypatch.setattr(settings, "embedding_provider", "local")
+    monkeypatch.setattr(embedder, "_build", build)
+    served = embedder._served("text-embedding-3-small")
+    assert built == [("local", "local")]
+    assert served.model_name == embedder.served_model_label("text-embedding-3-small") == "local"

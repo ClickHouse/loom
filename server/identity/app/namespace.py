@@ -370,6 +370,8 @@ def refuse_unwritable_name(namespace: str) -> None:
 async def handle_namespace_register(
     input: NamespaceRegisterInput,
 ) -> NamespaceRegisterOutput:
+    from server.auth.authz import identity_write
+
     ch = get_client()
     caller = resolve_subject()
     refuse_unwritable_name(input.namespace)
@@ -408,7 +410,8 @@ async def handle_namespace_register(
                 )
         now = naive_utc_now_seconds()
         row = registry_row(input, existing, now)
-        await ch.insert("loom.namespaces", [row])
+        with identity_write():
+            await ch.insert("loom.namespaces", [row])
     # The claim cap reads which accounts tie a person's spellings from this table.
     await grant_cache.changed(input.org)
     # The class this row implies is what the next request in this process runs as — no
@@ -660,6 +663,8 @@ async def handle_namespace_delete(
 
 async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
     """`namespace.delete`'s write, and `collection.delete`'s once its purge ran."""
+    from server.auth.authz import identity_write
+
     ch = get_client()
     # The sources lease first, as code.repo.remove takes it, so an add sees the delete.
     async with sources_lease(org, namespace), account_change(org, namespace):
@@ -684,7 +689,8 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
             row["active"] = False
             # Never behind the row it replaces: on a tie the row inserted last wins.
             row["updated_at"] = max(now, existing["updated_at"])
-            await ch.insert("loom.namespaces", [row])
+            with identity_write():
+                await ch.insert("loom.namespaces", [row])
         if existing.get("kind") == "collection":
             # The tree last, and on every delete: only it decides access, so a
             # delete cut short before it is retried (the gate still admits it)

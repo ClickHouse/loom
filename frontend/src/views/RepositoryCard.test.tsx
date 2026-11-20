@@ -181,6 +181,34 @@ async function openBranchMenu(user: ReturnType<typeof userEvent.setup>, branchNa
 }
 
 describe("branchHealth: one vocabulary for an index's health", () => {
+  it.each(["queued", "cloning", "indexing", "embedding"] as const)(
+    "shows a readable first index in progress before a completed head exists (%s)",
+    (stage) => {
+      const building = branch({ readable: true, git_head: "", indexed_at: "", stage });
+      expect(branchHealth(building)).toMatchObject({ text: "Indexing", state: "info" });
+    },
+  );
+
+  it.each(["not_member", "token_scope"] as const)("requires access for a redacted branch (%s)", (reason) => {
+    const redacted = branch({
+      readable: false,
+      unreadable_reason: reason,
+      classification: "restricted",
+      join_policy: "approval",
+      git_head: "",
+      clone_head: "",
+      indexed_at: "",
+      counts: {},
+    });
+    expect(branchHealth(redacted)).toMatchObject({ text: "Access required", state: "neutral" });
+    expect(branchHealth({ ...redacted, stage: "error" }).text).toBe("Access required");
+    expect(branchHealth({ ...redacted, stage: "indexing" }).text).toBe("Access required");
+    expect(branchHealth({ ...redacted, git_head: "abc123", fast_tier_lag: 42 }).text).toBe("Access required");
+    expect(worstHealth([redacted, branch()])?.text).toBe("Up to date");
+    expect(worstHealth([branch(), redacted])?.text).toBe("Up to date");
+    expect(branchHealth({ ...redacted, readable: true }).text).toBe("Not indexed");
+  });
+
   it("names every state with its badge colour", () => {
     expect(branchHealth(branch())).toMatchObject({ text: "Up to date", state: "success" });
     expect(branchHealth(branch({ fast_tier_lag: 412 }))).toMatchObject({
@@ -230,6 +258,30 @@ describe("branchHealth: one vocabulary for an index's health", () => {
 });
 
 describe("RepositoryCard: the row", () => {
+  it.each([false, true])("shows access instead of indexing health for a redacted row (opened: %s)", (open) => {
+    mount(
+      [
+        branch({
+          readable: false,
+          unreadable_reason: "not_member",
+          classification: "restricted",
+          join_policy: "approval",
+          git_head: "",
+          clone_head: "",
+          indexed_at: "",
+          counts: {},
+        }),
+      ],
+      [],
+      null,
+      { open },
+    );
+    expect(screen.getAllByText("Access required").length).toBeGreaterThan(0);
+    expect(screen.getByText("Restricted")).toBeInTheDocument();
+    expect(screen.queryByText("Not indexed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Up to date")).not.toBeInTheDocument();
+  });
+
   it("folded: name and health on line 1, the muted summary on line 2, the split button; the body only once opened — and passes axe", async () => {
     const user = userEvent.setup();
     const { container } = mount(
@@ -1041,6 +1093,11 @@ describe("RepositoryCard: a failing tier", () => {
     expect(list).toHaveTextContent("Fix: No credential with access (github.com/o/private)");
     expect(within(list).queryByText("Mirror fetch")).toBeNull();
     expect(await axeViolations(container)).toEqual([]);
+  });
+
+  it("requires access before interpreting a failing tier or an active index", () => {
+    const redacted = branch({ readable: false, tier_health: [failing], stage: "indexing", fast_tier_lag: 413 });
+    expect(branchHealth(redacted)).toMatchObject({ text: "Access required", state: "neutral" });
   });
 
   it("a branch whose tiers are ok shows no failure list", () => {

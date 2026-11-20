@@ -180,7 +180,7 @@ async def handle_memory_verify(input: MemoryVerifyInput) -> MemoryVerifyOutput:
         # agrees with the attestation (a row holding the DEFAULT reads '0').
         content_sha256=sha,
     )
-    await memory_repo.insert_versions_over_heads([new_row], [row], ch=get_client())
+    await memory_repo.insert_versions_over_heads([new_row], [row], ch=get_client(), exact=True)
     # The caller waits for the durable attestation, not for the ranking signal. The
     # embeddings mirror (a FINAL read of the row's vector plus a second committed insert,
     # best-effort by contract) runs after this answer on the request's loop, and the next

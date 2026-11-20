@@ -32,6 +32,11 @@ For a claim your agent writes, `memory.set` accepts `source_resource_id` and
 returns that pointer. The writer supplies it; storing it does not verify that the
 document supports the claim.
 
+The [read-only Python walkthrough](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md#fact_document_evidencepy)
+retrieves an existing fact and a caller-selected document section, preserving the
+returned provenance and passage fields for operator review. It makes no model call
+and leaves support unevaluated.
+
 [`loom decisions extract`](./tasks-and-decisions.md#extract-decisions-from-a-document)
 is a separate operator command for decisions stated in a document. It checks quotations
 against the document text, checks the claims with the configured model, and writes

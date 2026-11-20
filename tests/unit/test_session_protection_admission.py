@@ -124,7 +124,7 @@ async def test_http_protection_runs_after_authentication_before_body_or_validati
 
     phases = []
 
-    def authenticate(request):
+    async def authenticate(request):
         phases.append("authenticated")
         return None
 
@@ -149,7 +149,7 @@ async def test_http_authentication_refusal_precedes_the_deployment_read(monkeypa
 
     from server.transport import http
 
-    def authenticate(request):
+    async def authenticate(request):
         raise HTTPException(401, "credential refused")
 
     monkeypatch.setattr(http, "_extract_auth", authenticate)
@@ -215,7 +215,7 @@ async def test_unit_store_unreadability_refuses_before_http_body(monkeypatch, mi
 
     world = mirror_latch_world
     world.fault = "wrong_engine"
-    monkeypatch.setattr(http, "_extract_auth", lambda request: None)
+    monkeypatch.setattr(http, "_extract_auth", AsyncMock(return_value=None))
     body = AsyncMock(side_effect=AssertionError("private body must not be read"))
     monkeypatch.setattr(http, "_read_body", body)
     endpoint = http._make_endpoint(OPERATIONS_BY_NAME["conversation.create"])

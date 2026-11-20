@@ -70,8 +70,8 @@ def _refusal(e: BaseException) -> LoomServerError | HTTPException:
     return AuthInsufficientError("the caller may not ask the assistant here")
 
 
-def _bearer(request: Request) -> AuthInfo:
-    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
+async def _bearer(request: Request) -> AuthInfo:
+    auth = await verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if not settings.auth_actually_required():
             # Each answer reads under a token delegated from the caller's.
@@ -238,7 +238,7 @@ async def chat_completions(request: Request) -> Any:
     """One answer from the Loom assistant. Body: OpenAI's chat request (`messages`,
     `stream`); any `model`, `conversation_id`, system message, tool or file is ignored.
     The caller needs `viewer` on the namespace."""
-    bearer = _bearer(request)
+    bearer = await _bearer(request)
     # An org-wide token's `*` is no org a row can name, as the op transport keeps it out.
     org_seen = "-" if bearer.org == "*" else bearer.org
     row = _Row(bearer, org_seen, request.headers.get("X-Loom-Namespace") or "")

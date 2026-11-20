@@ -415,8 +415,12 @@ leaves its namespace out is refused, never run on the install's. The one listed 
 `memory.delete`, acts on the key it names, in the install's namespace, under any agent of
 the same user, as it does for a named agent. A call with a token is filled with nothing,
 nor is any call in another mode, so tenant isolation and failing closed are unchanged
-wherever a token decides who the caller is. In `trust-network`, passwords are argon2id and
-there is no email verification or password reset. In `gateway`, Loom never sees a
+wherever a token decides who the caller is. Caller identity and token-management routes
+use the deliberate dev identity only when no credential is supplied. A malformed bearer
+or another authorization scheme is refused; auth off does not turn it into `you`.
+MCP's `open` mode retains its separate [authentication rules](../reference/mcp.md#authentication).
+In `trust-network`, passwords are argon2id and there is no email verification or password
+reset. In `gateway`, Loom never sees a
 password.
 
 **Agent claims.** An agent account is unclaimed while its password is its claim code
@@ -506,11 +510,12 @@ caller's own org (itself, and the handle and email of each active account of it 
 is verified), is not acted for (403), nor is a bot that is revoked outright or disabled, nor
 any of its agents (a disable leaves their grants). Of the `sa:` subjects, only an active bot
 and its agents are acted for: any other is a token's own subject, whose direct grants belong
-to the token and must end with it, and a token ends in ways its grants do not record (an
-expiry, a revoke by `jti`, a cutoff on its maker or on itself), so a trusted caller acting
-for one would keep reaching what a dead token held. A token minted under a subject without
-`sa:` cannot be told from a person's, and is acted for until its subject is revoked
-outright. A request that names no org, from a caller whose token is for every org, has no
+to the token and must end with it, and a token ends in ways its directory row does not record
+(an expiry, a revoke by `jti`, a cutoff on its maker or on itself). A trusted caller acting
+for one would keep reaching what a dead token held. An actual personal bearer still needs
+its current row, creator and every lineage subject to pass the complete provisioning check
+in an enforced cell with SCIM on. A token minted under a subject without `sa:` cannot be
+told from a person's, and is acted for until its subject is revoked outright. A request that names no org, from a caller whose token is for every org, has no
 org to read spellings in, so only the subject as sent is checked. An unverified email is not
 held: revoking a stranger's account that typed someone's email does not refuse acting for
 that email. Sign-up refuses a trusted caller's own subject as a name (the sign-up rule under
@@ -581,6 +586,16 @@ for the same reason. A SCIM user's id is a UUIDv5 of its email, so it is a pseud
 secret: anyone who knows an address can compute its id. Keying it with the root secret would
 change every id when that secret rotates, and the provider would find none of its users.
 
+An enforced cell with SCIM on requires active provisioning; absence refuses a person. [Cell provisioning](cells.md#scim-and-sign-in-across-cells)
+defines the closed exemptions, verified account ownership, complete ancestry and resource
+bounds. `server/auth/jwt.py` (`authenticate_token`) adds that asynchronous decision after
+synchronous cryptographic verification. Bearer authentication, `whoami`, health's admin
+details, caller identity, dev service-account routes, the SCIM Groups JWT fallback, MCP
+POST/session DELETE and tenancy middleware use that boundary, directly or through the
+common bearer helper. Health remains public but omits denied or unavailable admin details.
+`verify_token` remains synchronous; OAuth revoke uses it only to end an existing credential,
+so provisioning refusal or outage cannot prevent logout or grant read/write authority.
+
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:
 
@@ -612,8 +627,8 @@ and lasts what they asked for (blank 90 days, 0 never). A session a third-party 
 holds is not one: what it mints ends with its access token at the latest, and at once when
 the session is revoked (the session is one of its `parents`), so disconnecting the client
 ends its reach. Any other parent bounds its children by its own expiry. Under OIDC each
-refresh first spends the provider's refresh token, so a user deactivated there loses their
-sessions within the hour. Their machine tokens are not re-checked at the provider:
+refresh checks local provisioning before spending the provider's refresh token, so a user
+deactivated there loses their sessions within the hour. Their machine tokens are not re-checked at the provider:
 offboarding, or a session found stolen, revokes them (by subject, or each from the owner's
 service-account list). A revocation of a token that never expires lasts as long as the table
 can hold a row (2105). A provider that issues no refresh token gets no Loom refresh token. A
@@ -646,6 +661,17 @@ table's key limit is the backstop: past it new sign-ins answer 503 and `/v1/heal
 `oauth_signin_state_full`. When Keeper fails mid-change, the change is undone before the
 client is told to retry, so its retry is not taken for a replay. A refresh token without a
 family is refused, so its owner signs in again.
+
+The OIDC-verified email is carried explicitly through resolved sign-in, consent, codes,
+device approval and refresh grants. `verified_email` is optional session metadata in the
+Keeper record and `loom.oauth_state` (`String DEFAULT ''`). A build without the field can
+read the record and drop it on rewrite; the receiving build treats omission as empty and
+checks the actual subject and accounts, never a guessed email or a verification exemption.
+The held compare-and-set value remains the exact raw value read. A local provisioning
+outage uses the existing refresh put-back path, preserving the same token, family and
+current sealed upstream credential. Account activity and roles are still rechecked, so
+stored email metadata cannot revive a released account. These auth rows hold no memory
+content; their expiry and erasure classification do not change.
 
 **The IdP round trip is bound to its browser.** What the callback needs (the nonce, the
 PKCE verifier, where to send the result) travels sealed in an HttpOnly cookie of the
@@ -838,7 +864,11 @@ provisioned. The personal-namespace auto-claim passes over a name in use to its 
 name, a workload trust's exchange refuses an agent name in use, and a first write's
 auto-registration names no owner on a name in use (rows a read or a run leaves aside,
 `namespace_autoregister.READ_TRACES`, which a fresh `namespace.register` still counts), so
-only an admin of the name completes the registration, a writer that is one included. Every
+only an admin of the name completes the registration, a writer that is one included. The
+exchange sets aside the rows a request writes about itself under the name it names
+(`namespace_census.REQUEST_TRACES`: a latency reading, an exposure, a search trace), so a
+lookup of an agent's name before its first exchange does not take the name from the
+agent; a run's ledger row counts there. Every
 other path that registers a name as new and makes its caller admin (`namespace.register`,
 `namespace.restore` into a fresh target, `collection.create`, a self-service code
 repository or tracker source, which checks again under the account's claim after its

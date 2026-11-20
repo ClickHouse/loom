@@ -176,8 +176,10 @@ async def ensure_namespace(m: machines.Machine, agent: str, *, by: str = "") -> 
                 # and so before it counted and audited the agent: this one does.
                 made = await _finish_grant(org, ns, who)
         else:
-            # Data or grants under the name with no row are someone else's.
-            if await directory().in_use(org, ns):
+            # Data or grants under the name with no row are someone else's. The rows a
+            # request writes about itself are not (a lookup's latency reading, a
+            # search's trace): looking an agent up before its first exchange leaves one.
+            if await directory().in_use(org, ns, skip_request_traces=True):
                 raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
             # The trust's own claim: two new agents at once must not both see room.
             async with bot_change(m["name"]):

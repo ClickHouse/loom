@@ -22,13 +22,13 @@ class Embedder(Protocol):
     dim: int
 
     async def embed(self, text: str) -> list[float]:
-        """Return a unit-norm embedding vector for `text`; an empty or
+        """Return a unit-norm query embedding for `text`; an empty or
         whitespace-only text may come back as an all-zeros vector (LocalEmbedder
         does), which has no norm to be unit."""
         ...
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        """One vector per text, in input order."""
+        """Document vectors of raw text in input order, including a single document."""
         ...
 
 
@@ -47,10 +47,10 @@ def provider_for(name: str) -> str:
         return label
     explicit = settings.embedding_provider.strip().lower()
     if explicit:
-        if explicit not in {"fake", "local", "openai", "gemini", "compatible"}:
+        if explicit not in {"fake", "local", "openai", "gemini", "compatible", "bedrock"}:
             raise ValueError(
                 f"unknown LOOM_EMBEDDING_PROVIDER={explicit!r}; "
-                "expected one of: fake, local, openai, gemini, compatible (or leave "
+                "expected one of: fake, local, openai, gemini, compatible, bedrock (or leave "
                 "empty to infer from LOOM_EMBEDDING_MODEL)"
             )
         return explicit
@@ -115,11 +115,24 @@ def get_embedder() -> Embedder:
     return _cached
 
 
-def _served(name: str) -> Embedder:
+def served_model_label(name: str) -> str:
+    """The configured stored label, without constructing a provider or key fallback."""
     provider = provider_for(name)
     if provider in ("prefix", "alias"):
         # Labels over the served model, never the served model itself.
         raise ValueError(f"unknown embedding model: {name!r}")
+    if provider == "fake":
+        from server.embedding.fake import fake_model_name
+
+        return fake_model_name(settings.embedding_dim)
+    if provider == "local" and not (name == "local" or name.startswith("local:")):
+        return "local"
+    return name
+
+
+def _served(name: str) -> Embedder:
+    name = served_model_label(name)
+    provider = provider_for(name)
     if _key_missing(provider):
         logging.getLogger(__name__).error(
             "No real embedder configured. LOOM_EMBEDDING_MODEL=%s but %s is not set — "
@@ -140,9 +153,6 @@ def _served(name: str) -> Embedder:
         from server.embedding.fake import FakeNGramEmbedder
 
         return FakeNGramEmbedder(dim=settings.embedding_dim)
-    if provider == "local" and not (name == "local" or name.startswith("local:")):
-        # LOOM_EMBEDDING_PROVIDER=local over a non-local model name.
-        name = "local"
     return _build(name, provider)
 
 
@@ -193,6 +203,10 @@ def _build(spec: str, provider: str) -> Embedder:
     """An embedder for a spec from `provider`, no fallbacks: a missing key or
     model raises, because a secondary arm silently degraded to the fake
     embedder would measure nothing."""
+    if provider == "bedrock":
+        from server.embedding.bedrock import BedrockEmbedder
+
+        return BedrockEmbedder(model=spec, dim=settings.embedding_dim)
     if provider == "compatible":
         from server.embedding.compatible import CompatibleEmbedder
 

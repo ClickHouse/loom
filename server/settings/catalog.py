@@ -28,6 +28,7 @@ import httpx
 import idna
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core import org_patterns
 from server.core.document_formats import route_key
 from server.core.embedding_space import inferred_provider
 from server.core.numbers import parse_budget_value
@@ -97,17 +98,6 @@ def _public_numbers(pem: str) -> object:
         return None
 
 
-def _overlap(a: str, b: str) -> bool:
-    """Whether two org patterns (a name, or `prefix*`) can match one org."""
-    if a.endswith("*") and b.endswith("*"):
-        return a[:-1].startswith(b[:-1]) or b[:-1].startswith(a[:-1])
-    if a.endswith("*"):
-        return b.startswith(a[:-1])
-    if b.endswith("*"):
-        return a.startswith(b[:-1])
-    return a == b
-
-
 @dataclass(frozen=True)
 class EndUserIssuer:
     """One end-user issuer: the orgs its tokens may name and where its keys are."""
@@ -148,7 +138,7 @@ class EndUserIssuer:
 
     def signs_for(self, org: str) -> bool:
         """Whether this issuer's tokens may name `org`: listed, or under a `prefix*`."""
-        return any(org.startswith(o[:-1]) if o.endswith("*") else org == o for o in self.orgs)
+        return any(org_patterns.matches(o, org) for o in self.orgs)
 
 
 class AuthSettings(BaseModel):
@@ -275,6 +265,9 @@ class AuthSettings(BaseModel):
     identity_provider_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
     # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
+    # With LOOM_CELL set, at most two entries, named for that cell; only the observed first
+    # cell also accepts unnamed tokens. Generate one with `loom cell scim-token new --cell NAME`.
+    # Enforced cells also require active provisioning for every nonexempt person.
     scim_token: str = ""
 
     @property
@@ -424,9 +417,10 @@ class AuthSettings(BaseModel):
     # caps a token's claim at the grant it holds there. The backstop: a grant
     # change reaches other processes through the per-org grant watermark
     # (acl_watermark_poll_seconds), and this bounds one whose watermark row was
-    # never written. It also bounds how long a SCIM deactivation of an email, or a
-    # bot disable, takes to stop a trusted caller acting for it on another process,
-    # and how long a bot created there takes to be acted for.
+    # never written. SCIM and bot final decisions use this TTL from read start.
+    # A complete enforced-cell SCIM check has a separate 30-second ceiling, so
+    # its cross-process observation bound is the larger of this TTL and that
+    # check's budget; a smaller positive read timeout reduces the latter.
     grant_cache_ttl_seconds: float = 10.0
     # Seconds between each process's reads of the per-org grant watermark
     # (loom.acl_versions): a revoke on one replica is enforced on every other
@@ -515,7 +509,9 @@ class AuthSettings(BaseModel):
                 raise ValueError(f"end-user issuer {issuer!r}: keys {same} are federated keys")
         # `user:<id>` names one person per org, so one issuer alone signs for an org.
         for (a, spec_a), (b, spec_b) in itertools.combinations(issuers.items(), 2):
-            shared = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]
+            shared = [
+                (x, y) for x in spec_a.orgs for y in spec_b.orgs if org_patterns.overlap(x, y)
+            ]
             if shared:
                 raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
         return self
@@ -694,6 +690,12 @@ class ClickHouseSettings(BaseModel):
     # HTTP connection pool size: request concurrency plus 3 x the batched-insert bound
     # (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
+    # Keeper holders a fenced writer acquires or releases at once (1–256),
+    # capped by a bounded HTTP connection pool.
+    ch_write_fence_concurrency: int = Field(default=16, ge=1, le=256)
+    # Memory rows per ClickHouse namespace-restore insert (1–1000).
+    # Smaller batches leave more lease budget for slow Keeper calls.
+    ch_restore_batch_rows: int = Field(default=1000, ge=1, le=1000)
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
     # TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`).
@@ -707,7 +709,9 @@ class ClickHouseSettings(BaseModel):
     # empty-pool retry remains the backstop).
     ch_read_your_writes_window_s: float = 20.0
     # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
-    # client-side bound that frees the pool slot. 0 = no bound for reads.
+    # client-side bound that frees the pool slot. 0 = no general read bound.
+    # Enforced-cell SCIM decisions still have a complete 30-second ceiling,
+    # reduced by a smaller positive value.
     ch_timeout_read_s: float = 30.0
     # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound.
     ch_timeout_write_s: float = 60.0
@@ -1086,6 +1090,11 @@ class CodeSettings(BaseModel):
     # PEM bundle git verifies TLS with through the proxy, in place of its default roots
     # (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url.
     code_git_proxy_ca_file: str = ""
+    # PEM bundle git verifies the proxy's own certificate with, in place of its default
+    # roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one
+    # is for the remote, behind a proxy that terminates TLS under its own authority; this
+    # one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url.
+    code_git_proxy_tls_ca_file: str = ""
     # The proxy user of an entry that names no `git_proxy_identity`: letters, digits and
     # `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs
     # code_git_proxy_url.
@@ -1110,11 +1119,17 @@ class CodeSettings(BaseModel):
         needs_url = {
             "LOOM_CODE_GIT_PROXY_TOKEN_FILE": self.code_git_proxy_token_file,
             "LOOM_CODE_GIT_PROXY_CA_FILE": self.code_git_proxy_ca_file,
+            "LOOM_CODE_GIT_PROXY_TLS_CA_FILE": self.code_git_proxy_tls_ca_file,
             "LOOM_CODE_GIT_PROXY_IDENTITY": identity,
         }
         for variable, value in needs_url.items():
             if value and not url:
                 raise ValueError(f"{variable} needs LOOM_CODE_GIT_PROXY_URL")
+        if self.code_git_proxy_tls_ca_file and urlsplit(url).scheme != "https":
+            raise ValueError(
+                "LOOM_CODE_GIT_PROXY_TLS_CA_FILE needs an https:// LOOM_CODE_GIT_PROXY_URL: "
+                "an http:// proxy has no TLS of its own to verify"
+            )
         if identity and not GIT_PROXY_IDENTITY.fullmatch(identity):
             raise ValueError(
                 "LOOM_CODE_GIT_PROXY_IDENTITY takes letters, digits and . _ ~ @ - only, "
@@ -1705,6 +1720,9 @@ class CodeSettings(BaseModel):
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
     code_search_prose_penalty: float = 0.25
+    # Chunk-kind ranking prior when the request names none: structural boosts the
+    # kind named by the question; flat/default apply fixed tables; off disables it.
+    code_search_kind_prior: Literal["off", "default", "flat", "structural"] = "flat"
     # The question kinds `code_search_catalogue_penalty` applies to.
     code_search_catalogue_kinds: str = "responsibility"
     # Cap of code.search's fan-in rank prior:
@@ -2666,11 +2684,9 @@ class McpSettings(BaseModel):
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # Ops whose tools/list entry carries `_meta: {"anthropic/alwaysLoad": true}`, so a host
-    # that defers MCP tools behind tool search lists these up front and an agent calls them
-    # on its first turn instead of spending a turn loading them. Comma-separated op names;
-    # empty = none.
-    mcp_always_load_tools: str = "code.search,code.symbol"
+    # Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad.
+    # Empty leaves loading to the host; set names to keep selected tools upfront.
+    mcp_always_load_tools: str = ""
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
@@ -4550,8 +4566,9 @@ def host_list_refusal(setting: str, hosts: str) -> str:
     return ""
 
 
-# The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
+# The gateway check merges these settings with the proposed dashboard configuration.
 _GATEWAY_CHECKED = (
+    "llm_provider",
     "openai_base_url",
     "anthropic_base_url",
     "local_llm_base_url",
@@ -4659,6 +4676,9 @@ _SENDER_HEADERS = frozenset(
         "content-type",
         "content-length",
         "host",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
     }
 )
 
@@ -4705,11 +4725,11 @@ class ProviderSettings(ModelSettings):
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
     # → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin
-    # "openai", "gemini", "local", "fake".
+    # "openai", "gemini", "bedrock" (Cohere Embed v4), "local", "fake".
     # Switching providers changes the embedding space: a full re-embed is
     # required.
     embedding_provider: Annotated[
-        Literal["", "openai", "gemini", "compatible", "local", "fake"], CaseFolded
+        Literal["", "openai", "gemini", "compatible", "bedrock", "local", "fake"], CaseFolded
     ] = ""
     # API root for an explicitly selected OpenAI-compatible embedding service,
     # e.g. https://provider.example/v1. Empty is invalid for compatible providers.
@@ -4728,6 +4748,9 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
+    # Region for native Bedrock model requests; empty uses the AWS SDK's region chain.
+    # AWS credentials use the SDK's role, profile or environment credential chain.
+    bedrock_region: str = ""
     # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
     # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
     local_llm_base_url: str = "http://localhost:11434/v1"
@@ -4845,11 +4868,12 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+    # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
     # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
     # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
     # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-    # overridden. Run `make bench-quick` before making anthropic a default.
+    # overridden. Bedrock requires llm_model and the SDK credential chain.
+    # Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
     # (production) makes it an `error` and `status: degraded`, which preflight
@@ -4878,6 +4902,21 @@ class ProviderSettings(ModelSettings):
             return self
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
+            self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_bedrock_embedding_dim(self) -> ProviderSettings:
+        """Cohere Embed v4 uses its native width unless the operator pins one."""
+        native = self.embedding_provider == "bedrock" or (
+            not self.embedding_provider and self.embedding_model.startswith("bedrock:")
+        )
+        if native and (
+            not self.embedding_model.strip() or self.embedding_model.startswith("fake-ngram")
+        ):
+            raise ValueError("LOOM_EMBEDDING_PROVIDER=bedrock requires a Cohere Embed v4 model")
+        if "embedding_dim" not in self.model_fields_set and native:
+            self.embedding_dim = 1536
             self._inferred_fields |= {"embedding_dim"}
         return self
 
@@ -5049,6 +5088,8 @@ class ProviderSettings(ModelSettings):
         pair = frozenset({"llm_provider", "llm_model"})
         inferred = pair if not (pair & self.model_fields_set) else frozenset()
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
+        if resolved.provider == "bedrock" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
@@ -5142,6 +5183,8 @@ class ProviderSettings(ModelSettings):
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
         saved = dict(changes or {})
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
+        if v["llm_provider"] == "bedrock":
+            return f"{why} refuses native Bedrock: use the inference gateway"
         # Both hosted API roots count, a provider unused included: a model named per
         # request may be either provider's. The local root is called only while it is
         # the provider, since no model name reaches it otherwise.
@@ -5150,7 +5193,7 @@ class ProviderSettings(ModelSettings):
             ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
             ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
         ]
-        if self.llm_provider == "local":
+        if v["llm_provider"] == "local":
             roots.append(("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL"))
         for field, what in roots:
             host = self.off_gateway(v[field]) if v[field] else ""
@@ -5176,12 +5219,13 @@ class ProviderSettings(ModelSettings):
                 provider = inferred_provider(v["embedding_model"])
             except ValueError:
                 provider = ""  # an unknown model is refused where the embedder is built
-        if provider == "gemini":
+        if provider in {"gemini", "bedrock"}:
             # The Gemini embedder calls Google's own API, never a gateway.
+            label = "Bedrock" if provider == "bedrock" else "Gemini"
             which = (
-                "the saved Gemini embedder"
+                f"the saved {label} embedder"
                 if "embedding_provider" in saved
-                else "the Gemini embedder"
+                else f"the {label} embedder"
             )
             return f"{why} refuses {which}: embed through the gateway"
         return ""
@@ -5348,10 +5392,16 @@ class RuntimeSettings(BaseModel):
     # process it starts and stops with the lease, so the passes do not share
     # the event loop that serves requests; inline = in the serving process.
     workers_process: Literal["child", "inline"] = "child"
+    # At most this many seconds to certify a reaped worker child; also bounded by
+    # the remaining stop or restart delay. Expiry leaves its participant unretired.
+    workers_child_retirement_timeout_s: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     # Seconds a process keeps serving after SIGTERM while /v1/health/ready
     # answers 503, so the load balancer stops routing to it before its port
     # closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once.
     shutdown_ready_delay_s: float = Field(default=15.0, ge=0)
+    # Seconds a native CLI command allows its producers, deferred writes and
+    # participant retirement to finish. Expiry leaves the participant unretired.
+    native_command_drain_timeout_s: float = Field(default=15.0, gt=0, allow_inf_nan=False)
     # Seconds boot waits for the first load of the tracker registry and the
     # runtime overrides, and the first publish of the dashboard bundle, before
     # it serves; readiness stays false until the first two load.

@@ -155,6 +155,7 @@ async def _release(
     # SELECT * so the release row mirrors EVERY column forward: loom.namespaces is
     # ReplacingMergeTree(updated_at), and an omitted column would reset to its schema
     # default under FINAL (a restricted namespace would read back as standard).
+    from server.auth.authz import identity_write
     from server.identity.store import namespaces as namespaces_repo
 
     existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
@@ -221,7 +222,8 @@ async def _release(
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     rewritten.append(True)
-    await ch.insert("loom.namespaces", [row])
+    with identity_write():
+        await ch.insert("loom.namespaces", [row])
 
     # A bot's exchange reads its live namespaces sequentially, so no token
     # issued from here on carries this one: the bots' cutoff is taken now.

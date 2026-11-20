@@ -1247,3 +1247,17 @@ test("a sed or awk pattern holding a run of backslashes is parsed in linear time
   assert.equal(parseBashBulk(`awk '/${run}' notes.txt`), null);
   assert.ok(performance.now() - start < 500, "the pattern regex backtracks over the backslash run");
 });
+
+for (const modified of ["modified", "untracked"]) {
+  test(`${modified} single-file symbol greps stay local`, () => {
+    const verdict = classifyGrep({
+      rel: "src/parser.py",
+      isFile: true,
+      prefixes: ["src/"],
+      pattern: "field_value",
+      symbol: "field_value",
+      modified,
+    });
+    assert.deepEqual(verdict, { deny: null, reason: modified });
+  });
+}

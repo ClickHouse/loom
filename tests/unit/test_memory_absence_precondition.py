@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -41,15 +40,19 @@ def _state(existing: Any = None, **kwargs: Any) -> _SetWrite:
     )
 
 
-def _row(*, expired: bool = False, version: int = 1) -> Any:
-    return SimpleNamespace(
+def _row(*, expired: bool = False, version: int = 1) -> memory_repo.MemoryRow:
+    return memory_repo.MemoryRow(
+        memory_id="11111111-1111-1111-1111-111111111111",
         org="o",
         namespace="n",
         agent="a",
         user_id="u",
         session_id="s",
         memory_key="resource",
-        value='{"workingMemory":"notes"}',
+        memory_type="semantic",
+        value={"workingMemory": "notes"},
+        confidence=1.0,
+        created_at=_NOW - timedelta(days=1),
         version=version,
         expires_at=_NOW - timedelta(seconds=1) if expired else None,
         tombstoned_at=None,
@@ -107,7 +110,7 @@ async def test_absent_set_keeps_expired_physical_head_for_admission(observed: li
 
 async def test_absent_set_treats_expiry_boundary_as_absent(observed: list[Any]) -> None:
     row = _row(expired=True)
-    row.expires_at = _NOW
+    row = row.model_copy(update={"expires_at": _NOW})
     w = _state(row)
     await write._set_check_if_match(w)
     assert w.existing is row
@@ -139,8 +142,9 @@ async def test_absent_write_keeps_expired_row_guards(
     dry_run: bool,
 ) -> None:
     row = _row(expired=True)
-    row.pinned = guard == "pin"
-    row.lock_mode = "read_only" if guard == "lock" else ""
+    row = row.model_copy(
+        update={"pinned": guard == "pin", "lock_mode": "read_only" if guard == "lock" else ""}
+    )
     w = _state(dry_run=dry_run)
 
     async def resolve(inp: Any) -> Any:
@@ -169,7 +173,7 @@ async def test_absent_set_does_not_hide_readable_states(
     value: Any,
 ) -> None:
     row = _row()
-    setattr(row, field, value)
+    row = row.model_copy(update={field: value})
     with pytest.raises(HTTPException):
         await write._set_check_if_match(_state(row))
 

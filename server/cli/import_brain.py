@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 from typing import Any
 
@@ -157,7 +158,11 @@ def _cmd_import_brain(args: argparse.Namespace) -> int:
                 except Exception as e:  # noqa: BLE001 — one document must not sink the rest
                     fail += 1
                     log.warning("import-brain: knowledge.add %s failed: %s", uri, e)
-        finally:
+        except BaseException:  # an importer failure must survive its writer close
+            with contextlib.suppress(BaseException):
+                await closer()
+            raise
+        else:
             await closer()
         print(f"import-brain: wrote {ok} item(s), {fail} failed")
         return 1 if fail and ok == 0 else 0

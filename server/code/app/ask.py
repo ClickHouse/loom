@@ -19,7 +19,10 @@ from server.code.app.common import (
 )
 from server.code.app.spans import set_code_span_attributes
 from server.code.store.index import CodeRepo
+from server.core.errors import error_kind
 from server.core.llm_free import refuse_synthesis
+from server.embedding.embedder import served_model_label
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -52,13 +55,18 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
 
     from server.embedding.embedder import get_embedder
 
-    embedder = get_embedder()
+    try:
+        embedder = get_embedder()
+    except customer.HOLDS:
+        raise
+    except Exception as exc:  # noqa: BLE001 — lexical evidence remains useful without a provider
+        logger.warning("code.ask embedding provider unavailable: %s", error_kind(exc))
+        embedder = None
 
     llm = None
     if input.synthesize:
         from server.llm.client import get_llm_client, get_llm_client_for_model
         from server.observability.budget import namespace_over_cap
-        from server.settings import settings
 
         if not await namespace_over_cap(org, ns, user_id=input.user_id or ""):
             override = settings.code_ask_llm_model
@@ -129,7 +137,9 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
         tokens_returned=res.tokens_returned,
         abstain=res.abstain,
         retrieval_risk=ask_risk,
-        embedding_model=embedder.model_name,
+        embedding_model=str(
+            getattr(embedder, "model_name", "") or served_model_label(settings.embedding_model)
+        ),
         started_monotonic=started,
         trace_run_id=trace_run_id,
         consumer=input.consumer,
@@ -152,6 +162,10 @@ async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
     )
     return CodeAskOutput(
         answer=res.answer,
+        partial=res.partial,
+        partial_reason=res.partial_reason,
+        note=res.note,
+        coverage=res.coverage,  # type: ignore[arg-type]
         citations=res.citations,
         as_of=as_of,
         source=res.source,  # type: ignore[arg-type]

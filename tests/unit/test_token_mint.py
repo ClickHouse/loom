@@ -11,6 +11,7 @@ import time
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -72,7 +73,9 @@ def grants(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str, str], Role]:
 
 
 async def _setup(monkeypatch: pytest.MonkeyPatch, caller: AuthInfo, body: dict) -> dict[str, Any]:
-    monkeypatch.setattr("server.auth.bearer.verify_bearer", lambda token: caller)
+    monkeypatch.setattr(
+        "server.auth.bearer.verify_bearer", AsyncMock(side_effect=lambda token: caller)
+    )
     request: Any = SimpleNamespace(headers={"Authorization": "Bearer t"}, state=SimpleNamespace())
     return await me.me_service_accounts_create(request, body)
 

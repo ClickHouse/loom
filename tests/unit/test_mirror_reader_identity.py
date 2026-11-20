@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import jwt
 import pytest
@@ -82,7 +83,7 @@ def test_malformed_reader_claim_is_refused(value: Any) -> None:
 async def _mint(
     monkeypatch: pytest.MonkeyPatch, caller: tokens.AuthInfo, *, personal: bool, **payload: Any
 ) -> dict[str, Any]:
-    monkeypatch.setattr("server.auth.bearer.verify_bearer", lambda token: caller)
+    monkeypatch.setattr("server.auth.bearer.verify_bearer", AsyncMock(return_value=caller))
     request: Any = SimpleNamespace(headers={"Authorization": "Bearer t"}, state=SimpleNamespace())
     route = me.me_personal_tokens_create if personal else me.me_service_accounts_create
     return await route(request, {"name": "personal-agent", "namespaces": ["a"], **payload})
@@ -147,7 +148,7 @@ async def test_personal_mint_refuses_on_behalf_header(
     monkeypatch: pytest.MonkeyPatch, grants: Any
 ) -> None:
     caller = _caller(session_id="sid", first_party=True)
-    monkeypatch.setattr("server.auth.bearer.verify_bearer", lambda token: caller)
+    monkeypatch.setattr("server.auth.bearer.verify_bearer", AsyncMock(return_value=caller))
     request: Any = SimpleNamespace(
         headers={"Authorization": "Bearer t", "X-Loom-On-Behalf-Of": "bob"}, state=SimpleNamespace()
     )
@@ -246,7 +247,7 @@ async def test_personal_mint_binds_the_once_verified_primary_session(
     parent = _caller(session_id="sid", first_party=True)
     checked: list[str] = []
 
-    def verify(token: str) -> tokens.AuthInfo:
+    async def verify(token: str) -> tokens.AuthInfo:
         checked.append(token)
         return parent
 
