@@ -916,8 +916,9 @@ def main() -> int:
         if state.get("cancelled_signal") is not None:
             state["native_code"] = 128 + state["cancelled_signal"]
             state["reason"] = "cancelled"
-        if state.get("video") and (
-            state["reason"] != "recorded_requires_media_review"
+        if output is not None and (
+            not state.get("video")
+            or state["reason"] != "recorded_requires_media_review"
             or state["post_cleanup_children"] != "empty"
         ):
             if state["reason"] == "recorded_requires_media_review":

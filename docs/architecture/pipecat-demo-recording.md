@@ -38,7 +38,7 @@ reading hold as making no new memory calls.
 
 The renderer streams 1280 × 720 RGB frames at five frames per second, with at
 most 275 frames and 32 events. It retains one frame at a time; converting a
-Pillow image to bytes briefly holds both representations, about 5.3 MiB total.
+Pillow image to bytes briefly holds both representations.
 The encoder has one thread and a separate 30-second encoding deadline. This is
 a bound on the renderer, separate from the video's measured playback duration.
 Nonblocking pipes interleave frame writes, encoded output and discarded error

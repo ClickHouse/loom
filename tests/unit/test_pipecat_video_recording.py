@@ -975,3 +975,71 @@ def test_receipt_display_fault_cannot_encode_a_truncated_video(recorder, tmp_pat
     sleep.assert_not_called()
     assert state["native_code"] == 0 and state.get("video") is None
     assert state["active"] is False
+
+
+@pytest.mark.parametrize("phase", ["encode", "probe"])
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT])
+def test_cancelled_main_removes_partial_video_before_metadata(recorder, phase, signum):
+    module, _ = recorder
+    clock = [4.0]
+    output = Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public"
+
+    def start(state):
+        state.update(started=0.0, events=[])
+
+    def native(state):
+        state["receipt"].write_text(json.dumps(module.EXPECTED_RECEIPT))
+        return 0
+
+    def cancel():
+        signal.getsignal(signum)(signum, None)
+
+    def encode(_state, path, _duration):
+        path.write_bytes(b"partial, not media-qualified")
+        if phase == "encode":
+            cancel()
+
+    def probe(_state, _path):
+        cancel()
+
+    def sleep(seconds):
+        clock[0] += seconds
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=start),
+        mock.patch.object(module, "run_native", side_effect=native),
+        mock.patch.object(module, "encode_video", side_effect=encode),
+        mock.patch.object(module, "probe_metadata", side_effect=probe) as media,
+        mock.patch.object(module, "stop_owned") as cleanup,
+        mock.patch.object(module, "post_cleanup_children", return_value="empty"),
+        mock.patch.object(module.time, "monotonic", side_effect=lambda: clock[0]),
+        mock.patch.object(module.time, "sleep", side_effect=sleep),
+    ):
+        assert module.main() == 128 + signum
+    assert cleanup.call_count == 4
+    assert media.call_count == (1 if phase == "probe" else 0)
+    assert not (output / "pipecat-ordinary-text.webm").exists()
+    status = json.loads((output / "recording-status.json").read_text())
+    assert status["reason"] == "cancelled" and status["native_code"] == 128 + signum
+    assert status["video"] is None and status["post_cleanup_children"] == "empty"
+
+
+def test_cancelled_main_does_not_touch_a_preexisting_output_directory(recorder):
+    module, _ = recorder
+    output = Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public"
+    output.mkdir()
+    sentinel = output / "pipecat-ordinary-text.webm"
+    sentinel.write_bytes(b"pre-existing, not owned by this invocation")
+
+    def native(_state):
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+    with (
+        mock.patch.object(module, "start_capture") as start,
+        mock.patch.object(module, "run_native", side_effect=native),
+        mock.patch.object(module, "post_cleanup_children", return_value="empty"),
+    ):
+        assert module.main() == 128 + signal.SIGTERM
+    start.assert_not_called()
+    assert sentinel.read_bytes() == b"pre-existing, not owned by this invocation"
+    assert not (output / "recording-status.json").exists()
