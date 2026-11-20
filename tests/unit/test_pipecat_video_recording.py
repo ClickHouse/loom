@@ -29,8 +29,12 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("LOOM_PIPECAT_EVIDENCE", str(tmp_path / "receipt.json"))
+    monkeypatch.setattr(module, "subreaper", mock.Mock(return_value=0))
+    # Ordinary main tests must not inspect or signal the pytest worker's children.
     monkeypatch.setattr(
-        module, "subreaper", mock.Mock(side_effect=lambda value=None: 1 if value is None else 0)
+        module,
+        "stop_adopted_children",
+        mock.Mock(wraps=module.stop_adopted_children, return_value=None),
     )
     old_umask = os.umask(0o077)
     try:
@@ -556,6 +560,9 @@ def test_cleanup_reaps_adopted_child_outside_launcher_group(recorder):
     with (
         mock.patch.object(module, "start_capture", side_effect=OSError("private-driver-failure")),
         mock.patch.object(module, "run_native", return_value=0),
+        mock.patch.object(
+            module, "subreaper", side_effect=lambda value=None: 1 if value is None else 0
+        ),
         mock.patch.object(module, "process_identity", side_effect=identify),
         mock.patch.object(module.Path, "open", open_path),
         mock.patch.object(module.Path, "stat", stat_path),
@@ -573,6 +580,8 @@ def test_cleanup_reaps_adopted_child_outside_launcher_group(recorder):
         mock.patch.object(module.time, "sleep"),
         mock.patch.object(module, "write_private") as write,
     ):
+        # All child identity, descriptor, signaling and reaping calls above are inert.
+        module.stop_adopted_children.return_value = mock.DEFAULT
         assert module.main() == 0
     status = json.loads(write.call_args.args[1])
     assert status["post_cleanup_children"] == "empty"
@@ -640,6 +649,8 @@ def adopted_child(recorder, monkeypatch):
     monkeypatch.setattr(module.os, "close", close)
     monkeypatch.setattr(module.time, "monotonic", lambda: state["time"])
     monkeypatch.setattr(module.time, "sleep", sleep)
+    # Enable the wrapped implementation only after every process syscall is mocked.
+    module.stop_adopted_children.return_value = mock.DEFAULT
     return module, state, pin, send_mock, close
 
 
@@ -898,3 +909,46 @@ def test_cumulative_adoptions_remain_bounded_after_reaping(adopted_child):
             module.stop_adopted_children()
     assert pin.call_count == close.call_count == 128
     send.assert_not_called()
+
+
+def test_ordinary_main_fixture_cannot_sweep_other_test_children(recorder):
+    module, _ = recorder
+    parent, child = os.getpid(), os.getpid() + 100000
+    original_open, original_stat, original_close = Path.open, Path.stat, os.close
+    snapshots = iter([str(child).encode(), b""])
+
+    def open_path(path, *args, **kwargs):
+        if str(path) == f"/proc/{parent}/task/{parent}/children":
+            return io.BytesIO(next(snapshots))
+        return original_open(path, *args, **kwargs)
+
+    def stat_path(path, *args, **kwargs):
+        if str(path) == f"/proc/{child}":
+            return mock.Mock(st_uid=os.getuid())
+        return original_stat(path, *args, **kwargs)
+
+    def identify(pid):
+        if pid == parent:
+            return (0, parent, parent, "worker-birth", "S")
+        assert pid == child
+        return (parent, child, child, "other-test-child", "Z")
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=ValueError("unavailable")),
+        mock.patch.object(module, "run_native", return_value=0),
+        mock.patch.object(module, "process_identity", side_effect=identify),
+        mock.patch.object(module.Path, "open", open_path),
+        mock.patch.object(module.Path, "stat", stat_path),
+        mock.patch.object(module.os, "pidfd_open", return_value=77) as pin,
+        mock.patch.object(module.signal, "pidfd_send_signal") as send,
+        mock.patch.object(module.os, "waitpid", return_value=(child, 0)) as reap,
+        mock.patch.object(
+            module.os, "close", side_effect=lambda fd: None if fd == 77 else original_close(fd)
+        ),
+        mock.patch.object(module, "post_cleanup_children", return_value="empty"),
+        mock.patch.object(module.time, "sleep"),
+    ):
+        assert module.main() == 0
+    pin.assert_not_called()
+    send.assert_not_called()
+    reap.assert_not_called()
