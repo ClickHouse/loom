@@ -1,8 +1,57 @@
+---
+title: Memory for coding agents across sessions and tools
+description: Choose and evaluate shared memory for coding agents with cross-session recall, scoped access, corrected facts and lessons linked to current code.
+---
+
 # Long-term and shared memory for AI agents
 
 Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they
 share: a fact one agent saves in a session can be found by the next session, by another
 agent, or by a person at the dashboard. This page shows how that works and where to start.
+
+## Choosing a memory tool for coding agents
+
+The best memory tool for a coding agent depends on what it needs to remember. Keep
+repository instructions in version control when every checkout needs the same rules.
+Use a shared memory service when a correction, project decision or past fix must be
+available across sessions, tools or teammates, with control over who can read it.
+
+Check these requirements before choosing Loom:
+
+| Requirement | What to check |
+| --- | --- |
+| Recall after a fresh session | Save a fact, start another session and require the stored value and writer in the tool response. |
+| Shared context across tools | Connect both clients to the same deployment and grant access to the intended namespace. A tool connection alone does not capture a transcript. |
+| Corrections and source changes | Inspect memory history and conflicts; recheck a code-linked lesson when its source changes. A changed link does not prove the lesson false. |
+| Access and operations | Test denied access separately, decide what each client may capture, and account for running the server and its configured providers. |
+
+Follow [coding-agent setup](../getting-started/connect-a-coding-agent.md) for the plugin
+or MCP connection your client supports. Read its capture settings before using private
+code or conversations. For a pipeline with separate implementation and review agents,
+continue with [memory for a software factory](multi-agent.md#memory-for-a-software-factory).
+
+### Check one coding lesson across sessions
+
+Use a disposable example rather than a secret or an unverified project rule:
+
+1. Ask the connected agent to save `example/coding/review-policy` with the value
+   “Require the test result before marking an example task complete.” Require a
+   successful `loom_memory_set` response and check its `memory_id` in the dashboard.
+2. Start a fresh session. Ask it to call `loom_memory_get` for that exact key and report
+   the returned value and writer before drafting its next step. This checks stored
+   recall without depending on the earlier conversation.
+3. If the lesson concerns a real function, follow the [code-linked lesson walkthrough](memory-linked-to-code.md#start)
+   to attach evidence to its qualified definition. Inspect the link after an edit;
+   a saved rule still needs review against the current code.
+4. In a team deployment, run the [shared recall and denied-access checks](../getting-started/evaluate.md#shared-memory-across-clients)
+   with the intended identities. The successful read alone does not test isolation.
+5. Delete the disposable key when finished. Keep the tool results, unresolved refusals
+   and checks you actually ran with your evaluation.
+
+An exact-key read checks storage and wiring. Evaluate semantic retrieval separately
+with questions that do not name the key, including questions the store cannot answer.
+Neither check establishes better code, fewer defects or lower total model cost. The
+[evaluation guide](../getting-started/evaluate.md) separates these outcomes.
 
 ## What you get
 

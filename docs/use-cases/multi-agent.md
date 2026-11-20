@@ -1,3 +1,8 @@
+---
+title: Shared memory for a software factory and multi-agent workflows
+description: Evaluate software-factory memory for coding-agent handoffs, source-linked lessons and reported outcomes, with a runnable evidence-handoff reference.
+---
+
 # Shared context for multi-agent workflows
 
 Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and
@@ -84,6 +89,29 @@ Start with its indexed public repository and review-inbox setup. It compares the
 function body and reports operation receipts; it does not generate a patch, decide whether
 a lesson is true or run code review. The example documents cleanup limits and supplies
 no captured live output.
+
+### Choosing memory for a software factory
+
+The best memory tool for a software factory depends on the evidence each stage needs.
+An issue, a conversation transcript, a reusable lesson and a test result serve different
+purposes. Keep the source revision and check results with the handoff so the next agent
+can distinguish a stored claim from a verified result.
+
+| Question | Evidence to collect |
+| --- | --- |
+| Can another agent use the handoff? | Read the saved result with the review identity; check the writer, issue, revision and unresolved work. |
+| Does the lesson still apply? | Inspect the current definition and its link state. Record the reviewer's judgment rather than treating a changed hash as an invalid lesson. |
+| Can unrelated agents read it? | Run a separate denied-access check with a token outside the shared namespace. A different agent name alone is not an access boundary. |
+| Did memory help the task? | Compare task outcomes under the same model, repository revision, tasks and review criteria. Include failed checks and the cost of storing and retrieving context. |
+
+The reference above exercises an evidence handoff; it is not a measured software-factory
+benchmark. A reported completion is not a passing test, an accepted patch or proof that
+memory helped. Your orchestrator remains responsible for enforcing those gates.
+
+For a single coding assistant, start with [coding-agent memory](agent-memory.md#choosing-a-memory-tool-for-coding-agents)
+and its cross-session check. For architecture trade-offs, read [Choosing memory for a software factory](https://github.com/ClickHouse/loom/discussions/939).
+Use the [code-linked lesson example](memory-linked-to-code.md#check-a-lesson-after-a-code-edit)
+to evaluate source freshness separately from recall.
 
 ## Start
 
