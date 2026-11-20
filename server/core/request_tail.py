@@ -371,7 +371,11 @@ async def streaming_scope() -> AsyncIterator[None]:
     The caller settles before its terminal event. Cancellation still joins the
     owned required delivery before this scope returns.
     """
+    parent = _tail.get()
     tail = _Tail()
+    if parent is not None:
+        # Every HTTP send must see proofs retained during model generation.
+        tail.publications = parent.publications
     token = _tail.set(tail)
     group_token = _publication_group.set(None)
     primary: BaseException | None = None
