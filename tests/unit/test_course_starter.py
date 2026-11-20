@@ -353,3 +353,10 @@ def test_lab_4_rows_are_one_count_per_agent(tmp_path: Path) -> None:
         grade.counts([{"agent": "a", "facts": 1}, {"agent": "a", "facts": 2}])
     with pytest.raises(grade.Failed, match="not an agent and one count"):
         grade.counts([{"agent": "a"}])
+
+def test_course_starter_carries_the_repository_license_and_notices() -> None:
+    """The starter is copied out as a standalone repository, so Loom's license
+    and attribution text must travel with it (and keep no dangling references)."""
+    for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES"):
+        assert (STARTER / name).is_file(), name
+        assert (STARTER / name).read_bytes() == (ROOT / name).read_bytes(), name
