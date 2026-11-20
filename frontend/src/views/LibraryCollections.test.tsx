@@ -141,9 +141,12 @@ describe("LibraryCollections", () => {
     expect(screen.getByRole("button", { name: "Actions for col-q3" })).toBeInTheDocument();
   });
 
-  it("gives a viewer no menu: its members are behind See who in the header", async () => {
+  it("gives a viewer the unavailable Budget action without Move or Delete", async () => {
     render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
-    expect(screen.queryByRole("button", { name: "Actions for col-plans" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for col-plans" }));
+    expect(await screen.findByRole("menuitem", { name: "Budget…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("menuitem", { name: "Move…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Delete collection" })).not.toBeInTheDocument();
   });
 
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {

@@ -30,6 +30,7 @@ import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 import { ALL_DOCUMENTS } from "../lib/libraryPlace";
+import { needsRole } from "../lib/namespaceRole";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -345,8 +346,14 @@ export function LibraryCollections({
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
   if (collection) {
+    items.push({
+      label: "Budget…",
+      reason: collection.role === "admin" ? null : needsRole("admin", collection.namespace),
+      onSelect: () => {
+        if (collection.role === "admin") setBudgeting(collection);
+      },
+    });
     if (collection.role === "admin") {
-      items.push({ label: "Budget…", onSelect: () => setBudgeting(collection) });
       items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(collection) });
       items.push({
         label: "Delete collection",

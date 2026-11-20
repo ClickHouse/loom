@@ -121,3 +121,23 @@ it("an old save cannot close a later collection dialog or discard its draft", as
   expect(screen.getByLabelText("Daily cost cap (USD)")).toHaveValue(7);
   expect(toast).not.toHaveBeenCalled();
 });
+
+it.each(["viewer", "writer"] as const)(
+  "the unavailable Budget action remains keyboard reachable for a %s without reading or writing policy",
+  async (role) => {
+    const c = entry("col-a", { role });
+    render(<Picker org="o" namespace={null} current={c} collections={read([c])} onPick={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "Actions for col-a" });
+    trigger.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    const budget = await screen.findByRole("menuitem", { name: "Budget…" });
+    await waitFor(() => expect(budget).toHaveFocus());
+    expect(budget).toHaveAttribute("aria-disabled", "true");
+    expect(budget).toHaveAccessibleDescription("Needs admin on col-a. An admin of it can grant that.");
+    await userEvent.keyboard("{Enter} ");
+    await userEvent.click(budget);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.getNamespace).not.toHaveBeenCalled();
+    expect(api.setCollectionBudget).not.toHaveBeenCalled();
+  },
+);

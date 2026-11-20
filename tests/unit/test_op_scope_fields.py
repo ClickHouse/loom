@@ -39,6 +39,9 @@ _READABLE_INBOX = "server.tasks.app.common._load_readable_inbox"
 
 # (op, field) -> the function that authorizes the field's value.
 AUTHORIZED: dict[tuple[str, str], str] = {
+    ("collection.budget_set", "budget_alert_inbox"): (
+        "server.tasks.app.budget_notifications.inbox_owned_by"
+    ),
     ("namespace.register", "budget_alert_inbox"): (
         "server.tasks.app.budget_notifications.inbox_owned_by"
     ),
