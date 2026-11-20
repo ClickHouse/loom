@@ -56,6 +56,7 @@ LANG_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "json": (".json",),
     "toml": (".toml",),
     "proto": (".proto",),
+    "thrift": (".thrift",),
     "cmake": (".cmake", "CMakeLists.txt"),
     "xml": (".xml",),
     "html": (".html", ".htm"),
