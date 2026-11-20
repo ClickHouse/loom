@@ -10,7 +10,7 @@ import os
 import signal
 from pathlib import Path
 from unittest import mock
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -29,7 +29,9 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("LOOM_PIPECAT_EVIDENCE", str(tmp_path / "receipt.json"))
-    monkeypatch.setattr(module, "subreaper", mock.Mock(return_value=0))
+    monkeypatch.setattr(
+        module, "subreaper", mock.Mock(side_effect=lambda value=None: 1 if value is None else 0)
+    )
     old_umask = os.umask(0o077)
     try:
         yield module, source
@@ -268,6 +270,8 @@ def test_capture_failure_reports_fixed_diagnostics_without_exception_text(record
         "code": "unavailable",
         "http_status": 0,
         "driver_error": "unavailable",
+        "io": {"kind": "unavailable", "errno": 0},
+        "driver_exit": {"kind": "unavailable", "code": 0},
     }
     assert secret not in raw
     assert status["video"] is None
@@ -394,6 +398,8 @@ def test_finalization_failure_keeps_fixed_stage_and_kind(
         "code": code,
         "http_status": 0,
         "driver_error": "unavailable",
+        "io": {"kind": "io" if failure == "probe" else "unavailable", "errno": 0},
+        "driver_exit": {"kind": "unavailable", "code": 0},
     }
     assert "private" not in json.dumps(diagnostic)
 
@@ -423,6 +429,8 @@ def test_finalization_exception_is_in_the_public_status(recorder):
         "code": "media_probe_timeout",
         "http_status": 0,
         "driver_error": "unavailable",
+        "io": {"kind": "unavailable", "errno": 0},
+        "driver_exit": {"kind": "unavailable", "code": 0},
     }
     assert status["video"] is None
 
@@ -494,6 +502,8 @@ def test_event_failure_survives_later_diagnostics_and_cleanup(recorder):
         "code": "unavailable",
         "http_status": 500,
         "driver_error": "unknown error",
+        "io": {"kind": "unavailable", "errno": 0},
+        "driver_exit": {"kind": "unavailable", "code": 0},
     }
     assert "private" not in raw
 
@@ -505,3 +515,386 @@ def test_child_census_read_refusal_is_unavailable(recorder, failure):
     module, _ = recorder
     with mock.patch.object(module.Path, "open", side_effect=failure):
         assert module.post_cleanup_children(True) == "unavailable"
+
+
+def test_cleanup_reaps_adopted_child_outside_launcher_group(recorder):
+    module, _ = recorder
+    alive = ["live"]
+    sent = []
+    parent = module.os.getpid()
+    child = parent + 100000
+    identity = (parent, child, child, "adopted-birth", "S")
+    original_open, original_stat = Path.open, Path.stat
+    original_close = os.close
+
+    def open_path(path, *args, **kwargs):
+        if str(path) == f"/proc/{parent}/task/{parent}/children":
+            return io.BytesIO(str(child).encode() if alive[0] != "reaped" else b"")
+        return original_open(path, *args, **kwargs)
+
+    def stat_path(path, *args, **kwargs):
+        if str(path) == f"/proc/{child}":
+            return mock.Mock(st_uid=module.os.getuid())
+        return original_stat(path, *args, **kwargs)
+
+    def identify(pid):
+        if pid == parent:
+            return (0, parent, parent, "recorder-birth", "S")
+        assert pid == child
+        return (*identity[:4], "S" if alive[0] == "live" else "Z")
+
+    def send(fd, signum):
+        assert fd == 77
+        sent.append(signum)
+        alive[0] = "zombie"
+
+    def reap(pid, flags):
+        assert pid == child and flags == module.os.WNOHANG
+        alive[0] = "reaped"
+        return (child, 0)
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=OSError("private-driver-failure")),
+        mock.patch.object(module, "run_native", return_value=0),
+        mock.patch.object(module, "process_identity", side_effect=identify),
+        mock.patch.object(module.Path, "open", open_path),
+        mock.patch.object(module.Path, "stat", stat_path),
+        mock.patch.object(module.os, "pidfd_open", return_value=77) as pin,
+        mock.patch.object(module.signal, "pidfd_send_signal", side_effect=send),
+        mock.patch.object(module.os, "waitpid", side_effect=reap) as wait,
+        mock.patch.object(
+            module.os, "close", side_effect=lambda fd: None if fd == 77 else original_close(fd)
+        ) as close,
+        mock.patch.object(
+            module,
+            "post_cleanup_children",
+            side_effect=lambda _active: "remaining" if alive[0] != "reaped" else "empty",
+        ),
+        mock.patch.object(module.time, "sleep"),
+        mock.patch.object(module, "write_private") as write,
+    ):
+        assert module.main() == 0
+    status = json.loads(write.call_args.args[1])
+    assert status["post_cleanup_children"] == "empty"
+    assert status["native_code"] == 0
+    assert sent == [signal.SIGTERM]
+    pin.assert_called_once_with(child, 0)
+    wait.assert_called_once_with(child, module.os.WNOHANG)
+    assert close.call_args_list.count(mock.call(77)) == 1
+
+
+@pytest.fixture
+def adopted_child(recorder, monkeypatch):
+    module, _ = recorder
+    parent, child = 1111, 2222
+    state = {
+        "child": "S",
+        "birth": "child-birth",
+        "uid": module.os.getuid(),
+        "ppid": parent,
+        "time": 0.0,
+        "term_resisted": False,
+    }
+    monkeypatch.setattr(module.os, "getpid", lambda: parent)
+    monkeypatch.setattr(module, "subreaper", lambda: 1)
+
+    def identify(pid):
+        if pid == parent:
+            return (0, parent, parent, "recorder-birth", "S")
+        assert pid == child
+        return (state["ppid"], child, child, state["birth"], state["child"])
+
+    def send(_fd, signum):
+        if signum == signal.SIGKILL or not state["term_resisted"]:
+            state["child"] = "Z"
+
+    def reap(pid, flags):
+        assert pid == child and flags == module.os.WNOHANG
+        state["child"] = None
+        return (child, 0)
+
+    def sleep(_seconds):
+        state["time"] += 3.1 if state["child"] == "S" else 0.1
+
+    monkeypatch.setattr(module, "process_identity", identify)
+    original_open, original_stat = Path.open, Path.stat
+
+    def open_path(path, *args, **kwargs):
+        if str(path) == f"/proc/{parent}/task/{parent}/children":
+            return io.BytesIO(str(child).encode() if state["child"] else b"")
+        return original_open(path, *args, **kwargs)
+
+    def stat_path(path, *args, **kwargs):
+        if str(path) == f"/proc/{child}":
+            return mock.Mock(st_uid=state["uid"])
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(module.Path, "open", open_path)
+    monkeypatch.setattr(module.Path, "stat", stat_path)
+    pin = mock.Mock(return_value=77)
+    send_mock = mock.Mock(side_effect=send)
+    close = mock.Mock()
+    monkeypatch.setattr(module.os, "pidfd_open", pin)
+    monkeypatch.setattr(module.signal, "pidfd_send_signal", send_mock)
+    monkeypatch.setattr(module.os, "waitpid", reap)
+    monkeypatch.setattr(module.os, "close", close)
+    monkeypatch.setattr(module.time, "monotonic", lambda: state["time"])
+    monkeypatch.setattr(module.time, "sleep", sleep)
+    return module, state, pin, send_mock, close
+
+
+def test_adopted_term_deadline_escalates_then_reaps(adopted_child):
+    module, state, pin, send, close = adopted_child
+    state["term_resisted"] = True
+    module.stop_adopted_children()
+    assert state["child"] is None
+    assert send.call_args_list == [mock.call(77, signal.SIGTERM), mock.call(77, signal.SIGKILL)]
+    pin.assert_called_once_with(2222, 0)
+    close.assert_called_once_with(77)
+
+
+@pytest.mark.parametrize("changed", ["ppid", "uid", "birth"])
+def test_adopted_identity_change_refuses_signal_and_closes_fd(adopted_child, changed):
+    module, state, pin, send, close = adopted_child
+
+    def opened(*_args):
+        state[changed] = "replacement" if changed == "birth" else 9999
+        return 77
+
+    pin.side_effect = opened
+    with pytest.raises(ValueError, match="adopted_child_identity_changed"):
+        module.stop_adopted_children()
+    send.assert_not_called()
+    close.assert_called_once_with(77)
+
+
+def test_adopted_zombie_is_reaped_without_signal(adopted_child):
+    module, state, _pin, send, close = adopted_child
+    state["child"] = "Z"
+    module.stop_adopted_children()
+    assert state["child"] is None
+    send.assert_not_called()
+    close.assert_called_once_with(77)
+
+
+@pytest.mark.parametrize("failure", [PermissionError("private-refusal"), OSError(38, "private")])
+def test_adopted_pidfd_refusal_has_no_signal_fallback(adopted_child, failure):
+    module, _state, pin, send, close = adopted_child
+    pin.side_effect = failure
+    with pytest.raises(OSError):
+        module.stop_adopted_children()
+    send.assert_not_called()
+    close.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error,kind,number",
+    [
+        (TimeoutError("private"), "timeout", 0),
+        (URLError(TimeoutError("private")), "timeout", 0),
+        (URLError(ConnectionRefusedError(111, "private")), "connection_refused", 111),
+        (ConnectionResetError(104, "private"), "connection_reset", 104),
+        (BrokenPipeError(32, "private"), "broken_pipe", 32),
+        (OSError(5000, "private"), "io", 0),
+        (URLError("private"), "unavailable", 0),
+    ],
+)
+def test_io_diagnostic_exports_only_fixed_category_and_errno(recorder, error, kind, number):
+    module, _ = recorder
+    assert module.io_diagnostic(error) == {"kind": kind, "errno": number}
+    assert "private" not in json.dumps(module.capture_failure({}, error))
+
+
+@pytest.mark.parametrize(
+    "outcome,expected",
+    [
+        (None, {"kind": "running", "code": 0}),
+        (mock.Mock(si_code=os.CLD_EXITED, si_status=7), {"kind": "exited", "code": 7}),
+        (mock.Mock(si_code=os.CLD_KILLED, si_status=9), {"kind": "signalled", "code": 9}),
+        (mock.Mock(si_code=os.CLD_EXITED, si_status=999), {"kind": "unavailable", "code": 0}),
+    ],
+)
+def test_driver_diagnostic_retains_unreaped_owned_launcher(recorder, outcome, expected):
+    module, _ = recorder
+    process = mock.Mock(pid=2222)
+    with (
+        mock.patch.object(module, "anchor_identity") as identity,
+        mock.patch.object(module.os, "waitid", return_value=outcome) as wait,
+    ):
+        assert module.driver_exit_diagnostic({"driver": process}) == expected
+    identity.assert_called_once_with(process)
+    wait.assert_called_once_with(os.P_PID, 2222, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    process.poll.assert_not_called()
+    process.wait.assert_not_called()
+
+
+def test_driver_diagnostic_unknown_identity_does_not_read_exit(recorder):
+    module, _ = recorder
+    with (
+        mock.patch.object(module, "anchor_identity", side_effect=ValueError("private")),
+        mock.patch.object(module.os, "waitid") as wait,
+    ):
+        assert module.driver_exit_diagnostic({"driver": object()}) == {
+            "kind": "unavailable",
+            "code": 0,
+        }
+    wait.assert_not_called()
+
+
+def test_adopted_group_change_does_not_remove_ownership(adopted_child):
+    module, state, pin, send, close = adopted_child
+    original = module.process_identity
+
+    def identify(pid):
+        identity = original(pid)
+        return (identity[0], 3333, 3333, *identity[3:]) if pid == 2222 and pin.called else identity
+
+    with mock.patch.object(module, "process_identity", side_effect=identify):
+        module.stop_adopted_children()
+    assert state["child"] is None
+    send.assert_called_once_with(77, signal.SIGTERM)
+    close.assert_called_once_with(77)
+
+
+def test_adopted_inactive_subreaper_refuses_before_pin(adopted_child):
+    module, _state, pin, send, close = adopted_child
+    with mock.patch.object(module, "subreaper", return_value=0):
+        with pytest.raises(ValueError, match="owned_subreaper_inactive"):
+            module.stop_adopted_children()
+    pin.assert_not_called()
+    send.assert_not_called()
+    close.assert_not_called()
+
+
+def test_adopted_snapshot_bound_refuses_before_pin(adopted_child):
+    module, _state, pin, send, close = adopted_child
+    with mock.patch.object(module.Path, "open", return_value=io.BytesIO(b"2222 " * 129)):
+        with pytest.raises(ValueError, match="adopted_child_cleanup_bound"):
+            module.stop_adopted_children()
+    pin.assert_not_called()
+    send.assert_not_called()
+    close.assert_not_called()
+
+
+def test_adopted_close_failure_still_closes_other_pinned_children(adopted_child):
+    module, state, pin, _send, close = adopted_child
+    original = module.process_identity
+    state["term_resisted"] = True
+
+    def identify(pid):
+        return (1111, pid, pid, "other-child", "S") if pid in (3333, 4444) else original(pid)
+
+    def opened(pid, _flags):
+        if pid == 4444:
+            raise PermissionError("private-refusal")
+        return {2222: 77, 3333: 78}[pid]
+
+    def closing(fd):
+        if fd == 77:
+            raise OSError("private-close-failure")
+
+    pin.side_effect = opened
+    close.side_effect = closing
+    with (
+        mock.patch.object(module.Path, "open", return_value=io.BytesIO(b"2222 3333 4444")),
+        mock.patch.object(module.Path, "stat", return_value=mock.Mock(st_uid=state["uid"])),
+        mock.patch.object(module, "process_identity", side_effect=identify),
+    ):
+        with pytest.raises(OSError):
+            module.stop_adopted_children()
+    assert close.call_args_list == [mock.call(77), mock.call(78)]
+
+
+def test_new_adoption_during_kill_stage_receives_kill(adopted_child):
+    module, state, pin, send, close = adopted_child
+    state["term_resisted"] = True
+    other = {"state": "S"}
+    original_identify = module.process_identity
+    original_send = send.side_effect
+    original_reap = module.os.waitpid
+
+    def identify(pid):
+        return (
+            (1111, 3333, 3333, "other-child", other["state"])
+            if pid == 3333
+            else original_identify(pid)
+        )
+
+    def sending(fd, signum):
+        if fd == 78:
+            assert signum == signal.SIGKILL
+            other["state"] = "Z"
+        else:
+            original_send(fd, signum)
+
+    def reap(pid, flags):
+        if pid == 3333:
+            assert flags == module.os.WNOHANG
+            other["state"] = None
+            return (pid, 0)
+        return original_reap(pid, flags)
+
+    def children(*_args, **_kwargs):
+        return io.BytesIO(b"2222" if state["child"] else b"3333" if other["state"] else b"")
+
+    pin.side_effect = lambda pid, _flags: 77 if pid == 2222 else 78
+    send.side_effect = sending
+    with (
+        mock.patch.object(module.Path, "open", side_effect=children),
+        mock.patch.object(module.Path, "stat", return_value=mock.Mock(st_uid=state["uid"])),
+        mock.patch.object(module, "process_identity", side_effect=identify),
+        mock.patch.object(module.os, "waitpid", side_effect=reap),
+    ):
+        module.stop_adopted_children()
+    assert send.call_args_list == [
+        mock.call(77, signal.SIGTERM),
+        mock.call(77, signal.SIGKILL),
+        mock.call(78, signal.SIGKILL),
+    ]
+    assert close.call_args_list == [mock.call(77), mock.call(78)]
+
+
+def test_reused_reaped_pid_fails_closed_before_repin(adopted_child):
+    module, state, pin, send, close = adopted_child
+
+    def reap(pid, flags):
+        assert pid == 2222 and flags == module.os.WNOHANG
+        state["birth"] = "replacement"
+        state["child"] = "S"
+        return (pid, 0)
+
+    state["child"] = "Z"
+    with mock.patch.object(module.os, "waitpid", side_effect=reap):
+        with pytest.raises(ValueError, match="adopted_child_identity_changed"):
+            module.stop_adopted_children()
+    pin.assert_called_once_with(2222, 0)
+    send.assert_not_called()
+    close.assert_called_once_with(77)
+
+
+def test_cumulative_adoptions_remain_bounded_after_reaping(adopted_child):
+    module, state, pin, send, close = adopted_child
+    counter = {"pid": 2000}
+    original = module.process_identity
+
+    def identify(pid):
+        if pid == 1111:
+            return original(pid)
+        return (1111, pid, pid, str(pid), "Z")
+
+    def children(*_args, **_kwargs):
+        counter["pid"] += 1
+        return io.BytesIO(str(counter["pid"]).encode())
+
+    pin.side_effect = lambda pid, _flags: pid
+    with (
+        mock.patch.object(module.Path, "open", side_effect=children),
+        mock.patch.object(module.Path, "stat", return_value=mock.Mock(st_uid=state["uid"])),
+        mock.patch.object(module, "process_identity", side_effect=identify),
+        mock.patch.object(module.os, "waitpid", side_effect=lambda pid, _flags: (pid, 0)),
+        mock.patch.object(module.time, "sleep"),
+    ):
+        with pytest.raises(ValueError, match="adopted_child_cleanup_bound"):
+            module.stop_adopted_children()
+    assert pin.call_count == close.call_count == 128
+    send.assert_not_called()

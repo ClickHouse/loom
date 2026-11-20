@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 FILMING_CASE = "tests/integration/_pipecat_video_ci.py"
@@ -105,6 +105,41 @@ def capture_phase(state: dict, stage: int) -> None:
     state["driver_error"] = "unavailable"
 
 
+def io_diagnostic(error: Exception) -> dict:
+    cause = error.reason if isinstance(error, URLError) else error
+    if isinstance(cause, TimeoutError):
+        kind = "timeout"
+    elif isinstance(cause, ConnectionRefusedError):
+        kind = "connection_refused"
+    elif isinstance(cause, ConnectionResetError):
+        kind = "connection_reset"
+    elif isinstance(cause, BrokenPipeError):
+        kind = "broken_pipe"
+    else:
+        kind = "io" if isinstance(cause, OSError) else "unavailable"
+    number = cause.errno if isinstance(cause, OSError) else None
+    return {"kind": kind, "errno": number if type(number) is int and 0 < number < 4096 else 0}
+
+
+def driver_exit_diagnostic(state: dict) -> dict:
+    result = {"kind": "unavailable", "code": 0}
+    process = state.get("driver")
+    if process is None:
+        return result
+    try:
+        anchor_identity(process)
+        outcome = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if outcome is None:
+            return {"kind": "running", "code": 0}
+        if outcome.si_code == os.CLD_EXITED and 0 <= outcome.si_status <= 255:
+            return {"kind": "exited", "code": outcome.si_status}
+        if outcome.si_code in (os.CLD_KILLED, os.CLD_DUMPED) and 0 < outcome.si_status <= 64:
+            return {"kind": "signalled", "code": outcome.si_status}
+    except Exception:  # noqa: BLE001 — optional launcher diagnostics cannot replace capture failure
+        pass
+    return result
+
+
 def capture_failure(state: dict, error: Exception) -> dict:
     code = error.args[0] if isinstance(error, ValueError) and error.args else None
     return {
@@ -117,6 +152,8 @@ def capture_failure(state: dict, error: Exception) -> dict:
         else "unavailable",
         "http_status": state.get("driver_http_status", 0),
         "driver_error": state.get("driver_error", "unavailable"),
+        "io": io_diagnostic(error),
+        "driver_exit": driver_exit_diagnostic(state),
     }
 
 
@@ -307,6 +344,88 @@ def stop_owned(process: subprocess.Popen | None) -> None:
             raise ValueError("owned_reap_identity_changed")
         os.waitpid(pid, 0)
     process.wait()
+
+
+def stop_adopted_children() -> None:
+    """Clean only pidfd-pinned direct children adopted by this recorder."""
+    if subreaper() != 1:
+        raise ValueError("owned_subreaper_inactive")
+    parent, uid = os.getpid(), os.getuid()
+    parent_birth = process_identity(parent)[3]
+    path = Path(f"/proc/{parent}/task/{parent}/children")
+    pinned, seen = {}, {}
+
+    def identify(pid, expected=None):
+        identity = process_identity(pid)
+        if (
+            identity[0] != parent
+            or Path(f"/proc/{pid}").stat().st_uid != uid
+            or process_identity(parent)[3] != parent_birth
+            or (expected is not None and (identity[0], identity[3]) != expected)
+        ):
+            raise ValueError("adopted_child_identity_changed")
+        return identity
+
+    try:
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            # These additional three-second stages are shared by all adopted children.
+            deadline = time.monotonic() + 3
+            signalled = set()
+            while time.monotonic() < deadline:
+                with path.open("rb") as source:
+                    raw = source.read(4097)
+                values = raw.split()
+                if len(raw) > 4096 or len(values) > 128:
+                    raise ValueError("adopted_child_cleanup_bound")
+                if process_identity(parent)[3] != parent_birth:
+                    raise ValueError("recorder_birth_changed")
+                children = set()
+                expired = False
+                for value in values:
+                    if time.monotonic() >= deadline:
+                        expired = True
+                        break
+                    if not value.isdigit():
+                        raise ValueError("adopted_child_identity_unavailable")
+                    pid = int(value)
+                    if pid in children:
+                        raise ValueError("adopted_child_identity_changed")
+                    children.add(pid)
+                    identity = identify(pid, seen.get(pid))
+                    if pid not in pinned:
+                        if len(seen) >= 128:
+                            raise ValueError("adopted_child_cleanup_bound")
+                        fd = os.pidfd_open(pid, 0)
+                        pinned[pid] = fd
+                        seen[pid] = (identity[0], identity[3])
+                    current = identify(pid, seen[pid])
+                    if time.monotonic() >= deadline:
+                        expired = True
+                        break
+                    if current[4] == "Z":
+                        # PPID and birth remain verified immediately before numeric reaping.
+                        identify(pid, seen[pid])
+                        if os.waitpid(pid, os.WNOHANG)[0] != pid:
+                            raise ValueError("adopted_child_reap_incomplete")
+                        os.close(pinned.pop(pid))
+                    elif pid not in signalled:
+                        signal.pidfd_send_signal(pinned[pid], signum)
+                        signalled.add(pid)
+                if expired:
+                    break
+                if not children:
+                    return
+                time.sleep(0.02)
+        raise ValueError("adopted_child_not_quiescent")
+    finally:
+        close_error = None
+        for fd in pinned.values():
+            try:
+                os.close(fd)
+            except OSError as error:
+                close_error = error
+        if close_error is not None:
+            raise close_error
 
 
 def refuse_occupied_server_port() -> None:
@@ -760,6 +879,11 @@ def main() -> int:
             stop_owned(state.get("server"))
         except Exception:  # noqa: BLE001 — restore handlers even if server cleanup refuses
             cleanup_failed = True
+        if prior_subreaper is not None and not cleanup_failed:
+            try:
+                stop_adopted_children()
+            except Exception:  # noqa: BLE001 — unknown child ownership must fail cleanup closed
+                cleanup_failed = True
         # Subreaper adoption keeps escaped process groups in this own-child census.
         # This is a post-cleanup observation, not continuous no-escape proof.
         state["post_cleanup_children"] = (
