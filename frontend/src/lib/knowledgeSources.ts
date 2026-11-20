@@ -30,6 +30,7 @@ export interface KnowledgeSource {
   kind: string;
   credential_mode?: "shared" | "connected";
   owner_subject?: string;
+  owned_by_caller?: boolean;
   /** The ids and filters the source reads, in the form that names ids per kind; {} when
    *  an item has no place in it. Never a credential. */
   config: Record<string, unknown>;

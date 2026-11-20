@@ -4402,7 +4402,7 @@ export interface KnowledgeSourceListInput {
   namespace: string;
 }
 
-export interface KnowledgeSourceEntry {
+export interface KnowledgeSourceListEntry {
   name: string;
   kind: string;
   credential_mode?: string;
@@ -4414,10 +4414,12 @@ export interface KnowledgeSourceEntry {
   created_by?: string;
   created_at?: string;
   sync?: KnowledgeSourceSync;
+  /** Whether the caller may read their own connected source's details; false when ownership or access cannot be verified. */
+  owned_by_caller?: boolean;
 }
 
 export interface KnowledgeSourceListOutput {
-  sources?: KnowledgeSourceEntry[];
+  sources?: KnowledgeSourceListEntry[];
   enabled?: boolean;
   accepts_sources?: boolean;
 }

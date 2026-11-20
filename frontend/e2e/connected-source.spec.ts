@@ -118,6 +118,7 @@ function sourceRow(complete: boolean) {
     kind: "gdrive",
     credential_mode: "connected",
     owner_subject: SUBJECT,
+    owned_by_caller: true,
     config: {},
     items: [],
     created_by: SUBJECT,
@@ -172,6 +173,7 @@ async function checkConnectionTab(
       return route.abort("blockedbyclient");
     }
     if (!url.pathname.startsWith("/v1/") && url.pathname !== "/v1") return route.continue();
+    if (url.pathname === "/v1/health") return route.fulfill({ json: {} });
     if (url.pathname === "/v1/whoami") {
       return route.fulfill({
         json: {

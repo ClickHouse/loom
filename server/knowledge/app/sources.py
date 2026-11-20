@@ -59,9 +59,9 @@ from server.knowledge.api.models_sources import (
     KnowledgeSourceCheckInput,
     KnowledgeSourceCheckOutput,
     KnowledgeSourceDocument,
-    KnowledgeSourceEntry,
     KnowledgeSourceInspectInput,
     KnowledgeSourceInspectOutput,
+    KnowledgeSourceListEntry,
     KnowledgeSourceListInput,
     KnowledgeSourceListOutput,
     KnowledgeSourceParsedLink,
@@ -433,12 +433,13 @@ async def handle_knowledge_source_list(
     for s in found:
         details = await _details_allowed(s)
         entries.append(
-            KnowledgeSourceEntry(
+            KnowledgeSourceListEntry(
                 name=s.name,
                 kind=s.kind,
                 credential_mode=s.credential_mode,
                 access=s.access,
                 owner_subject=s.owner_subject if details else "",
+                owned_by_caller=s.credential_mode == "connected" and details,
                 items=s.items if details else [],
                 include=_answered_include(s) if details else [],
                 config=(domain.id_list_config(s) or {}) if details else {},

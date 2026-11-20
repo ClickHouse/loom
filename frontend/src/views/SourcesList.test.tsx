@@ -51,7 +51,13 @@ const failure = () =>
 const place = { label: "acme/docs", noun: "repository" } as const;
 
 function connectedSource(name: string, owner?: string): KnowledgeSource {
-  return { ...LISTED.sources[0]!, name, credential_mode: "connected", owner_subject: owner };
+  return {
+    ...LISTED.sources[0]!,
+    name,
+    credential_mode: "connected",
+    owner_subject: owner,
+    owned_by_caller: owner === "alice",
+  };
 }
 
 function writer() {
@@ -113,6 +119,26 @@ describe("SourcesList", () => {
     render(<SourcesList org="acme" namespace="docs" place={place} manageable={false} connectedManageable />);
     expect(await screen.findByRole("button", { name: "Add a source" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Refresh sources" })).toBeEnabled();
+  });
+
+  it("uses server-proven ownership when the signed-in subject is an alias", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice-alias", org: "acme", roles: ["writer"] } });
+    sources.listKnowledgeSources.mockResolvedValue({ enabled: true, sources: [connectedSource("own-alias", "alice")] });
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable={false} connectedManageable />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for own-alias" }));
+    expect(await screen.findByRole("menuitem", { name: "Manage connection" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Sync now" })).toBeInTheDocument();
+  });
+
+  it("does not offer an admin mutation controls over another person's connected source", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["admin"] } });
+    sources.listKnowledgeSources.mockResolvedValue({
+      enabled: true,
+      sources: [connectedSource("another-owner", "bob")],
+    });
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable connectedManageable />);
+    await screen.findByRole("button", { name: "another-owner" });
+    expect(screen.queryByRole("button", { name: "Actions for another-owner" })).not.toBeInTheDocument();
   });
 
   it("gives a writer no mutation controls for another owner's connection or an admin's shared source", async () => {

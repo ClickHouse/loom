@@ -11861,12 +11861,12 @@ class KnowledgeSourceListBody(TypedDict, total=False):
 
 
 class KnowledgeSourceListOutput(TypedDict, total=False):
-    sources: NotRequired[list["KnowledgeSourceEntry"]]
+    sources: NotRequired[list["KnowledgeSourceListEntry"]]
     enabled: NotRequired[bool]
     accepts_sources: NotRequired[bool]
 
 
-class KnowledgeSourceEntry(TypedDict, total=False):
+class KnowledgeSourceListEntry(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
     credential_mode: NotRequired[str]
@@ -11878,6 +11878,7 @@ class KnowledgeSourceEntry(TypedDict, total=False):
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
+    owned_by_caller: NotRequired[bool]
 
 
 class KnowledgeSourceParseLinksInput(TypedDict, total=False):

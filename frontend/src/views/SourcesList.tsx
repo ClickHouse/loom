@@ -183,8 +183,8 @@ export function SourcesList({
   );
 
   const menu = (s: KnowledgeSource): RowMenuItem[] => {
-    const owned = !!subject && s.credential_mode === "connected" && s.owner_subject === subject;
-    if (!manageable && !(connectedManageable && owned)) return [];
+    const owned = !!subject && s.credential_mode === "connected" && s.owned_by_caller === true;
+    if (s.credential_mode === "connected" ? !(connectedManageable && owned) : !manageable) return [];
     const act = (verb: Verb) => () => setActing({ verb, source: s });
     const check: RowMenuItem = { label: "Check", icon: "check", onSelect: act("check") };
     const sync: RowMenuItem = { label: "Sync now", icon: "refresh", onSelect: act("sync") };
