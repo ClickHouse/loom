@@ -73,3 +73,48 @@ def test_nested_fences_keep_the_earliest_send_deadline() -> None:
         with rmt_carry.under_lease(5):
             assert rmt_carry._lease_end.get() == 5
         assert rmt_carry._lease_end.get() == 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_batch_admission_failure_releases_successful_peers(monkeypatch, cancel):
+    entered = asyncio.Event()
+    lease = SimpleNamespace(let_expire=lambda: None)
+    released = AsyncMock()
+
+    async def take(name, **kw):
+        if name == "a":
+            return lease
+        entered.set()
+        if cancel:
+            await asyncio.Event().wait()
+        raise RuntimeError("control store failed")
+
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.leases, "release_shielded", released)
+
+    async def write():
+        async with writes.fenced_many(["a", "b"]):
+            pytest.fail("a partial admission cannot write")
+
+    task = asyncio.create_task(write())
+    await entered.wait()
+    if cancel:
+        task.cancel()
+    with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+        await task
+    released.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_batch_checks_the_earliest_holder_before_sending(monkeypatch):
+    first, second = SimpleNamespace(), SimpleNamespace()
+    take = AsyncMock(side_effect=[first, second])
+    release = AsyncMock()
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    monkeypatch.setattr(writes.leases, "work_left", lambda lease, ttl: 0 if lease is first else 24)
+    with pytest.raises(writes.FenceUnavailableError, match="expired"):
+        async with writes.fenced_many(["a", "b"]):
+            pytest.fail("batch admission exhausted its earliest holder")
+    assert release.await_count == 2

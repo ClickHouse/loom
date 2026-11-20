@@ -16,6 +16,9 @@ class FenceUnavailableError(BackendUnavailableError):
     """The writer cannot enter because its holder is busy or its lease expired."""
 
 
+_ADMIT_AT_ONCE = 16
+
+
 def lease_ttl_s(send_bound_s: float) -> float:
     """Keep the last admitted send's finish bound before an unrenewed lease expires."""
     return max(60.0, (send_bound_s + 5.0) / 0.6)
@@ -28,10 +31,44 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
     An uncertain send retains the durable holder until every admitted server send
     has finished or expired. Every eraser of the written table takes this lease too.
     """
+    async with fenced_many([name], ch=ch) as mark:
+        yield mark
+
+
+async def _take_all(names: list[str], ttl: float, ch: Any) -> list[leases.Lease]:
+    held: list[leases.Lease] = []
+    try:
+        for start in range(0, len(names), _ADMIT_AT_ONCE):
+            tasks = [
+                asyncio.create_task(leases.take(name, ttl_s=ttl, ch=ch))
+                for name in names[start : start + _ADMIT_AT_ONCE]
+            ]
+            try:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                settled = await asyncio.gather(*tasks, return_exceptions=True)
+                held.extend(
+                    r for r in settled if r is not None and not isinstance(r, BaseException)
+                )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+                if result is None:
+                    raise FenceUnavailableError("a previous leased write is still settling")
+        return held
+    except BaseException:
+        await asyncio.gather(*(leases.release_shielded(lease) for lease in held))
+        raise
+
+
+@asynccontextmanager
+async def fenced_many(names: list[str], *, ch: Any = None) -> AsyncIterator[Callable[[bool], None]]:
+    """Admit keys in bounded waves and fence sends before the earliest holder expires."""
     ttl = lease_ttl_s(rmt_carry.send_bound_s())
-    lease = await leases.take(name, ttl_s=ttl, ch=ch)
-    if lease is None:
-        raise FenceUnavailableError("a previous leased write is still settling")
+    held = await _take_all(names, ttl, ch)
     uncertain = False
 
     def mark_uncertain(value: bool) -> None:
@@ -39,7 +76,7 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
         uncertain = value
 
     try:
-        left = leases.work_left(lease, ttl)
+        left = min(leases.work_left(lease, ttl) for lease in held)
         if left <= 0:
             raise FenceUnavailableError("the write lease expired")
         async with asyncio.timeout(left):
@@ -47,5 +84,6 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
                 yield mark_uncertain
     finally:
         if uncertain:
-            lease.let_expire()
-        await leases.release_shielded(lease)
+            for lease in held:
+                lease.let_expire()
+        await asyncio.gather(*(leases.release_shielded(lease) for lease in held))

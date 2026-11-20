@@ -149,8 +149,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 
 11. **Dry run** returns the verdict with version 0 and writes nothing, not even an audit
     row.
-12. **Dual write** (`_set_dual_write`). The `memory` row and its `build_embedding_row`
-    row are inserted concurrently. The embedding row carries the columns search filters
+12. **Dual write** (`_set_dual_write`). The `memory` row commits before its
+    `build_embedding_row` row is inserted, so a refused memory write publishes no text to
+    search. The embedding row carries the columns search filters
     on (type, status, tags, entities, validity, `source_class`, `verified`), so no leg
     joins back to `memory`; its `conflict_checked_at` carries the resolver's mark.
     Conflict marks then go on the peers, or `refines` supersedes them.

@@ -71,8 +71,10 @@ over the head it read (`heads_unchanged(exact=True)`), and a head written since 
 it.
 
 The ClickHouse fences use `server/core/lease_writes.py`: uncertain inserts retain their
-Keeper holders until every admitted send has finished or expired. Batches take keys in
-sorted identity order and keep the earliest send deadline. A busy fence or an unavailable
+Keeper holders until every admitted send has finished or expired. Batches admit keys in
+bounded waves and keep the earliest send deadline. Memory rows commit before their
+embedding rows are inserted, so a refused value write publishes no searchable text.
+A busy fence or an unavailable
 Keeper refuses the write with a retryable 503. The check covers version inserts, not
 in-place counter updates or redaction mutations. A serving build without these fences
 does not participate; during a rolling upgrade, the guarantee requires every writer to

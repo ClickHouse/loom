@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from typing import Any
 
 from server.core import lease_writes
@@ -39,19 +39,12 @@ async def checked_write(
     keys = {identity_key(r) for r in rows}
     if expected_heads is not None and set(expected_heads) != keys:
         raise ValueError("expected heads must name exactly the inserted keys")
-    async with AsyncExitStack() as stack:
-        marks = [
-            await stack.enter_async_context(
-                lease_writes.fenced(lease_name(key), ch=_lease_client(ch))
-            )
-            for key in sorted(keys)
-        ]
+    names = [lease_name(key) for key in sorted(keys)]
+    async with lease_writes.fenced_many(names, ch=_lease_client(ch)) as mark:
         if expected_heads is not None:
             current = await clickhouse_head_versions(list(keys), ch=ch)
             if any(current.get(key) != version for key, version in expected_heads.items()):
                 raise AdmissionContendedError("the memory changed while it was read")
-        for mark in marks:
-            mark(True)
+        mark(True)
         yield
-        for mark in marks:
-            mark(False)
+        mark(False)

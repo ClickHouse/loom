@@ -513,7 +513,7 @@ def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes, the memory rows and their embedding rows. Under
     Postgres the batch is committed and published through the publication batch, then
-    announced. On ClickHouse the two are gathered, each a committed insert, and once the
+    announced. On ClickHouse the memory rows precede the embeddings, and once the
     memory rows are in the batch is announced even when the embedding insert or the tail
     after it fails: a retry of the same values writes nothing and would announce
     nothing."""
@@ -593,21 +593,16 @@ async def _land_batch(
 
 async def _insert_batch(state: _BulkWriteState, ch: Any) -> BaseException | None:
     """On the ClickHouse authority: the batch's memory rows and embedding rows, written
-    beside each other. Raises what refused the memory rows; returns what refused the
+    in that order. Raises what refused the memory rows; returns what refused the
     embedding rows, raised once the batch is announced."""
     import server.memory.store as memory_repo
 
-    # The two core writes are independent rows of two tables and each is a ~260 ms committed
-    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
-    memory_done, embedding_done = await asyncio.gather(
-        # Full version rows (revision or first version), so the typed insert checks them.
-        memory_repo.insert_memory_versions(state.memory_rows, ch=ch),
-        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
-        return_exceptions=True,
-    )
-    if isinstance(memory_done, BaseException):
-        raise memory_done
-    return embedding_done if isinstance(embedding_done, BaseException) else None
+    await memory_repo.insert_memory_versions(state.memory_rows, ch=ch)
+    try:
+        await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
+    except BaseException as error:  # noqa: BLE001 — committed memory rows still owe an announcement
+        return error
+    return None
 
 
 async def _fence_and_announce(state: _BulkWriteState, *, ch: Any) -> None:

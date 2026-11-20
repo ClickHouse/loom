@@ -912,7 +912,7 @@ def _set_dry_run_answer(
 
 
 async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str, Any]) -> None:
-    """The version row and its embedding row, inserted concurrently; under the Postgres
+    """The version row, then its embedding row; under the Postgres
     authority, committed there and handed to the publication batch with the embedding
     row, the write answering at its commit or after its flush (`_answers_at_commit`)."""
     from server.observability.otel import traced
@@ -946,15 +946,9 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
 
             await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
-    with traced("ch.insert.dual_write", concurrent=2):
-        memory_done, embedding_done = await asyncio.gather(
-            _insert_memory(), _insert_embedding(), return_exceptions=True
-        )
-    if isinstance(memory_done, BaseException):
-        raise memory_done
+    await _insert_memory()
     try:
-        if isinstance(embedding_done, BaseException):
-            raise embedding_done
+        await _insert_embedding()
         await _lift_after_insert(w, ch, [embedding_row])
     finally:
         await _announce_set(w)  # the row is in, whatever failed after it
@@ -963,7 +957,7 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
 async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> Any:
     """Phase 12 of memory.set: the version row and its embedding row, then the peer links.
 
-    Builds the full-column embedding row, inserts both rows concurrently,
+    Builds the full-column embedding row, inserts it after the memory row,
     then flags `conflict` peers or applies a `refines` supersession — after the
     insert, so the new id exists. Returns the verdict that landed: `clear` when no
     peer was left live to flag.

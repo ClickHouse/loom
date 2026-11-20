@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -39,24 +38,11 @@ class Replica:
 
 
 @pytest.fixture
-def fenced_store(monkeypatch: pytest.MonkeyPatch):
-    """Model the existing Keeper fence; separate clients share its holders."""
-    held: set[str] = set()
-
-    @asynccontextmanager
-    async def fenced(name: str, **kw: Any):
-        if name in held:
-            raise lease_writes.FenceUnavailableError("busy")
-        held.add(name)
-        try:
-            yield lambda uncertain: None
-        finally:
-            held.remove(name)
-
-    monkeypatch.setattr(lease_writes, "fenced", fenced)
+def fenced_store(monkeypatch: pytest.MonkeyPatch, memory_insert_keeper):
+    """The existing Keeper fake holds names shared by both clients."""
     monkeypatch.setattr(rows, "next_version", lambda: 300)
     monkeypatch.setattr(verify, "_schedule_mirror", lambda *args, **kw: None)
-    return held
+    return memory_insert_keeper.keys
 
 
 @pytest.mark.asyncio
@@ -207,3 +193,52 @@ async def test_batch_contention_releases_keys_it_already_took(memory_insert_keep
         await insert_memory_versions(batch, ch=Replica(table))
     assert set(memory_insert_keeper.keys) == {busy}
     assert table == []
+
+
+@pytest.mark.asyncio
+async def test_supported_batch_reaches_insert_with_live_holders(monkeypatch):
+    """Two 30 ms control statements per key must fit a 1000-key write's leases."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.core import lease_writes
+
+    elapsed = 0.0
+    held = []
+    source = _row()
+    batch = [memory_repo.build_memory_version_row(source, memory_key=f"k{i}") for i in range(1000)]
+
+    async def take(name, *, ttl_s, **kw):
+        nonlocal elapsed
+        started = elapsed
+        await asyncio.sleep(0)
+        elapsed = max(elapsed, started + 0.03)
+        read = elapsed
+        await asyncio.sleep(0)
+        elapsed = max(elapsed, read + 0.03)
+        lease = SimpleNamespace(
+            name=name, acquired=started, ttl=ttl_s, released=False, let_expire=lambda: None
+        )
+        held.append(lease)
+        return lease
+
+    async def release(lease):
+        lease.released = True
+
+    def work_left(lease, ttl):
+        return lease.acquired + ttl * 0.4 - elapsed
+
+    class TimedInsert(Replica):
+        async def insert(self, *args, **kw):
+            assert all(work_left(lease, lease.ttl) > 0 for lease in held), (
+                "batch admission consumed an earlier holder before the insert"
+            )
+            await super().insert(*args, **kw)
+
+    monkeypatch.setattr(lease_writes.leases, "take", take)
+    monkeypatch.setattr(lease_writes.leases, "release_shielded", release)
+    monkeypatch.setattr(lease_writes.leases, "work_left", work_left)
+    table = []
+    await insert_memory_versions(batch, ch=TimedInsert(table))
+    assert table == batch
+    assert all(lease.released for lease in held)

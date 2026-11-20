@@ -777,16 +777,17 @@ async def _insert_revision(
 ) -> list[Any]:
     """On ClickHouse: the version row, its search document and, for a row no longer
     searchable (`retire_vectors`), its vectors retired at its version: each one's
-    outcome, gathered."""
+    outcome. A refused memory insert publishes no search document."""
     import server.memory.store as memory_repo
 
-    writes: list[Awaitable[Any]] = [insert_memory_versions([memory_row], ch=ch)]
+    await insert_memory_versions([memory_row], ch=ch)
+    writes: list[Awaitable[Any]] = []
     if emb_rows:
         writes.append(memory_repo.insert_embedding_rows(emb_rows, ch=ch))
     if retire_vectors:
         version = int(memory_row["version"])
         writes.append(memory_repo.tombstone_vectors_of(existing, version=version, ch=ch))
-    return list(await asyncio.gather(*writes, return_exceptions=True))
+    return [None, *await asyncio.gather(*writes, return_exceptions=True)]
 
 
 async def _commit_revision(
