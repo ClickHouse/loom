@@ -486,8 +486,10 @@ def registration_pair_refusal(reg: Mapping[str, Any]) -> str:
                 return "the registration fingerprint pair exceeds 64 KiB"
     except (TypeError, ValueError, RecursionError, UnicodeError):
         return "the registration fingerprint pair is unreadable"
-    if current is None or not fingerprints.readable(current) or (
-        pending is not None and not fingerprints.readable(pending)
+    if (
+        current is None
+        or not fingerprints.readable(current)
+        or (pending is not None and not fingerprints.readable(pending))
     ):
         return "the registration fingerprint pair is unreadable"
     return fingerprints.registration_pair_refusal(reg, current, pending)
