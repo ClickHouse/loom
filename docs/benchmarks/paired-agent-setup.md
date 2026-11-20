@@ -149,6 +149,11 @@ Record the native provider response before converting tool blocks. Preserve
 opaque or signed blocks when continuing the conversation. Disable automatic
 retries and alternate-model fallback unless the protocol explicitly budgets them.
 
+Exercise application hooks when qualifying the native message format. A
+verification hook can add context to the same user message as tool results. If the
+provider requires results first, preserve that ordering. A baseline-only transport
+probe does not test this path.
+
 | Evidence           | What to retain                                                                                       |
 | ------------------ | ---------------------------------------------------------------------------------------------------- |
 | Attempt identity   | Pairing key, arm, source and patch hashes, provider/model, protocol digest and terminal status       |
