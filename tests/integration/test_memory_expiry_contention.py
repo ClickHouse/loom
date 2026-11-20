@@ -30,6 +30,8 @@ async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, ren
         org=unique_org("expiry-contention"),
         namespace="notes",
         agent="writer",
+        user_id="-",
+        session_id="-",
         memory_key="review",
         memory_type="episodic",
         value="proposed",
@@ -37,6 +39,8 @@ async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, ren
         version=version_over(0),
         pinned=False,
         created_at=now,
+        updated_at=now,
+        last_reinforced_at=now,
         expires_at=now - timedelta(minutes=1),
         on_expire=action,
     )
