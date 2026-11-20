@@ -40,7 +40,7 @@ from server.transport.mcp_ledger import emit_token_refusal
 LOOM_OP_TOOL_NAME = "loom_op"
 # The code for a name no op (or tool) answers to, direct or through loom_op.
 UNKNOWN_OP = "UNKNOWN_OP"
-_HELP = {"", "help", "ops", "list", "catalog", "?"}
+CATALOG_ALIASES = {"", "help", "ops", "list", "catalog", "?"}
 _CATALOG_LIMIT = 15
 
 
@@ -365,7 +365,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if assistant_connection(toolset):
         return req, None  # `_call_tool` refuses `loom_op` on the assistant toolset
     name = str(args.get("op") or "").strip()
-    if name.lower() in _HELP:
+    if name.lower() in CATALOG_ALIASES:
         return req, _result(req.get("id"), catalog(str(args.get("query") or ""), toolset=toolset))
     # a hidden op is not here, so its name gets hidden_refusal
     by_name = {op.name: op for op in ALL_OPERATIONS if not is_hidden(op.name)}

@@ -548,3 +548,44 @@ async def test_review_protocol_version_refusal(monkeypatch, spans, version):
     roots = [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
     assert len(roots) == 1
     assert roots[0].attributes["loom.call.outcome"] == "refusal"
+
+
+@pytest.mark.parametrize(
+    "arguments, operation, failed",
+    [
+        ({"op": "help"}, "loom_op.help", False),
+        ({"op": " Catalog "}, "loom_op.help", False),
+        (None, "loom_op.help", False),
+        ({"op": "definitely_missing"}, "loom_op", True),
+        ({"op": 23}, "loom_op", True),
+        ("invalid", "loom_op", True),
+    ],
+)
+def test_review_operation_label_distinguishes_help_from_invalid_targets(
+    monkeypatch, spans, arguments, operation, failed
+):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.settings import settings
+    from server.transport import mcp
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    mcp.attach(app)
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "loom_op", "arguments": arguments},
+            },
+        )
+    body = response.json()
+    assert bool(body.get("error") or body.get("result", {}).get("isError")) is failed
+    roots = [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    assert len(roots) == 1
+    assert roots[0].attributes["loom.operation"] == operation
+    assert roots[0].attributes["loom.call.outcome"] == ("refusal" if failed else "success")

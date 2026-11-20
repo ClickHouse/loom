@@ -128,17 +128,21 @@ def _listing_params(request: Any) -> dict[str, str | None]:
 
 def _call_operation(params: dict[str, Any]) -> str:
     from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport.mcp_op import TOOLS_BY_NAME, resolve_op
+    from server.transport.mcp_op import CATALOG_ALIASES, TOOLS_BY_NAME, resolve_op
 
     name = params.get("name")
     if name == _LOOM_ACTIVATE_TOOL_NAME:
         return _LOOM_ACTIVATE_TOOL_NAME
     op = TOOLS_BY_NAME.get(name) if isinstance(name, str) else None
     if name == "loom_op":
-        arguments = params.get("arguments")
-        target = arguments.get("op") if isinstance(arguments, dict) else None
-        op = resolve_op(target, OPERATIONS_BY_NAME) if isinstance(target, str) else None
-        return op.name if op else "loom_op.help"
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return "loom_op"
+        target = str(arguments.get("op") or "").strip()
+        if target.lower() in CATALOG_ALIASES:
+            return "loom_op.help"
+        op = resolve_op(target, OPERATIONS_BY_NAME)
+        return op.name if op else "loom_op"
     return op.name if op else "tools/call"
 
 
