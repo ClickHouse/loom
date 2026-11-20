@@ -28,6 +28,20 @@ Only the exact receipt and allowlisted process summaries reach the renderer.
 Raw output stays in the job log. Audio, interruption, protected restoration,
 a separate CLI process and registry installation are outside this check.
 
+## Startup diagnostics
+
+The owned server excludes the recording client's `PYTHONPATH` target and uses
+its fixture's locked dependencies. The native client retains its own target.
+Before the public output directory exists, admission failures emit a fixed stage,
+allowlisted error code and numeric I/O details. An owned-server exit observation
+retains its unreaped PID and birth identity for cleanup.
+
+A diagnostic reads at most the first 64 KiB of the held private server log and
+exports only fixed import, validation and bind-error markers. Raw exception text,
+log bytes, paths and environment values are not exported. Missing diagnostics do
+not change the refusal or skip owned cleanup. Marker absence only describes the
+inspected prefix; it does not establish a startup cause.
+
 ## Renderer dependencies
 
 The hosted job installs `imageio-ffmpeg==0.6.0` and `Pillow==13.0.0` into an

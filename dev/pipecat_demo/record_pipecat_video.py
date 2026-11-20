@@ -375,6 +375,70 @@ def io_diagnostic(error: Exception) -> dict:
     return {"kind": kind, "errno": number if type(number) is int and 0 < number < 4096 else 0}
 
 
+def server_exit_diagnostic(process: subprocess.Popen | None) -> dict:
+    if process is None:
+        return {"state": "not_started"}
+    try:
+        anchor_identity(process)
+        outcome = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if outcome is None:
+            return {"state": "running"}
+        if outcome.si_code == os.CLD_EXITED and 0 <= outcome.si_status <= 255:
+            return {"state": "exited", "code": outcome.si_status}
+        if outcome.si_code in (os.CLD_KILLED, os.CLD_DUMPED) and 0 < outcome.si_status < 65:
+            return {"state": "signaled", "signal": outcome.si_status}
+    except Exception:  # noqa: BLE001 — optional observation cannot replace refusal or cleanup
+        pass
+    return {"state": "unavailable"}
+
+
+def server_log_diagnostic(log) -> dict:
+    if log is None:
+        return {"state": "not_started"}
+    try:
+        log.flush()
+        info = os.fstat(log.fileno())
+        if info.st_uid != os.getuid() or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            return {"state": "unavailable"}
+        raw = os.pread(log.fileno(), 65536, 0)
+        return {
+            "state": "observed",
+            "bytes": len(raw),
+            "truncated": info.st_size > len(raw),
+            "module_not_found": b"ModuleNotFoundError" in raw,
+            "import_error": b"ImportError" in raw,
+            "validation_error": b"ValidationError" in raw,
+            "address_in_use": b"Address already in use" in raw,
+        }
+    except Exception:  # noqa: BLE001 — private diagnostic I/O cannot interrupt owned cleanup
+        return {"state": "unavailable"}
+
+
+def admission_failure(state: dict, error: Exception) -> dict:
+    stage = state.get("admission_stage")
+    code = error.args[0] if isinstance(error, ValueError) and len(error.args) == 1 else None
+    known = {
+        "hosted_context_required",
+        "runner_context_unavailable",
+        "frozen_source_changed",
+        "receipt_path_required",
+        "receipt_not_fresh",
+        "owned_server_exited",
+        "owned_server_not_ready",
+        "owned_group_anchor_changed",
+        "owned_group_birth_changed",
+        "owned_group_anchor_not_in_child_tree",
+    }
+    return {
+        "stage": stage if type(stage) is int and 1 <= stage <= 8 else 0,
+        "kind": "io" if isinstance(error, OSError) else "value",
+        "code": code if type(code) is str and code in known else "unavailable",
+        "io": io_diagnostic(error),
+        "server": server_exit_diagnostic(state.get("server")),
+        "server_log": server_log_diagnostic(state.get("server_log")),
+    }
+
+
 def digest(path: Path) -> str:
     value = hashlib.sha256()
     with path.open("rb") as source:
@@ -643,13 +707,18 @@ def owned_listener(process: subprocess.Popen, port: int = 7778) -> bool:
 
 
 def start_server(state: dict, runner_temp: Path) -> None:
+    state["admission_stage"] = 4
     refuse_occupied_server_port()
+    state["admission_stage"] = 5
     log = os.fdopen(
-        os.open(runner_temp / "pipecat-server.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
-        "wb",
+        os.open(runner_temp / "pipecat-server.log", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600),
+        "w+b",
     )
     state["server_log"] = log
     environment = {**os.environ, "LOOM_WEB_WORKERS": "3", "PORT": "7778"}
+    # Only the native client needs the recording target's dependency overlay.
+    environment.pop("PYTHONPATH", None)
+    state["admission_stage"] = 6
     process = start_owned(
         state,
         "server",
@@ -661,12 +730,16 @@ def start_server(state: dict, runner_temp: Path) -> None:
     )
     until = time.monotonic() + 60
     while time.monotonic() < until:
+        state["admission_stage"] = 7
         if owned_listener(process):
             try:
+                state["admission_stage"] = 8
                 with urlopen("http://localhost:7778/v1/health", timeout=2) as response:
                     healthy = response.status == 200
-                if healthy and owned_listener(process):
-                    return
+                if healthy:
+                    state["admission_stage"] = 7
+                    if owned_listener(process):
+                        return
             except OSError:
                 pass
         time.sleep(0.1)
@@ -825,13 +898,24 @@ def main() -> int:
     }
     try:
         try:
+            state["admission_stage"] = 1
             runner_temp = admit_workload(state)
+            state["admission_stage"] = 2
             prior_subreaper = subreaper(1)
             if "--with-server" in sys.argv[1:]:
+                state["admission_stage"] = 3
                 start_server(state, runner_temp)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             state["reason"] = "workload_admission_refused"
             state["native_code"] = 2
+            try:
+                print(
+                    json.dumps({"admission_failure": admission_failure(state, error)}),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            except Exception:  # noqa: BLE001 — diagnostic output cannot replace refusal or owned cleanup
+                pass
             return 2
         try:
             candidate = runner_temp / "pipecat-video-public"
