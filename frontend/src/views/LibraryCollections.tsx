@@ -10,6 +10,7 @@ import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { type ClaimCreateVersion, CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
+import { CollectionBudgetDialog } from "../flows/CollectionBudgetDialog";
 import { CollectionBack, CollectionChips, CollectionPath, cycleStart } from "./LibraryHierarchy";
 import {
   COLLECTIONS_LISTED,
@@ -256,6 +257,7 @@ export function LibraryCollections({
 }) {
   const all = place === ALL_DOCUMENTS;
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
+  const [budgeting, setBudgeting] = useState<CollectionEntry | null>(null);
   const { rows, error } = collections;
   // New collection and Move belong to the place they opened in: a move to another
   // closes them, and coming back does not reopen them. The list answering (or read again)
@@ -263,7 +265,11 @@ export function LibraryCollections({
   useEffect(() => {
     setCreating(false);
     setMoving(null);
+    setBudgeting(null);
   }, [place]);
+  useEffect(() => {
+    setBudgeting(null);
+  }, [org, current?.namespace, current?.role]);
   // The select's order; beside the tree there is no select.
   const ordered = useMemo(() => (besideTree ? [] : treeOrder(rows ?? [])), [rows, besideTree]);
   // A phone gets the path as one back button in the select's row, and no chips.
@@ -340,6 +346,7 @@ export function LibraryCollections({
   const items: RowMenuItem[] = [];
   if (collection) {
     if (collection.role === "admin") {
+      items.push({ label: "Budget…", onSelect: () => setBudgeting(collection) });
       items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(collection) });
       items.push({
         label: "Delete collection",
@@ -460,6 +467,14 @@ export function LibraryCollections({
             Load collections again
           </Button>
         </p>
+      )}
+      {budgeting && (
+        <CollectionBudgetDialog
+          key={`${org}/${budgeting.namespace}`}
+          org={org}
+          collection={budgeting}
+          onClose={() => setBudgeting(null)}
+        />
       )}
       {moving && (
         <MoveCollectionDialog

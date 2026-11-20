@@ -6255,6 +6255,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # (batched), items by number, one name lookup per qualified name
     # (<=8 gathered); the optional mirror leg is capped at 20 calls / 5 s
     "code.verify_citations": 1500,
+    "collection.budget_set": 80,
     "collection.create": 80,
     # It runs the purging erasure inline, as `erasure.request` does.
     "collection.delete": 2000,

@@ -101,6 +101,41 @@ class CollectionMoveOutput(BaseModel):
     moved: bool  # False when it already sat there
 
 
+class CollectionBudgetSetInput(BaseModel):
+    """Change only a collection's spend caps and warning destination."""
+
+    org: str
+    namespace: str
+    daily_cost_cap_usd: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+        description="Collection cap in USD per rolling 24 hours; "
+        "0 inherits the server default, omit keeps it.",
+    )
+    daily_user_cost_cap_usd: float | None = Field(
+        default=None,
+        ge=0,
+        allow_inf_nan=False,
+        description="Named-user cap in USD per rolling 24 hours; "
+        "0 inherits the server default, omit keeps it.",
+    )
+    budget_alert_inbox: str | None = Field(
+        default=None,
+        max_length=128,
+        description="An existing task inbox owned by this collection; "
+        "'' disables warnings, omit keeps it.",
+    )
+
+
+class CollectionBudgetSetOutput(BaseModel):
+    namespace: str
+    changed: bool
+    daily_cost_cap_usd: float
+    daily_user_cost_cap_usd: float
+    budget_alert_inbox: str
+
+
 class CollectionListInput(BaseModel):
     """List the collections the caller can read, by name."""
 
