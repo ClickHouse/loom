@@ -185,6 +185,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Adding a benchmark case, dataset or suite](docs/benchmarks/adding-a-case.md): The committed sets are small (set sizes), so a new case is the cheapest way to improve the suite.
 - [Benchmark coverage](docs/benchmarks/coverage.md): This matrix shows which parts of Loom's memory, knowledge and code flows have a reproducible public measurement.
 - [Benchmark methodology](docs/benchmarks/methodology.md): This page covers what the harnesses compute, how a delta is judged against noise, when two numbers compare, and where the numbers are biased.
+- [Paired coding-agent benchmark setup](docs/benchmarks/paired-agent-setup.md): A coding-agent comparison needs an isolated repository checkout, a matching code index and an instrumented agent runner.
 - [Benchmark results](docs/benchmarks/results.md): This page lists only numbers that a committed file reproduces.
 - [Running the benchmarks](docs/benchmarks/running.md): Run every command from the repository root with the checkout's interpreter and the root first on `PYTHONPATH`:
 - [SDK issue resolution](docs/benchmarks/sdk-issue-resolution.md): The SDK issue harness measures proposed patches with and without Loom code lookup.
