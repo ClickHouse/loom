@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, render, screen } from "../test/rtl";
@@ -8,12 +8,13 @@ import { useLastPageFocus } from "./useLastPageFocus";
 // ends the read with these rows shown and says whether a page is left.
 let finish: (rows: string[], more: boolean) => void = () => {};
 
-function List({ first }: { first: string[] }) {
+function List({ first, startOnCommit = false }: { first: string[]; startOnCommit?: boolean }) {
   const [rows, setRows] = useState(first);
   const [loading, setLoading] = useState(false);
   const [more, setMore] = useState(true);
   const box = useRef<HTMLUListElement | null>(null);
   const search = useRef<HTMLInputElement | null>(null);
+  const loadMore = useRef<HTMLButtonElement | null>(null);
   const mark = useLastPageFocus({
     loading,
     more,
@@ -23,6 +24,13 @@ function List({ first }: { first: string[] }) {
       ),
     fallback: () => search.current,
   });
+  useLayoutEffect(() => {
+    if (!startOnCommit) return;
+    // Start before the previous render's passive effects flush.
+    loadMore.current?.focus();
+    mark(first);
+    setLoading(true);
+  }, []);
   finish = (next, left) => {
     setRows(next);
     setMore(left);
@@ -42,6 +50,7 @@ function List({ first }: { first: string[] }) {
       </ul>
       {more && (
         <button
+          ref={loadMore}
           type="button"
           onClick={() => {
             mark(rows);
@@ -63,6 +72,13 @@ async function pressLoadMore() {
 afterEach(cleanup);
 
 describe("useLastPageFocus", () => {
+  it("keeps a load marked before the previous render's passive effects flush", () => {
+    render(<List first={["a"]} startOnCommit />);
+    expect(screen.getByRole("button", { name: "Load more" })).toHaveFocus();
+    act(() => finish(["a", "b"], false));
+    expect(screen.getByRole("button", { name: "b" })).toHaveFocus();
+  });
+
   it("focuses the first row the last page added", async () => {
     render(<List first={["a"]} />);
     await pressLoadMore();
