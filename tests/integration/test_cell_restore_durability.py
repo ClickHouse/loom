@@ -240,7 +240,7 @@ async def drill(monkeypatch):
 
 async def _directory_page() -> dict[str, Any]:
     transport = httpx.ASGITransport(app=app.build_app(app.Router()))
-    async with httpx.AsyncClient(transport=transport, base_url="http://restore.test") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/cells/v1/operator/cells/first/restore-read",
             json={"deployment_id": DEPLOYMENT, "after": None, "expected_sha256": None},
