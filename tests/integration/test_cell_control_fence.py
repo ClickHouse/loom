@@ -612,7 +612,7 @@ async def test_attach_lock_dies_between_confirmation_and_mode_write(local_contro
     }
 
     async def ready():
-        await admin.execute("SELECT pg_terminate_backend($1)", a.get_server_pid())
+        assert await admin.fetchval("SELECT pg_terminate_backend($1, 5000)", a.get_server_pid())
         await apg.take_lock(b, "successor")
         return []
 
