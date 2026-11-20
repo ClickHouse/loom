@@ -133,6 +133,9 @@ competing write from a second client before releasing each pause. Read the winni
 back and compare every field, including its version. Keep an unchanged-head case beside
 each contended case, and run the interleaving against a private migrated database.
 
+Include competing rows with different content at the same numeric version. A matching
+version alone does not prove that the head is unchanged.
+
 Admission tests cover the derived effects too. A definite refusal before a memory send
 leaves its search documents and existing search data unchanged. Test known commits and
 uncertain sends separately: privacy cleanup and lease retention depend on whether a send
