@@ -164,7 +164,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Haystack document store and retriever](docs/architecture/haystack-adapter.md): The optional Haystack 3.5 adapter implements its document-store protocol and a native retrieval component through the synchronous Loom SDK.
 - [Knowledge gaps](docs/architecture/knowledge-gaps.md): Loom records the searches that found nothing a caller could use and groups them, once a day, into knowledge gaps: the questions several people asked that the namespace's memory and documents do not answer.
 - [Live connected-source search](docs/architecture/live-source-search.md): `search.query(live=true)` adds an ephemeral section from the asker's own connected Drive and Notion registrations.
-- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom uses pluggable embedders and model clients.
+- [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom uses pluggable embedders and model clients configured through server settings.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
 - [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.
