@@ -209,6 +209,8 @@ async def test_changed_registered_address_stops_before_local_claim_or_acknowledg
 ):
     monkeypatch.setattr(settings, "cell", "eu-2")
     monkeypatch.setattr(settings, "document_s3_bucket", "")
+    monkeypatch.setattr(settings, "public_base_url", "https://eu-2.loom.example")
+    monkeypatch.setattr(settings, "oauth_issuer", "")
 
     async def transaction(work):
         return await work()
