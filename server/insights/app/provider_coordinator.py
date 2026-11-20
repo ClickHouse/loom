@@ -2,13 +2,14 @@
 
 import json
 import logging
-from time import time_ns
+from time import monotonic, time_ns
 from typing import Any
 from uuid import UUID
 
 from server.core import embedding_space
 from server.core.secrets_at_rest import seal, unseal
 from server.insights.app.provider_barrier import (
+    SHUTDOWN_RETIRE_S,
     acknowledge_drain,
     distributed_drain,
     retire_dead_here,
@@ -113,13 +114,14 @@ def _is_leader() -> bool:
 async def coordinate_once() -> None:
     """One restart-safe step. A participant counts as stopped once it drained,
     retired, or was proven gone on its host (`retire_dead_here`)."""
+    retirement_end = monotonic() + SHUTDOWN_RETIRE_S
     try:
-        await retire_dead_here()
+        await retire_dead_here(end=retirement_end)
     except Exception as e:  # noqa: BLE001 — the next step retries; a drain waits meanwhile
         log.warning("provider participant check of this host failed: %s", str(e)[:200])
     if _is_leader():
         try:
-            await sweep_stopped()
+            await sweep_stopped(end=retirement_end)
         except Exception as e:  # noqa: BLE001 — a failed sweep never blocks this process's acknowledgement
             log.warning("provider participant sweep failed: %s", str(e)[:200])
     candidate = pending_configuration(await configurations())

@@ -28,7 +28,7 @@ def test_code_without_a_parser_and_plain_text_are_kept_as_text() -> None:
         "notes.txt": b"hello",
         "setup.cfg": b"[flake8]\nmax-line-length = 100\n",
         "gradle/build.gradle": b"plugins {}",
-        "schema.graphql": b"type Q { a: ID }",
+        "api/service.thrift": b"service Q { i32 a() }",
         "LICENSE": b"MIT",
         "Justfile": b"build:\n  cargo build",
     }.items():

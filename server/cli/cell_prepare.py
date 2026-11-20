@@ -1,7 +1,10 @@
 """`loom cell prepare`: register this cell in the router's directory and write the rows its
 processes read (docs/architecture/cells.md, "Preparing a cell" and "The tenancy check").
 
-It runs where the cell's stores are configured (`LOOM_CELL` set to the cell it names):
+It runs where the cell's stores are configured (`LOOM_CELL` set to the cell it names),
+holding the attach lock (`cell.ATTACH_LOCK_KEY`) on a direct session of the cell's Postgres,
+after that session's checks (one backend, the tenancy marker kept, a UTF8 database), so it
+never runs beside an attach or another prepare:
 
 1. It reads the cell's Postgres (deployment id, `first`, mode and own rows, tenancy rows)
    and the live processes' heartbeats, and refuses a cell whose rows name another cell
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
 import json
 import secrets
@@ -34,6 +38,7 @@ from typing import Any
 import httpx
 
 from server.cli import cell as cell_cli
+from server.cli import cell_control
 from server.cli._ch import writes
 from server.core import cell
 from server.settings import settings
@@ -101,14 +106,12 @@ def _args_problem(args: argparse.Namespace) -> str:
     return ""
 
 
-async def _read_rows() -> _CellRows:
-    from server.core import pg, pg_profile
-
-    deployment_id = await pg_profile.deployment_id()
-    first = await pg.fetchrow("SELECT is_first, cell FROM loom.cell_first")
-    mode = await pg.fetchval("SELECT mode FROM loom.tenancy_mode")
-    own = await pg.fetchrow("SELECT current_fp, next_fp FROM loom.cell_self")
-    tenancy_rows = await pg.fetchval("SELECT count(*) FROM loom.tenancy")
+async def _read_rows(conn: Any, *, count_tenancy: bool = True) -> _CellRows:
+    deployment_id = str(await conn.fetchval("SELECT deployment_id FROM loom.authority") or "")
+    first = await conn.fetchrow("SELECT is_first, cell FROM loom.cell_first")
+    mode = await conn.fetchval("SELECT mode FROM loom.tenancy_mode")
+    own = await conn.fetchrow("SELECT current_fp, next_fp FROM loom.cell_self")
+    tenancy_rows = await conn.fetchval("SELECT count(*) FROM loom.tenancy") if count_tenancy else 0
     return _CellRows(
         deployment_id=deployment_id,
         first=None if first is None else (bool(first["is_first"]), str(first["cell"])),
@@ -278,7 +281,7 @@ async def _delete_nonces(ch: Any, nonces: dict[str, str | None]) -> None:
         try:
             await step()
         except Exception as e:  # noqa: BLE001 — every nonce is tried; a stale one holds no data
-            print(f"loom cell prepare: the probe nonce in {where} stays: {e}", file=sys.stderr)
+            print(f"loom cell: the probe nonce in {where} stays: {e}", file=sys.stderr)
 
 
 def _register_timeout() -> httpx.Timeout:
@@ -299,9 +302,11 @@ async def _register(
     token = settings.router_operator_token
     url = cell_cli.at(router, f"/cells/v1/operator/cells/{args.cell}/register")
     deadline = time.monotonic() + args.wait
-    async with httpx.AsyncClient(
+    manager = httpx.AsyncClient(
         timeout=_register_timeout(), trust_env=router.scheme == "https", transport=transport
-    ) as client:
+    )
+    client = await manager.__aenter__()
+    try:
         while True:
             try:
                 r = await client.post(url, json=body, headers={"Authorization": f"Bearer {token}"})
@@ -316,7 +321,7 @@ async def _register(
                     f"{cell_cli.not_the_router(r)}; run prepare again once the router answers"
                 )
             if r.status_code == 200:
-                return answer
+                break
             code = answer.get("code")
             if code == "BACKEND_UNAVAILABLE":
                 raise Refused(
@@ -337,6 +342,14 @@ async def _register(
                 )
             print(f"loom cell prepare: {answer['error']}; retrying", file=sys.stderr)
             await _sleep(pause)
+
+    except BaseException:  # Client exit preserves the first request or refusal.
+        with contextlib.suppress(BaseException):
+            await manager.__aexit__(*sys.exc_info())
+        raise
+    else:
+        await manager.__aexit__(None, None, None)
+    return answer
 
 
 def _own_rows(
@@ -374,15 +387,24 @@ def _own_rows(
 
 
 async def _write_rows(
-    rows: _CellRows, answer: dict[str, Any], current: dict[str, Any], nxt: dict[str, Any] | None
+    conn: Any,
+    rows: _CellRows,
+    answer: dict[str, Any],
+    current: dict[str, Any],
+    nxt: dict[str, Any] | None,
 ) -> list[str]:
     """Write the `first` and mode rows that are missing and the own row where it differs
     from `current` and `nxt`, in one transaction; the rows written."""
-    from server.core import pg
-
     is_first = bool(answer.get("is_first"))
     written = []
-    async with pg.transaction() as conn:
+
+    async def write() -> list[str]:
+        # A state CAS does not need to count every tenancy row again.
+        fresh = await _read_rows(conn, count_tenancy=False)
+        before = (rows.deployment_id, rows.first, rows.mode, rows.current, rows.next)
+        after = (fresh.deployment_id, fresh.first, fresh.mode, fresh.current, fresh.next)
+        if json.dumps(before, sort_keys=True) != json.dumps(after, sort_keys=True):
+            raise Refused("local acceptance rows changed: stop and rerun with a fresh claim")
         if rows.first is None:
             await conn.execute(
                 "INSERT INTO loom.cell_first (is_first, cell) VALUES ($1, $2)",
@@ -395,7 +417,9 @@ async def _write_rows(
                 "INSERT INTO loom.tenancy_mode (mode) VALUES ($1)", str(answer["mode"])
             )
             written.append("mode")
-        if (rows.current, rows.next) != (current, nxt):
+        if json.dumps((rows.current, rows.next), sort_keys=True) != json.dumps(
+            (current, nxt), sort_keys=True
+        ):
             await conn.execute(
                 "INSERT INTO loom.cell_self (current_fp, next_fp) VALUES ($1, $2) "
                 "ON CONFLICT (id) DO UPDATE SET current_fp = EXCLUDED.current_fp, "
@@ -404,7 +428,9 @@ async def _write_rows(
                 nxt,
             )
             written.append("own")
-    return written
+        return written
+
+    return await cell_control.transaction(conn, write)
 
 
 def _answer_problem(rows: _CellRows, answer: dict[str, Any], beats: list[_Beat]) -> str:
@@ -443,7 +469,24 @@ async def prepare(
     router: httpx.URL,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> int:
-    rows = await _read_rows()
+    """Prepare on one independently supervised ATTACH-lock backend."""
+    try:
+        return await cell_control.run(
+            "prepare", lambda owner: _prepare_locked(ch, args, router, transport, owner)
+        )
+    except cell_control.Refused as error:
+        raise Refused(str(error)) from None
+
+
+async def _prepare_locked(
+    ch: Any,
+    args: argparse.Namespace,
+    router: httpx.URL,
+    transport: httpx.AsyncBaseTransport | None,
+    owner: cell_control.Owner,
+) -> int:
+    conn = owner.conn
+    rows = await owner.transaction(lambda: _read_rows(conn))
     if not rows.deployment_id:
         raise Refused("this cell's Postgres records no deployment id: start the cell once first")
     if rows.first is not None and rows.first[1] != settings.cell:
@@ -470,7 +513,11 @@ async def prepare(
     try:
         await _write_nonces(ch, body["nonces"])
         answer = await _register(args, router, body, transport)
-    finally:
+    except BaseException:  # Nonce cleanup preserves the first failure or cancellation.
+        with contextlib.suppress(BaseException):
+            await _delete_nonces(ch, body["nonces"])
+        raise
+    else:
         await _delete_nonces(ch, body["nonces"])
     # The processes may have changed while the probe was retried: judge the ones live now.
     beats = await _read_beats(ch)
@@ -478,7 +525,22 @@ async def prepare(
     if problem := _answer_problem(rows, answer, beats):
         raise Refused(problem)
     current, nxt = _own_rows(rows, answer, every)
-    written = await _write_rows(rows, answer, current, nxt)
+
+    async def call(path: str, body: dict[str, Any]) -> dict[str, Any]:
+        return await cell_control.request(router, args.cell, transport, path, body)
+
+    snapshot = await cell_control.request(router, args.cell, transport, "", method="GET")
+    snapshot = await cell_control.claim(conn, call, snapshot)
+    # A queued earlier controller may have committed before this claim. Its returned
+    # row, including the highest mode, supersedes the registration response.
+    answer = {**answer, **snapshot}
+    if problem := _answer_problem(rows, snapshot, beats):
+        raise Refused(problem)
+    current, nxt = _own_rows(rows, snapshot, every)
+    written = await owner.call(
+        lambda: _write_rows(conn, rows, answer, current, nxt),
+        total_s=cell_control.TRANSACTION_S,
+    )
     print(
         json.dumps(
             {

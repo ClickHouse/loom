@@ -262,7 +262,9 @@ async def _place_once(org: str) -> tuple[str, str]:
     request cancelled leaves the call running for the others."""
     task = _placing.get(org)
     if task is None:
-        task = asyncio.create_task(_place(org))
+        from server.core.background import create_deferred_task
+
+        task = create_deferred_task(_place(org), name="tenancy-placement")
         _placing[org] = task
         task.add_done_callback(functools.partial(_placed, org))
     return await asyncio.shield(task)

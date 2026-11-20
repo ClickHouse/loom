@@ -27,7 +27,8 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 
 from server.core.errors import error_kind
 from server.settings import settings
@@ -58,9 +59,17 @@ _PR_SET_PDEATHSIG = 1
 class ChildWorkers:
     """The supervisor's start/stop/status surface, backed by a child process."""
 
-    def __init__(self, lease: leader.SupervisorLease) -> None:
+    def __init__(
+        self,
+        lease: leader.SupervisorLease,
+        *,
+        retire_child: Callable[[str, float], Awaitable[None]],
+    ) -> None:
         self._lease = lease
+        self._retire_callback = retire_child
         self._proc: asyncio.subprocess.Process | None = None
+        self._child_proof: str | None = None
+        self._child_parent_proof: str | None = None
         self._watch: asyncio.Task[None] | None = None
         self._publish: asyncio.Task[None] | None = None
         self._write_fd: int | None = None
@@ -120,10 +129,13 @@ class ChildWorkers:
                 # The outcome reaches `/v1/health` (no token) as the lease's reason.
                 log.warning("workers child could not start: %s: %s", type(e).__name__, e)
                 outcome = f"could not start ({error_kind(e)})"
+                restart_at = time.monotonic() + RESTART_DELAY_S
             else:
                 assert self._proc is not None
                 self.last_exit = await self._proc.wait()
+                restart_at = time.monotonic() + RESTART_DELAY_S
                 self._close_pipe()
+                await self._retire_child(self._proc, restart_at)
                 outcome = f"exited (code {self.last_exit})"
             if not self._lease.fresh():
                 return  # the lease loop stops the workers, and starts them once it is
@@ -139,7 +151,7 @@ class ChildWorkers:
                 return
             log.error("workers child %s; restarting in %.0f s", outcome, RESTART_DELAY_S)
             self.restarts += 1
-            await asyncio.sleep(RESTART_DELAY_S)
+            await asyncio.sleep(max(0.0, restart_at - time.monotonic()))
 
     async def _spawn(self) -> None:
         """Start the child. On an OSError the child's pipe ends are closed here and
@@ -163,11 +175,67 @@ class ChildWorkers:
         finally:
             for fd in child_fds:
                 os.close(fd)
+        self._capture_child_proof()
         asyncio.get_running_loop().add_reader(self._alive_fd, self._read_beats)
         log.info("workers child started: pid %s", self._proc.pid)
         self._publish = asyncio.get_running_loop().create_task(
             self._publish_loop(), name="loom-workers-child-lease"
         )
+
+    def _capture_child_proof(self) -> None:
+        """Capture the owned child's birth while its PID still names our direct child."""
+        from server.core import provider_process
+
+        self._child_proof = None
+        self._child_parent_proof = None
+        proc = self._proc
+        if proc is None or proc.returncode is not None or proc.pid <= 1 or proc.pid == os.getpid():
+            return
+        try:
+            parent_proof = provider_process.host_proof()
+            parent = parent_proof.split("|")
+            root = Path(f"/proc/{proc.pid}")
+            stat = (root / "stat").read_text().rsplit(")", 1)[1].split()
+            if (
+                proc.returncode is not None
+                or len(parent) != 8
+                or parent[4] != str(os.getpid())
+                or int(stat[1]) != os.getpid()
+                or str(os.stat(root / "ns/pid").st_ino) != parent[3]
+            ):
+                return
+            parent[4:6] = [str(proc.pid), stat[19]]
+            self._child_proof = provider_process.certified("|".join(parent))
+            self._child_parent_proof = parent_proof
+        except (OSError, ValueError, IndexError):
+            return  # An unknown birth never authorizes post-reap retirement.
+
+    async def _retire_child(self, proc: asyncio.subprocess.Process, end: float) -> None:
+        from server.core import provider_process
+
+        proof = self._child_proof
+        if proc is not self._proc or proc.returncode is None or proof is None:
+            return
+        captured = proof.split("|")
+        parent_proof = provider_process.host_proof()
+        here = parent_proof.split("|")
+        if (
+            parent_proof != self._child_parent_proof
+            or len(captured) != 9
+            or not provider_process.has_certificate(proof)
+            or len(here) != 8
+            or captured[:4] != here[:4]
+            or captured[4] != str(proc.pid)
+            or proc.pid == os.getpid()
+            or end <= time.monotonic()
+        ):
+            return
+        try:
+            end = min(end, time.monotonic() + settings.workers_child_retirement_timeout_s)
+            async with asyncio.timeout_at(end):
+                await self._retire_callback(proof, end)
+        except Exception:  # noqa: BLE001 — unproved retirement must not replace child cleanup
+            log.warning("reaped workers child retirement remains unproved")
 
     def _send_deadline(self) -> None:
         """Send the lease deadline; it moves only while the lease is fresh."""
@@ -225,6 +293,9 @@ class ChildWorkers:
                     with contextlib.suppress(ProcessLookupError):
                         proc.kill()
                     await proc.wait()
+            if proc is not None:
+                await proc.wait()
+                await self._retire_child(proc, kill_at)
         finally:
             if proc is not None and proc.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
@@ -258,12 +329,14 @@ def child_env(parent: Mapping[str, str]) -> dict[str, str]:
 _RUNNER: WorkerSupervisor | ChildWorkers | None = None
 
 
-def worker_runner(lease: leader.SupervisorLease) -> WorkerSupervisor | ChildWorkers:
+def worker_runner(
+    lease: leader.SupervisorLease, *, retire_child: Callable[[str, float], Awaitable[None]]
+) -> WorkerSupervisor | ChildWorkers:
     """What runs the workers here: a child process for an `auto` lease holder
     (`LOOM_WORKERS_PROCESS=child`), else the in-process supervisor."""
     global _RUNNER
     if lease.mode == "auto" and settings.workers_process == "child":
-        _RUNNER = ChildWorkers(lease)
+        _RUNNER = ChildWorkers(lease, retire_child=retire_child)
     else:
         _RUNNER = get_supervisor()
     return _RUNNER

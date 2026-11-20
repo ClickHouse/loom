@@ -65,7 +65,7 @@ spec:
         app.kubernetes.io/component: {{ .name }}
     spec:
       restartPolicy: Never
-      {{- include "loom.podCommon" (dict "root" $ "leads" false) | nindent 6 }}
+      {{- include "loom.podCommon" (dict "root" $) | nindent 6 }}
       containers:
         - name: {{ .name }}
           image: {{ include "loom.image" $ }}
@@ -83,7 +83,7 @@ spec:
               value: {{ $v | toString | quote }}
             {{- end }}
             # Its participant proof names the pod, so a hook pod lost mid-run is
-            # retired like any other (provider_process.pod_gone).
+            # verified against the same exact process identity as every participant.
             - name: POD_NAME
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
             - name: POD_NAMESPACE

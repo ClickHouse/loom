@@ -300,6 +300,12 @@ def _parse_lua(path: str, source: bytes) -> ParsedFile:
     return parse_lua(path, source)
 
 
+def _parse_graphql(path: str, source: bytes) -> ParsedFile:
+    from server.code.domain.extract.lang_graphql import parse_graphql
+
+    return parse_graphql(path, source)
+
+
 def _parse_k8s(path: str, source: bytes) -> ParsedFile:
     from server.code.domain.extract.lang_k8s import parse_k8s
 
@@ -403,6 +409,7 @@ _PARSERS = {
     "k8s": _parse_k8s,
     "jsonnet": _parse_jsonnet,
     "lua": _parse_lua,
+    "graphql": _parse_graphql,
     "tla": _parse_tla,
     "tla_config": _parse_tlc,
     "flatbuffers": _parse_fbs,
@@ -415,12 +422,15 @@ _LANE_INCLUDE_LANGS: frozenset[str] = frozenset(
 
 # The lanes without a tree-sitter grammar — chunks from their symbol spans, edges from
 # their reference sites (`lane_units`)
-LANE_UNIT_LANGS: frozenset[str] = frozenset({"proto", "gotemplate", "hcl", "k8s", "jsonnet", "lua"})
+LANE_UNIT_LANGS: frozenset[str] = frozenset(
+    {"proto", "gotemplate", "hcl", "k8s", "jsonnet", "lua", "graphql"}
+)
 
 
 def _lane_module(lang: str) -> Any:
     """The lane module of a tree-less lane: `parse_*`, `reference_sites`,
-    `SITE_RULES`, `CHUNK_OPTIONS`, `wanted_paths` / `resolve_imports`."""
+    `SITE_RULES`, `CHUNK_OPTIONS`, and `wanted_paths` / `resolve_imports` for a
+    lane with imports."""
     from server.code.domain.extract import lang_gotemplate, lang_hcl, lang_k8s, lang_proto
 
     if lang == "hcl":
@@ -435,6 +445,10 @@ def _lane_module(lang: str) -> Any:
         from server.code.domain.extract import lang_lua
 
         return lang_lua
+    if lang == "graphql":
+        from server.code.domain.extract import lang_graphql
+
+        return lang_graphql
     return lang_proto if lang == "proto" else lang_gotemplate
 
 

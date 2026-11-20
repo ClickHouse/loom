@@ -45,7 +45,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      {{- include "loom.podCommon" (dict "root" . "leads" true) | nindent 6 }}
+      {{- include "loom.podCommon" (dict "root" .) | nindent 6 }}
       {{- if .Values.topologySpread.enabled }}
       # Leader and standby on different nodes.
       topologySpreadConstraints:

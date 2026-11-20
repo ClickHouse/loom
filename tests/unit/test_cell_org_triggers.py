@@ -86,6 +86,14 @@ class _Session:
     async def fetch(self, _sql: str, *_a: Any) -> list[Any]:
         return []
 
+    def terminate(self) -> None:
+        self.statements.append("terminated")
+
+    async def fetchval(self, sql: str, *_a: Any) -> bool:
+        assert sql in ("SELECT pg_try_advisory_lock($1)", "SELECT pg_advisory_unlock($1)")
+        self.statements.append(sql)
+        return True
+
 
 @pytest.mark.parametrize("name", ["eu-1", ""])
 @pytest.mark.parametrize("schema", ["loom", "loom_router"])
@@ -617,11 +625,17 @@ class _Cell:
         self.error = error
 
     def transaction(self) -> Any:
-        @contextlib.asynccontextmanager
-        async def _tx() -> AsyncIterator[None]:
-            yield
+        class _Tx:
+            async def start(self) -> None:
+                pass
 
-        return _tx()
+            async def commit(self) -> None:
+                pass
+
+            async def rollback(self) -> None:
+                pass
+
+        return _Tx()
 
     async def fetchrow(self, _sql: str, *_a: Any) -> dict[str, Any]:
         return {
@@ -695,7 +709,7 @@ def test_doctor_runs_the_cell_checks_only_with_loom_cell(
     monkeypatch.setattr(doctor, "_doctor_scim_token_check", lambda _s: ("scim_token", "PASS", ""))
     called: list[bool] = []
     monkeypatch.setattr(
-        doctor_cell, "cell_checks", lambda: called.append(True) or [("cell_state", "PASS", "")]
+        doctor_cell, "cell_checks", lambda *_: called.append(True) or [("cell_state", "PASS", "")]
     )
     names = [n for n, _g, _d in doctor._run_live_checks()]
     assert called == ([True] if runs else []) and ("cell_state" in names) == runs

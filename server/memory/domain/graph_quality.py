@@ -478,7 +478,7 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text; a name that starts with
     "commit:" or "error:" and a non-blank is never singularised. Idempotent."""
-    return canonical_entity(raw).text
+    return _capped_normal(str(raw or "").strip()) or ""
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:

@@ -9,6 +9,7 @@ import hashlib
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import httpx
 import pytest
@@ -46,6 +47,7 @@ def _row(**over: Any) -> directory.Cell:
         "next_fp": None,
     }
     values.update(over)
+    values["mutation_generation"] = UUID(int=1)
     return directory.Cell(**values)
 
 
@@ -102,6 +104,8 @@ class _Directory:
 
     async def set_limit(self, name: str, **fields: Any) -> directory.Cell:
         self._check()
+        expected = fields.pop("expected")
+        assert expected.generation == self.cells[name].mutation_generation
         given = {k: v for k, v in fields.items() if v is not directory.UNSET}
         self.cells[name] = dataclasses.replace(self.cells[name], **given)
         return self.cells[name]
@@ -964,7 +968,13 @@ def test_a_cell_the_operator_closes_refuses_its_next_new_org(
     assert _place(client, "before").status_code == 200
     closed = client.post(
         "/cells/v1/operator/cells/eu-1/limit",
-        json={"closed": True},
+        json={
+            "closed": True,
+            "expected": {
+                **{key: getattr(fake.cells["eu-1"], key, "") for key in directory.CONTROL_FIELDS},
+                "mutation_generation": str(fake.cells["eu-1"].mutation_generation),
+            },
+        },
         headers={"Authorization": f"Bearer {operator}"},
     )
     assert closed.status_code == 200 and closed.json()["closed"] is True

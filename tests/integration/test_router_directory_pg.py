@@ -22,12 +22,35 @@ from server.router import directory, routing
 from server.settings import settings
 
 
+async def _observed(name: str) -> directory.Control:
+    try:
+        found = await directory.attach_read(name)
+    except directory.NoSuchCell:
+        return directory.Control({}, uuid.UUID(int=0))
+    values = {
+        key: getattr(found.row, key) if hasattr(found.row, key) else getattr(found, key)
+        for key in directory.CONTROL_FIELDS
+    }
+    return directory.Control(values, found.row.mutation_generation)
+
+
 @pytest.fixture
-def dsn(monkeypatch: pytest.MonkeyPatch) -> str:
-    value = os.environ.get("LOOM_ROUTER_PG_DSN") or pytest.skip("LOOM_ROUTER_PG_DSN not set")
+async def dsn(monkeypatch: pytest.MonkeyPatch):
+    from tests.integration._pg_database import create_database, drop_database
+
+    admin_dsn = os.environ.get("LOOM_ROUTER_PG_DSN") or pytest.skip("LOOM_ROUTER_PG_DSN not set")
+    name, value = await create_database(admin_dsn)
     monkeypatch.setattr(settings, "router_pg_dsn", value)
     monkeypatch.setattr(directory, "_pool", None)
-    return value
+    async with contextlib.AsyncExitStack() as cleanup:
+        cleanup.push_async_callback(drop_database, admin_dsn, name)
+        cleanup.push_async_callback(directory.close)
+        try:
+            yield value
+        except BaseException:  # Owned cleanup cannot replace the first failure.
+            with contextlib.suppress(BaseException):
+                await cleanup.aclose()
+            raise
 
 
 @pytest.fixture
@@ -228,52 +251,72 @@ async def test_operator_changes_write_the_row_and_its_audit(dsn: str) -> None:
         # The operator's changes: a limit, and a credential rotation with its refusals.
         # Each writes the fields it names and updated_at, and leaves every other column.
         before = await row(b)
-        limited = await directory.set_limit(b, closed=True, placements_max=7)
+        limited = await directory.set_limit(
+            b, closed=True, placements_max=7, expected=await _observed(b)
+        )
         assert (limited.closed, limited.placements_max) == (True, 7)
         after = await row(b)
         assert after["updated_at"] > before["updated_at"]
         changed = {"closed": True, "placements_max": 7, "updated_at": after["updated_at"]}
         assert after == {**before, **changed}
-        cleared = await directory.set_limit(b, placements_max=None)
+        cleared = await directory.set_limit(b, placements_max=None, expected=await _observed(b))
         assert (cleared.closed, cleared.placements_max) == (True, None)  # closed is kept
         assert await row(b) == {**after, "placements_max": None, "updated_at": ANY}
         with pytest.raises(ValueError):
-            await directory.set_limit(b)  # nothing to set: no statement
+            await directory.set_limit(
+                b, expected=await _observed(b)
+            )  # nothing to set: no statement
         with pytest.raises(ValueError):
-            await directory.rotate_credential(b, "finsh")  # no such step: nothing written
+            await directory.rotate_credential(
+                b, "finsh", expected=await _observed(b)
+            )  # no such step: nothing written
         with pytest.raises(ValueError):
-            await directory.rotate_credential(b, "next")  # no hash to record
+            await directory.rotate_credential(
+                b, "next", expected=await _observed(b)
+            )  # no hash to record
         with pytest.raises(ValueError):
-            await directory.rotate_credential(b, "finish", "c" * 64)  # a hash finish ignores
+            await directory.rotate_credential(
+                b, "finish", "c" * 64, expected=await _observed(b)
+            )  # a hash finish ignores
         with pytest.raises(directory.NoSuchCell):
-            await directory.set_limit(f"nope-{b}", closed=True)
+            await directory.set_limit(
+                f"nope-{b}", closed=True, expected=await _observed(f"nope-{b}")
+            )
         sha_b = hashlib.sha256(b.encode()).hexdigest()
         with pytest.raises(directory.OperatorRefused, match="records that credential hash"):
-            await directory.rotate_credential(a, "next", sha_b)  # b's current hash
+            await directory.rotate_credential(
+                a, "next", sha_b, expected=await _observed(a)
+            )  # b's current hash
         with pytest.raises(directory.OperatorRefused, match="no next credential"):
-            await directory.rotate_credential(a, "finish")
+            await directory.rotate_credential(a, "finish", expected=await _observed(a))
         new = hashlib.sha256(f"new-{a}".encode()).hexdigest()
         before = await row(a)
-        assert (await directory.rotate_credential(a, "next", new)).credential_next_sha256 == new
+        assert (
+            await directory.rotate_credential(a, "next", new, expected=await _observed(a))
+        ).credential_next_sha256 == new
         assert await row(a) == {**before, "credential_next_sha256": new, "updated_at": ANY}
         assert (await directory.credentials())[a] == (hashlib.sha256(a.encode()).hexdigest(), new)
         with pytest.raises(directory.OperatorRefused, match="already cell .* next credential"):
-            await directory.rotate_credential(a, "next", new)  # this change, retried
+            await directory.rotate_credential(
+                a, "next", new, expected=await _observed(a)
+            )  # this change, retried
         with pytest.raises(directory.OperatorRefused, match="another next credential pending"):
-            await directory.rotate_credential(a, "next", "e" * 64)
+            await directory.rotate_credential(a, "next", "e" * 64, expected=await _observed(a))
         with pytest.raises(directory.OperatorRefused, match="records that credential hash"):
-            await directory.rotate_credential(b, "next", new)  # a's next hash
+            await directory.rotate_credential(
+                b, "next", new, expected=await _observed(b)
+            )  # a's next hash
         # Two cells asking for one next hash at once: the directory lock lets one in.
         raced = hashlib.sha256(f"raced-{a}".encode()).hexdigest()
         both = await asyncio.gather(
-            directory.rotate_credential(b, "next", raced),
-            directory.rotate_credential(q, "next", raced),
+            directory.rotate_credential(b, "next", raced, expected=await _observed(b)),
+            directory.rotate_credential(q, "next", raced, expected=await _observed(q)),
             return_exceptions=True,
         )
         assert sum(isinstance(r, directory.Cell) for r in both) == 1
         assert sum(isinstance(r, directory.OperatorRefused) for r in both) == 1
         pending = await row(a)
-        finished = await directory.rotate_credential(a, "finish")
+        finished = await directory.rotate_credential(a, "finish", expected=await _observed(a))
         assert (finished.credential_sha256, finished.credential_next_sha256) == (new, None)
         assert await row(a) == {
             **pending,
@@ -282,11 +325,13 @@ async def test_operator_changes_write_the_row_and_its_audit(dsn: str) -> None:
             "updated_at": ANY,
         }
         winner = b if isinstance(both[0], directory.Cell) else q
-        reverted = await directory.rotate_credential(winner, "revert")
+        reverted = await directory.rotate_credential(
+            winner, "revert", expected=await _observed(winner)
+        )
         assert reverted.credential_next_sha256 is None
         assert (await directory.credentials())[winner] == (reverted.credential_sha256,)
         with pytest.raises(directory.OperatorRefused, match="no next credential"):
-            await directory.rotate_credential(winner, "revert")
+            await directory.rotate_credential(winner, "revert", expected=await _observed(winner))
 
         def steps(cell: str) -> Any:
             return conn.fetch(
@@ -587,16 +632,22 @@ async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) 
     try:
         # Nothing before begin; begin writes its start once and the fingerprints.
         with pytest.raises(directory.OperatorRefused, match="has not begun"):
-            await directory.attach_enforced(name, dep)
+            await directory.attach_enforced(name, dep, expected=await _observed(name))
         with pytest.raises(directory.OperatorRefused, match="has not begun"):
-            await directory.attach_place(name, dep, ["a"])
+            await directory.attach_place(name, dep, ["a"], expected=await _observed(name))
         with pytest.raises(directory.OperatorRefused, match="deployment id"):
-            await directory.attach_begin(name, directory.Begin("dep-x", _fp(name), None, "k", {}))
-        found = await directory.attach_begin(name, begin)
+            await directory.attach_begin(
+                name,
+                directory.Begin("dep-x", _fp(name), None, "k", {}),
+                expected=await _observed(name),
+            )
+        found = await directory.attach_begin(name, begin, expected=await _observed(name))
         started = found.attach_started_at
         assert started is not None and found.row.current_fp == _fp(name)
         again = await directory.attach_begin(
-            name, directory.Begin(dep, _fp(name), None, "keys-2", {})
+            name,
+            directory.Begin(dep, _fp(name), None, "keys-2", {}),
+            expected=await _observed(name),
         )
         assert again.attach_started_at == started
         stored = await conn.fetchrow(
@@ -609,35 +660,45 @@ async def test_the_first_cell_attaches_through_the_operator_calls(own_dsn: str) 
         )
         with pytest.raises(directory.OperatorRefused, match="loom cell update"):
             await directory.attach_begin(
-                name, directory.Begin(dep, _fp(name, oidc_issuer="x"), None, "k", {})
+                name,
+                directory.Begin(dep, _fp(name, oidc_issuer="x"), None, "k", {}),
+                expected=await _observed(name),
             )
         # A batch waits for the directory mode `enforced`.
         with pytest.raises(directory.OperatorRefused, match="attach/enforced first"):
-            await directory.attach_place(name, dep, ["a"])
-        enforced = await directory.attach_enforced(name, dep)
+            await directory.attach_place(name, dep, ["a"], expected=await _observed(name))
+        enforced = await directory.attach_enforced(name, dep, expected=await _observed(name))
         assert enforced.row.mode == "enforced"
-        await directory.attach_enforced(name, dep)  # idempotent
+        await directory.attach_enforced(name, dep, expected=await _observed(name))  # idempotent
         # A closed cell with a quota of 0 still takes its own orgs; a rerun places none
         # twice.
         await conn.execute(
             "UPDATE loom_router.cells SET closed = true, placements_max = 0 WHERE cell = $1", name
         )
-        assert await directory.attach_place(name, dep, ["b", "a", "a"]) == (2, 2)
-        assert await directory.attach_place(name, dep, ["a", "c"]) == (1, 3)
+        assert await directory.attach_place(
+            name, dep, ["b", "a", "a"], expected=await _observed(name)
+        ) == (2, 2)
+        assert await directory.attach_place(
+            name, dep, ["a", "c"], expected=await _observed(name)
+        ) == (1, 3)
         placed = await conn.fetch(
             "SELECT org FROM loom_router.placements WHERE cell = $1 ORDER BY org", name
         )
         assert [r["org"] for r in placed] == ["a", "b", "c"]
         with pytest.raises(directory.OrgTooLong):
-            await directory.attach_place(name, dep, ["d", "x" * 2049])
-        served = await directory.attach_serving(name, dep)
+            await directory.attach_place(
+                name, dep, ["d", "x" * 2049], expected=await _observed(name)
+            )
+        served = await directory.attach_serving(name, dep, expected=await _observed(name))
         assert served.row.state == "serving"
         assert await conn.fetchval(
             "SELECT issuers FROM loom_router.cells WHERE cell = $1", name
         ) == [f"https://{name}.example.test"]
-        assert (await directory.attach_serving(name, dep)).row.state == "serving"  # done
+        assert (
+            await directory.attach_serving(name, dep, expected=await _observed(name))
+        ).row.state == "serving"  # done
         with pytest.raises(directory.OperatorRefused, match="serving already"):
-            await directory.attach_enforced(name, dep)
+            await directory.attach_enforced(name, dep, expected=await _observed(name))
         read = await directory.attach_read(name, audited=True)
         assert (read.row.state, read.other) == ("serving", None)
         audit = await conn.fetch(
@@ -686,8 +747,10 @@ async def _attaching_first(own_dsn: str) -> tuple[str, str]:
     name = f"lr-{uuid.uuid4().hex[:8]}"
     dep = f"dep-{name}"
     await directory.register(_first(name))
-    await directory.attach_begin(name, directory.Begin(dep, _fp(name), None, "k", {}))
-    await directory.attach_enforced(name, dep)
+    await directory.attach_begin(
+        name, directory.Begin(dep, _fp(name), None, "k", {}), expected=await _observed(name)
+    )
+    await directory.attach_enforced(name, dep, expected=await _observed(name))
     return name, dep
 
 
@@ -740,7 +803,9 @@ async def test_a_batch_racing_a_live_placement_of_the_same_org_skips_it(
         async with asyncio.timeout(30):
             live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
             await inserted.wait()
-            batch = asyncio.ensure_future(directory.attach_place(name, dep, ["acme", "beta"]))
+            batch = asyncio.ensure_future(
+                directory.attach_place(name, dep, ["acme", "beta"], expected=await _observed(name))
+            )
             await _waits_on_the_row_lock(conn, "FOR UPDATE")
             release.set()
             assert await live == (name, dep)
@@ -767,12 +832,14 @@ async def test_a_live_placement_racing_a_batch_of_the_same_org_answers_it_placed
     written, release = asyncio.Event(), asyncio.Event()
     real = directory._attach_change
 
-    @contextlib.asynccontextmanager
-    async def _held(cell_name: str) -> Any:
-        async with real(cell_name) as locked:
-            yield locked
+    async def _held(cell_name: str, expected: directory.Control, change) -> Any:
+        async def hold(conn, found):
+            result = await change(conn, found)
             written.set()
             await release.wait()  # the batch's writes are done, its commit held
+            return result
+
+        return await real(cell_name, expected, hold)
 
     monkeypatch.setattr(directory, "_attach_change", _held)
     conn = await asyncpg.connect(own_dsn)
@@ -780,7 +847,9 @@ async def test_a_live_placement_racing_a_batch_of_the_same_org_answers_it_placed
         # A full quota: a live placement judged on it would be refused.
         await conn.execute("UPDATE loom_router.cells SET placements_max = 0 WHERE cell = $1", name)
         async with asyncio.timeout(30):
-            batch = asyncio.ensure_future(directory.attach_place(name, dep, ["acme"]))
+            batch = asyncio.ensure_future(
+                directory.attach_place(name, dep, ["acme"], expected=await _observed(name))
+            )
             await written.wait()
             live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
             await _waits_on_the_row_lock(conn, "FOR UPDATE")
@@ -821,23 +890,29 @@ async def test_an_attaching_cell_with_no_placement_is_removed_with_its_hosts(
             later,
         )
         with pytest.raises(directory.OperatorRefused, match=f"loom cell remove --cell {later}"):
-            await directory.attach_begin(first, directory.Begin(dep, _fp(first), None, "k", {}))
-        assert (await directory.remove(later)).cell == later
+            await directory.attach_begin(
+                first,
+                directory.Begin(dep, _fp(first), None, "k", {}),
+                expected=await _observed(first),
+            )
+        assert (await directory.remove(later, expected=await _observed(later))).cell == later
         assert (
             await conn.fetchval("SELECT count(*) FROM loom_router.hosts WHERE cell = $1", later)
             == 0
         )
         with pytest.raises(directory.NoSuchCell):
-            await directory.remove(later)
+            await directory.remove(later, expected=await _observed(later))
         # The first cell backs out at any directory mode until its first placement.
-        await directory.attach_begin(first, directory.Begin(dep, _fp(first), None, "k", {}))
-        await directory.attach_enforced(first, dep)
-        await directory.attach_place(first, dep, ["only"])
+        await directory.attach_begin(
+            first, directory.Begin(dep, _fp(first), None, "k", {}), expected=await _observed(first)
+        )
+        await directory.attach_enforced(first, dep, expected=await _observed(first))
+        await directory.attach_place(first, dep, ["only"], expected=await _observed(first))
         with pytest.raises(directory.OperatorRefused, match="never back"):
-            await directory.remove(first)
+            await directory.remove(first, expected=await _observed(first))
         await conn.execute("UPDATE loom_router.cells SET state = 'serving' WHERE cell = $1", first)
         with pytest.raises(directory.OperatorRefused, match="stays attached"):
-            await directory.remove(first)
+            await directory.remove(first, expected=await _observed(first))
         removed = await conn.fetch(
             "SELECT detail FROM loom_router.audit WHERE action = 'remove' ORDER BY id"
         )
@@ -860,10 +935,14 @@ async def test_an_attaching_cell_with_no_placement_is_removed_with_its_hosts(
         await conn.execute("DELETE FROM loom_router.cells")
         await directory.register(_first(other))
         await directory.attach_begin(
-            other, directory.Begin(f"dep-{other}", _fp(other), None, "k", {})
+            other,
+            directory.Begin(f"dep-{other}", _fp(other), None, "k", {}),
+            expected=await _observed(other),
         )
-        await directory.attach_enforced(other, f"dep-{other}")  # a step-3 lock that never landed
-        assert (await directory.remove(other)).is_first
+        await directory.attach_enforced(
+            other, f"dep-{other}", expected=await _observed(other)
+        )  # a step-3 lock that never landed
+        assert (await directory.remove(other, expected=await _observed(other))).is_first
         assert await conn.fetchval("SELECT count(*) FROM loom_router.cells") == 0
         assert await conn.fetchval("SELECT count(*) FROM loom_router.hosts") == 0
     finally:

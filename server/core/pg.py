@@ -21,11 +21,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import time
 import weakref
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager, suppress
 from typing import Any
+from uuid import UUID
 
+from server.core import provider_process, retirement
 from server.core.error_summary import error_summary
 from server.core.errors import LoomServerError
 from server.settings import settings
@@ -36,6 +40,41 @@ _pools: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Any] = weakref.Weak
 _opening: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
     weakref.WeakKeyDictionary()
 )
+_closing: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Task[Any]] = (
+    weakref.WeakKeyDictionary()
+)
+_state_pid = os.getpid()
+
+
+def _check_process() -> None:
+    global _state_pid
+    if _state_pid != os.getpid():
+        if _pools or any(lock.locked() for lock in _opening.values()) or _closing:
+            raise retirement.ProcessStopping("Inherited Postgres ownership cannot be reused")
+        _state_pid = os.getpid()
+
+
+def _check_unsealed(gate: retirement.RetirementGate) -> None:
+    if gate.pg_sealed:
+        raise retirement.ProcessStopping("Postgres application opening is permanently closed")
+
+
+@contextmanager
+def _opening_scope() -> Iterator[retirement.RetirementGate]:
+    _check_process()
+    gate = retirement.get_gate()
+    _check_unsealed(gate)
+    gate.active += 1
+    try:
+        yield gate
+    finally:
+        gate.active -= 1
+
+
+def authority_state_present() -> bool:
+    """Cached or unfinished authority ownership, never evidence of remote absence."""
+    _check_process()
+    return bool(_pools or any(lock.locked() for lock in _opening.values()) or _closing)
 
 
 class PostgresUnavailableError(LoomServerError):
@@ -141,7 +180,7 @@ async def verify_deployment() -> None:
             pool = await _pool_for_loop()
             # Opening a pool runs the check and disarms it; one already open is checked here.
             if _expected is not None:
-                async with pool.acquire() as conn:
+                async with _acquire(pool) as conn:
                     await _check_deployment(conn)
         except Exception as e:
             _raise_if_unavailable(e)
@@ -173,46 +212,87 @@ async def _check_deployment(conn: Any) -> None:
     _expected = None  # one DSN per process: checked once
 
 
-async def _pool_for_loop() -> Any:
-    """The pool of the running event loop, opened on first use: the server and worker
-    processes open it at boot, a CLI command or a test on its first statement. A pool
-    belongs to the loop that opened it; a CLI process's first one checks the deployment
-    (`expect_deployment`)."""
+async def _pool_connect(*args: Any, **kwargs: Any) -> Any:
+    """Pool maintenance owns opening and codecs until the connection is usable."""
     import asyncpg
 
-    loop = asyncio.get_running_loop()
-    pool = _pools.get(loop)
-    if pool is not None:
-        return pool
-    _require_dsn()
-    async with _opening.setdefault(loop, asyncio.Lock()):
-        if loop not in _pools:
-            pool = await asyncpg.create_pool(
-                settings.pg_dsn,
-                min_size=settings.pg_pool_min_size,
-                max_size=settings.pg_pool_max_size,
-                init=init_connection,
-                server_settings={
-                    "application_name": "loom",
-                    "synchronous_commit": "on",
-                    # The commits re-check rows they waited on; whatever the server's default.
-                    "default_transaction_isolation": "read committed",
-                    "statement_timeout": str(settings.pg_statement_timeout_ms),
-                    # A transaction left open by a cancelled request is ended by the server.
-                    "idle_in_transaction_session_timeout": idle_timeout_ms(),
-                    **marker_settings(),
-                },
-                command_timeout=settings.pg_statement_timeout_ms / 1000 + 1,
-            )
-            if _expected is not None:
+    with _opening_scope() as gate:
+        conn = await asyncpg.connect(*args, **kwargs)
+        try:
+            await init_connection(conn)
+            _check_unsealed(gate)
+            return conn
+        except BaseException:
+            with suppress(BaseException):
+                _terminate(conn)
+            raise
+
+
+async def _pool_for_loop() -> Any:
+    """Construct and publish a pool only while this process can open application work."""
+    import asyncpg
+
+    with _opening_scope() as gate:
+        loop = asyncio.get_running_loop()
+        pool = _pools.get(loop)
+        if pool is not None:
+            return pool
+        _require_dsn()
+        lock = _opening.setdefault(loop, asyncio.Lock())
+        async with lock:
+            _check_unsealed(gate)
+            if loop not in _pools:
+                pool = await asyncpg.create_pool(
+                    settings.pg_dsn,
+                    min_size=settings.pg_pool_min_size,
+                    max_size=settings.pg_pool_max_size,
+                    connect=_pool_connect,
+                    server_settings={
+                        "application_name": provider_process.participant_tag(
+                            provider_process.process_identity()
+                        ),
+                        "synchronous_commit": "on",
+                        "default_transaction_isolation": "read committed",
+                        "statement_timeout": str(settings.pg_statement_timeout_ms),
+                        "idle_in_transaction_session_timeout": idle_timeout_ms(),
+                        **marker_settings(),
+                    },
+                    command_timeout=settings.pg_statement_timeout_ms / 1000 + 1,
+                )
                 try:
-                    async with pool.acquire() as conn:
-                        await _check_deployment(conn)
+                    _check_unsealed(gate)
+                    if _expected is not None:
+                        async with _acquire(pool) as conn:
+                            await _check_deployment(conn)
+                    _check_unsealed(gate)
                 except BaseException:
-                    pool.terminate()  # never handed out: nothing to wait for
+                    with suppress(BaseException):
+                        pool.terminate()
                     raise
-            _pools[loop] = pool
-    return _pools[loop]
+                _pools[loop] = pool
+            return _pools[loop]
+
+
+@asynccontextmanager
+async def _acquire(pool: Any) -> AsyncIterator[Any]:
+    with _opening_scope() as gate:
+        try:
+            conn = await pool.acquire(timeout=settings.pg_statement_timeout_ms / 1000)
+        except Exception as error:
+            _raise_if_unavailable(error)
+            raise
+        try:
+            _check_unsealed(gate)
+        except BaseException:
+            with suppress(BaseException):
+                _terminate(conn)
+            with suppress(BaseException):
+                await _release(pool, conn)
+            raise
+    try:
+        yield conn
+    finally:
+        await _release(pool, conn)
 
 
 def idle_timeout_ms() -> str:
@@ -221,12 +301,85 @@ def idle_timeout_ms() -> str:
     return str(settings.pg_statement_timeout_ms * 2)
 
 
-async def close_pool() -> None:
+def _pool_close_task() -> tuple[Any, asyncio.Task[Any]] | None:
+    _check_process()
     loop = asyncio.get_running_loop()
+    if any(owner is not loop for owner in (*_pools, *_closing)) or any(
+        owner is not loop and lock.locked() for owner, lock in _opening.items()
+    ):
+        raise retirement.ProcessStopping("Another event loop still owns Postgres state")
+    pool = _pools.get(loop)
+    if pool is None:
+        return None
+    task = _closing.get(loop)
+    if task is None:
+        gate = retirement.get_gate()
+        gate.active += 1
+
+        async def close() -> SystemExit | KeyboardInterrupt | None:
+            try:
+                await pool.close()
+            except (SystemExit, KeyboardInterrupt) as error:
+                return error
+            return None
+
+        def ended(task: asyncio.Task[Any]) -> None:
+            gate.active -= 1
+            _retrieve_task(task)
+
+        task = asyncio.create_task(close())
+        task.add_done_callback(ended)
+        _closing[loop] = task
+    return pool, task
+
+
+def _forget_pool() -> None:
+    loop = asyncio.get_running_loop()
+    _pools.pop(loop, None)
+    _closing.pop(loop, None)
     _opening.pop(loop, None)
-    pool = _pools.pop(loop, None)
-    if pool is not None:
-        await pool.close()
+
+
+async def close_pool() -> None:
+    """Reversible close; retain an unfinished or failed close for its next owner."""
+    owned = _pool_close_task()
+    if owned is not None:
+        pool, task = owned
+        try:
+            result = await asyncio.shield(task)
+            if isinstance(result, (SystemExit, KeyboardInterrupt)):
+                raise result
+        except BaseException:
+            if task.done() and not retirement.get_gate().pg_sealed:
+                with suppress(BaseException):
+                    pool.terminate()
+                _forget_pool()
+            raise
+        else:
+            if not retirement.get_gate().pg_sealed:
+                _forget_pool()
+
+
+async def close_pool_until(*, end: float) -> bool:
+    """The terminal owner keeps one close child through its actual completion."""
+    owned = _pool_close_task()
+    if owned is None:
+        return True
+    pool, task = owned
+    if task.done() and task.cancelled():
+        return True
+    try:
+        await _wait_owned(task, end=end, abort=pool.terminate)
+    except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
+        raise
+    except Exception:  # noqa: BLE001 — only a fresh remote census can resolve a failed close.
+        return task.done()
+    return True
+
+
+def finish_retirement() -> None:
+    """Positive remote absence resolved the retained, completed local pool owner."""
+    _forget_pool()
 
 
 # Errors a retry may clear, by SQLSTATE: a cancelled statement (its timeout, a lock it
@@ -341,22 +494,19 @@ async def connection() -> AsyncIterator[Any]:
     """One pooled connection for the block; an unreachable server is 503."""
     try:
         pool = await _pool_for_loop()
-        conn = await pool.acquire(timeout=settings.pg_statement_timeout_ms / 1000)
     except Exception as e:
         _raise_if_unavailable(e)
         raise
-    try:
-        yield conn
-    except BaseException as e:
-        if _read_only(e):
-            # Left on a demoted primary: none of the pool's connections is handed out again.
-            _terminate(conn)
-            await pool.expire_connections()
-        elif _connection_lost(e):
-            _terminate(conn)
-        raise
-    finally:
-        await _release(pool, conn)
+    async with _acquire(pool) as conn:
+        try:
+            yield conn
+        except BaseException as e:
+            if _read_only(e):
+                _terminate(conn)
+                await pool.expire_connections()
+            elif _connection_lost(e):
+                _terminate(conn)
+            raise
 
 
 def _lost(conn: Any) -> bool:
@@ -377,6 +527,58 @@ def _terminate(conn: Any) -> None:
 
     with suppress(asyncpg.InterfaceError):
         conn.terminate()
+
+
+def _retrieve_task(task: asyncio.Task[Any]) -> None:
+    if not task.cancelled():
+        task.exception()
+
+
+async def _wait_owned(task: asyncio.Task[Any], *, end: float, abort: Callable[[], None]) -> Any:
+    interrupted: asyncio.CancelledError | None = None
+    try:
+        while not task.done():
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Postgres owned cleanup deadline expired")
+            try:
+                await asyncio.wait({task}, timeout=remaining)
+            except asyncio.CancelledError as error:
+                interrupted = interrupted or error
+        result = task.result()
+        if isinstance(result, (SystemExit, KeyboardInterrupt)):
+            raise result
+    except BaseException:
+        try:
+            abort()
+        except BaseException:  # noqa: BLE001 — abort preserves the first cleanup failure.
+            pass
+        if not task.done():
+            task.cancel()
+        task.add_done_callback(_retrieve_task)
+        if interrupted is not None:
+            raise interrupted from None
+        raise
+    if interrupted is not None:
+        raise interrupted
+    return result
+
+
+async def close_owned(conn: Any, *, end: float) -> None:
+    """Bound public close; local abort is not proof the backend released its locks."""
+    if end <= time.monotonic():
+        with suppress(BaseException):
+            _terminate(conn)
+        raise TimeoutError("Postgres owned-session cleanup deadline expired")
+
+    async def close() -> SystemExit | KeyboardInterrupt | None:
+        try:
+            await conn.close(timeout=max(0, end - time.monotonic()))
+        except (SystemExit, KeyboardInterrupt) as error:
+            return error
+        return None
+
+    await _wait_owned(asyncio.create_task(close()), end=end, abort=lambda: _terminate(conn))
 
 
 async def _release(pool: Any, conn: Any) -> None:
@@ -430,6 +632,121 @@ def may_have_committed(e: BaseException) -> bool:
     return isinstance(e, PostgresUnavailableError) and bool(e.extra.get("outcome_unknown"))
 
 
+async def _connect_dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> Any:
+    """Construct, initialize and hand off one process-attributed application session."""
+    import asyncpg
+
+    with _opening_scope() as gate:
+        _require_dsn()
+        conn = None
+        try:
+            conn = await asyncpg.connect(
+                settings.pg_dsn,
+                command_timeout=None,
+                server_settings={
+                    "application_name": provider_process.participant_tag(
+                        provider_process.process_identity()
+                    ),
+                    "synchronous_commit": "on",
+                    "default_transaction_isolation": "read committed",
+                    "statement_timeout": str(statement_timeout_ms),
+                    "idle_in_transaction_session_timeout": idle_timeout_ms(),
+                    **(marker_settings() if marked else {}),
+                },
+            )
+            _check_unsealed(gate)
+            await _check_deployment(conn)
+            await init_connection(conn)
+            _check_unsealed(gate)
+            return conn
+        except BaseException as error:
+            if conn is not None:
+                with suppress(BaseException):
+                    _terminate(conn)
+            if isinstance(error, Exception):
+                _raise_if_unavailable(error)
+            raise
+
+
+async def retirement_settled(
+    participant: UUID, recorded: Mapping[str, Any], *, legacy: bool, end: float
+) -> bool:
+    """Only fixed metadata may connect beyond the terminal application seal."""
+    import asyncpg
+
+    _check_process()
+    _require_dsn()
+    conn = None
+
+    def remaining() -> float:
+        value = end - time.monotonic()
+        if value <= 0:
+            raise TimeoutError("Postgres retirement proof deadline expired")
+        return value
+
+    async def verify() -> bool | SystemExit | KeyboardInterrupt:
+        nonlocal conn
+        try:
+            budget = remaining()
+            conn = await asyncpg.connect(
+                settings.pg_dsn,
+                timeout=budget,
+                command_timeout=budget,
+                server_settings={
+                    "application_name": provider_process.participant_tag(
+                        provider_process.process_identity()
+                    ),
+                    "synchronous_commit": "on",
+                    "default_transaction_isolation": "read committed",
+                    "statement_timeout": str(
+                        min(settings.pg_statement_timeout_ms, max(1, int(budget * 1000)))
+                    ),
+                    "idle_in_transaction_session_timeout": idle_timeout_ms(),
+                },
+            )
+            try:
+                held = await conn.fetchrow(
+                    "SELECT authority, deployment_id, epoch, pg_is_in_recovery() AS in_recovery "
+                    "FROM loom.authority",
+                    timeout=remaining(),
+                )
+                if (
+                    held is None
+                    or held.get("authority") != "postgres"
+                    or str(held.get("deployment_id")) != str(recorded["deployment_id"])
+                    or type(held.get("epoch")) is not int
+                    or held["epoch"] != recorded["epoch"]
+                    or type(held.get("in_recovery")) is not bool
+                    or held["in_recovery"]
+                ):
+                    return False
+                count = await conn.fetchval(
+                    "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() "
+                    "AND (application_name = $1 OR ($2::boolean AND application_name = 'loom'))",
+                    provider_process.participant_tag(participant),
+                    legacy,
+                    timeout=remaining(),
+                )
+                return type(count) is int and count == 0
+            finally:
+                await close_owned(conn, end=end)
+        except (SystemExit, KeyboardInterrupt) as error:
+            return error
+
+    task = asyncio.create_task(verify())
+    try:
+        return (
+            await _wait_owned(
+                task, end=end, abort=lambda: _terminate(conn) if conn is not None else None
+            )
+            is True
+        )
+    except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
+        raise
+    except Exception:  # noqa: BLE001 — inaccessible or unclosed evidence cannot certify absence.
+        return False
+
+
 @asynccontextmanager
 async def dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> AsyncIterator[Any]:
     """A connection of its own, outside the pool, with no client timeout and no server
@@ -441,36 +758,7 @@ async def dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> As
     without it)."""
     import asyncpg
 
-    _require_dsn()
-    try:
-        conn = await asyncpg.connect(
-            settings.pg_dsn,
-            command_timeout=None,
-            server_settings={
-                "application_name": "loom",
-                "synchronous_commit": "on",
-                "default_transaction_isolation": "read committed",
-                "statement_timeout": str(statement_timeout_ms),
-                # Its statements may run long; a transaction left idle by a stalled
-                # process does not hold its locks past the pool's bound.
-                "idle_in_transaction_session_timeout": idle_timeout_ms(),
-                **(marker_settings() if marked else {}),
-            },
-        )
-    except Exception as e:
-        _raise_if_unavailable(e)
-        raise
-    # Opening includes the deployment check and the codecs (jsonb reads back as a dict, as
-    # the pool's): an outage there is the 503; the block's own errors pass through as
-    # they are (an erasure's deadlock reaches its retry).
-    try:
-        await _check_deployment(conn)
-        await init_connection(conn)
-    except BaseException as e:
-        conn.terminate()  # never handed out: nothing to finish, and it cannot raise
-        if isinstance(e, Exception):
-            _raise_if_unavailable(e)
-        raise
+    conn = await _connect_dedicated(statement_timeout_ms=statement_timeout_ms, marked=marked)
     try:
         try:
             yield conn

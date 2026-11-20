@@ -11,6 +11,7 @@ but only until it is `jwt_revocation_max_stale_seconds` old.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -87,7 +88,7 @@ async def test_a_snapshot_past_the_stale_bound_refuses_until_a_refresh_lands(
     assert verify_token(_token(), secret=SECRET).subject == "alice"
 
 
-def test_http_answers_an_unloaded_list_with_a_retryable_503(
+async def test_http_answers_an_unloaded_list_with_a_retryable_503(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from fastapi import HTTPException
@@ -97,19 +98,19 @@ def test_http_answers_an_unloaded_list_with_a_retryable_503(
     def _unavailable(token: str) -> Any:
         raise RevocationUnavailable("token revocation list not loaded yet; retry shortly")
 
-    monkeypatch.setattr(bearer_mod, "verify_token", _unavailable)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_unavailable))
 
     class _Req:
         headers = {"Authorization": "Bearer x.y.z"}
 
     with pytest.raises(HTTPException) as err:
-        http_mod._extract_auth(_Req())  # type: ignore[arg-type]
+        (await http_mod._extract_auth(_Req()))  # type: ignore[arg-type]
     assert err.value.status_code == 503
     assert err.value.detail["code"] == "AUTH_UNAVAILABLE"
     assert err.value.headers == {"Retry-After": "5"}
 
 
-def test_every_http_bearer_check_answers_an_unloaded_list_with_503(
+async def test_every_http_bearer_check_answers_an_unloaded_list_with_503(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The admin router, claim release and the knowledge download share one check."""
@@ -120,14 +121,14 @@ def test_every_http_bearer_check_answers_an_unloaded_list_with_503(
     monkeypatch.setattr(rev, "_loaded", False)
     tok = mint_token(subject="s", org="o", namespaces=["n"], roles=["admin"], ttl_seconds=60)
     with pytest.raises(HTTPException) as err:
-        verify_bearer(tok)
+        await verify_bearer(tok)
     assert err.value.status_code == 503 and err.value.headers == {"Retry-After": "5"}
     with pytest.raises(HTTPException) as bad:
-        verify_bearer("garbage")
+        await verify_bearer("garbage")
     assert bad.value.status_code == 401
 
 
-def test_me_and_task_watch_answer_an_unloaded_list_with_503(
+async def test_me_and_task_watch_answer_an_unloaded_list_with_503(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The caller API's bearer checks and the task watch stream use the same check: a
@@ -151,12 +152,12 @@ def test_me_and_task_watch_answer_an_unloaded_list_with_503(
     ]
     for check in checks:
         with pytest.raises(HTTPException) as err:
-            check(req)
+            await check(req)
         assert err.value.status_code == 503, check.__name__
         assert err.value.headers == {"Retry-After": "5"}
     monkeypatch.setattr(rev, "_loaded", True)
     bad: Any = SimpleNamespace(headers={"Authorization": "Bearer garbage"}, state=SimpleNamespace())
     for check in checks:
         with pytest.raises(HTTPException) as err:
-            check(bad)
+            await check(bad)
         assert err.value.status_code == 401, check.__name__

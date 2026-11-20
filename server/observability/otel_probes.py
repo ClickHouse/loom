@@ -182,10 +182,11 @@ def _invariants_sql() -> str:
             -- here, on the census clock, from the lease holder.
             (SELECT count() FROM system.mutations
              WHERE database = {{loom_db:String}} AND NOT is_done) AS mutations_pending,
-            -- Memories that cannot be found by search, for ANY reason: live memory
-            -- rows minus live vectors. Not `embedding_dim = 0` alone, which is blind
-            -- to a memory with no embedding row at all.
-            sum(s.live_rows) - sum(s.e_vec) AS embed_pending,
+            -- Memories that search should find and cannot: live rows of an embedded
+            -- type and sensitivity (the memory plane's `is_embedded`) with no live
+            -- vector, whether an `embedding_dim = 0` row waits or no embedding row
+            -- exists. Episodic, profile and `high` rows never get a vector.
+            sum(s.pending) AS embed_pending,
             -- INVARIANTS, not levels: statements that must hold for ALL rows, so
             -- each catches the next instance of its class. 0 is the only right
             -- reading for every one below.
@@ -213,14 +214,14 @@ def _invariants_sql() -> str:
             sum(s.high_emb) AS high_with_embedding
         FROM (
             SELECT org, namespace,
-                   sum(live5) AS live_rows, sum(e_vec5) AS e_vec, sum(div5) AS divergent,
+                   sum(live5) AS live_rows, sum(pending5) AS pending, sum(div5) AS divergent,
                    sum(orphan_vec5) AS orphan_vec, sum(orphan_ev5) AS orphan_ev,
                    sum(dim0_vec5) AS dim0_vec, sum(drift5) AS drift, sum(past5) AS past,
                    sum(high_emb5) AS high_emb
             FROM (
                 -- The entity-vector identity: the anti join against live memory.
                 SELECT org, namespace, agent, user_id, memory_key,
-                       sum(m_live) AS live5, sum(e_vec) AS e_vec5, sum(div) AS div5,
+                       sum(m_live) AS live5, sum(pending) AS pending5, sum(div) AS div5,
                        sum(orphan_vec) AS orphan_vec5,
                        if(live5 = 0, sum(ev_rows), 0) AS orphan_ev5,
                        sum(dim0_vec) AS dim0_vec5, sum(drift) AS drift5, sum(past) AS past5,
@@ -240,6 +241,7 @@ def _invariants_sql() -> str:
                               arrayCount(x -> x != anyIf(ents, is_m), groupArrayIf(ents, is_e)),
                               0) AS div,
                            if(m_live = 0, e_vec, 0) AS orphan_vec,
+                           if(e_vec = 0, sum(is_m AND live AND embeds), 0) AS pending,
                            if(m_live > 0 AND maxIf(high, is_m) = 1, countIf(is_e), 0) AS high_emb
                     FROM (
                         -- Every memory row after FINAL (the drift count reads the
@@ -251,17 +253,19 @@ def _invariants_sql() -> str:
                                1 AS is_m, 0 AS is_e, 0 AS is_v,
                                tombstoned_at IS NULL AS live, toString(status) AS st,
                                valid_to, sensitivity = 'high' AS high,
+                               memory_type NOT IN {{unembedded:Array(String)}}
+                                   AND sensitivity != 'high' AS embeds,
                                arraySort(entities) AS ents, 0 AS dim, 0 AS vlen
                         FROM loom.memory FINAL
                         UNION ALL
                         SELECT org, namespace, agent, user_id, session_id, memory_key,
-                               0, 1, 0, 1, '', NULL, 0, arraySort(entities),
+                               0, 1, 0, 1, '', NULL, 0, 0, arraySort(entities),
                                embedding_dim, embedding.size0
                         FROM loom.memory_embeddings FINAL
                         WHERE tombstoned_at IS NULL
                         UNION ALL
                         SELECT org, namespace, agent, user_id, '', memory_key,
-                               0, 0, 1, 1, '', NULL, 0, [], 0, 0
+                               0, 0, 1, 1, '', NULL, 0, 0, [], 0, 0
                         FROM loom.entity_vectors FINAL
                         WHERE tombstoned_at IS NULL
                     )
@@ -286,11 +290,16 @@ def _invariants_sql() -> str:
     """
 
 
+def _invariants_parameters() -> dict[str, Any]:
+    """The census statement's own parameters; the probe client binds the database names."""
+    return {"unembedded": list(state_inputs().unembedded_memory_types)}
+
+
 def _probe_invariants() -> dict[str, Any]:
     """The slow-clock half of the state probe: the mutation level, one
     backlog and the invariants, in one statement (`_invariants_sql`)."""
     client = _probe_client()
-    row = client.query(_invariants_sql()).result_rows
+    row = client.query(_invariants_sql(), parameters=_invariants_parameters()).result_rows
     if not row:
         return {}
     (

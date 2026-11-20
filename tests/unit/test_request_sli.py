@@ -7,6 +7,7 @@ import asyncio
 import contextvars
 import re
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -217,7 +218,7 @@ class _Counter:
         self.calls.append(attributes)
 
 
-def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None:
+async def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None:
     from server.auth import bearer
     from server.observability import metrics
     from server.transport import mcp_auth
@@ -225,10 +226,10 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
     counter = _Counter()
     monkeypatch.setattr(metrics, "_auth_refusals", counter)
     with pytest.raises(HTTPException) as e:
-        bearer.verify_bearer_header("Basic abc")
+        (await bearer.verify_bearer_header("Basic abc"))
     assert e.value.status_code == 401
     with pytest.raises(HTTPException):
-        bearer.verify_bearer("not-a-jwt")
+        (await bearer.verify_bearer("not-a-jwt"))
     assert counter.calls == [
         {"reason": "malformed", "loom.transport": "http"},
         {"reason": "invalid", "loom.transport": "http"},
@@ -247,7 +248,7 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
 
     for check in (lambda: bearer.verify_bearer(token), lambda: dev_bearer(_Unchecked())):
         with pytest.raises(HTTPException) as e:
-            check()
+            await check()
         assert e.value.status_code == 503
     assert counter.calls == [{"reason": "unavailable", "loom.transport": "http"}] * 2
 
@@ -269,7 +270,7 @@ def test_a_refused_bearer_is_counted_once_on_each_transport(monkeypatch) -> None
     ]
 
 
-def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
+async def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
     from starlette.requests import Request
 
     from server.auth import routes
@@ -289,19 +290,19 @@ def test_a_missing_bearer_is_counted_on_every_http_route(monkeypatch) -> None:
         me_callers._authed,
         watch_routes._bearer_auth,
         lambda r: admin_routes._verified_admin(r, Role.ADMIN),
-        lambda r: asyncio.run(download_routes.knowledge_download(r, "o", "n", "s")),
+        lambda r: download_routes.knowledge_download(r, "o", "n", "s"),
     )
     for refuse in refusals:
         with pytest.raises(HTTPException) as e:
-            refuse(request)
+            await refuse(request)
         assert e.value.status_code == 401
     assert counter.calls == [{"reason": "missing", "loom.transport": "http"}] * len(refusals)
 
     # The token check counts a refused token, not a signed-out caller.
     counter.calls.clear()
-    assert asyncio.run(routes.whoami(request)) == {"authenticated": False}
+    assert await routes.whoami(request) == {"authenticated": False}
     bad = Request({"type": "http", "headers": [(b"authorization", b"Bearer not-a-jwt")]})
-    assert asyncio.run(routes.whoami(bad))["authenticated"] is False
+    assert (await routes.whoami(bad))["authenticated"] is False
     assert counter.calls == [{"reason": "invalid", "loom.transport": "http"}]
 
 
@@ -1663,7 +1664,7 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
         subject="eve",
         org="eve-org",
         namespaces=("*",),
-        roles=(Role.VIEWER,),
+        roles=(Role.PLATFORM_ADMIN,),
         is_service_account=True,
     )
     for arguments in ({}, {"org": "", "namespace": ""}):
@@ -1683,7 +1684,7 @@ def test_a_call_served_on_its_default_namespace_counts_in_that_tenant(monkeypatc
     # HTTP with a token, through the endpoint: refused while its body is
     # validated (a null org) and at the gate, naming no org or an empty one.
     rows.clear()
-    monkeypatch.setattr(http_mod, "_extract_auth", lambda request: eve)
+    monkeypatch.setattr(http_mod, "_extract_auth", AsyncMock(side_effect=lambda request: eve))
     client = TestClient(app)
     assert client.post("/v1/code.repos", json={"org": None}).status_code == 422
     for body in ({}, {"org": "", "namespace": ""}, {"org": " "}, {"org": "-", "namespace": "n"}):

@@ -1,13 +1,15 @@
 """What git itself does with the proxy settings Loom hands it, run with the real binary
 against a forward proxy the test starts: the first request carries the identity and the
 password, the repository's own token stays inside the tunnel, the remote is trusted by
-the CA bundle alone, a submodule goes the same way, and nothing is stored."""
+the CA bundle alone, an https proxy by a bundle of its own, a submodule goes the same
+way, and nothing is stored."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import datetime
+import ipaddress
 import shutil
 import ssl
 import subprocess
@@ -45,16 +47,21 @@ class _Proxy:
     """A forward proxy on a free loopback port that records the head of each CONNECT and
     answers it with `status`. Given `tls` it answers 200 instead, terminates TLS as the
     remote, records the head of the request git sends inside the tunnel and answers
-    that one 404."""
+    that one 404. Given `listener` the proxy itself speaks TLS: an https:// proxy."""
 
-    def __init__(self, status: int = 403, tls: ssl.SSLContext | None = None) -> None:
-        self.status, self._tls = status, tls
+    def __init__(
+        self,
+        status: int = 403,
+        tls: ssl.SSLContext | None = None,
+        listener: ssl.SSLContext | None = None,
+    ) -> None:
+        self.status, self._tls, self._listener = status, tls, listener
         self.heads: list[list[str]] = []
         self.inside: list[list[str]] = []
         self._server: asyncio.Server | None = None
 
     async def __aenter__(self) -> _Proxy:
-        self._server = await asyncio.start_server(self._answer, "127.0.0.1", 0)
+        self._server = await asyncio.start_server(self._answer, "127.0.0.1", 0, ssl=self._listener)
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
@@ -65,7 +72,8 @@ class _Proxy:
     @property
     def url(self) -> str:
         assert self._server is not None
-        return f"http://127.0.0.1:{self._server.sockets[0].getsockname()[1]}"
+        scheme = "https" if self._listener else "http"
+        return f"{scheme}://127.0.0.1:{self._server.sockets[0].getsockname()[1]}"
 
     async def _answer(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -183,15 +191,20 @@ def _certificate(
         .add_extension(x509.BasicConstraints(ca=signed_by is None, path_length=None), critical=True)
     )
     if signed_by:
+        try:
+            host: x509.GeneralName = x509.IPAddress(ipaddress.ip_address(name))
+        except ValueError:
+            host = x509.DNSName(name)
         builder = builder.add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False
+            x509.SubjectAlternativeName([host]), critical=False
         ).add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
     return builder.sign(issuer_key, hashes.SHA256())
 
 
 def _terminating_as(host: str, directory: Path) -> tuple[ssl.SSLContext, Path, Path]:
-    """(the TLS a proxy terminates with as `host`, the CA bundle that signed its
-    certificate, the bundle of an authority that did not)."""
+    """(the TLS a proxy answers with as `host`, the CA bundle that signed its certificate,
+    the bundle of an authority that did not). The bundles are `authority.pem` and
+    `other.pem` in `directory`."""
     pem = serialization.Encoding.PEM
     authority_key, other_key, host_key = (ec.generate_private_key(ec.SECP256R1()) for _ in "123")
     authority = _certificate("the proxy's authority", authority_key)
@@ -239,6 +252,58 @@ async def test_git_trusts_the_remote_through_the_proxy_by_the_ca_bundle_alone(
     assert request[0] == "GET /acme/widgets.git/info/refs?service=git-upload-pack HTTP/1.1"
     assert _credentials(request, "authorization:") == ["oauth2:repo-token"]
     assert _credentials(request, "proxy-authorization:") == []
+
+
+@pytest.mark.parametrize(
+    ("setting", "bundle", "verified"),
+    [
+        ("code_git_proxy_tls_ca_file", "authority.pem", True),
+        ("code_git_proxy_tls_ca_file", "other.pem", False),
+        ("code_git_proxy_ca_file", "authority.pem", False),
+    ],
+    ids=["its authority", "another authority", "its authority as the remote's bundle"],
+)
+async def test_git_verifies_an_https_proxy_by_a_bundle_of_its_own(
+    setting: str, bundle: str, verified: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A proxy whose own listener speaks TLS under a private authority. With that
+    authority in LOOM_CODE_GIT_PROXY_TLS_CA_FILE git sends its first request, the identity
+    and the password in it, as it does to an http:// proxy. With another authority's
+    bundle, or with the authority named only as the remote's bundle, git refuses the
+    proxy: it sends no request, so no credential leaves."""
+    mirror = tmp_path / "mirror.git"
+    git(tmp_path, "init", "--bare", "--quiet", str(mirror))
+    started: list[tuple[str, ...]] = []
+    spawn = asyncio.create_subprocess_exec
+
+    async def _recorded(*argv: str, **kw: Any) -> asyncio.subprocess.Process:
+        started.append(argv)
+        return await spawn(*argv, **kw)
+
+    monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", _recorded)
+    listener, _authority, _other = _terminating_as("127.0.0.1", tmp_path)
+    async with _Proxy(403, listener=listener) as proxy:
+        assert proxy.url.startswith("https://")
+        _set_proxy(monkeypatch, tmp_path, proxy.url)
+        monkeypatch.setattr(settings, setting, str(tmp_path / bundle))
+        with pytest.raises(gitrepo.GitError) as failed:
+            await gitrepo.fetch(
+                str(mirror), REMOTE, "main", token="repo-token", proxy_identity=IDENTITY
+            )
+    (argv,) = started
+    assert not [arg for arg in argv if TOKEN in arg or ENCODED in arg or BASIC in arg]
+    error = str(failed.value)
+    assert TOKEN not in error and ENCODED not in error and BASIC not in error
+    assert "proxy" not in (mirror / "config").read_text().lower()
+    if not verified:
+        assert proxy.heads == []  # git refused the proxy: no request, so no credential
+        return
+    assert proxy.heads, "git made no request to the proxy"
+    for head in proxy.heads:
+        assert head[0] == "CONNECT git.invalid:443 HTTP/1.1"
+        assert _credentials(head, "proxy-authorization:") == [f"{IDENTITY}:{TOKEN}"]
+        assert _credentials(head, "authorization:") == []
+    assert tier_health.classify(error) == "egress"
 
 
 def _checkout_with_a_submodule(directory: Path, url: str) -> Path:
