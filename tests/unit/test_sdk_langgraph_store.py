@@ -5,12 +5,25 @@ and the sync/async entry points."""
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from loom.agent import Agent
 from loom.integrations import langgraph as lg
 from loom.memory import MemorySearchHit, MemorySearchResult
+from loom.session_protection import (
+    AutomaticCaptureSuppressed,
+    SessionProtection,
+    SessionProtectionUnavailable,
+    observation_scope,
+)
 
 
 class _FakeMemory:
@@ -71,6 +84,7 @@ class _FakeMemory:
 class _FakeAgent:
     def __init__(self, memory: _FakeMemory) -> None:
         self.memory = memory
+        self.transport = SimpleNamespace(session_protection=None)
         self.closed_on: asyncio.AbstractEventLoop | None = None
 
     async def close(self) -> None:
@@ -305,3 +319,231 @@ def test_listing_pages_past_one_memory_list_page() -> None:
     page = store.search(("team",), limit=2, offset=1500)
     assert [item.value["i"] for item in page] == [1500, 1501]
     assert [lst["offset"] for lst in mem.lists] == [0, 1000]  # stops once it has enough
+
+
+# ---- retained invocation ownership ----
+
+
+@asynccontextmanager
+async def _protection_agent(
+    root: SessionProtection | None,
+    reply: dict[str, Any] | Callable[[str, dict[str, Any]], dict[str, Any]],
+    *,
+    auth: httpx.Auth | None = None,
+) -> AsyncIterator[tuple[Agent, list[tuple[str, dict[str, Any]]]]]:
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        op = request.url.path.rsplit("/", 1)[-1]
+        body = json.loads(request.content)
+        posts.append((op, body))
+        return httpx.Response(200, json=reply(op, body) if callable(reply) else reply)
+
+    agent = Agent(
+        org="acme",
+        namespace="support",
+        agent="bot",
+        base_url="http://inert.invalid",
+        api_key="test-token",
+        coalesce_sets=False,
+        pacing=False,
+        mentor_brief=False,
+        auto_run=False,
+        session_protection=root,
+    )
+    transport = agent.transport
+    transport._client._transport = httpx.MockTransport(respond)
+    if auth is not None:
+        transport._client.auth = auth
+    try:
+        yield agent, posts
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_protection_store_observes_constructor_family_after_transport_rebinding(
+    tmp_path: Path,
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    reply = {"found": True, "value": {"note": "private"}, "mirrored": True}
+    async with (
+        _protection_agent(first, {}) as (agent, original_posts),
+        _protection_agent(current, reply) as (rebound, posts),
+    ):
+        store = lg.LoomStore(agent)
+        agent.transport = rebound.transport
+        assert (await store.aget(("u",), "k")).value == {"note": "private"}
+        assert first.protected and current.protected
+        assert not original_posts and len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["constructor", "callback"])
+async def test_protection_store_retains_ambient_response_contributor_after_scope_exit(
+    tmp_path: Path, origin: str
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    clean = {"found": True, "value": {"note": "ordinary"}}
+    marked = {"found": True, "value": {"note": "private"}, "mirrored": True}
+    async with (
+        _protection_agent(None, clean) as (agent, _),
+        _protection_agent(current, marked) as (rebound, posts),
+    ):
+        if origin == "constructor":
+            with observation_scope((first,)):
+                store = lg.LoomStore(agent)
+        else:
+            store = lg.LoomStore(agent)
+            with observation_scope((first,)):
+                assert (await store.aget(("u",), "k")).value == {"note": "ordinary"}
+        agent.transport = rebound.transport
+        assert (await store.aget(("u",), "k")).value == {"note": "private"}
+        assert first.protected and current.protected
+        assert len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["get", "put"])
+async def test_protection_store_automatic_call_rechecks_constructor_family_after_rebind(
+    tmp_path: Path, method: str
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    async with (
+        _protection_agent(first, {}) as (agent, original_posts),
+        _protection_agent(current, {"found": False}) as (rebound, posts),
+    ):
+        store = lg.LoomStore(agent)
+        agent.transport = rebound.transport
+        first.mark()
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            if method == "get":
+                await store.aget(("u",), "k")
+            else:
+                await store.aput(("u",), "k", {"note": "private"})
+        assert not original_posts and not posts
+
+
+@pytest.mark.asyncio
+async def test_protection_store_automatic_call_retains_an_earlier_callback_contributor(
+    tmp_path: Path,
+) -> None:
+    earlier = SessionProtection.create(base=tmp_path / "earlier")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    async with _protection_agent(None, {"found": False}) as (agent, posts):
+        store = lg.LoomStore(agent)
+        with earlier.automatic():
+            assert await store.aget(("u",), "k") is None
+        earlier.mark()
+        posts.clear()
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            await store.aget(("u",), "k")
+        assert not posts
+
+
+@pytest.mark.asyncio
+async def test_protection_store_freezes_current_family_before_consuming_a_lazy_batch(
+    tmp_path: Path,
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    reply = {"found": True, "value": {"note": "private"}, "mirrored": True}
+    async with (
+        _protection_agent(None, {}) as (agent, _),
+        _protection_agent(first, {}) as (at_entry, entry_posts),
+        _protection_agent(current, reply) as (rebound, posts),
+    ):
+        store = lg.LoomStore(agent)
+        agent.transport = at_entry.transport
+
+        def ops() -> Iterator[Any]:
+            agent.transport = rebound.transport
+            yield lg.GetOp(("u",), "k")
+
+        (item,) = await store.abatch(ops())
+        assert item.value == {"note": "private"}
+        assert first.protected and current.protected
+        assert not entry_posts and len(posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_protection_store_rechecks_retained_family_after_credentials_await(
+    tmp_path: Path,
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class Auth(httpx.Auth):
+        async def async_auth_flow(self, request: httpx.Request) -> AsyncIterator[httpx.Request]:
+            entered.set()
+            await release.wait()
+            yield request
+
+    async with (
+        _protection_agent(first, {}) as (agent, original_posts),
+        _protection_agent(current, {"found": False}, auth=Auth()) as (rebound, posts),
+    ):
+        original_transport = agent.transport
+        store = lg.LoomStore(agent)
+        agent.transport = rebound.transport
+        with producer.automatic():
+            call = asyncio.create_task(store.aget(("u",), "k"))
+            try:
+                await entered.wait()
+                first.mark()
+                agent.transport = original_transport
+                release.set()
+                with pytest.raises(AutomaticCaptureSuppressed):
+                    await call
+            finally:
+                release.set()
+                await asyncio.gather(call, return_exceptions=True)
+        assert not original_posts and not posts
+
+
+@pytest.mark.asyncio
+async def test_protection_store_marks_every_retained_family_on_a_malformed_reply(
+    tmp_path: Path,
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    async with (
+        _protection_agent(first, {}) as (agent, original_posts),
+        _protection_agent(current, {"found": False, "mirrored": "unknown"}) as (rebound, posts),
+    ):
+        store = lg.LoomStore(agent)
+        agent.transport = rebound.transport
+        with pytest.raises(SessionProtectionUnavailable):
+            await store.aget(("u",), "k")
+        assert first.protected and current.protected
+        assert not original_posts and len(posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["get", "put"])
+async def test_protection_store_explicit_call_stays_usable_with_a_protected_family(
+    tmp_path: Path, method: str
+) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    async with _protection_agent(family, {"found": True, "value": {"note": "explicit"}}) as (
+        agent,
+        posts,
+    ):
+        store = lg.LoomStore(agent)
+        with family.automatic():
+            assert (await store.aget(("u",), "k")).value == {"note": "explicit"}
+        posts.clear()
+        family.mark()
+        if method == "get":
+            assert (await store.aget(("u",), "k")).value == {"note": "explicit"}
+        else:
+            await store.aput(("u",), "k", {"note": "explicit"})
+        ((op, body),) = posts
+        assert op == f"memory.{method if method == 'get' else 'set'}"
+        assert body["memory_key"] == "lg/u/k"

@@ -820,6 +820,7 @@ class MemoryClient:
         *,
         tags: list[str] | None = None,
         entities: list[str] | None = None,
+        files: list[str] | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
         run_id: str | None = None,
@@ -849,6 +850,11 @@ class MemoryClient:
         find them immediately — without waiting on server-side LLM extraction
         (which skips point writes under a keyless/fake provider). Stored
         lowercased.
+
+        `files`: repository-relative references for file context and code linking.
+        A code namespace or explicit `repo:<id>` tag selects the repository.
+        None detects from the value and retains prior references on an empty
+        detection; [] clears them. Linking runs asynchronously after the write.
 
         `valid_at`: real-world time when this fact became true. Distinct
         from `created_at` (when Loom records the row). Read paths accept
@@ -926,6 +932,8 @@ class MemoryClient:
             relations=[list(f) for f in relations or []],
             dry_run=dry_run,
         )
+        if files is not None:
+            payload["files"] = list(files)  # [] explicitly clears prior references
         coalescer = self._set_coalescer()
         if coalescer is not None and set(payload) - set(_IDENTITY_KEYS) <= _BULK_ENTRY_KEYS:
             # From the third set inside one 200 ms window this

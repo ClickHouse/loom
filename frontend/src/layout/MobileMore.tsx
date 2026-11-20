@@ -108,7 +108,7 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
           <div className="section-label mb-1.5 px-1">{g.group}</div>
           <div className="grid grid-cols-3 gap-2">
             {g.items.map((m) => {
-              const active = view === m.id;
+              const active = view === m.id || (m.id === "setup" && view === "connected-accounts");
               return (
                 <a
                   key={m.id}

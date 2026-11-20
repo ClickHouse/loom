@@ -446,7 +446,9 @@ def _run_out_after(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     def _budget() -> Any:
         budget = real_budget()
         return SimpleNamespace(
-            started=budget.started, exhausted=lambda: late["out"] or budget.exhausted()
+            started=budget.started,
+            stop_after=budget.stop_after,
+            exhausted=lambda: late["out"] or budget.exhausted(),
         )
 
     monkeypatch.setattr(source_sync.gdrive, name, _then_out)
@@ -3318,3 +3320,89 @@ def test_a_slow_first_of_the_rest_does_not_hold_back_the_others_behind_a_request
     # not first, ran out again on what was left, so the next pass starts with it.
     assert synced == ["aaa", "bbb", "aaa", "ccc", "bbb"]
     assert cursor["at"] == f"{ORG}/{NS}/bbb"
+
+
+@pytest.mark.parametrize(
+    ("kind", "provider", "status", "expected_failures"),
+    [
+        ("recording", "meet", "provider_removed", 0),
+        ("recording", "zoom", "provider_removed", 1),
+        ("gdrive", "meet", "provider_removed", 1),
+        ("recording", "meet", "failed", 1),
+        ("recording", "meet", "credential_invalid", 1),
+    ],
+)
+def test_only_a_retired_meet_turn_is_not_a_pass_failure(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    provider: str,
+    status: str,
+    expected_failures: int,
+) -> None:
+    src = dataclasses.replace(_source(), kind=kind, config={"provider": provider}, items=[])
+    world.sources = [src]
+    before = {
+        "requested_at": "2026-01-01T00:00:00Z",
+        "full": True,
+        "file_waits": {"old-file": ["old-revision", 2, "old-reason"]},
+    }
+    world.states[src.name] = {"state_value": "old-stamp", "detail": json.dumps(before)}
+    failures: list[Any] = []
+
+    async def _turn(source: Any, state: Any, run: Any) -> source_sync.TurnResult:
+        return source_sync.TurnResult(
+            status=status,
+            complete=False,
+            error="Meet transcripts use a gdrive shared-folder source",
+        )
+
+    monkeypatch.setattr(source_sync, "_turn_of", lambda source: _turn)
+    monkeypatch.setattr(
+        source_sync.pass_context, "note_failure", lambda *args: failures.append(args)
+    )
+    result = source_sync.PassResult()
+    run = source_sync.Pass(source_sync._budget(), left=5)
+    turn = asyncio.run(source_sync._sync_turn(src, world.states[src.name], run, result))
+    assert turn is not None and turn.status == status and not turn.complete
+    assert result.failed == len(result.errors) == len(failures) == expected_failures
+    assert (result.changed, result.removed, result.unconverted, result.skipped) == (0, 0, 0, 0)
+    assert world.states[src.name]["state_value"] == "old-stamp"
+    detail = _detail(world, src.name)
+    assert detail["status"] == status
+    assert {key: detail[key] for key in before} == before
+    assert not world.requests and not world.upserts and not world.audits
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_format"),
+    [
+        (
+            "## **Planning**\n\n# **Attendees**\n\nSpeaker A, Speaker B\n\n"
+            "# **Transcript**\n\n### 00:05:00\n\nSpeaker A: Keep the proposal.\n\n"
+            "### 01:05:00\n\nSpeaker B: Check the revised figures.\n\n"
+            "### Meeting ended after 01:06:00 👋\n\n"
+            "*This editable transcript was computer generated and might contain errors. "
+            "People can also change the text after it was created.*\n",
+            "transcript",
+        ),
+        ("# Meeting notes\n\nKeep the proposal.\n", "markdown"),
+        ("# Transcript\n\nSpeaker A: No elapsed markers were supplied.\n", "markdown"),
+    ],
+)
+def test_drive_fetch_classifies_timed_transcripts_without_rewriting_the_export(
+    world: _World, monkeypatch: pytest.MonkeyPatch, body: str, expected_format: str
+) -> None:
+    calls: list[tuple[Any, str]] = []
+
+    async def _export(token: Any, file_id: str, **kwargs: Any) -> str:
+        calls.append((token, file_id))
+        return body
+
+    monkeypatch.setattr(gdrive, "export_markdown", _export)
+    fetched = asyncio.run(source_sync._fetch("tok", {"id": "doc1", "mimeType": DOCS}))
+    assert fetched.content == body
+    assert fetched.ingested_format == expected_format
+    assert fetched.original == b"" and fetched.coverage == {}
+    assert calls == [("tok", "doc1")]
+    assert not world.requests and not world.upserts and not world.audits

@@ -162,8 +162,9 @@ def sign_with_root_only() -> None:
 def load_for_offline_mint(*, run: Callable[..., Any] | None = None) -> bool:
     """For a process that mints without serving (a CLI, a dev or bench
     script): read the keyring once, or sign as kid `default` when ClickHouse
-    cannot be read. `run` is the CLI's `run_connected`; without it the read
-    uses a client of its own. True when it was read. Raises ValueError when
+    cannot be read. `run` can supply a connected read; without it the read
+    uses a client of its own. Native CLI minting uses `load_for_connected_mint`
+    inside its enrolled command instead. True when it was read. Raises ValueError when
     the keyring was recorded under another root secret: no server would
     accept what this process signs; through `run`, raises AuthorityMismatch
     when the shell is configured for another deployment (`connect_checked`)."""
@@ -191,6 +192,24 @@ def load_for_offline_mint(*, run: Callable[..., Any] | None = None) -> bool:
         raise  # a shell configured for another deployment: refused, not signed by root
     except Exception:  # noqa: BLE001 — an offline mint signs with the root secret
         read = False
+    return _offline_mint_result(read)
+
+
+async def load_for_connected_mint(*, ch: Any) -> bool:
+    """Read signing keys inside an already verified, enrolled native command."""
+    from server.core.pg import AuthorityMismatch
+    from server.core.retirement import ProcessStopping
+
+    try:
+        read = await refresh(ch=ch)
+    except (AuthorityMismatch, ProcessStopping):
+        raise
+    except Exception:  # noqa: BLE001 — an enrolled mint can sign with the root secret
+        read = False
+    return _offline_mint_result(read)
+
+
+def _offline_mint_result(read: bool) -> bool:
     if not read:
         print("  · signing keyring not read; signing as kid 'default'", file=sys.stderr)
         sign_with_root_only()

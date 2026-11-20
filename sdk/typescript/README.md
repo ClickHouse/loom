@@ -115,11 +115,36 @@ produce `SessionProtectionUnavailable` and protect all known handles. A local
 monotonic latch suppresses concurrent automatic calls while persistence is pending;
 it never substitutes for durable acknowledgement before content returns.
 
-This control covers JSON transport observation and explicit invocation ownership.
-It does not qualify Session buffers, framework callbacks, restored host lineage or
-a concrete storage backend. Bound raw streams refuse and cancel their response
-until a streaming observer is available. Binding a handle does not send a session
-protection capability declaration or enable mirrored-source creation.
+Bound event streams observe complete SSE frames before exposing their original
+bytes. Readers, body methods and clones share that guarded body; a marked frame
+waits for every contributing record's durable acknowledgement. CR, LF, CRLF,
+multiline data and split UTF-8 are supported. An unfinished frame is limited to
+4 MiB. Invalid frames, incomplete EOF, unsupported media types and compressed
+responses protect the retained handles and refuse. Early cancellation and read
+failures also protect them and join bounded owned cleanup. Verified ordinary EOF
+leaves clean handles unchanged. BYOB readers are unsupported and refuse; use the
+default reader or a standard body method. Native clone queues follow the platform's
+tee behavior and are separate from the observer's unfinished-frame limit.
+
+`loom.assistant.stream` accepts `capture` alongside its question for an automatic
+invocation. It retains all contributing handles, preserves protection failures and
+requires the completion marker before returning an answer. It keeps draining after
+that marker so later response metadata is observed.
+
+`Session` retains its constructor's optional `capture` and every transport handle
+that later contributes to it. Automatic resume, transcript and extraction calls
+check their retained authority before dispatch. A first marked recall can return;
+optional history is then omitted. Protection discards pending and carry-over turns
+instead of retrying them. The synchronous `buffered` getter discards known local
+taint; asynchronous owner boundaries also perform bounded durable checks.
+Explicit offload, fetch and note remain available and observe all retained handles.
+For an explicit call outside Session, `observe: new SessionCapture(roots)` retains
+response observers without making the call automatic.
+
+This control covers JSON/SSE transport observation and Session buffer ownership.
+It does not qualify framework callbacks, restored host lineage or a concrete storage
+backend. Binding a handle does not send a session protection capability declaration
+or enable mirrored-source creation.
 
 ## Errors
 
@@ -373,7 +398,49 @@ for (const call of completion.choices[0].message.tool_calls ?? []) {
 // Anthropic: tools.definitions("anthropic"); anything that takes JSON schema: tools.definitions()
 ```
 
-`execute()` returns the string the model reads (compact JSON, or a line it can act on: "no parked text under blob_key=…"), validates required arguments with messages a model can correct, and truncates past `maxResultChars` (`loom_recall` leaves out its lowest-ranked memories whole to fit, counted in `omitted`). [`examples/session-resume`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/) is the two-process run with a real `gpt-4o-mini` tool-use turn.
+`execute()` returns the string the model reads (compact JSON, or a line it can act on:
+"no parked text under blob_key=…") and validates required arguments with messages a model
+can correct. `loom_remember` preserves the server receipt, including no-op merges,
+canonical keys and conflict peers; `stored` confirms a persisted row. `loom_recall`
+preserves abstention, code freshness, row status, provenance and verification metadata
+when supplied. `retrieval_risk` and `retrieval_confidence` score non-governed hits;
+`governed` identifies authoritative definitions and `term_leg` reports the definition
+lookup status. Memory results remain valid JSON under `maxResultChars`: whole omitted
+memories are counted in `omitted`, and metadata that cannot fit returns `insufficient`
+and `metadata_omitted`. A budget too small for that marker is rejected before the call.
+Other tools truncate oversized text.
+[`examples/session-resume`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/)
+is the two-process run with a real `gpt-4o-mini` tool-use turn.
+
+The compact `loom_remember` schema does not expose file or repository association. The
+application can pass `files` and `tags` through `bot.remember(key, value, options)` or
+`bot.call("memory.set", body)`. Use the matching `repo:<id>` tag established by the
+integration, or a configured code namespace. `code.repos` reports `primary_namespace`
+for shared file rules. Do not infer a repository from the enabled lookup tools. Linking runs
+asynchronously, and provenance does not attest that code is unchanged. See
+[memories linked to code](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memories-linked-to-code).
+
+An explicit code namespace offers a read-only lookup before the memory tools. Use
+`only` for a code-only loop; memory tools keep the Agent's memory namespace:
+
+```ts
+const tools = bot.tools(
+  { userId: "u1", sessionId: "thread-42" },
+  { codeNamespace: "code-repo", only: ["loom_code_lookup"], maxResultChars: 12000 },
+);
+const definitions = tools.definitions("openai");
+const result = await tools.execute("loom_code_lookup", {
+  kind: "callers",
+  target: "pkg.Reader.read",
+  depth: 2,
+});
+```
+
+The model selects `symbol`, `search`, `callers` or `impact`; the application fixes scope
+and request budgets. Code results fit the configured cap as valid JSON with explicit
+whole-body or row omissions. Honor abstention, ambiguity, citations and graph lower
+bounds. See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/)
+and [`examples/code-lookup`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/code-lookup/).
 
 ## Probe before you rely
 
@@ -428,7 +495,7 @@ import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
 const memory = loomMemoryTool(bot, { store: "u-42" }); // client.beta.messages.toolRunner({ tools: [memory], ... })
 ```
 
-The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8.x). `loomMemoryHandlers(bot, { store })` returns the command handlers alone, for a loop that dispatches the calls itself.
+The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8.x or 1.11.x). `loomMemoryHandlers(bot, { store })` returns the command handlers alone, for a loop that dispatches the calls itself.
 
 ## LangChain.js
 

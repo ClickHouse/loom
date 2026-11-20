@@ -2,6 +2,8 @@ import type { CodeRepoSummary } from "../api";
 import { fmtInt } from "./format";
 import { isRecord } from "./guards";
 
+export const BUILDING_STAGES = new Set(["queued", "cloning", "indexing", "embedding"]);
+
 type StageTone = "ok" | "warn" | "bad" | "muted";
 interface StageLabel {
   label: string;

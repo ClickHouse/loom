@@ -193,7 +193,8 @@ jobs:
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -q -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+          pytest tests/unit -vv -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+            -o faulthandler_timeout=300 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
       # Also after a failure: the failing part's test times are what a reader needs.
@@ -342,7 +343,18 @@ jobs:
       - name: Ledger is a subset of the repo (strict dry-run)
         run: python -m server.core.schema.migrate --dry-run --strict
       - name: Verify schemas/schema.sql matches what migrations produce
+        id: schema_current
         run: make schema-check
+      - name: Export the generated schema after a mismatch
+        if: failure() && steps.schema_current.outcome == 'failure'
+        run: python -m scripts.ops.dump_schema --out "$RUNNER_TEMP/schema.sql"
+      - name: Upload the generated schema after a mismatch
+        if: failure() && steps.schema_current.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-schema
+          path: ${{ runner.temp }}/schema.sql
+          if-no-files-found: error
 
   ts-typecheck:
     needs: validate-ref
@@ -794,6 +806,33 @@ jobs:
           echo "auth-on control plane never became healthy"
           tail -100 server-auth.log
           exit 1
+      - name: Install the native Pipecat client in a private target
+        id: pipecat_client
+        if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
+        run: >-
+          uv pip install --python "$PWD/.venv/bin/python"
+          --target "$RUNNER_TEMP/loom-pipecat-native" './sdk/python[pipecat]'
+      - name: Native Pipecat text example (auth on)
+        id: pipecat_demo
+        if: >-
+          matrix.part == 'isolation' && !cancelled()
+          && steps.pipecat_client.outcome == 'success'
+        timeout-minutes: 5
+        env:
+          LOOM_AUTH_REQUIRED: "true"
+          LOOM_BASE_URL: http://localhost:7778
+          PYTHONPATH: ${{ runner.temp }}/loom-pipecat-native
+          LOOM_PIPECAT_EVIDENCE: ${{ runner.temp }}/pipecat-native-demo.json
+        run: pytest -q tests/integration/_pipecat_demo_ci.py
+      - name: Upload native Pipecat qualification receipt
+        if: >-
+          always() && matrix.part == 'isolation'
+          && steps.pipecat_demo.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pipecat-native-demo
+          path: ${{ runner.temp }}/pipecat-native-demo.json
+          if-no-files-found: error
       - name: pytest isolation gates (auth on)
         if: matrix.part == 'isolation' && !cancelled() && steps.auth_on.outcome == 'success'
         env:
@@ -966,8 +1005,24 @@ jobs:
           tests/integration/test_pg_clickhouse_live_ch.py
           tests/integration/test_cell_tenancy_pg.py
           tests/integration/test_router_directory_pg.py
+          tests/integration/test_pg_online_index.py
+          tests/integration/test_pg_owned_cleanup.py
           tests/integration/test_cell_unset_gate_pg.py
           tests/integration/test_cell_prepare.py
+          tests/integration/test_cell_attach.py
+          tests/integration/test_cell_place.py
+          tests/integration/test_cell_update_directory.py
+          tests/integration/test_cell_update_addresses.py
+          tests/integration/test_cell_update_run_pg.py
+          tests/integration/test_cell_update_participants_ch.py
+          tests/integration/test_cell_place_cleanup.py
+          tests/integration/test_cell_attach_two_replicas.py
+          tests/integration/test_cell_attach_cleanup.py
+          tests/integration/test_cell_scim_census_live_ch.py
+          tests/integration/test_cell_update_scim_live_ch.py
+          tests/integration/test_cell_control_cleanup.py
+          tests/integration/test_cell_control_fence.py
+          tests/integration/test_directory_control_cleanup.py
           tests/integration/test_cell_org_triggers_pg.py
           tests/integration/test_source_access_store.py
           tests/integration/test_source_document_store.py
@@ -986,6 +1041,73 @@ jobs:
           tests/integration/test_marked_rollup_migration_native.py
           tests/integration/test_marked_durable_folds_native.py
           tests/integration/test_marked_sql_surface_native.py
+      - name: pytest online-index durability on a private physical standby
+        timeout-minutes: 8
+        env:
+          LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
+          LOOM_PG_CONTAINER: loom-scale-index-drill-pg
+          LOOM_PG_HOST_PORT: "15432"
+          LOOM_PG_INDEX_DRILL: "1"
+          LOOM_PG_INDEX_DRILL_DSN: postgres://loom:loomdev@localhost:15432/loom
+        run: |
+          set -euo pipefail
+          for name in loom-scale-index-drill-pg loom-scale-index-drill-pg-standby; do
+            if docker container inspect "$name" >/dev/null 2>&1; then
+              echo "drill container already exists: $name" >&2
+              exit 1
+            fi
+          done
+          if docker network inspect loom-scale-index-drill-pg-net >/dev/null 2>&1; then
+            echo "drill network already exists" >&2
+            exit 1
+          fi
+          cleanup() {
+            docker rm -f -v loom-scale-index-drill-pg loom-scale-index-drill-pg-standby || true
+            docker network rm loom-scale-index-drill-pg-net || true
+          }
+          trap cleanup EXIT
+          bash dev/ci_start_postgres.sh
+          docker update --memory 1g --memory-swap 1g loom-scale-index-drill-pg loom-scale-index-drill-pg-standby
+          pytest -q tests/integration/test_pg_online_index_durability.py
+      - name: pytest placement durability on a private physical standby
+        timeout-minutes: 8
+        env:
+          LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
+          LOOM_PG_CONTAINER: loom-scale-place-drill-pg
+          LOOM_PG_HOST_PORT: "0"
+          LOOM_CELL_PLACE_DRILL: "1"
+        run: |
+          set -euo pipefail
+          for name in loom-scale-place-drill-pg loom-scale-place-drill-pg-standby; do
+            if docker container inspect "$name" >/dev/null 2>&1; then
+              echo "drill container already exists: $name" >&2
+              exit 1
+            fi
+          done
+          if docker network inspect loom-scale-place-drill-pg-net >/dev/null 2>&1; then
+            echo "drill network already exists" >&2
+            exit 1
+          fi
+          cleanup() {
+            docker rm -f -v loom-scale-place-drill-pg loom-scale-place-drill-pg-standby || true
+            docker network rm loom-scale-place-drill-pg-net || true
+          }
+          trap cleanup EXIT
+          bash dev/ci_start_postgres.sh
+          # Docker reserves the host port; use only this primary's loopback mapping.
+          mapping=$(docker port "$LOOM_PG_CONTAINER" 5432/tcp)
+          if [[ ! "$mapping" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          port=${BASH_REMATCH[1]}
+          if (( port > 65535 )); then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          export LOOM_CELL_PLACE_DRILL_DSN="postgres://loom:loomdev@127.0.0.1:$port/loom"
+          docker update --memory 1g --memory-swap 1g loom-scale-place-drill-pg loom-scale-place-drill-pg-standby
+          pytest -q tests/integration/test_cell_place_durability.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).
@@ -1086,6 +1208,49 @@ jobs:
       - name: Published build ordinary-event compatibility
         run: python scripts/gates/mixed_version.py --require --base 1cbaf0411114512957b96ec5ea7bbb8058828543
 
+  sdk-rust:
+    needs: validate-ref
+    name: rust sdk (${{ matrix.rust }}, fmt, tests, clippy, docs, package)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.84.1", stable]
+    defaults:
+      run:
+        working-directory: sdk/rust
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust with format and lint components
+        run: |
+          rustup toolchain install "${{ matrix.rust }}" --profile minimal --component rustfmt --component clippy
+          rustup override set "${{ matrix.rust }}"
+      # The library leaves dependency locking to its consumers; each toolchain resolves once.
+      - name: Resolve dependencies for this toolchain
+        run: cargo generate-lockfile
+      - name: Rust formatting
+        run: cargo fmt --check
+      - name: Unit, HTTP contract and documentation tests
+        run: cargo test --locked
+      - name: Lint the library, tests and examples
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: API documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps
+      - name: Verify the distributable crate and its license
+        run: |
+          cargo package --locked
+          for archive in target/package/clickhouse-loom-*.crate; do
+            package="$(basename "$archive" .crate)"
+            tar -xOf "$archive" "$package/LICENSE" | cmp - ../../LICENSE
+          done
+
   sdk-typescript:
     needs: validate-ref
     name: typescript sdk (generated types in sync, lint, tsc, vitest, dist)
@@ -1130,6 +1295,15 @@ jobs:
       - name: build + dist tests + publint + attw
         working-directory: sdk/typescript
         run: npm run check:dist
+      # Keep the locked 1.8 baseline above and qualify the other supported band
+      # against the same source, native tool runner and package exports.
+      - name: Claude memory tool with Anthropic 1.11
+        working-directory: sdk/typescript
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm run type-check
+          npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
+          npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts
 
   sdk-python-adapters:
     needs: validate-ref
@@ -1203,3 +1377,43 @@ jobs:
           uv pip list --python /tmp/sdk-venv/bin/python
       - name: Smoke-test the installed wheel
         run: /tmp/sdk-venv/bin/python scripts/gates/sdk_wheel_smoke.py dist/*.whl
+
+  langflow-extension:
+    needs: validate-ref
+    name: Langflow extension wheel (py ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the SDK and extension distributions
+        run: |
+          uv build sdk/python --out-dir "$RUNNER_TEMP/langflow-sdk-dist"
+          uv build integrations/langflow --out-dir "$RUNNER_TEMP/langflow-extension-dist"
+          mkdir "$RUNNER_TEMP/langflow-sdist"
+          tar -xzf "$RUNNER_TEMP"/langflow-extension-dist/*.tar.gz -C "$RUNNER_TEMP/langflow-sdist"
+          uv build "$RUNNER_TEMP"/langflow-sdist/* --wheel --out-dir "$RUNNER_TEMP/langflow-rebuilt-dist"
+      - name: Install and discover the extension outside the checkout
+        run: |
+          uv venv --python "$(command -v python)" "$RUNNER_TEMP/langflow-extension-venv"
+          uv pip install --python "$RUNNER_TEMP/langflow-extension-venv/bin/python" \
+            "$RUNNER_TEMP"/langflow-sdk-dist/*.whl \
+            "$RUNNER_TEMP"/langflow-rebuilt-dist/*.whl "lfx==1.13.3"
+          uv pip check --python "$RUNNER_TEMP/langflow-extension-venv/bin/python"
+          cd "$RUNNER_TEMP"
+          env -u PYTHONPATH "$RUNNER_TEMP/langflow-extension-venv/bin/python" -I \
+            "$GITHUB_WORKSPACE/scripts/gates/langflow_extension_smoke.py" \
+            "$GITHUB_WORKSPACE" "$RUNNER_TEMP/langflow-extension-dist" \
+            "$RUNNER_TEMP/langflow-rebuilt-dist" \
+            "$RUNNER_TEMP/langflow-sdk-dist"

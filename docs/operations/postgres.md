@@ -44,6 +44,10 @@ pooler refuses or drops (its org triggers then refuse Loom's own writes for an o
 cell holds no row for, and the `loom.tenancy` guard its tenancy row for each newly placed
 org), and `loom doctor` names a session that lost it. Scripts and bulk loaders never set
 `session_replication_role = replica` on a cell: it skips the org triggers and the guard.
+No role is granted `SET` or `ALTER SYSTEM` on `session_replication_role`, `ALTER SYSTEM`
+on `loom.tenancy_checked`, or membership in `pg_write_server_files` or
+`pg_execute_server_program` on a cell: `loom cell attach` refuses such a role, and
+`loom doctor` warns on one ([attaching the first cell](cell-attach.md)).
 
 Every replica of the deployment, and its worker process, sets the same values. The full
 list, with the admission and delivery settings, is in the
@@ -84,6 +88,14 @@ Postgres did not answer or the role cannot see `pg_stat_replication`.
 
 Point `LOOM_PG_DSN` at the manager's primary endpoint (the service or address that
 follows the leader), never at one host, so a promotion moves Loom with it.
+
+Participant retirement also uses that endpoint. A process can remain unretired
+after it exits if an attributed backend, including an idle one, is still present
+or the store pair cannot be verified. Retry recovery after the backend is absent;
+transport abort and heartbeat expiry are not settlement evidence. During an
+upgrade, generic `loom` sessions from clients without participant tags must all
+drain before their identities can be recertified. See the
+[participant lifecycle baseline](../architecture/cells.md#participant-lifecycle-baseline).
 
 A primary with one standby and no manager, as `dev/ci_start_postgres.sh` starts for
 tests, shows the settings:

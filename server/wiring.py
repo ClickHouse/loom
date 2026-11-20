@@ -24,6 +24,7 @@ def wire() -> None:
     from server.identity.app.directory import IdentityDirectory
     from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
     from server.memory.app import provenance, recent_writes
+    from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
     from server.memory.store import pg_publish
     from server.memory.store.usage import AGENT_LABEL_EVENT_TYPES
     from server.observability.budget_notifications import use_observer
@@ -37,6 +38,7 @@ def wire() -> None:
     use_state_inputs(
         StateInputs(
             live_chunk_sql=LIVE_CHUNK_SQL,
+            unembedded_memory_types=tuple(sorted(NON_SEARCHABLE_TYPES)),
             agent_label_kinds=AGENT_LABEL_EVENT_TYPES,
             # read through the module at every probe: the registry snapshot moves
             code_repos=lambda: repos.configured_repos(),

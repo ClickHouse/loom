@@ -30,7 +30,11 @@ curl -fsS -X POST "$LOOM_BASE_URL/v1/code.search" \
 MCP, the `loom_code_search` tool:
 
 ```json
-{ "query": "where are request quotas enforced?", "namespace": "code-myrepo", "top_k": 5 }
+{
+  "query": "where are request quotas enforced?",
+  "namespace": "code-myrepo",
+  "top_k": 5
+}
 ```
 
 ```python
@@ -57,8 +61,9 @@ code op is callable by name or through `loom_op`:
 `loom_op {"op": "code.index_status", "arguments": {"namespace": "code-myrepo"}}`. These
 are served over HTTP and the SDKs only: `code.outcome`, `code.refresh`, `code.reindex`,
 `code.calibrate`, `code.context_packs`, `code.coverage.watch`, `code.coverage.unwatch`,
-`code.scip_ingest`, `code.scip_status`. An op's MCP tool name is `loom_` plus its name
-with dots as underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
+`code.scip_ingest`, `code.scip_status`; `LOOM_MCP_CODE_UPLOAD_TOOLS=true` serves the last
+two over MCP as well. An op's MCP tool name is `loom_` plus its name with dots as
+underscores. Toolsets: [MCP reference](../../reference/mcp.md#toolsets).
 
 **CLI.** There is no client CLI for the read ops. `loom code …` (`init`, `backfill`,
 `reconcile`, `compact`, `reembed`, `backfill-prs`, `scip-full`, `scip-delta`, `warm`,
@@ -85,6 +90,22 @@ A caller with a clock of its own passes `deadline_ms` to `code.grep` or `code.se
 the request stops starting new work when the budget runs out and returns what it has,
 `partial: true` with a `partial_reason` naming what did not finish (a grep scan stopped
 by ClickHouse's break-on-timeout, a search leg, rerank, HyDE), instead of timing out.
+
+A failed lexical or vector retrieval leg also returns `partial: true`. Its
+`partial_reason` names the unavailable leg, and `note` warns that results are
+incomplete. These warnings survive the default MCP result shaping and searches
+across repositories. An empty result during an outage does not prove that no match
+exists. Failed-leg results are neither memoized nor saved as continuation pools;
+retry after restoring the provider or store. Choosing `legs: "lexical"` deliberately
+is not a failure.
+
+Providers that record request outcomes expose failures in `/v1/health` under
+`providers_degraded` and `problems`, and in the dashboard's Health view. A successful
+recorded call clears its warning. Other providers and constructor failures can
+produce a search warning without a health warning. Check credentials, permissions
+and quota. Health reads make no provider calls and cannot detect expired credentials
+before a real request encounters them.
+
 In `mode: "message"`, a pattern that matches no statement template (a code line rather
 than a rendered message) is grepped once more as a literal and the answer says
 `fallback: "literal"`.
@@ -107,6 +128,90 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 (rg `-g`), `langs` (rg `-t`), `pattern` (constrains both legs to chunks containing it),
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
 `expand` (one LLM hop to bridge wording to identifiers) and `cursor` for the next page.
+
+## Follow a specification to code and back
+
+Repository Markdown and imported knowledge documents take different paths. An indexed
+`.md` file has a symbol for each heading. Outside fenced code blocks, a backticked
+identifier such as `enforce_quota` can create a `reads` edge from that section to a code
+definition when the name resolves uniquely in the same namespace. Ambiguous names and
+unsupported reference forms create no such edge. This is a recorded textual reference,
+not proof that the implementation satisfies the specification.
+
+Use an indexed repository, a token that may read it and the `coding`
+MCP toolset. Check the branch and indexed revision before comparing documents and implementation;
+editor changes are not indexed. The names below illustrate the call shapes: replace them
+with a section and definition returned from your repository, rather than expecting these
+example names to exist.
+
+1. Find the specification with `loom_code_search`, using the repository's `namespace`,
+   a question such as "where is request quota enforcement specified?", and
+   `path_prefix: "docs/"` when that directory is indexed. Read the returned section and
+   copy its exact `symbol` value.
+2. Follow that section's recorded references with `code.callees` through `loom_op`:
+
+   ```json
+   {
+     "op": "code.callees",
+     "arguments": {
+       "namespace": "code-myrepo",
+       "name": "docs.quotas::Quotas::Enforcement",
+       "edge_kinds": ["reads"],
+       "depth": 1,
+       "max_nodes": 20,
+       "explain": true
+     }
+   }
+   ```
+
+   Each returned `edges` item names its target in `to_symbol` and `to_symbol_id`;
+   `path` and `line` locate the reference in the document. Keep the edge's confidence
+   and any ambiguity or truncation warning. `explain` belongs inside `arguments` and
+   keeps the full result; ordinary MCP compaction can omit symbol IDs and a repeated
+   target name.
+
+3. Read the target and find documents that cite it with `code.symbol` through `loom_op`:
+
+   ```json
+   {
+     "op": "code.symbol",
+     "arguments": {
+       "namespace": "code-myrepo",
+       "name": "enforce_quota",
+       "include_body": true,
+       "explain": true
+     }
+   }
+   ```
+
+   Prefer the previous edge's `to_symbol_id` as `symbol_id` when selecting one exact
+   definition. `definitions` contains the implementation; `documented_in` lists up to
+   five citing sections with their `section`, `path` and `line`. Read those sections
+   before describing what they require. An absent link or an elided body does not prove
+   that documentation or implementation is absent. For more recorded references, use
+   `code.callers` with `edge_kinds: ["reads"]` and inspect the document paths among its
+   results.
+
+### Documents outside the repository
+
+An internal document synced into the repository's trunk code namespace is knowledge
+content, not a Markdown symbol in that branch's code graph. With a readable
+`X-Loom-Code-Scope: acme/code-myrepo` MCP connection, `loom_search` can retrieve the
+repository's documents alongside the caller's other content. It has no `namespace`
+argument: setting a namespace on a separate code call does not set this connection scope.
+A document source must be configured and synced; its worker needs
+`LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`. See [document sources](../knowledge.md#document-sources)
+and [search scope](../unified-search.md#which-namespaces-it-reads).
+
+Search for the symbol name and the behavior it implements, then inspect
+`structuredContent.knowledge.results`: the MCP text summary quotes only an excerpt.
+Preserve the returned `source_uri`, `section`, `revision` and any `locator` when
+citing the passage. A knowledge revision is not a Git commit. Repository tags group
+ordinary synced documents for retrieval; they do not create symbol edges or grant access.
+A retrieved passage that names a symbol still needs an explicit code lookup and a human
+or agent comparison. This workflow does not automatically join imported documents to
+symbols, verify their claims, or prove that a missing search result means no document
+exists. These call shapes are not captured output from a document/code qualification run.
 
 ## Structure and change
 

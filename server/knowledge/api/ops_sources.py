@@ -1,7 +1,8 @@
 """The `knowledge.source.*` operation declarations; their wire models are in
 `models_sources`. Each op is addressed by the namespace the source's documents
 live in, so the transport's namespace gate decides: readers list, inspect and
-parse links, the namespace's admins do the rest."""
+parse links; writers manage their connected sources, and shared sources require
+namespace administration inside the handler."""
 
 from __future__ import annotations
 
@@ -66,7 +67,7 @@ knowledge_source_add = Operation(
     output_model=KnowledgeSourceAddOutput,
     handler=handle_knowledge_source_add,
     idempotent=False,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
     audit_subject=source_add_audit_subject,
 )
@@ -77,7 +78,7 @@ knowledge_source_update = Operation(
     output_model=KnowledgeSourceUpdateOutput,
     handler=handle_knowledge_source_update,
     idempotent=False,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
     audit_subject=source_update_audit_subject,
 )
@@ -91,8 +92,7 @@ knowledge_source_parse_links = Operation(
     idempotent=True,
     required_role=Role.VIEWER,
 )
-# ADMIN although it writes nothing: the probe spends the source's rate limit
-# with the stored credential.
+# The owner may probe their connection; other callers need namespace administration.
 knowledge_source_check = Operation(
     name="knowledge.source.check",
     maturity="experimental",
@@ -100,7 +100,7 @@ knowledge_source_check = Operation(
     output_model=KnowledgeSourceCheckOutput,
     handler=handle_knowledge_source_check,
     idempotent=True,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
 )
 knowledge_source_rotate = Operation(
     name="knowledge.source.rotate",
@@ -120,7 +120,7 @@ knowledge_source_remove = Operation(
     output_model=KnowledgeSourceRemoveOutput,
     handler=handle_knowledge_source_remove,
     idempotent=False,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
 )
 knowledge_source_sync_now = Operation(
@@ -130,7 +130,7 @@ knowledge_source_sync_now = Operation(
     output_model=KnowledgeSourceSyncNowOutput,
     handler=handle_knowledge_source_sync_now,
     idempotent=True,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
 )
 

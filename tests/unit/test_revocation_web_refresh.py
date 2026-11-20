@@ -133,16 +133,28 @@ async def test_token_state_loads_each_at_boot_and_runs_each_loop(
         t.cancel()
 
 
-def test_lifespan_starts_the_token_state_and_cancels_it_at_shutdown() -> None:
-    src = (ROOT / "server" / "main.py").read_text()
-    lifespan = src[src.index("async def lifespan(") :]
-    assert "auth_loops = await boot.start_token_state()" in lifespan
-    assert (
-        "for loop in (*cell_loops, *auth_loops, overrides_loop):\n            loop.cancel()"
-        in lifespan
+@pytest.mark.asyncio
+async def test_lifespan_starts_the_token_state_and_cancels_it_at_shutdown(monkeypatch) -> None:
+    import ast
+
+    from server import boot, main
+    from server.code.app.index import mirrors
+    from server.core import retirement
+    from server.memory.app import embedder_calibration
+
+    tree = ast.parse((ROOT / "server" / "main.py").read_text())
+    lifespan = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan"
     )
-    # the decorator still sits on lifespan, not on the helper above it
-    assert "@asynccontextmanager\nasync def lifespan(" in src
+    calls = {ast.unparse(n.func) for n in ast.walk(lifespan) if isinstance(n, ast.Call)}
+    assert {"boot.start_token_state", "_stop_background"} <= calls
+    monkeypatch.setattr(mirrors, "stop_warmup", lambda: None)
+    monkeypatch.setattr(embedder_calibration, "stop_refresh_loop", lambda: None)
+    monkeypatch.setattr(boot, "cancel_boot_tasks", lambda: None)
+    task = retirement.get_gate().track(asyncio.create_task(asyncio.Event().wait()))
+    await main._stop_background(None)
+    await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled() and retirement.get_gate().closed
 
 
 @pytest.mark.asyncio

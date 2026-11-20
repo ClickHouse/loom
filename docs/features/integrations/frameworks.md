@@ -1,10 +1,9 @@
 # Agent frameworks and orchestrators
 
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
-interface. An adapter needs its framework: in Python, the SDK extra its section names
-(`pip install 'clickhouse-loom[langchain]'` and so on); in TypeScript, the framework
-package, an optional peer dependency. The LangGraph and Strands adapters import without
-their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
+interface. An adapter needs its framework: in Python, the SDK extra its section names;
+in TypeScript, the framework package, an optional peer dependency. The LangGraph and
+Strands adapters import without their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
 Loom's namespace authorization. Every adapter calls your Loom server through the SDK: the
 data is stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
@@ -36,6 +35,8 @@ or needs another database, vector store or cache.
 | Dify                           | Remember, Recall, Search knowledge              | `integrations/dify` standalone plugin                     | Native Dify tools                                                        |
 | Haystack                       | `LoomDocumentStore`, `LoomRetriever`            | Python, `loom.integrations.haystack`                      | `DocumentStore` protocol, retrieval component                            |
 | Agno                           | `LoomMemoryDb`                                  | Python, `loom.integrations.agno`                          | `BaseDb` user-memory methods                                             |
+| Langflow                       | Loom                                            | `integrations/langflow` custom component                  | Langflow `Component`                                                     |
+| DSPy                           | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.dspy`                          | a retriever callable returning `dspy.Prediction`, `dspy.Tool`            |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -46,7 +47,7 @@ see [agent integration](../../guides/agent-integration.md) and
 `LoomKnowledgeRetriever` searches the namespace's documents (`knowledge.search`) and
 `LoomMemoryRetriever` its memories (`memory.search`). Both are LangChain `BaseRetriever`s,
 so they work with `invoke`, in a chain, and as an agent tool through
-`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]'`
+`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]==1.3.0'`
 (`langchain-core` 1.x).
 
 ```python
@@ -61,6 +62,15 @@ async with Agent(org="acme", namespace="support") as agent:
 ```
 
 `invoke` needs a `SyncAgent`; `ainvoke` takes an `Agent` or a `SyncAgent`.
+
+The Python retrievers retain their bound and ambient `SessionProtection` contributors at
+construction and on each callback, including after client rebinding and across worker
+threads. When the caller enters `family.automatic()`, retained protection also guards
+automatic retrieval; without that context, direct retrieval and retriever tools stay
+explicit and observe responses. A mirrored result marks all retained families before
+documents return. A failed durable mark withholds the documents, and a marked family
+blocks later automatic retrieval. Use separate retrievers for independent conversation
+families.
 
 | Retriever                | `page_content`  | `id`                                                                                | `metadata`                                                                                        |
 | ------------------------ | --------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -81,9 +91,11 @@ async with Agent(org="acme", namespace="support") as agent:
 A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` (below)
 as its `store` for long-term memory.
 
-The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` (an optional peer
-dependency, 1.x) and take the same options in camelCase, with the memory retriever's
-user, session, run and agent in one `scope`:
+Install the TypeScript SDK and its framework peer with
+`npm install @clickhouse/loom@1.3.0 '@langchain/core@^1.0.0'`.
+The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` and take the same
+options in camelCase, with the memory retriever's user, session, run and agent in one
+`scope`:
 
 ```ts
 import {
@@ -102,7 +114,7 @@ const memories = await new LoomMemoryRetriever(agent, { scope: { userId: "alice"
 `LoomRetriever` searches the namespace's documents (`knowledge.search`) as a LlamaIndex
 `BaseRetriever`, for a query engine, a chat engine or a retriever tool. `LoomMemoryBlock`
 is a long-term memory block for LlamaIndex's `Memory`. Install with
-`pip install 'clickhouse-loom[llamaindex]'` (`llama-index-core` 0.14).
+`pip install 'clickhouse-loom[llamaindex]==1.3.0'` (`llama-index-core` 0.14).
 
 ```python
 from llama_index.core.memory import Memory
@@ -166,11 +178,21 @@ was opened on; an `Agent` serves `aget` and `aput` on its own loop. `Memory` kee
 short-term messages in its own chat store (in process by default); only what the block
 receives reaches Loom.
 
+Wrap automatic callbacks in the application's `SessionProtection.automatic()` scope.
+The retriever and memory block retain the families bound at construction and contributed
+by earlier callbacks, including across client rebinding and sync worker threads. A
+mirrored recall marks those families before returning. Later automatic calls refuse
+protected work; explicit calls keep their response observers without becoming automatic.
+`aflush` retains each Loom block's contributors before reading the native buffer. A
+refused flush raises and leaves that window active for retry, without archiving it or
+acknowledging an unsent extraction. The native framework owns its overflow archival;
+`aflush` does not roll it back.
+
 ## Haystack
 
 `LoomDocumentStore` implements Haystack 3.5's `DocumentStore` protocol, and
 `LoomRetriever` is a native retrieval component over Loom knowledge search. Install
-`pip install 'clickhouse-loom[haystack]'` (`haystack-ai>=3.5,<3.6`).
+`pip install 'clickhouse-loom[haystack]==1.3.0'` (`haystack-ai>=3.5,<3.6`).
 
 ```python
 from haystack import Document, Pipeline
@@ -221,6 +243,66 @@ pipeline containing this adapter requires the application to trust the installed
 does not change that policy or register trust automatically. A pipeline constructed
 directly from the imported component works as in the example.
 
+## DSPy
+
+`LoomKnowledgeRetriever` searches the namespace's documents (`knowledge.search`) and
+`LoomMemoryRetriever` its memories (`memory.search`). Each is a retriever callable, the
+shape of DSPy's own `dspy.retrievers.Embeddings`: a program calls it in `forward` and gets
+a `dspy.Prediction` whose `passages` are the texts, with `sources`, `scores` and
+`metadata` in the same order, so the program can cite what it used. `as_tool()` hands the
+same search to `dspy.ReAct`. From the root of the Loom checkout that supplies this
+guide, install with `pip install './sdk/python[dspy]'` (`dspy` 3.5.x).
+
+```python
+import dspy
+from loom import SyncAgent
+from loom.integrations.dspy import LoomKnowledgeRetriever, LoomMemoryRetriever
+
+
+class Answer(dspy.Module):
+    def __init__(self, search: LoomKnowledgeRetriever) -> None:
+        super().__init__()
+        self.search = search
+        self.respond = dspy.ChainOfThought("context, question -> answer")
+
+    def forward(self, question: str) -> dspy.Prediction:
+        found = self.search(question)
+        return self.respond(context=found.passages, question=question)
+
+
+with SyncAgent(org="acme", namespace="support") as agent:
+    answer = Answer(LoomKnowledgeRetriever(agent, k=3))(question="Do annual plans refund?")
+    react = dspy.ReAct(
+        "question -> answer",
+        tools=[LoomMemoryRetriever(agent, user_id="alice").as_tool()],
+    )
+```
+
+A call needs a `SyncAgent`; `await retriever.acall(query)` takes an `Agent` or a
+`SyncAgent`. Pass `k=` to a call to override the retriever's own for that search.
+
+The adapter does not use `dspy.configure(rm=...)` and `dspy.Retrieve`: DSPy 3.5's
+`Retrieve` keeps only each passage's `long_text`, so the sources would be lost, and its
+own retrievers (`dspy.retrievers.Embeddings`) are plain callables that a program calls or
+hands to `dspy.ReAct` as a tool.
+
+| Retriever                | passage         | source                                 | `metadata`                                                                                        |
+| ------------------------ | --------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>` | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`                           |
+| `LoomMemoryRetriever`    | the memory text | `<namespace>/<memory_key>`             | `namespace`, `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
+
+`scores` is each hit's similarity, rounded to four places. The retrievers take the same
+search fields as the LangChain retrievers above (`k`, default 3, `search_tags`,
+`uri_prefix`, `namespace_scope`, `search_kwargs`; `memory_type`, `user_id`, `session_id`,
+`run_id`, `agent_id`, `honour_abstain`). When Loom abstains, `LoomMemoryRetriever`
+returns no passages unless `honour_abstain=False`. A search error is raised, not turned
+into an empty result. Session protection works as for the LangChain retrievers.
+
+`as_tool()` returns a `dspy.Tool` named `loom_search_documents` or
+`loom_search_memories` (pass `name=` to rename it) that returns one `[source] passage`
+line per hit. With a `SyncAgent` the tool is sync; with an `Agent` it is async, for
+`dspy.ReAct`'s `acall`.
+
 ## OpenAI Agents SDK
 
 `loom_tools` returns Loom's agent verbs as the OpenAI Agents SDK's `FunctionTool`s, so the
@@ -258,6 +340,18 @@ extends the conversation history of one session there. Every process whose Loom 
 the same name reads the same Python history for the same session id and user, and a
 handoff between agents of one run keeps it. Python and TypeScript histories are separate
 because the frameworks use different item formats.
+
+Bind the application's existing protection family before constructing either
+native session. The instance retains constructor and callback client families,
+including after rebinding. Python also retains contributors active in the
+callback's context. Use one instance per logical conversation family; restore it
+with the same application-owned protection capsule. The native user and session
+ids select history, without establishing protection authority. History reads and
+additions are automatic work: a marked reply protects every contributor before
+returning and suppresses later automatic calls. An initial complete history reply
+may return; follow-up pages, hydration and batch writes stop. Explicit pop, clear
+and model-selected tools remain available, with reply observation retained for the
+session's manual deletions.
 
 ```python
 from loom.integrations.openai_agents import LoomSession
@@ -327,7 +421,7 @@ const result = await run(assistant, "Book my usual seat to Lisbon", { session })
 agents share the namespace's memory. Set it on the `Crew`, not on an `Agent`: when CrewAI
 copies a crew (`kickoff_for_each`, `train`, `test`) it rebuilds each agent's memory as its
 own `Memory`, with a local store, and keeps only the crew's. Install with
-`pip install 'clickhouse-loom[crewai]'` (`crewai` 1.15, Python 3.11 to 3.13).
+`pip install 'clickhouse-loom[crewai]==1.3.0'` (`crewai` 1.15, Python 3.11 to 3.13).
 
 ```python
 from crewai import Crew
@@ -338,6 +432,14 @@ with SyncAgent(org="acme", namespace="research") as agent:
     crew = Crew(agents=[...], tasks=[...], memory=LoomCrewMemory(agent=agent))
     crew.kickoff()
 ```
+
+Use one `LoomCrewMemory` per conversation, bound to that conversation's logical session
+family. Constructor and callback contributors remain bound after client rebinding,
+including contributors seen by `extract_memories`. Inside an application-owned automatic
+scope, protected contributors refuse recall and capture before HTTP. Recalled protection
+is observed before matches return to the crew. Native memory tools called outside an
+automatic scope remain explicit. `user_id` and the native `private` flag do not select
+session protection.
 
 | A crew run asks memory to                               | Loom                                                                                                                 |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -373,7 +475,7 @@ restores that, with a local store.
 
 `LoomMemory` implements AutoGen's `Memory` protocol (`autogen_core.memory`), which an
 `AssistantAgent` takes as `memory=[...]`. Install with
-`pip install 'clickhouse-loom[autogen]' autogen-agentchat` (`autogen-core` 0.7;
+`pip install 'clickhouse-loom[autogen]==1.3.0' autogen-agentchat` (`autogen-core` 0.7;
 `AssistantAgent` comes from `autogen-agentchat`, which the extra does not install).
 
 ```python
@@ -409,6 +511,14 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 An `AssistantAgent` holding a `LoomMemory` cannot be dumped with `dump_component`: the Loom
 agent and its credential are not component config.
 
+Bind one memory instance per conversation to its application-owned `SessionProtection`
+family. Constructor and callback contributors remain bound across context exit and
+client rebinding. `update_context` snapshots them before awaiting native messages and
+runs as automatic work. A marked recall is durably observed before system-message
+injection; later automatic work stops. Direct `query` and `add` remain explicit unless
+their caller owns automatic work, while their responses still observe known families.
+Native user and session ids do not select protection.
+
 ## AG2
 
 An AG2 1.3 agent gets context through assembly policies, which run before each model call,
@@ -416,7 +526,7 @@ and acts through tools. `LoomRecallPolicy` is a policy that adds the Loom memori
 the latest user message to the prompt, and `loom_tools` returns Loom's agent verbs as AG2
 tools, the same `AgentTools` as the [OpenAI Agents SDK](#openai-agents-sdk) adapter, so the
 model writes memories with `loom_remember`. Install with
-`pip install 'clickhouse-loom[ag2]'` (`ag2` 1.3).
+`pip install --upgrade --pre 'clickhouse-loom[ag2]'` (`ag2` 1.3).
 
 ```python
 from ag2 import Agent as AG2Agent, Middleware
@@ -455,12 +565,23 @@ trimming policy (`SlidingWindowPolicy`, `TokenBudgetPolicy`), which can cut the 
 request out of the events the policy reads. Those policies trim events, not the prompt, so
 `top_k` is what bounds the memory block.
 
+Use one recall policy per conversation, with its Loom client bound to the
+application-owned `SessionProtection` family. The policy retains constructor and
+callback contributors across context exit and client rebinding. Native user and session
+ids do not select protection. A protected contributor stops automatic recall with
+`AutomaticCaptureSuppressed` before dispatch. A marked recall is durably observed before
+its content reaches the current prompt; later automatic recalls stop. Model-selected
+`loom_tools` calls remain explicit operations.
+
+Find more projects using AG2 in [Build with AG2](https://github.com/ag2ai/build-with-ag2).
+
 ## Microsoft Agent Framework
 
 `LoomContextProvider` implements Agent Framework's `ContextProvider`, which an `Agent`
 takes in `context_providers=[...]`: before each run it adds the Loom memories that match
 the user's input to the run's instructions, and after the run it sends the turn's text to
-Loom, which extracts the facts. Install with `pip install 'clickhouse-loom[agent-framework]'`
+Loom, which extracts the facts. Install with
+`pip install 'clickhouse-loom[agent-framework]==1.3.0'`
 (`agent-framework-core` 1.26.x). Agent Framework succeeds AutoGen; a new project
 uses this provider, and the [AutoGen](#autogen) memory stays for AutoGen projects.
 
@@ -497,6 +618,17 @@ Extraction runs under a Loom session derived from the user and the Agent Framewo
 (`maf-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and
 a caller may choose its session ids.
 
+With an application-owned `SessionProtection` bound to the Loom agent, use one
+provider per logical conversation family. The provider retains constructor and callback
+contributors, including ambient automatic contributors, across callbacks and client
+rebinding. Native user and session ids provide routing, not protection authority. The
+application reopens the same durable capsule when restoring a family.
+
+A first marked recall can reach the model after durable protection. Later automatic
+recall and extraction raise `AutomaticCaptureSuppressed`; a marked extraction response
+stops later batches. Suppression after the model answers fails the run without undoing
+that answer or any tool effects.
+
 | `LoomContextProvider` argument | Default  | Effect                                                                                                                                                                                      |
 | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`                        | required | the `loom.Agent` the provider calls; Agent Framework awaits its providers, so a `SyncAgent` is refused                                                                                      |
@@ -514,7 +646,7 @@ across conversations, and the application runs its commands. `AsyncLoomMemoryToo
 memory tool bases and run those commands against Loom: each file is a Loom document, so
 every agent of the namespace reads the same files, `knowledge.search` finds what they say,
 and the files stay in the Loom deployment. Install with
-`pip install 'clickhouse-loom[claude-memory]'` (`anthropic` 2.8.x).
+`pip install 'clickhouse-loom[claude-memory]==1.3.0'` (`anthropic` 2.11.x).
 
 ```python
 import anthropic
@@ -536,7 +668,8 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 
 In TypeScript, `loomMemoryTool(agent, { store }, extras)` returns the SDK's `betaMemoryTool`
 (with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an
-optional peer dependency, 1.8.x):
+optional peer dependency, 1.8.x or 1.11.x). Install the SDK and native peer with
+`npm install @clickhouse/loom@1.3.0 '@anthropic-ai/sdk@>=1.11.0 <1.12.0'`:
 
 ```ts
 import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
@@ -584,7 +717,7 @@ Give each user their own namespace when users must not read each other's files.
 `memory_service=`. ADK's own memory tools read it: `preload_memory` searches with the
 user's message before each model call and adds the matches to the prompt, and
 `load_memory` lets the model search. A callback saves each turn. Install with
-`pip install 'clickhouse-loom[google-adk]'` (`google-adk` 2.14.x).
+`pip install 'clickhouse-loom[google-adk]==1.3.0'` (`google-adk` 2.14.x).
 
 ```python
 from google.adk.agents import LlmAgent
@@ -634,6 +767,15 @@ makes a session id unique per user only. A search reads all of the user's memori
 namespace, from every session. Remaining result slots hold up to 100 knowledge documents shared by
 the app namespace; documents carry no fact-deletion id.
 
+The Python service retains the application-owned `SessionProtection` families present
+at construction and method entry. Use one service per logical session family; native
+app, user and session ids do not select protection. Inside `family.automatic()`, a
+protected contributor suppresses further content requests, including later extraction
+batches and the optional knowledge search. If that second search is suppressed after
+a marked memory result, the callback raises `AutomaticCaptureSuppressed` and returns
+no memory response. Calls outside automatic context remain explicit and observe
+responses through the retained families. Exact deletion remains a reference operation.
+
 | ADK                     | Loom                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `add_session_to_memory` | the text of the session's events, without the ones a rewind took back, sent to `memory.set_from_messages` (400 messages a call, the op's cap); Loom extracts the facts and resolves duplicates and conflicts. A session added again is extracted again, so a callback that runs every turn, as `after_agent_callback` does, saves that turn's events, as in the example                                                                                                                                                               |
@@ -655,7 +797,8 @@ sent, and neither is `custom_metadata` or an entry's `author` and `id`.
 | `key_prefix`                 | `adk`    | the prefix of `add_memory`'s keys; an empty one is refused                                     |
 
 The TypeScript service implements `@google/adk` 2.5's `BaseMemoryService` interface
-(`npm install @google/adk@~2.5`). It exposes `addSessionToMemory` and `searchMemory`;
+(`npm install @clickhouse/loom@1.3.0 @google/adk@~2.5`). It exposes
+`addSessionToMemory` and `searchMemory`;
 that interface has no individual-memory deletion or event-append method. Both SDKs
 use the same derived Loom session for the same user and ADK session id. TypeScript
 options are `appName`, `topK`, `honourAbstain` and `defer`, with the Python defaults.
@@ -696,7 +839,7 @@ extracted memories and searchable documents in the user's deployment.
 ## Agno
 
 `LoomMemoryDb` implements Agno 3.2's `BaseDb` user-memory methods for one user and
-store. Install `pip install 'clickhouse-loom[agno]'` (`agno>=3.2,<3.3`). Pass it to a
+store. Install `pip install 'clickhouse-loom[agno]==1.3.0'` (`agno>=3.2,<3.3`). Pass it to a
 `MemoryManager`; configure the agent's session database separately if needed.
 
 ```python
@@ -725,6 +868,13 @@ bound user; a different user is refused. Agno's manager defaults an omitted user
 Loom session include both user and store digests. Separate namespaces and restricted
 tokens remain the boundary for mutually untrusted applications.
 
+Bind one database per conversation to its application-owned `SessionProtection`
+family. Constructor and callback contributors remain bound across context exit and
+client rebinding. Automatic invocations join those retained contributors, so a protected
+family stops later automatic reads and writes before dispatch. Explicit database calls
+remain explicit after the automatic invocation ends, and every response still observes
+the known families. Native user and store ids do not select protection.
+
 The database implements single/bulk upsert, get, list, content/topic/agent/team filters,
 sorting, pagination, topic listing, statistics and deletion. Reads hydrate full values
 and page through the bound store. Filters and sorting run over those rows locally;
@@ -741,7 +891,7 @@ adapter makes no model call itself; its tests supply native memory objects direc
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
 agent verbs as a `FunctionToolset`, the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. Install with
-`pip install 'clickhouse-loom[pydantic-ai]' 'pydantic-ai-slim[anthropic]'` (`pydantic-ai-slim`
+`pip install 'clickhouse-loom[pydantic-ai]==1.3.0' 'pydantic-ai-slim[anthropic]'` (`pydantic-ai-slim`
 2.68 or a later 2.x, plus the extra for your model's provider).
 
 ```python
@@ -772,7 +922,8 @@ refuses a `SyncAgent`. Message history stays with the caller, who passes it to e
 `loomTools(agent, scope)` returns Loom's agent verbs as Mastra tools built with
 `createTool`, keyed by name as a Mastra `Agent` takes them: the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` 1.83.x is an
-optional peer dependency, and needs Node 22.13 or later.
+optional peer dependency, and needs Node 22.13 or later. Install with
+`npm install @clickhouse/loom@1.3.0 '@mastra/core@>=1.83.0 <1.84.0'`.
 
 ```ts
 import { Agent as MastraAgent } from "@mastra/core/agent";
@@ -789,7 +940,10 @@ const assistant = new MastraAgent({
 
 `LoomMemoryStorage` implements the native `MemoryStorage` domain. It keeps mutable
 threads, complete message payloads and resource working memory in Loom through the SDK.
-Install `@mastra/core` 1.83.x and `@mastra/memory` alongside `@clickhouse/loom`:
+For native storage, also run `npm install @mastra/memory@1.41.1`.
+
+For automatic native memory, the app supplies `conversationCapture`, a `SessionCapture`
+restored for the complete logical conversation family:
 
 ```ts
 import { MastraCompositeStore } from "@mastra/core/storage";
@@ -800,7 +954,11 @@ const memory = new Memory({
   storage: new MastraCompositeStore({
     id: "loom",
     domains: {
-      memory: new LoomMemoryStorage(agent, { resourceId: "alice", storeId: "assistant" }),
+      memory: new LoomMemoryStorage(agent, {
+        resourceId: "alice",
+        storeId: "assistant",
+        capture: conversationCapture,
+      }),
     },
   }),
   options: {
@@ -818,6 +976,20 @@ resource argument remain scoped to that bound user. Cross-resource writes are re
 cross-resource reads return missing or empty results. Keep the same Loom agent and
 `storeId` across processes to resume the same data. A store must not be shared across
 users, and resource reassignment is unsupported.
+
+With `capture`, construct a separate storage and `Memory` instance for each complete
+conversation family. Keep its durable protection state across reconnects and restarts;
+resource, store and thread IDs identify rows and do not restore protection authority.
+The adapter retains the supplied capture and the client's contributing families before
+asynchronous work. A marked recall returns only after every contributing family commits
+protection. Later automatic callbacks raise `AutomaticCaptureSuppressed`, including
+batch continuation, conditional-update retries and pending thread timestamp updates.
+A marked write also refuses the callback, so a failed batch can leave earlier writes
+stored. The refusal propagates through native `Memory` methods.
+
+Omit `capture` only for explicitly owned CRUD. Those calls retain response observers
+without becoming automatic. Model-selected `loomTools` calls remain explicit. The
+adapter does not supply durable protection storage or create a conversation family.
 
 Native listing supports thread/resource filters, date and metadata filters, ordering,
 pagination and included message context across that user's threads. Lists scan the
@@ -859,7 +1031,8 @@ goes on.
 `loomTools(agent, scope)` returns Loom's agent verbs as an AI SDK `ToolSet`, the record
 `generateText`, `streamText` and the SDK's agents take as `tools`: the same `AgentTools` as
 the [OpenAI Agents SDK](#openai-agents-sdk) adapter. `ai` 7.x is an optional peer
-dependency, and needs Node 22.12 or later (the package is ESM-only).
+dependency, and needs Node 22.12 or later (the package is ESM-only). Install with
+`npm install @clickhouse/loom@1.3.0 'ai@>=7.0.0 <8.0.0'`.
 
 ```ts
 import { generateText, stepCountIs } from "ai";
@@ -925,6 +1098,15 @@ The [MCP/OpenAPI setup](mcp-clients.md#hosted-builders-and-chat-apps) also works
 the package.
 
 ## LangGraph
+
+A store retains application-owned constructor and callback conversation contributors
+across client rebinding. Bind complete contributor authority before construction and
+use one store per logical conversation family; restore that family's existing capsule.
+An existing automatic SDK context makes only that invocation automatic, with every
+retained family checked before dispatch. Direct calls and model-selected tools remain
+explicit, including after an automatic invocation ends. All calls retain response
+observation, so a marked or malformed reply protects earlier contributors before
+returning or refusing. Namespace, thread and user ids supply no protection authority.
 
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
 every graph node reaches it through `get_store()`.
@@ -1050,7 +1232,10 @@ async with Agent(org="acme", namespace="support") as loom_agent:
     )
 ```
 
-Install with `pip install 'clickhouse-loom[pipecat]'` (`pipecat-ai` 1.16.x).
+Install with `pip install 'clickhouse-loom[pipecat]==1.3.0'` (`pipecat-ai` 1.16.x).
+
+The [text-only example](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/pipecat_text_memory.py)
+uses a canned reply and requires the application's existing trusted session pointer.
 
 | Pipecat                        | Loom                                                                                                                                                                                         |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1062,6 +1247,18 @@ Extraction runs under a Loom session derived from the user and the service's `se
 and a caller may choose its session ids. When `session_id` is omitted, the service mints one
 for its lifetime, so the turns of one call share a session.
 
+Bind the application's existing `SessionProtection` before creating the service, and
+use one service per logical conversation family. The service retains constructor and
+callback contributors before native processing awaits, including committed context
+frames whose capture happens later. Client rebinding cannot drop an earlier contributor.
+Native user and session ids provide routing, not protection authority.
+
+A first marked recall can enter the native context after durable protection. Later
+automatic recall and capture are suppressed while native frames keep flowing. Protection
+discards only the service's retry references and write tracking; it does not clear
+application-owned history or acknowledge unsent extraction. These controls do not declare
+fleet support or initialize a capsule during restore.
+
 | `LoomMemoryService` argument | Default  | Effect                                                                                                                                                                                      |
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`                      | required | the `loom.Agent` the processors call; Pipecat awaits its processors, so a `SyncAgent` is refused                                                                                            |
@@ -1070,6 +1267,18 @@ for its lifetime, so the turns of one call share a session.
 | `top_k`                      | 5        | memories per turn, from 1 to 500                                                                                                                                                            |
 | `honour_abstain`             | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                                                           |
 | `defer`                      | `True`   | queue the extraction on the server instead of waiting                                                                                                                                       |
+
+## Langflow
+
+The [Loom Langflow component](../../../integrations/langflow/README.md) saves a memory,
+searches memories, and searches knowledge documents from a Langflow flow. It is a
+Langflow `Component` with typed inputs for the namespace, the user, and the query, plus
+an action dropdown (`save`, `search memory`, `search documents`). Install
+`clickhouse-loom` in Langflow's Python environment and load
+`integrations/langflow/loom_component.py` as a custom component. The component
+constructs a `SyncAgent` and calls `memory.set`, `memory.search`, or `knowledge.search`;
+the user input is `user_id` on the memory write and search. Knowledge search is
+namespace-scoped. Data stays in your Loom deployment; the component adds no store.
 
 ## Agent orchestrators
 

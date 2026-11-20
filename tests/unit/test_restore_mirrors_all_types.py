@@ -12,10 +12,12 @@ stays fail-open. CH-free.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from server.core import leases
 from server.memory import store as memory_repo
 from server.memory.api.models_crud import MemoryRestoreInput
 from server.memory.app import handlers as mem_handlers
@@ -24,9 +26,13 @@ from server.memory.app import restore as restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.domain.memory_types import is_searchable_type
 from server.memory.store import EMBEDDING_PERSISTED_COLS, MemoryRow
+from server.memory.store import key_write_lock as kl
 from server.observability.budget_shape import current_budget_shape, note_budget_shape
 from tests.unit.claims_fake import fake_key_locks
+from tests.unit.clock_fake import ManualClock
 from tests.unit.memory_store import stub_status_before
+
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
 
 _NOW = datetime.now(UTC).replace(tzinfo=None)
 _TYPES = ("episodic", "profile", "semantic")
@@ -35,7 +41,13 @@ _TYPES = ("episodic", "profile", "semantic")
 @pytest.fixture(autouse=True)
 def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
     # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
+    # Scheduling must not consume the fake, uncontended lease's admission budget.
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(kl, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(leases, "time", SimpleNamespace(monotonic=clock.monotonic))
     fake_key_locks(monkeypatch)
+    table = kl.key_write_locks.ch
+    monkeypatch.setattr(table, "now", lambda: clock.monotonic() + table.offset)
 
 
 @pytest.fixture(autouse=True)

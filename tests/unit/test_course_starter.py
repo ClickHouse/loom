@@ -50,9 +50,25 @@ def test_devcontainer_matches_the_root_one() -> None:
     }
 
 
-def test_start_script_is_the_root_one() -> None:
-    root = ROOT / ".devcontainer" / "start-loom.sh"
-    assert (STARTER / ".devcontainer" / "start-loom.sh").read_bytes() == root.read_bytes()
+@pytest.mark.parametrize(
+    "name",
+    [
+        "start-loom.sh",
+        "agent-cli/package.json",
+        "agent-cli/package-lock.json",
+        "agent-cli/bind-native.cjs",
+    ],
+)
+def test_start_script_is_the_root_one(name: str) -> None:
+    root = ROOT / ".devcontainer" / name
+    assert (STARTER / ".devcontainer" / name).read_bytes() == root.read_bytes()
+
+
+def test_copied_native_binding_helper_matches_the_installer() -> None:
+    helper = ROOT / "scripts" / "code-toolchains" / "bind-native.cjs"
+    assert (
+        ROOT / ".devcontainer" / "agent-cli" / "bind-native.cjs"
+    ).read_bytes() == helper.read_bytes()
 
 
 def test_workflow_actions_are_pinned_to_commits() -> None:

@@ -775,7 +775,9 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     """Repository jobs run without the sandbox: an operator's repositories still
     get their build-based tiers, which execute the repository's code on this
     host; self-registered ones get none, are not fetched over the network, and
-    adding one is refused."""
+    adding one is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the last
+    two, and the warning stays: their git jobs then reach the remote with
+    nothing vetting its address."""
     if not settings.code_ingest_enabled:
         return []
     problems = _layout_problems(state)
@@ -795,6 +797,17 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
                 source="runtime",
             ),
         ]
+    self_registered = (
+        "self-registered repositories get no build tier, those with a network remote are "
+        "not cloned or fetched, and adding one from the page is refused."
+    )
+    if settings.code_self_service_git_unsandboxed:
+        self_registered = (
+            "self-registered repositories get no build tier, and those with a network "
+            "remote no compiler tier at all: LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lets "
+            "platform admins add them and runs their clone and fetch as plain processes, "
+            "which reach the remote with no egress proxy vetting its address."
+        )
     return [
         *problems,
         Problem(
@@ -802,13 +815,35 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "warn",
             "Repository jobs (clone, fetch, dependency installs, compiler tiers) run "
             "unsandboxed: operator repositories' build tiers execute repository code on "
-            "this host; self-registered repositories get no build tier, those with a "
-            "network remote are not cloned or fetched, and adding one from the page is "
-            "refused.",
+            f"this host; {self_registered}",
             f"{_SANDBOX_FIX} Where the sandbox cannot run, list the repositories you trust "
             f"in LOOM_CODE_REPOS_JSON — {_SANDBOX_DOCS}.",
             source="runtime",
         ),
+    ]
+
+
+def _git_proxy_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """LOOM_CODE_GIT_PROXY_URL on a host that runs repository jobs in the sandbox: the
+    sandbox's network does not go through that proxy, so every network git job is
+    refused (`server.code.app.index.git_proxy`). Unknown before the probe."""
+    if not (settings.code_intel_enabled and settings.code_git_proxy_url):
+        return []
+    if state.repo_sandbox is not True:
+        return []
+    return [
+        Problem(
+            "repo_git_proxy_sandboxed",
+            "error",
+            "The code index's network git (clone, fetch, ls-remote, submodule update) is "
+            "refused: LOOM_CODE_GIT_PROXY_URL is set and this host runs repository jobs in "
+            "the sandbox, whose network does not go through that proxy.",
+            "The two are not used together: unset LOOM_CODE_GIT_PROXY_URL, or run this host "
+            "without the repository-job sandbox (its container profile and "
+            "LOOM_CODE_SANDBOX_REQUIRED) — 'Git through a forward proxy' in "
+            "docs/operations/code-index-operations.md.",
+            source="runtime",
+        )
     ]
 
 
@@ -935,8 +970,9 @@ def _participant_problems(state: HealthState) -> list[Problem]:
             f"A provider reconfiguration would wait on these participants: {ids}. "
             "`heartbeat_expired` ones stopped heartbeating (they may be paused), "
             "and `queries_running` ones did so with a query still running.",
-            "Once a participant's process is confirmed stopped, retire it with "
-            "`loom participant retire --participant <id> --yes`.",
+            "On its trusted host, verify exact physical death and settled queries with "
+            "`loom participant retire --participant <id>`. Expiry or a deleted pod "
+            "object does not prove death.",
             source="runtime",
         )
     ]
@@ -1036,6 +1072,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _otel_problems(settings, st)
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
+        + _git_proxy_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _analysis_problems(settings, st)
         + _assistant_problems(settings, st)

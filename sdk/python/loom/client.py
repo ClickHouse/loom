@@ -677,6 +677,33 @@ class ConflictsOps:
         )
 
 
+class ConnectionOps:
+    """The `connection.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def disconnect(
+        self, body: _ops.ConnectionDisconnectBody | None = None, /, **options: Any
+    ) -> _ops.ConnectionDisconnectOutput:
+        """`connection.disconnect`."""
+        return cast(
+            "_ops.ConnectionDisconnectOutput",
+            await self._agent.call("connection.disconnect", body, **options),
+        )
+
+    async def list(
+        self, body: _ops.ConnectionListBody | None = None, /, **options: Any
+    ) -> _ops.ConnectionListOutput:
+        """`connection.list`."""
+        return cast(
+            "_ops.ConnectionListOutput", await self._agent.call("connection.list", body, **options)
+        )
+
+
 class ConsolidationsOps:
     """The `consolidations.*` operations."""
 
@@ -3527,6 +3554,7 @@ class OpsClient:
         self.code = CodeOps(agent)
         self.collection = CollectionOps(agent)
         self.conflicts = ConflictsOps(agent)
+        self.connection = ConnectionOps(agent)
         self.consolidations = ConsolidationsOps(agent)
         self.context = ContextOps(agent)
         self.conversation = ConversationOps(agent)

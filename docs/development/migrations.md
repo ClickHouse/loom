@@ -157,20 +157,56 @@ operator step ([release process](./release-process.md#release-notes)).
 edited once merged, and every `CREATE`, `ALTER` or `DROP` of a table names
 `loom.<table>`, except a rename's new name, where Postgres takes no schema
 (`tests/unit/test_storage_layout_rows.py`). A boot applies them under a Postgres
-advisory lock, each file in one transaction with its ledger row. A migration waits at
+advisory lock, each ordinary file in one transaction with its ledger row. A migration waits at
 most 5 s for a table lock (`lock_timeout`, then retried), so an `ALTER` never queues
 every query of the table behind a long transaction. A build serves a ledger that holds a
 later build's files, with a warning naming them; a ledger file it does not carry
 numbered at or below its own last file, or one whose checksum changed, refuses the boot.
 
-Every file runs in one transaction, so a migration builds no index on a large table: the
-build would hold off the table's writes, every commit answering 503, until it ends. Such
-an index needs `CREATE INDEX CONCURRENTLY` outside a transaction, and a boot waiting on
-the advisory lock deadlocks with it (a waiting session holds a snapshot the build waits
-out): a change that adds such a file also takes the lock by retrying
-`pg_try_advisory_lock`. When the first release that writes a table carries the file, the
-table is small wherever the file runs, and its index may be built in the file's
-transaction (`010_revision_delivered_at.sql`).
+Ordinary files run in one transaction, so they build no index on a table that
+already ships: a transactional build blocks writes until it ends. An index on a
+table introduced by the same release may be transactional because that table is
+small wherever the file runs (`010_revision_delivered_at.sql`).
+
+For an existing table, the shared Postgres runner accepts only this online file
+form, in either the cell or router journal:
+
+```sql
+-- loom:online-index loom_router.placements_by_cell_org ON loom_router.placements (cell, org)
+CREATE INDEX CONCURRENTLY placements_by_cell_org ON loom_router.placements
+USING btree (cell COLLATE "C", org COLLATE "C");
+```
+
+The declaration and statement must name the same schema, table, index and ordered
+columns. Only ordinary identifiers, a non-unique btree and C collations are
+accepted. Expressions, predicates, included columns and additional statements
+are refused before the ledger changes. This is not a general escape from
+transactional migrations.
+
+The runner takes session advisory locks by retrying `pg_try_advisory_lock`, with
+no transaction or snapshot between attempts. It releases the ordinary migration
+key before acquiring a separate schema-scoped online-index key and running
+concurrent DDL. A shipped blocking migrator can therefore finish its unchanged
+journal while the index waits for old snapshots. After the build finishes, the
+runner reacquires the ordinary key, records the file's checksum in the existing
+ledger and commits a WAL-message fence. Later files wait for this ledger entry.
+
+Catalog validation checks the table, ordered columns and collations, btree
+method, absence of constraints and expressions, and valid/ready state. A
+matching incomplete index is dropped concurrently and rebuilt; a different
+same-named object refuses without being dropped. A recorded but absent or
+invalid index refuses as corruption. Even when every file is recorded, a build
+carrying an online file validates its index and acknowledges a fresh WAL fence:
+a primary-visible ledger row after a cancelled synchronous COMMIT is insufficient.
+An interrupted build, drop or ledger write is retried from catalogs and the
+existing ledger, without a separate job table. Cancellation terminates the
+migration session before asyncpg can wait indefinitely on rollback.
+
+The router's dedicated migration connection has no statement timeout; its
+serving pool retains its statement limit. The runner preserves a borrowed
+connection's statement budget, including a stopped restore command's deadline.
+Concurrent DDL retains the five-second lock timeout and can be interrupted and
+retried without changing the file checksum.
 
 ## Schema dump and check
 

@@ -158,7 +158,7 @@ def test_the_accessors_refuse_until_the_registry_is_read(monkeypatch) -> None:
         org_readable=True,
     )
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    monkeypatch.setattr(repos, "_configured_from_env", lambda: [entry])
+    monkeypatch.setattr(repos, "_configured_from_env", lambda _config, _errors: [entry])
     monkeypatch.setattr(repos, "registry_repos", lambda: [])
     monkeypatch.setattr(repos, "_registry_loaded", False)
     with pytest.raises(repos.RegistryUnread):
@@ -289,11 +289,11 @@ async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unrea
     monkeypatch,
 ) -> None:
     from contextlib import asynccontextmanager
-    from types import SimpleNamespace
 
     from server.knowledge.app import source_sync
+    from server.knowledge.domain.sources import KnowledgeSource
 
-    src = SimpleNamespace(org="o", namespace="code-x", name="docs", access="namespace")
+    src = KnowledgeSource("o", "code-x", "docs", "gdrive", "source-id")
     retired: list[str] = []
 
     async def active() -> list[object]:

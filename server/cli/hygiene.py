@@ -312,6 +312,7 @@ async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     import server.operations  # noqa: F401 — wires handlers before importing one
+    from server.auth.authz import identity_write
     from server.identity.api.models import NamespaceRegisterInput
     from server.identity.app.namespace import registry_row
     from server.identity.app.namespace_autoregister import (
@@ -370,7 +371,8 @@ async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
     for row in batch:
         row["updated_at"] = AUTO_ROW_VERSION  # an explicit row always wins
     for i in range(0, len(batch), 500):
-        await ch.insert("loom.namespaces", batch[i : i + 500])
+        with identity_write():
+            await ch.insert("loom.namespaces", batch[i : i + 500])
     print(f"adopted {len(batch)} namespace(s); retention_days=0 on every row, no TTL altered")
     return 0
 

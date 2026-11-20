@@ -449,7 +449,16 @@ class Rehearsal:
             return tag
         self.distro_images.add(tag)
         dockerfile = f"FROM {distro}\nRUN {PREPARE[distro]}\n"
-        run("docker", "build", "-q", "-t", tag, "-", input=dockerfile, capture_output=True)
+        run(
+            "docker",
+            "build",
+            "--progress=plain",
+            "-t",
+            tag,
+            "-",
+            input=dockerfile,
+            capture_output=True,
+        )
         remove_on_exit(self.cleanup, "rmi", tag)
         return tag
 

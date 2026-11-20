@@ -18,6 +18,7 @@ class _Driver:
         self.error: BaseException | None = None
         self.entered = asyncio.Event()
         self.release: asyncio.Event | None = None
+        self.closed = False
 
     async def query(self, sql: str, *, parameters: Any, settings: Any, **kwargs: Any) -> Any:
         self.calls.append((sql, dict(settings), kwargs))
@@ -33,12 +34,28 @@ class _Driver:
         if self.error is not None:
             raise self.error
 
+    async def close(self) -> None:
+        self.closed = True
+
+    def _force_close(self) -> None:
+        self.closed = True
+
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> ch.CHClient:
     monkeypatch.setattr(ch.settings, "ch_reader_user", "read_only")
     connection = ch.CHClient()
     connection._client = _Driver()  # type: ignore[assignment]
+    connection._connection_config = ch.connection_kwargs()
+    channels: list[_Driver] = []
+    connection.__dict__["proofs"] = channels
+
+    async def create(**_kwargs: Any) -> _Driver:
+        driver = _Driver()
+        channels.append(driver)
+        return driver
+
+    monkeypatch.setattr(ch.clickhouse_connect, "get_async_client", create)
     return connection
 
 
@@ -55,7 +72,7 @@ async def test_reads_and_writes_keep_one_checked_session_and_service_principal(c
     calls = client.client.calls
     assert "Authorization" in calls[0][2]["transport_settings"]
     assert "Authorization" in calls[-1][2]["transport_settings"]
-    proof = calls[1:-1]
+    proof = client.proofs[0].calls
     session_ids = {settings["session_id"] for _, settings, _ in proof}
     assert len(session_ids) == 1 and session_ids != {"replacement"}
     assert [settings["session_check"] for _, settings, _ in proof] == [0, 1, 1]
@@ -80,7 +97,7 @@ async def test_a_replaced_client_refuses_before_sending_another_query(
             client._client = _Driver()
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 2")
-    assert len(original.calls) == 1
+    assert original.calls == [] and len(client.proofs[0].calls) == 1
     if replacement == "driver":
         assert client.client.calls == []
 
@@ -93,14 +110,15 @@ async def test_a_network_failure_never_reconnects_or_reuses_a_negative_proof(
     monkeypatch.setattr(client, "_reconnect", reconnect)
     error = ConnectionResetError("connection reset")
     async with client.coordination_session():
-        client.client.error = error
+        driver = client._statement_client()
+        driver.error = error
         with pytest.raises(ConnectionResetError) as caught:
             await client.query_one("SELECT 2")
         assert caught.value is error
-        client.client.error = None
+        driver.error = None
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 3")
-    assert len(client.client.calls) == 2
+    assert len(driver.calls) == 2 and driver.closed
     reconnect.assert_not_awaited()
 
 
@@ -125,17 +143,18 @@ async def test_an_ordinary_read_retains_its_existing_network_retry(
 @pytest.mark.asyncio
 async def test_cancellation_invalidates_the_shared_proof_and_joins_the_query(client: Any) -> None:
     async with client.coordination_session():
-        client.client.release = asyncio.Event()
+        driver = client._statement_client()
+        driver.release = asyncio.Event()
         pending = asyncio.create_task(client.query_one("SELECT 2"))
-        await client.client.entered.wait()
+        await driver.entered.wait()
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending
         assert pending.done()
-        client.client.release = None
+        driver.release = None
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 3")
-    assert len(client.client.calls) == 2
+    assert len(driver.calls) == 2 and driver.closed
 
 
 @pytest.mark.asyncio
@@ -151,7 +170,7 @@ async def test_a_child_cannot_reuse_the_session_after_its_owner_exits(client: An
         pending = asyncio.create_task(later())
     release.set()
     await pending
-    assert len(client.client.calls) == 1
+    assert len(client.proofs[0].calls) == 1
 
 
 @pytest.mark.asyncio
@@ -190,21 +209,26 @@ async def test_concurrent_protocols_have_distinct_sessions_without_leaking_to_ot
 
     await asyncio.gather(proof(), proof())
     await client.query_one("SELECT 3")
-    calls = client.client.calls
-    sessions = [settings["session_id"] for _, settings, _ in calls[:-1]]
+    assert len(client.proofs) == 2 and all(driver.closed for driver in client.proofs)
+    sessions = [
+        settings["session_id"] for driver in client.proofs for _, settings, _ in driver.calls
+    ]
     assert len(set(sessions)) == 2 and all(sessions.count(value) == 2 for value in set(sessions))
-    assert "session_id" not in calls[-1][1]
+    assert len(client.client.calls) == 1 and "session_id" not in client.client.calls[0][1]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("same_client", [False, True])
 async def test_schema_refresh_stays_advisory_before_and_during_a_checked_session(
-    client: Any, monkeypatch: pytest.MonkeyPatch
+    client: Any, monkeypatch: pytest.MonkeyPatch, same_client: bool
 ) -> None:
     from server.core import ch_schema_guard
     from server.core.schema import status
 
-    metadata = ch.CHClient()
-    metadata._client = _Driver()  # type: ignore[assignment]
+    client._slots = asyncio.Semaphore(1)
+    metadata = client if same_client else ch.CHClient()
+    if not same_client:
+        metadata._client = _Driver()  # type: ignore[assignment]
     monkeypatch.setattr(ch, "get_client", lambda: metadata)
     monkeypatch.setattr(status, "_cache", {"at": 0, "value": None})
     cache = {"at": None, "tables": {}, "refreshing": False}
@@ -215,7 +239,7 @@ async def test_schema_refresh_stays_advisory_before_and_during_a_checked_session
         await client.query_one("SELECT 2")
     assert len(metadata.client.calls) == 2
     assert all("session_id" not in extra for _, extra, _ in metadata.client.calls)
-    assert [extra["session_check"] for _, extra, _ in client.client.calls] == [0, 1]
+    assert [extra["session_check"] for _, extra, _ in client.proofs[0].calls] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -231,7 +255,7 @@ async def test_preflight_refusal_invalidates_the_scope_without_sending(
             await client.query_one("SELECT 2")
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 3")
-    assert len(client.client.calls) == 1
+    assert len(client.proofs[0].calls) == 1
     refused.assert_awaited_once()
 
 
@@ -257,7 +281,7 @@ async def test_cancelled_pool_waiter_invalidates_the_scope_without_leaking_a_slo
         assert pending.done() and ch._POOL_IN_USE == before
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 3")
-    assert len(client.client.calls) == 1
+    assert len(client.proofs[0].calls) == 1
 
 
 @pytest.mark.asyncio
@@ -276,4 +300,4 @@ async def test_unsupported_operations_refuse_before_any_send_and_poison_the_scop
                 await other.insert("loom._migration_lock", [{"name": "test"}])
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 3")
-    assert len(client.client.calls) == 1 and other.client.calls == []
+    assert len(client.proofs[0].calls) == 1 and other.client.calls == []

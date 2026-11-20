@@ -1,0 +1,8 @@
+{
+  "name": "loom-github-pnpm",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "pnpm": "10.34.9"
+  }
+}

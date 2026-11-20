@@ -224,6 +224,12 @@ validates required arguments, and truncates past `maxResultChars` (`loom_recall`
 out its lowest-ranked memories whole to fit, counted in `omitted`). The schemas
 match the Python SDK's.
 
+`bot.tools(scope, { codeNamespace: "code-repo" })` offers the read-only
+`loom_code_lookup` first. `only: ["loom_code_lookup"]` selects just that tool; memory
+still uses the Agent's namespace. Code results remain valid JSON under `maxResultChars`
+with explicit omissions. See [code tools](../guides/code-tools.md) for request bounds,
+model guidance and uncertainty.
+
 ```ts
 const session = bot.session("thread-42", { userId: "u1", flushEvery: 8 });
 const { system, messages } = await session.resume({ query: "resume the billing migration" });

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from starlette.requests import Request
 
 import server.identity.app.claim_release as cr
 from server.settings import settings
@@ -70,8 +71,11 @@ def test_release_keeps_classification_and_every_other_column(
     fake = _FakeCH()
     monkeypatch.setattr(cr, "get_client", lambda: fake)
 
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
     out = asyncio.run(
-        cr.claim_release(cr.ClaimReleaseInput(org="acme", namespace="vault", reason="left"), None)  # type: ignore[arg-type]
+        cr.claim_release(
+            cr.ClaimReleaseInput(org="acme", namespace="vault", reason="left"), request
+        )
     )
     assert out.released and out.previous_owner == "Alice" and out.grants_revoked == 1
 

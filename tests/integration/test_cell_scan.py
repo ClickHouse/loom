@@ -17,11 +17,13 @@ from typing import Any
 
 import pytest
 
-from server.cli import cell_ch, cell_scan, cell_writers
-from server.cli.cell_ch import Refused
-from server.cli.cell_scan import Budget, Table, TableList
-from server.core import cell, ch_names, pg
+from server.cli import cell_scan, cell_writers
+from server.cli.cell_scan import Table, TableList
+from server.core import cell, cell_ch, ch_names, pg
+from server.core.cell_ch import Refused
+from server.core.cell_sync import Budget
 from server.core.ch import get_client
+from server.insights.store import cell_catalog
 from server.settings import settings
 from tests.integration._pg_database import own_database
 from tests.integration._resources import unique_org
@@ -166,7 +168,7 @@ async def test_the_postgres_scan_skips_through_the_org_index(own_pg: Any) -> Non
         ("Index Only Scan", "tenancy_pkey"),
         ("Index Only Scan", "tenancy_pkey"),
     ], scans
-    assert len(await cell_scan._pg_orgs("loom.tenancy", Budget(60))) == 20000
+    assert len(await cell_scan.pg_orgs("loom.tenancy", Budget(60))) == 20000
     # Every org-keyed table of the schema has the index the scan needs.
     names, refusals = await cell_scan.list_postgres(own_pg)
     assert refusals == []
@@ -287,12 +289,12 @@ async def test_grants_are_read_as_the_server_keeps_them(
         await ch.execute(f"GRANT {role} TO {users['writer']}")
         await ch.execute(f"SET DEFAULT ROLE NONE TO {users['writer']}")
         topology = await cell_ch.read_topology(ch)
-        every, _ = await cell_writers._host_grants(ch, topology, {}, "")
+        every, _ = await cell_catalog._host_grants(ch, topology, {}, "")
         (grants,) = every.values()
-        assert f"SELECT ON {schema}.*" in cell_writers.own_problems(
+        assert f"SELECT ON {schema}.*" in cell_catalog.own_problems(
             grants[users["narrow"]], topology, [schema]
         )
-        assert cell_writers.holds(grants[users["remote"]], "REMOTE"), grants[users["remote"]]
+        assert cell_catalog.holds(grants[users["remote"]], "REMOTE"), grants[users["remote"]]
         assert cell_writers.writer_reason(grants[users["writer"]], [schema]) == (
             f"holds INSERT on {schema}.*"
         )
@@ -516,7 +518,7 @@ async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pai
         created.remove(theirs)
         # Loom's own pair: the analyst's scope, and every other user reading every row, with
         # a scratch user standing in for the analyst.
-        monkeypatch.setattr(cell_writers, "ANALYST_USER", other)
+        monkeypatch.setattr(cell_catalog, "ANALYST_USER", other)
         for name, using, to in (
             (POLICY_NAME, "org = ''", other),
             (OTHERS_POLICY_NAME, "1", f"ALL EXCEPT {other}"),
@@ -527,7 +529,7 @@ async def test_a_row_policy_on_a_configured_table_refuses_unless_it_is_looms_pai
             )
             created.append(name)
         counted = await ch.query_one(f"SELECT count() AS n FROM {schema}.memory")
-        refusals = await cell_writers._row_policies(ch, topology, {}, own, cell_ch.databases())
+        refusals = await cell_catalog._row_policies(ch, topology, {}, own, cell_ch.databases())
     finally:
         for name in created:
             await ch.execute(f"DROP ROW POLICY IF EXISTS `{name}` ON {schema}.memory")

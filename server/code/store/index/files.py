@@ -223,22 +223,34 @@ class FilesMixin(CodeRepoBase):
         )
         return [(str(r["kind"]), int(r["start_line"]), int(r["end_line"])) for r in rows]
 
-    async def chunk_bodies_with_symbol(
-        self, org: str, ns: str, path: str, symbol_id: str, *, limit: int = 3
-    ) -> list[str]:
-        """The contents of the live chunks of `path` that carry `symbol_id`, in line
-        order, at most `limit`."""
-        rows = await self._ch.query_all(
+    async def source_chunks_for_span(
+        self, org: str, ns: str, path: str, start: int, end: int, embedding_model: str
+    ) -> list[dict[str, Any]]:
+        """Bounded live raw chunks overlapping a definition under one served label.
+
+        The extra row detects a capped read; the caller never treats it as complete.
+        """
+        return await self._ch.query_all(
             """
-            SELECT content FROM loom.code_chunks FINAL
+            SELECT DISTINCT start_line, end_line, content, kind
+            FROM loom.code_chunks FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
-              AND path = {path:String} AND has(symbol_ids, {sid:String})
+              AND path = {path:String}
+              AND embedding_model = {model:String}
+              AND start_line <= {end:UInt32} AND end_line >= {start:UInt32}
+              AND kind != 'class_skeleton'
               AND tombstoned_at IS NULL
-            ORDER BY start_line LIMIT {limit:UInt32}
+            ORDER BY start_line, end_line LIMIT 401
             """,
-            {"org": org, "ns": ns, "path": path, "sid": symbol_id, "limit": limit},
+            {
+                "org": org,
+                "ns": ns,
+                "path": path,
+                "start": start,
+                "end": end,
+                "model": embedding_model,
+            },
         )
-        return [str(r["content"]) for r in rows]
 
     async def innermost_chunk_at(self, org: str, ns: str, path: str, line: int) -> str | None:
         """The content of the tightest live chunk of `path` covering `line`; None when
@@ -368,7 +380,7 @@ class FilesMixin(CodeRepoBase):
         selects by the sort key's path component; 50 paths per statement."""
         out: dict[str, list[dict[str, Any]]] = {}
         wanted = list(dict.fromkeys(p for p in paths if p))
-        for i in range(0, len(wanted), 50):
+        for batch in _batched(wanted, 50):
             rows = await self._ch.query_all(
                 """
                 SELECT DISTINCT path, kind, scope, start_line, end_line
@@ -378,7 +390,7 @@ class FilesMixin(CodeRepoBase):
                 ORDER BY path, start_line
                 LIMIT 20000
                 """,
-                {"org": org, "ns": ns, "paths": wanted[i : i + 50]},
+                {"org": org, "ns": ns, "paths": batch},
             )
             for r in rows:
                 out.setdefault(str(r["path"]), []).append(

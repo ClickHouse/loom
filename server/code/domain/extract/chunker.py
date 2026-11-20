@@ -34,6 +34,7 @@ Ordinal 0 has no suffix.
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -149,7 +150,7 @@ def _split_oversized(
     piece floats context-free; `doc` is prepended to the first. Returns
     (text, start_line, end_line) tuples covering `content` in order.
     """
-    lines = content.splitlines(keepends=True)
+    lines = list(io.StringIO(content, newline="\n"))
     if not lines:
         return []
     prefix = f"{leader} … continued from {header.strip()[:160]}\n"
@@ -329,7 +330,7 @@ def _unit_node(pf: ParsedFile, start_line: int, end_line: int, kinds: set[str]) 
     root = getattr(tree, "root_node", None)
     if root is None:
         return None
-    text = pf.source.decode("utf-8", "replace").splitlines()
+    text = pf.source.decode("utf-8", "replace").split("\n")
     row = start_line - 1
     if row >= len(text):
         return None
@@ -493,7 +494,7 @@ def chunk_file(
     group are kept instead of dropped. 0 keeps every run its own chunk.
     """
     text = pf.source.decode("utf-8", "replace")
-    src_lines = text.splitlines(keepends=True)
+    src_lines = list(io.StringIO(text, newline="\n"))  # Parser coordinates count LF.
     leader = _COMMENT_LEADER.get(pf.lang, "//")
 
     if pf.tree is None:

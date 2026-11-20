@@ -462,11 +462,26 @@ the tokens they made are refused at once by the Loom process that took the
 request, and by every other process, on that replica or another, at its next
 revocation refresh (`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS`, 30 s by default).
 No process makes them a new token meanwhile: every mint reads revocations from
-ClickHouse. Set a long random token and restart:
+ClickHouse. On a standalone deployment, set a long random token and restart:
 
 ```bash
 LOOM_SCIM_TOKEN=$(openssl rand -hex 32)
 ```
+
+With `LOOM_CELL` set, generate a token for that exact cell name:
+
+```bash
+loom cell scim-token new --cell <name>
+```
+
+This runs offline and prints only the token. Keep it in the operator's secret
+store and set it as `LOOM_SCIM_TOKEN` and the provider application's bearer for
+that cell's host. A cell accepts only its own named tokens. Only the observed
+first cell also accepts existing unnamed tokens, so its rollout needs no forced
+rotation. A cell allows at most two configured entries, including duplicates.
+An unread first-cell identity answers 503 with `Retry-After`; `loom doctor`
+fails its SCIM check until it can read the identity. See [cell token
+policy](../architecture/cells.md#scim-and-sign-in-across-cells).
 
 Empty (the default) leaves SCIM off and its routes unmounted. Loom refuses to
 start with a token shorter than 32 characters, or with SCIM set while sign-in
@@ -479,8 +494,34 @@ comma-separated, and roll the replicas; set the new one at the provider; then
 remove the old one and roll again:
 
 ```bash
-LOOM_SCIM_TOKEN="$OLD_TOKEN,$(openssl rand -hex 32)"
+LOOM_SCIM_TOKEN="$OLD_TOKEN,$REPLACEMENT_TOKEN"
 ```
+
+Generate the replacement with the same command used for that deployment's
+initial token. Both entries on a cell must name that cell, except for unnamed
+tokens retained by its observed first cell.
+
+On an enforced cell with SCIM on, provision the person before sign-in: an active,
+undeleted SCIM row is required before JIT account lookup or creation. Assign the
+same people to the cell's sign-in and provisioning applications. Every active
+account contact is checked, including password contacts, but an unlinked password
+contact cannot prove that its account belongs to the person. Resolve stale or
+incorrect account contacts before enforcement. Personal service-account creators
+and all lineage subjects must qualify too; neither an admin role nor a minted token
+bypasses the rule. See [cell provisioning](../architecture/cells.md#scim-and-sign-in-across-cells)
+for the closed machine and signed-end-user exemptions.
+
+Missing provisioning and unsupported identity sizes refuse authentication or
+authorization. A complete decision supports at most 1,024 roots, subjects, lineage
+edges, accounts and emails per dimension, and 65,536 bytes for input, serialized
+parameters and transferred identity data. These are fixed security limits. Its
+complete deadline is at most 30 seconds, reduced by a smaller positive
+`LOOM_CH_TIMEOUT_READ_S`; zero does not disable this SCIM-specific bound. An unread
+store or deadline answers retryable 503 with `Retry-After: 5`. A refresh checks local
+provisioning before contacting the identity provider and puts its token back on an
+outage; logout remains available. These admission checks supplement the revocations
+below. The cache TTL alone is not the cross-process observation bound; the linked
+architecture describes the complete read budget.
 
 Loom keys a SCIM user on an email: of the request's `emails` entries with an
 address, the one marked primary, else the first work one, else the first; or
@@ -651,9 +692,10 @@ by hand. Reactivate at the provider first anyone who should keep Loom.
 ### Changing a person's email
 
 Loom keys a SCIM user on the address and refuses a change of it (400), so a
-new address must arrive as a new SCIM user. Until it does, a sign-in with the
-new address makes an account no SCIM user reaches, which the old address's
-deactivation misses. Change it before the person signs in with the new one:
+new address must arrive as a new SCIM user. An enforced cell with SCIM on refuses
+the address until it is provisioned. On a standalone deployment, an earlier sign-in
+with the address can make an account no SCIM user reaches, which the old address's
+deactivation misses. Change it before the person signs in with the address:
 
 1. Remove the person from the app at the provider. That deactivates the old
    address and revokes the accounts it reaches.

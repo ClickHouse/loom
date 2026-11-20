@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
+from server.code.app.repo_scope import session_repo_tag
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
 from server.core.errors import (
@@ -34,7 +35,6 @@ from server.observability.consumer import ASSISTANT_CONSUMER
 from server.observability.ledger import required_call_exit, run_id_of
 from server.operations.base import Operation
 from server.operations.toolsets import (
-    _MCP_HIDDEN_OPS,
     ASSISTANT_DROPPED_ARGS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
@@ -62,7 +62,7 @@ from server.transport.mcp_config import (
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
-from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal
+from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal, is_hidden
 from server.transport.mcp_outcome import (
     _emit_success,
     _handler_failed,
@@ -146,6 +146,27 @@ def _scope_arguments(
     if op_name == SEARCH_OP:
         coerce_search_arguments(arguments)
     apply_code_scope(op_name, arguments, current_code_scope())
+
+
+async def _tag_session_repository(op: Operation, arguments: dict[str, Any], auth: Any) -> None:
+    """A `memory.set` that carries no `repo:` tag takes the `repo:<id>` of the
+    connection's code scope (`session_repo_tag` says which repository), so a
+    memory the agent saves about the checkout can be linked to its code. An
+    explicit `repo:` tag, whichever repository it names, is the caller's and
+    stays; tags that are not a list of strings are left to validation."""
+    if op.name != "memory.set" or current_code_scope() is None:
+        return
+    tags = arguments.get("tags") or []
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        return
+    if any(t.startswith("repo:") for t in tags):
+        return
+    org = gates.resolve_org(op, arguments.get("org"), auth)
+    namespace = present(arguments.get("namespace"))
+    if not org or not namespace:
+        return
+    if tag := await session_repo_tag(org, namespace):
+        arguments["tags"] = [*tags, tag]
 
 
 # The op MCP serves as the `loom_search` tool.
@@ -269,7 +290,7 @@ async def _call_tool(
     target = await _authorize_call(req_id, op, input_obj, arguments, auth, request_id)
     if isinstance(target, dict):
         return target  # AUTH_INSUFFICIENT — nothing below (limiter, handler) runs
-    input_obj = gates.with_target(input_obj, target)
+    input_obj = gates.with_target(op, input_obj, target)
 
     # The resolved tenant the telemetry and post-handler rows name, as HTTP's
     # identity does after authorization.
@@ -514,7 +535,7 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    if op is None or (op.name in _MCP_HIDDEN_OPS and not allow_hidden):
+    if op is None or (is_hidden(op.name) and not allow_hidden):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.
@@ -639,6 +660,7 @@ async def _bind_caller_identity(
         filled_ns = _address_first_claim(arguments, defaults.get("readable") or [])
     note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)
     _scope_arguments(op.name, arguments, defaults, explicit_agent)
+    await _tag_session_repository(op, arguments, auth)
     if op.name == SEARCH_OP and filled_ns:
         await _address_home(arguments, auth)
 

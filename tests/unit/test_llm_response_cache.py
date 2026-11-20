@@ -185,7 +185,17 @@ async def test_a_reply_the_provider_cut_is_not_memoed() -> None:
     """A content-filtered or capped reply is partial; memoing it would replay
     the cut for every retry of the same prompt."""
     ch = _CH()
-    for stop in ("content_filter", "length", "max_tokens", "refusal"):
+    for stop in (
+        "content_filter",
+        "length",
+        "max_tokens",
+        "refusal",
+        "content_filtered",
+        "guardrail_intervened",
+        "model_context_window_exceeded",
+        "malformed_model_output",
+        "malformed_tool_use",
+    ):
         inner = _Inner(text='{"facts":[{"key":"k","value":"cut mid')
 
         async def cut(system, user, max_tokens=1024, response_format=None, _s=stop, **kw):
@@ -202,6 +212,13 @@ async def test_a_reply_the_provider_cut_is_not_memoed() -> None:
         await CachedLLMClient(inner, org="o", ch=ch, table="loom.t").complete("sys", "user")
         await _settle()
     assert ch.inserts == []
+
+
+@pytest.mark.parametrize("stop", ["", "stop", "end_turn", "stop_sequence"])
+def test_complete_and_unreported_stops_remain_complete(stop: str) -> None:
+    from server.llm.traits import is_complete_stop
+
+    assert is_complete_stop(stop)
 
 
 # ---- the property: a changed memory misses ----------------------------------

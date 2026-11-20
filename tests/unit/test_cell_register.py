@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -90,6 +91,7 @@ def _row(reg: directory.Registration) -> directory.Cell:
         current_fp=None,
         next_fp=None,
         credential_next_sha256=None,
+        mutation_generation=UUID(int=1),
     )
 
 
@@ -501,7 +503,23 @@ def test_a_cell_never_registers_with_the_operator_credentials_hash(router) -> No
     assert r.status_code == 400 and "operator credential's hash" in r.json()["error"]
     rotated = client.post(
         "/cells/v1/operator/cells/eu-1/credential",
-        json={"step": "next", "sha256": operator_sha},
+        json={
+            "step": "next",
+            "sha256": operator_sha,
+            "expected": {
+                "cell": "eu-1",
+                "is_first": True,
+                "host": "loom.example",
+                "deployment_id": "dep-1",
+                "bucket": "",
+                "bucket_prefix": "",
+                "probe_url": "",
+                "upstream_url": "",
+                "current_fp": None,
+                "next_fp": None,
+                "mutation_generation": "00000000-0000-0000-0000-000000000001",
+            },
+        },
         headers={"Authorization": f"Bearer {OPERATOR}"},
     )
     assert rotated.status_code == 400 and "operator credential's hash" in rotated.json()["error"]

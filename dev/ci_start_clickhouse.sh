@@ -48,6 +48,7 @@ docker run -d --pull "$PULL" --name "$NAME" \
   -v "$CFG/nlp_user_settings.xml:/etc/clickhouse-server/users.d/nlp_user_settings.xml:ro" \
   -v "$CFG/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
   -v "$CFG/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml:ro" \
+  -v "$CFG/system_logs.xml:/etc/clickhouse-server/config.d/system_logs.xml:ro" \
   -v "$ROOT/dev/clickhouse-ci/log_queries_readonly.xml:/etc/clickhouse-server/users.d/log_queries_readonly.xml:ro" \
   -v "$ROOT/dev/clickhouse-ci/custom_settings_prefixes.xml:/etc/clickhouse-server/config.d/custom_settings_prefixes.xml:ro" \
   "$IMAGE"

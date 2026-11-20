@@ -5,14 +5,16 @@ every model call to the gateway; no exchange and no provider key."""
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
-from server.llm import gateway
+from server.llm import customer, gateway
 from server.settings import Settings, settings
 from tests.unit.clock_fake import ManualClock
 from tests.unit.model_client import through_the_model_client
@@ -47,10 +49,15 @@ def token_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path
     gateway._reset_for_tests()
 
 
+@pytest.fixture(params=(1000.0, 1e12), ids=("small-epoch", "large-epoch"))
+def clock_epoch(request: pytest.FixtureRequest) -> float:
+    return float(request.param)
+
+
 @pytest.fixture
-def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
-    c = ManualClock(t=1000.0)
-    monkeypatch.setattr(gateway.time, "monotonic", c.monotonic)
+def clock(monkeypatch: pytest.MonkeyPatch, clock_epoch: float) -> ManualClock:
+    c = ManualClock(t=clock_epoch)
+    monkeypatch.setattr(gateway, "time", SimpleNamespace(monotonic=c.monotonic, time=time.time))
     return c
 
 
@@ -139,14 +146,24 @@ def test_the_file_is_read_at_most_once_a_minute(token_file, clock) -> None:
     assert asyncio.run(gateway.bearer("", "https://gateway.example/v1")) == "sa-token-2"
 
 
-def test_a_401_makes_the_next_call_read_the_file_again(token_file, clock, wire) -> None:
-    _chat()
-    token_file.write_text("sa-token-2")
-    wire.refused.add("Bearer sa-token-1")  # the gateway no longer takes it
-    with pytest.raises(httpx.HTTPStatusError, match="401"):
-        _chat()  # not retried: the same token would be refused again
-    _chat()  # no time has passed: the 401 alone made it read the file
-    assert wire.bearers == ["Bearer sa-token-1", "Bearer sa-token-1", "Bearer sa-token-2"]
+def test_a_401_makes_the_next_call_read_the_file_again(
+    token_file, monkeypatch, request, clock_epoch
+) -> None:
+    from tests.unit.switch_state import switch_off
+
+    process_clock = ManualClock(t=0.0)
+    monkeypatch.setattr("time.monotonic", process_clock.monotonic)
+    switch_off()
+    request.getfixturevalue("clock")
+    wire = request.getfixturevalue("wire")
+    with customer.for_org("gateway-bearer-test"):
+        _chat()
+        token_file.write_text("sa-token-2")
+        wire.refused.add("Bearer sa-token-1")  # the gateway no longer takes it
+        with pytest.raises(httpx.HTTPStatusError, match="401"):
+            _chat()  # not retried: the same token would be refused again
+        _chat()  # no time has passed: the 401 alone made it read the file
+        assert wire.bearers == ["Bearer sa-token-1", "Bearer sa-token-1", "Bearer sa-token-2"]
 
 
 def test_an_unreadable_file_serves_the_token_in_hand_and_with_none_is_an_outage(

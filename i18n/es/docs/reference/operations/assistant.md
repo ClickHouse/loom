@@ -1,4 +1,4 @@
-<!-- i18n: source=docs/reference/operations/assistant.md blob=431a74665371b7d0d4d1d74317450ad439bcd592 model=claude-sonnet-5-5 -->
+<!-- i18n: source=docs/reference/operations/assistant.md blob=8776e14406e66ab7af3b886a055d72761355b550 model=claude-sonnet-5-5 -->
 > Esta página es una traducción automática de la [página en inglés](https://github.com/ClickHouse/loom/blob/main/docs/reference/operations/assistant.md), que prevalece.
 > Machine-translated from the [English page](https://github.com/ClickHouse/loom/blob/main/docs/reference/operations/assistant.md), which is authoritative.
 
@@ -20,22 +20,23 @@ Cada op es `POST /v1/<op>` sobre HTTP y la herramienta MCP `loom_<op>`. Los camp
 
 Hazle al asistente de Loom una pregunta sobre este espacio de nombres y obtén una respuesta con citas: qué contiene, cómo se usa, recuentos sobre sus filas y cómo escribirlo mejor.
 
-`POST /v1/assistant.ask` · MCP `loom_assistant_ask` · rol `viewer` · escritura · no figura en el conjunto de herramientas `all` de MCP
+`POST /v1/assistant.ask` · MCP `loom_assistant_ask` · rol `viewer` · escritura · no se lista en el conjunto de herramientas `all` de MCP
 
 | Campo de entrada | Tipo | Valor por defecto | Significado |
 | --- | --- | --- | --- |
-| `org` | `str` | obligatorio | El tenant (primer elemento de la tupla de identidad). |
+| `org` | `str` | obligatorio | El inquilino (primer elemento de la tupla de identidad). |
 | `namespace` | `str` | obligatorio | El espacio de nombres que la op lee o escribe. |
-| `question` | `str` | obligatorio | La pregunta sobre este espacio de nombres, respondida como el solicitante, de como máximo 20,000 caracteres. |
-| `history` | `list[AssistantMessage]` | *(calculado)* | Turnos anteriores de la conversación, del más antiguo al más reciente, como máximo 50; vacío por defecto. |
+| `question` | `str` | obligatorio | La pregunta sobre este espacio de nombres, respondida en nombre de quien llama, de hasta 20,000 caracteres. |
+| `history` | `list[AssistantMessage]` | *(calculado)* | Turnos anteriores de la conversación, del más antiguo al más reciente, hasta 50; vacío por defecto. |
 
 | Campo de salida | Tipo | Significado |
 | --- | --- | --- |
+| `mirrored` | `bool` | Verdadero cuando esta respuesta es privada para la sesión protegida de quien llama; falso por defecto. |
 | `answer` | `str` | La respuesta del asistente, con sus citas tal como las escribió el agente. |
 | `run_id` | `str` | El id de la respuesta: la ejecución bajo la que se registran sus llamadas a herramientas (agent_events.run_id). |
 | `model` | `str` | El modelo que respondió. |
 | `citations` | `list[AssistantCitation]` | Cada cita de `answer`, comprobada al terminar la respuesta. |
-| `support` | `str` | En qué medida la respuesta se apoya en lo que Loom contiene: supported, unsupported, unchecked o none (sin afirmación, como un saludo o una abstención); por defecto unchecked. |
-| `unknown_names` | `list[str]` | Nombres de ops que la respuesta escribe entre acentos graves, y nombres LOOM_* en cualquier lugar de ella, que esta compilación ni atiende ni documenta: nombres que puede haber inventado. |
+| `support` | `str` | Hasta qué punto la respuesta se apoya en lo que contiene Loom: supported, unsupported, unchecked o none (sin afirmación, como un saludo o una abstención); por defecto unchecked. |
+| `unknown_names` | `list[str]` | Nombres de ops que la respuesta escribe entre comillas invertidas, y nombres LOOM_* en cualquier parte, que esta compilación ni sirve ni documenta: nombres que quizá se inventó. |
 
 <!-- prettier-ignore-end -->

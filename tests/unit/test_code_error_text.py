@@ -87,6 +87,7 @@ class _Cfg:
         self.git_remote = "https://git.example/acme/app.git"
         self.git_branch = "main"
         self.github_token = ""
+        self.git_proxy_identity = ""
         self.classification = "standard"
 
 

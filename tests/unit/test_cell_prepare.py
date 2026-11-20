@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from server.cli import cell as cell_cli
-from server.cli import cell_prepare
+from server.cli import cell_control, cell_prepare
 from server.core import cell
 from server.settings import settings
 
@@ -29,6 +29,21 @@ def _cell(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "storage_authority", "postgres")
     monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
     monkeypatch.setattr(settings, "router_operator_token", OPERATOR)
+
+    # The attach lock's session is Postgres's (tests/integration/test_cell_attach.py).
+    class Owner:
+        conn = None
+
+        async def transaction(self, work):
+            return await work()
+
+        async def call(self, work, **_):
+            return await work()
+
+    async def run(_what, work):
+        return await work(Owner())
+
+    monkeypatch.setattr(cell_control, "run", run)
 
 
 def _args(**over: Any) -> argparse.Namespace:
@@ -366,7 +381,7 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     reads = [[_beat("i-old", before)], [_beat("i-new", after)]]
     written: list[Any] = []
 
-    async def _rows_read() -> cell_prepare._CellRows:
+    async def _rows_read(_conn: Any) -> cell_prepare._CellRows:
         return _rows()
 
     async def _beats(_ch: Any) -> list[cell_prepare._Beat]:
@@ -378,7 +393,7 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     async def _register(*_a: Any) -> dict[str, Any]:
         return {**OK, "registered": True}
 
-    async def _write(_rows: Any, _answer: Any, current: Any, nxt: Any) -> list[str]:
+    async def _write(_conn: Any, _rows: Any, _answer: Any, current: Any, nxt: Any) -> list[str]:
         written.append((current, nxt))
         return ["first", "mode", "own"]
 
@@ -392,6 +407,17 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
         ("_write_rows", _write),
     ):
         monkeypatch.setattr(cell_prepare, name, fake)
+
+    directory_mode = ["recording"]
+
+    async def snapshot(*_a: Any, **_kw: Any) -> dict[str, Any]:
+        return {**OK, "mode": directory_mode[0], "current_fp": None, "next_fp": None}
+
+    async def claimed(_conn: Any, _call: Any, row: Any) -> Any:
+        return row
+
+    monkeypatch.setattr(cell_control, "request", snapshot)
+    monkeypatch.setattr(cell_control, "claim", claimed)
     assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
     assert written == [(cell.as_value(after), None)] and reads == []
     # stdout stays one JSON document; a first cell's next step goes to stderr.
@@ -399,6 +425,7 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     assert json.loads(out.out)["is_first"] is True
     assert out.err.strip() == "loom cell prepare: prepared the first cell; roll out LOOM_CELL next"
     # A rerun on a cell past recording names no next step.
+    directory_mode[0] = "enforced"
     monkeypatch.setattr(
         cell_prepare, "_register", AsyncMock(return_value={**OK, "mode": "enforced"})
     )
@@ -406,6 +433,7 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
     assert capsys.readouterr().err == ""
     # A rerun in recording that writes no first row (the rollout is usually done).
+    directory_mode[0] = "recording"
     monkeypatch.setattr(cell_prepare, "_register", AsyncMock(return_value={**OK}))
 
     async def _own_only(*_a: Any) -> list[str]:
@@ -415,3 +443,16 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
     assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
     assert capsys.readouterr().err == ""
+
+    # A prior controller committed enforced after registration but before this claim.
+    directory_mode[0] = "enforced"
+    posted: list[str] = []
+
+    async def write_latest(_conn: Any, _rows: Any, answer: Any, *_fp: Any) -> list[str]:
+        posted.append(answer["mode"])
+        return ["mode"]
+
+    monkeypatch.setattr(cell_prepare, "_write_rows", write_latest)
+    reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
+    assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
+    assert posted == ["enforced"]

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,7 +60,12 @@ def _detect_installed_clients() -> list[str]:
     found: list[str] = []
     for client in _INSTALL_CLIENTS:
         try:
-            if _resolve_install_path(client).parent.exists():
+            if client == "gemini":
+                # Google Antigravity also creates ~/.gemini/, so the directory alone does
+                # not mean Gemini CLI is installed: ask for its settings file or its binary.
+                if _resolve_install_path(client).exists() or shutil.which("gemini"):
+                    found.append(client)
+            elif _resolve_install_path(client).parent.exists():
                 found.append(client)
         except Exception:  # noqa: BLE001 — detection must never crash install
             continue
@@ -402,6 +408,25 @@ def _install_zed(
     return True
 
 
+def _has_json_comments(text: str) -> bool:
+    """True when `text` holds a `//` or `/* */` comment outside a string: JSON with
+    comments, which some clients (Gemini CLI) read and `json` refuses."""
+    in_string = escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "/" and text[i + 1 : i + 2] in ("/", "*"):
+            return True
+    return False
+
+
 def _install_one(
     client: str,
     *,
@@ -442,9 +467,9 @@ def _install_one(
 
     existing: dict[str, Any] = {}
     if cfg_path.exists():
+        text = cfg_path.read_text(encoding="utf-8")
         try:
-            with cfg_path.open("r", encoding="utf-8") as f:
-                existing = _json.load(f)
+            existing = _json.loads(text)
             if not isinstance(existing, dict):
                 print(
                     f"ERROR ({client}): {cfg_path} top level is not a JSON "
@@ -453,6 +478,17 @@ def _install_one(
                 )
                 return False
         except _json.JSONDecodeError as e:
+            if _has_json_comments(text):
+                # Rewriting would drop the comments, so write nothing and hand the entry over.
+                print(
+                    f"ERROR ({client}): {cfg_path} holds comments, which `loom install` "
+                    f"cannot keep when it rewrites the file; nothing was written. Add this "
+                    f"under {section!r} yourself (replace <token> with your Loom token):",
+                    file=sys.stderr,
+                )
+                snippet = _json.dumps({name: entry}, indent=2)
+                print(snippet.replace(token, "<token>") if token else snippet, file=sys.stderr)
+                return False
             print(
                 f"ERROR ({client}): {cfg_path} is not valid JSON ({e}); "
                 f"fix or delete it and re-run.",

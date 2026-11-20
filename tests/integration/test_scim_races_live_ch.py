@@ -18,8 +18,9 @@ from typing import Any
 
 import pytest
 
-from server.auth import revocation, scim
+from server.auth import account_lifecycle, revocation, scim
 from server.core.ch import get_client
+from server.knowledge.app.connected_accounts import stop_subjects
 from server.settings import settings
 from tests.integration._resources import unique_org
 
@@ -81,6 +82,8 @@ async def seeded(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_Seeded]:
 
     monkeypatch.setattr(settings, "scim_token", secrets.token_hex(32))
     monkeypatch.setattr(revocation, "wait_out", no_wait)  # the wait is not what races
+    # Direct SCIM calls need the real downstream cleanup that HTTP and CLI roots bind.
+    monkeypatch.setattr(account_lifecycle, "_stopper", stop_subjects)
     ch = get_client()
     await ch.connect()
     made = _Seeded()

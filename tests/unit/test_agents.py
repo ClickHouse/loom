@@ -38,6 +38,7 @@ def world(monkeypatch) -> dict[str, Any]:
         "granted": [],
         "grant_rows": set(),
         "used": set(),
+        "traced": set(),
     }
 
     class _CH:
@@ -65,8 +66,11 @@ def world(monkeypatch) -> dict[str, Any]:
     async def emit(*a: Any, **k: Any) -> str:
         return ""
 
-    async def in_use(self: Any, org: str, namespace: str, **_k: Any) -> bool:
-        return namespace in state["used"]
+    async def in_use(
+        self: Any, org: str, namespace: str, *, skip_request_traces: bool = False, **_k: Any
+    ) -> bool:
+        traced = namespace in state["traced"] and not skip_request_traces
+        return traced or namespace in state["used"]
 
     monkeypatch.setattr(IdentityDirectory, "in_use", in_use)
     monkeypatch.setattr(agents, "get_client", lambda: _CH())
@@ -105,6 +109,16 @@ def test_a_name_holding_data_with_no_row_is_not_made(world) -> None:
     with pytest.raises(machines.Refused, match="not this trust's"):
         _ensure()
     assert world["made"] == [] and world["granted"] == []
+
+
+def test_rows_a_request_wrote_about_itself_do_not_take_the_name_from_the_agent(world) -> None:
+    """Looking the agent up before its first exchange leaves a latency reading or a
+    trace under the name."""
+    world["traced"].add("fleet-a1")
+    assert _ensure() == "fleet-a1"
+    [made] = world["made"]
+    assert made["subject"] == "sa:fleet:a1"
+    assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]
 
 
 def test_a_released_agent_namespace_is_not_made_again(world) -> None:

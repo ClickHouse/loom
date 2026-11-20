@@ -11,9 +11,12 @@ from typing import Any
 
 import pytest
 
-from server.cli import cell_ch, cell_scan, cell_writers
-from server.cli.cell_ch import Topology
-from server.cli.cell_writers import Allowed, Grant, holds, parse_show_grants, writer_reason
+from server.cli import cell_scan, cell_writers
+from server.cli.cell_writers import Allowed, writer_reason
+from server.core import cell_ch
+from server.core.cell_ch import Topology
+from server.insights.store import cell_catalog
+from server.insights.store.cell_catalog import Grant, holds, parse_show_grants
 from tests.unit.test_cell_scan import NAMES, ONE, TWO, FakeCH
 
 DBS = ["loom", "loom_telemetry"]
@@ -69,7 +72,7 @@ def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
         "REVOKE SELECT ON loom.secret FROM attach",
         "REVOKE GRANT OPTION FOR SELECT ON other.* FROM attach",
     ]
-    assert cell_writers.own_problems(parse_show_grants(lines), ONE, DBS) == [
+    assert cell_catalog.own_problems(parse_show_grants(lines), ONE, DBS) == [
         "SHOW TABLES ON *.* (narrowed by REVOKE SHOW TABLES ON side.*)",
         "SELECT ON loom.* (narrowed by REVOKE SELECT ON loom.secret)",
     ]
@@ -90,8 +93,8 @@ def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
     rows.append(
         {"user_name": "attach", "access_type": "SHOW", "database": "side", "is_partial_revoke": 1}
     )
-    grants = cell_writers.resolve_grants("attach", rows, [])
-    assert cell_writers.own_problems(grants, TWO, DBS) == [
+    grants = cell_catalog.resolve_grants("attach", rows, [])
+    assert cell_catalog.own_problems(grants, TWO, DBS) == [
         "SHOW TABLES ON *.* (narrowed by REVOKE SHOW ON side.*)",
         "SHOW COLUMNS ON *.* (narrowed by REVOKE SHOW ON side.*)",
     ]
@@ -101,10 +104,10 @@ def test_a_partial_revoke_narrowing_attachs_own_reads_refuses() -> None:
 
 def test_attachs_own_user_needs_every_read_its_checks_make() -> None:
     full = [Grant("SELECT"), Grant("SHOW"), Grant("SHOW ACCESS"), Grant("SYSTEM")]
-    assert cell_writers.own_problems(full, ONE, DBS) == []
-    assert cell_writers.own_problems(full, TWO, DBS) == ["READ ON REMOTE", "CLUSTER ON *.*"]
+    assert cell_catalog.own_problems(full, ONE, DBS) == []
+    assert cell_catalog.own_problems(full, TWO, DBS) == ["READ ON REMOTE", "CLUSTER ON *.*"]
     narrow = [Grant("SELECT", "loom", "memory"), Grant("SELECT", "system"), Grant("SHOW")]
-    assert cell_writers.own_problems(narrow, Topology("", 0), DBS) == [
+    assert cell_catalog.own_problems(narrow, Topology("", 0), DBS) == [
         "SHOW USERS ON *.*",
         "SHOW ROLES ON *.*",
         "SHOW ROW POLICIES ON *.*",
@@ -168,7 +171,7 @@ def test_a_grants_row_as_newer_servers_write_it() -> None:
         {"user_name": "u", "access_type": "WRITE", "access_object": "URL", "database": None},
         {"user_name": "u", "access_type": "INSERT", "database": "lo", "is_wildcard": 1},
     ]
-    assert cell_writers.resolve_grants("u", rows, []) == [
+    assert cell_catalog.resolve_grants("u", rows, []) == [
         Grant("REMOTE"),
         Grant("URL"),
         Grant("INSERT", "lo*"),
@@ -190,9 +193,9 @@ def test_attachs_own_sessions_have_only_its_default_roles() -> None:
         {"user_name": "u", "role_name": None, "granted_role_name": "spare",
          "granted_role_is_default": 0},
     ]  # fmt: skip
-    every = cell_writers.resolve_grants("u", grant_rows, role_rows)
+    every = cell_catalog.resolve_grants("u", grant_rows, role_rows)
     assert {g.access for g in every} == {"SHOW", "SELECT", "INSERT"}
-    session = cell_writers.resolve_grants("u", grant_rows, role_rows, default_only=True)
+    session = cell_catalog.resolve_grants("u", grant_rows, role_rows, default_only=True)
     assert {g.access for g in session} == {"SHOW", "SELECT"}
 
 
@@ -203,7 +206,7 @@ def test_a_role_named_as_a_user_is_not_that_user() -> None:
     ]
     # Role `attach` holds role `w`; user `attach` holds neither.
     role_rows = [{"user_name": None, "role_name": "attach", "granted_role_name": "w"}]
-    assert cell_writers.resolve_grants("attach", grant_rows, role_rows) == []
+    assert cell_catalog.resolve_grants("attach", grant_rows, role_rows) == []
 
 
 def test_roles_are_followed_and_partial_revokes_ignored() -> None:
@@ -224,7 +227,7 @@ def test_roles_are_followed_and_partial_revokes_ignored() -> None:
         {"user_name": "u", "role_name": None, "granted_role_name": "outer"},
         {"user_name": None, "role_name": "outer", "granted_role_name": "inner"},
     ]
-    assert cell_writers.resolve_grants("u", grant_rows, role_rows) == [
+    assert cell_catalog.resolve_grants("u", grant_rows, role_rows) == [
         Grant("INSERT", "loom"),
         Grant("SELECT"),
         Grant("SELECT", "loom", "secret", revoked=True),
@@ -470,7 +473,7 @@ def test_a_replica_keeper_lists_outside_the_cluster_is_extra() -> None:
             "replica_is_active": {"r0": 1},
         },
     ]
-    assert cell_writers.extra_replicas(rows) == {"loom.memory": {"dr"}}
+    assert cell_catalog.extra_replicas(rows) == {"loom.memory": {"dr"}}
 
 
 def _row(user: str, access: str, database: str | None = None) -> dict[str, Any]:
@@ -775,7 +778,7 @@ def test_loom_s_own_row_policy_pair_lets_attach_read_every_row() -> None:
         _policy(POLICY_NAME, select_filter="org = 'a'", apply_to_list=["loom_analyst"]),
         _policy(OTHERS_POLICY_NAME, apply_to_all=1, apply_to_except=["loom_analyst"]),
     ]
-    assert cell_writers.row_policy_problems(rows, "attach") == []
+    assert cell_catalog.row_policy_problems(rows, "attach") == []
 
 
 def test_any_row_policy_on_a_system_table_refuses() -> None:
@@ -783,7 +786,7 @@ def test_any_row_policy_on_a_system_table_refuses() -> None:
         _policy("own", database="system", table="grants", apply_to_all=1),
         _policy("loom_analyst_others", database="system", table="tables", apply_to_all=1),
     ]
-    assert cell_writers.row_policy_problems(rows, "attach") == [
+    assert cell_catalog.row_policy_problems(rows, "attach") == [
         ("row policy on system.grants: own", "a row policy hides rows from the checks"),
         (
             "row policy on system.tables: loom_analyst_others",
@@ -839,13 +842,13 @@ def test_any_row_policy_on_a_system_table_refuses() -> None:
 def test_a_row_policy_hiding_rows_from_attach_refuses(
     rows: list[dict[str, Any]], reason: str
 ) -> None:
-    found = cell_writers.row_policy_problems(rows, "attach")
+    found = cell_catalog.row_policy_problems(rows, "attach")
     assert any(reason in why for _, why in found), found
 
 
 async def test_the_row_policies_read_covers_the_system_tables() -> None:
     ch = _cluster()
-    await cell_writers.own_refusals(ch, TWO, NAMES)
+    await cell_catalog.own_refusals(ch, TWO, NAMES)
     (sql,) = [s for s in ch.sql("query_all") if "system.row_policies" in s]
     assert "database IN {dbs:Array(String)} OR database = 'system'" in sql
 
@@ -924,14 +927,14 @@ def _looms_policies() -> list[dict[str, Any]]:
 def test_the_policies_loom_s_analyst_setup_writes_pass() -> None:
     rows = _looms_policies()
     assert {r["table"] for r in rows} >= {"memory", "analysis_canary"}
-    assert cell_writers.row_policy_problems(rows, "attach") == []
+    assert cell_catalog.row_policy_problems(rows, "attach") == []
     # Without every other user's policy, the canary would read no row for attach.
     alone = [
         r
         for r in rows
         if not (r["table"] == "analysis_canary" and r["short_name"] == "loom_analyst_others")
     ]
-    assert cell_writers.row_policy_problems(alone, "attach") == [
+    assert cell_catalog.row_policy_problems(alone, "attach") == [
         (
             "row policy on loom.analysis_canary",
             "no permissive policy `USING 1` covers attach: it reads no row",

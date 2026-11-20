@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import suppress
 from typing import Any
 
 from server.core.github_values import FeedInputError
@@ -78,8 +79,9 @@ async def _connection(args: argparse.Namespace, endpoint: Any, deployment: Any) 
     try:
         await connect_external(client, deployment=deployment, orgs=(args.org,))
         await _validate_writer(client, endpoint.database)
-    except BaseException:
-        await client.disconnect()
+    except BaseException:  # Keep the opening failure through record cleanup.
+        with suppress(BaseException):
+            await client.disconnect()
         raise
     return client
 
@@ -101,8 +103,9 @@ async def _validate_writer(client: Any, database: str) -> None:
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
     from types import SimpleNamespace
 
-    from server.cli._ch import connect_checked, disconnect
+    from server.cli._ch import check_acceptance, connect_verified, disconnect
     from server.core.ch import get_client, set_query_tag
+    from server.insights.app.provider_command import model_command
     from server.settings import settings
     from server.tracker.app import github_feed as feed
     from server.tracker.store import github_feed as store
@@ -113,48 +116,63 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     deployment = get_client()
     record = None
     try:
-        await connect_checked(deployment, orgs=(args.org,))
-        owner = await store.database_uuid(deployment)
-        allowed: set[str] = set()
-        if args.feed_command == "init":
-            endpoint = SimpleNamespace(
-                host=args.host,
-                port=args.port,
-                secure=not args.insecure,
-                database=args.database,
-            )
-        else:
-            endpoint, allowed, _reader = await _registered(args)
-        record = await _connection(args, endpoint, deployment)
-        if args.feed_command == "init":
-            await feed.initialize(record, args.org, owner)
-            return {"initialized": True}
-        if args.feed_command == "configure":
-            if not args.read_only_token:
-                raise FeedInputError("token permission attestation requires --read-only-token")
-            await feed.configure(
-                record,
-                org=args.org,
-                owner_uuid=owner,
-                repo=args.repo,
-                token=_environment(args.token_env),
-                allowed_repos=allowed,
-                max_pages=args.max_pages,
-            )
-            return {"configured": True}
-        return await feed.sync(
-            record,
-            org=args.org,
-            owner_uuid=owner,
-            repo=args.repo,
-            allowed_repos=allowed,
-        )
-    finally:
-        try:
-            if record is not None:
-                await record.disconnect()
-        finally:
+        await connect_verified(deployment)
+        async with model_command():
+            try:
+                await check_acceptance(orgs=(args.org,))
+                owner = await store.database_uuid(deployment)
+                allowed: set[str] = set()
+                if args.feed_command == "init":
+                    endpoint = SimpleNamespace(
+                        host=args.host,
+                        port=args.port,
+                        secure=not args.insecure,
+                        database=args.database,
+                    )
+                else:
+                    endpoint, allowed, _reader = await _registered(args)
+                record = await _connection(args, endpoint, deployment)
+                if args.feed_command == "init":
+                    await feed.initialize(record, args.org, owner)
+                    result: dict[str, Any] = {"initialized": True}
+                elif args.feed_command == "configure":
+                    if not args.read_only_token:
+                        raise FeedInputError(
+                            "token permission attestation requires --read-only-token"
+                        )
+                    await feed.configure(
+                        record,
+                        org=args.org,
+                        owner_uuid=owner,
+                        repo=args.repo,
+                        token=_environment(args.token_env),
+                        allowed_repos=allowed,
+                        max_pages=args.max_pages,
+                    )
+                    result = {"configured": True}
+                else:
+                    result = await feed.sync(
+                        record,
+                        org=args.org,
+                        owner_uuid=owner,
+                        repo=args.repo,
+                        allowed_repos=allowed,
+                    )
+            except BaseException:  # Keep work failure through the owned record close.
+                if record is not None:
+                    with suppress(BaseException):
+                        await record.disconnect()
+                raise
+            else:
+                if record is not None:
+                    await record.disconnect()
+    except BaseException:  # Keep native work or retirement failure through store cleanup.
+        with suppress(BaseException):
             await disconnect(deployment)
+        raise
+    else:
+        await disconnect(deployment)
+        return result
 
 
 def _command(args: argparse.Namespace) -> int:

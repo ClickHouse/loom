@@ -1,0 +1,17 @@
+# Billing adds waybills to the shared delivery schema.
+
+"The charge for one parcel."
+type Waybill {
+  id: ID!
+  parcel: Parcel!
+  issuedAt: Moment
+}
+
+extend type Query {
+  waybills(after: Moment): [Waybill!]!
+}
+
+extend type Mutation {
+  "Issues the waybill for a delivered parcel."
+  issueWaybill(parcel: ID!): Waybill
+}

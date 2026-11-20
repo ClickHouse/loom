@@ -117,10 +117,11 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
     try:
         # A repository added from the Repositories page lives in the registry, not in
         # LOOM_CODE_REPOS_JSON: read it before the subcommand resolves its namespace.
+        from server.cli._ch import connect_verified
         from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE, refresh_db_repos
         from server.code.domain.index.repos import RegistryUnread
 
-        await connect_declared(get_client(), org_free=reads("reads the repository registry"))
+        await connect_verified(get_client())
         async with model_command():
             # Never raises; while it has never succeeded, `configured_repos` refuses.
             await refresh_db_repos(force=True)
@@ -133,13 +134,23 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
                 # Some native commands close their own client. Reopen it for
                 # buffered-write drain/retirement before leaving enrollment.
                 # The subcommand's own connect gated its writes; a drain checks nothing new.
-                await connect_declared(
-                    get_client(), org_free=reads("drains the writes its own connect gated")
-                )
+                first = sys.exception()
+                try:
+                    await connect_declared(
+                        get_client(), org_free=reads("drains the writes its own connect gated")
+                    )
+                except BaseException:  # keep the subcommand failure if drain reconnect also fails
+                    if first is None:
+                        raise
     finally:
+        first = sys.exception()
         if not started and asyncio.iscoroutine(coro):
             coro.close()
-        await disconnect(get_client())
+        try:
+            await disconnect(get_client())
+        except BaseException:  # a disconnect failure must not replace the subcommand failure
+            if first is None:
+                raise
 
 
 def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int:

@@ -159,7 +159,9 @@ def test_cli_refuses_the_source_as_target(capsys) -> None:
     assert "must differ" in capsys.readouterr().err
 
 
-def test_reextract_token_falls_back_to_the_saved_token(tmp_path, monkeypatch) -> None:
+def test_reextract_token_falls_back_to_the_saved_token(
+    tmp_path, monkeypatch, stub_model_command
+) -> None:
     """--token, else LOOM_API_KEY, else ~/.loom/token: the order every client command uses."""
     import argparse
 

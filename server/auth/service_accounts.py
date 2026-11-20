@@ -76,24 +76,13 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
     hit = _creators.get(key)
     if hit is not None and time.monotonic() - hit[0] < settings.jwt_revocation_cache_ttl_seconds:
         return hit[1]
-    if ch is None:
-        from server.core.ch import get_client
-
-        ch = get_client()
     try:
-        row = await ch.query_one(
-            """
-            SELECT created_by, inherit_creator_grants, kind
-            FROM loom.service_accounts FINAL
-            WHERE org = {org:String} AND sa_subject = {sub:String}
-              AND revoked_at IS NULL
-            LIMIT 1
-            """,
-            params={"org": org, "sub": sa_subject},
-        )
+        row = await _creator_row(org, sa_subject, ch=ch)
     except Exception as e:  # noqa: BLE001 — a failed read inherits nothing (fail closed)
         log.warning("service_accounts lookup failed for %s/%s: %s", org, sa_subject, e)
         note_unreadable()
+        return None
+    if row is not None and row["revoked_at"] is not None:
         return None
     creator = str((row or {}).get("created_by") or "")
     if not creator:
@@ -107,6 +96,36 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
         _creators.clear()
     _creators[key] = (time.monotonic(), found)
     return found
+
+
+async def _creator_row(
+    org: str,
+    sa_subject: str,
+    *,
+    ch: Any | None = None,
+    max_items: int = 1024,
+    max_bytes: int = 65536,
+) -> dict[str, Any] | None:
+    """One current row, with ancestry projected only within the caller's budget."""
+    if ch is None:
+        from server.core.ch import get_client
+
+        ch = get_client()
+    row = await ch.query_one(
+        """SELECT inherit_creator_grants, kind, revoked_at, expires_at,
+                  length(lineage) AS lineage_count,
+                  arraySum(arrayMap(s -> length(s), lineage)) + length(created_by) AS subject_bytes,
+                  if(length(created_by) <= {bytes:UInt32}, created_by, '') AS bounded_creator,
+                  if(lineage_count <= {items:UInt32} AND subject_bytes <= {bytes:UInt32},
+                     lineage, []) AS bounded_lineage
+           FROM loom.service_accounts FINAL
+           WHERE org = {org:String} AND sa_subject = {sub:String} LIMIT 1""",
+        params={"org": org, "sub": sa_subject, "items": max_items, "bytes": max_bytes},
+    )
+    if row is not None:
+        row["created_by"] = row.pop("bounded_creator")
+        row["lineage"] = row.pop("bounded_lineage")
+    return row
 
 
 async def inheriting_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> str | None:
@@ -207,6 +226,7 @@ async def hand_down_lineage(org: str, name: str) -> None:
 async def _add_lineage(
     org: str, name: str, find: str, params: dict[str, Any], above: list[str]
 ) -> None:
+    from server.auth.authz import identity_write
     from server.auth.grant_claims import service_account_change
     from server.core.ch import get_client, own_write_reads
 
@@ -222,7 +242,10 @@ async def _add_lineage(
         lineage = sorted({*row["lineage"], *above})
         # Every column carried, past the version read, as `revoked_row` does.
         version = max(time.time_ns(), int(row["version"]) + 1)
-        await ch.insert("loom.service_accounts", [{**row, "lineage": lineage, "version": version}])
+        with identity_write():
+            await ch.insert(
+                "loom.service_accounts", [{**row, "lineage": lineage, "version": version}]
+            )
 
 
 # Names a pass revokes at once: each is a lease round trip and an insert.
@@ -328,6 +351,8 @@ async def _revoke_all(
     listed = {str(r["sa_subject"]) for r in found}
 
     async def revoke(org: str, name: str) -> str | None:
+        from server.auth.authz import identity_write
+
         async with gate, service_account_change(org, name):
             with own_write_reads():
                 row = await ch.query_one(
@@ -348,7 +373,8 @@ async def _revoke_all(
             revoked_copy = revoked_row(
                 row, revoked_at=naive_utc_now_seconds(), revoked_by=revoked_by
             )
-            await ch.insert("loom.service_accounts", [revoked_copy])
+            with identity_write():
+                await ch.insert("loom.service_accounts", [revoked_copy])
             return str(row["sa_subject"])
 
     try:

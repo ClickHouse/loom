@@ -15,11 +15,20 @@ import pytest
 
 from server.code.workers import scip_ts_delta as w
 from tests.unit.code_fixtures import repo_config
+from tests.unit.git_repo import git
 
 
 @pytest.fixture(autouse=True)
 def _scip_typescript_exists(monkeypatch) -> None:
     monkeypatch.setattr(w.settings, "code_scip_typescript_path", sys.executable)
+
+
+@pytest.fixture
+def checkout(tmp_path: Path) -> Path:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    git(root, "init", "-q")
+    return root
 
 
 def _Cfg(**kw: Any) -> Any:
@@ -100,8 +109,9 @@ async def test_uninstalled_checkout_is_prepared_before_indexing(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_first_run_is_full_and_the_delta_is_applied(monkeypatch, tmp_path: Path):
-    checkout = tmp_path / "checkout"
+async def test_first_run_is_full_and_the_delta_is_applied(
+    monkeypatch, tmp_path: Path, checkout: Path
+):
     (checkout / "node_modules").mkdir(parents=True)
     bare = tmp_path / "repo.git"
     bare.mkdir()
@@ -156,8 +166,9 @@ async def test_first_run_is_full_and_the_delta_is_applied(monkeypatch, tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_no_typescript_change_in_window_advances_the_watermark(monkeypatch, tmp_path: Path):
-    checkout = tmp_path / "checkout"
+async def test_no_typescript_change_in_window_advances_the_watermark(
+    monkeypatch, tmp_path: Path, checkout: Path
+):
     (checkout / "node_modules").mkdir(parents=True)
     bare = tmp_path / "repo.git"
     bare.mkdir()
@@ -189,9 +200,10 @@ def test_registry_and_producer_field():
 
 
 @pytest.mark.asyncio
-async def test_a_lockfile_change_in_the_window_is_named(monkeypatch, tmp_path: Path):
+async def test_a_lockfile_change_in_the_window_is_named(
+    monkeypatch, tmp_path: Path, checkout: Path
+):
     """Changed lockfiles refresh dependencies before the compiler watermark moves."""
-    checkout = tmp_path / "checkout"
     (checkout / "node_modules").mkdir(parents=True)
     bare = tmp_path / "repo.git"
     bare.mkdir()

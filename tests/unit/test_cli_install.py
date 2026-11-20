@@ -66,9 +66,86 @@ def test_install_one_rejects_invalid_json_without_clobbering(
 def test_detect_installed_clients(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     paths = {c: tmp_path / c / "cfg.json" for c in cli._INSTALL_CLIENTS}
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: paths[c])
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
     (tmp_path / "cursor").mkdir(parents=True)
     (tmp_path / "zed").mkdir(parents=True)
     assert set(cli._detect_installed_clients()) == {"cursor", "zed"}
+
+
+def test_gemini_is_detected_by_its_settings_or_binary_not_by_the_directory(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Google Antigravity also creates ~/.gemini/, so the directory alone is not Gemini CLI.
+    paths = {c: tmp_path / c / "cfg.json" for c in cli._INSTALL_CLIENTS}
+    paths["gemini"] = tmp_path / ".gemini" / "settings.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: paths[c])
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    (tmp_path / ".gemini" / "antigravity").mkdir(parents=True)
+    assert "gemini" not in cli._detect_installed_clients()
+
+    paths["gemini"].write_text("{}")
+    assert "gemini" in cli._detect_installed_clients()
+
+    paths["gemini"].unlink()
+    monkeypatch.setattr(
+        cli.shutil, "which", lambda name: "/usr/local/bin/gemini" if name == "gemini" else None
+    )
+    assert "gemini" in cli._detect_installed_clients()
+
+
+def test_install_one_gemini_writes_http_url_and_keeps_other_settings(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / ".gemini" / "settings.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+    other = {"command": "node", "args": ["server.js"]}
+    cfg.write_text(json.dumps({"ui": {"theme": "Dracula"}, "mcpServers": {"other": other}}))
+
+    for token in ("T1", "T2"):  # a first write, then a rewrite with a new token
+        assert cli._install_one(
+            "gemini", token=token, server_url="https://h", name="loom", dry_run=False
+        )
+        d = json.loads(cfg.read_text())
+        # Gemini CLI reads streamable HTTP from httpUrl, and is a coding agent
+        assert d["mcpServers"]["loom"] == {
+            "httpUrl": "https://h/mcp?toolset=coding",
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+        assert d["ui"] == {"theme": "Dracula"} and d["mcpServers"]["other"] == other
+
+
+def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / ".gemini" / "settings.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+    text = '{\n  // my theme\n  "ui": {"theme": "Dracula"} /* end */\n}\n'
+    cfg.write_text(text)
+
+    ok = cli._install_one(
+        "gemini", token="SECRET", server_url="https://h", name="loom", dry_run=False
+    )
+
+    assert ok is False
+    assert cfg.read_text() == text  # nothing written, comments kept
+    err = capsys.readouterr().err
+    assert str(cfg) in err and "comments" in err
+    pasted = json.loads(err[err.index("{") :])
+    assert pasted == {
+        "loom": {
+            "httpUrl": "https://h/mcp?toolset=coding",
+            "headers": {"Authorization": "Bearer <token>"},
+        }
+    }
+    assert "SECRET" not in err
+
+
+def test_has_json_comments_ignores_slashes_inside_strings() -> None:
+    assert cli._has_json_comments('{"url": "https://h/mcp", "p": "a/*b*/c"}') is False
+    assert cli._has_json_comments('{"a": "x\\"" // c\n}') is True
+    assert cli._has_json_comments('{"a": 1 /* c */}') is True
 
 
 def test_claude_code_capture_writes_env_preserving_settings(

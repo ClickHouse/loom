@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    model_serializer,
+)
 
 
 class SearchInput(BaseModel):
@@ -46,9 +53,33 @@ class SearchInput(BaseModel):
     bodies: Literal["full", "excerpt", "none", "unit"] = "excerpt"
     # Every section unwithheld, and the ranking terms of each memory hit.
     explain: bool = False
+    # Search the asker's connected sources without storing their results; off by default.
+    live: StrictBool = False
     # A `memory.next_page` handle from an earlier answer, to read the memory leg's next page;
     # empty = the first page.
     page: str = Field(default="", max_length=120)
+
+
+class LiveSearchHit(BaseModel):
+    """One ephemeral result from the asker's connected source."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=1024)
+    title: str = Field(max_length=1024)
+    url: str = Field(min_length=1, max_length=4096)
+    provider: Literal["gdrive", "notion", "linear"]
+    content: str = Field(default="", max_length=200)
+    live: Literal[True] = True
+
+
+class LiveSearchResults(BaseModel):
+    """Connected-source results returned only in this response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    live: Literal[True] = True
+    results: list[LiveSearchHit] = Field(default_factory=list, max_length=10)
 
 
 class SearchOutput(BaseModel):
@@ -61,7 +92,7 @@ class SearchOutput(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_absent_sections(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         data: dict[str, Any] = handler(self)
-        for key in ("tracker", "withheld"):
+        for key in ("tracker", "withheld", "live"):
             if data.get(key) is None:
                 data.pop(key, None)
         return data
@@ -70,6 +101,8 @@ class SearchOutput(BaseModel):
     # even with no matches; absent for empty general search or an unavailable, failed
     # or timed-out tracker leg.
     tracker: dict[str, Any] | None = None
+    # Ephemeral connected-source hits; absent unless the optional live leg answered.
+    live: LiveSearchResults | None = None
     # The `memory.search` result plus the scoped repository's decisions, rendered as a
     # reader block, without the hits the calibration flagged below its threshold
     # (unless every hit is flagged).

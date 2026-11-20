@@ -746,14 +746,19 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   tail. One Keeper write, no part, no mutation.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
-`schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`
+`schemas/schema.sql` in the lists below, and `tests/unit/test_every_table_is_classified.py`
 fails on a table in none:
 
-| List                | Holds                                                                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `_CENSUS`           | One `Substrate(...)` per table that can hold content in scope: live predicate, user predicate, owner step. |
-| `STEP_ONLY_TABLES`  | Tables a saga step clears but the census does not count, with the reason.                                  |
-| `NO_MEMORY_CONTENT` | Every other table, with the reason it holds no memory content.                                             |
+| List                     | Holds                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `_CENSUS`                | One `Substrate(...)` per table that can hold content in scope: live predicate, user predicate, owner step. |
+| `STEP_ONLY_TABLES`       | Tables a saga step clears but the census does not count, with the reason.                                  |
+| `CANONICAL_OWNER_TABLES` | Authentication registries with an explicit canonical sign-in owner erasure lifecycle.                      |
+| `NO_MEMORY_CONTENT`      | Tables with no memory content, each with its documented reason.                                            |
+
+The owner lifecycle for `loom.connected_accounts` physically erases provider identity
+and credential history, including sealed personal data. Its canonical sign-in subject
+is independent of namespace and memory `user_id` erasure scopes.
 
 The saga is described in [memory architecture](memory-architecture.md#erasure-saga).
 
@@ -982,7 +987,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - Every statement carries a `log_comment`, a class deadline and a pool slot.
 - `memory_versions` receives every `memory` row, and the column lists match.
 - No table that holds memory content has a schema TTL.
-- Every `loom.*` table is in `_CENSUS`, `STEP_ONLY_TABLES` or `NO_MEMORY_CONTENT`.
+- Every `loom.*` table is in `_CENSUS`, `STEP_ONLY_TABLES`, `CANONICAL_OWNER_TABLES` or
+  `NO_MEMORY_CONTENT`.
 - A derived row is never the only copy of a write: the source row lands first and the
   derivation can be replayed.
 - A merged migration file is never edited.
@@ -1002,7 +1008,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - `server/core/vectors/codes_state.py`, `patch_parts.py`:
   vector read policy.
 - `server/memory/store/rows.py`, `inserts.py`: the version-row builders.
-- `server/erasure/store/census.py`: `_CENSUS`, `STEP_ONLY_TABLES`, `NO_MEMORY_CONTENT`;
+- `server/erasure/store/census.py`: `_CENSUS`, `STEP_ONLY_TABLES`, `CANONICAL_OWNER_TABLES`,
+  `NO_MEMORY_CONTENT`;
   `server/erasure/store/mutations.py`: `LIGHTWEIGHT_PURGE_TABLES`.
 - `server/memory/app/after_write.py`: fail-open projections.
 - `server/observability/events_stream.py`, `server/observability/audit.py`: telemetry and

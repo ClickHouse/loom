@@ -249,7 +249,9 @@ def test_deactivating_over_scim_ends_the_person_and_reactivating_lets_them_back(
     assert not any(_authenticated(base, t) for t in [session, *made_by_person])
     assert _authenticated(base, admin_bot)
     denied = _sign_in(base)
-    assert denied.status_code == 403 and "deactivated" in denied.text
+    assert denied.status_code == 403 and (
+        "this account is not allowed to sign in; ask your Loom operator for access." in denied.text
+    )
 
     assert _set_active(base, uid, True)["active"] is True
     ch_client.command(
