@@ -137,7 +137,7 @@ def test_required_cost_delivery_precedes_done(monkeypatch, fail):
         if fail:
             raise request_tail.RequiredTailError()
 
-    monkeypatch.setattr(request_tail, "settle_current", settle)
+    monkeypatch.setattr(request_tail, "publish_current", settle)
     held = SimpleNamespace(close=lambda error: order.append("ledger"), finished=False)
 
     async def scenario():
