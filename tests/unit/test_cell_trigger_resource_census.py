@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.gates.testsupport.cell_trigger import fixture
+from scripts.gates.testsupport.cell_trigger.owned_children import OwnedChildren
 
 
 @pytest.fixture
@@ -80,6 +81,67 @@ def census(monkeypatch, tmp_path):
     owner = fixture.Owner(spec, owned, lambda *args, **kwargs: None)
     owner.sampled = 7.0
     return owner, owned, clock
+
+
+@pytest.fixture
+def rss_census(census, monkeypatch):
+    owner, owned, clock = census
+    original_read, original_identity = Path.read_text, owned.identify
+    gone, failures = set(), {}
+
+    def read(path, *args, **kwargs):
+        if path.parent.parent == Path("/proc") and path.name == "status":
+            pid = int(path.parent.name)
+            if pid in failures:
+                return failures[pid]()
+            return "Name:\tfixture\nVmRSS:\t1024 kB\n"
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read)
+    owned.identify = lambda pid: None if pid in gone else original_identity(pid)
+    owned.measure = OwnedChildren.rss
+    return owner, owned, clock, gone, failures
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_a_vanished_rss_read_requires_a_new_complete_forest(rss_census, error):
+    owner, owned, _, gone, failures = rss_census
+
+    def vanish():
+        gone.add(300)
+        raise error("gone during RSS read")
+
+    failures[300] = vanish
+    owner.sample()
+    assert owner.first is None
+    assert owner.sampled == 10.0
+    assert owned.round == 2
+    assert owned.sampled_pids.count(200) == 2
+    assert 400 in owned.sampled_pids
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_a_live_process_with_unreadable_rss_never_refreshes_the_sample(rss_census, error):
+    owner, owned, _, _, failures = rss_census
+
+    def unreadable():
+        raise error("RSS unavailable while identity remains present")
+
+    failures[300] = unreadable
+    owner.sample()
+    assert owner.first is not None
+    assert owner.sampled == 7.0
+    assert owned.round == 1
+    assert 400 not in owned.sampled_pids
+
+
+def test_a_readable_rss_forest_keeps_the_existing_admission_path(rss_census):
+    owner, owned, _, _, _ = rss_census
+    owner.sample()
+    assert owner.first is None
+    assert owner.sampled == 10.0
+    assert owned.round == 1
+    assert set(owned.sampled_pids) == {100, 200, 300}
 
 
 @pytest.mark.parametrize("stage", ["before", "after", "children"])
