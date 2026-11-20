@@ -206,14 +206,20 @@ def _outcome(span: Any, value: str) -> None:
         pass
 
 
-def outcome(span: Any, response: Mapping[str, Any]) -> None:
+def outcome(
+    span: Any, response: Mapping[str, Any], *, protocol_refusals: tuple[int, ...] = ()
+) -> None:
     result = response.get("result")
     error = response.get("error")
     if isinstance(error, dict):
         code = error.get("code")
         detail = error.get("data")
         detail = detail if isinstance(detail, dict) else {}
-        value = "refusal" if isinstance(code, int) and code in {-32600, -32601, -32602} else "error"
+        value = (
+            "refusal"
+            if isinstance(code, int) and code in (-32600, -32601, -32602, *protocol_refusals)
+            else "error"
+        )
     elif isinstance(result, dict) and result.get("isError"):
         detail = result.get("structuredContent")
         detail = detail if isinstance(detail, dict) else {}

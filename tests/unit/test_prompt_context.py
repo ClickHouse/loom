@@ -476,3 +476,75 @@ def test_invocation_http_default_response_status_is_success(spans):
     root = spans.get_finished_spans()[0]
     assert root.attributes["loom.call.outcome"] == "success"
     assert root.attributes["loom.request_id"] == "request-example"
+
+
+@pytest.mark.parametrize("target", ["memory.set", "memory_set", " memory.set "])
+def test_review_operation_refusal_retains_normalized_target(monkeypatch, spans, target):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.settings import settings
+    from server.transport import mcp
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    mcp.attach(app)
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp?toolset=readonly",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "loom_op", "arguments": {"op": target}},
+            },
+        )
+    assert response.json()["result"]["isError"] is True
+    roots = [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    assert len(roots) == 1
+    assert roots[0].attributes["loom.operation"] == "memory.set"
+    assert roots[0].attributes["loom.call.outcome"] == "refusal"
+
+
+@pytest.mark.asyncio
+async def test_review_operation_activation_retains_operation(monkeypatch, spans):
+    from server.transport import mcp, mcp_call
+
+    async def primer(*args):
+        return "primer"
+
+    monkeypatch.setattr(mcp_call, "_render_primer_and_emit", primer)
+    response = await mcp._handle_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "loom_activate"}}
+    )
+    assert response["result"]["isError"] is False
+    roots = [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    assert len(roots) == 1
+    assert roots[0].attributes["loom.operation"] == "loom_activate"
+    assert roots[0].attributes["loom.call.outcome"] == "success"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", ["2026-07-28", "2025-11-25"])
+async def test_review_protocol_version_refusal(monkeypatch, spans, version):
+    from server.transport import mcp
+    from server.transport.mcp_config import META_PROTOCOL_VERSION, UNSUPPORTED_PROTOCOL_VERSION
+
+    response = await mcp._handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "not-a-real-tool",
+                "_meta": {META_PROTOCOL_VERSION: version},
+            },
+        }
+    )
+    if version == "2026-07-28":
+        assert response["error"]["code"] == UNSUPPORTED_PROTOCOL_VERSION
+    else:
+        assert response["result"]["isError"] is True
+    roots = [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    assert len(roots) == 1
+    assert roots[0].attributes["loom.call.outcome"] == "refusal"

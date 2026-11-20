@@ -58,6 +58,7 @@ from server.transport.mcp_auth import (
 )
 from server.transport.mcp_call import _call_tool
 from server.transport.mcp_config import (
+    _LOOM_ACTIVATE_TOOL_NAME,
     _TRANSPORT_ERROR_ID,
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -68,6 +69,7 @@ from server.transport.mcp_config import (
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     SERVER_INFO,
+    UNSUPPORTED_PROTOCOL_VERSION,
     _err,
     _ok,
     cache_hints,
@@ -126,14 +128,16 @@ def _listing_params(request: Any) -> dict[str, str | None]:
 
 def _call_operation(params: dict[str, Any]) -> str:
     from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport.mcp_op import TOOLS_BY_NAME
+    from server.transport.mcp_op import TOOLS_BY_NAME, resolve_op
 
     name = params.get("name")
+    if name == _LOOM_ACTIVATE_TOOL_NAME:
+        return _LOOM_ACTIVATE_TOOL_NAME
     op = TOOLS_BY_NAME.get(name) if isinstance(name, str) else None
     if name == "loom_op":
         arguments = params.get("arguments")
         target = arguments.get("op") if isinstance(arguments, dict) else None
-        op = OPERATIONS_BY_NAME.get(target) if isinstance(target, str) else None
+        op = resolve_op(target, OPERATIONS_BY_NAME) if isinstance(target, str) else None
         return op.name if op else "loom_op.help"
     return op.name if op else "tools/call"
 
@@ -155,7 +159,7 @@ async def _observe_call(
     ) as span:
         result = await dispatch(payload)
         if result is not None:
-            prompt_context.outcome(span, result)
+            prompt_context.outcome(span, result, protocol_refusals=(UNSUPPORTED_PROTOCOL_VERSION,))
         return result
 
 
