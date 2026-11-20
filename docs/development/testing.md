@@ -141,11 +141,19 @@ leaves its search documents and existing search data unchanged. Test known commi
 uncertain sends separately: privacy cleanup and lease retention depend on whether a send
 may have committed. Preserve the original backend exception, including cancellation.
 
+Pause fence release after the database acknowledges a write, then cancel the caller or
+fail the release. Verify that every owed audit receipt, announcement and privacy cleanup
+still completes: a release failure cannot undo the committed row.
+
 Exercise the largest supported batch with nonzero control store latency and a small
 connection pool. Check acquisition and release under partial failure and cancellation.
 Every acquired holder must be released or retained for the documented uncertain-send
 bound. Include restore batches, whose supported size can exceed a single request batch.
 Use the clock seam for deadline cases.
+
+Prefer stateless fast paths over retaining private derived strings. If an optimization
+needs a process cache, bound its size and retention. Test erasure across replicas as well
+as warm-cache results, including private text retained in cache keys.
 
 Cover the documented [rolling-upgrade overlap](../architecture/rolling-upgrades.md) as
 well as writers that all use the same protocol. Record which interleavings a protocol
