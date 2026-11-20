@@ -209,12 +209,15 @@ async def test_concurrent_protocols_have_distinct_sessions_without_leaking_to_ot
 
     await asyncio.gather(proof(), proof())
     await client.query_one("SELECT 3")
-    assert len(client.proofs) == 2 and all(driver.closed for driver in client.proofs)
+    assert len(client.proofs) == 2
+    assert sum(not driver.closed for driver in client.proofs) <= 1
     sessions = [
         settings["session_id"] for driver in client.proofs for _, settings, _ in driver.calls
     ]
     assert len(set(sessions)) == 2 and all(sessions.count(value) == 2 for value in set(sessions))
     assert len(client.client.calls) == 1 and "session_id" not in client.client.calls[0][1]
+    await client.disconnect()
+    assert all(driver.closed for driver in client.proofs)
 
 
 @pytest.mark.asyncio
@@ -301,3 +304,141 @@ async def test_unsupported_operations_refuse_before_any_send_and_poison_the_scop
         with pytest.raises(ch.CoordinationSessionLost):
             await client.query_one("SELECT 3")
     assert len(client.proofs[0].calls) == 1 and other.client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_sequential_proofs_reuse_transport_but_bootstrap_distinct_sessions(
+    client: Any,
+) -> None:
+    for index in range(3):
+        async with client.coordination_session():
+            await client.query_one(f"SELECT {index + 2}")
+
+    assert len(client.proofs) == 1
+    driver = client.proofs[0]
+    assert not driver.closed
+    assert len(driver.calls) == 6
+    sessions = [extra["session_id"] for _, extra, _ in driver.calls]
+    assert len(set(sessions)) == 3
+    assert all(sessions.count(value) == 2 for value in set(sessions))
+    assert [extra["session_check"] for _, extra, _ in driver.calls] == [0, 1] * 3
+    assert all(
+        extra["use_query_cache"] == extra["use_query_condition_cache"] == 0
+        for _, extra, _ in driver.calls
+    )
+    assert client.client.calls == []
+    await client.disconnect()
+    assert driver.closed
+
+
+@pytest.mark.asyncio
+async def test_a_caught_failure_discards_the_reusable_transport(client: Any) -> None:
+    async with client.coordination_session():
+        first_channel = client._statement_client()
+        await client.query_one("SELECT 2")
+    first = client.proofs[0]
+    async with client.coordination_session():
+        assert client._statement_client() is first_channel
+        first.error = ConnectionResetError("connection reset")
+        with pytest.raises(ConnectionResetError):
+            await client.query_one("SELECT 3")
+    assert first.closed
+    async with client.coordination_session():
+        assert client._statement_client() is not first_channel
+        await client.query_one("SELECT 4")
+    assert len(client.proofs) == 2
+    await client.disconnect()
+    assert all(driver.closed for driver in client.proofs)
+
+
+@pytest.mark.asyncio
+async def test_reusable_transport_is_not_shared_between_clients(client: Any) -> None:
+    async with client.coordination_session():
+        original_channel = client._statement_client()
+        await client.query_one("SELECT 2")
+    original = client.proofs[0]
+    other = ch.CHClient()
+    other._client = _Driver()
+    other._connection_config = dict(client._connection_config)
+    async with other.coordination_session():
+        assert other._statement_client() is not original_channel
+        await other.query_one("SELECT 3")
+    assert len(client.proofs) == 2
+    assert not original.closed
+    await other.disconnect()
+    assert not original.closed
+    await client.disconnect()
+    assert original.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["generation", "driver", "configuration"])
+async def test_idle_transport_cannot_cross_a_connection_replacement(
+    client: Any, replacement: str
+) -> None:
+    async with client.coordination_session():
+        original_channel = client._statement_client()
+        await client.query_one("SELECT 2")
+    original = client.proofs[0]
+    if replacement == "generation":
+        client._generation += 1
+    elif replacement == "driver":
+        client._client = _Driver()
+    else:
+        client._connection_config = dict(client._connection_config, username="different")
+    async with client.coordination_session():
+        assert client._statement_client() is not original_channel
+        await client.query_one("SELECT 3")
+    assert len(client.proofs) == 2 and original.closed
+    await client.disconnect()
+    assert all(driver.closed for driver in client.proofs)
+
+
+@pytest.mark.asyncio
+async def test_owner_exit_discards_a_channel_with_an_inflight_child(client: Any) -> None:
+    pending = None
+    try:
+        async with client.coordination_session():
+            original_channel = client._statement_client()
+            original = client.proofs[0]
+            original.release = asyncio.Event()
+            pending = asyncio.create_task(client.query_one("SELECT 2"))
+            await original.entered.wait()
+        assert original.closed
+        async with client.coordination_session():
+            assert client._statement_client() is not original_channel
+            await client.query_one("SELECT 3")
+    finally:
+        if pending is not None:
+            original.release.set()
+            outcomes = await asyncio.gather(pending, return_exceptions=True)
+        await client.disconnect()
+    assert isinstance(outcomes[0], ch.CoordinationSessionLost)
+    assert all(driver.closed for driver in client.proofs)
+
+
+@pytest.mark.asyncio
+async def test_idle_transport_reuse_never_revives_an_old_child_session(client: Any) -> None:
+    release = asyncio.Event()
+
+    async def later() -> None:
+        await release.wait()
+        with pytest.raises(ch.CoordinationSessionLost):
+            await client.query_one("SELECT 2")
+
+    pending = None
+    try:
+        async with client.coordination_session():
+            original_channel = client._statement_client()
+            pending = asyncio.create_task(later())
+        async with client.coordination_session():
+            assert client._statement_client() is original_channel
+            release.set()
+            await pending
+            await client.query_one("SELECT 3")
+        assert len(client.proofs) == 1 and len(client.proofs[0].calls) == 3
+    finally:
+        release.set()
+        if pending is not None:
+            await asyncio.gather(pending, return_exceptions=True)
+        await client.disconnect()
