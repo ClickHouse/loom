@@ -1,3 +1,8 @@
+---
+title: MCP code search and caller graphs for coding agents
+description: Search indexed repositories over MCP, inspect definitions and callers, check tier-specific commits and follow code-linked lessons before changing code.
+---
+
 # A code index for coding agents
 
 Loom gives coding agents a shared index of your git repositories, served over MCP, so an
