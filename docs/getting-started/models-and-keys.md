@@ -52,9 +52,10 @@ keyless providers a degraded-health condition.
 | No provider key; a model server on the machine | A local model (`local`)                        | The `local` embedder the image carries.                          |
 
 **One OpenAI API key is enough for both roles; an Anthropic key is not required.**
-In Models & keys, choose one main LLM and leave per-job overrides blank. All enabled
-LLM jobs use that model, including verification and judging. Advanced overrides are
-optional and require another provider's key only when you explicitly select one.
+In Models & keys, choose one main LLM and leave the displayed per-job overrides blank
+to use it for those jobs, including capture verification and retrieval judging.
+Background settings such as the conflict resolver are configured separately; use the
+[per-job recipe](#keep-every-llm-job-on-your-chosen-provider) to route them explicitly.
 
 Choose OpenAI, Google Gemini, [Bedrock](#amazon-bedrock) or an
 **OpenAI-compatible embedding endpoint**. OpenAI embeddings use
@@ -74,7 +75,8 @@ your external agent's choice of provider is independent.
 
 As a platform administrator, open **Settings → Models & keys** (also available during Setup).
 Choose your LLM and embedding provider, enter their model IDs and API keys, then click
-**Test & apply**. Leave per-job overrides blank to use one LLM for every enabled job.
+**Test & apply**. Blank per-job overrides apply the main LLM to the displayed jobs;
+the [conflict resolver](#keep-every-llm-job-on-your-chosen-provider) keeps its separate setting.
 Saved dashboard settings override the environment and are encrypted in ClickHouse.
 **No Docker restart or Compose command is needed.** Key and LLM updates apply live;
 embedding changes start the rebuild described below. **Use environment
