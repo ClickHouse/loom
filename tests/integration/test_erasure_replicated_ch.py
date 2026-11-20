@@ -74,6 +74,11 @@ def db(raw: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
             parameters={"db": name},
         ).result_rows
         assert engines == [(True,)]
+        # Fenced memory inserts need leases isolated from the source schema's keys.
+        raw.command(
+            f"CREATE TABLE {name}._migration_lock AS {source}._migration_lock "
+            f"ENGINE = KeeperMap('/{name}/_migration_lock') PRIMARY KEY name"
+        )
         monkeypatch.setattr(settings, "ch_database", name)
         yield name
     finally:
