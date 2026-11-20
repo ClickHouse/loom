@@ -476,7 +476,11 @@ def _add_cell_parser(sub: Any) -> None:
     remove.set_defaults(func=_cmd_remove)
 
     from server.cli.cell_attach import add_attach_parser
+    from server.cli.cell_place import add_place_parser
     from server.cli.cell_prepare import add_prepare_parser
+    from server.cli.cell_update import add_update_parser
 
+    add_place_parser(csub)
     add_prepare_parser(csub)
     add_attach_parser(csub)
+    add_update_parser(csub)

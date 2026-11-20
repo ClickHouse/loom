@@ -28,6 +28,7 @@ import httpx
 import idna
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core import org_patterns
 from server.core.document_formats import route_key
 from server.core.embedding_space import inferred_provider
 from server.core.numbers import parse_budget_value
@@ -97,17 +98,6 @@ def _public_numbers(pem: str) -> object:
         return None
 
 
-def _overlap(a: str, b: str) -> bool:
-    """Whether two org patterns (a name, or `prefix*`) can match one org."""
-    if a.endswith("*") and b.endswith("*"):
-        return a[:-1].startswith(b[:-1]) or b[:-1].startswith(a[:-1])
-    if a.endswith("*"):
-        return b.startswith(a[:-1])
-    if b.endswith("*"):
-        return a.startswith(b[:-1])
-    return a == b
-
-
 @dataclass(frozen=True)
 class EndUserIssuer:
     """One end-user issuer: the orgs its tokens may name and where its keys are."""
@@ -148,7 +138,7 @@ class EndUserIssuer:
 
     def signs_for(self, org: str) -> bool:
         """Whether this issuer's tokens may name `org`: listed, or under a `prefix*`."""
-        return any(org.startswith(o[:-1]) if o.endswith("*") else org == o for o in self.orgs)
+        return any(org_patterns.matches(o, org) for o in self.orgs)
 
 
 class AuthSettings(BaseModel):
@@ -519,7 +509,9 @@ class AuthSettings(BaseModel):
                 raise ValueError(f"end-user issuer {issuer!r}: keys {same} are federated keys")
         # `user:<id>` names one person per org, so one issuer alone signs for an org.
         for (a, spec_a), (b, spec_b) in itertools.combinations(issuers.items(), 2):
-            shared = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]
+            shared = [
+                (x, y) for x in spec_a.orgs for y in spec_b.orgs if org_patterns.overlap(x, y)
+            ]
             if shared:
                 raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
         return self
@@ -1722,6 +1714,9 @@ class CodeSettings(BaseModel):
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
     code_search_prose_penalty: float = 0.25
+    # Chunk-kind ranking prior when the request names none: structural boosts the
+    # kind named by the question; flat/default apply fixed tables; off disables it.
+    code_search_kind_prior: Literal["off", "default", "flat", "structural"] = "flat"
     # The question kinds `code_search_catalogue_penalty` applies to.
     code_search_catalogue_kinds: str = "responsibility"
     # Cap of code.search's fan-in rank prior:

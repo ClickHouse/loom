@@ -970,7 +970,7 @@ def test_each_attach_calls_bound_counts_the_statements_it_sends(store: _Store) -
 def test_a_live_placement_reads_the_winner_again_under_the_row_lock(store: _Store) -> None:
     """A batch holds the cell's row lock, not the org's: an org it placed between the live
     placement's first read and its row lock is answered placed, never judged on the quota,
-    counted or audited twice."""
+    counted twice. Its call still writes the durability audit."""
     store.cells["eu-1"].update(state="serving", placements_max=0)
     reads = 0
     real = _Conn.fetchrow
@@ -985,9 +985,10 @@ def test_a_live_placement_reads_the_winner_again_under_the_row_lock(store: _Stor
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_Conn, "fetchrow", _fetchrow)
-        winner = asyncio.run(directory.place("acme", "eu-1", lambda _row: ""))
+        winner = asyncio.run(directory.place("acme", "eu-1", lambda _row: "", actor="cell:eu-1"))
     assert winner == ("eu-1", "dep-1") and reads == 2
-    assert store.cells["eu-1"]["placed"] == 0 and store.audit == []
+    assert store.cells["eu-1"]["placed"] == 0
+    assert store.audit == [("cell:eu-1", "place", {"org": "acme", "cell": "eu-1"})]
 
 
 def test_a_live_insert_that_loses_to_the_primary_key_counts_nothing(store: _Store) -> None:
@@ -1001,8 +1002,12 @@ def test_a_live_insert_that_loses_to_the_primary_key_counts_nothing(store: _Stor
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_Conn, "fetchval", _fetchval)
-        assert asyncio.run(directory.place("acme", "eu-1", lambda _row: "")) == ("eu-1", "dep-1")
-    assert store.cells["eu-1"]["placed"] == 0 and store.audit == []
+        assert asyncio.run(directory.place("acme", "eu-1", lambda _row: "", actor="cell:eu-1")) == (
+            "eu-1",
+            "dep-1",
+        )
+    assert store.cells["eu-1"]["placed"] == 0
+    assert store.audit == [("cell:eu-1", "place", {"org": "acme", "cell": "eu-1"})]
 
 
 # The attach lock and the troubleshooting page.
@@ -1451,3 +1456,28 @@ def test_native_compact_batch_with_control_envelope_fits_public_handler(client, 
     assert response.status_code == 200, response.text
     assert response.json()["placed"] == len(batch)
     assert set(store.placements) == set(batch)
+
+
+@pytest.mark.parametrize("position", ["current_fp", "next_fp"])
+def test_begin_refuses_operator_envelope_overflow_before_probe_or_writes(
+    client: TestClient, store: _Store, listener: _Listener, position: str
+) -> None:
+    deployment = str(UUID(int=1))
+    store.cells["eu-1"]["deployment_id"] = deployment
+    current = cell.as_value({**FIELDS, "deployment_id": deployment})
+    grown = cell.as_value({**FIELDS, "deployment_id": deployment, "oidc_client_id": ""})
+    live = {"org": "", "cell": "eu-1", "fingerprint": grown}
+    available = MAX_BODY_BYTES - len(json.dumps(live)) - 6 * cell.ORG_MAX_BYTES
+    grown["fields"]["oidc_client_id"] = "x" * available
+    body = (
+        _begin(deployment_id=deployment, current_fp=current, **{position: grown})
+        if position == "next_fp"
+        else _begin(deployment_id=deployment, current_fp=grown)
+    )
+    response = _call(client, "POST", "attach/begin", body)
+    assert response.status_code == 409
+    assert position in response.json()["error"]
+    assert "oidc_client_id" in response.json()["error"]
+    assert store.statements == directory.ATTACH_READ_STATEMENTS
+    assert listener.asked == [] and store.audit == []
+    assert store.cells["eu-1"]["attach_started_at"] is None

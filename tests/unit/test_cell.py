@@ -765,7 +765,7 @@ def test_the_configured_orgs_hold_the_org_of_each_repository_entry_the_code_conf
     monkeypatch.setattr(settings, "code_repo", code_repo)
     monkeypatch.setattr(settings, "code_repos_json", repos_json)
     monkeypatch.setattr(cell, "_code_orgs", repos.operator_orgs)
-    kept = {r.org for r in repos._configured_from_env()}
+    kept = {r.org for r in repos._configured_from_env(settings, {})}
     assert set(cell.fingerprint("dep-1")["configured_orgs"]) == ({code_org} | kept) - {""}
 
 

@@ -41,6 +41,9 @@ The [quickstart](../getting-started/quickstart.md) runs the stack with the extra
 service. Add a document from the dashboard's Library page, with `knowledge.add` for text,
 or, for a file the extractor converts, with `knowledge.upload` then `knowledge.ingest`
 ([ingesting files](../features/knowledge.md#ingesting-files)).
+[`document_search.py`](../../sdk/python/examples/document_search.py) runs the whole loop
+from Python: it adds two documents, cites the passages a search returns, and gets nothing
+back for a question they do not answer.
 
 ## Inspect a citation over MCP
 

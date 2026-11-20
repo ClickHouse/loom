@@ -14,6 +14,8 @@
 - `POST /cells/v1/operator/cells/<cell>/limit` and `.../credential`: the operator's changes
   to a cell's row (`loom cell limit`, `loom cell credential`), with the router's operator
   credential;
+- `POST /cells/v1/operator/cells/<cell>/place`: `loom cell place` places an org with the
+  operator credential, verifying the requested cell's deployment id and fingerprint;
 - `POST /cells/v1/operator/cells/<cell>/register`: `loom cell prepare` registers a cell,
   once the probe listener (the first cell's at LOOM_ROUTER_UPSTREAM_PROBE_URL, a later
   cell's at its `probe_url`) answers its deployment id, prepare's nonces and the bucket and
@@ -21,6 +23,8 @@
 - `GET /cells/v1/operator/cells/<cell>`: the cell's row as attach reads it;
 - `POST /cells/v1/operator/cells/<cell>/attach/begin`, `.../attach/place`,
   `.../attach/enforced` and `.../attach/serving`: the first cell's attach, in that order;
+- `POST /cells/v1/operator/cells/<cell>/configuration`: reserve or narrow the cell's
+  configuration after store proof, with the claimed generation and exact observed pair;
 - `DELETE /cells/v1/operator/cells/<cell>`: `loom cell remove` removes the row of a cell
   that is `attaching` with no placement;
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
@@ -28,9 +32,9 @@
 Every refusal of a placement writes nothing. A malformed placement body answers 400; the
 directory's refusals answer 503, so the cell's request answers 503 and its retry is safe,
 except a new org longer than `cell.ORG_MAX_BYTES`, which answers 400 `ORG_TOO_LONG` and no
-retry places; a credential that names no cell, or not this one, answers 401. An operator
-route answers a cell the directory does not hold 404 with the code `NO_SUCH_CELL`, so a 404
-without it is a router of an earlier build.
+retry places; a credential that names no cell, or not this one, answers 401. Operator
+placement refusals answer 409; the other operator routes answer a cell the directory does
+not hold 404 with `NO_SUCH_CELL`, so a 404 without it is a router of an earlier build.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any, NamedTuple, Protocol
 from urllib.parse import parse_qs
 from uuid import UUID
@@ -62,7 +67,7 @@ from starlette.routing import Route
 
 from server.core import cell as cell_state
 from server.core.cell_probe import PATH as PROBE_PATH
-from server.router import directory, routing
+from server.router import directory, fingerprints, routing
 from server.router.limits import (
     ATTACH_BATCH,
     ATTACH_BEGIN_MAX_BYTES,
@@ -302,7 +307,7 @@ class Router:
             return ""
 
         try:
-            winner, deployment_id = await directory.place(org, name, refusal)
+            winner, deployment_id = await directory.place(org, name, refusal, actor=f"cell:{name}")
         except directory.OrgTooLong as e:
             return _refused(400, e.reason, code="ORG_TOO_LONG")
         except (directory.PlacementRefused, directory.DirectoryUnavailable) as e:
@@ -314,6 +319,41 @@ class Router:
             return _refused(503, e.reason)
         log.info("placement of %s: %s (asked by %s)", org, winner, name)
         return JSONResponse({"cell": winner, "deployment_id": deployment_id})
+
+    async def operator_place(self, request: Request) -> JSONResponse:
+        """Place with the operator credential. The CLI checks its local Postgres mode;
+        this route trusts that check and verifies the directory's locked identity."""
+        body = await self._operator_body(request, MAX_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        org = cell_state.named_org(body.get("org"))
+        deployment_id = _text(body, "deployment_id", needed=True)
+        if (
+            set(body) != {"org", "deployment_id", "fingerprint"}
+            or org is None
+            or deployment_id is None
+        ):
+            return _refused(400, "a placement names org, deployment_id and fingerprint")
+        if reason := cell_state.org_name_refusal(org):
+            return _refused(400, reason, code="ORG_TOO_LONG")
+        name = request.path_params["cell"]
+
+        def verify(locked: directory.Cell) -> str:
+            if locked.deployment_id != deployment_id:
+                return "the calling process names another deployment id"
+            if not fingerprint_matches(locked, body["fingerprint"]):
+                return f"the calling process's configuration matches no value of {name!r}"
+            return ""
+
+        try:
+            winner, deployment = await directory.place(
+                org, name, placement_refusal, actor="operator", verify=verify
+            )
+        except directory.PlacementRefused as e:
+            return _refused(409, e.reason)
+        except directory.DirectoryUnavailable as e:
+            return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
+        return JSONResponse({"org": org, "cell": winner, "deployment_id": deployment})
 
     async def cell_state(self, request: Request) -> JSONResponse:
         """`GET /cells/v1/cells/<cell>`: the first cell's state, for its own credential
@@ -685,6 +725,135 @@ class Router:
         return await _answered(
             lambda: directory.claim(request.path_params["cell"], expected), _attach_answer
         )
+
+    async def addresses(self, request: Request) -> JSONResponse:
+        if request.method == "GET":
+            if refused := self._operator(request) or _malformed_cell_refusal(request):
+                return refused
+            found = await _read_attaching(request.path_params["cell"])
+            if isinstance(found, JSONResponse):
+                return found
+            return JSONResponse(
+                {
+                    **_attach_answer(found),
+                    "router_upstream_url": _cell_address(settings.router_upstream_url) or "",
+                    "router_upstream_probe_url": _cell_address(settings.router_upstream_probe_url)
+                    or "",
+                }
+            )
+        body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
+        if set(body) != {"probe_url", "upstream_url", "nonces"} or not _nonces_shaped(
+            body.get("nonces")
+        ):
+            return _refused(
+                400, "address refresh requires probe_url, upstream_url and store nonces"
+            )
+        probe_text = _text(body, "probe_url", needed=True)
+        upstream_text = _text(body, "upstream_url")
+        probe_url = _cell_address(probe_text) if probe_text is not None else None
+        upstream_url = _cell_address(upstream_text) if upstream_text else ""
+        if not probe_url or upstream_text is None or upstream_url is None:
+            return _refused(400, "address refresh requires normalized HTTP(S) host-only addresses")
+        found = await _read_attaching(request.path_params["cell"])
+        if isinstance(found, JSONResponse):
+            return found
+        if reason := directory.control_refusal(found, expected):
+            return _refused(409, reason)
+        proposed = replace(found, probe_url=probe_url, upstream_url=upstream_url)
+
+        def configured() -> bool:
+            return not found.row.is_first or (probe_url, upstream_url) == (
+                _cell_address(settings.router_upstream_probe_url),
+                _cell_address(settings.router_upstream_url),
+            )
+
+        if not configured():
+            return _refused(
+                409, "proposed addresses differ from this router's configured upstreams"
+            )
+        if not found.row.is_first and upstream_url != found.upstream_url:
+            return _refused(409, "a later cell probe refresh cannot change its upstream address")
+        if refused := await _probe(
+            proposed, body["nonces"], self._probe_transport, writer="update"
+        ):
+            return refused
+        if found.row.is_first:
+            if refused := await _upstream_check(proposed, self._probe_transport):
+                return refused
+        response = await _answered(
+            lambda: directory.update_addresses(
+                found.row.cell, probe_url, upstream_url, expected=expected, configured=configured
+            ),
+            _attach_answer,
+        )
+        if response.status_code in (200, 503):
+            self._table_at = None
+        return response
+
+    async def configuration_placements(self, request: Request) -> JSONResponse:
+        body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
+        orgs = body.get("orgs")
+        if (
+            set(body) != {"orgs", "keys_fp"}
+            or _text(body, "keys_fp", needed=True) is None
+            or not isinstance(orgs, list)
+            or any(cell_state.named_org(org) is None for org in orgs)
+        ):
+            return _refused(
+                400, "placement proof requires keys_fp and an explicit list of configured org names"
+            )
+        if any(cell_state.org_name_refusal(org) for org in orgs):
+            return _refused(400, "a configured org name is too long", code="ORG_TOO_LONG")
+        return await _answered(
+            lambda: directory.configuration_placements(
+                request.path_params["cell"], orgs, expected=expected, keys_fp=body["keys_fp"]
+            ),
+            lambda held: {"cell": request.path_params["cell"], "orgs": held},
+        )
+
+    async def configuration(self, request: Request) -> JSONResponse:
+        body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
+        if set(body) != {"action", "target_fp", "keys_fp", "nonces"}:
+            return _refused(400, "configuration requires action, target_fp, keys_fp and nonces")
+        action, target, keys_fp = body["action"], body["target_fp"], body["keys_fp"]
+        if action not in ("config", "finish", "revert") or not fingerprints.readable(target):
+            return _refused(400, "configuration requires a supported action and readable target_fp")
+        if _text(body, "keys_fp", needed=True) is None:
+            return _refused(400, f"keys_fp is text of 1 to {_TEXT_MAX} characters, no NUL")
+        if not _nonces_shaped(body["nonces"]):
+            return _refused(400, _NONCES_REFUSAL)
+        name = request.path_params["cell"]
+        found = await _read_attaching(name)
+        if isinstance(found, JSONResponse):
+            return found
+        if reason := directory.control_refusal(found, expected):
+            return _refused(409, reason)
+        if refused := await self._stores_check(found, body["nonces"]):
+            return refused
+        response = await _answered(
+            lambda: directory.update_configuration(
+                name, target, action, keys_fp=keys_fp, refusal=placement_refusal, expected=expected
+            ),
+            _attach_answer,
+        )
+        if response.status_code in (200, 503):
+            self._table_at = None
+        return response
 
     async def attach_begin(self, request: Request) -> JSONResponse:
         """`attach/begin`: once the probe listener echoes attach's nonces from the stores
@@ -1460,6 +1629,7 @@ def build_app(router: Router | None = None) -> Starlette:
     return Starlette(
         routes=[
             Route("/cells/v1/placements", router.place, methods=["POST"]),
+            Route("/cells/v1/operator/cells/{cell}/place", router.operator_place, methods=["POST"]),
             Route("/cells/v1/cells/{cell}", router.cell_state, methods=["GET"]),
             Route("/cells/v1/operator/cells/{cell}/limit", router.set_limit, methods=["POST"]),
             Route("/cells/v1/operator/cells/{cell}/register", router.register, methods=["POST"]),
@@ -1470,6 +1640,21 @@ def build_app(router: Router | None = None) -> Starlette:
             ),
             Route("/cells/v1/operator/cells/{cell}", router.operator_cell, methods=["GET"]),
             Route("/cells/v1/operator/cells/{cell}/claim", router.claim, methods=["POST"]),
+            Route(
+                "/cells/v1/operator/cells/{cell}/addresses",
+                router.addresses,
+                methods=["GET", "POST"],
+            ),
+            Route(
+                "/cells/v1/operator/cells/{cell}/configuration/placements",
+                router.configuration_placements,
+                methods=["POST"],
+            ),
+            Route(
+                "/cells/v1/operator/cells/{cell}/configuration",
+                router.configuration,
+                methods=["POST"],
+            ),
             Route("/cells/v1/operator/cells/{cell}", router.remove, methods=["DELETE"]),
             Route(
                 "/cells/v1/operator/cells/{cell}/attach/begin",

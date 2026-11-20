@@ -329,6 +329,7 @@ Operator signals (tier lag, stale files, failed passes) are in
 
 ## Related
 
+- [repository questions](../../guides/repository-questions.md): calibration, documentation retrieval and answer completeness
 - [operations.md](operations.md): every `code.*` op by task
 - [freshness.md](freshness.md): `as_of`, commit coverage, CI refresh
 - [repositories.md](repositories.md): adding a repository, branches, who can read

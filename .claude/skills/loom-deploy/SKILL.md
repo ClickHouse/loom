@@ -2,7 +2,7 @@
 name: loom-deploy
 description: Operator procedure for a blue/green Loom deployment with redeploy.sh — preflight, swap, post-swap checks, rollback. Use only when an operator explicitly asks to deploy, roll back or check which build is serving.
 disable-model-invocation: true
-argument-hint: "[--status | --rollback]"
+argument-hint: "[--target-commit <full-sha> [--reapply-config] | --status | --rollback]"
 metadata:
   internal: true
 ---
@@ -30,6 +30,14 @@ LOOM_COLOUR=blue LOOM_COLOUR_PORT=7781 docker compose --env-file .env -f dev/doc
 ./redeploy.sh            # builds and boots the idle colour, waits for status=ok, readiness.ready and schema.pending=[], swaps the proxy, stops the old colour
 ```
 
+For a qualified source commit, use a clean deployment checkout already at that full
+SHA and `./redeploy.sh --target-commit <full-sha>`. It fetches main without rebasing.
+Tracked edits, untracked files and an idle build reporting another SHA refuse. Keep
+staged configuration artifacts outside the clean checkout. Reapplying configuration
+at that same commit is `./redeploy.sh --target-commit <same-full-sha> --reapply-config`:
+another ordinary guarded deployment, followed by final observation. The two builds
+share source identity; this does not select or prove an identical image digest.
+
 The script refuses to swap when the new colour is unhealthy or not ready, a provider is degraded, or the embedding width does not match; read its last `!!!` line rather than forcing. Both colours serve on the new schema for a moment, which is safe only because every change follows the [rolling-upgrade rules](../../../docs/architecture/rolling-upgrades.md). The workers lease passes between colours; if the script exits before the new colour's workers take over, it restarts the old colour's.
 
 ## 3. After the swap
@@ -40,7 +48,7 @@ curl -s localhost:7777/v1/health | jq '{status, build_commit, ready: .readiness.
 docker logs --since 5m loom-<colour> 2>&1 | grep -iE 'error|traceback' | tail
 ```
 
-- `build_commit` is the commit you meant to deploy. The script fetched `origin/main` and rebased onto it (`--autostash`), refused a dirty tree that was behind, and asked `[y/N]` before pulling commits that touch the deploy files; a dirty tree it was not behind ships as it is.
+- `build_commit` is the commit you meant to deploy. Ordinary mode fetches `origin/main` and rebases onto it (`--autostash`), refuses a dirty tree that is behind, and asks `[y/N]` before pulling commits that touch deploy files. Pinned mode keeps HEAD unchanged, requires clean source and checks the full target SHA before the swap.
 - Watch error rate and p95 for the first minutes; a ClickHouse replica restarting at the same moment slows inserts without a code cause.
 
 ## 4. Rollback

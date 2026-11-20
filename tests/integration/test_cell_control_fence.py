@@ -473,7 +473,7 @@ async def test_backout_closure_serializes_queued_placement(
                 "SELECT cell FROM loom_router.cells WHERE cell = 'first' FOR UPDATE"
             )
             placement = asyncio.create_task(
-                directory.place("queued", "first", app.placement_refusal)
+                directory.place("queued", "first", app.placement_refusal, actor="cell:first")
             )
             # The placement has its org lock and is queued at the cell row before claim.
             for _ in range(100):
@@ -507,7 +507,7 @@ async def test_backout_closure_serializes_queued_placement(
                 "SELECT pg_advisory_xact_lock($1, hashtext($2))", directory._PLACE_LOCK, "queued"
             )
             placement = asyncio.create_task(
-                directory.place("queued", "first", app.placement_refusal)
+                directory.place("queued", "first", app.placement_refusal, actor="cell:first")
             )
             await wait_for_lock(directory._PLACE_LOCK)
             await cell_control.backout(_owner(local_admin), call, original)
@@ -666,7 +666,9 @@ async def test_backout_close_cannot_be_reopened_before_same_session_cleanup(
             )
             # Actually attempt placement before the acknowledged close returns to cleanup.
             try:
-                await directory.place("between-close-and-cleanup", "first", app.placement_refusal)
+                await directory.place(
+                    "between-close-and-cleanup", "first", app.placement_refusal, actor="cell:first"
+                )
             except directory.PlacementRefused as exc:
                 placement_error = str(exc)
         return answer

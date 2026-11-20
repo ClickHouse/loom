@@ -427,3 +427,30 @@ def run_connected[T](
             return result
 
     return asyncio.run(_go())
+
+
+def run_control_connected[T](run: Callable[[CHClient], Awaitable[T]], *, org_free: OrgFree) -> T:
+    """Connect an operator-only coordinator without admitting model or org work.
+
+    Such a coordinator cannot join the participant set whose retirement it waits
+    for. It still verifies paired stores and the explicit org-free write gate.
+    """
+    from server.core.ch import get_client
+
+    _declared(None, org_free)
+
+    async def go() -> T:
+        ch = get_client()
+        await connect_verified(ch)
+        try:
+            await check_acceptance(org_free=org_free)
+            result = await run(ch)
+        except BaseException:  # Keep the coordinator failure while closing its clients.
+            with suppress(BaseException):
+                await disconnect(ch)
+            raise
+        else:
+            await disconnect(ch)
+            return result
+
+    return asyncio.run(go())

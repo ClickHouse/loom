@@ -178,6 +178,83 @@ async def test_public_close_defers_repeated_signals_until_acknowledged_within_or
         await asyncio.gather(*owned_tasks, return_exceptions=True)
 
 
+@pytest.mark.parametrize("stage", ["opening", "initial", "directory", "transaction", "close"])
+@pytest.mark.parametrize("kind", ["SystemExit", "KeyboardInterrupt"])
+async def test_placement_fatal_stays_inside_owner_until_public_close(stage, kind):
+    import subprocess
+    import sys
+    import textwrap
+
+    program = textwrap.dedent(
+        """
+        import argparse, asyncio, sys
+        import asyncpg
+        import httpx
+        from server.cli import cell_place
+        from server.core import pg
+        from server.settings import settings
+        settings.pg_dsn = "postgres://not-connected"
+        stage, kind = sys.argv[1:]
+        original = (SystemExit if kind == 'SystemExit' else KeyboardInterrupt)('original')
+        events = []
+        class Transaction:
+            async def start(self): pass
+            async def commit(self): events.append('commit')
+        class Connection:
+            def transaction(self): return Transaction()
+            async def execute(self, *args):
+                if stage == 'transaction': raise original
+            async def close(self, **kw):
+                events.append('close')
+                if stage == 'close': raise original
+            def terminate(self): events.append('abort')
+        conn = Connection()
+        async def connect(*args, **kw): return conn
+        async def initialize(c):
+            assert c is conn
+            if stage == 'opening': raise original
+        async def noop(*args): pass
+        async def direct(c, what): return []
+        async def identity(c, name):
+            assert c is conn
+            if stage == 'initial': raise original
+            return 'dep', {}
+        async def directory(*args):
+            if stage == 'directory': raise original
+        async def held(c): return True
+        async def main():
+            asyncpg.connect = connect
+            pg._check_deployment = initialize
+            pg.init_connection = noop
+            cell_place.apg.direct_refusals = direct
+            cell_place.apg.take_lock = noop
+            cell_place.apg.lock_held = held
+            cell_place._identity = identity
+            cell_place._directory = directory
+            try:
+                await cell_place.place(argparse.Namespace(cell='first', org='acme'), httpx.URL('http://router'))
+            except BaseException as error:
+                assert error is original, (type(error).__name__, events)
+                assert events.count('close') == 1, events
+                await asyncio.sleep(0)
+                print('original-after-public-close')
+                return
+            raise AssertionError('fatal became success')
+        asyncio.run(main())
+        """
+    )
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [sys.executable, "-c", program, stage, kind],
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "original-after-public-close" in result.stdout
+
+
 async def test_repeated_signals_cannot_extend_an_expired_public_close(monkeypatch):
     clock = ManualClock(t=100.0)
     local_time = SimpleNamespace(monotonic=clock.monotonic)
