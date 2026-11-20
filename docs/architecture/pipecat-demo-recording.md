@@ -6,6 +6,22 @@ labels itself as a visualization rather than a screen recording. It shows
 measured process events and synthetic observations from a validated post-run
 assertion receipt. It does not replay API responses or type a simulated session.
 
+## Source entry points
+
+- [dev/pipecat_demo/record_pipecat_video.py](../../dev/pipecat_demo/record_pipecat_video.py):
+  `run_native`, `validated_receipt`, `frame_bytes`, `encode_video` and `main`
+  collect events, validate observations, render frames and clean owned processes.
+- [dev/pipecat_demo/_pipecat_video_ci.py](../../dev/pipecat_demo/_pipecat_video_ci.py):
+  `test_pipecat_text_example_recalls_and_stores_the_real_turn` writes the synthetic
+  receipt after native assertions pass.
+- [tests/integration/_pipecat_demo_ci.py](../../tests/integration/_pipecat_demo_ci.py):
+  `test_pipecat_text_example_recalls_and_stores_the_real_turn` qualifies the native
+  context and persisted messages.
+- [sdk/python/examples/pipecat_text_memory.py](../../sdk/python/examples/pipecat_text_memory.py):
+  `main`, `open_application_family` and `run_turn` execute the example.
+
+## Invariants
+
 The workload keeps the native test, example and filming wrapper pinned by hash.
 It uses a real Agent and Pipecat with fake server LLM and embedding providers.
 Only the exact receipt and allowlisted process summaries reach the renderer.
