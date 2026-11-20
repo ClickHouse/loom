@@ -399,3 +399,52 @@ def test_blocking_is_substantially_cheaper_than_the_scan() -> None:
         _reference(m, many)
     scan = time.perf_counter() - t0
     assert blocked * 3 < scan, f"blocked {blocked * 1000:.0f} ms vs scan {scan * 1000:.0f} ms"
+
+
+@pytest.mark.parametrize(
+    "prefix", ["record-abcdefghijklmnopqrstuvwxyz", "catalog-0123456789abcdef0123456789abcdef"]
+)
+def test_ambiguous_names_stop_scoring_after_refusal_is_certain(monkeypatch, prefix):
+    from server.memory.app import entity_resolution as owner
+
+    candidates = [f"{prefix}-{arm}-{i}" for arm in range(3) for i in range(700)]
+    mention = f"{prefix}-3-1800"
+    expected = _reference(mention, candidates)
+    original = owner._prepared_similarity
+    scored = 0
+
+    def counted(*args):
+        nonlocal scored
+        scored += 1
+        return original(*args)
+
+    monkeypatch.setattr(owner, "_prepared_similarity", counted)
+    assert owner.choose_canonical_candidate(mention, candidates) == expected
+    assert expected.strategy == "self"
+    assert scored <= 8, f"ambiguous names required {scored} similarity comparisons"
+
+
+def test_entropy_rounding_boundaries_keep_the_full_scoring_decision():
+    import math
+
+    candidates = ["abc-defghij", "abcd-efghij", "abcdef-ghij"]
+    entropy = normalized_entropy([1.0, 1.0, 1.0])
+    thresholds = [
+        0.0,
+        _MAX_NORMALIZED_ENTROPY,
+        math.nextafter(entropy, 0.0),
+        entropy,
+        math.nextafter(entropy, math.inf),
+        math.nextafter(1.0, 0.0),
+        1.0,
+    ]
+    for minimum in (_MIN_FUZZY_SCORE, math.nextafter(1.0, 0.0), 1.0):
+        for maximum in thresholds:
+            for gap in (0.0, math.nextafter(0.0, 1.0), _MIN_TOP_GAP):
+                kwargs = dict(min_score=minimum, max_entropy=maximum, min_gap=gap)
+                assert choose_canonical_candidate("abcdefghij", candidates, **kwargs) == _reference(
+                    "abcdefghij", candidates, **kwargs
+                ), kwargs
+                assert choose_canonical_candidate(
+                    "abcdefghij", candidates + ["abcdefghij"], **kwargs
+                ) == EntityResolutionDecision("abcdefghij", "abcdefghij", 1.0, "exact")

@@ -314,6 +314,11 @@ def choose_canonical_candidate(
     # (see the note above), so this decides exactly what the full scan would.
     scored: list[tuple[str, float]] = []
     gap_blockers = 0
+    entropy_blockers = 0
+    # Qualifying probabilities contain at least min_score uniform mass.
+    # Reserve 64 ulps per candidate for normalization and entropy summation.
+    entropy_floor = min_score - 64.0 * math.ulp(1.0) * len(prepared)
+    two_scores_refuse = 0.0 < min_score <= 1.0 and 0.0 <= max_entropy < entropy_floor
     for i in _blocked_positions(prepared, m_len, m_clen, min_score):
         if prepared[i][0] == mention or not _overlap_admits(
             prepared, i, m_len, m_clen, m_chars, m_cchars, min_score
@@ -321,6 +326,10 @@ def choose_canonical_candidate(
             continue
         score = _prepared_similarity(mention, prepared[i][0], m_compact, prepared[i][1])
         scored.append((prepared[i][0], score))
+        if two_scores_refuse and score >= min_score:
+            entropy_blockers += 1
+            if entropy_blockers == 2:
+                return EntityResolutionDecision(mention, mention, 1.0, "self")
         if 1.0 - score < min_gap:
             gap_blockers += 1
             # Two scores this close to one leave no room for the required winner gap.
