@@ -150,10 +150,11 @@ protects and the operator steps required to reach that guarantee.
 
 ## Worker progress regressions
 
-Resume through the supervisor and persisted `loom.worker_status`, with fresh worker
-process state between passes. Check the saved cursor after a partial pass and after a
-completed scan. This exercises both the worker's cursor and the supervisor's persistence
-rules.
+Use consecutive passes in the same process for boundary events and late usage. These
+cases exercise the process watermark. Also test restarts and handovers: begin with fresh
+worker process state and resume through the supervisor and persisted
+`loom.worker_status`. Check the saved cursor after a partial pass and after a completed
+scan to exercise the supervisor's persistence rules.
 
 Include these boundaries:
 
