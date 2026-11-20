@@ -494,11 +494,15 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
             finally:
                 await _announce_set(w)  # committed, whatever failed after it
             return w.version
-    landed = False
+    sent = False
+
+    def mark_sent() -> None:
+        nonlocal sent
+        sent = True
+
     try:
         with traced("ch.insert.memory", table="loom.memory"):
-            await insert_memory_versions([memory_row], ch=ch)
-        landed = True
+            await insert_memory_versions([memory_row], ch=ch, on_send=mark_sent)
         try:
             await _audit_set_receipt(
                 w.input,
@@ -514,7 +518,7 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
         await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
         return version
     finally:  # the row is in: a failed lift or retire must not also skip the fence
-        if landed and (fence := _fence()):
+        if sent and (fence := _fence()):
             await fence_high(fence, ch=ch)
 
 

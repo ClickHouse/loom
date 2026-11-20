@@ -306,7 +306,7 @@ async def insert_versions_over_heads(
     the head is overtaken by it. Under Postgres only over that very version, else 503
     (`heads_unchanged(exact=True)`): a copy never overwrites a write, a relabel or a
     redaction it did not see; a key with no head read (None) is held to having no live
-    head. On ClickHouse, `exact` checks the versions under the same Keeper fences every
+    head. On ClickHouse, `exact` checks the rows under the same Keeper fences every
     memory insert takes, refusing a moved head with 503 `ADMISSION_CONTENDED`; without
     it, only the insert is fenced and the source may have moved before the fence.
 
@@ -325,10 +325,7 @@ async def insert_versions_over_heads(
     if not pg.enabled() or not rows:
         if rows:
             if exact:
-                expected = {
-                    identity_key(r): None if h is None else h.version
-                    for r, h in zip(rows, read, strict=True)
-                }
+                expected = {identity_key(r): h for r, h in zip(rows, read, strict=True)}
                 await insert_memory_versions(rows, ch=ch, expected_heads=expected)
             else:
                 await insert_memory_versions(rows, ch=ch)

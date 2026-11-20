@@ -61,9 +61,12 @@ the key, a write drawn later or one from a replica whose clock is ahead. A judge
 supersession goes one above the version it read; its vector rows take a version the
 status mirror draws (`mirror_status_to_embeddings(judged=True)`). Under the ClickHouse
 authority every memory insert takes per-key Keeper fences. `memory.lock`,
-`memory.unlock` and `memory.verify` check the source versions inside those fences and
+`memory.unlock` and `memory.verify` compare the source rows inside those fences and
 answer 503 `ADMISSION_CONTENDED` without inserting when a head has moved. Value writers
 take the same fences, so another replica cannot insert between that check and the copy.
+The comparison includes the served value and persisted metadata: clock skew can make
+two writers choose the same version. Usage totals and JSON projection formatting are
+excluded because they can differ without a version insert.
 Other copy writers fence only their insert: a write with a lower version whose row lands
 between their source read and the fence is still overtaken, and nothing reports it.
 Under Postgres the copy commits only
@@ -74,8 +77,9 @@ The ClickHouse fences use `server/core/lease_writes.py`: uncertain inserts retai
 Keeper holders until every admitted send has finished or expired. Batches admit keys in
 bounded waves and keep the earliest send deadline. Memory rows commit before their
 embedding rows are inserted, so a refused value write publishes no searchable text.
-A high-sensitivity update refused before admission leaves prior search data live;
-a memory send whose outcome is unknown is still fenced.
+A high-sensitivity write refused before admission leaves prior search data live;
+an admitted memory send is still fenced if its outcome is unknown or cancellation
+arrives during holder release.
 Holder release uses bounded waves too, so a batch does not exhaust its own connection
 pool during cleanup. Large ClickHouse namespace restores insert bounded batches to
 keep admission inside each batch's lease budget.

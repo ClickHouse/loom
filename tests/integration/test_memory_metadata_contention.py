@@ -26,7 +26,10 @@ pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["lock", "unlock", "verify", "revoke"])
-async def test_metadata_copy_refuses_a_committed_intervening_update(monkeypatch, operation):
+@pytest.mark.parametrize("same_version", [False, True])
+async def test_metadata_copy_refuses_a_committed_intervening_update(
+    monkeypatch, operation, same_version
+):
     if pg.enabled():
         pytest.skip("exercises the ClickHouse authority")
     now = naive_utc_now_seconds()
@@ -41,7 +44,7 @@ async def test_metadata_copy_refuses_a_committed_intervening_update(monkeypatch,
         memory_type="episodic",
         value="proposed",
         confidence=0.8,
-        version=version_over(0),
+        version=version_over(0) + 10_000_000_000,
         pinned=False,
         created_at=now,
         updated_at=now,
@@ -96,7 +99,9 @@ async def test_metadata_copy_refuses_a_committed_intervening_update(monkeypatch,
         async with asyncio.timeout(30):
             await paused.wait()
             update = build_memory_version_row(
-                source, value="rejected", version=version_over(source)
+                source,
+                value="rejected",
+                version=source.version if same_version else version_over(source),
             )
             await insert_memory_versions([update], ch=second)
             committed = (await memory_rows_by_identity_keys([key], ch=second, sequential=True))[key]
@@ -108,10 +113,12 @@ async def test_metadata_copy_refuses_a_committed_intervening_update(monkeypatch,
         assert final.value == "rejected"
         assert mirrors == []
         history = await first.query_one(
-            "SELECT count() AS n FROM loom.memory_versions WHERE org = {org:String}",
-            {"org": source.org},
+            "SELECT uniqExact(version) AS versions, countIf(version > {version:UInt64}) AS copies "
+            "FROM loom.memory_versions WHERE org = {org:String}",
+            {"org": source.org, "version": committed.version},
         )
-        assert history["n"] == 2
+        # Equal-version history rows may already have merged into one row.
+        assert history == {"versions": 1 if same_version else 2, "copies": 0}
     finally:
         if task is not None and not task.done():
             task.cancel()

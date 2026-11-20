@@ -1188,10 +1188,12 @@ usage fold's counters on `memory` are batched lightweight updates; see
 
 Under the ClickHouse authority, every memory version insert holds a Keeper fence per
 identity key. `memory.lock`, `memory.unlock` and `memory.verify` check that the source
-version is still the head inside the fence, and answer 503 `ADMISSION_CONTENDED` with
+row is still the head inside the fence, and answer 503 `ADMISSION_CONTENDED` with
 no version written when it moved. All value inserts take the same fences, including
 unconditional writes and batches, so the check and insert cannot interleave with another
 replica's version insert. A re-read outside the fence provides no such guarantee.
+The check compares values and metadata as well as versions, since writers can draw
+equal versions. Usage totals and JSON projection formatting do not identify a version.
 The fence's failure and rollout limits are described in
 [storage authority](storage-authority.md#why-two-stores).
 

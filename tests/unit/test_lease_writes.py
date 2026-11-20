@@ -126,13 +126,15 @@ async def test_batch_release_does_not_overload_its_own_pool(monkeypatch, pool):
     names = [f"k{i}" for i in range(1000)]
     remaining = set(names)
     active = 0
+    peak = 0
 
     async def take(name, **kw):
         return SimpleNamespace(name=name)
 
     async def release(lease):
-        nonlocal active
+        nonlocal active, peak
         active += 1
+        peak = max(peak, active)
         try:
             if active > (pool or 64):
                 return  # a refused release leaves its durable holder in place
@@ -143,11 +145,13 @@ async def test_batch_release_does_not_overload_its_own_pool(monkeypatch, pool):
 
     monkeypatch.setattr(writes.leases, "take", take)
     monkeypatch.setattr(writes.settings, "ch_pool_maxsize", pool)
+    monkeypatch.setattr(writes.settings, "ch_write_fence_concurrency", 3)
     monkeypatch.setattr(writes.leases, "work_left", lambda *args: 24)
     monkeypatch.setattr(writes.leases, "release_shielded", release)
     async with writes.fenced_many(names):
         pass
     assert not remaining, "cleanup cannot strand keys by exceeding the connection pool"
+    assert peak == min(3, pool or 3)
 
 
 @pytest.mark.asyncio

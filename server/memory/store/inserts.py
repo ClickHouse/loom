@@ -8,7 +8,7 @@ from contextlib import nullcontext
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.store.rows import MEMORY_PERSISTED_COLS, IdentityKey
+from server.memory.store.rows import MEMORY_PERSISTED_COLS, IdentityKey, MemoryRow
 from server.observability import pg_pipeline
 
 
@@ -39,7 +39,7 @@ async def insert_memory_versions(
     published: bool = False,
     publish_now: bool = True,
     policy: Mapping[tuple[str, str], int] | None = None,
-    expected_heads: Mapping[IdentityKey, int | None] | None = None,
+    expected_heads: Mapping[IdentityKey, MemoryRow | None] | None = None,
     on_send: Callable[[], None] | None = None,
 ) -> int:
     """The one loom.memory write: every row is checked against
@@ -48,7 +48,7 @@ async def insert_memory_versions(
     there first and published from the commit (`pg_publish`), which inserts them
     here with `published`; with `publish_now` False they are only committed, for the
     delivery worker to publish. On ClickHouse all writers take the same per-key Keeper
-    fences; `expected_heads` checks source versions inside them before inserting.
+    fences; `expected_heads` checks source rows inside them before inserting.
     `on_send` marks a direct ClickHouse insert that passed admission and may land.
     Returns the row count; an empty batch writes nothing."""
     if not rows:

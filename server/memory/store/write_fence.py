@@ -11,8 +11,8 @@ from typing import Any
 from server.core import lease_writes
 from server.core.repo_base import _CHClient
 from server.memory.store.pg_memory import AdmissionContendedError
-from server.memory.store.reads import clickhouse_head_versions
-from server.memory.store.rows import IdentityKey, identity_key
+from server.memory.store.reads import memory_rows_by_identity_keys
+from server.memory.store.rows import IdentityKey, MemoryRow, identity_key, memory_head_state
 
 
 def _lease_client(ch: _CHClient) -> _CHClient:
@@ -28,7 +28,7 @@ def lease_name(key: IdentityKey) -> str:
 async def checked_write(
     rows: Sequence[Mapping[str, Any]],
     *,
-    expected_heads: Mapping[IdentityKey, int | None] | None,
+    expected_heads: Mapping[IdentityKey, MemoryRow | None] | None,
     ch: _CHClient,
 ) -> AsyncIterator[None]:
     """Every value writer takes these fences too, closing the check/insert window.
@@ -42,8 +42,14 @@ async def checked_write(
     names = [lease_name(key) for key in sorted(keys)]
     async with lease_writes.fenced_many(names, ch=_lease_client(ch)) as mark:
         if expected_heads is not None:
-            current = await clickhouse_head_versions(list(keys), ch=ch)
-            if any(current.get(key) != version for key, version in expected_heads.items()):
+            current = await memory_rows_by_identity_keys(
+                list(keys), ch=ch, sequential=True, include_tombstoned=True
+            )
+            # Clock skew lets independent writers choose the same head+2 version.
+            if any(
+                memory_head_state(current.get(key)) != memory_head_state(head)
+                for key, head in expected_heads.items()
+            ):
                 raise AdmissionContendedError("the memory changed while it was read")
         mark(True)
         yield

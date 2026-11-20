@@ -17,7 +17,9 @@ from tests.unit.test_memory_verify import _row
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["set", "update", "update_retire", "update_high", "bulk_set"])
+@pytest.mark.parametrize(
+    "operation", ["set", "set_high", "update", "update_retire", "update_high", "bulk_set"]
+)
 async def test_contended_value_write_publishes_no_embedding(
     operation, memory_insert_keeper, monkeypatch
 ):
@@ -29,6 +31,7 @@ async def test_contended_value_write_publishes_no_embedding(
     high_fence = AsyncMock()
     monkeypatch.setattr(store, "tombstone_vectors_of", retire)
     monkeypatch.setattr(update, "fence_high", high_fence)
+    monkeypatch.setattr(set_commit, "fence_high", high_fence)
 
     class CH:
         async def insert(self, table, rows, **kw):
@@ -41,6 +44,8 @@ async def test_contended_value_write_publishes_no_embedding(
             await set_commit._insert_row_and_vector(
                 SimpleNamespace(memory_row=memory, embedder=SimpleNamespace(dim=4)), ch, embedding
             )
+        elif operation == "set_high":
+            await set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
         elif operation in ("update", "update_retire", "update_high"):
             await update._land_inserted(
                 source,
@@ -110,3 +115,40 @@ async def test_unanswered_high_memory_send_still_fences_search(monkeypatch):
             source, memory, [], LostAnswer(), retire_vectors=True, high=True, record=AsyncMock()
         )
     fence.assert_awaited_once_with([(identity_key(source), memory["version"])], ch=ANY)
+
+
+@pytest.mark.asyncio
+async def test_high_set_cancelled_during_holder_release_still_fences_search(monkeypatch):
+    import asyncio
+
+    from server.core import leases
+
+    releasing, finish = asyncio.Event(), asyncio.Event()
+    release = leases.release_shielded
+    fence = AsyncMock()
+    monkeypatch.setattr(set_commit, "fence_high", fence)
+    source = _row()
+    memory = store.build_memory_version_row(source, sensitivity="high")
+    inserted = []
+
+    class CH:
+        async def insert(self, table, batch, **kw):
+            inserted.extend(batch)
+
+    async def held_release(lease):
+        releasing.set()
+        await finish.wait()
+        await release(lease)
+
+    monkeypatch.setattr(leases, "release_shielded", held_release)
+    ch = CH()
+    task = asyncio.create_task(
+        set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
+    )
+    await releasing.wait()
+    assert inserted == [memory]
+    task.cancel()
+    finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    fence.assert_awaited_once_with([(identity_key(source), memory["version"])], ch=ch)

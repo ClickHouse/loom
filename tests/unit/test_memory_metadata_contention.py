@@ -25,7 +25,7 @@ class Replica:
 
     @property
     def head(self) -> dict[str, Any]:
-        return max(self.table, key=lambda r: r["version"])
+        return max(reversed(self.table), key=lambda r: r["version"])
 
     async def insert(self, table: str, batch: list[dict[str, Any]], **kw: Any) -> None:
         assert table == "loom.memory"
@@ -47,14 +47,21 @@ def fenced_store(monkeypatch: pytest.MonkeyPatch, memory_insert_keeper):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["lock", "unlock", "verify", "revoke"])
-@pytest.mark.parametrize("moved", [False, True])
+@pytest.mark.parametrize("moved", [False, "newer", "same_version_value", "same_version_tags"])
 async def test_metadata_copy_checks_the_head_under_shared_writer_fence(
     monkeypatch: pytest.MonkeyPatch, fenced_store: set[str], operation: str, moved: bool
 ) -> None:
     source = _row(lock_mode="no_delete", verified_by="human:reviewer", verified_sha256="old")
     table = [memory_repo.build_memory_version_row(source)]
     reader, writer = Replica(table), Replica(table)
-    update = memory_repo.build_memory_version_row(source, value="rejected", version=200)
+    update = memory_repo.build_memory_version_row(
+        source,
+        value=source.value if moved == "same_version_tags" else "rejected",
+        tags=["revised"] if moved == "same_version_tags" else source.tags,
+        version=200 if moved == "newer" else source.version,
+    )
+    # Two writers whose clocks trail the same head can draw the same version.
+    assert rows.version_over(98, drawn=0) == source.version
 
     async def read(*args: Any, **kw: Any):
         # The read has captured source; the other replica's update returns before
@@ -88,7 +95,7 @@ async def test_metadata_copy_checks_the_head_under_shared_writer_fence(
             await call
         assert reader.head == update
         assert len(table) == 2  # no stale copy even in history
-        assert reader.head["value"] == "rejected"
+        assert reader.head["value"] == update["value"]
     else:
         await call
         assert len(table) == 2
@@ -128,7 +135,7 @@ async def test_value_insert_cannot_enter_the_exact_check_insert_window(
     first, second = Replica(table), Replica(table)
     copy = memory_repo.build_memory_version_row(source, version=300, lock_mode="read_only")
     update = memory_repo.build_memory_version_row(source, value="rejected", version=200)
-    check = write_fence.clickhouse_head_versions
+    check = write_fence.memory_rows_by_identity_keys
 
     async def competing_write(keys: Any, **kw: Any):
         assert memory_insert_keeper.keys
@@ -138,11 +145,36 @@ async def test_value_insert_cannot_enter_the_exact_check_insert_window(
             await asyncio.create_task(insert_memory_versions([update], ch=second))
         return await check(keys, **kw)
 
-    monkeypatch.setattr(write_fence, "clickhouse_head_versions", competing_write)
-    await insert_memory_versions([copy], ch=first, expected_heads={rows.identity_key(source): 100})
+    monkeypatch.setattr(write_fence, "memory_rows_by_identity_keys", competing_write)
+    await insert_memory_versions(
+        [copy], ch=first, expected_heads={rows.identity_key(source): source}
+    )
     assert first.head == copy
     assert len(table) == 2
     assert not memory_insert_keeper.keys
+
+
+@pytest.mark.asyncio
+async def test_usage_overlay_does_not_refuse_an_unchanged_source(memory_insert_keeper):
+    source = _row()
+    table = [memory_repo.build_memory_version_row(source)]
+    read = source.model_copy(update={"recall_count": 17, "evidence_count": 9})
+    copy = memory_repo.build_memory_version_row(read, version=300, lock_mode="read_only")
+    await memory_repo.insert_versions_over_heads([copy], [read], ch=Replica(table), exact=True)
+    assert table[-1] == copy
+    assert not memory_insert_keeper.keys
+
+
+@pytest.mark.parametrize("change", [{"value": "rejected"}, {"tags": ["revised"]}])
+def test_postgres_exact_check_distinguishes_equal_version_rows(change):
+    from server.memory.store import pg_memory
+
+    source = _row()
+    stored = memory_repo.build_memory_version_row(source, **change)
+    with pytest.raises(pg_memory.HeadMoved):
+        pg_memory.heads_unchanged({rows.identity_key(source): source}, exact=True)(
+            rows.identity_key(source), stored
+        )
 
 
 @pytest.mark.asyncio
@@ -246,6 +278,7 @@ async def test_supported_batch_reaches_insert_with_live_holders(
     if restore:
         from server.memory.app import snapshot_rows
 
+        monkeypatch.setattr(snapshot_rows.settings, "ch_restore_batch_rows", 1000)
         assert not await snapshot_rows.insert_version_rows(batch, ch=TimedInsert(table))
     else:
         await insert_memory_versions(batch, ch=TimedInsert(table))
