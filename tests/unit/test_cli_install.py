@@ -115,8 +115,16 @@ def test_install_one_gemini_writes_http_url_and_keeps_other_settings(
         assert d["ui"] == {"theme": "Dracula"} and d["mcpServers"]["other"] == other
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "token", ["SECRET", 'secret"quote', "secret\\path", "secret\nline", "secret\U0001f512"]
+)
 def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    token: str,
+    dry_run: bool,
 ) -> None:
     cfg = tmp_path / ".gemini" / "settings.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
@@ -125,7 +133,7 @@ def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
     cfg.write_text(text)
 
     ok = cli._install_one(
-        "gemini", token="SECRET", server_url="https://h", name="loom", dry_run=False
+        "gemini", token=token, server_url="https://h", name="loom", dry_run=dry_run
     )
 
     assert ok is False
@@ -139,7 +147,8 @@ def test_install_one_refuses_a_settings_file_with_comments_and_prints_the_entry(
             "headers": {"Authorization": "Bearer <token>"},
         }
     }
-    assert "SECRET" not in err
+    assert token not in err
+    assert json.dumps(token)[1:-1] not in err
 
 
 def test_has_json_comments_ignores_slashes_inside_strings() -> None:

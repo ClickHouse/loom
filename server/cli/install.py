@@ -486,8 +486,8 @@ def _install_one(
                     f"under {section!r} yourself (replace <token> with your Loom token):",
                     file=sys.stderr,
                 )
-                snippet = _json.dumps({name: entry}, indent=2)
-                print(snippet.replace(token, "<token>") if token else snippet, file=sys.stderr)
+                snippet = _json.dumps({name: mcp_entry(client, mcp_url, "<token>")}, indent=2)
+                print(snippet, file=sys.stderr)
                 return False
             print(
                 f"ERROR ({client}): {cfg_path} is not valid JSON ({e}); "
