@@ -678,6 +678,7 @@
 516db52eddcc	SELECT count() AS n FROM loom.session_brief_revisions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 51af520b7286	SELECT DISTINCT tier, qualified_name, symbol_id FROM loom.code_symbol_names WHERE org = {org:String} AND namespace = {ns:String} AND name IN {names:Array(String)} AND (qualified_name = {full:String} O
 51f662fe04fe	SELECT count() AS n FROM loom.learnings_queue WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)} AND status = ?
+52083af6b301	SELECT count() AS n FROM system.mutations WHERE database = {db:String} AND table = {t:String} AND NOT is_done
 52448e9cfd6b	ALTER TABLE loom.memory_record_conflicts UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {er
 524493debfe9	SELECT count() AS n FROM loom.datasets WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 525d9e3b3774	SELECT count() AS n FROM loom.working_memory FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
@@ -1047,6 +1048,7 @@
 7baded054596	SELECT count() AS n FROM loom.knowledge_ingestions WHERE org = {org:String} AND namespace = {ns:String} AND ?
 7bb1d4059098	SELECT (SELECT count() FROM ( SELECT e.org AS org, e.namespace AS namespace, e.memory_key AS memory_key FROM ( SELECT org, namespace, agent, user_id, memory_key FROM loom.entity_vectors FINAL WHERE to
 7bb9d891b190	SELECT thread_id, msg_id, role, content_excerpt AS embedded_text, ts, cosineDistance(embedding, {q:Array(Float32)}) AS distance FROM loom.conversation_embeddings FINAL WHERE org = {org:String} AND nam
+7bc09b2b31bc	SELECT org, namespace, toString(memory_id) AS memory_id, sum(recall_count) AS recall_total, sum(evidence_count) AS evidence_total, sum(used_count) AS used_total, sum(harm_count) AS harm_total, max(las
 7bcba9ce8741	SELECT state_value FROM loom.code_index_state FINAL WHERE org = {org:String} AND namespace = {ns:String} AND state_key = ? LIMIT ?
 7c06e9fdda88	ALTER TABLE loom.knowledge_uploads DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 7c313a3b4c8e	SELECT term, toUInt64(uniqExactMerge(df_state)) AS df FROM loom.code_term_freq WHERE org = {org:String} AND namespace = {ns:String} AND term IN {tokens:Array(String)} GROUP BY term
@@ -1739,6 +1741,7 @@ c7ae15b6a560	SELECT path, count() AS chunks, min(start_line) AS first_line, coun
 c7c5d35e8502	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, value, ? AS value_truncated, confidence, version, pinned, char_limit, created_at, updated_at, expires_at, valid_a
 c7c8b7f2f21c	ALTER TABLE loom.memory_record_conflicts DELETE WHERE (org = {org:String} AND (prior_record_id IN {ids:Array(UUID)} OR incoming_record_id IN {ids:Array(UUID)})) AND ({erasure_mutation_tag:String} = {e
 c7ec8090e470	SELECT memory_key, memory_type, content_excerpt, ? - cosineDistance(embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(temporal_anchor, toDateTime(?))) AS temporal_anchor, temporal_confi
+c7f724d1ca61	SELECT min(t.bumped) AS first_unfolded FROM ( SELECT org, namespace, memory_id, sum(recall_count) AS recall_total, sum(evidence_count) AS evidence_total, max(last_recalled_at) AS last_recalled, max(bu
 c8167139ec34	DELETE FROM loom.memory_embeddings WHERE (org = {org:String} AND has(tags, ?) AND hasAny(tags, {src:Array(String)}) AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))}
 c8342f918649	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
 c8424367f9c9	SELECT namespace, source_uri, count() AS chunk_count FROM loom.chunks WHERE org = {org:String} AND (namespace, source_uri) IN {keys:Array(Tuple(String, String))} AND doc_superseded_at IS NULL AND (org
