@@ -31,6 +31,7 @@ export interface KnowledgeSource {
   credential_mode?: "shared" | "connected";
   owner_subject?: string;
   owned_by_caller?: boolean;
+  access?: "namespace" | "mirrored";
   /** The ids and filters the source reads, in the form that names ids per kind; {} when
    *  an item has no place in it. Never a credential. */
   config: Record<string, unknown>;
@@ -119,6 +120,34 @@ const KIND_LABEL: Record<string, string> = {
 
 export function kindLabel(kind: string): string {
   return KIND_LABEL[kind] ?? kind;
+}
+
+const ITEM_LABELS: Record<string, string> = {
+  folder: "Folder",
+  file: "File",
+  shared_drive: "Shared drive",
+  filter: "Files matching",
+  page: "Page",
+  database: "Database",
+  project: "Project",
+  name_contains: "name contains",
+  modified_after: "changed after",
+  in: "in folder",
+};
+
+export function sourceConfigText(value: unknown): string {
+  if (Array.isArray(value)) return value.join(", ");
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+/** A stored item as a label, retaining its id and filter values. */
+export function sourceItemText(item: Record<string, unknown>): string {
+  const { type, recursive, ...rest } = item;
+  const label = (key: string) => ITEM_LABELS[key] ?? key;
+  const fields = Object.entries(rest).map(([key, value]) =>
+    key === "id" ? sourceConfigText(value) : `${label(key)}: ${sourceConfigText(value)}`,
+  );
+  return [label(String(type)), ...fields, ...(recursive ? ["(with subfolders)"] : [])].join(" ");
 }
 
 /** The credential field's label for a kind, in the add and rotate forms. */

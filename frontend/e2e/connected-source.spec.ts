@@ -87,6 +87,19 @@ async function installConnectedSource(page: Page) {
         json: { sources: state.added ? [sourceRow(state.complete)] : [], enabled: true, accepts_sources: true },
       });
     }
+    if (path.endsWith(".parse_links")) {
+      expect(raw.links).toEqual(LINKS);
+      return route.fulfill({
+        json: {
+          links: LINKS.map((link, index) => ({
+            link,
+            kind: "gdrive",
+            item: { type: "file", id: index === 0 ? "selected-file" : "selected-doc" },
+            unreadable: "",
+          })),
+        },
+      });
+    }
     if (path.endsWith(".add")) {
       if (raw.dry_run && !state.refusedCheck) {
         state.refusedCheck = true;

@@ -94,4 +94,14 @@ describe("SourceDetailsDialog", () => {
     expect(await screen.findByText("123456789")).toBeInTheDocument();
     expect(screen.getByText("zoom")).toBeInTheDocument();
   });
+
+  it.each([
+    ["mirrored", "Provider access must be verified for each reader. Unverified access stays hidden."],
+    ["namespace", "Everyone who can read this destination can read the imported content."],
+    [undefined, "Access mode is not available from this server."],
+  ] as const)("shows the stored %s access mode without promising a provider check", async (access, text) => {
+    vi.mocked(api.inspectKnowledgeSource).mockResolvedValueOnce({ ...DETAIL, access });
+    render(<SourceDetailsDialog org="acme" namespace="code-x" name="design-docs" onClose={() => {}} />);
+    expect(await screen.findByText(text)).toBeInTheDocument();
+  });
 });

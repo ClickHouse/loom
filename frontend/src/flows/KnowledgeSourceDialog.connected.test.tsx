@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { axeViolations, unlabeledControls } from "../test/axe";
 import { listConnections } from "../api/connections";
-import { addKnowledgeSource } from "../api/knowledgeSources";
+import { addKnowledgeSource, parseKnowledgeSourceLinks } from "../api/knowledgeSources";
 import { ApiError } from "../lib/errors";
 import { sourceAddBody } from "../lib/knowledgeSources";
 import { useStore } from "../lib/state";
@@ -16,6 +16,7 @@ vi.mock("../api/connections", async (load) => ({
 vi.mock("../api/knowledgeSources", async (load) => ({
   ...(await load<typeof import("../api/knowledgeSources")>()),
   addKnowledgeSource: vi.fn(),
+  parseKnowledgeSourceLinks: vi.fn(),
 }));
 
 const LINK = "https://drive.google.com/file/d/selected-file/view";
@@ -57,6 +58,17 @@ const result = (dry_run = true) => ({
   probe: { documents: 0, more: false, sample: [], checked: 2, sampled: false },
   dry_run,
 });
+const parsedLinks = (links: string[]) => ({
+  links: links.map((link) => {
+    const kind = link.includes("notion.so") ? "notion" : link.includes("linear.app") ? "linear" : "gdrive";
+    return {
+      link,
+      kind,
+      item: { type: kind === "notion" ? "page" : kind === "linear" ? "project" : "file", id: "selected-item" },
+      unreadable: "",
+    };
+  }),
+});
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -68,6 +80,7 @@ beforeEach(() => {
   });
   vi.mocked(listConnections).mockResolvedValue(connections());
   vi.mocked(addKnowledgeSource).mockImplementation(async (_id, _form, dry) => result(dry));
+  vi.mocked(parseKnowledgeSourceLinks).mockImplementation(async (_id, links) => parsedLinks(links));
 });
 afterEach(() => {
   cleanup();
@@ -102,6 +115,13 @@ describe("connected account to document source", () => {
     expect(screen.getByText("Team library")).toBeVisible();
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     await check();
+    expect(parseKnowledgeSourceLinks).toHaveBeenCalledWith(NS, [LINK, OTHER], { signal: expect.any(AbortSignal) });
+    expect(within(screen.getByRole("region", { name: "Content link preview" })).getAllByRole("listitem")).toHaveLength(
+      2,
+    );
+    expect(
+      screen.getByText("This preview identifies content. It does not check access or import documents."),
+    ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Add source" }));
     await waitFor(() => expect(added).toHaveBeenCalledWith("selected"));
     const bodies = vi
@@ -138,11 +158,110 @@ describe("connected account to document source", () => {
     await check();
     fireEvent.input(screen.getByLabelText(/^Content links/), { target: { value: LINK } });
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+    expect(screen.queryByRole("region", { name: "Content link preview" })).toBeNull();
     await check();
     await userEvent.click(screen.getByRole("button", { name: "Refresh account" }));
     await screen.findByText("Using reader@example.com.");
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expect(screen.getByLabelText(/^Content links/)).toHaveValue(LINK);
+  });
+
+  it("keeps selected links when link resolution fails, and retries preview before checking access", async () => {
+    open();
+    await fill();
+    vi.mocked(parseKnowledgeSourceLinks).mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", message: "The link preview is unavailable." }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The link preview is unavailable.");
+    expect(screen.getByLabelText(/^Content links/)).toHaveValue(`${LINK}\n${OTHER}`);
+    expect(addKnowledgeSource).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+    await check();
+    expect(parseKnowledgeSourceLinks).toHaveBeenCalledTimes(2);
+    expect(addKnowledgeSource).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["unreadable", "different-provider"])(
+    "shows each link and blocks access Check for %s content",
+    async (problem) => {
+      open();
+      await fill();
+      const preview = parsedLinks([LINK, OTHER]);
+      preview.links[1] =
+        problem === "unreadable"
+          ? { link: OTHER, kind: "", item: { type: "", id: "" }, unreadable: "This file type is not supported." }
+          : { link: OTHER, kind: "notion", item: { type: "page", id: "selected-page" }, unreadable: "" };
+      vi.mocked(parseKnowledgeSourceLinks).mockResolvedValueOnce(preview);
+      fireEvent.click(screen.getByRole("button", { name: "Check" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        problem === "unreadable" ? "This file type is not supported." : "This is Notion content.",
+      );
+      const rows = within(screen.getByRole("region", { name: "Content link preview" })).getAllByRole("listitem");
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toHaveTextContent(LINK);
+      expect(rows[1]).toHaveTextContent(OTHER);
+      expect(rows[1]).toHaveTextContent(
+        problem === "unreadable" ? "This file type is not supported." : "This is Notion content.",
+      );
+      expect(screen.getByLabelText(/^Content links/)).toHaveValue(`${LINK}\n${OTHER}`);
+      expect(addKnowledgeSource).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+    },
+  );
+
+  it.each(["missing", "reordered"])("does not check access for a %s preview result", async (problem) => {
+    open();
+    await fill();
+    vi.mocked(parseKnowledgeSourceLinks).mockResolvedValueOnce(
+      parsedLinks(problem === "missing" ? [LINK] : [OTHER, LINK]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The link preview did not match your selection");
+    expect(addKnowledgeSource).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Content link preview" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+  });
+
+  it("drops a late link preview after the signed-in principal changes", async () => {
+    let resolve!: (value: ReturnType<typeof parsedLinks>) => void;
+    vi.mocked(parseKnowledgeSourceLinks).mockImplementationOnce(
+      () =>
+        new Promise((yes) => {
+          resolve = yes;
+        }),
+    );
+    open();
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    await waitFor(() => expect(parseKnowledgeSourceLinks).toHaveBeenCalledTimes(1));
+    act(() => useStore.setState({ whoami: { authenticated: true, subject: "other", org: NS.org, roles: ["writer"] } }));
+    await act(async () => resolve(parsedLinks([LINK, OTHER])));
+    expect(screen.queryByRole("region", { name: "Content link preview" })).toBeNull();
+    expect(screen.getByLabelText(/^Content links/)).toHaveValue("");
+    expect(addKnowledgeSource).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a late preview after account refresh invalidates the check", async () => {
+    let resolve!: (value: ReturnType<typeof parsedLinks>) => void;
+    vi.mocked(parseKnowledgeSourceLinks).mockImplementationOnce(
+      () =>
+        new Promise((yes) => {
+          resolve = yes;
+        }),
+    );
+    open();
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+    await waitFor(() => expect(parseKnowledgeSourceLinks).toHaveBeenCalledTimes(1));
+    fireEvent(window, new Event("focus"));
+    await waitFor(() => expect(listConnections).toHaveBeenCalledTimes(2));
+    await screen.findByText("Using reader@example.com.");
+    await act(async () => resolve(parsedLinks([LINK, OTHER])));
+    expect(screen.queryByRole("region", { name: "Content link preview" })).toBeNull();
+    expect(screen.getByLabelText(/^Content links/)).toHaveValue(`${LINK}\n${OTHER}`);
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+    expect(addKnowledgeSource).not.toHaveBeenCalled();
   });
 
   it.each([

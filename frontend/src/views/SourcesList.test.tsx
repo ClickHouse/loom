@@ -128,6 +128,37 @@ describe("SourcesList", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Actions for own-alias" }));
     expect(await screen.findByRole("menuitem", { name: "Manage connection" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Sync now" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Edit items" })).toBeInTheDocument();
+  });
+
+  it("discards the prior caller's ownership projection and reloads after a sign-in change", async () => {
+    writer();
+    sources.listKnowledgeSources.mockResolvedValueOnce({
+      enabled: true,
+      sources: [connectedSource("private-selection", "alice")],
+    });
+    let finish!: (value: KnowledgeSourceList) => void;
+    sources.listKnowledgeSources.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable={false} connectedManageable />);
+    await screen.findByRole("button", { name: "Actions for private-selection" });
+    await act(async () => {
+      useStore.setState({ whoami: { authenticated: true, subject: "bob", org: "acme", roles: ["writer"] } });
+    });
+    await waitFor(() => expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "private-selection" })).not.toBeInTheDocument();
+    await act(async () => {
+      finish({
+        enabled: true,
+        sources: [{ ...connectedSource("private-selection", "alice"), owned_by_caller: false }],
+      });
+    });
+    await screen.findByRole("button", { name: "private-selection" });
+    expect(screen.queryByRole("button", { name: "Actions for private-selection" })).not.toBeInTheDocument();
   });
 
   it("does not offer an admin mutation controls over another person's connected source", async () => {

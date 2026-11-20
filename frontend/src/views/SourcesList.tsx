@@ -49,6 +49,9 @@ const RotateSourceDialog = lazy(() =>
 const SourceDetailsDialog = lazy(() =>
   import("../flows/SourceDetailsDialog").then((m) => ({ default: m.SourceDetailsDialog })),
 );
+const EditSourceItemsDialog = lazy(() =>
+  import("../flows/EditSourceItemsDialog").then((m) => ({ default: m.EditSourceItemsDialog })),
+);
 const SourcePushDialog = lazy(() => import("../flows/SourcePushDialog").then((m) => ({ default: m.SourcePushDialog })));
 const RetireSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.RetireSourceDialog })),
@@ -63,7 +66,7 @@ type State =
   | { kind: "refused" }
   | { kind: "error"; error: unknown };
 
-type Verb = "check" | "sync" | "rotate" | "retire" | "push";
+type Verb = "check" | "sync" | "rotate" | "retire" | "push" | "edit";
 
 function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuItem[]; onOpen: () => void }) {
   const badge = syncBadge(s.sync);
@@ -117,16 +120,7 @@ function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuIte
 /** The place a list belongs to: what the add dialog's title names, and what the copy calls it. */
 export type SourcesPlace = { label: string; noun: "repository" | "namespace" | "collection" };
 
-export function SourcesList({
-  org,
-  namespace,
-  place,
-  manageable,
-  connectedManageable = false,
-  busy = false,
-  section,
-  panel,
-}: {
+interface SourcesListProps {
   org: string;
   /** The namespace the sources live in. */
   namespace: string;
@@ -143,7 +137,38 @@ export function SourcesList({
   section?: string;
   /** Where the open section goes (below the page header). */
   panel?: HTMLElement | null;
-}) {
+}
+
+export function SourcesList(props: SourcesListProps) {
+  const scope = useStore((s) =>
+    JSON.stringify([
+      s.identity?.org,
+      s.whoami?.org,
+      s.whoami?.subject,
+      s.whoami?.roles,
+      s.whoami?.is_service_account,
+      s.authed,
+      s.sessionExpired,
+    ]),
+  );
+  return (
+    <ScopedSourcesList
+      key={JSON.stringify([props.org, props.namespace, props.manageable, props.connectedManageable, scope])}
+      {...props}
+    />
+  );
+}
+
+function ScopedSourcesList({
+  org,
+  namespace,
+  place,
+  manageable,
+  connectedManageable = false,
+  busy = false,
+  section,
+  panel,
+}: SourcesListProps) {
   const subject = useStore((s) => s.whoami?.subject);
   const canAdd = manageable || connectedManageable;
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -195,6 +220,8 @@ export function SourcesList({
     const items = closed
       ? [check, retire]
       : [check, sync, ...(s.credential_mode === "connected" ? [] : [rotate]), retire];
+    if (!closed && ["gdrive", "notion", "linear"].includes(s.kind))
+      items.splice(1, 0, { label: "Edit items", onSelect: act("edit") });
     if (!closed && owned)
       items.splice(2, 0, {
         label: "Manage connection",
@@ -299,6 +326,19 @@ export function SourcesList({
       )}
       {acting && (
         <Suspense fallback={null}>
+          {acting.verb === "edit" && (
+            <EditSourceItemsDialog
+              org={org}
+              namespace={namespace}
+              source={acting.source}
+              canManage={acting.source.credential_mode === "connected" ? connectedManageable : manageable}
+              onClose={() => setActing(null)}
+              onUpdated={() => {
+                toast(`Updated ${acting.source.name}`, "ok");
+                reload();
+              }}
+            />
+          )}
           {acting.verb === "push" && (
             <SourcePushDialog
               org={org}

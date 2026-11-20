@@ -7,7 +7,7 @@
  * accounts use the server's caller binding. Shared credentials remain in dialog
  * memory, clear when their provider or account mode changes, and are never displayed.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { PasswordField } from "@clickhouse/click-ui/PasswordField";
@@ -18,6 +18,8 @@ import {
   removeKnowledgeSource,
   rotateKnowledgeSource,
   syncKnowledgeSourceNow,
+  parseKnowledgeSourceLinks,
+  type KnowledgeSourceParsedLink,
 } from "../api/knowledgeSources";
 import { committedAnyway, humanizeError } from "../lib/errorWords";
 import { canCallOwnConnections } from "../lib/canCall";
@@ -25,6 +27,7 @@ import { useStore } from "../lib/state";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { useSourceAccount } from "./SourceAccountField";
 import { SourceRegistrationFields, type SetField } from "./SourceRegistrationFields";
+import { SourceLinkPreview, validateSourceLinkPreview } from "./SourceLinkPreview";
 import {
   credentialLabel,
   emptySourceForm,
@@ -35,6 +38,7 @@ import {
   sourceFormFingerprint,
   sourceFormProblems,
   sourceFormTouched,
+  sourceLinks,
   type KnowledgeSourceCheckResult,
   type KnowledgeSourceProbe,
   type SourceForm,
@@ -136,6 +140,8 @@ function SourceRegistration({
     );
   };
   const running = useRef(false);
+  const previewRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => previewRequest.current?.abort(), []);
   const [form, setForm] = useState<SourceForm>(() => {
     const f = emptySourceForm();
     return !allowShared || (whoami?.org === org && canCallOwnConnections(whoami))
@@ -145,6 +151,11 @@ function SourceRegistration({
   const connected = form.credentialMode === "connected";
   const account = useSourceAccount(org, form.kind === "recording" ? null : form.kind, connected);
   const [checked, setChecked] = useState<{ fingerprint: string; probe: KnowledgeSourceProbe } | null>(null);
+  const [preview, setPreview] = useState<{
+    fingerprint: string;
+    links: KnowledgeSourceParsedLink[];
+    valid: boolean;
+  } | null>(null);
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set: SetField = (key, value) => {
@@ -167,23 +178,44 @@ function SourceRegistration({
     connected ? account.stamp : "shared",
   ]);
   const accountReady = !connected || account.ready;
-  const passed = checked !== null && checked.fingerprint === fingerprint && accountReady;
+  const currentFingerprint = useRef(fingerprint);
+  currentFingerprint.current = fingerprint;
+  const usesLinks = form.inputMode === "links" && form.kind !== "recording";
+  const previewReady = !usesLinks || (preview?.fingerprint === fingerprint && preview.valid);
+  const passed = checked !== null && checked.fingerprint === fingerprint && accountReady && previewReady;
 
   const run = async (dryRun: boolean) => {
     if (!current() || running.current || problems.length || !accountReady || (!dryRun && !passed)) return;
     running.current = true;
     setBusy(dryRun ? "check" : "add");
     setError(null);
+    const controller = new AbortController();
+    if (dryRun) {
+      setChecked(null);
+      setPreview(null);
+    }
     try {
+      if (dryRun && usesLinks) {
+        const selected = sourceLinks(form.links);
+        previewRequest.current = controller;
+        const parsed = await parseKnowledgeSourceLinks({ org, namespace }, selected, { signal: controller.signal });
+        if (!current() || currentFingerprint.current !== fingerprint) return;
+        const { matches, problems } = validateSourceLinkPreview(parsed.links, form.kind, selected);
+        if (matches) setPreview({ fingerprint, links: parsed.links, valid: problems.length === 0 });
+        if (problems.length) {
+          setError(problems.join(" "));
+          return;
+        }
+      }
       const out = await addKnowledgeSource({ org, namespace }, form, dryRun);
-      if (!current()) return;
+      if (!current() || (dryRun && currentFingerprint.current !== fingerprint)) return;
       if (dryRun) setChecked({ fingerprint, probe: out.probe });
       else {
         onAdded(out.name);
         onOpenChange(false);
       }
     } catch (e) {
-      if (!current()) return;
+      if (!current() || (dryRun && currentFingerprint.current !== fingerprint)) return;
       if (!dryRun && committedAnyway("Add source", e)) {
         onAdded(normalisedName(form.name));
         onOpenChange(false);
@@ -194,6 +226,7 @@ function SourceRegistration({
       setError(humanizeError(e));
     } finally {
       running.current = false;
+      if (previewRequest.current === controller) previewRequest.current = null;
       if (mounted.current) setBusy(null);
     }
   };
@@ -254,6 +287,7 @@ function SourceRegistration({
         />
       )}
       {checked && !passed && <p className="text-xs text-text-muted">The form changed since the check: check again.</p>}
+      {preview?.fingerprint === fingerprint && <SourceLinkPreview links={preview.links} expectedKind={form.kind} />}
       {error && <ErrorNote>{error}</ErrorNote>}
     </DialogFrame>
   );
