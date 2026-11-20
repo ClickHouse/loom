@@ -279,10 +279,12 @@ describe("toggleInclude", () => {
 
 describe("retiredMessage", () => {
   it("says whether the documents stay, how many go, and that they wait while sync is off", () => {
-    expect(retiredMessage("d", false, 5, true)).toBe("Retired d; its documents stay");
-    expect(retiredMessage("d", true, 0, true)).toBe("Retired d; it has no documents left to retire");
-    expect(retiredMessage("d", true, 1, true)).toBe("Retired d; its 1 document is retired over the next sync passes");
-    expect(retiredMessage("d", true, 3, false)).toBe(
+    expect(retiredMessage("d", false, 5, true, "namespace")).toBe("Retired d; its documents stay");
+    expect(retiredMessage("d", true, 0, true, "namespace")).toBe("Retired d; it has no documents left to retire");
+    expect(retiredMessage("d", true, 1, true, "namespace")).toBe(
+      "Retired d; its 1 document is retired over the next sync passes",
+    );
+    expect(retiredMessage("d", true, 3, false, "namespace")).toBe(
       "Retired d; its 3 documents are retired once sync is on for this deployment",
     );
   });

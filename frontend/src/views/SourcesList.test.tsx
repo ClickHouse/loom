@@ -222,6 +222,45 @@ describe("SourcesList", () => {
     expect(screen.queryByLabelText(/password|integration token|service account key/i)).not.toBeInTheDocument();
   });
 
+  it.each(["connected", "shared"] as const)("uses stored mirrored policy for %s source retirement", async (mode) => {
+    writer();
+    sources.listKnowledgeSources.mockResolvedValue({
+      enabled: true,
+      sources: [
+        {
+          ...connectedSource("own-pages", "alice"),
+          credential_mode: mode,
+          access: "mirrored",
+        },
+      ],
+    });
+    render(
+      <SourcesList org="acme" namespace="docs" place={place} manageable={mode === "shared"} connectedManageable />,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for own-pages" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Retire" }));
+    expect(await screen.findByText(/Mirrored copies are always queued for retirement/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("keeps the namespace retirement choice for a connected source", async () => {
+    writer();
+    sources.listKnowledgeSources.mockResolvedValue({
+      enabled: true,
+      sources: [
+        {
+          ...connectedSource("own-pages", "alice"),
+          access: "namespace",
+        },
+      ],
+    });
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable={false} connectedManageable />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for own-pages" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Retire" }));
+    expect(await screen.findByRole("checkbox", { name: /Also retire the documents/ })).not.toBeChecked();
+    expect(screen.queryByText(/Mirrored copies are always/)).not.toBeInTheDocument();
+  });
+
   it("preserves an admin's shared-source credential rotation without offering another person's account", async () => {
     useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["admin"] } });
     sources.listKnowledgeSources.mockResolvedValue(LISTED);

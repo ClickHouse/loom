@@ -554,9 +554,19 @@ export function sourceFormFingerprint(f: SourceForm): string {
   return JSON.stringify(sourceAddBody("", "", f, true));
 }
 
-/** The toast after Retire: whether the documents stay, how many go, and that the
- *  retirement waits for the sync worker when it is off. */
-export function retiredMessage(name: string, deleteDocuments: boolean, pending: number, enabled: boolean): string {
+/** Mirrored counts are withheld; only namespace access can report a document count. */
+export function retiredMessage(
+  name: string,
+  deleteDocuments: boolean,
+  pending: number,
+  enabled: boolean,
+  access: KnowledgeSource["access"],
+): string {
+  if (access === "mirrored")
+    return enabled
+      ? `Retired ${name}; its mirrored copies are queued for retirement over the next sync passes`
+      : `Retired ${name}; its mirrored copies are queued for retirement once sync is on for this deployment`;
+  if (access !== "namespace") return `Retired ${name}; document retirement follows the source's stored access policy`;
   if (!deleteDocuments) return `Retired ${name}; its documents stay`;
   if (pending === 0) return `Retired ${name}; it has no documents left to retire`;
   const docs = pending === 1 ? "1 document is" : `${pending} documents are`;

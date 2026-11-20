@@ -457,7 +457,7 @@ describe("SyncNowDialog", () => {
 });
 
 describe("RetireSourceDialog", () => {
-  function renderRetire(enabled: boolean, onRetired = vi.fn()) {
+  function renderRetire(enabled: boolean, onRetired: () => void, access: "namespace" | "mirrored" | undefined) {
     render(
       <RetireSourceDialog
         open
@@ -465,15 +465,52 @@ describe("RetireSourceDialog", () => {
         {...NS}
         name="design-docs"
         enabled={enabled}
+        access={access}
         onRetired={onRetired}
       />,
     );
     return onRetired;
   }
 
+  it.each([true, false])("explains mandatory mirrored-copy retirement with sync enabled=%s", async (enabled) => {
+    vi.mocked(removeKnowledgeSource).mockResolvedValue({ name: "design-docs", documents_pending: 0 });
+    const onRetired = renderRetire(enabled, vi.fn(), "mirrored");
+    expect(screen.getByText(/Mirrored copies are always queued for retirement/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "design-docs" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retire source" }));
+    await waitFor(() => expect(onRetired).toHaveBeenCalled());
+    expect(removeKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", "design-docs", true);
+    const message = String(vi.mocked(toast).mock.calls[0]?.[0]);
+    expect(message).toContain("mirrored copies are queued for retirement");
+    expect(message).not.toMatch(/documents stay|no documents left/);
+    if (!enabled) expect(message).toContain("once sync is on");
+  });
+
+  it.each([
+    { enabled: true, requested: false, pending: 0 },
+    { enabled: false, requested: false, pending: 7 },
+    { enabled: false, requested: true, pending: 7 },
+  ])("keeps unknown-policy retirement explicit: %j", async ({ enabled, requested, pending }) => {
+    vi.mocked(removeKnowledgeSource).mockResolvedValue({ name: "design-docs", documents_pending: pending });
+    const onRetired = renderRetire(enabled, vi.fn(), undefined);
+    expect(screen.getByText(/stored access policy is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/documents it wrote stay/)).not.toBeInTheDocument();
+    const request = screen.getByRole("checkbox", { name: "Request retirement of imported documents" });
+    expect(request).not.toBeChecked();
+    if (requested) fireEvent.click(request);
+    fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "design-docs" } });
+    fireEvent.click(screen.getByRole("button", { name: "Retire source" }));
+    await waitFor(() => expect(onRetired).toHaveBeenCalled());
+    expect(removeKnowledgeSource).toHaveBeenCalledWith(NS, "design-docs", "design-docs", requested);
+    expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toBe(
+      "Retired design-docs; document retirement follows the source's stored access policy",
+    );
+  });
+
   it("needs the typed name and keeps the documents unless asked", async () => {
     vi.mocked(removeKnowledgeSource).mockResolvedValue({ name: "design-docs", documents_pending: 0 });
-    const onRetired = renderRetire(true);
+    const onRetired = renderRetire(true, vi.fn(), "namespace");
     const retire = screen.getByRole("button", { name: "Retire source" });
     expect(retire).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "design-docs" } });
@@ -485,7 +522,7 @@ describe("RetireSourceDialog", () => {
 
   it("with sync off, says the documents wait until sync is on", async () => {
     vi.mocked(removeKnowledgeSource).mockResolvedValue({ name: "design-docs", documents_pending: 1 });
-    const onRetired = renderRetire(false);
+    const onRetired = renderRetire(false, vi.fn(), "namespace");
     fireEvent.click(screen.getByRole("checkbox", { name: /Also retire the documents/ }));
     fireEvent.change(screen.getByLabelText(/to confirm/), { target: { value: "design-docs" } });
     fireEvent.click(screen.getByRole("button", { name: "Retire source" }));

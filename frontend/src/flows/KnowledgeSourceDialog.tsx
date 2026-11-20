@@ -39,6 +39,7 @@ import {
   sourceFormProblems,
   sourceFormTouched,
   sourceLinks,
+  type KnowledgeSource,
   type KnowledgeSourceCheckResult,
   type KnowledgeSourceProbe,
   type SourceForm,
@@ -464,18 +465,26 @@ export function RetireSourceDialog({
   namespace,
   name,
   enabled,
+  access,
   onRetired,
-}: DialogProps & { name: string; enabled: boolean; onRetired: () => void }) {
+}: DialogProps & { name: string; enabled: boolean; access: KnowledgeSource["access"]; onRetired: () => void }) {
   const [typed, setTyped] = useState("");
   const [deleteDocuments, setDeleteDocuments] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const retireDocuments = access === "mirrored" || deleteDocuments;
+  const description =
+    access === "mirrored"
+      ? "Loom stops pulling from this source. Mirrored copies are always queued for retirement. Only this source's imported copies are retired over future sync passes; retirement waits until sync is on."
+      : access === "namespace"
+        ? "Loom stops pulling from the source and clears its stored credential. The documents it wrote stay unless you ask for them to go too."
+        : "Loom stops pulling from this source. Its stored access policy is unavailable: imported copies may be retired even if you leave the retirement request unchecked.";
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
-      const out = await removeKnowledgeSource({ org, namespace }, name, typed.trim(), deleteDocuments);
-      toast(retiredMessage(name, deleteDocuments, out.documents_pending, enabled), "ok");
+      const out = await removeKnowledgeSource({ org, namespace }, name, typed.trim(), retireDocuments);
+      toast(retiredMessage(name, retireDocuments, out.documents_pending, enabled, access), "ok");
       onRetired();
       onOpenChange(false);
     } catch (e) {
@@ -490,7 +499,7 @@ export function RetireSourceDialog({
       onOpenChange={onOpenChange}
       width={460}
       title={`Retire ${name}?`}
-      description="Loom stops pulling from the source and clears its stored credential. The documents it wrote stay unless you ask for them to go too."
+      description={description}
       footer={
         <>
           <CancelButton />
@@ -506,11 +515,15 @@ export function RetireSourceDialog({
         </>
       }
     >
-      <Checkbox
-        label="Also retire the documents it wrote"
-        checked={deleteDocuments}
-        onCheckedChange={(v) => setDeleteDocuments(v === true)}
-      />
+      {access !== "mirrored" && (
+        <Checkbox
+          label={
+            access === "namespace" ? "Also retire the documents it wrote" : "Request retirement of imported documents"
+          }
+          checked={deleteDocuments}
+          onCheckedChange={(v) => setDeleteDocuments(v === true)}
+        />
+      )}
       <TextField
         label={
           <>

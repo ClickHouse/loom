@@ -407,6 +407,7 @@ function ScopedSourcesList({
               namespace={namespace}
               name={acting.source.name}
               enabled={state.kind === "ready" && state.enabled}
+              access={acting.source.access}
               onOpenChange={close}
               onRetired={reload}
             />

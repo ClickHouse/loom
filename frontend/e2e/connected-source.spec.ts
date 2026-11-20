@@ -235,9 +235,10 @@ async function checkConnectionTab(
     const url = new URL(popup.url());
     expect(url.origin).toBe(origin);
     expect(url.pathname).toBe("/settings/connected-accounts");
-    expect([...url.searchParams.keys()].sort()).toEqual(["from", "kind"]);
+    expect([...url.searchParams.keys()].sort()).toEqual(["from", "kind", "namespace"]);
     expect(url.searchParams.get("kind")).toBe("gdrive");
     expect(url.searchParams.get("from")).toBe("source");
+    expect(url.searchParams.get("namespace")).toBe("bench");
     for (const provider of ["Google Drive", "Notion", "Linear"])
       await expect(popup.getByRole("button", { name: `Connect ${provider}`, exact: true })).toBeVisible();
     await expect(popup.getByRole("heading", { name: "Google Drive", exact: true })).toBeFocused();

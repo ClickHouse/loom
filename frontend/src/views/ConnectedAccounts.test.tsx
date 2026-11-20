@@ -81,6 +81,24 @@ describe("Connected accounts", () => {
     expect(useStore.getState().view).toBe("setup");
   });
 
+  it("keeps source return guidance through boot while dropping unrelated query keys", async () => {
+    useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } });
+    history.replaceState(
+      null,
+      "",
+      "/settings/connected-accounts?kind=notion&from=source&state=drop&code=drop&return_url=https%3A%2F%2Felsewhere.example",
+    );
+    act(() => useStore.getState().bootView("connected-accounts"));
+    expect(window.location.pathname + window.location.search).toBe(
+      "/settings/connected-accounts?namespace=team&kind=notion&from=source",
+    );
+    render(<ConnectedAccounts />);
+    await screen.findByText("reader@example.com");
+    expect(screen.getByText("After connecting, return to the tab where you are adding a source.")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Notion" })).toHaveFocus());
+    expect(api.startConnection).not.toHaveBeenCalled();
+  });
+
   it("shows three statuses and only supplied emails, without scopes or credential controls", async () => {
     const { container } = render(<ConnectedAccounts />);
     await screen.findByText("reader@example.com");
