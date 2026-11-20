@@ -305,8 +305,16 @@ line per hit. With a `SyncAgent` the tool is sync; with an `Agent` it is async, 
 ## OpenAI Agents SDK
 
 `loom_tools` returns Loom's agent verbs as the OpenAI Agents SDK's `FunctionTool`s, so the
-model keeps and reads long-term memory in Loom during a run. Install with
-`pip install 'clickhouse-loom[openai-agents]'` (`openai-agents` 0.24).
+model keeps and reads long-term memory in Loom during a run. For the Python examples,
+install the SDK from the root of the Loom checkout that supplies this guide:
+
+```bash
+pip install './sdk/python[openai-agents]'
+```
+
+The extra installs `openai-agents` 0.24. Native sessions also require a server built
+from that same checkout with the Postgres memory authority; see
+[running the server from source](../../development/local-development.md#running-the-server-from-source).
 
 ```python
 from agents import Agent as OpenAIAgent, Runner
@@ -402,6 +410,14 @@ established beyond its history, give the model `loom_remember`, or send the turn
 | `user_id`              | none            | the end user the history belongs to                             |
 | `key_prefix`           | `openai-agents` | the items' key prefix                                           |
 | `session_settings`     | the SDK's       | `limit`: the default number of latest items `get_items` returns |
+
+Build and install the TypeScript SDK from that same checkout using the
+[SDK source instructions](../../../sdk/typescript/README.md). In your application,
+install its supported native peer:
+
+```bash
+npm install '@openai/agents@>=0.22.0 <0.23.0'
+```
 
 In TypeScript, `loomTools(agent, scope)` from `@clickhouse/loom/integrations/openai-agents`
 returns the same tools built with `tool()` from `@openai/agents`, an optional peer
