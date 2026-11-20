@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from server.core import pg
-from server.core.ch import CHClient
+from server.core.ch import CHClient, sequential_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.memory import store as memory_repo
 from server.memory.app import expiry
@@ -90,10 +90,11 @@ async def test_expiry_scan_leaves_an_intervening_update(monkeypatch, action, ren
         assert final.value == "rejected"
         assert result.moved_skipped == 1 and not result.failures
         assert (result.tombstoned, result.demoted, result.anonymized) == (0, 0, 0)
-        history = await first.query_one(
-            "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {org:String}",
-            {"org": source.org},
-        )
+        with sequential_reads():
+            history = await first.query_one(
+                "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {org:String}",
+                {"org": source.org},
+            )
         # Equal version stamps share the history sort key and can merge.
         assert history["n"] == (1 if same_version else 2)
     finally:
