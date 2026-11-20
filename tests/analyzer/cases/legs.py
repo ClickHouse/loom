@@ -713,6 +713,21 @@ def cases() -> list[Case]:
                 "as_of": (False, True),
                 "basis": ("valid_time", "knowledge_time"),
             },
+            rows=rows_by_substring(
+                {
+                    "FROM loom.session_summaries FINAL": [
+                        {
+                            "agent": AGENT,
+                            "user_id": "alice",
+                            "session_id": "session",
+                            "version": 1,
+                            "derived_from": ["source"],
+                            "summary_text": "a source fact",
+                            "distance": 0.1,
+                        }
+                    ]
+                }
+            ),
         ),
         Case(
             "memory_repo.reads",

@@ -113,6 +113,25 @@ async def _published(pg_conn: Any, org: str) -> None:
     await eventually(landed, description="the org's deliveries published")
 
 
+async def test_digest_source_proof_reads_exact_authoritative_metadata(
+    call: Any, org: str, pg_conn: Any
+) -> None:
+    from server.memory.store import pg_memory
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    response = await call("memory.set", _set(ns, "source", "a source fact"))
+    assert response.status_code == 200, response.text
+    key = (org, ns, "a", "-", "-", "source")
+    other_key = (org, ns, "another-agent", "-", "-", "source")
+    stored = await pg_conn.fetchval(
+        "SELECT row FROM loom.memory_current WHERE org = $1 AND namespace = $2", org, ns
+    )
+    heads = await pg_memory.summary_source_heads([key, other_key])
+    decoded = pg_memory.decode_row(stored)
+    assert heads == {key: {col: decoded.get(col) for col in pg_memory.SUMMARY_SOURCE_STATE_COLUMNS}}
+    assert "value" not in heads[key] and "value_json" not in heads[key]
+
+
 @pytest.mark.usefixtures("pg_authority")
 async def test_a_write_is_listed_and_rolled_back_right_after_it_answers(
     call: Any, org: str

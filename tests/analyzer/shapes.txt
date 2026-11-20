@@ -991,6 +991,7 @@
 764e0e259701	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 765404bd5d8d	SELECT toDate(coalesce(temporal_anchor, valid_at)) AS event_date, cosineDistance(embedding, {q:Array(Float32)}) AS distance, substring(content_excerpt, ?, ?) AS excerpt, memory_key, temporal_anchor IS
 7662b4971175	SELECT org, namespace, agent, user_id, session_id, memory_id, memory_key, memory_type, value, confidence, source_trace, version, tombstoned_at, created_at, expires_at, sensitivity FROM loom.memory FIN
+769c165248dc	SELECT agent, if(user_id = ?, ?, user_id) AS source_user, if(session_id = ?, ?, session_id) AS source_session, memory_key, version, content_sha256, status, sensitivity, tombstoned_at, redacted_at, exp
 76ed76b066ae	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 76f47ab9df72	SELECT ? AS present FROM loom.code_caller_guards WHERE org = {org:String} AND namespace = {ns:String} LIMIT ?
 77424b91d322	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)}
@@ -1649,6 +1650,7 @@ bd4266cbfe15	SELECT count() AS n FROM loom.conflict_allowlist FINAL WHERE org = 
 bda43b1f632f	WITH arrayConcat(splitByNonAlpha(context_lc), splitByNonAlpha(content_lc)) AS words SELECT namespace, source_uri, chunk_idx, doc_version, JSONExtractUInt(chunk_metadata, ?) AS revision, cosineDistance
 bde7c432bca1	ALTER TABLE loom.entity_communities DELETE WHERE (org = {org:String} AND (cityHash64(namespace, entity) IN {entities:Array(UInt64)} OR cityHash64(namespace, label) IN {entities:Array(UInt64)})) AND ({
 bde98d358a2b	SELECT path, uniqExact(facet_kind, name) AS matched, groupArray((facet_kind, name, ordinal, line, confidence)) AS hits, length(arrayIntersect(groupUniqArrayIf(ordinal, facet_kind = {k0:String} AND nam
+be08a1021716	SELECT agent, if(user_id = ?, ?, user_id) AS source_user, if(session_id = ?, ?, session_id) AS source_session, memory_key, version, content_sha256, status, sensitivity, tombstoned_at, redacted_at, exp
 be29d7515a0a	SELECT count() AS n FROM loom.memory_doc_stats WHERE org = {org:String} AND namespace = {ns:String}
 be6f152846ae	SELECT arrayFirst( u -> startsWith(source_resource_id, concat({prefix:String}, u, ?)), {uris:Array(String)} ) AS source_uri, toUInt8(has(tags, {proposed_tag:String})) AS proposed, count() AS total, co
 be735bd4b1cf	ALTER TABLE loom.namespace_guides DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
@@ -1932,6 +1934,7 @@ dbd04ba47fb3	SELECT agent, user_id, session_id, memory_key, memory_type, content
 dbe0f33a89a7	SELECT toString(memory_id) AS memory_id, org, namespace, agent, user_id, session_id, memory_key, value, created_at, valid_at, version, redacted_at, toString(content_sha256) AS content_sha256 FROM loom
 dbe745784521	SELECT memory_type, toString(status) AS status, source_class, count() AS rows, min(updated_at) AS first_at, max(updated_at) AS last_at FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {
 dbefbb4f200e	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.agent AS agent, c.user
+dbf0d4bbb01d	SELECT agent, if(user_id = ?, ?, user_id) AS source_user, if(session_id = ?, ?, session_id) AS source_session, memory_key, version, content_sha256, status, sensitivity, tombstoned_at, redacted_at, exp
 dbf737bf992e	ALTER TABLE loom.knowledge_uploads DELETE WHERE (org = {org:String} AND user_id = {uid:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 dbfe0a193e5b	SELECT count() AS n FROM loom.documents FINAL WHERE org = {org:String} AND namespace IN {ns:Array(String)} AND superseded_at IS NULL
 dc003d9f3eb2	SELECT toString(failure_id) AS failure_id, org, namespace, agent, projection, source_operation, source_resource_id, memory_keys, error_type, error_message, payload, status, created_at, resolved_at FRO

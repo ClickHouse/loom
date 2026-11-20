@@ -484,6 +484,37 @@ FOR SHARE OF c
 
 _HEADS_BY_KEYS = f"SELECT c.row {_EXACT_KEYS}"
 
+# A digest may use the projection's eligibility decision only while these fields match
+# its authority. Read no source values: a shortlist can name many source keys.
+SUMMARY_SOURCE_STATE_COLUMNS = (
+    "version",
+    "content_sha256",
+    "status",
+    "sensitivity",
+    "tombstoned_at",
+    "redacted_at",
+    "expires_at",
+    "valid_to",
+    "created_at",
+    "valid_at",
+    "temporal_anchor",
+    "invalid_at",
+)
+_SUMMARY_SOURCE_COLUMNS = (
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_key",
+    *SUMMARY_SOURCE_STATE_COLUMNS,
+)
+_SUMMARY_SOURCE_HEADS = (
+    "SELECT jsonb_strip_nulls(jsonb_build_object("
+    + ", ".join(f"'{col}', c.row->'{col}'" for col in _SUMMARY_SOURCE_COLUMNS)
+    + f")) AS row {_EXACT_KEYS}"
+)
+
 _HEADS_OWING = f"""
 SELECT c.row, coalesce(d.targets, 0) AS owed {_EXACT_KEYS}
 LEFT JOIN loom.memory_deliveries d
@@ -1612,6 +1643,27 @@ async def heads_by_keys(
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
     rows = await _read(sql, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
+
+
+async def summary_source_heads(
+    keys: Sequence[IdentityKey],
+) -> dict[IdentityKey, dict[str, Any]]:
+    """Exact-key digest source metadata, including deleted and unserved heads.
+
+    A missing or unreadable head cannot validate a projected source. Values and other
+    payloads stay in the authority; the caller compares only the serving state.
+    """
+    keys = [k for k in keys if not pg.unstorable(k)]
+    if not keys:
+        return {}
+    rows = await _read(_SUMMARY_SOURCE_HEADS, *_key_arrays(keys), durable=False)
+    heads = {}
+    for row in rows:
+        decoded = decode_row(row["row"])
+        heads[identity_key(decoded)] = {
+            col: decoded.get(col) for col in SUMMARY_SOURCE_STATE_COLUMNS
+        }
+    return heads
 
 
 async def heads_owing(

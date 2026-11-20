@@ -1001,6 +1001,10 @@ Session digests carry the keys they compressed in `derived_from`. Before dedupli
 the summary leg checks those known sources under the digest's full identity. A source
 that is missing, unserved, deleted, expired, outside its validity, high-sensitivity or at a newer
 version withholds the digest. An unreadable source check withholds all unchecked digests.
+Under Postgres authority, the leg reads each exact source key again after reading its
+projection. The authoritative version, content hash and serving metadata must match
+the projection; a missing head or content hash withholds the digest. This check reads
+metadata only, and never falls back to the projection when Postgres is unavailable.
 Without source revision hashes, a later source version conservatively withholds a digest
 during replay too. Lineage covers extracted facts, not every sentence of the transcript:
 a digest without a known source remains session evidence, and does not prove that its
