@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .model import digest
 from .observations import CandidateFailure, DockerObservations
+from .workspace import GradingBudgetExceeded
 
 
 @dataclass(frozen=True)
@@ -177,7 +178,7 @@ class BehavioralGrader:
         if checkout.original != self.base:
             raise PermissionError("Candidate base differs from the behavioral controls")
         if not hidden and self.calls >= 3:
-            raise TimeoutError("Visible observation budget exhausted")
+            raise GradingBudgetExceeded("Visible observation budget exhausted")
         if not hidden:
             self.calls += 1
         out = self.output / ("hidden" if hidden else f"visible-{self.calls}")

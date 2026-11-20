@@ -13,7 +13,7 @@ from examples.software_factory.adapters import ReplayContext, ReplayProvider
 from examples.software_factory.cohort import Cohort
 from examples.software_factory.controller import run_active
 from examples.software_factory.model import Task
-from examples.software_factory.workspace import ObjectiveGrader
+from examples.software_factory.workspace import GradingBudgetExceeded, ObjectiveGrader
 
 
 def prepare(task_id, output):
@@ -72,10 +72,12 @@ def main():
 
     def grader(task_id, output):
         task, oracle = prepare(task_id, output)
-        if args.behavior == "visible-grader-failure":
+        if args.behavior in {"visible-grader-failure", "visible-budget-exhausted"}:
 
             def fail_visible(checkout, *, hidden=False):
                 if not hidden:
+                    if args.behavior == "visible-budget-exhausted":
+                        raise GradingBudgetExceeded("scripted visible budget exhausted")
                     raise RuntimeError("scripted visible infrastructure failure")
                 return {"passed": True, "grader_sha256": oracle.sha256}
 

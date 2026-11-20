@@ -189,6 +189,20 @@ class ControllerContracts(unittest.TestCase):
             with self.assertRaisesRegex(PermissionError, "reconciliation"):
                 run(root, plan)
 
+    def test_settled_visible_budget_exhaustion_allows_next_cold_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, plan = Path(directory), protocol()
+            entry = run(root, plan, "visible-budget-exhausted")
+            self.assertEqual(entry["result"]["status"], "stopped")
+            self.assertFalse(entry["result"]["resolved"])
+            with Cohort(root, plan) as cohort:
+                self.assertFalse(cohort.state.get("halted", False))
+                self.assertFalse(cohort.state["accounting"]["unknown"])
+                self.assertTrue(all(r["settled"] for r in cohort.state["accounting"]["rows"]))
+            next_entry = run(root, plan)
+            self.assertEqual(next_entry["order"], 1)
+            self.assertTrue(next_entry["result"]["resolved"])
+
     def test_worker_rechecks_eligibility_and_task_before_constructing_clients(self):
         with tempfile.TemporaryDirectory() as directory:
             root, plan, client = Path(directory), protocol(), Mock()

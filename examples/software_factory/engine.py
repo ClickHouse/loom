@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .context import Context
 from .model import MODES, Budget, Ledger, Provider, Task, digest, tool_schemas
-from .workspace import Checkout, ObjectiveGrader, require_independent_grader
+from .workspace import Checkout, GradingBudgetExceeded, ObjectiveGrader, require_independent_grader
 
 
 class InvalidGrader(RuntimeError):
@@ -96,6 +96,8 @@ class Factory:
             self.impact_state = state
         try:
             result = self.grader.run(self.checkout)
+        except GradingBudgetExceeded:
+            raise
         except Exception as exc:  # Grader faults must not become agent tool errors.
             raise InvalidGrader(f"{type(exc).__name__}: {exc}") from exc
         self.verified_state = state

@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from .cleanup import remove_owned
 from .model import Task, digest
-from .workspace import Checkout, require_independent_grader
+from .workspace import Checkout, GradingBudgetExceeded, require_independent_grader
 
 
 def controller_hashes() -> dict[str, str]:
@@ -390,7 +390,7 @@ class HistoricalGrader:
         if checkout.original != {k: v for k, v in self.base.items() if k.startswith("src/flask/")}:
             raise PermissionError("Candidate base differs from the frozen implementation")
         if not hidden and self.calls >= self.max_visible_calls:
-            raise TimeoutError("Visible test budget exhausted")
+            raise GradingBudgetExceeded("Visible test budget exhausted")
         if not hidden:
             self.calls += 1
         out = self.output / ("hidden" if hidden else f"visible-{self.calls}")

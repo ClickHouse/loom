@@ -188,7 +188,11 @@ class BehavioralContracts(unittest.TestCase):
 
     def test_visible_infrastructure_failure_remains_invalid_after_hidden_success(self):
         for actions in ([], [{"name": "test"}]):
-            for failure in (RuntimeError("transport failed"), ValueError("invalid runtime")):
+            for failure in (
+                RuntimeError("transport failed"),
+                ValueError("invalid runtime"),
+                TimeoutError("infrastructure deadline"),
+            ):
                 with self.subTest(actions=actions, failure=failure):
                     with tempfile.TemporaryDirectory() as directory:
                         factory = self.factory(Path(directory), [{"actions": actions}])
@@ -203,6 +207,28 @@ class BehavioralContracts(unittest.TestCase):
                         self.assertEqual(result["status"], "invalid_grader")
                         self.assertFalse(result["resolved"])
                         self.assertIn(str(failure), result["error"])
+
+    def test_visible_check_budget_stops_only_attempt_and_preserves_hidden_grade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            factory = self.factory(
+                Path(directory), [{"actions": [{"name": "test"}]} for _ in range(4)]
+            )
+            expected = {p.key: p.expected for p in factory.grader.probes}
+
+            def observe(_runner, _workspace, requests):
+                return json.dumps(
+                    [{"id": row["id"], "value": expected[row["id"]]} for row in requests]
+                ).encode()
+
+            with patch.object(DockerObservations, "run", autospec=True, side_effect=observe) as io:
+                result = factory.run()
+            self.assertEqual(factory.grader.calls, 3)
+            self.assertEqual(io.call_count, 4)
+            self.assertEqual(result["status"], "stopped")
+            self.assertFalse(result["resolved"])
+            self.assertIn("budget exhausted", result["error"])
+            hidden = [row for row in factory.ledger.rows if row["kind"] == "hidden_verification"]
+            self.assertEqual([row["passed"] for row in hidden], [True])
 
     def test_attach_output_limit_is_candidate_failure_before_runtime_mismatch(self):
         for stream in ("stdout", "stderr"):

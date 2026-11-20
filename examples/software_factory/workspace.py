@@ -10,6 +10,10 @@ from pathlib import Path
 from .model import Task, digest
 
 
+class GradingBudgetExceeded(TimeoutError):
+    """The candidate used its visible checks; grading infrastructure is healthy."""
+
+
 class Checkout:
     def __init__(self, root: Path, task: Task):
         self.root = root.resolve()
