@@ -1144,9 +1144,9 @@ async def test_clickhouse_expiry_retries_only_the_unmoved_candidates(
 async def test_clickhouse_expiry_refuses_a_head_that_moves_during_the_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = [_row(memory_key=a, on_expire=a) for a in ("demote", "anonymize")]
+    rows = [_row(memory_key=a, on_expire=a) for a in X.ACTIONS]
     ch, _ = _stub(monkeypatch, rows)
-    updated = [build_memory_version_row(row, version=200, value='"rewritten"') for row in rows]
+    updated = [build_memory_version_row(row, version=200, value='"rewritten"') for row in rows[:2]]
     ch.heads[identity_key(rows[0])] = updated[0]
     retry = X._retry_heads
 
@@ -1157,10 +1157,13 @@ async def test_clickhouse_expiry_refuses_a_head_that_moves_during_the_retry(
 
     monkeypatch.setattr(X, "_retry_heads", moved_again)
     res = await X.run_pass()
-    assert not res.failures and res.moved_skipped == 2
+    assert not res.failures and res.moved_skipped == 3
     assert (res.tombstoned, res.demoted, res.anonymized) == (0, 0, 0)
     assert not res.sample and not ch.inserts and not retired and not _DEMOTE_REEMITS
-    assert [ch.heads[identity_key(row)] for row in rows] == updated
+    assert [ch.heads[identity_key(row)] for row in rows] == [
+        *updated,
+        build_memory_version_row(rows[2]),
+    ]
 
 
 @pytest.mark.parametrize("action", X.ACTIONS)

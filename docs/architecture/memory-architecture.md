@@ -1336,7 +1336,8 @@ every selected authoritative head, including equal-version replacements. Postgre
 refresh a candidate to a rewritten head that is still expired. Missing, deleted or
 renewed candidates are skipped and counted in `moved_skipped`. A change after source
 selection also refuses admission. The refused batch is re-read and retried once without
-moved candidates, counted in `moved_skipped`; another refusal leaves that batch whole.
+moved candidates, counted in `moved_skipped`; another refusal counts the entire remaining
+batch there, including unchanged candidates.
 Dry runs write nothing and do not acquire the fences
 ([storage authority](storage-authority.md#why-two-stores)). An acknowledged expiry still
 announces and mirrors its action if holder cleanup is cancelled, even if cancellation

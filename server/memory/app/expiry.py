@@ -82,7 +82,8 @@ class ExpiryResult:
     demoted: int = 0
     anonymized: int = 0
     locked_skipped: int = 0
-    moved_skipped: int = 0  # candidates omitted by head selection or changed after planning
+    # Candidates skipped by head checks or whole-batch admission refusal.
+    moved_skipped: int = 0
     dry_run: bool = False
     # Up to 20 handled rows: (identity key, the entry as_dict reports).
     sampled: list[tuple[IdentityKey, dict[str, Any]]] = field(default_factory=list)
