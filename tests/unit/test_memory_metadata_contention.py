@@ -334,3 +334,58 @@ async def test_supported_batch_reaches_insert_with_live_holders(
         await insert_memory_versions(batch, ch=TimedInsert(table))
     assert table == batch
     assert all(lease.released for lease in held)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage,advance,wait_s,admitted",
+    [
+        ("retry", 0.1, 1.0, True),
+        ("retry", 2.0, 1.0, False),
+        ("take", 0.1, 1.0, True),
+        ("take", 2.0, 1.0, False),
+        ("take", 2.0, 0.0, True),
+    ],
+)
+async def test_memory_insert_respects_its_admission_deadline(
+    monkeypatch, stage, advance, wait_s, admitted
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from server.memory.store import write_fence
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    attempts = 0
+    lease = SimpleNamespace()
+    release = AsyncMock()
+    client = SimpleNamespace(insert=AsyncMock())
+
+    async def take(*args, **kw):
+        nonlocal attempts
+        attempts += 1
+        if stage == "retry" and attempts == 1:
+            return None
+        if stage == "take":
+            clock.advance(advance)
+        return lease
+
+    async def pause(delay):
+        clock.advance(advance)
+
+    monkeypatch.setattr(lease_writes, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(lease_writes.asyncio, "sleep", pause)
+    monkeypatch.setattr(lease_writes.leases, "take", take)
+    monkeypatch.setattr(lease_writes.leases, "work_left", lambda *args: 24)
+    monkeypatch.setattr(lease_writes.leases, "release_shielded", release)
+    monkeypatch.setattr(write_fence, "_admission_wait_s", lambda: wait_s)
+    row = memory_repo.build_memory_version_row(_row())
+    if admitted:
+        await insert_memory_versions([row], ch=client)
+    else:
+        with pytest.raises(lease_writes.FenceUnavailableError):
+            await insert_memory_versions([row], ch=client)
+    assert client.insert.await_count == int(admitted)
+    assert attempts == (2 if stage == "retry" and admitted else 1)
+    assert release.await_count == int(admitted or stage == "take")

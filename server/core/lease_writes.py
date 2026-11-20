@@ -90,24 +90,56 @@ def _work_deadlines(held: list[leases.Lease], ttl: float) -> tuple[float, float]
     return loop_now + left, send_now + left
 
 
+async def _admit(names: list[str], ttl: float, ch: Any, wait_s: float) -> list[leases.Lease]:
+    if wait_s <= 0:
+        return await _take_all(names, ttl, ch)
+
+    loop = asyncio.get_running_loop()
+    loop_until = loop.time() + wait_s
+    until = time.monotonic() + wait_s
+    deadline = asyncio.timeout_at(loop_until)
+    held: list[leases.Lease] = []
+    admitted = False
+
+    def left() -> float:
+        return min(until - time.monotonic(), loop_until - loop.time())
+
+    try:
+        async with deadline:
+            while True:
+                if left() <= 0:
+                    raise FenceUnavailableError("write fence admission exceeded its deadline")
+                try:
+                    held = await _take_all(names, ttl, ch)
+                except FenceUnavailableError:
+                    remaining = left()
+                    if remaining <= 0:
+                        raise
+                    # Release partial batches before waiting for overlapping keys.
+                    await asyncio.sleep(min(0.1, remaining))
+                    continue
+                # A completed take need not yield to the timeout after suspension.
+                if left() <= 0:
+                    raise FenceUnavailableError("write fence admission exceeded its deadline")
+                break
+        admitted = True
+        return held
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        raise FenceUnavailableError("write fence admission exceeded its deadline") from None
+    finally:
+        if held and not admitted:
+            await to_its_end(_release_all(held), name="lease_writes.release")
+
+
 @asynccontextmanager
 async def fenced_many(
     names: list[str], *, ch: Any = None, wait_s: float = 0.0
 ) -> AsyncIterator[Callable[[bool], None]]:
     """Admit keys in bounded waves and fence sends before the earliest holder expires."""
     ttl = lease_ttl_s(rmt_carry.send_bound_s())
-    until = time.monotonic() + wait_s
-    while True:
-        try:
-            held = await _take_all(names, ttl, ch)
-            break
-        except FenceUnavailableError:
-            left = until - time.monotonic()
-            if left <= 0:
-                raise
-            # Partial admission is released before waiting, so overlapping batches
-            # cannot wait while holding each other's keys.
-            await asyncio.sleep(min(0.1, left))
+    held = await _admit(names, ttl, ch, wait_s)
     uncertain = False
 
     def mark_uncertain(value: bool) -> None:

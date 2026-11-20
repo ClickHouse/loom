@@ -277,3 +277,75 @@ async def test_inner_timeout_keeps_its_original_error(monkeypatch):
     assert failed.value is inner
     lease.let_expire.assert_called_once()
     release.assert_awaited_once_with(lease)
+
+
+@pytest.mark.asyncio
+async def test_admission_deadline_cancels_acquisition_and_waits_for_cleanup(monkeypatch):
+    entered = asyncio.Event()
+    releasing = asyncio.Event()
+    finish_release = asyncio.Event()
+    lease = SimpleNamespace()
+    deadlines = []
+    timeout_at = asyncio.timeout_at
+
+    def deadline(when):
+        result = timeout_at(when)
+        deadlines.append(result)
+        return result
+
+    async def take(name, **kw):
+        if name == "a":
+            return lease
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def release(held):
+        assert held is lease
+        releasing.set()
+        await finish_release.wait()
+
+    async def write():
+        async with writes.fenced_many(["a", "b"], wait_s=60):
+            pytest.fail("the expired admission cannot enter the writer")
+
+    monkeypatch.setattr(writes.asyncio, "timeout_at", deadline)
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    task = asyncio.create_task(write())
+    try:
+        await entered.wait()
+        assert len(deadlines) == 1, "acquisition must have an absolute timeout"
+        deadlines[0].reschedule(asyncio.get_running_loop().time())
+        await releasing.wait()
+        assert not task.done(), "the caller must wait for shielded holder cleanup"
+        finish_release.set()
+        with pytest.raises(writes.FenceUnavailableError):
+            await task
+    finally:
+        finish_release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_admission_keeps_the_original_backend_error(monkeypatch, failure):
+    error = failure("control store interrupted")
+    monkeypatch.setattr(writes.leases, "take", AsyncMock(side_effect=error))
+    with pytest.raises(failure) as failed:
+        async with writes.fenced_many(["key"], wait_s=60):
+            pytest.fail("failed admission cannot enter the writer")
+    assert failed.value is error
+
+
+@pytest.mark.asyncio
+async def test_zero_wait_refuses_after_one_attempt(monkeypatch):
+    take = AsyncMock(return_value=None)
+    sleep = AsyncMock()
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.asyncio, "sleep", sleep)
+    with pytest.raises(writes.FenceUnavailableError):
+        async with writes.fenced_many(["key"], wait_s=0):
+            pytest.fail("busy admission cannot enter the writer")
+    take.assert_awaited_once()
+    sleep.assert_not_awaited()
